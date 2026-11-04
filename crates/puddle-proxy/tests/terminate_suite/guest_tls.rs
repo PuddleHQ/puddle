@@ -10,7 +10,10 @@ use crate::terminate_support;
 
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Duration;
 
+use puddle_agent_proto::host::HostConfig;
+use puddle_proxy::ProxyConfig;
 use puddle_types::{ConnectionDecision, ConnectionOutcome};
 use rustls::pki_types::ServerName;
 use terminate_support::{FakeServer, Flaw, Guest, Pki, Reply, RigBuilder};
@@ -31,7 +34,7 @@ async fn a_client_that_does_not_trust_the_workspace_ca_is_recorded_as_having_ref
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let guest = rig.guest().await;
+    let guest = rig.guest();
     // A client over a real socket, whose roots hold some other CA only: it sends the alert and
     // then closes, as a tool in a workspace does.
     let (port, _bridge) = guest.bridge("bound.test:443").await;
@@ -69,7 +72,7 @@ async fn an_http2_client_that_does_not_trust_the_workspace_ca_is_recorded_the_sa
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let guest = rig.guest().await;
+    let guest = rig.guest();
     let (port, _bridge) = guest.bridge("bound.test:443").await;
     let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -96,16 +99,16 @@ async fn a_certificate_puddle_could_not_make_is_recorded_as_its_own_failure_not_
     // A CA that has already expired cannot issue the leaf.
     let expired = Arc::new(
         puddle_ca::CaBuilder::new("Puddle test CA (expired)")
-            .ca_validity(std::time::Duration::from_millis(20))
-            .leaf_validity(std::time::Duration::from_millis(10))
-            .backdate(std::time::Duration::ZERO)
+            .ca_validity(Duration::from_millis(20))
+            .leaf_validity(Duration::from_millis(10))
+            .backdate(Duration::ZERO)
             .build()
             .unwrap(),
     );
     // Waits out the 20 ms validity of the test CA so it is expired.
-    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    tokio::time::sleep(Duration::from_millis(60)).await;
     rig.use_ca(expired);
-    let guest = rig.guest().await;
+    let guest = rig.guest();
     let (port, _bridge) = guest.bridge("bound.test:443").await;
     let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -130,7 +133,7 @@ async fn a_client_that_goes_away_before_the_handshake_is_not_a_refused_certifica
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, reader) = guest.connect_to("bound.test:443").await;
     assert_eq!(code, 200);
     drop(reader);
@@ -148,7 +151,7 @@ async fn a_client_that_hangs_up_in_the_middle_of_the_handshake_is_an_ordinary_co
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let guest = rig.guest().await;
+    let guest = rig.guest();
     let (port, _bridge) = guest.bridge("bound.test:443").await;
     let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -177,7 +180,7 @@ async fn a_client_that_trusts_the_workspace_ca_is_served_as_before() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/").await.status, 200);
     client.close().await;
@@ -197,7 +200,7 @@ async fn an_upstream_certificate_that_is_not_accepted_is_a_connect_failure_in_th
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/").await.status, 502);
     client.close().await;
@@ -243,7 +246,7 @@ async fn a_real_tool_that_refuses_the_certificate_is_recorded_too() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let guest = rig.guest().await;
+    let guest = rig.guest();
     let (port, _bridge) = guest.bridge("bound.test:443").await;
     let dir = tempfile::tempdir().unwrap();
     // The tool's own list of roots: some other CA, not the workspace's.
@@ -275,4 +278,28 @@ async fn a_real_tool_that_refuses_the_certificate_is_recorded_too() {
     let events = rig.events(1).await;
     assert_eq!(events[0].reason.to_string(), "guest_tls_rejected");
     assert_eq!(events[0].decision, ConnectionDecision::Allow);
+}
+
+/// The agent dials its session to the host only when it opens a stream, and the host drops a
+/// session that stays silent past its first-byte wait. A tool that starts slowly (a cold
+/// interpreter on a busy machine) must still find the session there when it connects.
+#[tokio::test]
+async fn a_tool_that_connects_after_the_hosts_first_byte_wait_still_gets_through() {
+    let pki = Pki::new();
+    let server = upstream(&pki).await;
+    let wait = Duration::from_millis(200);
+    let config = ProxyConfig::default().with_session(HostConfig {
+        first_byte_timeout: wait,
+        ..HostConfig::default()
+    });
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .config(&config)
+        .build();
+    let mut guest = rig.guest();
+    // An absence window: the slow tool's start, five times the host's wait. Nothing signals the
+    // host giving up on a silent session, so only time passing can show that it did not.
+    tokio::time::sleep(wait * 5).await;
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    assert_eq!(client.get("bound.test", "/").await.status, 200);
 }

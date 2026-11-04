@@ -2,13 +2,17 @@
 //! The rule sets that ship with Puddle, and the hosts Puddle allows because of the user's own
 //! setup ("System managed"), as data (`docs/spec/rules.md` §7).
 //!
-//! Both only ever allow (R-36): Puddle ships no deny list. Their entries are checked by the tests
-//! below (R-4, no duplicates) and loaded into memory; nothing is copied into the database, so an
-//! update of Puddle updates them.
+//! A built-in set is single-kind (R-36): every entry allows or every entry denies, as
+//! [`BuiltInSet::effect`] says. System managed only allows. Entries are checked by the tests below
+//! (R-4, no duplicates) and loaded into memory; nothing is copied into the database, so an update
+//! of Puddle updates them.
 
 use std::fmt;
 
+use puddle_types::RuleSetId;
+
 use crate::pattern::Pattern;
+use crate::rule::Effect;
 
 /// One entry of a built-in set or of a System managed reason: a pattern as the user would type
 /// it (`example.com`, `*.example.com`) and what it is for.
@@ -43,7 +47,10 @@ pub struct BuiltInSet {
     /// Whether the set is on where the user never switched it. Every built-in set ships off
     /// (R-1: a fresh install has decided nothing).
     pub default_on: bool,
-    /// The hosts it allows.
+    /// What every entry of the set does. A set never mixes the two (R-36); a deny set names its
+    /// source list, the list's licence and the date it was taken in `description` (R-36).
+    pub effect: Effect,
+    /// The hosts it allows or denies.
     pub entries: &'static [CatalogueEntry],
 }
 
@@ -54,6 +61,7 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         name: "Package registries",
         description: "The public registries of npm, Yarn, PyPI, crates.io, Go modules, Maven Central, NuGet and RubyGems.",
         default_on: false,
+        effect: Effect::Allow,
         entries: &[
             entry!("registry.npmjs.org", "npm"),
             entry!("registry.yarnpkg.com", "Yarn"),
@@ -76,6 +84,7 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         name: "Debian and Ubuntu packages",
         description: "The Debian and Ubuntu package archives, for apt.",
         default_on: false,
+        effect: Effect::Allow,
         entries: &[
             entry!("deb.debian.org", "Debian archive"),
             entry!("security.debian.org", "Debian security updates"),
@@ -90,6 +99,7 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         name: "GitHub",
         description: "github.com, its API, and the hosts that serve repository archives, raw files and release downloads.",
         default_on: false,
+        effect: Effect::Allow,
         entries: &[
             entry!("github.com", "GitHub"),
             entry!("api.github.com", "GitHub API"),
@@ -119,6 +129,14 @@ pub enum SystemReason {
     /// Direct SSH is on for the workspace: desktop VS Code's Remote-SSH installs Microsoft's
     /// server and its extensions in it.
     DirectSsh,
+    /// Direct SSH is on for the workspace: Cursor's Remote SSH installs Cursor's server and its
+    /// extensions in it.
+    DirectSshCursor,
+    /// Direct SSH is on for the workspace: `JetBrains` Gateway downloads the IDE backend there and
+    /// the backend installs plugins.
+    DirectSshJetBrains,
+    /// Direct SSH is on for the workspace: Zed downloads its remote server there.
+    DirectSshZed,
 }
 
 const MICROSOFT_HOSTS: &[CatalogueEntry] = &[
@@ -135,6 +153,30 @@ const MICROSOFT_HOSTS: &[CatalogueEntry] = &[
     entry!("*.gallerycdn.vsassets.io", "Marketplace extension files"),
 ];
 
+const CURSOR_HOSTS: &[CatalogueEntry] = &[
+    entry!("cursor.blob.core.windows.net", "Cursor server downloads"),
+    entry!("marketplace.cursorapi.com", "Cursor extension marketplace"),
+    entry!("marketplace.cursor-cdn.com", "Cursor extension files"),
+];
+
+const JETBRAINS_HOSTS: &[CatalogueEntry] = &[
+    entry!("download.jetbrains.com", "IDE backend downloads"),
+    entry!("download-cdn.jetbrains.com", "IDE backend download files"),
+    entry!("download-cf.jetbrains.com", "IDE backend download files"),
+    entry!("cache-redirector.jetbrains.com", "IDE runtime downloads"),
+    entry!("data.services.jetbrains.com", "list of IDE builds"),
+    entry!("plugins.jetbrains.com", "JetBrains Marketplace"),
+    entry!("downloads.marketplace.jetbrains.com", "plugin files"),
+];
+
+const ZED_HOSTS: &[CatalogueEntry] = &[
+    entry!("github.com", "Zed remote server downloads"),
+    entry!(
+        "release-assets.githubusercontent.com",
+        "Zed remote server download files"
+    ),
+];
+
 const OPEN_VSX_HOSTS: &[CatalogueEntry] = &[
     entry!("open-vsx.org", "Open VSX extensions"),
     entry!("openvsx.eclipsecontent.org", "Open VSX extension files"),
@@ -142,7 +184,14 @@ const OPEN_VSX_HOSTS: &[CatalogueEntry] = &[
 
 impl SystemReason {
     /// Every reason.
-    pub const ALL: [Self; 3] = [Self::MicrosoftServer, Self::CodeServer, Self::DirectSsh];
+    pub const ALL: [Self; 6] = [
+        Self::MicrosoftServer,
+        Self::CodeServer,
+        Self::DirectSsh,
+        Self::DirectSshCursor,
+        Self::DirectSshJetBrains,
+        Self::DirectSshZed,
+    ];
 
     /// The stored and wire name.
     #[must_use]
@@ -151,6 +200,9 @@ impl SystemReason {
             Self::MicrosoftServer => "microsoft_server",
             Self::CodeServer => "code_server",
             Self::DirectSsh => "direct_ssh",
+            Self::DirectSshCursor => "direct_ssh_cursor",
+            Self::DirectSshJetBrains => "direct_ssh_jetbrains",
+            Self::DirectSshZed => "direct_ssh_zed",
         }
     }
 
@@ -173,6 +225,15 @@ impl SystemReason {
             Self::DirectSsh => {
                 "Direct SSH is on for this workspace: desktop VS Code installs Microsoft's VS Code server and its extensions there."
             }
+            Self::DirectSshCursor => {
+                "Direct SSH is on for this workspace: Cursor installs its server and its extensions there."
+            }
+            Self::DirectSshJetBrains => {
+                "Direct SSH is on for this workspace: `JetBrains` Gateway downloads the IDE backend there, and the backend installs plugins."
+            }
+            Self::DirectSshZed => {
+                "Direct SSH is on for this workspace: Zed downloads its remote server there."
+            }
         }
     }
 
@@ -182,6 +243,9 @@ impl SystemReason {
         match self {
             Self::MicrosoftServer | Self::DirectSsh => MICROSOFT_HOSTS,
             Self::CodeServer => OPEN_VSX_HOSTS,
+            Self::DirectSshCursor => CURSOR_HOSTS,
+            Self::DirectSshJetBrains => JETBRAINS_HOSTS,
+            Self::DirectSshZed => ZED_HOSTS,
         }
     }
 }
@@ -190,6 +254,22 @@ impl fmt::Display for SystemReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+/// The engine entries of `sets` (R-36), each carrying its set's effect.
+pub(crate) fn set_entries(sets: &[BuiltInSet]) -> Vec<crate::engine::SetEntry> {
+    sets.iter()
+        .flat_map(|set| {
+            patterns(set.entries)
+                .into_iter()
+                .map(|pattern| crate::engine::SetEntry {
+                    set: RuleSetId::BuiltIn(set.slug),
+                    pattern,
+                    workspace: None,
+                    effect: set.effect,
+                })
+        })
+        .collect()
 }
 
 /// `entries` as patterns. The catalogue is checked by tests, so a pattern that doesn't parse is
@@ -293,6 +373,105 @@ mod tests {
             "marketplace.visualstudio.com"
         ));
         assert!(has(SystemReason::CodeServer, "open-vsx.org"));
+        // Each editor's hosts belong to its own reason.
+        assert!(has(
+            SystemReason::DirectSshCursor,
+            "cursor.blob.core.windows.net"
+        ));
+        assert!(!has(
+            SystemReason::DirectSsh,
+            "cursor.blob.core.windows.net"
+        ));
+        assert!(has(
+            SystemReason::DirectSshJetBrains,
+            "downloads.marketplace.jetbrains.com"
+        ));
+        assert!(has(
+            SystemReason::DirectSshZed,
+            "release-assets.githubusercontent.com"
+        ));
+        assert!(!has(SystemReason::DirectSshZed, "plugins.jetbrains.com"));
         assert!(!has(SystemReason::MicrosoftServer, "open-vsx.org"));
+    }
+
+    /// The provenance rule (R-36): a deny set's description names where its list came from, the
+    /// list's licence and the date. Returns what is missing.
+    fn provenance_gaps(set: &BuiltInSet) -> Vec<&'static str> {
+        let text = set.description;
+        let dated = text.as_bytes().windows(10).any(|w| {
+            w.iter().enumerate().all(|(i, b)| match i {
+                4 | 7 => *b == b'-',
+                _ => b.is_ascii_digit(),
+            })
+        });
+        let mut gaps = Vec::new();
+        if !text.contains("https://") {
+            gaps.push("source");
+        }
+        if !text.contains("licence") {
+            gaps.push("licence");
+        }
+        if !dated {
+            gaps.push("date");
+        }
+        gaps
+    }
+
+    const TRACKER_FIXTURE: BuiltInSet = BuiltInSet {
+        slug: "fixture-trackers",
+        name: "Fixture trackers",
+        description: "Hosts from https://lists.example/trackers (MIT licence), taken 2026-11-04.",
+        default_on: false,
+        effect: Effect::Deny,
+        entries: &[
+            entry!("tracker.example", "tracker"),
+            entry!("*.ads.example", "ads"),
+        ],
+    };
+
+    /// The deny sets among `sets` that lack provenance, with what each lacks.
+    fn deny_sets_missing_provenance(sets: &[BuiltInSet]) -> Vec<(&'static str, Vec<&'static str>)> {
+        sets.iter()
+            .filter(|set| set.effect == Effect::Deny)
+            .map(|set| (set.slug, provenance_gaps(set)))
+            .filter(|(_, gaps)| !gaps.is_empty())
+            .collect()
+    }
+
+    fn no_gaps() -> Vec<(&'static str, Vec<&'static str>)> {
+        Vec::new()
+    }
+
+    #[test]
+    fn r36_every_deny_set_names_its_source_licence_and_date() {
+        assert_eq!(deny_sets_missing_provenance(BUILT_IN_SETS), no_gaps());
+        assert_eq!(deny_sets_missing_provenance(&[TRACKER_FIXTURE]), no_gaps());
+        assert_eq!(provenance_gaps(&TRACKER_FIXTURE), Vec::<&str>::new());
+        let bare = BuiltInSet {
+            description: "Tracker hosts.",
+            ..TRACKER_FIXTURE
+        };
+        assert_eq!(
+            deny_sets_missing_provenance(&[bare]),
+            [("fixture-trackers", vec!["source", "licence", "date"])]
+        );
+    }
+
+    #[test]
+    fn r36_a_built_in_sets_entries_all_carry_its_effect() {
+        for effect in [Effect::Allow, Effect::Deny] {
+            let set = BuiltInSet {
+                effect,
+                ..TRACKER_FIXTURE
+            };
+            let entries = set_entries(&[set]);
+            assert_eq!(entries.len(), 2);
+            assert!(entries.iter().all(|e| e.effect == effect));
+            assert!(
+                entries
+                    .iter()
+                    .all(|e| e.set == RuleSetId::BuiltIn("fixture-trackers"))
+            );
+        }
     }
 }

@@ -374,6 +374,48 @@ pub struct RuleSetWire {
     pub created_by: String,
 }
 
+/// What a `workspace_op` record is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceOpKind {
+    /// A workspace made.
+    Create,
+    /// A workspace deleted, with its volume (or, when the volume was already gone, without it).
+    Delete,
+    /// A workspace's display name changed.
+    Rename,
+    /// A workspace started. Only a failed start is recorded.
+    Start,
+    /// A workspace stopped. Only a failed stop is recorded.
+    Stop,
+    /// An identity made.
+    IdentityCreated,
+    /// An identity's label, author or credentials replaced.
+    IdentityUpdated,
+    /// An identity deleted.
+    IdentityDeleted,
+    /// The default identity changed.
+    IdentityDefaultSet,
+    /// A workspace's identity list changed (one attached, one taken off, or a new order).
+    IdentitiesChanged,
+    /// A repository added to a workspace's list.
+    RepoAdded,
+    /// A repository's pull or push switch changed.
+    RepoSwitched,
+    /// A repository removed from a workspace's list.
+    RepoRemoved,
+}
+
+/// How a workspace operation ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceOpOutcome {
+    /// It went through.
+    Succeeded,
+    /// It did not; `detail` says why.
+    Failed,
+}
+
 /// One audit record (R-24). Internally tagged: `{"type": "rule_created", ...}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -530,10 +572,29 @@ pub enum AuditRecord {
         /// The workspace, or `null` for every workspace.
         #[serde(alias = "sandbox_id")]
         workspace_id: Option<String>,
-        /// Reasons that now apply (`microsoft_server`, `code_server`, `direct_ssh`).
+        /// Reasons that now apply (`microsoft_server`, `code_server`, `direct_ssh`, `direct_ssh_cursor`, `direct_ssh_jetbrains`, `direct_ssh_zed`).
         added: Vec<String>,
         /// Reasons that no longer apply.
         removed: Vec<String>,
+    },
+    /// A workspace operation, or a change to the identities and repository lists a workspace
+    /// uses: who asked, which workspace and how it ended.
+    WorkspaceOp {
+        /// Epoch ms.
+        ts: u64,
+        /// What was done.
+        op: WorkspaceOpKind,
+        /// The workspace; `null` for a change that belongs to no workspace (an identity).
+        workspace_id: Option<String>,
+        /// How it ended.
+        outcome: WorkspaceOpOutcome,
+        /// Who asked: `cli`, `ui`, `api` or `system`.
+        actor: String,
+        /// A short plain sentence: why it failed, or what the operation touched (the new name,
+        /// the repository, the identity's label). Never a secret. Absent when there is nothing
+        /// to add.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
     /// Oldest records deleted to keep the audit under its cap (R-26).
     AuditTrimmed {
@@ -561,16 +622,22 @@ pub enum AuditOutcome {
     Blocked,
     /// A pending request that expired without a decision.
     Expired,
+    /// A workspace operation that went through.
+    Succeeded,
+    /// A workspace operation that failed.
+    Failed,
 }
 
 impl AuditOutcome {
     /// Every outcome.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Allow,
         Self::Deny,
         Self::Pending,
         Self::Blocked,
         Self::Expired,
+        Self::Succeeded,
+        Self::Failed,
     ];
 
     /// The `snake_case` name stored in the `audit.outcome` column and used on the wire.
@@ -582,13 +649,15 @@ impl AuditOutcome {
             Self::Pending => "pending",
             Self::Blocked => "blocked",
             Self::Expired => "expired",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
         }
     }
 }
 
 impl AuditRecord {
     /// Every `type` tag, in declaration order.
-    pub const KINDS: [&'static str; 18] = [
+    pub const KINDS: [&'static str; 19] = [
         "connection",
         "pending_created",
         "pending_decided",
@@ -606,6 +675,7 @@ impl AuditRecord {
         "rule_set_switched",
         "rule_set_changed",
         "system_managed_changed",
+        "workspace_op",
         "audit_trimmed",
     ];
 
@@ -634,6 +704,7 @@ impl AuditRecord {
             | Self::RuleSetSwitched { .. }
             | Self::RuleSetChanged { .. }
             | Self::SystemManagedChanged { .. }
+            | Self::WorkspaceOp { .. }
             | Self::AuditTrimmed { .. } => return None,
         };
         Some(host.to_ascii_lowercase())
@@ -669,6 +740,10 @@ impl AuditRecord {
                 _ => None,
             },
             Self::PendingExpired { .. } => Some(AuditOutcome::Expired),
+            Self::WorkspaceOp { outcome, .. } => Some(match outcome {
+                WorkspaceOpOutcome::Succeeded => AuditOutcome::Succeeded,
+                WorkspaceOpOutcome::Failed => AuditOutcome::Failed,
+            }),
             Self::PendingSuppressed { .. }
             | Self::RuleCreated { .. }
             | Self::RuleUpdated { .. }
@@ -707,6 +782,7 @@ impl AuditRecord {
             Self::RuleSetSwitched { .. } => "rule_set_switched",
             Self::RuleSetChanged { .. } => "rule_set_changed",
             Self::SystemManagedChanged { .. } => "system_managed_changed",
+            Self::WorkspaceOp { .. } => "workspace_op",
             Self::AuditTrimmed { .. } => "audit_trimmed",
         }
     }
@@ -732,6 +808,7 @@ impl AuditRecord {
             | Self::RuleSetSwitched { ts, .. }
             | Self::RuleSetChanged { ts, .. }
             | Self::SystemManagedChanged { ts, .. }
+            | Self::WorkspaceOp { ts, .. }
             | Self::AuditTrimmed { ts, .. } => *ts,
         }
     }
@@ -753,7 +830,8 @@ impl AuditRecord {
                 rule.workspace_id.as_deref()
             }
             Self::RuleSetSwitched { workspace_id, .. }
-            | Self::SystemManagedChanged { workspace_id, .. } => workspace_id.as_deref(),
+            | Self::SystemManagedChanged { workspace_id, .. }
+            | Self::WorkspaceOp { workspace_id, .. } => workspace_id.as_deref(),
             Self::RuleSetCreated { .. }
             | Self::RuleSetUpdated { .. }
             | Self::RuleSetDeleted { .. }
@@ -1561,6 +1639,56 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), AuditRecord::KINDS.len());
+    }
+
+    fn workspace_op(outcome: WorkspaceOpOutcome, detail: Option<&str>) -> AuditRecord {
+        AuditRecord::WorkspaceOp {
+            ts: 7,
+            op: WorkspaceOpKind::Delete,
+            workspace_id: Some("acme".into()),
+            outcome,
+            actor: "api".into(),
+            detail: detail.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_workspace_op_has_a_workspace_an_outcome_and_no_host() {
+        let ok = workspace_op(WorkspaceOpOutcome::Succeeded, None);
+        let failed = workspace_op(WorkspaceOpOutcome::Failed, Some("the volume is busy"));
+        assert_eq!(ok.kind(), "workspace_op");
+        assert!(AuditRecord::KINDS.contains(&ok.kind()));
+        assert_eq!(
+            (ok.workspace_id(), ok.host(), ok.origin(), ok.ts()),
+            (Some("acme"), None, None, 7)
+        );
+        assert_eq!(ok.outcome(), Some(AuditOutcome::Succeeded));
+        assert_eq!(failed.outcome(), Some(AuditOutcome::Failed));
+        let identity = AuditRecord::WorkspaceOp {
+            ts: 7,
+            op: WorkspaceOpKind::IdentityCreated,
+            workspace_id: None,
+            outcome: WorkspaceOpOutcome::Succeeded,
+            actor: "api".into(),
+            detail: Some("Work".into()),
+        };
+        assert_eq!(identity.workspace_id(), None);
+    }
+
+    #[test]
+    fn a_workspace_op_line_round_trips_and_one_without_a_detail_reads() {
+        let failed = workspace_op(WorkspaceOpOutcome::Failed, Some("the volume is busy"));
+        let line = failed.to_line().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["type"], "workspace_op");
+        assert_eq!(value["op"], "delete");
+        assert_eq!(value["outcome"], "failed");
+        assert_eq!(serde_json::from_str::<AuditRecord>(&line).unwrap(), failed);
+        // A line with no detail field (the field is optional) reads as none, and is not written.
+        let ok = workspace_op(WorkspaceOpOutcome::Succeeded, None);
+        let line = ok.to_line().unwrap();
+        assert!(!line.contains("detail"), "{line}");
+        assert_eq!(serde_json::from_str::<AuditRecord>(&line).unwrap(), ok);
     }
 
     #[test]

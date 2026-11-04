@@ -52,8 +52,8 @@ async fn a_plain_http_download_larger_than_the_stream_window_arrives_whole() {
         .name("plain.test", server)
         .allow(vec!["plain.test"])
         .build();
-    let guest = rig.guest().await;
-    let mut stream = guest.control.clone().open_stream().await.unwrap();
+    let guest = rig.guest();
+    let mut stream = guest.open_stream().await;
     stream
         .write_all(b"GET http://plain.test/big HTTP/1.1\r\nHost: plain.test\r\n\r\n")
         .await

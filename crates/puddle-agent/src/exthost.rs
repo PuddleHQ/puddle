@@ -70,9 +70,12 @@ pub struct Ended {
 }
 
 /// The ids of the extension hosts of the servers installed in `servers`.
+///
+/// A child a host has forked shows the host's command line until it runs its own program, so a
+/// match whose parent matches too is that child, part of its parent's tree, not another host.
 #[must_use]
 pub fn extension_hosts(procs: &[Proc], servers: &[PathBuf]) -> Vec<i32> {
-    procs
+    let matches: HashSet<i32> = procs
         .iter()
         .filter(|p| !p.zombie)
         .filter(|p| p.argv.iter().any(|a| a == HOST_ARG))
@@ -81,6 +84,11 @@ pub fn extension_hosts(procs: &[Proc], servers: &[PathBuf]) -> Vec<i32> {
                 .iter()
                 .any(|a| servers.iter().any(|s| Path::new(a).starts_with(s)))
         })
+        .map(|p| p.pid)
+        .collect();
+    procs
+        .iter()
+        .filter(|p| matches.contains(&p.pid) && !matches.contains(&p.ppid))
         .map(|p| p.pid)
         .collect()
 }
@@ -423,6 +431,21 @@ mod tests {
         procs.push(zombie);
         assert_eq!(extension_hosts(&procs, &servers()), [20]);
         assert_eq!(extension_hosts(&procs, &[]), Vec::<i32>::new());
+    }
+
+    #[test]
+    fn a_child_the_host_forked_that_has_not_run_its_program_yet_is_not_another_host() {
+        let mut procs = table();
+        // Between `fork` and `exec` a child shows its parent's command line.
+        let host = procs.iter().find(|p| p.pid == 20).unwrap().clone();
+        procs.push(Proc {
+            pid: 23,
+            ppid: 20,
+            start: 230,
+            ..host
+        });
+        assert_eq!(extension_hosts(&procs, &servers()), [20]);
+        assert!(tree(&procs, &[20]).contains(&23));
     }
 
     #[test]

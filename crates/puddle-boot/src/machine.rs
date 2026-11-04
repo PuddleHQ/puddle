@@ -2,13 +2,22 @@
 //! VS Code's Machine settings in the guest: how ports are forwarded and the
 //! accident guard that keeps desktop VS Code from handing its git credentials to the guest.
 
-use puddle_types::{GuestFile, MergeEntry, MergeFormat, MergeSpec};
+use puddle_types::{GuestFile, MergeEntry, MergeFormat, MergeSpec, SessionUser};
 use serde_json::json;
 
 use crate::assets::guest_path;
 
+/// Where the VS Code server reads Machine settings, below the session user's home.
+pub const MACHINE_SETTINGS_RELATIVE: &str = ".vscode-server/data/Machine/settings.json";
+
 /// Where the VS Code server reads Machine settings for the `root` user.
 pub const MACHINE_SETTINGS_GUEST: &str = "/root/.vscode-server/data/Machine/settings.json";
+
+/// The Machine settings file of `user`.
+#[must_use]
+pub fn machine_settings_path(user: SessionUser) -> String {
+    format!("{}/{MACHINE_SETTINGS_RELATIVE}", user.home())
+}
 
 /// The Machine settings file, as a JSONC merge: Puddle owns only these keys, so the
 /// user's own Machine settings, comments and trailing commas survive every boot.
@@ -26,7 +35,7 @@ pub const MACHINE_SETTINGS_GUEST: &str = "/root/.vscode-server/data/Machine/sett
 /// Never in practice: the keys are fixed and disjoint (the unit tests build the spec for several
 /// ports).
 #[must_use]
-pub fn machine_settings(agent_port: u16) -> GuestFile {
+pub fn machine_settings(agent_port: u16, user: SessionUser) -> GuestFile {
     let entry = |key: &[&str], value: serde_json::Value| MergeEntry::json(key, &value);
     let port = agent_port.to_string();
     let spec = MergeSpec::new(
@@ -51,7 +60,7 @@ pub fn machine_settings(agent_port: u16) -> GuestFile {
         reason = "the keys are fixed and disjoint, the values are JSON: the unit tests build it for several ports"
     )]
     let spec = spec.expect("the Machine settings spec is valid");
-    GuestFile::merged(guest_path(MACHINE_SETTINGS_GUEST), spec)
+    GuestFile::merged(guest_path(&machine_settings_path(user)), spec)
 }
 
 #[cfg(test)]
@@ -62,8 +71,12 @@ mod tests {
 
     #[test]
     fn settings_forward_by_process_and_guard_git_auth() {
-        let f = machine_settings(3128);
+        let f = machine_settings(3128, SessionUser::Root);
         assert_eq!(f.path().as_str(), MACHINE_SETTINGS_GUEST);
+        assert_eq!(
+            machine_settings(3128, SessionUser::Agent).path().as_str(),
+            "/home/agent/.vscode-server/data/Machine/settings.json"
+        );
         assert_eq!(f.mode(), 0o644);
         let ApplyKind::Merge(spec) = f.apply() else {
             panic!("the Machine settings are merged, not replaced")
@@ -84,7 +97,7 @@ mod tests {
 
     #[test]
     fn puddle_owns_leaves_not_whole_port_tables() {
-        let keys = machine_settings(3128);
+        let keys = machine_settings(3128, SessionUser::Root);
         let ApplyKind::Merge(spec) = keys.apply() else {
             panic!()
         };
@@ -102,14 +115,14 @@ mod tests {
     #[test]
     fn any_agent_port_gives_a_valid_spec() {
         for port in [0, 1, 3128, u16::MAX] {
-            let _ = machine_settings(port);
+            let _ = machine_settings(port, SessionUser::Agent);
         }
     }
 
     #[test]
     fn the_users_own_machine_settings_survive_a_boot_and_the_guard_is_kept() {
         let user = "// mine\n{\n  \"editor.fontSize\": 14, // big\n  \"github.gitAuthentication\": true,\n  \"remote.portsAttributes\": { \"8080\": { \"label\": \"web\" }, },\n}\n";
-        let f = machine_settings(3128);
+        let f = machine_settings(3128, SessionUser::Root);
         let ApplyKind::Merge(spec) = f.apply() else {
             panic!()
         };
@@ -135,14 +148,24 @@ mod tests {
     /// editor's folder must not reach it, so the desktop editor keeps its Workspace Trust prompt.
     #[test]
     fn settings_leave_workspace_trust_to_the_desktop_editor() {
-        let text = String::from_utf8(machine_settings(3128).contents().to_vec()).unwrap();
+        let text = String::from_utf8(
+            machine_settings(3128, SessionUser::Root)
+                .contents()
+                .to_vec(),
+        )
+        .unwrap();
         assert!(!text.contains("workspace.trust"), "{text}");
         assert!(!text.contains("workspaceTrust"), "{text}");
     }
 
     #[test]
     fn settings_name_no_credential_helper() {
-        let text = String::from_utf8(machine_settings(3128).contents().to_vec()).unwrap();
+        let text = String::from_utf8(
+            machine_settings(3128, SessionUser::Root)
+                .contents()
+                .to_vec(),
+        )
+        .unwrap();
         assert!(!text.to_lowercase().contains("credential"));
     }
 }

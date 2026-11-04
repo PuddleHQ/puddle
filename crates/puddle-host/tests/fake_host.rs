@@ -4065,6 +4065,197 @@ async fn a_rename_is_undone_when_the_workspace_list_cannot_be_saved() {
     host.shutdown().await;
 }
 
+/// The `workspace_op` records the activity log shows for `query`, oldest first, as the API
+/// answers them.
+async fn workspace_ops(query: &str, api: &Api) -> Vec<serde_json::Value> {
+    let page = api
+        .get(&format!("/api/audit?type=workspace_op&after=0&{query}"))
+        .await;
+    assert_eq!(page.status, 200, "{}", page.body);
+    page.json()["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["record"].clone())
+        .collect()
+}
+
+fn op_summary(record: &serde_json::Value) -> (String, String, String) {
+    let text = |key: &str| record[key].as_str().unwrap_or("").to_owned();
+    (text("op"), text("workspace_id"), text("outcome"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_created_and_a_deleted_workspace_are_in_the_activity_log_with_who_asked() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let accepted = api
+        .delete("/api/workspaces/acme", Some(r#"{"confirm": true}"#))
+        .await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    let ops = workspace_ops("workspace=acme", &api).await;
+    let seen: Vec<_> = ops.iter().map(op_summary).collect();
+    assert_eq!(
+        seen,
+        [
+            ("create".into(), "acme".into(), "succeeded".into()),
+            ("delete".into(), "acme".into(), "succeeded".into()),
+        ]
+    );
+    assert_eq!(ops[0]["actor"], "api", "{}", ops[0]);
+    assert!(ops[1]["detail"].is_null(), "{}", ops[1]);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_workspace_whose_volume_was_already_gone_says_so_in_the_activity_log() {
+    let (_rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let check = api.get("/api/workspaces/acme/delete-check").await.json();
+    let seen = json!({"confirm": true, "fingerprint": check["fingerprint"]}).to_string();
+    api.delete("/api/workspaces/acme", Some(&seen)).await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    // The first record is the create that seeded the workspace.
+    let ops = workspace_ops("outcome=succeeded", &api).await;
+    assert_eq!(ops.len(), 2, "{ops:?}");
+    assert_eq!(op_summary(&ops[1]).0, "delete");
+    assert_eq!(ops[1]["detail"], "deleted; its volume was already gone");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_create_start_and_stop_are_failures_in_the_activity_log_that_the_filter_finds() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    // A create that fails.
+    let parent = shell_init_folder(&rig, "acme")
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&parent);
+    std::fs::write(&parent, "in the way").unwrap();
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    std::fs::remove_file(&parent).unwrap();
+    // A stop that fails, on a workspace that then runs.
+    create(&api, &mut events, "acme").await;
+    rig.runtime
+        .inject(Op::Stop, Fault::once(disk_error("stop")).only_for("acme"));
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    let failed = workspace_ops("outcome=failed", &api).await;
+    let seen: Vec<_> = failed.iter().map(op_summary).collect();
+    assert_eq!(
+        seen,
+        [
+            ("create".into(), "acme".into(), "failed".into()),
+            ("stop".into(), "acme".into(), "failed".into()),
+        ]
+    );
+    for record in &failed {
+        assert!(
+            record["detail"].as_str().is_some_and(|d| !d.is_empty()),
+            "a failure says why: {record}"
+        );
+    }
+    // The outcome filter splits the one successful create from the two failures.
+    let succeeded = workspace_ops("outcome=succeeded", &api).await;
+    assert_eq!(succeeded.len(), 1, "{succeeded:?}");
+    assert_eq!(op_summary(&succeeded[0]).0, "create");
+    // Another workspace's filter finds none of them.
+    assert!(workspace_ops("workspace=other", &api).await.is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_start_is_in_the_activity_log_and_a_start_that_worked_is_not() {
+    let (_rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    // The first record is the create that seeded the workspace.
+    let ops = workspace_ops("", &api).await;
+    assert_eq!(ops.len(), 2, "{ops:?}");
+    assert_eq!(
+        op_summary(&ops[1]),
+        ("start".into(), "acme".into(), "failed".into())
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_started_and_stopped_workspace_leaves_no_start_or_stop_records() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    let seen: Vec<_> = workspace_ops("", &api)
+        .await
+        .iter()
+        .map(op_summary)
+        .collect();
+    assert_eq!(seen, [("create".into(), "acme".into(), "succeeded".into())]);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rename_is_in_the_activity_log_and_so_is_one_that_could_not_be_saved() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let renamed = api
+        .patch("/api/workspaces/acme", &display_name_body("Acme shop"))
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    make_unwritable(&list_path(&rig));
+    let refused = api
+        .patch("/api/workspaces/acme", &display_name_body("Acme store"))
+        .await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+
+    let ops = workspace_ops("workspace=acme", &api).await;
+    let seen: Vec<_> = ops.iter().map(op_summary).collect();
+    assert_eq!(
+        seen,
+        [
+            ("create".into(), "acme".into(), "succeeded".into()),
+            ("rename".into(), "acme".into(), "succeeded".into()),
+            ("rename".into(), "acme".into(), "failed".into()),
+        ]
+    );
+    assert_eq!(ops[1]["detail"], "renamed to Acme shop");
+    assert!(
+        ops[2]["detail"].as_str().unwrap().contains("not renamed"),
+        "{}",
+        ops[2]
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_list_with_a_bad_display_name_stops_the_start() {
     let rig = Rig::new();
@@ -6390,6 +6581,73 @@ async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
     events.until(ended("acme"), Duration::from_secs(20)).await;
     assert!(!has_problem(&host, "kubernetes:acme"));
 
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_repaired() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.docker/config.json"
+    ));
+
+    // A start that finds both files unparsable names each file, the error and what fails.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    *rig.guest.boot_says.lock().unwrap() = "puddle-boot: /root/.docker/config.json left as it is: \
+        the file is not valid JSON: EOF while parsing at line 1 column 1\n\
+        puddle-boot: /root/.vscode-server/data/Machine/settings.json left as it is: \
+        the file is not valid JSON: expected value at line 2 column 3\n"
+        .to_owned();
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let docker = problem_of(&host, "merge-left:acme:/root/.docker/config.json");
+    assert_eq!(
+        docker.title,
+        "Puddle could not update /root/.docker/config.json in acme"
+    );
+    assert!(
+        docker
+            .detail
+            .contains("EOF while parsing at line 1 column 1")
+            && docker.detail.contains("bypasses the proxy")
+            && docker.detail.contains("pulls"),
+        "{}",
+        docker.detail
+    );
+    let machine = problem_of(
+        &host,
+        "merge-left:acme:/root/.vscode-server/data/Machine/settings.json",
+    );
+    assert!(
+        machine.detail.contains("expected value at line 2 column 3")
+            && machine.detail.contains("port forwarding"),
+        "{}",
+        machine.detail
+    );
+
+    // The user repaired the files: the next start says nothing, and the old notices are gone.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.docker/config.json"
+    ));
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.docker/config.json"
+    ));
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.vscode-server/data/Machine/settings.json"
+    ));
     host.shutdown().await;
 }
 

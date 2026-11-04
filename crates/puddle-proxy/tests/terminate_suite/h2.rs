@@ -22,7 +22,7 @@ async fn an_h2_guest_talking_to_an_h2_server_is_served_h2_end_to_end() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2", b"http/1.1"]).await;
     let got = client
         .request(
@@ -64,7 +64,7 @@ async fn many_streams_share_the_one_upstream_connection() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest.h2("bound.test:443", &[b"h2"]).await;
     let mut tasks = Vec::new();
     for i in 0..64 {
@@ -93,7 +93,7 @@ async fn an_http11_server_keeps_an_http11_guest_even_when_the_guest_offers_h2() 
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest
         .tls_with("bound.test:443", None, &[b"h2", b"http/1.1"], true)
         .await
@@ -120,7 +120,7 @@ async fn an_h2_only_guest_is_translated_to_an_http11_server() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let got = client
         .request(
@@ -161,7 +161,7 @@ async fn a_refusal_of_the_injector_is_a_response_on_that_stream_only() {
         .name("bound.test", server.addr)
         .injector(injector)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let denied = client.get("bound.test", "/denied").await;
     assert_eq!(denied.status, 403);
@@ -211,7 +211,7 @@ async fn trailers_and_te_trailers_pass_both_ways() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest.h2("bound.test:443", &[b"h2"]).await;
     let mut sender = client.sender.clone();
     let mut request_trailers = http::HeaderMap::new();
@@ -250,7 +250,7 @@ async fn request_trailers_cannot_carry_credentials_or_framing() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest.h2("bound.test:443", &[b"h2"]).await;
     let mut sender = client.sender.clone();
     let mut trailers = http::HeaderMap::new();
@@ -288,7 +288,7 @@ async fn a_request_that_is_not_for_the_connection_host_or_not_valid_h2_is_refuse
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let other = client.get("other.test", "/").await;
     assert_eq!(other.status, 421);
@@ -313,7 +313,7 @@ async fn an_h2_request_puddle_refuses_on_its_own_is_recorded_blocked_with_a_reas
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let odd = client
         .request(
@@ -350,7 +350,7 @@ async fn a_server_with_a_bad_certificate_is_a_502_on_the_first_stream_and_nothin
         .name("bound.test", server.addr)
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let got = client.get("bound.test", "/").await;
     assert_eq!(got.status, 502);
@@ -373,7 +373,7 @@ async fn an_idle_h2_connection_is_closed_after_the_keepalive_timeout() {
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/").await.status, 200);
     puddle_test_kit::eventually(
@@ -405,7 +405,7 @@ async fn a_websocket_upgrade_over_http11_is_injected_and_piped() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(
@@ -465,7 +465,7 @@ async fn a_refused_upgrade_is_an_ordinary_answer_and_the_connection_goes_on() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     // No key: the server answers 404 and closes.
     client
@@ -483,7 +483,7 @@ async fn a_websocket_over_http2_extended_connect_reaches_an_http11_server_as_an_
         .name("bound.test", server.addr)
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let request = http::Request::builder()
         .method("CONNECT")
@@ -563,7 +563,7 @@ async fn a_websocket_over_http2_to_an_http2_server_is_passed_as_extended_connect
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let request = http::Request::builder()
         .method("CONNECT")
@@ -593,7 +593,7 @@ async fn an_injected_credential_is_sent_never_indexed() {
     let (addr, block, _task) =
         terminate_support::h2_rig::capture_first_headers_block(&pki, "bound.test").await;
     let rig = RigBuilder::new(&pki).name("bound.test", addr).build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest.h2("bound.test:443", &[b"h2"]).await;
     let mut sender = client.sender.clone();
     tokio::spawn(async move {
@@ -637,7 +637,7 @@ async fn head_204_and_304_answers_end_the_stream_cleanly() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let head = client
         .request(
@@ -661,7 +661,7 @@ async fn a_connection_the_server_dropped_is_replaced_for_the_next_stream() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/1").await.text(), "again");
     server.drop_connections();
@@ -681,7 +681,7 @@ async fn an_http11_server_that_closes_after_every_answer_is_reconnected_for_each
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     for i in 0..4 {
         let got = client.get("bound.test", &format!("/{i}")).await;

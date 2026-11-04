@@ -75,7 +75,7 @@ async fn an_http11_guest_gets_no_h3_entry_and_every_other_entry_unchanged() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.alpn.as_deref(), Some(&b"http/1.1"[..]));
     let response = client.get("bound.test", "/").await;
@@ -92,7 +92,7 @@ async fn an_http2_guest_gets_no_h3_entry_from_an_http2_server() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.alpn.as_deref(), Some(&b"h2"[..]));
     let got = client.get("bound.test", "/").await;
@@ -113,7 +113,7 @@ async fn an_http2_guest_gets_no_h3_entry_from_an_http11_server() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let got = client.get("bound.test", "/").await;
     assert_eq!(got.status, 200);
@@ -128,7 +128,7 @@ async fn a_response_without_alt_svc_gains_none() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let got = client.get("bound.test", "/").await;
     assert_eq!(got.status, 200);
@@ -154,7 +154,7 @@ async fn a_spliced_host_keeps_its_alt_svc() {
         .name("spliced.test", spliced.addr)
         .allow(vec!["bound.test", "spliced.test"])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest
         .tls_trusting("spliced.test:443", std::slice::from_ref(&pki.root))
         .await

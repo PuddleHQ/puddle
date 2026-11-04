@@ -1630,7 +1630,7 @@ export interface components {
          * @description What an audit record says happened, for the `outcome` filter.
          * @enum {string}
          */
-        AuditOutcome: "allow" | "deny" | "pending" | "blocked" | "expired";
+        AuditOutcome: "allow" | "deny" | "pending" | "blocked" | "expired" | "succeeded" | "failed";
         /** @description A page of the audit log: newest first for a read without `after`, oldest first with it. */
         AuditPage: {
             /** @description The records. */
@@ -1992,6 +1992,24 @@ export interface components {
             /** @description The workspace; `null` for every workspace. */
             workspace_id: string | null;
         } | {
+            /** @description Who asked: `cli`, `ui`, `api` or `system`. */
+            actor: string;
+            /** @description Why it failed, or what the operation touched; `null` when there is nothing to add. */
+            detail: string | null;
+            /** @description What was done. */
+            op: components["schemas"]["WorkspaceOpKind"];
+            /** @description How it ended. */
+            outcome: components["schemas"]["WorkspaceOpOutcome"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "workspace_op";
+            /** @description The workspace; `null` for a change that belongs to none (an identity). */
+            workspace_id: string | null;
+        } | {
             /**
              * Format: int64
              * @description Records deleted.
@@ -2098,7 +2116,7 @@ export interface components {
          * @description The record types, for the `type` filter.
          * @enum {string}
          */
-        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "request_rule_created" | "request_rule_deleted" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "audit_trimmed";
+        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "request_rule_created" | "request_rule_deleted" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "workspace_op" | "audit_trimmed";
         /** @description One built-in icon, drawn for the Settings screen to preview. */
         BuiltInIcon: {
             /** @description The choice that selects it. */
@@ -3995,7 +4013,7 @@ export interface components {
         };
         /** @description One entry of a rule set. */
         RuleSetEntry: {
-            /** @description Allow or deny (built-in sets only allow). */
+            /** @description Allow or deny (a built-in set's entries all do the same; your own set may mix them). */
             effect: components["schemas"]["Effect"];
             /**
              * Format: int64
@@ -4320,7 +4338,7 @@ export interface components {
          * @description Why Puddle allows a System managed host: a choice you made.
          * @enum {string}
          */
-        SystemReason: "microsoft_server" | "code_server" | "direct_ssh";
+        SystemReason: "microsoft_server" | "code_server" | "direct_ssh" | "direct_ssh_cursor" | "direct_ssh_jetbrains" | "direct_ssh_zed";
         /**
          * @description The colour theme of Puddle's window.
          * @enum {string}
@@ -4493,6 +4511,16 @@ export interface components {
          * @example my-project
          */
         WorkspaceName: string;
+        /**
+         * @description What a `workspace_op` record is about.
+         * @enum {string}
+         */
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "repo_added" | "repo_switched" | "repo_removed";
+        /**
+         * @description How a workspace operation ended.
+         * @enum {string}
+         */
+        WorkspaceOpOutcome: "succeeded" | "failed";
         /**
          * @description The long operation a workspace is in the middle of; progress comes as
          *     `workspace_progress` events.

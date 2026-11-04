@@ -23,7 +23,7 @@ use puddle_compute::{ExecRequest, Runtime, Sandbox, SandboxSpec};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_guest_env::{ProxySettings, guest_proxy_config};
 use puddle_test_kit::eventually_async;
-use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, SandboxName};
+use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, SandboxName, SessionUser};
 use puddle_vm_tests::Settings;
 
 /// The adapter on the run's private msb home (the VM harness), and the run's settings.
@@ -582,4 +582,114 @@ async fn vm_merged_machine_settings_keep_the_users_jsonc_across_boots() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_merged_docker_config_keeps_a_docker_login_across_boots() {
     Box::pin(check_merge()).await;
+}
+
+async fn as_agent<S: Sandbox>(sb: &GatedSandbox<S>, script: &str) -> (i32, String) {
+    let out = sb
+        .exec(ExecRequest::sh(script).as_user("agent"))
+        .await
+        .unwrap();
+    let said = format!("{}{}", out.stdout_text(), out.stderr_text());
+    (out.status.code, said.trim_end().to_owned())
+}
+
+/// The session user `agent` on a real image: made by the hook at the first free uid, with its
+/// home and Puddle's files there its own, root through `sudo` when the image has it, low ports
+/// open, and the same user after a restart.
+async fn check_session_user(image: &str, tag: &str, uid: &str, has_sudo: bool) {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let image = ImageRef::new(image).unwrap();
+    let config = rt.pull_image(&image).await.unwrap();
+    let plan = BootPlan::builder(&config)
+        .session_user(SessionUser::Agent)
+        .build()
+        .unwrap();
+    let dir = assets_dir(rt, tag);
+    let assets = write_assets(&dir).unwrap();
+    let name = sandbox_name(&settings, tag);
+    let spec = with_boot_mounts(
+        SandboxSpec::new(name.clone(), image),
+        assets,
+        Some(&agent_binary(&dir)),
+    );
+    let gate = Gate::new();
+    let hook = BootHook::new();
+    let sb = hook.create(rt, spec, &plan, &gate).await.unwrap();
+    let report = &sb.boot_report().stdout;
+    assert!(
+        report.contains(&format!("session user agent added (uid {uid})")),
+        "{report}"
+    );
+    check_agent_boot(&sb, uid, has_sudo).await;
+    sb.stop().await.unwrap();
+    let again = hook.start(rt, &name, &plan, &gate).await.unwrap();
+    assert!(
+        !again.boot_report().stdout.contains("added"),
+        "{}",
+        again.boot_report().stdout
+    );
+    check_agent_boot(&again, uid, has_sudo).await;
+    again.stop().await.unwrap();
+    rt.remove(&name).await.unwrap();
+}
+
+async fn check_agent_boot<S: Sandbox>(sb: &GatedSandbox<S>, uid: &str, has_sudo: bool) {
+    let report = &sb.boot_report().stdout;
+    let sudo = if has_sudo {
+        "sudo at"
+    } else {
+        "no sudo in this image"
+    };
+    assert!(
+        report.contains(&format!("session user agent (uid {uid}), {sudo}")),
+        "{report}"
+    );
+    let (code, said) = as_agent(sb, "id -un; id -u; echo \"$HOME\"").await;
+    assert_eq!(
+        (code, said.as_str()),
+        (0, format!("agent\n{uid}\n/home/agent").as_str())
+    );
+    // Puddle's files below the home, and the directories it made for them, are the user's.
+    let machine = puddle_boot::machine_settings_path(SessionUser::Agent);
+    let (code, said) = as_agent(
+        sb,
+        &format!("ls -ld /home/agent /home/agent/.vscode-server {machine} | awk '{{print $3}}' | sort -u; touch /home/agent/.vscode-server/w"),
+    )
+    .await;
+    assert_eq!(
+        (code, said.as_str()),
+        (0, "agent"),
+        "the home is the user's"
+    );
+    let (code, said) = as_agent(sb, "cat /proc/sys/net/ipv4/ip_unprivileged_port_start").await;
+    assert_eq!((code, said.as_str()), (0, "0"));
+    if has_sudo {
+        let (code, said) = as_agent(sb, "sudo -n id -u && sudo -n -i sh -c 'id -un; pwd'").await;
+        assert_eq!((code, said.as_str()), (0, "0\nroot\n/root"), "sudo is root");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_session_user_agent_debian_devcontainer() {
+    // The image has `vscode` at uid 1000 and sudo.
+    Box::pin(check_session_user(
+        FakeRuntime::DEBIAN,
+        "sudeb",
+        "1001",
+        true,
+    ))
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_session_user_agent_alpine() {
+    // busybox only: no useradd, no sudo, uid 1000 free.
+    Box::pin(check_session_user(
+        FakeRuntime::ALPINE,
+        "sualp",
+        "1000",
+        false,
+    ))
+    .await;
 }

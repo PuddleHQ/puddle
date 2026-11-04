@@ -297,6 +297,8 @@ async fn a_tool_that_connects_after_the_hosts_first_byte_wait_still_gets_through
         .config(&config)
         .build();
     let mut guest = rig.guest();
+    // An absence window: the slow tool's start, five times the host's wait. Nothing signals the
+    // host giving up on a silent session, so only time passing can show that it did not.
     tokio::time::sleep(wait * 5).await;
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/").await.status, 200);

@@ -2737,14 +2737,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// The editor's origin is `<name>.localhost`, so a workspace of this name would reach the
     /// browser data an earlier one left (a delete cut short, or made where no window could clean
-    /// it). No window can exist for a name with no workspace: clear it before the create.
+    /// it). No window can exist for a workspace that is still being created: clear it once the name is reserved.
     async fn clear_left_over_browser_state(
         &self,
+        id: &WorkspaceId,
         name: &WorkspaceName,
     ) -> Result<(), WorkspaceError> {
         let failed = self.clear_browser_state(name).await;
         if failed.is_empty() {
+            self.inner
+                .problems
+                .clear(&problem_key("browser-data", name));
             return Ok(());
+        }
+        // Give the name back: the create is refused.
+        let mut state = self.state();
+        state.slots.remove(id);
+        if let Err(e) = self.persist(&state) {
+            tracing::warn!(workspace = %name, error = %e, "could not save the list after a refused create");
         }
         Err(WorkspaceError::Conflict(format!(
             "browser data left from an earlier workspace named {name} could not be removed ({}), \
@@ -2906,9 +2916,6 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     new.name
                 )));
             }
-            if !self.state().slots.contains_key(&id) {
-                self.clear_left_over_browser_state(&new.name).await?;
-            }
             {
                 let mut state = self.state();
                 if state.closed {
@@ -2940,6 +2947,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     )));
                 }
             }
+            // Reserved first: a create that loses the race for the name is refused above before it
+            // can clear the winner's data.
+            self.clear_left_over_browser_state(&id, &new.name).await?;
             // The name is reserved and the list saved: set up what the clones need first.
             git.set_up(&new.name, &new.repositories).await;
             self.status_event(&record);

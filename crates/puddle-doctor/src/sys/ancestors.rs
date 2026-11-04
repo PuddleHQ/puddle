@@ -210,4 +210,15 @@ mod tests {
             Some(DataPathFacts::Checked { .. })
         ));
     }
+
+    #[test]
+    fn a_folder_that_cannot_be_resolved_is_unreadable_and_named() {
+        match data_path(Some(Path::new(""))) {
+            Some(DataPathFacts::Unreadable { dir, detail }) => {
+                assert_eq!(dir, Path::new(""));
+                assert!(!detail.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 }

@@ -1224,3 +1224,23 @@ fn linux_data_path_no_folder() {
     let r = check("linux_data_path_no_folder", &fake, CheckId::DataPath, None);
     assert_eq!(r.check(CheckId::DataPath).unwrap().status, Status::Skipped);
 }
+
+#[test]
+fn linux_data_path_world_writable_only() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::Checked {
+            dir: "/data/puddle".into(),
+            writable: vec![folder("/data", 0o757, true)],
+        }),
+        ..linux()
+    };
+    let r = check(
+        "linux_data_path_world_writable",
+        &fake,
+        CheckId::DataPath,
+        Some(Finding::DataPathWritable),
+    );
+    let c = r.check(CheckId::DataPath).unwrap();
+    assert!(c.summary.contains("writable by everyone"), "{}", c.summary);
+    assert!(c.fix.as_deref().unwrap().contains("\n  chmod go-w /data"));
+}

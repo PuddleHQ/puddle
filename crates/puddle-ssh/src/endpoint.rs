@@ -367,7 +367,7 @@ mod tests {
             _cx: &mut Context<'_>,
             _buf: &mut ReadBuf<'_>,
         ) -> Poll<io::Result<()>> {
-            Poll::Pending
+            Poll::Ready(Ok(()))
         }
     }
 
@@ -394,6 +394,8 @@ mod tests {
     #[tokio::test]
     async fn the_watch_forwards_flush_and_shutdown_to_the_stream() {
         let (mut watched, _closed) = ClientWatch::new(Recording::default());
+        watched.write_all(b"x").await.unwrap();
+        assert_eq!(watched.read(&mut [0_u8; 1]).await.unwrap(), 0);
         watched.flush().await.unwrap();
         assert_eq!((watched.inner.flushes, watched.inner.shutdowns), (1, 0));
         watched.shutdown().await.unwrap();

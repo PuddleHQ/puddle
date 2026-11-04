@@ -101,5 +101,5 @@ pub use workspaces::{
     NewRepository, NewWorkspace, NoGitSetup, NoWorkspaces, Operation, RepoFindings, RepoUrl,
     Repository, RepositoryDraft, ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError,
     WorkspaceRecord, WorkspaceService, check_rename, check_repositories, check_repositories_with,
-    check_start_folder_change, label_taken,
+    check_session_user_change, check_start_folder_change, label_taken,
 };

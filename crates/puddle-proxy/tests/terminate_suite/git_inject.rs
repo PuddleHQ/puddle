@@ -10,7 +10,9 @@ use crate::git_support;
 use crate::terminate_support;
 
 use bytes::Bytes;
-use git_support::{GitRig, H2GitRig, Host, PERSONAL, REAL_SECRET, WORK, denied, token_basic};
+use git_support::{
+    GitRig, H2GitRig, Host, MOVED_TO, PERSONAL, REAL_SECRET, WORK, denied, token_basic,
+};
 use puddle_secrets::SourceError;
 use puddle_types::{ConnectionDecision, ConnectionReason, Event, GitAccess};
 use terminate_support::h2_rig::full;
@@ -442,15 +444,26 @@ async fn a_401_to_the_workspaces_own_header_is_the_servers_answer_as_without_pud
     );
 }
 
-#[tokio::test]
-async fn a_source_that_cannot_supply_its_secret_is_a_502_never_a_401_and_the_server_is_not_asked() {
-    let t = GitRig::new().await;
-    let work = &t.world.store.identities().unwrap()[0];
-    t.world
+/// The Work identity's source cannot be read because nobody is signed in.
+fn sign_out(world: &puddle_inject::testing::World) {
+    let identities = world.store.identities().unwrap();
+    let source = &identities
+        .first()
+        .unwrap()
         .credentials
-        .fail(&work.credentials[0].source, SourceError::NotSignedIn);
+        .first()
+        .unwrap()
+        .source;
+    world.credentials.fail(source, SourceError::NotSignedIn);
+}
+
+#[tokio::test]
+async fn a_push_with_an_identity_that_is_not_signed_in_is_a_502_never_a_401_and_the_server_is_not_asked()
+ {
+    let t = GitRig::new().await;
+    sign_out(&t.world);
     let mut guest = t.rig.guest();
-    let answer = get(&mut guest, FETCH, None).await;
+    let answer = get(&mut guest, PUSH_ADVERT, None).await;
     assert_eq!(answer.status, 502);
     assert_eq!(
         answer.header("x-puddle-blocked"),
@@ -461,9 +474,124 @@ async fn a_source_that_cannot_supply_its_secret_is_a_502_never_a_401_and_the_ser
         "{}",
         answer.text()
     );
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client
+        .send(b"POST /acme/web.git/git-receive-pack HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 4\r\n\r\nPACK")
+        .await;
+    let post = client.response("POST").await;
+    assert_eq!(
+        (post.status, post.header("x-puddle-blocked")),
+        (502, Some("credential_unavailable"))
+    );
     assert!(t.server.recorded().is_empty());
     // The notice for a sign-in that is needed comes from the cache the secret is read through.
     assert_eq!(t.raised(), []);
+}
+
+#[tokio::test]
+async fn a_public_clone_with_an_identity_that_is_not_signed_in_goes_out_with_no_credential() {
+    let t = GitRig::new().await;
+    sign_out(&t.world);
+    let mut guest = t.rig.guest();
+    for path in [
+        "/acme/open.git/info/refs?service=git-upload-pack",
+        "/acme/open.git/info/lfs/objects/abc",
+    ] {
+        assert_eq!(get(&mut guest, path, None).await.status, 200, "{path}");
+    }
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client
+        .send(b"POST /acme/open.git/git-upload-pack HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 4\r\n\r\n0000")
+        .await;
+    assert_eq!(client.response("POST").await.status, 200);
+    drop(client);
+    let seen = t.server.recorded();
+    assert_eq!(seen.len(), 3);
+    for request in &seen {
+        assert_eq!(request.header("authorization"), None);
+        assert_eq!(request.header("cookie"), None);
+    }
+    // Nothing of any identity went out, whichever it was.
+    let wire = format!("{seen:?}");
+    let leaked = [WORK, PERSONAL, REAL_SECRET]
+        .into_iter()
+        .any(|secret| wire.contains(secret));
+    assert!(!leaked, "an identity secret reached the origin");
+    let events = t.rig.events(3).await;
+    assert!(events.iter().all(|e| !e.injected && e.binding_id.is_none()));
+}
+
+#[tokio::test]
+async fn a_private_clone_with_an_identity_that_is_not_signed_in_fails_with_the_sign_in_notice() {
+    let t = GitRig::new().await;
+    sign_out(&t.world);
+    let mut guest = t.rig.guest();
+    let answer = get(
+        &mut guest,
+        "/acme/private.git/info/refs?service=git-upload-pack",
+        None,
+    )
+    .await;
+    // The host's `401` would make the tool ask for a password; the refusal says what to do.
+    assert_eq!(answer.status, 502);
+    assert_eq!(
+        answer.header("x-puddle-blocked"),
+        Some("credential_unavailable")
+    );
+    assert_eq!(answer.header("www-authenticate"), None);
+    assert!(
+        answer.text().contains("sign in to it in Puddle"),
+        "{}",
+        answer.text()
+    );
+    assert!(answer.text().contains("Work"), "{}", answer.text());
+    let seen = t.server.recorded();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].header("authorization"), None);
+    // The workspace's own token still works as without Puddle.
+    let own = get(
+        &mut guest,
+        "/acme/private.git/info/refs?service=git-upload-pack",
+        Some(OWN),
+    )
+    .await;
+    assert_eq!(own.status, 200);
+    assert_eq!(t.raised(), []);
+}
+
+#[tokio::test]
+async fn an_anonymous_read_that_the_host_redirects_is_passed_on_and_never_followed() {
+    let t = GitRig::new().await;
+    sign_out(&t.world);
+    let mut guest = t.rig.guest();
+    let answer = get(
+        &mut guest,
+        "/acme/moved.git/info/refs?service=git-upload-pack",
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, 302);
+    assert_eq!(answer.header("location"), Some(MOVED_TO));
+    let seen = t.server.recorded();
+    assert_eq!(seen.len(), 1, "one request, and none to the other host");
+    assert_eq!(seen[0].header("authorization"), None);
+}
+
+#[tokio::test]
+async fn a_pull_off_the_list_is_refused_before_an_anonymous_read_goes_out() {
+    let t = GitRig::new().await;
+    sign_out(&t.world);
+    t.world.switches(true, true);
+    let mut guest = t.rig.guest();
+    let answer = get(
+        &mut guest,
+        "/acme/open.git/info/refs?service=git-upload-pack",
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, 403);
+    assert_eq!(answer.header("x-puddle-blocked"), Some("pull_denied"));
+    assert!(t.server.recorded().is_empty());
 }
 
 // The same over HTTP/2.
@@ -618,4 +746,42 @@ async fn over_http2_a_401_is_ours_only_when_puddle_chose_the_credential() {
         events[0].reason,
         ConnectionReason::Refused("credential_rejected")
     );
+}
+
+#[tokio::test]
+async fn over_http2_an_identity_that_is_not_signed_in_still_reads_in_public_and_never_pushes() {
+    let t = H2GitRig::new(Host::default()).await;
+    sign_out(&t.world);
+    let mut guest = t.rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let public = h2_get(
+        &mut client,
+        "/acme/open.git/info/refs?service=git-upload-pack",
+        None,
+    )
+    .await;
+    assert_eq!(public.status, 200);
+    let private = h2_get(
+        &mut client,
+        "/acme/private.git/info/refs?service=git-upload-pack",
+        None,
+    )
+    .await;
+    assert_eq!(private.status, 502);
+    assert_eq!(
+        private.header("x-puddle-blocked"),
+        Some("credential_unavailable")
+    );
+    assert_eq!(private.header("www-authenticate"), None);
+    let push = h2_get(&mut client, PUSH_ADVERT, None).await;
+    assert_eq!(push.status, 502);
+    assert_eq!(
+        push.header("x-puddle-blocked"),
+        Some("credential_unavailable")
+    );
+    client.close().await;
+    // The two reads went out, with no credential; the push did not.
+    let seen = t.server.recorded();
+    assert_eq!(seen.len(), 2);
+    assert!(seen.iter().all(|r| r.header("authorization").is_none()));
 }

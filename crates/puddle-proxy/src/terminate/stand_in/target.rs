@@ -636,6 +636,30 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_stand_ins_in_the_audit_target_get_the_first_label() {
+        // The end of one is the start of the other: neither contains the other, so both register.
+        let registry = StandIns::new();
+        for (name, text) in [
+            ("FIRST", "prefix-aaaaaaaa-ZZZZ12345678"),
+            ("SECOND", "ZZZZ12345678-bbbbbbbbbbbb"),
+        ] {
+            registry
+                .insert(entry(
+                    name,
+                    text,
+                    "real",
+                    &["q.example.com"],
+                    Placement::Path,
+                ))
+                .unwrap();
+        }
+        assert_eq!(
+            registry.redact_target("/prefix-aaaaaaaa-ZZZZ12345678-bbbbbbbbbbbb/x"),
+            "/[secret:FIRST]-bbbbbbbbbbbb/x"
+        );
+    }
+
+    #[test]
     fn an_answer_header_that_repeats_a_target_secret_gets_the_stand_in_back() {
         let registry = StandIns::new();
         registry

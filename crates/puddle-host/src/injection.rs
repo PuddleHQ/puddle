@@ -1573,9 +1573,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_git_request_whose_source_needs_a_sign_in_is_a_502_and_the_user_gets_one_notice() {
+    async fn a_git_read_whose_source_needs_a_sign_in_goes_out_anonymously_and_the_user_gets_one_notice()
+     {
         // The shape of the default injector, over a cache whose source is never signed in: the
-        // request is refused with the way out, and the one notice is the cache's, forwarded.
+        // request goes out anonymously, and the one notice is the cache's, forwarded.
         let store = store();
         let ws = workspace("alpha");
         attach(&store, &ws, "ada", "github.com");
@@ -1600,16 +1601,16 @@ mod tests {
             "/acme/web.git/info/refs?service=git-upload-pack",
             &lines,
         );
+        // A read goes out with no credential; a private repository's `401` is the sign-in line.
         let decision = injector.decide(&context, &view).await;
-        assert!(matches!(&decision, InjectDecision::Refuse(refusal)
-                if refusal.code() == "credential_unavailable"
-                    && refusal.message().contains("sign in to it in Puddle")));
+        assert!(
+            format!("{decision:?}").starts_with("PassThroughNoting"),
+            "{decision:?}"
+        );
         puddle_test_kit::eventually("a sign-in notice forwarded", Duration::from_secs(2), || {
             !events.0.lock().unwrap().is_empty()
         })
         .await;
-        // Absence window: no second sign-in notice follows the first.
-        tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(
             *events.0.lock().unwrap(),
             [Event::CredentialSignInNeeded {
@@ -1617,9 +1618,13 @@ mod tests {
                 source: "gh account me on github.com".into(),
             }]
         );
+        // The forwarder ends with the cache it listens to; the injector holds a handle too.
         drop(secrets);
         drop(injector);
-        task.abort();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

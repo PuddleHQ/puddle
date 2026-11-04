@@ -835,6 +835,88 @@ fn identity(label: &str, host: &str) -> IdentityDraft {
     }
 }
 
+/// An identity whose `gh` account is not signed in covers github.com, and the default Git injector
+/// is on: a clone of a public repository still works (it goes out with no credential), a push is
+/// refused with the sign-in line, and no credential reaches the guest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_clones_a_public_repository_when_the_identity_is_not_signed_in_and_refuses_a_push()
+{
+    let internet =
+        web_internet_with_github(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_platform("anon", internet.options, &internet.platform, |_| {}).await;
+    let name = format!("{}-anon", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse("github.com").unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    host.store()
+        .create_identity(identity("Work", REPO_HOST))
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repositories": [{"url": REPO}], "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    // The clone went through the decrypting proxy with no credential and the repository arrived.
+    assert_eq!(end["step"], "done", "{end}");
+    let clone = format!("/workspaces/{name}/Hello-World");
+    let log = guest(
+        &runtime,
+        &sandbox,
+        &format!("git -C {clone} log --oneline | head -1"),
+    )
+    .await;
+    assert!(!log.trim().is_empty(), "{log}");
+    // A fetch works the same way; a push is refused with the way out, and never a password prompt.
+    let fetch = guest(
+        &runtime,
+        &sandbox,
+        &format!("git -C {clone} fetch origin 2>&1; echo rc=$?"),
+    )
+    .await;
+    assert!(fetch.contains("rc=0"), "{fetch}");
+    let push = guest(
+        &runtime,
+        &sandbox,
+        &format!("cd {clone} && GIT_TERMINAL_PROMPT=0 git push origin HEAD:refs/heads/anon-probe 2>&1; echo rc=$?"),
+    )
+    .await;
+    assert!(!push.contains("rc=0"), "{push}");
+    assert!(
+        push.contains("502") || push.contains("sign in to it in Puddle"),
+        "{push}"
+    );
+    assert!(!push.contains("Password"), "{push}");
+    // No credential or key of Puddle's reached the guest.
+    let held = guest(
+        &runtime,
+        &sandbox,
+        &format!("git -C {clone} config --get-regexp 'credential|extraheader' || true; env | grep -i -E 'token|authorization' || true"),
+    )
+    .await;
+    assert!(!held.contains("nobody"), "{held}");
+    host.shutdown().await;
+}
+
 /// The guest trusts the workspace's CA from its first boot; only the hosts an identity names are
 /// decrypted (a clone through one of them works); an identity attached to the running workspace
 /// takes effect on the next connection with no restart; the author of a commit follows the

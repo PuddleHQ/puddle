@@ -865,6 +865,33 @@ mod behaviour_tests {
         emit_until(&rig, opened(904), |r| !r.notices().is_empty());
     }
 
+    #[test]
+    fn low_free_space_notifies_by_its_own_switch() {
+        let low = || Event::DiskSpaceChanged {
+            level: puddle_types::DiskSpaceLevel::Low,
+            free_mib: 12_288,
+        };
+        let rig = rig(TrayState::Shown);
+        // The request switch is off too: the probe event the helper sends would notify otherwise.
+        save(
+            &rig,
+            &json!({"notify_low_disk_space": false, "notifications": false}),
+        );
+        settled_after_quiet(&rig, low());
+        assert_eq!(rig.recorded.notices(), []);
+
+        // Back to fine, then low again with the switch on: the crossing is announced.
+        rig.backend.events().emit(Event::DiskSpaceChanged {
+            level: puddle_types::DiskSpaceLevel::Ok,
+            free_mib: 40_960,
+        });
+        save(&rig, &json!({}));
+        emit_until(&rig, low(), |r| !r.notices().is_empty());
+        let (notice, _) = rig.recorded.notices().remove(0);
+        assert_eq!(notice.title, "Disk space is running low");
+        assert!(notice.body.starts_with("12 GB are left"), "{}", notice.body);
+    }
+
     /// An event that must raise nothing: afterwards, a probe event (the badge changes on it) shows the
     /// loop got past it.
     fn settled_after_quiet(rig: &Rig, event: Event) {

@@ -25,8 +25,9 @@ use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
 use puddle_host::{
-    DevCertSource, GuestSettings, Host, HostConfig, HostError, HostPaths, PREPARE_STEPS, Platform,
-    RewriteGate, RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
+    DevCertSource, FreeSpaceTiming, GuestSettings, Host, HostConfig, HostError, HostPaths,
+    PREPARE_STEPS, Platform, RewriteGate, RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS,
+    START_STEPS, Step, prepare,
 };
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
@@ -34,7 +35,8 @@ use puddle_secrets::{MemoryStore, SecretStore as _};
 use puddle_test_kit::{eventually, next_event_matching, no_event_matching};
 use puddle_types::fixture;
 use puddle_types::{
-    Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceName,
+    DiskSpaceLevel, Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId,
+    WorkspaceName,
 };
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH};
@@ -7815,6 +7817,63 @@ async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt()
     let report = api.get("/api/network-health").await;
     fixture::assert_absent("the network-health reply", &report.body, &wrong);
     assert_eq!(report.json()["sign_in"]["attempts"][0]["result"], "failed");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_host_says_when_the_free_space_of_its_drive_crosses_a_line_and_when_it_recovers() {
+    let rig = Rig::new();
+    // Lines no real drive reaches: the first read finds the drive under both.
+    let settings = rig.dir.path().join("data").join("settings");
+    std::fs::create_dir_all(&settings).unwrap();
+    std::fs::write(
+        settings.join("global.json"),
+        json!({"schema_version": 2, "ui": {"disk_warn_free_gb": 10_000, "disk_fail_free_gb": 10_000}})
+            .to_string(),
+    )
+    .unwrap();
+    let mut config = rig.config();
+    config.free_space = FreeSpaceTiming {
+        first_read: Duration::from_secs(1),
+        period: Duration::from_millis(200),
+    };
+    let host = rig.start_with(config).await;
+    let mut events = host.events().subscribe();
+    let level = |event| match event {
+        Event::DiskSpaceChanged { level, .. } => Some(level),
+        _ => None,
+    };
+    let first = next_event_matching(
+        "the drive reported under both lines",
+        Duration::from_secs(10),
+        &mut events,
+        level,
+    )
+    .await;
+    assert_eq!(first, DiskSpaceLevel::Critical);
+    no_event_matching(
+        "a second report while the drive stays under the line",
+        Duration::from_millis(600),
+        &mut events,
+        level,
+    )
+    .await;
+
+    // Lines every drive passes: the next read says it is fine again.
+    let api = api(&host);
+    let lines = json!({"ui": {"disk_warn_free_gb": 1, "disk_fail_free_gb": 1}});
+    assert_eq!(
+        api.put("/api/settings", &lines.to_string()).await.status,
+        200
+    );
+    let recovered = next_event_matching(
+        "the drive reported fine again",
+        Duration::from_secs(10),
+        &mut events,
+        level,
+    )
+    .await;
+    assert_eq!(recovered, DiskSpaceLevel::Ok);
     host.shutdown().await;
 }
 

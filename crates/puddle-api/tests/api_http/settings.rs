@@ -40,7 +40,8 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         json!({"theme": null, "density": null, "palette": null, "custom_accent": null, "custom_background": null,
                "custom_surface": null, "custom_text": null, "notifications": null, "sound": null, "close_behaviour": null,
                "minimize_to_tray": null, "app_icon": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_unexpected_stop": null,
-               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null})
+               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null,
+               "notify_low_disk_space": null, "disk_warn_free_gb": null, "disk_fail_free_gb": null})
     );
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
@@ -370,7 +371,8 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         "vscode_server": {"server": "microsoft", "telemetry": false},
         "ui": {"theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0A6A85", "custom_text": "#102030", "notifications": false, "sound": true, "close_behaviour": "quit",
                 "minimize_to_tray": true, "app_icon": "duck_night", "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_unexpected_stop": false,
-                "confirm_global_rules": false, "inbox_shortcuts": true, "start_at_login": true}
+                "confirm_global_rules": false, "inbox_shortcuts": true, "start_at_login": true,
+                "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10}
     });
     let reply = api.send("PUT", "/api/settings", Some(&body)).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -393,6 +395,9 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     }
     assert_eq!(view["ui"]["inbox_shortcuts"], true);
     assert_eq!(view["ui"]["start_at_login"], true);
+    assert_eq!(view["ui"]["notify_low_disk_space"], false);
+    assert_eq!(view["ui"]["disk_warn_free_gb"], 50);
+    assert_eq!(view["ui"]["disk_fail_free_gb"], 10);
     assert_eq!(view["ui"]["app_icon"], "duck_night");
     let stored = api.settings.load_global().unwrap().unwrap();
     assert_eq!(stored["ui"]["theme"], "dark");
@@ -406,6 +411,23 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     assert_eq!(
         api.get("/api/consents").await.json()["vscode_server"]["state"],
         "granted"
+    );
+
+    // The free-space lines: a range of 1 to 10000 GB, and the failure line never above the warning line.
+    for bad in [
+        json!({"ui": {"disk_warn_free_gb": 0}}),
+        json!({"ui": {"disk_fail_free_gb": 10_001}}),
+        json!({"ui": {"disk_warn_free_gb": 10, "disk_fail_free_gb": 11}}),
+        json!({"ui": {"disk_fail_free_gb": 25}}),
+    ] {
+        let reply = api.send("PUT", "/api/settings", Some(&bad)).await;
+        assert_eq!(reply.status, 422, "{bad}: {}", reply.body);
+    }
+    let stored = api.settings.load_global().unwrap().unwrap();
+    assert_eq!(
+        stored["ui"]["disk_warn_free_gb"],
+        json!(null),
+        "a refused change stores nothing"
     );
 
     let bad = json!({"ui": {"theme": "purple"}});

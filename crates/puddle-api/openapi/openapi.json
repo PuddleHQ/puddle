@@ -10942,6 +10942,15 @@
           "unsupported"
         ]
       },
+      "DiskSpaceLevel": {
+        "type": "string",
+        "description": "How the free space on the drive that holds Puddle's data compares with the warning and the\nfailure line (settings `ui.disk_warn_free_gb` and `ui.disk_fail_free_gb`). Ordered from fine to\nworst, so `level > previous` says the space got tighter.",
+        "enum": [
+          "ok",
+          "low",
+          "critical"
+        ]
+      },
       "DoctorCheck": {
         "type": "object",
         "description": "One line of the system check.",
@@ -12056,6 +12065,33 @@
                 "type": "string",
                 "enum": [
                   "problems_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The free space on the drive that holds Puddle's data moved across the warning or the\nfailure line, or back above both (`level` is then `ok`). Sent when the level changes, not\non every read; the first read after Puddle starts counts as a change when it is not `ok`.\nGlobal: every subscriber gets it.",
+            "required": [
+              "level",
+              "free_mib",
+              "type"
+            ],
+            "properties": {
+              "free_mib": {
+                "type": "integer",
+                "format": "int64",
+                "description": "The free space at the read that changed the level, in whole MiB.",
+                "minimum": 0
+              },
+              "level": {
+                "$ref": "#/components/schemas/DiskSpaceLevel",
+                "description": "Where the free space stands now."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "disk_space_changed"
                 ]
               }
             }
@@ -15459,7 +15495,10 @@
           "notify_unexpected_stop",
           "confirm_global_rules",
           "inbox_shortcuts",
-          "start_at_login"
+          "start_at_login",
+          "notify_low_disk_space",
+          "disk_warn_free_gb",
+          "disk_fail_free_gb"
         ],
         "properties": {
           "app_icon": {
@@ -15541,6 +15580,26 @@
               }
             ]
           },
+          "disk_fail_free_gb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The free space, in GB, under which `puddle doctor` fails; 1 to 10000, default 5, never above\nthe warning line.",
+            "maximum": 10000,
+            "minimum": 1
+          },
+          "disk_warn_free_gb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The free space, in GB (1024 x 1024 x 1024 bytes), under which `puddle doctor` warns and the\napp says so; 1 to 10000, default 20.",
+            "maximum": 10000,
+            "minimum": 1
+          },
           "inbox_shortcuts": {
             "type": [
               "boolean",
@@ -15561,6 +15620,13 @@
               "null"
             ],
             "description": "A system notification for a new request (default on)."
+          },
+          "notify_low_disk_space": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Notify when the free space on the drive that holds Puddle's data falls under the warning or\nthe failure line (default on)."
           },
           "notify_only_unfocused": {
             "type": [

@@ -1965,6 +1965,21 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub start_at_login: Option<bool>,
+    /// Notify when the free space on the drive that holds Puddle's data falls under the warning or
+    /// the failure line (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub notify_low_disk_space: Option<bool>,
+    /// The free space, in GB (1024 x 1024 x 1024 bytes), under which `puddle doctor` warns and the
+    /// app says so; 1 to 10000, default 20.
+    #[serde(default)]
+    #[schema(required = true, minimum = 1, maximum = 10000)]
+    pub disk_warn_free_gb: Option<u32>,
+    /// The free space, in GB, under which `puddle doctor` fails; 1 to 10000, default 5, never above
+    /// the warning line.
+    #[serde(default)]
+    #[schema(required = true, minimum = 1, maximum = 10000)]
+    pub disk_fail_free_gb: Option<u32>,
 }
 
 impl From<&settings::UiPrefs> for UiPrefs {
@@ -1989,12 +2004,21 @@ impl From<&settings::UiPrefs> for UiPrefs {
             confirm_global_rules: u.confirm_global_rules,
             inbox_shortcuts: u.inbox_shortcuts,
             start_at_login: u.start_at_login,
+            notify_low_disk_space: u.notify_low_disk_space,
+            disk_warn_free_gb: u.disk_warn_free_gb.map(Into::into),
+            disk_fail_free_gb: u.disk_fail_free_gb.map(Into::into),
         }
     }
 }
 
 fn colour_text(colour: Option<&settings::HexColour>) -> Option<String> {
     colour.map(|c| c.as_str().to_owned())
+}
+
+fn free_gb(gb: Option<u32>) -> Result<Option<settings::FreeGb>, ApiError> {
+    gb.map(settings::FreeGb::new)
+        .transpose()
+        .map_err(|err| ApiError::invalid(err.to_string()))
 }
 
 fn parse_colour(text: Option<String>) -> Result<Option<settings::HexColour>, ApiError> {
@@ -2025,6 +2049,9 @@ impl UiPrefs {
             confirm_global_rules,
             inbox_shortcuts,
             start_at_login,
+            notify_low_disk_space,
+            disk_warn_free_gb,
+            disk_fail_free_gb,
         } = self;
         prefs.theme = theme.map(Into::into);
         prefs.density = density.map(Into::into);
@@ -2045,6 +2072,19 @@ impl UiPrefs {
         prefs.confirm_global_rules = confirm_global_rules;
         prefs.inbox_shortcuts = inbox_shortcuts;
         prefs.start_at_login = start_at_login;
+        prefs.notify_low_disk_space = notify_low_disk_space;
+        prefs.disk_warn_free_gb = free_gb(disk_warn_free_gb)?;
+        prefs.disk_fail_free_gb = free_gb(disk_fail_free_gb)?;
+        // The failure line above the warning line would make the warning unreachable.
+        settings::DiskSpaceLimits::new(
+            prefs
+                .disk_warn_free_gb
+                .unwrap_or(settings::FreeGb::DEFAULT_WARN),
+            prefs
+                .disk_fail_free_gb
+                .unwrap_or(settings::FreeGb::DEFAULT_FAIL),
+        )
+        .map_err(|err| ApiError::invalid(err.to_string()))?;
         Ok(())
     }
 }
@@ -2584,6 +2624,36 @@ mod tests {
     }
 
     #[test]
+    fn the_free_space_lines_are_validated_alone_and_together() {
+        let apply = |warn, fail| {
+            let mut prefs = settings::UiPrefs::default();
+            UiPrefs {
+                disk_warn_free_gb: warn,
+                disk_fail_free_gb: fail,
+                ..UiPrefs::default()
+            }
+            .apply_to(&mut prefs)
+            .map(|()| prefs.disk_limits())
+        };
+        let lines = apply(Some(30), Some(30)).unwrap();
+        assert_eq!((lines.warn().gb(), lines.fail().gb()), (30, 30));
+        let defaults = apply(None, None).unwrap();
+        assert_eq!((defaults.warn().gb(), defaults.fail().gb()), (20, 5));
+        for bad in [
+            apply(Some(0), None),
+            apply(None, Some(10_001)),
+            apply(Some(10), Some(11)),
+            // The failure line is compared with the warning line that applies: the default 20.
+            apply(None, Some(21)),
+            // And a warning line under the default failure line of 5.
+            apply(Some(4), None),
+        ] {
+            let err = bad.unwrap_err();
+            assert_eq!(err.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+        }
+    }
+
+    #[test]
     fn density_choices_convert_both_ways() {
         for (wire, stored) in [
             (
@@ -2630,6 +2700,9 @@ mod tests {
                 confirm_global_rules: Some(false),
                 inbox_shortcuts: Some(true),
                 start_at_login: Some(true),
+                notify_low_disk_space: Some(false),
+                disk_warn_free_gb: Some(50),
+                disk_fail_free_gb: Some(10),
             },
         }
         .apply_to(&mut g)
@@ -2655,6 +2728,9 @@ mod tests {
         assert!(!g.ui.confirm_global_rules());
         assert!(g.ui.inbox_shortcuts());
         assert!(g.ui.start_at_login());
+        assert!(!g.ui.notify_low_disk_space());
+        let lines = g.ui.disk_limits();
+        assert_eq!((lines.warn().gb(), lines.fail().gb()), (50, 10));
         assert!(g.vscode_server.telemetry());
         assert!(!g.vscode_server.auto_update());
         let view = GlobalSettingsView::new(&settings::Loaded {

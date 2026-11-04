@@ -5967,6 +5967,7 @@ dependencies = [
  "puddle-host",
  "puddle-ipc",
  "puddle-lifecycle",
+ "puddle-settings",
  "puddle-ssh",
  "puddle-test-kit",
  "puddle-types",
@@ -6321,6 +6322,7 @@ version = "0.0.0"
 dependencies = [
  "dirs",
  "getrandom 0.4.3",
+ "rustix",
  "tempfile",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",

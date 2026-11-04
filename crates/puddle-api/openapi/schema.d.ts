@@ -2411,6 +2411,13 @@ export interface components {
          * @enum {string}
          */
         DevCertificate: "not_checked" | "reusing_existing" | "trusted" | "needs_trust" | "trust_declined" | "trust_failed" | "unsupported";
+        /**
+         * @description How the free space on the drive that holds Puddle's data compares with the warning and the
+         *     failure line (settings `ui.disk_warn_free_gb` and `ui.disk_fail_free_gb`). Ordered from fine to
+         *     worst, so `level > previous` says the space got tighter.
+         * @enum {string}
+         */
+        DiskSpaceLevel: "ok" | "low" | "critical";
         /** @description One line of the system check. */
         DoctorCheck: {
             /** @description Raw evidence: an OS error, the runtime's last output lines; `null` when there is none. */
@@ -2805,6 +2812,16 @@ export interface components {
         } | {
             /** @enum {string} */
             type: "problems_changed";
+        } | {
+            /**
+             * Format: int64
+             * @description The free space at the read that changed the level, in whole MiB.
+             */
+            free_mib: number;
+            /** @description Where the free space stands now. */
+            level: components["schemas"]["DiskSpaceLevel"];
+            /** @enum {string} */
+            type: "disk_space_changed";
         };
         /** @description A bounded list of lines from the unsaved-work check. */
         FindingList: {
@@ -4352,12 +4369,29 @@ export interface components {
             /** @description The `custom` palette's text, `#rrggbb`; `null` keeps Pond's. */
             custom_text: string | null;
             density: components["schemas"]["DensityChoice"] | null;
+            /**
+             * Format: int32
+             * @description The free space, in GB, under which `puddle doctor` fails; 1 to 10000, default 5, never above
+             *     the warning line.
+             */
+            disk_fail_free_gb: number | null;
+            /**
+             * Format: int32
+             * @description The free space, in GB (1024 x 1024 x 1024 bytes), under which `puddle doctor` warns and the
+             *     app says so; 1 to 10000, default 20.
+             */
+            disk_warn_free_gb: number | null;
             /** @description The inbox's single-key shortcuts A, D, J and K (default off). */
             inbox_shortcuts: boolean | null;
             /** @description Minimizing hides the window to the tray instead of the taskbar (default off). */
             minimize_to_tray: boolean | null;
             /** @description A system notification for a new request (default on). */
             notifications: boolean | null;
+            /**
+             * @description Notify when the free space on the drive that holds Puddle's data falls under the warning or
+             *     the failure line (default on).
+             */
+            notify_low_disk_space: boolean | null;
             /** @description Notify only while Puddle's window is not focused (default on). */
             notify_only_unfocused: boolean | null;
             /** @description Notify when a workspace is killed for running out of memory (default on). */

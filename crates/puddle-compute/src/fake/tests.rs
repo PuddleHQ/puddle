@@ -616,8 +616,8 @@ async fn the_specs_owned_disks_and_volume_mounts_can_be_read_back() {
             size: DiskSize::mib(2),
         });
     let name = s.name.clone();
-    assert!(rt.owned_disks(&name).is_empty());
-    assert!(rt.volume_mounts(&name).is_empty());
+    assert_eq!(rt.owned_disks(&name).len(), 0);
+    assert_eq!(rt.volume_mounts(&name).len(), 0);
     rt.create(s).await.unwrap();
     let disks = rt.owned_disks(&name);
     assert_eq!(disks.len(), 1);

@@ -110,8 +110,6 @@ jobs:
       # Runners of the pool sometimes start with a 72 GB root disk (14 GB free) instead of 145 GB; this removes
       # the preinstalled toolchains no job uses when under 60 GB is free (ci/free-disk.sh) and prints what it freed.
       - name: free disk space on a runner that starts low
-        env:
-          FREE_DISK_BELOW_GB: "1000"
         run: ci/free-disk.sh
       - name: anything new since the last green run?
         id: changed
@@ -193,8 +191,6 @@ jobs:
       # Runners of the pool sometimes start with a 72 GB root disk (14 GB free) instead of 145 GB; this removes
       # the preinstalled toolchains no job uses when under 60 GB is free (ci/free-disk.sh) and prints what it freed.
       - name: free disk space on a runner that starts low
-        env:
-          FREE_DISK_BELOW_GB: "1000"
         run: ci/free-disk.sh
       - name: KVM preflight (infrastructure)
         id: kvm

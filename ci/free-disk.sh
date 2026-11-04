@@ -6,7 +6,9 @@
 # of a job. When the root disk has at least FREE_DISK_BELOW_GB (default 60) free it does nothing. Otherwise it
 # removes preinstalled toolchains that no job here uses (the list below; the workflows and ci/ never call them:
 # Rust comes from rustup in the home folder, Node from setup-node, the browsers from Playwright) and prints how
-# much each one freed, to stdout and to the job summary.
+# much each one freed, to stdout and to the job summary. Only the five big ones are listed: measured on image
+# 20261101.360.1 they free 24 GB of the 33 GB the whole set did (android 11.3, dotnet 5.9, ghcup 3.7, swift 3.5,
+# CodeQL 1.4 GB), and deleting is I/O bound (the whole set took 170 s), so the small ones are not worth the time.
 #
 #   ci/free-disk.sh        the real run
 #   FREE_DISK_PATHS=... FREE_DISK_SUDO= FREE_DISK_ROOT=<dir> ci/free-disk.sh   (ci/free-disk-test.sh)
@@ -18,7 +20,7 @@ below=${FREE_DISK_BELOW_GB:-60}
 root=${FREE_DISK_ROOT:-/}
 sudo_cmd=${FREE_DISK_SUDO-sudo}
 # shellcheck disable=SC2206 # why: a space-separated list of paths without spaces
-paths=(${FREE_DISK_PATHS:-/usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell /usr/local/julia* /opt/az /usr/local/aws-cli /usr/local/share/chromium /opt/microsoft})
+paths=(${FREE_DISK_PATHS:-/usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL})
 
 free_gb() { df -Pk "$root" | awk 'NR == 2 { print int($4 / 1048576) }'; }
 size_mb() { $sudo_cmd du -sm "$1" 2>/dev/null | awk '{ print $1 }'; }

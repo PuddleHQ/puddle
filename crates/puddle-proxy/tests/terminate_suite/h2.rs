@@ -719,7 +719,7 @@ async fn a_plain_request_over_http2_to_an_http11_server_is_judged_without_upgrad
         .name("bound.test", server.addr)
         .injector(injector)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/plain").await.text(), "plain");
     assert_eq!(*lines.lock().unwrap(), [(None, None)]);

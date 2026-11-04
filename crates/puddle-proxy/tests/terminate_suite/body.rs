@@ -297,7 +297,7 @@ async fn over_http2_a_refusal_on_the_body_and_an_oversized_body_send_nothing_ups
 #[tokio::test]
 async fn over_http2_a_body_of_exactly_the_limit_is_read_whole() {
     let (server, rig, peek) = h2().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let exact = "y".repeat(LIMIT);
     let got = client

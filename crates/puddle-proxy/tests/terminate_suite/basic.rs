@@ -641,7 +641,7 @@ async fn an_answer_to_an_upload_that_is_not_finished_ends_the_connection() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(

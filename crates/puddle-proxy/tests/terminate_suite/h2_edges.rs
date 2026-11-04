@@ -593,7 +593,7 @@ async fn a_request_with_a_large_header_goes_through_over_http2() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let cookie = "c".repeat(8 * 1024);
     let got = client
@@ -640,7 +640,7 @@ async fn the_audit_keeps_the_address_of_the_first_connection_when_the_server_is_
         .name("bound.test", first)
         .name("bound.test", second)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/1").await.text(), "again");
     server.drop_connections();

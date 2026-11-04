@@ -1498,7 +1498,7 @@ async fn a_udp_refusal_is_audited_as_blocked_for_an_ip_address_only() {
             .with_connection_log(log.clone()),
     );
     let handler = proxy.handler(workspace());
-    let refusal = |address: &str| puddle_agent_proto::host::UdpRefusal {
+    let refusal = |address: &str| UdpRefusal {
         address: address.into(),
         port: 5353,
         count: 1,

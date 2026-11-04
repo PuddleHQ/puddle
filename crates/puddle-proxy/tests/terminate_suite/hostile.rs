@@ -1068,7 +1068,7 @@ async fn a_response_that_is_not_http_is_a_502_that_says_what_the_upstream_got_wr
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let got = client.get("bound.test", "/garbage").await;
     assert_eq!(got.status, 502);

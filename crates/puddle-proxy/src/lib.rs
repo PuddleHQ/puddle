@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Egress proxy: the only way out of a workspace.
+//! (measurement touch)
 //!
 //! Every guest connection reaches the host as a yamux stream on the workspace's route (a per-workspace
 //! named pipe or Unix socket, `puddle-ipc`), carried by the guest agent (`puddle-agent-proto`).

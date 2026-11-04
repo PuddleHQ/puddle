@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Puddle's credential injector for Git hosts (`docs/arch/spec/credentials.md` §6 to §8).
+//! (measurement touch)
 //!
 //! One [`GitInjector`] serves one workspace. For each request on a host Puddle decrypts it reads
 //! which repository the path names and what the request asks of it (module `git_path`), applies the

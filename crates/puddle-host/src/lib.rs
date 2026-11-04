@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The Puddle host process as a library: the one place that wires the store, the proxies, the
+//! (measurement touch)
 //! sandbox runtime, workspaces, shutdown and the API together.
 //!
 //! `puddle serve` and the desktop app both start it the same way:

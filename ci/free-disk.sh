@@ -23,7 +23,9 @@ sudo_cmd=${FREE_DISK_SUDO-sudo}
 paths=(${FREE_DISK_PATHS:-/usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL})
 
 free_gb() { df -Pk "$root" | awk 'NR == 2 { print int($4 / 1048576) }'; }
-size_mb() { $sudo_cmd du -sm "$1" 2>/dev/null | awk '{ print $1 }'; }
+# why: du -sm rounds up, so the directory blocks of a tree that holds exactly 3 MiB (4 KiB each on ext4) read as 4;
+# KiB rounded to the nearest MiB does not depend on the file system's block size
+size_mb() { $sudo_cmd du -sk "$1" 2>/dev/null | awk '{ print int(($1 + 512) / 1024) }'; }
 
 start=$(free_gb)
 if [ "$start" -ge "$below" ]; then
@@ -60,6 +62,7 @@ end=$(free_gb)
     df -h "$root" /mnt 2>/dev/null
     echo '```'
 } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+rm -f -- "$out"
 if [ "$end" -lt "$below" ]; then
     echo "::warning title=runner still low on disk::${end} GB free after removing the unused toolchains (floor ${below} GB)"
 fi

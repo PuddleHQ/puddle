@@ -140,6 +140,32 @@ pub fn eventually_blocking<O: Outcome>(
     }
 }
 
+/// Runs `f` on its own thread and returns what it returns; panics, naming `what`, when it has not
+/// returned after `bound`. For code that must always end (a shortening loop, a scanner that must
+/// advance): a regression there would otherwise spin and allocate until the process dies, which
+/// reads as a hang, not a failed test. `bound` is a hang guard, not a measurement, so it stays fixed.
+/// A thread that never returns is left running until the test process exits; a panic in `f` is
+/// reported as such, not as a timeout.
+pub fn returns_within<T: Send + 'static>(
+    what: &str,
+    bound: Duration,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    use std::sync::mpsc::{RecvTimeoutError, channel};
+    check_bound(what, bound);
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    match rx.recv_timeout(bound) {
+        Ok(value) => value,
+        Err(RecvTimeoutError::Timeout) => {
+            panic!("{what}: did not return within {bound:?}")
+        }
+        Err(RecvTimeoutError::Disconnected) => panic!("{what}: panicked before it returned"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -256,5 +282,25 @@ mod tests {
         eventually_blocking("never ready", Duration::from_millis(30), || {
             Err::<(), _>("3 files")
         });
+    }
+
+    #[test]
+    fn a_bounded_call_hands_back_its_value() {
+        assert_eq!(returns_within("adds", Duration::from_secs(5), || 2 + 2), 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "stuck: did not return within 30ms")]
+    fn a_bounded_call_that_does_not_return_names_itself() {
+        // Parks for far longer than the bound; the thread is left behind and ends with the process.
+        returns_within("stuck", Duration::from_millis(30), || {
+            std::thread::park();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "boom: panicked before it returned")]
+    fn a_bounded_call_that_panics_says_so() {
+        returns_within("boom", Duration::from_secs(5), || -> u8 { panic!("inner") });
     }
 }

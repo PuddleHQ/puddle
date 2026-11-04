@@ -354,6 +354,52 @@ mod tests {
         assert!(closed.load(Ordering::Acquire));
     }
 
+    /// Counts the flushes and shutdowns that reach it.
+    #[derive(Default)]
+    struct Recording {
+        flushes: usize,
+        shutdowns: usize,
+    }
+
+    impl AsyncRead for Recording {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
+    impl AsyncWrite for Recording {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.flushes += 1;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.shutdowns += 1;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_watch_forwards_flush_and_shutdown_to_the_stream() {
+        let (mut watched, _closed) = ClientWatch::new(Recording::default());
+        watched.flush().await.unwrap();
+        assert_eq!((watched.inner.flushes, watched.inner.shutdowns), (1, 0));
+        watched.shutdown().await.unwrap();
+        assert_eq!((watched.inner.flushes, watched.inner.shutdowns), (1, 1));
+    }
+
     #[test]
     fn accept_failures_are_reported_once_per_run_and_a_stop_always() {
         let error = IpcError::NoRuntime;

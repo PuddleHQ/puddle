@@ -28,6 +28,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 const WAIT: Duration = Duration::from_secs(30);
+const REPORT_WAIT: Duration = Duration::from_secs(3);
 
 /// A fake `boot.sh` whose exit code the test sets.
 fn install_hook(rt: &FakeRuntime, stderr: &'static str) -> Arc<AtomicI32> {
@@ -573,8 +574,9 @@ async fn a_failed_session_is_reported_to_the_target_with_its_cause() {
         .unwrap()
         .unwrap()
         .unwrap();
-    // The report follows the session's end; wait for it rather than race the close.
-    eventually("the failure was never reported", WAIT, || {
+    // The report follows the session's end; wait for it rather than race the close. A short bound:
+    // it takes microseconds, and a mutant that drops the report must fail the test, not stall it.
+    eventually("the failure was never reported", REPORT_WAIT, || {
         !target.reports.lock().unwrap().is_empty()
     })
     .await;

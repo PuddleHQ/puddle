@@ -126,6 +126,7 @@ describe("the screen", () => {
       "Notifications",
       "Inbox",
       "Workspaces",
+      "Disk space",
       "Network",
       "Browser VS Code",
       "Git and credentials",
@@ -527,6 +528,11 @@ describe("notification and inbox switches", () => {
     ["A workspace runs out of memory", "notify_oom", true],
     ["A workspace stops on its own", "notify_unexpected_stop", true],
     [
+      "The drive that holds Puddle's data runs low on space",
+      "notify_low_disk_space",
+      true,
+    ],
+    [
       "Confirm before a rule affects every workspace",
       "confirm_global_rules",
       true,
@@ -766,6 +772,81 @@ describe("workspace defaults and the network", () => {
     await save();
     expect(api.layer.reconnection_grace).toBe(600);
     expect(screen.queryByText(/Use between/)).toBeNull();
+  });
+});
+
+describe("disk space lines", () => {
+  const warn = () =>
+    screen.getByLabelText("Warn when free space is under (GB)");
+  const fail = () =>
+    screen.getByLabelText("Fail when free space is under (GB)");
+  const type = async (box: HTMLElement, text: string) => {
+    await fireEvent.input(box, { target: { value: text } });
+    await fireEvent.change(box);
+  };
+
+  it("shows Puddle's lines of 20 and 5 GB and saves a change on Save", async () => {
+    await open();
+    expect(warn()).toHaveValue("20");
+    expect(fail()).toHaveValue("5");
+    await type(warn(), "50");
+    await type(fail(), "10");
+    expect(putBodies()).toHaveLength(0);
+    await save();
+    expect(api.ui.disk_warn_free_gb).toBe(50);
+    expect(api.ui.disk_fail_free_gb).toBe(10);
+  });
+
+  it("shows what is stored", async () => {
+    api.ui.disk_warn_free_gb = 40;
+    api.ui.disk_fail_free_gb = 8;
+    await open();
+    expect(warn()).toHaveValue("40");
+    expect(fail()).toHaveValue("8");
+  });
+
+  it("refuses an amount that is not a number of GB from 1 to 10000", async () => {
+    await open();
+    await type(warn(), "0");
+    expect(
+      await screen.findByText("Use between 1 and 10000 GB."),
+    ).toBeVisible();
+    expect(warn()).toHaveAttribute("aria-invalid", "true");
+    await type(fail(), "lots");
+    expect(
+      await screen.findByText("Enter a whole number of GB."),
+    ).toBeVisible();
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    expect(screen.getByText("Fix the disk space lines to save.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await type(warn(), "30");
+    await type(fail(), "6");
+    await save();
+    expect(api.ui.disk_warn_free_gb).toBe(30);
+    expect(api.ui.disk_fail_free_gb).toBe(6);
+  });
+
+  it("refuses a failure line above the warning line", async () => {
+    await open();
+    await type(fail(), "25");
+    expect(
+      await screen.findByText(
+        "The failure line (25 GB) cannot be above the warning line (20 GB).",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await type(warn(), "25");
+    expect(screen.queryByText(/cannot be above the warning line/)).toBeNull();
+    await save();
+    expect(api.ui.disk_warn_free_gb).toBe(25);
+    expect(api.ui.disk_fail_free_gb).toBe(25);
+  });
+
+  it("puts a line back to what is stored without it counting as a change", async () => {
+    await open();
+    await type(warn(), "50");
+    await type(warn(), "20");
+    expect(screen.getByText("No unsaved changes.")).toBeVisible();
   });
 });
 

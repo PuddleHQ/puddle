@@ -109,6 +109,6 @@ export const SECRET_NEVER_IN =
 export const PLACE_HINT =
   "Most tools send a key in a header. Pick the query or the path only for an API that takes its key nowhere else, such as ?appid= for OpenWeatherMap or /bot<token>/ for a Telegram bot. The value is swapped there and nowhere else.";
 export const SWAP_LIMITS =
-  "How the swap works: Puddle finds the stand-in in requests to the hosts you name and puts the real value in its place. It cannot cover a key the tool uses to sign requests itself (AWS access keys with SigV4, HMAC secrets, JWT signing keys), a secret for something other than HTTPS (databases, SMTP, SSH) or a key used only inside the workspace: the tool gets the stand-in there and fails. Give such a value to the workspace as a plain variable instead, or use a short-lived credential.";
+  "How the swap works: Puddle finds the stand-in in requests to the hosts you name and puts the real value in its place. It cannot cover a key the tool uses to sign requests itself (AWS access keys with SigV4, HMAC secrets, JWT signing keys), a secret for something other than HTTPS (databases, SMTP, SSH) or a key used only inside the workspace: the tool gets the stand-in there and fails. Prefer a short-lived credential for such a tool; giving the value as a plain variable puts the real value inside the workspace, where anything running there can read it.";
 export const DECRYPT_HOSTS =
   "Puddle will decrypt connections to each host you name here, to swap the value in. It decrypts port 443 only.";

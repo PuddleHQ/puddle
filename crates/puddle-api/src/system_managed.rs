@@ -14,8 +14,12 @@ use crate::routes::AppState;
 use crate::routes::settings::{load_global, load_workspace};
 
 /// What direct SSH gives a workspace: each desktop editor's server download and extension hosts.
-const DIRECT_SSH_REASONS: [SystemReason; 2] =
-    [SystemReason::DirectSsh, SystemReason::DirectSshCursor];
+const DIRECT_SSH_REASONS: [SystemReason; 4] = [
+    SystemReason::DirectSsh,
+    SystemReason::DirectSshCursor,
+    SystemReason::DirectSshJetBrains,
+    SystemReason::DirectSshZed,
+];
 
 /// The System managed reasons for a setup.
 ///
@@ -23,7 +27,7 @@ const DIRECT_SSH_REASONS: [SystemReason; 2] =
 ///   that covers today's terms) gives Microsoft's download and Marketplace hosts to every workspace; the
 ///   bundled code-server gives Open VSX.
 /// - `direct_ssh`: the workspaces with direct SSH on, which get the hosts of the desktop editors
-///   for themselves (VS Code installs Microsoft's server and extensions there; Cursor, its own).
+///   for themselves (VS Code installs Microsoft's server and extensions there; Cursor, JetBrains Gateway and Zed, their own).
 ///
 /// Nothing else is derived: a workspace used with another tool gets no host for VS Code's sake.
 #[must_use]

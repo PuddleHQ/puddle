@@ -20,6 +20,11 @@ pub enum SystemReason {
     DirectSsh,
     /// Direct SSH is on for the workspace, for Cursor.
     DirectSshCursor,
+    /// Direct SSH is on for the workspace, for JetBrains Gateway.
+    #[serde(rename = "direct_ssh_jetbrains")]
+    DirectSshJetBrains,
+    /// Direct SSH is on for the workspace, for Zed.
+    DirectSshZed,
 }
 
 impl SystemReason {
@@ -29,6 +34,8 @@ impl SystemReason {
             store::SystemReason::CodeServer => Self::CodeServer,
             store::SystemReason::DirectSsh => Self::DirectSsh,
             store::SystemReason::DirectSshCursor => Self::DirectSshCursor,
+            store::SystemReason::DirectSshJetBrains => Self::DirectSshJetBrains,
+            store::SystemReason::DirectSshZed => Self::DirectSshZed,
             _ => return None,
         })
     }

@@ -310,12 +310,20 @@ async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
         "cursor.blob.core.windows.net",
         "marketplace.cursorapi.com",
         "marketplace.cursor-cdn.com",
+        "download-cdn.jetbrains.com",
+        "downloads.marketplace.jetbrains.com",
+        "release-assets.githubusercontent.com",
     ] {
         assert!(decide(&api, "ssh", host).is_allow(), "{host}");
         assert!(!decide(&api, "other", host).is_allow(), "{host}");
     }
     let list = api.get("/api/rule-sets").await.json();
-    for reason in ["direct_ssh", "direct_ssh_cursor"] {
+    for reason in [
+        "direct_ssh",
+        "direct_ssh_cursor",
+        "direct_ssh_jetbrains",
+        "direct_ssh_zed",
+    ] {
         assert!(
             list["system_managed"]
                 .as_array()

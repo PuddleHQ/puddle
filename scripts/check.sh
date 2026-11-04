@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,
 #   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
-#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips   (pre-commit hook)
+#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips   (pre-commit hook)
 #   all      = fast quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage
 #              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
@@ -91,6 +91,12 @@ lower_ok() {
     export COVERAGE_BASELINE_LOWER_OK
 }
 
+# Removes what a coverage report would read from an earlier run in the shared instrumented directory: the test
+# executables (the libraries stay built) and the profile files. `cargo llvm-cov nextest --no-report` cleans neither.
+coverage_scrub() {
+    find "$1/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
+    find "$1/llvm-cov-target" -maxdepth 1 -name '*.profraw' -type f -delete 2>/dev/null || true
+}
 # Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
 # extra arguments. Needs a base; without one it fails.
 diff_coverage() {
@@ -192,6 +198,14 @@ run_gate() {
         ;;
     standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh && scripts/check-product-name.sh --self-test && scripts/check-product-name.sh ;;
     git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh ;;
+    # An `exclude_re` entry of .cargo/mutants.toml that matches no mutant of `cargo mutants --list` is stale
+    # (the code it covered moved): fails, so a position-keyed exclusion cannot rot unseen. A failed
+    # listing is an empty list, which the script refuses. `--colors never`: CI sets CARGO_TERM_COLOR=always,
+    # which makes cargo-mutants colour the function names inside each line, so no entry matched.
+    mutants-exclusions)
+        python3 -I scripts/check-mutants-exclusions.py --self-test &&
+            "$cargo" mutants --list --no-config --colors never | python3 -I scripts/check-mutants-exclusions.py --list -
+        ;;
     # Every `unsafe`, lint suppression, `#[ignore]`, product `unwrap` and TODO must say why in place; a site
     # without a reason fails. No baseline file: a new site with a reason is fine (docs/STANDARDS.md, "Quality").
     quality)
@@ -392,29 +406,38 @@ run_gate() {
             exit 0
         fi
         packages=
+        filter=
         for c in $crates; do
             [ -z "$skip_app" ] || [ "$c" != puddle-app ] || continue
-            packages="$packages -p $c"
+            packages="$packages $c"
+            filter="${filter:+$filter | }package($c)"
         done
         if [ -z "$packages" ]; then
             echo "diff-coverage-fast: only puddle-app changed and it is skipped here; CI measures it"
             exit 0
         fi
-        # Its own target directory, and the old test binaries removed from it first: a report reads every
-        # executable in the directory, so a binary left by an earlier run of other crates, built from older
-        # sources, would put the old line numbers into this report. Cargo links the missing ones again; every
-        # library stays built for the next run. The full coverage gate's directory (and its lcov.info) is never touched.
-        target=${CARGO_TARGET_DIR:-target}/diff-coverage-fast
+        # The same instrumented target directory as the `coverage` gate (`<target>/llvm-cov-target`), so the third-party
+        # crates it builds are built once, not once per gate (15 GB of a host lane when each kept its own copy). A
+        # report reads every profile file and every test executable in the directory, so one left by an earlier run
+        # (other crates, older sources) would bring its old line numbers or another run's counts; `coverage_scrub`
+        # removes both before this run and again when it ends, so neither gate reports what the other left. Every
+        # library stays built. The lcov file is this gate's own, never the `coverage` gate's `lcov.info`.
+        target=${CARGO_TARGET_DIR:-target}
+        lcov=$target/diff-coverage-fast.lcov
         echo "diff-coverage-fast: tests with coverage for:$packages"
-        find "$target/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
-        # shellcheck disable=SC2086 # $packages is a list of `-p <crate>` pairs
-        CARGO_TARGET_DIR=$target scripts/coverage-run.sh "$plain_cargo" $packages --all-features --locked \
-            --profile "${NEXTEST_PROFILE:-default}"
-        CARGO_TARGET_DIR=$target "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
+        coverage_scrub "$target"
+        trap 'coverage_scrub "$target"' EXIT
+        # The build selects the whole workspace like the `coverage` gate (a `-p` selection resolves other features
+        # for some third-party crates, so their units would hash differently and be built twice); the filterset
+        # picks the tests that run.
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
+        scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
+            --profile "${NEXTEST_PROFILE:-default}" -E "$filter"
+        "$plain_cargo" llvm-cov report --lcov --output-path "$lcov"
         # The exclusion notes ("matched nothing in this diff") list every entry of the file that this change does
         # not touch: hundreds of lines, so only their count is printed.
         rc=0
-        report=$(diff_coverage "diff-coverage-fast (rust)" "$target/lcov.info" .rs 2>&1) || rc=$?
+        report=$(diff_coverage "diff-coverage-fast (rust)" "$lcov" .rs 2>&1) || rc=$?
         printf '%s\n' "$report" | grep -v 'matched nothing in this diff' || true
         echo "diff-coverage-fast: $(printf '%s\n' "$report" | grep -c 'matched nothing in this diff' || true) exclusion note(s) for untouched code left out"
         if [ "$rc" != 0 ]; then
@@ -436,7 +459,7 @@ run_gate() {
 }
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
-fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins silent-skips"
+fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips"
 all_gates="$fast_gates quality git-env secrets clippy clippy-windows deny advisories notices openapi ui ui-licences ui-audit ui-e2e doc coverage"
 # After the fast gates and before the slow ones: a change whose added lines no test runs fails in minutes.
 pre_push_gates=$fast_gates" diff-coverage-fast"

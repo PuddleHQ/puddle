@@ -38,7 +38,7 @@ async fn a_host_with_no_credential_is_decrypted_when_the_workspace_decrypts_ever
         .injector(injector.clone())
         .decrypting_all(true, &[])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("free.test:443", None).await.unwrap();
     let response = client.get("free.test", "/some/path?q=1").await;
     assert_eq!((response.status, response.text().as_str()), (200, "hello"));
@@ -65,7 +65,7 @@ async fn with_the_switch_off_the_same_host_is_passed_through_and_the_tool_sees_t
         .allow(vec!["bound.test", "free.test"])
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest
         .tls_trusting("free.test:443", std::slice::from_ref(&pki.root))
         .await
@@ -89,7 +89,7 @@ async fn a_name_on_the_never_decrypt_list_is_passed_through_and_says_so_in_the_a
         .injector(injector.clone())
         .decrypting_all(true, &["bank.test"])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest
         .tls_trusting("bank.test:443", std::slice::from_ref(&pki.root))
         .await
@@ -101,7 +101,7 @@ async fn a_name_on_the_never_decrypt_list_is_passed_through_and_says_so_in_the_a
     assert_eq!(events[0].reason.to_string(), "pass_through:never_decrypt");
     assert_eq!(events[0].decision, ConnectionDecision::Allow);
     // Only the exact name is listed: its subdomain is decrypted.
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("api.bank.test:443", None).await.unwrap();
     assert_eq!(client.get("api.bank.test", "/").await.status, 200);
     client.close().await;
@@ -116,7 +116,7 @@ async fn a_host_with_a_credential_is_decrypted_even_when_the_never_decrypt_list_
         .name("bound.test", server.addr)
         .decrypting_all(true, &["bound.test"])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/").await.status, 200);
     assert!(
@@ -139,7 +139,7 @@ async fn a_client_in_a_container_is_passed_through_and_a_client_of_the_guest_is_
         .decrypting_all(true, &[])
         .build();
     // The container's tools trust the server's own root and nothing of Puddle's.
-    let mut container = rig.guest().await.in_container();
+    let mut container = rig.guest().in_container();
     let mut client = container
         .tls_trusting("free.test:443", std::slice::from_ref(&pki.root))
         .await
@@ -156,7 +156,7 @@ async fn a_client_in_a_container_is_passed_through_and_a_client_of_the_guest_is_
     assert_eq!(events[0].decision, ConnectionDecision::Allow);
 
     // The same host from a process of the guest, which trusts Puddle's CA, is decrypted.
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("free.test:443", None).await.unwrap();
     assert_eq!(client.get("free.test", "/").await.status, 200);
     client.close().await;
@@ -172,7 +172,7 @@ async fn a_host_with_a_credential_is_decrypted_for_a_client_in_a_container_too()
         .decrypting_all(true, &[])
         .build();
     // Its credential must be added, so Puddle's certificate is what the client gets.
-    let mut container = rig.guest().await.in_container();
+    let mut container = rig.guest().in_container();
     let mut client = container.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/").await.status, 200);
     assert!(
@@ -191,7 +191,7 @@ async fn a_container_with_the_switch_off_changes_nothing() {
         .name("free.test", server.addr)
         .allow(vec!["bound.test", "free.test"])
         .build();
-    let mut container = rig.guest().await.in_container();
+    let mut container = rig.guest().in_container();
     let mut client = container
         .tls_trusting("free.test:443", std::slice::from_ref(&pki.root))
         .await
@@ -212,7 +212,7 @@ async fn the_switch_applies_to_the_next_connection_without_a_restart() {
         .allow(vec!["bound.test", "free.test"])
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest
         .tls_trusting("free.test:443", std::slice::from_ref(&pki.root))
         .await
@@ -246,7 +246,7 @@ async fn a_tool_that_refuses_the_certificate_is_learned_and_the_host_is_passed_t
         .learned(Arc::clone(&learned))
         .build();
     // First connection: a tool whose roots do not hold the workspace CA refuses the certificate.
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (port, _bridge) = guest.bridge("pinned.test:443").await;
     let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -291,7 +291,7 @@ async fn a_certificate_alert_on_a_host_with_a_credential_never_teaches_the_host_
         .learned(Arc::clone(&learned))
         .build();
     // A tool whose roots do not hold the workspace CA refuses the certificate.
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (port, _bridge) = guest.bridge("bound.test:443").await;
     let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -330,7 +330,7 @@ async fn a_connection_that_is_not_tls_is_passed_through_with_the_bytes_already_r
         .injector(adds_nothing())
         .decrypting_all(true, &[])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, mut stream) = guest.connect_to("plain.test:443").await;
     assert_eq!(code, 200);
     stream
@@ -366,7 +366,7 @@ async fn a_protocol_where_the_server_speaks_first_is_passed_through_when_the_gue
         .injector(adds_nothing())
         .decrypting_all(true, &[])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, mut stream) = guest.connect_to("ssh.test:443").await;
     assert_eq!(code, 200);
     let mut banner = vec![0_u8; 32];
@@ -396,7 +396,7 @@ async fn a_server_that_asks_for_a_client_certificate_is_passed_through() {
         .injector(adds_nothing())
         .decrypting_all(true, &[])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest
         .tls_trusting("mutual.test:443", std::slice::from_ref(&pki.root))
         .await
@@ -425,7 +425,7 @@ async fn a_server_whose_certificate_puddle_does_not_accept_is_passed_through_for
         .injector(adds_nothing())
         .decrypting_all(true, &[])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, reader) = guest.connect_to("selfsigned.test:443").await;
     assert_eq!(code, 200);
     let tls = tokio_rustls::TlsConnector::from(Arc::new(terminate_support::trusting_anything()))
@@ -454,7 +454,7 @@ async fn a_client_that_asks_for_another_name_is_passed_through_not_refused() {
         .injector(adds_nothing())
         .decrypting_all(true, &[])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     // The client names a host that is not the one in its CONNECT: with no credential at stake
     // the tool is left to the real server, as it is for any host that is not decrypted.
     let (code, reader) = guest.connect_to("free.test:443").await;
@@ -488,7 +488,7 @@ async fn a_record_that_looks_like_a_hello_but_is_not_one_is_passed_through() {
         .injector(adds_nothing())
         .decrypting_all(true, &[])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, mut stream) = guest.connect_to("odd.test:443").await;
     assert_eq!(code, 200);
     // A handshake record that holds a ClientHello type with no body.
@@ -512,7 +512,7 @@ async fn a_pass_through_to_a_server_that_cannot_be_reached_just_ends_the_connect
         .injector(adds_nothing())
         .decrypting_all(true, &[])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, mut stream) = guest.connect_to("dead.test:443").await;
     assert_eq!(code, 200);
     stream.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
@@ -536,7 +536,7 @@ async fn a_decrypted_host_that_cannot_be_reached_gets_an_error_the_tool_can_read
         .injector(adds_nothing())
         .decrypting_all(true, &[])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("dead.test:443", None).await.unwrap();
     let response = client.get("dead.test", "/").await;
     assert_eq!(response.status, 502);

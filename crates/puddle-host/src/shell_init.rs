@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use puddle_compute::{ExecOutput, ExecRequest, FileMount};
 use puddle_store::Store;
-use puddle_types::{GuestFile, GuestPath, WorkspaceId, WorkspaceName};
+use puddle_types::{GuestFile, GuestPath, SessionUser, WorkspaceId, WorkspaceName};
 
 /// Where a workspace's folder with its shell init is mounted.
 pub(crate) const GUEST_DIR: &str = "/puddle/shell-init";
@@ -245,10 +245,11 @@ out=$("$s" -c '. "$1"' "$s" "$f" </dev/null 2>&1; echo x)
 if [ "$out" != x ]; then printf '%s' "${out%x}"; exit 66; fi
 "#;
 
-/// The request that runs [`CHECK_SCRIPT`] on `content`.
-pub(crate) fn check_request(content: &str) -> ExecRequest {
+/// The request that runs [`CHECK_SCRIPT`] on `content` as `user`, the user whose login shells
+/// source it.
+pub(crate) fn check_request(content: &str, user: SessionUser) -> ExecRequest {
     let mut request = ExecRequest::new("sh", ["-c", CHECK_SCRIPT])
-        .as_user("root")
+        .as_user(user.name())
         .with_timeout(CHECK_TIMEOUT);
     request.stdin = content.as_bytes().to_vec();
     request
@@ -610,11 +611,13 @@ mod tests {
     }
 
     #[test]
-    fn the_check_request_runs_as_root_with_the_script_on_stdin_and_a_limit() {
-        let request = check_request("echo hi\n");
-        assert_eq!(request.stdin, b"echo hi\n");
-        assert_eq!(request.user.as_deref(), Some("root"));
-        assert_eq!(request.timeout, CHECK_TIMEOUT);
+    fn the_check_request_runs_as_the_session_user_with_the_script_on_stdin_and_a_limit() {
+        for user in [SessionUser::Agent, SessionUser::Root] {
+            let request = check_request("echo hi\n", user);
+            assert_eq!(request.stdin, b"echo hi\n");
+            assert_eq!(request.user.as_deref(), Some(user.name()));
+            assert_eq!(request.timeout, CHECK_TIMEOUT);
+        }
     }
 
     #[test]

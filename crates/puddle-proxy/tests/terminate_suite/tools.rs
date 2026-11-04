@@ -56,7 +56,7 @@ async fn python_strict_x509_accepts_the_leaf_and_the_ca() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let guest = rig.guest().await;
+    let guest = rig.guest();
     let (port, _bridge) = guest.bridge("bound.test:443").await;
     let dir = tempfile::tempdir().unwrap();
     let ca = dir.path().join("ca.pem");

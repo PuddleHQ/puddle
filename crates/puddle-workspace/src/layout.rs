@@ -13,7 +13,7 @@
 use std::time::Duration;
 
 use puddle_compute::ExecRequest;
-use puddle_types::{CheckoutDir, GuestPath, WorkspaceId};
+use puddle_types::{CheckoutDir, GuestPath, SessionUser, WorkspaceId};
 
 use crate::WorkspaceError;
 
@@ -28,6 +28,13 @@ pub const LOST_AND_FOUND: &str = CheckoutDir::LOST_AND_FOUND;
 
 /// How long a `sync` may take (a clone of a large repository leaves a lot to write).
 pub(crate) const SYNC_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The guest script that makes the volume ready for its session user (`guest/prepare.sh`).
+pub const PREPARE_SH: &str = include_str!("../guest/prepare.sh");
+
+/// How long the preparation may take. It is instant unless the volume changes owner, when every
+/// file on it is given to the new one (once; a large `node_modules` is many files).
+pub(crate) const PREPARE_TIMEOUT: Duration = Duration::from_mins(15);
 
 /// A workspace's paths in the guest.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,15 +79,24 @@ impl Layout {
         self.child(dir.as_str())
     }
 
-    /// The command that creates Puddle's directory (owner-only), run as root after every boot
-    /// of a sandbox with this workspace. Idempotent.
-    ///
-    /// # Errors
-    ///
-    /// [`WorkspaceError::Layout`] (never for a valid layout).
-    pub fn prepare_request(&self) -> Result<ExecRequest, WorkspaceError> {
-        let dir = self.puddle_dir()?;
-        Ok(ExecRequest::new("mkdir", ["-p", "-m", "0700", dir.as_str()]).as_user("root"))
+    /// The command that creates Puddle's directory (owner-only) and gives the volume to `user`
+    /// ([`PREPARE_SH`]), run as root after every boot of a sandbox with this workspace.
+    /// Idempotent.
+    #[must_use]
+    pub fn prepare_request(&self, user: SessionUser) -> ExecRequest {
+        ExecRequest::new(
+            "sh",
+            [
+                "-c",
+                PREPARE_SH,
+                "puddle-prepare",
+                self.mount.as_str(),
+                user.name(),
+            ]
+            .map(str::to_owned),
+        )
+        .as_user("root")
+        .with_timeout(PREPARE_TIMEOUT)
     }
 
     /// `git clone -- <url> /workspaces/<id>/<dir>`. Without a shell, so the URL is one argument
@@ -173,10 +189,22 @@ mod tests {
     }
 
     #[test]
-    fn prepare_request_makes_an_owner_only_puddle_dir_as_root() {
-        let r = layout().prepare_request().unwrap();
-        assert_eq!(r.program, "mkdir");
-        assert_eq!(r.args, ["-p", "-m", "0700", "/workspaces/acme/.puddle"]);
-        assert_eq!(r.user.as_deref(), Some("root"));
+    fn prepare_request_runs_the_script_as_root_for_the_session_user() {
+        for user in [SessionUser::Agent, SessionUser::Root] {
+            let r = layout().prepare_request(user);
+            assert_eq!(r.program, "sh");
+            assert_eq!(
+                r.args,
+                [
+                    "-c",
+                    PREPARE_SH,
+                    "puddle-prepare",
+                    "/workspaces/acme",
+                    user.name()
+                ]
+            );
+            assert_eq!(r.user.as_deref(), Some("root"));
+            assert_eq!(r.timeout, PREPARE_TIMEOUT);
+        }
     }
 }

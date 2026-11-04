@@ -607,6 +607,13 @@ so a red `vm-linux (KVM, msb microVMs)` names the test instead of saying `cancel
 A run where every test is several times slower than usual is a slow runner, not a hang: the deadline names the test it
 cut, and the slowest-tests list and the runner figures show the cause.
 
+A runner that fills its disk dies with its job log (`No space left on device` in the runner's own `_diag` log, nothing
+else), so `ci/disk-watch.sh` writes what survives it: the `disk at start` step puts `df` and an annotation (under 60 GB
+free) in the job summary, `snap` steps (`if: always()`) after each heavy step of the `vm-linux` jobs and the Rust job put
+`df` and the size of the dirs a job fills there, and `guard`, in the same step as the tests or the build, logs free space
+every 2 seconds to `disk-watch-*.log` (kept with the results), takes a deep snapshot under 30 GB free and, under 5 GB,
+annotates `::error` and stops cargo or nextest so the job ends readable with its artifacts. Self-test: `ci/disk-watch-test.sh`.
+
 The VM no-hypervisor policy fails a merge queue run like a PR, and `verdict --nightly-skips` accepts a skip only on a
 scheduled run. Self-tests: `ci/scope-test.sh` (light mode and merge queue cases, a verdict matrix over every event and
 variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cancel-group-test.sh`, `ci/cache-gc-test.sh`, `ci/raise-coverage-baseline-test.sh`, `ci/test-vm-skip-policy.sh`, `ci/vm-tests-report-test.sh`, all in the

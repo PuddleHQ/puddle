@@ -29,10 +29,8 @@ nobody can explain.
   waits in the inbox until the user answers; nothing is denied in advance, telemetry hosts included.
   (How the tool's connection behaves meanwhile, held open or refused with "waiting for approval", is
   a spec choice; the request itself stays open.) Automated help (rule sets, suggestions, an AI judge)
-  may at most allow what is clearly safe; where it would say no, the user is asked instead. A
-  built-in rule set that blocks, such as a list of tracker hosts, is the user's own choice: it ships
-  switched off and blocks only after the user switches it on, and every refusal names it.
-- **This rules out:** a deny list that is on without the user's say; denying a request, or not recording it, because its
+  may at most allow what is clearly safe; where it would say no, the user is asked instead.
+- **This rules out:** a built-in deny list; denying a request, or not recording it, because its
   workspace asks about many hosts; a helper's "no" turned into a deny rule. A workspace flooding the
   inbox is bounded without refusing: grouping, back-pressure, storage caps that keep requests
   waiting.

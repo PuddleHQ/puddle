@@ -366,11 +366,15 @@ mod tests {
             .collect()
     }
 
+    fn no_gaps() -> Vec<(&'static str, Vec<&'static str>)> {
+        Vec::new()
+    }
+
     #[test]
     fn r36_every_deny_set_names_its_source_licence_and_date() {
-        assert!(deny_sets_missing_provenance(BUILT_IN_SETS).is_empty());
-        assert!(deny_sets_missing_provenance(&[TRACKER_FIXTURE]).is_empty());
-        assert!(provenance_gaps(&TRACKER_FIXTURE).is_empty());
+        assert_eq!(deny_sets_missing_provenance(BUILT_IN_SETS), no_gaps());
+        assert_eq!(deny_sets_missing_provenance(&[TRACKER_FIXTURE]), no_gaps());
+        assert_eq!(provenance_gaps(&TRACKER_FIXTURE), Vec::<&str>::new());
         let bare = BuiltInSet {
             description: "Tracker hosts.",
             ..TRACKER_FIXTURE

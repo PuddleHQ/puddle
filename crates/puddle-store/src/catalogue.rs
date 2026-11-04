@@ -119,6 +119,9 @@ pub enum SystemReason {
     /// Direct SSH is on for the workspace: desktop VS Code's Remote-SSH installs Microsoft's
     /// server and its extensions in it.
     DirectSsh,
+    /// Direct SSH is on for the workspace: Cursor's Remote SSH installs Cursor's server and its
+    /// extensions in it.
+    DirectSshCursor,
 }
 
 const MICROSOFT_HOSTS: &[CatalogueEntry] = &[
@@ -135,6 +138,12 @@ const MICROSOFT_HOSTS: &[CatalogueEntry] = &[
     entry!("*.gallerycdn.vsassets.io", "Marketplace extension files"),
 ];
 
+const CURSOR_HOSTS: &[CatalogueEntry] = &[
+    entry!("cursor.blob.core.windows.net", "Cursor server downloads"),
+    entry!("marketplace.cursorapi.com", "Cursor extension marketplace"),
+    entry!("marketplace.cursor-cdn.com", "Cursor extension files"),
+];
+
 const OPEN_VSX_HOSTS: &[CatalogueEntry] = &[
     entry!("open-vsx.org", "Open VSX extensions"),
     entry!("openvsx.eclipsecontent.org", "Open VSX extension files"),
@@ -142,7 +151,12 @@ const OPEN_VSX_HOSTS: &[CatalogueEntry] = &[
 
 impl SystemReason {
     /// Every reason.
-    pub const ALL: [Self; 3] = [Self::MicrosoftServer, Self::CodeServer, Self::DirectSsh];
+    pub const ALL: [Self; 4] = [
+        Self::MicrosoftServer,
+        Self::CodeServer,
+        Self::DirectSsh,
+        Self::DirectSshCursor,
+    ];
 
     /// The stored and wire name.
     #[must_use]
@@ -151,6 +165,7 @@ impl SystemReason {
             Self::MicrosoftServer => "microsoft_server",
             Self::CodeServer => "code_server",
             Self::DirectSsh => "direct_ssh",
+            Self::DirectSshCursor => "direct_ssh_cursor",
         }
     }
 
@@ -173,6 +188,9 @@ impl SystemReason {
             Self::DirectSsh => {
                 "Direct SSH is on for this workspace: desktop VS Code installs Microsoft's VS Code server and its extensions there."
             }
+            Self::DirectSshCursor => {
+                "Direct SSH is on for this workspace: Cursor installs its server and its extensions there."
+            }
         }
     }
 
@@ -182,6 +200,7 @@ impl SystemReason {
         match self {
             Self::MicrosoftServer | Self::DirectSsh => MICROSOFT_HOSTS,
             Self::CodeServer => OPEN_VSX_HOSTS,
+            Self::DirectSshCursor => CURSOR_HOSTS,
         }
     }
 }
@@ -293,6 +312,15 @@ mod tests {
             "marketplace.visualstudio.com"
         ));
         assert!(has(SystemReason::CodeServer, "open-vsx.org"));
+        // Each editor's hosts belong to its own reason.
+        assert!(has(
+            SystemReason::DirectSshCursor,
+            "cursor.blob.core.windows.net"
+        ));
+        assert!(!has(
+            SystemReason::DirectSsh,
+            "cursor.blob.core.windows.net"
+        ));
         assert!(!has(SystemReason::MicrosoftServer, "open-vsx.org"));
     }
 }

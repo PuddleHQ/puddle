@@ -13,13 +13,17 @@ use crate::error::blocking;
 use crate::routes::AppState;
 use crate::routes::settings::{load_global, load_workspace};
 
+/// What direct SSH gives a workspace: each desktop editor's server download and extension hosts.
+const DIRECT_SSH_REASONS: [SystemReason; 2] =
+    [SystemReason::DirectSsh, SystemReason::DirectSshCursor];
+
 /// The System managed reasons for a setup.
 ///
 /// - The browser editor's server is a global choice: Microsoft's server (only with a consent
 ///   that covers today's terms) gives Microsoft's download and Marketplace hosts to every workspace; the
 ///   bundled code-server gives Open VSX.
-/// - `direct_ssh`: the workspaces with direct SSH on, which get Microsoft's hosts for themselves
-///   (desktop VS Code installs Microsoft's server and extensions there).
+/// - `direct_ssh`: the workspaces with direct SSH on, which get the hosts of the desktop editors
+///   for themselves (VS Code installs Microsoft's server and extensions there; Cursor, its own).
 ///
 /// Nothing else is derived: a workspace used with another tool gets no host for VS Code's sake.
 #[must_use]
@@ -39,7 +43,7 @@ pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceName]) -> Sys
         plan.workspaces
             .entry(workspace.clone())
             .or_default()
-            .insert(SystemReason::DirectSsh);
+            .extend(DIRECT_SSH_REASONS);
     }
     plan
 }
@@ -177,7 +181,7 @@ mod tests {
             plan.workspaces
                 .get(&ssh)
                 .map(|r| r.iter().copied().collect::<Vec<_>>()),
-            Some(vec![SystemReason::DirectSsh])
+            Some(DIRECT_SSH_REASONS.to_vec())
         );
         assert!(!plan.everywhere.contains(&SystemReason::DirectSsh));
     }

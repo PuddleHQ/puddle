@@ -530,7 +530,7 @@ pub enum AuditRecord {
         /// The workspace, or `null` for every workspace.
         #[serde(alias = "sandbox_id")]
         workspace_id: Option<String>,
-        /// Reasons that now apply (`microsoft_server`, `code_server`, `direct_ssh`).
+        /// Reasons that now apply (`microsoft_server`, `code_server`, `direct_ssh`, `direct_ssh_cursor`).
         added: Vec<String>,
         /// Reasons that no longer apply.
         removed: Vec<String>,

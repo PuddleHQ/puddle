@@ -183,8 +183,12 @@ jobs:
       contents: read
       actions: write
     steps:
-      - name: Disk at start
-        run: df -h /
+      - name: disk at start (evidence, never a gate)
+        run: |
+          # Into the job summary too, and an annotation when the runner starts low: both outlive a dead runner.
+          { echo '### disk at start'; echo '```'; df -h /; echo "runner=${RUNNER_NAME} image=${ImageVersion:-unknown}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          free=$(df -Pk / | awk 'NR == 2 { print int($4 / 1048576) }')
+          [ "$free" -ge 60 ] || echo "::warning title=runner started low on disk::${free} GB free at start (a normal runner has 86 GB)"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the diff-coverage gate needs the base commit
@@ -194,6 +198,11 @@ jobs:
         run: ci/free-disk.sh
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
+      - name: disk after the toolchain (evidence, never a gate)
+        if: ${{ always() }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "rust, after checkout and toolchain"
       # The 6.7 GB entry is saved by every develop run whose restore was not an exact hit (rust-cache skips
       # the save itself on an exact hit), so a lost entry is back after the next push to develop instead
       # of after the next dependency change. A pull request restores it and never saves.
@@ -221,6 +230,11 @@ jobs:
       # No job builds for x86_64-pc-windows-msvc here (the cross-check is its own job without a Rust cache), but the
       # restore-key chain carried the directory from entry to entry: 415 MiB raw in the 7.0 GiB entry. Removing it
       # right after the restore keeps it out of the next save (rust-cache's post step packs `target` as it is then).
+      - name: disk after the Rust cache restore (evidence, never a gate)
+        if: ${{ always() }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "rust, after the Rust cache restore"
       - name: Keep the unused msvc target out of the saved entry (develop only)
         if: ${{ github.ref == 'refs/heads/develop' }}
         run: rm -rf target/x86_64-pc-windows-msvc
@@ -325,6 +339,11 @@ jobs:
       - name: clippy (linux)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy
+      - name: disk after clippy (evidence, never a gate)
+        if: ${{ always() }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "rust, after clippy"
       - name: cargo-deny (bans, licences, sources; advisories run in their own job)
         if: ${{ !cancelled() }}
         run: scripts/check.sh deny
@@ -382,6 +401,11 @@ jobs:
           PUDDLE_REQUIRE_VSOCK: "1"
           PUDDLE_REQUIRE_NON_ROOT: "1"
         run: |
+          # The guard logs free space during the build and tests and, under 5 GB, stops cargo and the tests with the
+          # sizes in the job summary, so a filling runner ends the job readable.
+          DISK_WATCH_KILL='cargo|rustc|llvm-cov|nextest' ci/disk-watch.sh guard coverage &
+          guard=$!
+          trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
           scripts/check.sh coverage
           {
             echo '### Coverage'
@@ -389,12 +413,18 @@ jobs:
             cargo llvm-cov report --summary-only
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: disk after the tests with coverage (evidence, never a gate)
+        if: ${{ always() }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "rust, after the tests with coverage"
       - name: upload test results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-test-results
           path: |
+            ${{ runner.temp }}/disk-watch-*.log
             target/nextest/ci/junit.xml
             target/lcov.info
             target/coverage-summary.json

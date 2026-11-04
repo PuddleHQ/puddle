@@ -104,8 +104,10 @@ jobs:
       # about 86 GB free, and a test job writes about 13 GB (measured 2026-10-31).
       - name: disk at start (evidence, never a gate)
         run: |
-          df -h /
-          echo "runner=${RUNNER_NAME} image=${ImageVersion:-unknown}"
+          # Into the job summary too, and an annotation when the runner starts low: both outlive a dead runner.
+          { echo '### disk at start'; echo '```'; df -h /; echo "runner=${RUNNER_NAME} image=${ImageVersion:-unknown}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          free=$(df -Pk / | awk 'NR == 2 { print int($4 / 1048576) }')
+          [ "$free" -ge 60 ] || echo "::warning title=runner started low on disk::${free} GB free at start (a normal runner has 86 GB)"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Runners of the pool sometimes start with a 72 GB root disk (14 GB free) instead of 145 GB; this removes
       # the preinstalled toolchains no job uses when under 60 GB is free (ci/free-disk.sh) and prints what it freed.
@@ -117,6 +119,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ci/should-run.sh vm-linux.yml --events schedule,workflow_dispatch
+      - name: disk after checkout (evidence, never a gate)
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "build, after checkout"
       - name: Toolchain (from rust-toolchain.toml)
         if: steps.changed.outputs.run == 'true'
         run: rustup toolchain install && rustc --version
@@ -143,9 +149,24 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/bundle"
           cp "$(ci/build-agent.sh --locked)" "$RUNNER_TEMP/bundle/puddle-agent"
+      - name: disk after the musl agent build (evidence, never a gate)
+        if: ${{ always() && steps.changed.outputs.run == 'true' }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "build, after the guest agent"
       - name: build the VM tests once (nextest archive)
         if: steps.changed.outputs.run == 'true'
-        run: cargo nextest archive $VM_CRATES --profile vm --locked --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
+        run: |
+          # The guard logs free space while the archive builds and, under 5 GB, stops cargo with the sizes in the summary.
+          DISK_WATCH_KILL='cargo|rustc' ci/disk-watch.sh guard build &
+          guard=$!
+          trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
+          cargo nextest archive $VM_CRATES --profile vm --locked --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
+      - name: disk after the archive build (evidence, never a gate)
+        if: ${{ always() && steps.changed.outputs.run == 'true' }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "build, after the nextest archive"
       - name: share the archive and the agent with the test jobs
         if: steps.changed.outputs.run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -185,13 +206,19 @@ jobs:
       # about 86 GB free, and a test job writes about 13 GB (measured 2026-10-31).
       - name: disk at start (evidence, never a gate)
         run: |
-          df -h /
-          echo "runner=${RUNNER_NAME} image=${ImageVersion:-unknown}"
+          # Into the job summary too, and an annotation when the runner starts low: both outlive a dead runner.
+          { echo '### disk at start'; echo '```'; df -h /; echo "runner=${RUNNER_NAME} image=${ImageVersion:-unknown}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          free=$(df -Pk / | awk 'NR == 2 { print int($4 / 1048576) }')
+          [ "$free" -ge 60 ] || echo "::warning title=runner started low on disk::${free} GB free at start (a normal runner has 86 GB)"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Runners of the pool sometimes start with a 72 GB root disk (14 GB free) instead of 145 GB; this removes
       # the preinstalled toolchains no job uses when under 60 GB is free (ci/free-disk.sh) and prints what it freed.
       - name: free disk space on a runner that starts low
         run: ci/free-disk.sh
+      - name: disk after checkout (evidence, never a gate)
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "partition ${{ matrix.partition }}, after checkout"
       - name: KVM preflight (infrastructure)
         id: kvm
         run: |
@@ -249,6 +276,11 @@ jobs:
             -E 'test(/(^|::)vm_browser_/)' --message-format oneline)
           echo "$listed"
           if [ -n "$listed" ]; then echo "needed=true" >> "$GITHUB_OUTPUT"; else echo "needed=false" >> "$GITHUB_OUTPUT"; fi
+      - name: disk after the archive download and extract (evidence, never a gate)
+        if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "partition ${{ matrix.partition }}, after the archive download and extract"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.browser.outputs.needed == 'true'
         with:
@@ -274,6 +306,11 @@ jobs:
             npx playwright install chromium
           fi
           echo "PUDDLE_VM_BROWSER_MODULES=$PWD/node_modules" >> "$GITHUB_ENV"
+      - name: disk after the browser client (evidence, never a gate)
+        if: ${{ always() && steps.browser.outputs.needed == 'true' }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "partition ${{ matrix.partition }}, after the browser client"
       # Every test on one runner ran 4 to 6 times slower than usual once (a slow host, not a hang): the
       # figures show a slow runner at the top of the log, before the tests it slows down.
       - name: runner speed (evidence, never a gate)
@@ -310,6 +347,11 @@ jobs:
               --partition hash:${{ matrix.partition }}/4 \
               -E "$FILTER"
           }
+          # The guard logs free space while the tests run and, under 5 GB, stops nextest with the sizes in the job
+          # summary: a runner that fills up ends this step readable, with the upload below still running.
+          DISK_WATCH_KILL='cargo-nextest' ci/disk-watch.sh guard "tests-${{ matrix.partition }}" &
+          guard=$!
+          trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
           if [ "$RUNS" = "1" ]; then
             # nextest writes to a file that the upload keeps (the job log is lost when the job is
             # cancelled), and tail shows it here as it grows, until nextest exits. The file exists
@@ -354,6 +396,11 @@ jobs:
               printf 'pid %s ppid %s rss %s MiB age %s s: %s\n' "$pid" "$ppid" "$((rss / 1024))" "$age" "$cmd"
             done
           } 2>&1 | tee "$RUNNER_TEMP/vm-processes.txt"
+      - name: disk after the VM tests (evidence, never a gate)
+        if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "partition ${{ matrix.partition }}, after the VM tests"
       # Names the tests that failed or were stopped as annotations on this job. The merge queue cancels
       # the run when a job fails, and a cancelled job keeps only its annotations, so this is where the
       # result job finds the name.
@@ -374,6 +421,7 @@ jobs:
             ${{ runner.temp }}/run-*.log
             ${{ runner.temp }}/vm-processes.txt
             ${{ runner.temp }}/runner-speed.txt
+            ${{ runner.temp }}/disk-watch-*.log
             ${{ runner.temp }}/pvm/**/logs/**
           retention-days: 14
           if-no-files-found: ignore

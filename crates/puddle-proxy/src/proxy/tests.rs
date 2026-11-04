@@ -1488,3 +1488,27 @@ async fn forwarding_one_request_counts_the_pipelined_bytes_it_drops() {
     guest_peer.read_to_end(&mut answer).await.unwrap();
     assert_eq!(answer, b"OK");
 }
+
+#[tokio::test]
+async fn forwarding_one_request_counts_pipelined_bytes_held_in_both_buffers() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+    let (guest, mut guest_peer) = tokio::io::duplex(65536);
+    let (upstream, mut upstream_peer) = tokio::io::duplex(4096);
+    let pipelined = vec![b'p'; 12_000];
+    guest_peer.write_all(b"hello").await.unwrap();
+    guest_peer.write_all(&pipelined).await.unwrap();
+    let server = tokio::spawn(async move {
+        let mut body = [0u8; 5];
+        upstream_peer.read_exact(&mut body).await.unwrap();
+        upstream_peer.write_all(b"OK").await.unwrap();
+    });
+    // A buffer larger than the one the body copy reads through keeps part of the pipelined bytes.
+    let mut client = BufReader::with_capacity(16 * 1024, guest);
+    client.fill_buf().await.unwrap();
+    let mut upstream = upstream;
+    let dropped = forward_one_request(&mut client, &mut upstream, Body::Length(5))
+        .await
+        .unwrap();
+    server.await.unwrap();
+    assert_eq!(dropped, pipelined.len());
+}

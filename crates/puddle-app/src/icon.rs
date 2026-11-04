@@ -175,6 +175,12 @@ mod tests {
         ) -> Result<(), puddle_api::SettingsRepoError> {
             Ok(())
         }
+        fn delete_workspace(
+            &self,
+            _: &puddle_types::WorkspaceName,
+        ) -> Result<(), puddle_api::SettingsRepoError> {
+            Ok(())
+        }
         fn load_app_icon(&self) -> Result<Option<Vec<u8>>, puddle_api::SettingsRepoError> {
             Err(puddle_api::SettingsRepoError::new("permission denied"))
         }

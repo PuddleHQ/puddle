@@ -311,6 +311,9 @@ mod tests {
         fn save_workspace(&self, _: &WorkspaceName, _: Value) -> Result<(), SettingsRepoError> {
             Ok(())
         }
+        fn delete_workspace(&self, _: &WorkspaceName) -> Result<(), SettingsRepoError> {
+            Ok(())
+        }
         fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
             Ok(None)
         }

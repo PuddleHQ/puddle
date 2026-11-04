@@ -4464,6 +4464,66 @@ async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
     host.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_workspace_does_not_inherit_the_settings_of_a_deleted_one_of_the_same_name() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    let name = WorkspaceName::new("acme").unwrap();
+    assert!(host.workspaces().direct_ssh_allowed(&name));
+    let file = rig
+        .dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces")
+        .join("acme.json");
+    assert!(file.is_file());
+    stop_and_wait(&api, &mut events, "acme").await;
+    delete_and_wait(&api, &mut events, "acme").await;
+    assert!(!file.exists(), "a delete removes the settings file");
+    create(&api, &mut events, "acme").await;
+    let view = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(view["direct_ssh"], false, "{view}");
+    assert!(!host.workspaces().direct_ssh_allowed(&name));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    let file = rig
+        .dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces")
+        .join("acme.json");
+    make_unwritable(&file);
+    delete_and_wait(&api, &mut events, "acme").await;
+    let problem = problem_of(&host, "settings:acme");
+    assert!(problem.title.contains("acme"), "{problem:?}");
+    assert!(problem.detail.contains("settings"), "{problem:?}");
+    let list = api.get("/api/workspaces").await;
+    assert!(!list.body.contains("acme"), "{}", list.body);
+    // Once the file is dealt with, the next delete of that name withdraws the notice.
+    std::fs::remove_dir_all(&file).unwrap();
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    delete_and_wait(&api, &mut events, "acme").await;
+    assert!(!has_problem(&host, "settings:acme"));
+    host.shutdown().await;
+}
+
 /// A session the runtime cannot serve ends the client's `ssh` with nothing to read, so the user
 /// is told through the event stream.
 #[tokio::test(flavor = "multi_thread")]

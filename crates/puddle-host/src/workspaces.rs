@@ -2720,6 +2720,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
+    /// Deletes the workspace's settings document, so one made later under the same name starts
+    /// from the defaults (direct SSH off). A failure is a notice (the file stays and the name
+    /// would inherit it).
+    fn forget_settings_file(&self, name: &WorkspaceName) {
+        let inner = &self.inner;
+        let key = problem_key("settings", name);
+        match inner.settings.delete_workspace(name) {
+            Ok(()) => inner.problems.clear(&key),
+            Err(e) => inner.problems.raise(Problem::new(
+                key,
+                format!("{name}'s settings were not deleted"),
+                format!(
+                    "{e}. A workspace made later with the name {name} would inherit them, direct \
+                     SSH included; delete the file by hand."
+                ),
+            )),
+        }
+    }
+
     /// Deletes what the browser editor kept for a deleted workspace, so one made later under the
     /// same name starts clean: the front's half of Microsoft's secret key and the windows' browser
     /// data. A failure is a notice (the data stays and the name would inherit it).
@@ -2773,6 +2792,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.name)));
+        self.forget_settings_file(&record.name);
         self.forget_browser_state(&record.name).await;
         Ok(())
     }

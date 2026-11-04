@@ -350,3 +350,89 @@ async fn unreadable_settings_leave_system_managed_as_it_was() {
     assert!(decide(&api, "box", "open-vsx.org").is_allow());
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn every_set_has_a_colour_and_your_own_can_be_chosen_and_changed() {
+    let api = start().await;
+    // Built-in sets come with their own colours, all different, in the typed form.
+    let list = api.get("/api/rule-sets").await.json();
+    let colours: Vec<String> = list["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            assert_eq!(s["fill"]["kind"], "solid", "{s}");
+            s["fill"]["color"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    assert!(colours.iter().all(|c| c.len() == 7 && c.starts_with('#')));
+    let mut distinct = colours.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(distinct.len(), colours.len());
+
+    // Left out: the set has the default of its number. Chosen: the choice, in lower case.
+    let plain = api
+        .send("POST", "/api/rule-sets", Some(&json!({"name": "Plain"})))
+        .await;
+    assert_eq!(plain.status, 201, "{}", plain.body);
+    assert_eq!(plain.json()["fill"]["kind"], "solid");
+    let chosen = api
+        .send(
+            "POST",
+            "/api/rule-sets",
+            Some(&json!({"name": "Chosen", "fill": {"kind": "solid", "color": "#0A6A85"}})),
+        )
+        .await;
+    assert_eq!(chosen.status, 201, "{}", chosen.body);
+    assert_eq!(
+        chosen.json()["fill"],
+        json!({"kind": "solid", "color": "#0a6a85"})
+    );
+    let id = chosen.json()["id"].as_str().unwrap().to_owned();
+
+    // A rename that names no colour keeps it; a new one replaces it and the list shows it.
+    let kept = api
+        .send(
+            "PUT",
+            &format!("/api/rule-sets/{id}"),
+            Some(&json!({"name": "Chosen too"})),
+        )
+        .await;
+    assert_eq!(kept.status, 200, "{}", kept.body);
+    assert_eq!(kept.json()["fill"]["color"], "#0a6a85");
+    let changed = api
+        .send(
+            "PUT",
+            &format!("/api/rule-sets/{id}"),
+            Some(&json!({"name": "Chosen too", "fill": {"kind": "solid", "color": "#c04f7a"}})),
+        )
+        .await;
+    assert_eq!(changed.json()["fill"]["color"], "#c04f7a");
+    let list = api.get("/api/rule-sets").await.json();
+    let shown = list["sets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id.as_str())
+        .unwrap();
+    assert_eq!(shown["fill"]["color"], "#c04f7a");
+
+    // Anything that is not a solid #rrggbb is refused.
+    for bad in [
+        json!({"kind": "solid", "color": "teal"}),
+        json!({"kind": "solid", "color": "#12345"}),
+        json!({"kind": "linear", "color": "#123456"}),
+        json!("#123456"),
+    ] {
+        let refused = api
+            .send(
+                "POST",
+                "/api/rule-sets",
+                Some(&json!({"name": "Bad", "fill": bad})),
+            )
+            .await;
+        assert_eq!(refused.status, 422, "{bad}: {}", refused.body);
+    }
+    api.running.shutdown().await;
+}

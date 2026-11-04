@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use puddle_types::RuleSetId;
+use puddle_types::{Fill, Rgb, RuleSetId};
 
 use crate::pattern::Pattern;
 use crate::rule::Effect;
@@ -50,6 +50,9 @@ pub struct BuiltInSet {
     /// What every entry of the set does. A set never mixes the two (R-36); a deny set names its
     /// source list, the list's licence and the date it was taken in `description` (R-36).
     pub effect: Effect,
+    /// The colour the set is shown in. A built-in set is read-only, so this is fixed; a set the
+    /// user made stores its own.
+    pub fill: Fill,
     /// The hosts it allows or denies.
     pub entries: &'static [CatalogueEntry],
 }
@@ -62,6 +65,7 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         description: "The public registries of npm, Yarn, PyPI, crates.io, Go modules, Maven Central, NuGet and RubyGems.",
         default_on: false,
         effect: Effect::Allow,
+        fill: Fill::solid(Rgb::new(0x2f, 0x80, 0xc9)),
         entries: &[
             entry!("registry.npmjs.org", "npm"),
             entry!("registry.yarnpkg.com", "Yarn"),
@@ -85,6 +89,7 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         description: "The Debian and Ubuntu package archives, for apt.",
         default_on: false,
         effect: Effect::Allow,
+        fill: Fill::solid(Rgb::new(0xc0, 0x4f, 0x7a)),
         entries: &[
             entry!("deb.debian.org", "Debian archive"),
             entry!("security.debian.org", "Debian security updates"),
@@ -100,6 +105,7 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         description: "github.com, its API, and the hosts that serve repository archives, raw files and release downloads.",
         default_on: false,
         effect: Effect::Allow,
+        fill: Fill::solid(Rgb::new(0x7a, 0x5b, 0xc7)),
         entries: &[
             entry!("github.com", "GitHub"),
             entry!("api.github.com", "GitHub API"),
@@ -351,6 +357,7 @@ mod tests {
         description: "Hosts from https://lists.example/trackers (MIT licence), taken 2026-11-04.",
         default_on: false,
         effect: Effect::Deny,
+        fill: Fill::solid(Rgb::new(0, 0, 0)),
         entries: &[
             entry!("tracker.example", "tracker"),
             entry!("*.ads.example", "ads"),
@@ -383,6 +390,14 @@ mod tests {
             deny_sets_missing_provenance(&[bare]),
             [("fixture-trackers", vec!["source", "licence", "date"])]
         );
+    }
+
+    #[test]
+    fn every_built_in_set_has_its_own_colour() {
+        let mut seen = HashSet::new();
+        for set in BUILT_IN_SETS {
+            assert!(seen.insert(set.fill), "{} repeats a colour", set.slug);
+        }
     }
 
     #[test]

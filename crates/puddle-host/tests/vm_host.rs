@@ -3104,14 +3104,16 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     editor_up(&runtime, &sandbox).await;
     let data = format!("/workspaces/{name}/.puddle/code-server");
     let password = check_editor_session(&runtime, &sandbox, &name).await;
-    // A new workspace's server runs as its session user, agent, and its folders are agent's.
+    // A new workspace's server runs as its session user, agent, and its folders are agent's. The
+    // match is anchored on the program so this script's own shell, whose command line holds the
+    // same words, is not counted.
     let owners = guest(
         &runtime,
         &sandbox,
         &format!(
             "for p in /proc/[0-9]*; do \
                case \"$(tr '\\0' ' ' <$p/cmdline 2>/dev/null)\" in \
-                 *code-server*--bind-addr*) stat -c 'server %U' $p;; esac; \
+                 /puddle/code-server/*--bind-addr*) stat -c 'server %U' $p;; esac; \
              done | sort -u; stat -c 'data %U' {data}/user-data {data}/extensions"
         ),
     )

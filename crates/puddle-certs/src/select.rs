@@ -414,6 +414,21 @@ mod tests {
     }
 
     #[test]
+    fn a_certificate_that_ends_this_second_is_still_synced() {
+        let edge = root("Edge Root", 2030);
+        let mut s = StoreSnapshot::new();
+        s.add(LM_ROOT, der(&edge));
+        let r = CorporateRoots::select(&s, now());
+        assert_eq!(names(&r), ["Edge Root"]);
+        let later = CorporateRoots::select(&s, now() + Duration::from_secs(1));
+        assert_eq!(names(&later), Vec::<&str>::new());
+        assert_eq!(
+            skipped(&later),
+            [("Edge Root".to_owned(), SkipReason::Expired)]
+        );
+    }
+
+    #[test]
     fn a_disallowed_key_counts_even_in_a_reissued_certificate() {
         let original = root("Rotated Root", 2040);
         // Same key, new certificate (e.g. re-issued with a longer validity).

@@ -61,6 +61,7 @@ export const TYPES: readonly { value: AuditType; label: string }[] = [
   { value: "rule_set_switched", label: "Rule set switched" },
   { value: "rule_set_changed", label: "Rule set updated by Puddle" },
   { value: "system_managed_changed", label: "System managed changed" },
+  { value: "workspace_op", label: "Workspace operation" },
   { value: "audit_trimmed", label: "Log trimmed" },
 ];
 
@@ -70,6 +71,8 @@ export const OUTCOMES: readonly { value: AuditOutcome; label: string }[] = [
   { value: "pending", label: "Waiting" },
   { value: "blocked", label: "Blocked" },
   { value: "expired", label: "Closed" },
+  { value: "succeeded", label: "Succeeded" },
+  { value: "failed", label: "Failed" },
 ];
 
 const typeLabels = new Map(TYPES.map((t) => [t.value, t.label]));
@@ -294,6 +297,65 @@ const SYSTEM_REASONS: Record<string, string> = {
   code_server: "code-server",
   direct_ssh: "direct SSH",
 };
+
+/** How each operation reads when it went through and when it failed. */
+const WORKSPACE_OPS: Record<
+  Schemas["WorkspaceOpKind"],
+  { done: string; failed: string }
+> = {
+  create: { done: "Created", failed: "Create failed" },
+  delete: { done: "Deleted", failed: "Delete failed" },
+  rename: { done: "Renamed", failed: "Rename failed" },
+  start: { done: "Started", failed: "Start failed" },
+  stop: { done: "Stopped", failed: "Stop failed" },
+  identity_created: {
+    done: "Identity added",
+    failed: "Adding an identity failed",
+  },
+  identity_updated: {
+    done: "Identity changed",
+    failed: "Changing an identity failed",
+  },
+  identity_deleted: {
+    done: "Identity deleted",
+    failed: "Deleting an identity failed",
+  },
+  identity_default_set: {
+    done: "Default identity changed",
+    failed: "Changing the default identity failed",
+  },
+  identities_changed: {
+    done: "Identities changed",
+    failed: "Changing identities failed",
+  },
+  repo_added: {
+    done: "Repository added",
+    failed: "Adding a repository failed",
+  },
+  repo_switched: {
+    done: "Repository switches changed",
+    failed: "Changing repository switches failed",
+  },
+  repo_removed: {
+    done: "Repository removed",
+    failed: "Removing a repository failed",
+  },
+};
+
+/** What was done and how it ended, then the plain sentence the record carries and who asked. */
+function workspaceOpDetail(
+  record: Extract<AuditRecord, { type: "workspace_op" }>,
+): string {
+  const words = WORKSPACE_OPS[record.op];
+  const label =
+    words === undefined
+      ? record.op
+      : record.outcome === "failed"
+        ? words.failed
+        : words.done;
+  const note = record.detail === null ? "" : `: ${record.detail}`;
+  return `${label}${note}, by ${record.actor}`;
+}
 
 function reasonList(reasons: readonly string[]): string {
   return reasons.map((r) => SYSTEM_REASONS[r] ?? r).join(", ");
@@ -543,6 +605,18 @@ export function describe(record: AuditRecord): RowView {
         ]
           .filter((part) => part !== "")
           .join("; "),
+      };
+    case "workspace_op":
+      return {
+        ts: record.ts,
+        workspace: record.workspace_id,
+        type,
+        destination: null,
+        outcome:
+          record.outcome === "failed"
+            ? { label: "Failed", tone: "deny" }
+            : { label: "Succeeded", tone: "allow" },
+        detail: workspaceOpDetail(record),
       };
     case "audit_trimmed":
       return {

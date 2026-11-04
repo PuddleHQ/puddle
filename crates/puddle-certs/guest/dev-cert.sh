@@ -10,9 +10,12 @@
 # boot.sh runs this as a plan step at every boot. It never fails the boot over a tool: a .NET
 # that refuses the certificate is reported on one line and the other tools keep working. Each
 # .NET command gets 12 s (a boot has 60 s in all; the commands take about a second). It is
-# idempotent: the import is skipped while the certificate is the one imported last time.
-# POSIX sh. PUDDLE_ROOT relocates the paths for the unit tests only (boot.sh passes it on empty);
-# PUDDLE_DEV_HOME is the home the .NET tooling uses (root's by default).
+# idempotent: the import is skipped while the certificate is the one imported last time into the
+# same home.
+# POSIX sh. PUDDLE_ROOT relocates the paths for the unit tests only (boot.sh passes it on empty).
+# boot.sh sets PUDDLE_SESSION_HOME and PUDDLE_SESSION_OWNER (<uid>:<gid>) to the session user's:
+# .NET keeps the certificate in that home, so the import goes there and its files are given to the
+# user, as Kestrel run by that user reads them (root's home and owner when not set).
 set -u
 
 ROOT=${PUDDLE_ROOT:-}
@@ -42,13 +45,15 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
     have=$(cksum "$CRT" | cut -d ' ' -f 1,2 | tr ' ' -)
 fi
+home=${PUDDLE_SESSION_HOME:-/root}
+owner=${PUDDLE_SESSION_OWNER:-0:0}
+have="$have $home"
 if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$have" ]; then
     echo "certificate unchanged; .NET already has it"
     exit 0
 fi
 rm -f "$STAMP"
 
-home=${PUDDLE_DEV_HOME:-/root}
 trust_dir=$home/.aspnet/dev-certs/trust
 work=$(mktemp -d "${TMPDIR:-/tmp}/puddle-dev-cert.XXXXXX") || {
     echo "certificate in place; .NET not set up (no temporary folder)"
@@ -95,6 +100,20 @@ else
     dotnet dev-certs https --trust >/dev/null 2>&1 || :
 fi
 run "dev-certs --check --trust" dotnet dev-certs https --check --trust
+
+# What .NET wrote below the home as root belongs to the session user. Under the unit tests' fake
+# root (not root) the request is recorded in $PUDDLE_ROOT/owned instead.
+if [ "$owner" != 0:0 ]; then
+    for d in "$home/.dotnet" "$home/.aspnet"; do
+        [ -e "$ROOT$d" ] || continue
+        if [ -n "$ROOT" ]; then
+            printf '%s %s\n' "$owner" "$d" >>"$ROOT/owned"
+        elif ! chown -R -h "$owner" "$d"; then
+            echo "certificate in place; .NET set up, but $d could not be given to the session user"
+            exit 0
+        fi
+    done
+fi
 
 printf '%s\n' "$have" >"$STAMP"
 echo "certificate imported into .NET and trusted for its check"

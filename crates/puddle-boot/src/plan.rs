@@ -598,7 +598,7 @@ impl BootPlanBuilder {
                 reason: "has more rules than a plan holds",
             });
         }
-        files.push(git_config(self.git.as_ref(), &self.git_rules));
+        files.push(git_config(&self));
         files.extend(git_author_files(&self.git_rules));
         let port = self.agent.as_ref().map_or(DEFAULT_AGENT_PORT, |a| a.port);
         files.extend(session_files(port, self.session_user));
@@ -778,14 +778,20 @@ fn git_author_name(n: usize) -> String {
 /// Puddle's git settings: `core.fsync=committed` always (ADR 0006: no lost commits on a VM
 /// kill), the identity when set, then one `includeIf` per remote glob of each author rule, in
 /// order (git lets the last match win), each pointing at that rule's author file. Never a
-/// credential helper.
-fn git_config(identity: Option<&GitIdentity>, rules: &[GitAuthorRule]) -> GuestFile {
+/// credential helper. With a session user other than root, `safe.directory = *`: the checkouts
+/// belong to that user, and a root shell (`sudo -i`) would otherwise find every one refused as
+/// "dubious ownership". The check guards one user from another's repository, and in a guest
+/// whose only user becomes root at will there is no other user to guard.
+fn git_config(plan: &BootPlanBuilder) -> GuestFile {
     let mut text = String::from(GENERATED);
     text.push_str("[core]\n\tfsync = committed\n");
-    if let Some(id) = identity {
+    if !plan.session_user.is_root() {
+        text.push_str("[safe]\n\tdirectory = *\n");
+    }
+    if let Some(id) = &plan.git {
         text.push_str(&git_user(id));
     }
-    for (i, rule) in rules.iter().enumerate() {
+    for (i, rule) in plan.git_rules.iter().enumerate() {
         for glob in &rule.globs {
             text.extend([
                 "[includeIf \"hasconfig:remote.*.url:",
@@ -950,6 +956,15 @@ mod tests {
         assert_eq!(
             text(&without_id, GIT_CONFIG_GUEST),
             format!("{GENERATED}[core]\n\tfsync = committed\n")
+        );
+        let as_agent = BootPlan::builder(&ImageConfig::default())
+            .session_user(SessionUser::Agent)
+            .build()
+            .unwrap();
+        assert_eq!(
+            text(&as_agent, GIT_CONFIG_GUEST),
+            format!("{GENERATED}[core]\n\tfsync = committed\n[safe]\n\tdirectory = *\n"),
+            "root may work in the session user's checkouts"
         );
         let id = GitIdentity::new(r#"Ada "the" \Countess"#, "ada@example.org").unwrap();
         assert_eq!(id.name(), r#"Ada "the" \Countess"#);

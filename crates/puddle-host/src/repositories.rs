@@ -302,7 +302,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 &record.id,
                 repository.url.as_str(),
                 &repository.directory,
-                None,
+                self.booted_user(&record.name).await,
             )
             .await;
         match cloned {

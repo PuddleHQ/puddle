@@ -37,7 +37,7 @@ use puddle_types::{
     Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceName,
 };
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
-use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH};
+use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH, PREPARE_SH};
 use rustls::pki_types::pem::PemObject;
 use serde_json::json;
 use support::{Api, TestDevCert, ended, hermetic_options};
@@ -153,6 +153,8 @@ impl RuntimeFactory for FakeFactory {
 #[derive(Default)]
 struct Guest {
     commands: Mutex<Vec<String>>,
+    /// Who each command ran as, `<kind> <user>` (`-` when it named none), in order.
+    users: Mutex<Vec<String>>,
     /// The boot plan (stdin) of every run of the boot hook, with the sandbox it ran in.
     plans: Mutex<Vec<(String, Vec<u8>)>>,
     /// The environment the sandbox was made with, at every run of the boot hook.
@@ -228,7 +230,7 @@ impl Guest {
         }
         let kind = match (r.program.as_str(), r.args.first().map(String::as_str)) {
             ("/bin/sh", Some("/puddle/boot.sh")) => "boot",
-            ("mkdir", _) => "layout",
+            ("sh", _) if second == Some(PREPARE_SH) => "layout",
             ("sh", _) if r.args.get(2).map(String::as_str) == Some("puddle-start-folder") => {
                 "start-folder"
             }
@@ -243,10 +245,7 @@ impl Guest {
             ("sync", _) => "sync",
             _ => return None,
         };
-        self.commands
-            .lock()
-            .unwrap()
-            .push(format!("{} {kind}", ctx.sandbox()));
+        self.record(ctx, kind, r);
         if kind == "boot" {
             self.boot_envs.lock().unwrap().push(ctx.env().clone());
             self.plans
@@ -276,8 +275,9 @@ impl Guest {
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
                 "",
-                "mkdir: cannot create directory: read-only file system",
+                "cannot create /workspaces/x/.puddle: read-only file system",
             ),
+            "layout" => ExecOutput::new(0, "D\n", ""),
             "locks" => match *self.locks_answer.lock().unwrap() {
                 Some((code, out)) => ExecOutput::new(code, out, ""),
                 None => ExecOutput::new(0, "D\n", ""),
@@ -441,8 +441,30 @@ impl Guest {
         ExecOutput::new(0, format!("{said}puddle-boot: ready\n"), "")
     }
 
+    /// Notes that `r` ran in `ctx`'s sandbox as a command of `kind`, and as whom.
+    fn record(&self, ctx: &ExecContext<'_>, kind: &str, r: &ExecRequest) {
+        self.commands
+            .lock()
+            .unwrap()
+            .push(format!("{} {kind}", ctx.sandbox()));
+        self.users
+            .lock()
+            .unwrap()
+            .push(format!("{kind} {}", r.user.as_deref().unwrap_or("-")));
+    }
+
     fn commands(&self) -> Vec<String> {
         self.commands.lock().unwrap().clone()
+    }
+
+    /// The users the commands of `kind` ran as, in order.
+    fn users_of(&self, kind: &str) -> Vec<String> {
+        self.users
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|u| u.strip_prefix(kind)?.strip_prefix(' ').map(str::to_owned))
+            .collect()
     }
 
     /// Every clone's arguments, joined.
@@ -2029,6 +2051,28 @@ async fn a_list_that_cannot_be_saved_changes_nothing_and_says_so() {
     assert!(reply.body.contains("nothing changed"), "{}", reply.body);
     let ws = api.get("/api/workspaces/adds").await.json();
     assert_eq!(ws["repositories"].as_array().unwrap().len(), 1, "{ws}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_user_switch_that_cannot_be_saved_or_comes_at_shutdown_changes_nothing() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "who").await;
+    let body = json!({"session_user": "root"}).to_string();
+    let switch = || api.put("/api/workspaces/who/session-user", &body);
+    make_unwritable(&list_path(&rig));
+    let reply = switch().await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("was not changed"), "{}", reply.body);
+    let ws = api.get("/api/workspaces/who").await.json();
+    assert_eq!(ws["session_user"], "agent", "{ws}");
+    host.workspaces().close();
+    let reply = switch().await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("shutting down"), "{}", reply.body);
     host.shutdown().await;
 }
 
@@ -3677,6 +3721,93 @@ async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
         "stopped"
     );
     again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_workspace_runs_as_agent_and_a_switch_to_root_applies_at_the_next_start() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let got = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(got["session_user"], "agent", "{got}");
+
+    // The hook adds the user, Puddle's per-user files are in its home, the volume is given to it
+    // (as root) and the clone runs as it.
+    let plan = String::from_utf8(rig.guest.plan_bytes(0)).unwrap();
+    assert!(
+        plan.contains("\npuddle_session_user 'agent' '/home/agent'\n"),
+        "{plan}"
+    );
+    assert!(
+        plan.contains("/home/agent/.gradle/init.d/puddle-proxy.gradle"),
+        "{plan}"
+    );
+    assert!(!plan.contains("/root/.gradle"), "{plan}");
+    assert_eq!(rig.guest.users_of("layout"), ["root"]);
+    assert_eq!(rig.guest.users_of("clone"), ["agent"]);
+
+    // Switched to root while it runs: saved at once, and the running guest keeps agent.
+    let put = api
+        .put(
+            "/api/workspaces/acme/session-user",
+            &json!({"session_user": "root"}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(put.json()["session_user"], "root");
+    let refused = api
+        .put(
+            "/api/workspaces/acme/session-user",
+            &json!({"session_user": "vscode"}).to_string(),
+        )
+        .await;
+    assert_eq!(refused.status, 422, "{}", refused.body);
+    let saved: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(rig.dir.path().join("data/workspaces.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["workspaces"][0]["session_user"], "root", "{saved}");
+
+    // The next start boots as root: no user line, root's home, the volume back to root.
+    let stop = api.post("/api/workspaces/acme/stop", "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let start = api.post("/api/workspaces/acme/start", "").await;
+    assert_eq!(start.status, 202, "{}", start.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let plan = String::from_utf8(rig.guest.plan_bytes(rig.guest.boots() - 1)).unwrap();
+    assert!(!plan.contains("puddle_session_user"), "{plan}");
+    assert!(
+        plan.contains("/root/.gradle/init.d/puddle-proxy.gradle"),
+        "{plan}"
+    );
+    assert_eq!(rig.guest.users_of("layout"), ["root", "root"]);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_saved_before_session_users_keeps_root() {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let book = json!({"version": 2, "workspaces": [{
+        "id": "old", "name": "old", "repositories": [], "start_folder": null,
+        "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+    }]});
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("old").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    let host = rig.start().await;
+    let got = api(&host).get("/api/workspaces/old").await.json();
+    assert_eq!(got["session_user"], "root", "{got}");
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -8837,7 +8968,7 @@ async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at
     ] {
         assert!(env.contains(line), "{line} in {env}");
     }
-    assert!(env.contains("export SSL_CERT_DIR='/root/.aspnet/dev-certs/trust:"));
+    assert!(env.contains("export SSL_CERT_DIR='/home/agent/.aspnet/dev-certs/trust:"));
 
     // After a renewal the next start (the guest boots again) carries the new certificate.
     rig.dev_cert.renew();

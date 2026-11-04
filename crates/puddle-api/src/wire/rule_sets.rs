@@ -105,7 +105,7 @@ pub struct RuleSetEntry {
     pub pattern: String,
     /// Exact or suffix.
     pub pattern_kind: PatternKind,
-    /// Allow or deny (built-in sets only allow).
+    /// Allow or deny (a built-in set's entries all do the same; your own set may mix them).
     pub effect: Effect,
     /// What it is for (built-in sets); empty for your own entries.
     pub note: String,

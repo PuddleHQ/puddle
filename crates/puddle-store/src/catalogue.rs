@@ -2,13 +2,17 @@
 //! The rule sets that ship with Puddle, and the hosts Puddle allows because of the user's own
 //! setup ("System managed"), as data (`docs/spec/rules.md` §7).
 //!
-//! Both only ever allow (R-36): Puddle ships no deny list. Their entries are checked by the tests
-//! below (R-4, no duplicates) and loaded into memory; nothing is copied into the database, so an
-//! update of Puddle updates them.
+//! A built-in set is single-kind (R-36): every entry allows or every entry denies, as
+//! [`BuiltInSet::effect`] says. System managed only allows. Entries are checked by the tests below
+//! (R-4, no duplicates) and loaded into memory; nothing is copied into the database, so an update
+//! of Puddle updates them.
 
 use std::fmt;
 
+use puddle_types::RuleSetId;
+
 use crate::pattern::Pattern;
+use crate::rule::Effect;
 
 /// One entry of a built-in set or of a System managed reason: a pattern as the user would type
 /// it (`example.com`, `*.example.com`) and what it is for.
@@ -43,7 +47,10 @@ pub struct BuiltInSet {
     /// Whether the set is on where the user never switched it. Every built-in set ships off
     /// (R-1: a fresh install has decided nothing).
     pub default_on: bool,
-    /// The hosts it allows.
+    /// What every entry of the set does. A set never mixes the two (R-36); a deny set names its
+    /// source list, the list's licence and the date it was taken in `description` (R-36).
+    pub effect: Effect,
+    /// The hosts it allows or denies.
     pub entries: &'static [CatalogueEntry],
 }
 
@@ -54,6 +61,7 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         name: "Package registries",
         description: "The public registries of npm, Yarn, PyPI, crates.io, Go modules, Maven Central, NuGet and RubyGems.",
         default_on: false,
+        effect: Effect::Allow,
         entries: &[
             entry!("registry.npmjs.org", "npm"),
             entry!("registry.yarnpkg.com", "Yarn"),
@@ -76,6 +84,7 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         name: "Debian and Ubuntu packages",
         description: "The Debian and Ubuntu package archives, for apt.",
         default_on: false,
+        effect: Effect::Allow,
         entries: &[
             entry!("deb.debian.org", "Debian archive"),
             entry!("security.debian.org", "Debian security updates"),
@@ -90,6 +99,7 @@ pub const BUILT_IN_SETS: &[BuiltInSet] = &[
         name: "GitHub",
         description: "github.com, its API, and the hosts that serve repository archives, raw files and release downloads.",
         default_on: false,
+        effect: Effect::Allow,
         entries: &[
             entry!("github.com", "GitHub"),
             entry!("api.github.com", "GitHub API"),
@@ -246,6 +256,22 @@ impl fmt::Display for SystemReason {
     }
 }
 
+/// The engine entries of `sets` (R-36), each carrying its set's effect.
+pub(crate) fn set_entries(sets: &[BuiltInSet]) -> Vec<crate::engine::SetEntry> {
+    sets.iter()
+        .flat_map(|set| {
+            patterns(set.entries)
+                .into_iter()
+                .map(|pattern| crate::engine::SetEntry {
+                    set: RuleSetId::BuiltIn(set.slug),
+                    pattern,
+                    workspace: None,
+                    effect: set.effect,
+                })
+        })
+        .collect()
+}
+
 /// `entries` as patterns. The catalogue is checked by tests, so a pattern that doesn't parse is
 /// a build-time bug; it is skipped (and logged) rather than taking the store down.
 pub(crate) fn patterns(entries: &'static [CatalogueEntry]) -> Vec<Pattern> {
@@ -366,5 +392,86 @@ mod tests {
         ));
         assert!(!has(SystemReason::DirectSshZed, "plugins.jetbrains.com"));
         assert!(!has(SystemReason::MicrosoftServer, "open-vsx.org"));
+    }
+
+    /// The provenance rule (R-36): a deny set's description names where its list came from, the
+    /// list's licence and the date. Returns what is missing.
+    fn provenance_gaps(set: &BuiltInSet) -> Vec<&'static str> {
+        let text = set.description;
+        let dated = text.as_bytes().windows(10).any(|w| {
+            w.iter().enumerate().all(|(i, b)| match i {
+                4 | 7 => *b == b'-',
+                _ => b.is_ascii_digit(),
+            })
+        });
+        let mut gaps = Vec::new();
+        if !text.contains("https://") {
+            gaps.push("source");
+        }
+        if !text.contains("licence") {
+            gaps.push("licence");
+        }
+        if !dated {
+            gaps.push("date");
+        }
+        gaps
+    }
+
+    const TRACKER_FIXTURE: BuiltInSet = BuiltInSet {
+        slug: "fixture-trackers",
+        name: "Fixture trackers",
+        description: "Hosts from https://lists.example/trackers (MIT licence), taken 2026-11-04.",
+        default_on: false,
+        effect: Effect::Deny,
+        entries: &[
+            entry!("tracker.example", "tracker"),
+            entry!("*.ads.example", "ads"),
+        ],
+    };
+
+    /// The deny sets among `sets` that lack provenance, with what each lacks.
+    fn deny_sets_missing_provenance(sets: &[BuiltInSet]) -> Vec<(&'static str, Vec<&'static str>)> {
+        sets.iter()
+            .filter(|set| set.effect == Effect::Deny)
+            .map(|set| (set.slug, provenance_gaps(set)))
+            .filter(|(_, gaps)| !gaps.is_empty())
+            .collect()
+    }
+
+    fn no_gaps() -> Vec<(&'static str, Vec<&'static str>)> {
+        Vec::new()
+    }
+
+    #[test]
+    fn r36_every_deny_set_names_its_source_licence_and_date() {
+        assert_eq!(deny_sets_missing_provenance(BUILT_IN_SETS), no_gaps());
+        assert_eq!(deny_sets_missing_provenance(&[TRACKER_FIXTURE]), no_gaps());
+        assert_eq!(provenance_gaps(&TRACKER_FIXTURE), Vec::<&str>::new());
+        let bare = BuiltInSet {
+            description: "Tracker hosts.",
+            ..TRACKER_FIXTURE
+        };
+        assert_eq!(
+            deny_sets_missing_provenance(&[bare]),
+            [("fixture-trackers", vec!["source", "licence", "date"])]
+        );
+    }
+
+    #[test]
+    fn r36_a_built_in_sets_entries_all_carry_its_effect() {
+        for effect in [Effect::Allow, Effect::Deny] {
+            let set = BuiltInSet {
+                effect,
+                ..TRACKER_FIXTURE
+            };
+            let entries = set_entries(&[set]);
+            assert_eq!(entries.len(), 2);
+            assert!(entries.iter().all(|e| e.effect == effect));
+            assert!(
+                entries
+                    .iter()
+                    .all(|e| e.set == RuleSetId::BuiltIn("fixture-trackers"))
+            );
+        }
     }
 }

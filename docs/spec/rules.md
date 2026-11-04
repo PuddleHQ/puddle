@@ -379,6 +379,13 @@ the API. *Added 2026-10-08.*
   | Direct SSH is on for a workspace, for JetBrains Gateway | `download.jetbrains.com`, `download-cdn.jetbrains.com`, `download-cf.jetbrains.com`, `cache-redirector.jetbrains.com`, `data.services.jetbrains.com` (IDE backend), `plugins.jetbrains.com`, `downloads.marketplace.jetbrains.com` (plugins) | that workspace |
   | Direct SSH is on for a workspace, for Zed | `github.com`, `release-assets.githubusercontent.com` (remote server download) | that workspace |
 
+  Open VSX is in force from the first start, on a fresh install with no settings stored: the
+  default editor is code-server, so every workspace, including one whose browser editor was never
+  opened, can install an extension from the editor's extension view with no rule added and no
+  request raised. The registry's API (`open-vsx.org`) and its file host (`openvsx.eclipsecontent.org`,
+  where a download is redirected) are both listed, because an install needs both. A user who
+  does not want it adds an own deny (R-39).
+
   Telemetry, experiment and certificate-status hosts are not in it: they are ordinary traffic
   (R-1). When the reasons change, one `system_managed_changed` record per scope says which reasons
   were added and removed, and open requests the new hosts decide are closed by `system` (R-37).

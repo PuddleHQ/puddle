@@ -51,17 +51,25 @@ paths() {
     if [ -n "${DISK_WATCH_PATHS:-}" ]; then printf '%s\n' "$DISK_WATCH_PATHS" | tr ':' '\n'; fi
 }
 
+# du that falls back to sudo, for root-only dirs (/var/crash, docker); a user without sudo gets what it can read.
+du_run() { # <du args...>
+    local out
+    out=$(timeout 40 du "$@" 2>/dev/null)
+    if [ -z "$out" ] && [ "${#sudo_cmd[@]}" -gt 0 ]; then out=$(timeout 40 "${sudo_cmd[@]}" du "$@" 2>/dev/null); fi
+    printf '%s\n' "$out"
+}
+
 sizes() { # MiB and path of each existing dir over 50 MiB, biggest first
     paths | sort -u | while IFS= read -r p; do
         [ -e "$p" ] || continue
-        mib=$(timeout 20 "${sudo_cmd[@]}" du -xsm "$p" 2>/dev/null | cut -f1)
+        mib=$(du_run -xsm "$p" | cut -f1)
         [ -n "$mib" ] && [ "$mib" -ge 50 ] && printf '%8s MiB  %s\n' "$mib" "$p"
     done | sort -rn
 }
 
 deep() { # what the targeted list can miss: the top level of the disk, and space held by deleted files
     echo "-- top level of $root (MiB)"
-    timeout 40 "${sudo_cmd[@]}" du -xm -d1 "$root" 2>/dev/null | sort -rn | head -12
+    du_run -xm -d1 "$root" | sort -rn | head -12
     if command -v lsof >/dev/null 2>&1; then
         echo "-- files deleted but still open (lsof +L1)"
         timeout 20 "${sudo_cmd[@]}" lsof -nP +L1 2>/dev/null | head -10

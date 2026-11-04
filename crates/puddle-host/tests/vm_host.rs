@@ -3158,12 +3158,13 @@ echo "marker=$(cat /var/lib/docker/puddle-marker 2>/dev/null)""#
     )
 }
 
-/// The value of `key=` in the guest's reply.
+/// The value of `key=` in the guest's reply, empty when the line is missing (the assertions on it
+/// then fail with the whole reply in their message).
 fn said<'a>(reply: &'a str, key: &str) -> &'a str {
     reply
         .lines()
         .find_map(|l| l.strip_prefix(&format!("{key}=")))
-        .unwrap_or_else(|| panic!("no {key} in {reply}"))
+        .unwrap_or_default()
 }
 
 /// Docker's data folder is a disk of the sandbox itself: ext4, neither the root nor the workspace

@@ -374,13 +374,20 @@ the API. *Added 2026-10-08.*
   |---|---|---|
   | The browser editor runs Microsoft's VS Code server (consent granted for the terms Puddle shows) | `update.code.visualstudio.com`, `vscode.download.prss.microsoft.com`, `marketplace.visualstudio.com`, `*.gallery.vsassets.io`, `*.gallerycdn.vsassets.io` | every workspace |
   | The browser editor runs the bundled code-server (the default) | `open-vsx.org`, `openvsx.eclipsecontent.org` | every workspace |
-  | Direct SSH is on for a workspace | the five Microsoft hosts | that workspace |
+  | Direct SSH is on for a workspace, for desktop VS Code | the five Microsoft hosts | that workspace |
+  | Direct SSH is on for a workspace, for Cursor | `cursor.blob.core.windows.net` (server download), `marketplace.cursorapi.com`, `marketplace.cursor-cdn.com` (extensions) | that workspace |
+  | Direct SSH is on for a workspace, for JetBrains Gateway | `download.jetbrains.com`, `download-cdn.jetbrains.com`, `download-cf.jetbrains.com`, `cache-redirector.jetbrains.com`, `data.services.jetbrains.com` (IDE backend), `plugins.jetbrains.com`, `downloads.marketplace.jetbrains.com` (plugins) | that workspace |
+  | Direct SSH is on for a workspace, for Zed | `github.com`, `release-assets.githubusercontent.com` (remote server download) | that workspace |
 
   Telemetry, experiment and certificate-status hosts are not in it: they are ordinary traffic
   (R-1). When the reasons change, one `system_managed_changed` record per scope says which reasons
   were added and removed, and open requests the new hosts decide are closed by `system` (R-37).
   Direct SSH is the workspace's effective `direct_ssh` setting (its own value, else the global
   default).
+  Direct SSH has no per-editor choice: switching it on gives the workspace every desktop editor's
+  list above, each shown on the Rules screen with its own reason, and an own deny of any host
+  overrides it (R-39). The AI, sign-in, licence and telemetry hosts of these editors are not in
+  the lists.
 - **R-42 A set's allow reaches a local destination only like a wildcard.** After resolving a name
   a set allowed, an address in a local category counts as reached by a wildcard rule (R-14): with
   "wildcards reach local addresses" off, it needs an own exact allow of the name or the address,

@@ -156,7 +156,7 @@ async fn a_refusal_of_the_injector_is_a_response_on_that_stream_only() {
         if view.path() == "/denied" {
             refuse(403, "not-on-the-list")
         } else {
-            terminate_support::inject("x")
+            inject("x")
         }
     });
     let rig = RigBuilder::new(&pki)

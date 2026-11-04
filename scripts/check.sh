@@ -91,19 +91,14 @@ lower_ok() {
     export COVERAGE_BASELINE_LOWER_OK
 }
 
-# Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
-# extra arguments. Needs a base; without one it fails.
-covprobe() {
-    echo "COVPROBE $1 lcov-covered-lines-sha $(awk -F'[:,]' '/^SF/{f=$2} /^DA/{print f":"$2":"($3>0)}' "$2" | sort | sha256sum | cut -c1-16) lines $(grep -c '^DA' "$2") hit $(grep '^DA' "$2" | awk -F, '$2>0' | wc -l)"
-    for d in "${CARGO_TARGET_DIR:-target}"/llvm-cov-target "${CARGO_TARGET_DIR:-target}"/diff-coverage-fast; do [ -d "$d" ] && echo "COVPROBE $1 du-mb $d $(du -xsm "$d" | cut -f1)"; done
-    echo "COVPROBE $1 time $(date +%s)"
-}
 # Removes what a coverage report would read from an earlier run in the shared instrumented directory: the test
 # executables (the libraries stay built) and the profile files. `cargo llvm-cov nextest --no-report` cleans neither.
 coverage_scrub() {
     find "$1/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
     find "$1/llvm-cov-target" -maxdepth 1 -name '*.profraw' -type f -delete 2>/dev/null || true
 }
+# Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
+# extra arguments. Needs a base; without one it fails.
 diff_coverage() {
     label=$1 lcov=$2 exts=$3
     shift 3
@@ -370,7 +365,6 @@ run_gate() {
         node ui/scripts/full-coverage.ts --lcov "$target/lcov.info" \
             --crates scripts/full-coverage-crates.txt --exclusions scripts/full-coverage-exclusions.txt
         diff_coverage "diff-coverage (rust)" "$target/lcov.info" .rs
-        covprobe coverage "$target/lcov.info"
         ;;
     coverage-determinism)
         # Two coverage runs of the 100 % crates must execute the same lines (slow, not in a gate set; see
@@ -422,7 +416,6 @@ run_gate() {
         # library stays built. The lcov file is this gate's own, never the `coverage` gate's `lcov.info`.
         target=${CARGO_TARGET_DIR:-target}
         lcov=$target/diff-coverage-fast.lcov
-        echo "COVPROBE fast start $(date +%s)"
         echo "diff-coverage-fast: tests with coverage for:$packages"
         coverage_scrub "$target"
         trap 'coverage_scrub "$target"' EXIT
@@ -438,7 +431,6 @@ run_gate() {
         rc=0
         report=$(diff_coverage "diff-coverage-fast (rust)" "$lcov" .rs 2>&1) || rc=$?
         printf '%s\n' "$report" | grep -v 'matched nothing in this diff' || true
-        covprobe fast "$lcov"
         echo "diff-coverage-fast: $(printf '%s\n' "$report" | grep -c 'matched nothing in this diff' || true) exclusion note(s) for untouched code left out"
         if [ "$rc" != 0 ]; then
             echo "diff-coverage-fast: only the tests of$packages ran; a line another crate's tests run is reported here and cleared by the full coverage gate" >&2

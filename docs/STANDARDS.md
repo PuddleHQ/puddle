@@ -402,7 +402,9 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   crates whose `.rs` files the change touches (`scripts/diff-coverage-crates.sh` names them) with coverage, then the same
   diff-coverage tool on that report, so an added line no test runs fails in about half a minute (3 crates, warm build) to
   a few minutes, and not after the whole `pre-push` set. It builds in the `coverage` gate's instrumented directory (`<target>/llvm-cov-target`), so the third-party crates
-  are compiled once and not once per gate (about 8 GB less disk on a warm lane). A report reads every test executable
+  are compiled once and not once per gate (about 4.4 GB less disk on a warm lane). It selects the whole workspace like
+  the `coverage` gate and limits only the tests that run (a nextest filterset on the touched crates): a `-p` selection
+  resolves other features for some third-party crates, so their builds would hash differently and be built twice. A report reads every test executable
   and profile file in a directory, and one left by an earlier run, built from older sources or run by other tests,
   brings its old line numbers or counts, so the gate removes both before it runs and again when it ends; the
   libraries stay built. Its report is `<target>/diff-coverage-fast.lcov`. A change to `Cargo.toml`, `Cargo.lock`

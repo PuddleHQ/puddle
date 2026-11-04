@@ -12,6 +12,7 @@ use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -885,12 +886,12 @@ impl Rig {
         );
     }
 
-    pub(crate) async fn guest(&self) -> Guest {
-        Guest::connect(&self.route, Arc::clone(&self.ca)).await
+    pub(crate) fn guest(&self) -> Guest {
+        Guest::new(&self.route, Arc::clone(&self.ca))
     }
 
-    pub(crate) async fn other_guest(&self) -> Guest {
-        Guest::connect(&self.other_route, Arc::clone(&self.other_ca)).await
+    pub(crate) fn other_guest(&self) -> Guest {
+        Guest::new(&self.other_route, Arc::clone(&self.other_ca))
     }
 
     /// Waits until the proxy has seen `count` of its connections to real servers end, so a test
@@ -912,30 +913,76 @@ impl Rig {
 }
 
 pub(crate) struct Guest {
-    pub(crate) control: Control,
-    driver: JoinHandle<()>,
+    link: Arc<Link>,
     ca: Arc<WorkspaceCa>,
     in_container: bool,
 }
 
 impl Drop for Guest {
     fn drop(&mut self) {
-        self.driver.abort();
+        self.link.close();
+    }
+}
+
+/// The guest's yamux session to its route, dialled when the first stream is opened and that
+/// stream opened at once, as the agent does. The host drops a session that sends nothing within
+/// its first-byte timeout (30 s), so a session dialled before a slow tool starts would be gone by
+/// the time the tool connects.
+struct Link {
+    endpoint: PathBuf,
+    control: tokio::sync::OnceCell<Control>,
+    driver: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Link {
+    /// A new stream on the session, or `None` once the session is gone.
+    async fn open_stream(&self) -> Option<StreamHandle> {
+        let control = self
+            .control
+            .get_or_init(|| async {
+                let conn = puddle_ipc::connect(&self.endpoint).await.unwrap();
+                let mut session = Session::new_client(conn, client_config());
+                let control = session.control();
+                let driver =
+                    tokio::spawn(async move { while let Some(Ok(_)) = session.next().await {} });
+                *self.driver.lock().unwrap_or_else(PoisonError::into_inner) = Some(driver);
+                control
+            })
+            .await;
+        control.clone().open_stream().await.ok()
+    }
+
+    fn close(&self) {
+        if let Some(driver) = self
+            .driver
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            driver.abort();
+        }
     }
 }
 
 impl Guest {
-    async fn connect(route: &Route, ca: Arc<WorkspaceCa>) -> Self {
-        let conn = puddle_ipc::connect(route.endpoint().path()).await.unwrap();
-        let mut session = Session::new_client(conn, client_config());
-        let control = session.control();
-        let driver = tokio::spawn(async move { while let Some(Ok(_)) = session.next().await {} });
+    fn new(route: &Route, ca: Arc<WorkspaceCa>) -> Self {
         Self {
-            control,
-            driver,
+            link: Arc::new(Link {
+                endpoint: route.endpoint().path().to_owned(),
+                control: tokio::sync::OnceCell::new(),
+                driver: Mutex::new(None),
+            }),
             ca,
             in_container: false,
         }
+    }
+
+    /// A new stream into the route, as the agent opens one for each connection it relays.
+    pub(crate) async fn open_stream(&self) -> StreamHandle {
+        self.link
+            .open_stream()
+            .await
+            .expect("the guest's session to the route is up")
     }
 
     /// A client the agent marks as being in a container: its `CONNECT`s carry the origin header.
@@ -964,7 +1011,7 @@ impl Guest {
 
     /// Opens a `CONNECT authority` tunnel; the status line and the tunnel's stream.
     pub(crate) async fn connect_to(&mut self, authority: &str) -> (u16, BufReader<StreamHandle>) {
-        let mut stream = self.control.open_stream().await.unwrap();
+        let mut stream = self.open_stream().await;
         let origin = if self.in_container {
             format!("{ORIGIN_HEADER}: {CONTAINER}\r\n")
         } else {
@@ -1170,18 +1217,38 @@ pub(crate) fn captured_logs() -> String {
 }
 
 // ---------------------------------------------------------------------------------------------
-// A loopback TCP bridge into the guest's route, for clients that are separate programs.
+// Loopback TCP bridges into the guest's route, for clients that are separate programs.
 
 impl Guest {
+    /// Listens on a loopback port and relays each connection byte for byte over a new stream into
+    /// the route, as the agent relays the guest's proxy port: the program on the other end speaks
+    /// to the proxy itself (`CONNECT`, or plain HTTP).
+    pub(crate) async fn proxy_port(&self) -> (u16, JoinHandle<()>) {
+        let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let link = Arc::clone(&self.link);
+        let task = tokio::spawn(async move {
+            while let Ok((mut tcp, _)) = listener.accept().await {
+                let Some(mut stream) = link.open_stream().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
+                });
+            }
+        });
+        (port, task)
+    }
+
     /// Listens on a loopback port; each connection becomes `CONNECT authority` on the route and
     /// is then relayed byte for byte, as if the program had opened the tunnel itself.
     pub(crate) async fn bridge(&self, authority: &'static str) -> (u16, JoinHandle<()>) {
         let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let mut control = self.control.clone();
+        let link = Arc::clone(&self.link);
         let task = tokio::spawn(async move {
             while let Ok((mut tcp, _)) = listener.accept().await {
-                let Ok(mut stream) = control.open_stream().await else {
+                let Some(mut stream) = link.open_stream().await else {
                     return;
                 };
                 tokio::spawn(async move {

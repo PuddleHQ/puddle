@@ -294,6 +294,7 @@ async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
         assert_eq!(reply.status, 202, "{}", reply.body);
     }
     assert!(!decide(&api, "ssh", "marketplace.visualstudio.com").is_allow());
+    assert!(!decide(&api, "ssh", "cursor.blob.core.windows.net").is_allow());
     let reply = api
         .send(
             "PUT",
@@ -304,14 +305,34 @@ async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert!(decide(&api, "ssh", "marketplace.visualstudio.com").is_allow());
     assert!(!decide(&api, "other", "marketplace.visualstudio.com").is_allow());
+    // Cursor's hosts come with direct SSH too, for that workspace only.
+    for host in [
+        "cursor.blob.core.windows.net",
+        "marketplace.cursorapi.com",
+        "marketplace.cursor-cdn.com",
+        "download-cdn.jetbrains.com",
+        "downloads.marketplace.jetbrains.com",
+        "release-assets.githubusercontent.com",
+    ] {
+        assert!(decide(&api, "ssh", host).is_allow(), "{host}");
+        assert!(!decide(&api, "other", host).is_allow(), "{host}");
+    }
     let list = api.get("/api/rule-sets").await.json();
-    assert!(
-        list["system_managed"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|h| { h["reason"] == "direct_ssh" && h["workspace"] == "ssh" })
-    );
+    for reason in [
+        "direct_ssh",
+        "direct_ssh_cursor",
+        "direct_ssh_jetbrains",
+        "direct_ssh_zed",
+    ] {
+        assert!(
+            list["system_managed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| { h["reason"] == reason && h["workspace"] == "ssh" }),
+            "{reason}"
+        );
+    }
     // The global default on: a workspace made afterwards gets them too.
     api.send(
         "PUT",
@@ -328,6 +349,7 @@ async fn direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
     )
     .await;
     assert!(!decide(&api, "ssh", "marketplace.visualstudio.com").is_allow());
+    assert!(!decide(&api, "ssh", "cursor.blob.core.windows.net").is_allow());
     api.running.shutdown().await;
 }
 

@@ -67,7 +67,7 @@ async fn a_stand_in_is_swapped_toward_its_host_and_only_the_real_server_sees_the
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(
@@ -127,7 +127,7 @@ async fn a_git_style_basic_value_is_decoded_swapped_and_encoded_again() {
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let basic = STANDARD.encode(format!("x-access-token:{stand_in}"));
     client
@@ -157,7 +157,7 @@ async fn a_stand_in_added_while_a_connection_is_open_applies_from_its_next_reque
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let (stand_in, entry) = entry("API_KEY", REAL_KEY, &["bound.test"]);
     let ask = format!("GET /x HTTP/1.1\r\nHost: bound.test\r\nX-Api-Key: {stand_in}\r\n\r\n");
@@ -193,7 +193,7 @@ async fn a_stand_in_toward_another_decrypted_host_goes_out_unchanged_and_is_flag
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("elsewhere.test:443", None).await.unwrap();
     client
         .send(
@@ -237,7 +237,7 @@ async fn another_workspaces_stand_in_is_just_a_string() {
     assert_ne!(stand_in, their_stand_in, "random per workspace and secret");
 
     // The first workspace's stand-in, sent from the second workspace.
-    let mut guest = rig.other_guest().await;
+    let mut guest = rig.other_guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(
@@ -278,8 +278,8 @@ async fn a_stand_in_in_plain_http_is_never_swapped() {
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let guest = rig.guest().await;
-    let stream = guest.control.clone().open_stream().await.unwrap();
+    let guest = rig.guest();
+    let stream = guest.open_stream().await;
     let mut stream = tokio::io::BufReader::new(stream);
     stream
         .get_mut()
@@ -313,7 +313,7 @@ async fn a_server_whose_certificate_is_not_accepted_never_gets_the_real_value() 
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(
@@ -344,7 +344,7 @@ async fn a_stand_in_and_a_credential_binding_work_side_by_side() {
         .injector(TestInjector::always())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(
@@ -383,7 +383,7 @@ async fn stand_ins_in_the_path_or_an_escaped_query_go_out_unchanged_and_the_reco
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(format!("GET {target} HTTP/1.1\r\nHost: bound.test\r\n\r\n").as_bytes())
@@ -417,7 +417,7 @@ async fn a_request_whose_target_holds_no_stand_in_leaves_the_record_list_empty()
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"GET /v1/models?key=%70uddle-secret-not-ours&a=%zz HTTP/1.1\r\nHost: bound.test\r\n\r\n")

@@ -26,7 +26,7 @@ use puddle_certs::{
     SOURCES, StoreSnapshot,
 };
 use puddle_compute::ImageConfig;
-use puddle_types::GuestFile;
+use puddle_types::{GuestFile, SessionUser};
 
 /// The agent binary as the merge tool: reads the spec and leaves the file as it is.
 const MERGE_TOOL_STUB: &str = "#!/bin/sh\ncat >/dev/null\necho unchanged\n";
@@ -80,13 +80,19 @@ impl Guest {
             .tempdir()
             .unwrap();
         let root = dir.path().to_path_buf();
-        for d in ["proc/sys/fs/inotify", "proc/sys/kernel/random", "etc"] {
+        for d in [
+            "proc/sys/fs/inotify",
+            "proc/sys/kernel/random",
+            "proc/sys/net/ipv4",
+            "etc",
+        ] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
         for f in [
             "fs/inotify/max_user_instances",
             "fs/inotify/max_user_watches",
             "kernel/unprivileged_bpf_disabled",
+            "net/ipv4/ip_unprivileged_port_start",
         ] {
             std::fs::write(root.join("proc/sys").join(f), "0\n").unwrap();
         }
@@ -157,8 +163,13 @@ impl Guest {
     }
 
     fn boot_files(&self, trust: &GuestTrust, files: Vec<GuestFile>) -> Output {
+        self.boot_as(trust, files, SessionUser::Root)
+    }
+
+    fn boot_as(&self, trust: &GuestTrust, files: Vec<GuestFile>, user: SessionUser) -> Output {
         let mut b = BootPlan::builder(&ImageConfig::default())
             .no_agent()
+            .session_user(user)
             .files(files)
             .env(&trust.env());
         for step in trust.boot_steps() {
@@ -601,6 +612,52 @@ fn the_development_certificate_reaches_the_guest_and_net_is_set_up_once_per_cert
                 .contains(&body(&cert)[..60])
         );
     }
+}
+
+#[test]
+fn net_gets_the_certificate_in_the_session_users_home_and_again_when_the_user_changes() {
+    assert!(has_openssl());
+    let dev = dev_cert();
+    let g = Guest::new(&shells()[0], "", true);
+    write_exec(&g.root.join("stubs/dotnet"), DOTNET_STUB);
+    g.write("/etc/passwd", "root:x:0:0:root:/root:/bin/sh\n");
+    g.write("/etc/group", "root:x:0:\n");
+    // What .NET leaves in the home, which the step gives to the user.
+    std::fs::create_dir_all(g.p("/home/agent/.dotnet/corefx")).unwrap();
+    let t = with_dev(&dev).for_user(SessionUser::Agent);
+    let out = g.boot_as(&t, t.guest_files(), SessionUser::Agent);
+    assert!(out.status.success(), "{}", show(&out));
+    let log = dotnet_log(&g);
+    assert_eq!(log.len(), 3, "{log:?}");
+    assert!(
+        log[0].contains(
+            "HOME=/home/agent SSL_CERT_DIR=/home/agent/.aspnet/dev-certs/trust:/etc/ssl/certs"
+        ),
+        "{log:?}"
+    );
+    assert!(
+        g.read(ENV_FILE_GUEST).contains(
+            "export SSL_CERT_DIR='/home/agent/.aspnet/dev-certs/trust:/etc/ssl/certs:/usr/lib/ssl/certs'"
+        ),
+        "the sessions look in the same folder"
+    );
+    let owned = g.read("/owned");
+    assert!(
+        owned.lines().any(|l| l == "1000:1000 /home/agent/.dotnet"),
+        "{owned}"
+    );
+    assert!(
+        !owned.contains("/home/agent/.aspnet"),
+        "not made, so not given: {owned}"
+    );
+
+    // The same certificate for root: imported again, into root's home.
+    let t = with_dev(&dev);
+    let out = g.boot_as(&t, t.guest_files(), SessionUser::Root);
+    assert!(out.status.success(), "{}", show(&out));
+    let log = dotnet_log(&g);
+    assert_eq!(log.len(), 6, "{log:?}");
+    assert!(log[3].contains("HOME=/root "), "{log:?}");
 }
 
 #[test]

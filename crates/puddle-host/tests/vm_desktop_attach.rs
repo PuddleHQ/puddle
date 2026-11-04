@@ -289,15 +289,22 @@ mod attach {
             text(&off)
         );
 
-        // On: ssh logs in as root through the entry, with Puddle's own file and through the
-        // user's file's include line.
+        // On: ssh logs in as the new workspace's session user, `agent`, who becomes root with
+        // sudo, through the entry, with Puddle's own file and through the user's file's include
+        // line.
         direct(true).await;
         let first_endpoint = host.workspaces().ssh_endpoint(&workspace).await.unwrap();
-        let login = ssh(&["-F", &cfg, &alias, "id -un; echo from-the-guest"]).await;
+        let login = ssh(&[
+            "-F",
+            &cfg,
+            &alias,
+            "id -un; echo \"$HOME\"; sudo -n id -un; echo from-the-guest",
+        ])
+        .await;
         assert!(login.status.success(), "{}", text(&login));
         let said = String::from_utf8_lossy(&login.stdout).into_owned();
         assert!(
-            said.starts_with("root\n") && said.contains("from-the-guest"),
+            said.starts_with("agent\n/home/agent\nroot\n") && said.contains("from-the-guest"),
             "{said}"
         );
         let uc = user_config.to_str().unwrap();

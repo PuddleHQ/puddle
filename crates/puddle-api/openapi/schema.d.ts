@@ -1404,6 +1404,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/session-user": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sets the guest user the workspace's sessions, browser editor and clones run as: `agent`
+         *     (passwordless `sudo`) or `root`. It applies at the next start; a running workspace keeps the
+         *     user it started with until then. A workspace that is being created or deleted answers 409.
+         */
+        put: operations["put_session_user"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/shell-init": {
         parameters: {
             query?: never;
@@ -1630,7 +1651,7 @@ export interface components {
          * @description What an audit record says happened, for the `outcome` filter.
          * @enum {string}
          */
-        AuditOutcome: "allow" | "deny" | "pending" | "blocked" | "expired";
+        AuditOutcome: "allow" | "deny" | "pending" | "blocked" | "expired" | "succeeded" | "failed";
         /** @description A page of the audit log: newest first for a read without `after`, oldest first with it. */
         AuditPage: {
             /** @description The records. */
@@ -1992,6 +2013,24 @@ export interface components {
             /** @description The workspace; `null` for every workspace. */
             workspace_id: string | null;
         } | {
+            /** @description Who asked: `cli`, `ui`, `api` or `system`. */
+            actor: string;
+            /** @description Why it failed, or what the operation touched; `null` when there is nothing to add. */
+            detail: string | null;
+            /** @description What was done. */
+            op: components["schemas"]["WorkspaceOpKind"];
+            /** @description How it ended. */
+            outcome: components["schemas"]["WorkspaceOpOutcome"];
+            /**
+             * Format: int64
+             * @description Epoch ms.
+             */
+            ts: number;
+            /** @enum {string} */
+            type: "workspace_op";
+            /** @description The workspace; `null` for a change that belongs to none (an identity). */
+            workspace_id: string | null;
+        } | {
             /**
              * Format: int64
              * @description Records deleted.
@@ -2098,7 +2137,7 @@ export interface components {
          * @description The record types, for the `type` filter.
          * @enum {string}
          */
-        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "request_rule_created" | "request_rule_deleted" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "audit_trimmed";
+        AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "request_rule_created" | "request_rule_deleted" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "workspace_op" | "audit_trimmed";
         /** @description One built-in icon, drawn for the Settings screen to preview. */
         BuiltInIcon: {
             /** @description The choice that selects it. */
@@ -3995,7 +4034,7 @@ export interface components {
         };
         /** @description One entry of a rule set. */
         RuleSetEntry: {
-            /** @description Allow or deny (built-in sets only allow). */
+            /** @description Allow or deny (a built-in set's entries all do the same; your own set may mix them). */
             effect: components["schemas"]["Effect"];
             /**
              * Format: int64
@@ -4106,6 +4145,25 @@ export interface components {
          * @enum {string}
          */
         ServerChoice: "code_server" | "microsoft";
+        /**
+         * @description Who sessions run as in the guest. The default is the one for a new workspace; a boot plan that
+         *     names no user stays `root` (see `puddle-boot`), so nothing changes for a caller that never asks.
+         *
+         *     ```
+         *     use puddle_types::SessionUser;
+         *     assert_eq!(SessionUser::default(), SessionUser::Agent);
+         *     assert_eq!(SessionUser::Agent.name(), "agent");
+         *     assert_eq!(SessionUser::Agent.home(), "/home/agent");
+         *     assert_eq!(SessionUser::Root.home(), "/root");
+         *     ```
+         * @enum {string}
+         */
+        SessionUser: "agent" | "root";
+        /** @description `PUT /api/workspaces/{id}/session-user`. */
+        SessionUserRequest: {
+            /** @description `agent` (passwordless `sudo`, `sudo -i` for a root shell) or `root`. */
+            session_user: components["schemas"]["SessionUser"];
+        };
         /**
          * @description Which level an effective value came from.
          * @enum {string}
@@ -4320,7 +4378,7 @@ export interface components {
          * @description Why Puddle allows a System managed host: a choice you made.
          * @enum {string}
          */
-        SystemReason: "microsoft_server" | "code_server" | "direct_ssh";
+        SystemReason: "microsoft_server" | "code_server" | "direct_ssh" | "direct_ssh_cursor" | "direct_ssh_jetbrains" | "direct_ssh_zed";
         /**
          * @description The colour theme of Puddle's window.
          * @enum {string}
@@ -4437,6 +4495,13 @@ export interface components {
             /** @description The repositories Puddle manages for it, in the order they were added (0 to 100). */
             repositories: components["schemas"]["WorkspaceRepository"][];
             /**
+             * @description The guest user its sessions, browser editor and clones run as: `agent` (with passwordless
+             *     `sudo`) for a workspace made since non-root sessions came in, `root` for one made before or
+             *     switched back. A change applies at the next start (`PUT
+             *     /api/workspaces/{id}/session-user`).
+             */
+            session_user: components["schemas"]["SessionUser"];
+            /**
              * @description Why `direct_ssh` is only a guess: the settings could not be read, so it counts as off.
              *     `null` when the settings were read.
              */
@@ -4493,6 +4558,16 @@ export interface components {
          * @example my-project
          */
         WorkspaceName: string;
+        /**
+         * @description What a `workspace_op` record is about.
+         * @enum {string}
+         */
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "repo_added" | "repo_switched" | "repo_removed";
+        /**
+         * @description How a workspace operation ended.
+         * @enum {string}
+         */
+        WorkspaceOpOutcome: "succeeded" | "failed";
         /**
          * @description The long operation a workspace is in the middle of; progress comes as
          *     `workspace_progress` events.
@@ -11324,6 +11399,96 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_session_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionUserRequest"];
+            };
+        };
+        responses: {
+            /** @description the workspace with its new session user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is being created or deleted */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not `agent` or `root` */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

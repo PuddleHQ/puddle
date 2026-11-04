@@ -6,7 +6,7 @@
 //! good. Every swap takes the lock below, so they run one after another.
 
 use std::panic::PanicHookInfo;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 static SWAP: Mutex<()> = Mutex::new(());
 
@@ -25,14 +25,28 @@ pub fn chain(extra: impl Fn(&PanicHookInfo<'_>) + Send + Sync + 'static) {
     }));
 }
 
-/// Runs `make` with panic messages switched off, returning `None` if it panicked. The earlier
-/// hook is back when this returns, and no other swap happens meanwhile.
+/// Runs `make` with this thread's panic messages switched off, returning `None` if it panicked.
+/// A panic on any other thread meanwhile still goes to the earlier hook, so a crash report is not
+/// lost. The earlier hook is back when this returns.
+///
+/// `make` must not call `chain` or `silenced`: the swap lock is held for the whole call and is not
+/// reentrant, so that would deadlock.
 pub fn silenced<T>(make: impl FnOnce() -> T) -> Option<T> {
     let _swap = lock();
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
+    let caller = std::thread::current().id();
+    let previous = Arc::new(std::panic::take_hook());
+    let forward = Arc::clone(&previous);
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().id() != caller {
+            forward(info);
+        }
+    }));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(make));
-    std::panic::set_hook(previous);
+    // Taking our hook out drops its clone, so `previous` has one owner again.
+    drop(std::panic::take_hook());
+    if let Some(hook) = Arc::into_inner(previous) {
+        std::panic::set_hook(hook);
+    }
     result.ok()
 }
 
@@ -45,10 +59,23 @@ mod tests {
     #[test]
     fn a_chained_hook_runs_and_survives_a_silenced_call() {
         static RAN: AtomicBool = AtomicBool::new(false);
+        static OTHER: AtomicBool = AtomicBool::new(false);
         chain(|_| RAN.store(true, Ordering::SeqCst));
         assert_eq!(silenced(|| -> u8 { panic!("quiet") }), None);
         assert!(!RAN.load(Ordering::SeqCst), "silenced hides the panic");
         assert_eq!(silenced(|| 7), Some(7));
+
+        // A panic on another thread during `silenced` still reaches the earlier hook.
+        chain(|_| OTHER.store(true, Ordering::SeqCst));
+        let got = silenced(|| {
+            let _ = std::thread::spawn(|| panic!("other thread")).join();
+            3
+        });
+        assert_eq!(got, Some(3));
+        assert!(
+            OTHER.load(Ordering::SeqCst),
+            "another thread's panic is not hidden"
+        );
         let _ = std::thread::spawn(|| panic!("loud")).join();
         assert!(RAN.load(Ordering::SeqCst), "the chained hook came back");
         drop(std::panic::take_hook());

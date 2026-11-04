@@ -59,6 +59,68 @@ const EXPLORER_READY: &str =
 const EXPLORER_ROWS: &str = "[...document.querySelectorAll('.explorer-folders-view .monaco-list-row')]\
      .map(r => ({ name: r.querySelector('.label-name')?.textContent, level: r.getAttribute('aria-level') }))";
 
+/// What the window shows when its explorer does not get ready: where it is, the explorer's rows,
+/// the side bar's view and any dialog or notification in front of it.
+const WINDOW_STATE: &str = r"(() => {
+  const text = (e, n) => (e?.textContent || '').replace(/\s+/g, ' ').slice(0, n);
+  const all = (selector, n) => [...document.querySelectorAll(selector)].map(e => text(e, n));
+  return {
+    href: location.href,
+    rows: all('.explorer-folders-view .monaco-list-row', 80),
+    sidebar: text(document.querySelector('.part.sidebar .title-label'), 80),
+    panes: all('.part.sidebar .pane-header', 80),
+    welcome: all('.part.sidebar .welcome-view-content', 300),
+    dialogs: all('.monaco-dialog-box', 400),
+    notifications: all('.notifications-toasts .notification-list-item', 300),
+    status: text(document.querySelector('.part.statusbar'), 400),
+  };
+})()";
+
+/// The guest's side of a window whose explorer does not get ready: the editor server's command
+/// line, the multi-root file, the volume, and the end of the server's own logs.
+const SERVER_STATE: &str = r#"
+ps -eo pid,etimes,args | grep -e '[c]ode-server' | cut -c1-2000
+data=$(ps -eo args= | grep -o -e '--user-data-dir [^ ]*' | head -n 1 | cut -d' ' -f2)
+for f in /workspaces/*/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; }; done
+echo "== volume"; ls -a /workspaces/*/
+for f in $(find "$data/logs" -type f 2>/dev/null | sort | tail -n 12); do echo "== $f"; tail -n 30 "$f"; done
+echo "== agent"; tail -n 30 /run/puddle/agent.log
+true
+"#;
+
+/// Waits in `sandbox`'s newest page until its explorer lists rows and reads `result`. When it does
+/// not, the failure carries what the window and the guest show, so a timeout names its cause.
+async fn explorer(
+    shell: &ShellStandIn,
+    runtime: &MsbRuntime,
+    sandbox: &WorkspaceName,
+    result: &str,
+) -> Value {
+    let page = shell.page(sandbox.as_str());
+    let request = PageRequest::new("", EXPLORER_READY)
+        .result(result)
+        .budget(WORKBENCH_BUDGET);
+    let outcome = shell.browser.lock().await.wait(page, &request).await;
+    match outcome {
+        Ok(outcome) => outcome.result,
+        Err(e) => {
+            let state = PageRequest::new("", "true")
+                .result(WINDOW_STATE)
+                .budget(PAGE_BUDGET);
+            let window = shell.browser.lock().await.wait(page, &state).await;
+            let window = match window {
+                Ok(outcome) => outcome.result.to_string(),
+                Err(e) => format!("(not read: {e})"),
+            };
+            // Logged before the guest is asked: a guest that does not answer fails the test in
+            // `guest_within`, and the window's state must not be lost with it.
+            tracing::error!(workspace = %sandbox, error = %e, %window, "the explorer did not get ready");
+            let server = guest_within(runtime, sandbox, SERVER_STATE, PAGE_BUDGET).await;
+            panic!("{sandbox}'s explorer did not get ready; the guest:\n{server}");
+        }
+    }
+}
+
 /// Waits until the editor server answers its health check.
 const EDITOR_UP: &str = "for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
 
@@ -272,7 +334,8 @@ async fn sign_in(front: SocketAddr, workspace: &str, password: &str) -> Result<S
 const COUNT: &str = r#"
 hosts=$(ps -eo args= | grep -c -e '--type=extensionHos[t]' || true)
 pty=$(ps -eo args= | grep -c -e '--type=ptyHos[t]' || true)
-echo "hosts=$hosts pty=$pty health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
+shells=$(ps -eo args= | grep -c -e 'shellIntegration-bas[h]' || true)
+echo "hosts=$hosts pty=$pty shells=$shells health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/healthz)"
 "#;
 
 /// Parses `key=<n>` out of [`COUNT`]'s line.
@@ -392,9 +455,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         "{origin}"
     );
     assert!(answer.get("url").is_none_or(Value::is_null), "{answer}");
-    let rows = shell
-        .wait(&name, EXPLORER_READY, EXPLORER_ROWS, WORKBENCH_BUDGET)
-        .await;
+    let rows = explorer(&shell, &runtime, &sandbox, EXPLORER_ROWS).await;
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     let password = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
@@ -445,6 +506,21 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         count(line, "pty") >= 1
     })
     .await;
+    // No "Trust Folder" prompt stands in the way (`--disable-workspace-trust`): the terminal's
+    // shell started although nobody clicked anything.
+    let shell_counts = counts_until(&runtime, &sandbox, "the terminal's shell", |line| {
+        count(line, "shells") >= 1
+    })
+    .await;
+    assert!(shell_counts.contains("health=200"), "{shell_counts}");
+    shell
+        .wait(
+            &name,
+            "!document.querySelector('.workspace-trust-editor, .monaco-dialog-box')",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
 
     // The window closes: the front counts none, and the cleanup ends the real extension host and
     // leaves the terminal host and the server.
@@ -473,9 +549,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
 
     // Opened again within the grace: the kept session, no second sign-in, a new extension host.
     attach().await;
-    shell
-        .wait(&name, EXPLORER_READY, "true", WORKBENCH_BUDGET)
-        .await;
+    explorer(&shell, &runtime, &sandbox, "true").await;
     assert_eq!(
         shell.wait(&name, "true", WHERE, PAGE_BUDGET).await["login"],
         false
@@ -516,9 +590,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     assert_ne!(after, before, "the new boot kept the old boot's password");
     let sign_ins = 2;
     attach().await;
-    let rows = shell
-        .wait(&name, EXPLORER_READY, EXPLORER_ROWS, WORKBENCH_BUDGET)
-        .await;
+    let rows = explorer(&shell, &runtime, &sandbox, EXPLORER_ROWS).await;
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     assert_eq!(*shell.sign_ins.lock().unwrap(), sign_ins);
@@ -581,7 +653,7 @@ const cookie = (n) => document.cookie.split('; ').find((c) => c.startsWith(n + '
   const answer = await fetch(keyPath, { method: 'POST' });
   const key = [...new Uint8Array(await answer.arrayBuffer())].map((b) => b.toString(16).padStart(2, '0')).join('');
   const socket = new WebSocket('ws://' + location.host + '/socket');
-  socket.onopen = () => { window.state = { build: ${JSON.stringify(build)}, token: !!cookie('vscode-tkn'), keyPath, key }; };
+  socket.onopen = () => { window.state = { build: ${JSON.stringify(build)}, argv: ${JSON.stringify(process.argv.slice(2))}, token: !!cookie('vscode-tkn'), keyPath, key }; };
 })();
 </script>`;
 
@@ -784,6 +856,15 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
         .await;
     assert_eq!(first["build"], BUILD_A, "{first}");
     assert_eq!(first["token"], true, "{first}");
+    // The folder is trusted at the server: the real server's flag, so no prompt holds the shell.
+    assert!(
+        first["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a == "--disable-workspace-trust"),
+        "{first}"
+    );
     assert_eq!(first["keyPath"], "/_puddle/mint-key", "{first}");
     let key = first["key"].as_str().unwrap().to_owned();
     assert_eq!(key.len(), 64, "{first}");

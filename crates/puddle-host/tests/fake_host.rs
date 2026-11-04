@@ -37,7 +37,7 @@ use puddle_types::{
     Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceName,
 };
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
-use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH};
+use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH, PREPARE_SH};
 use rustls::pki_types::pem::PemObject;
 use serde_json::json;
 use support::{Api, TestDevCert, ended, hermetic_options};
@@ -153,6 +153,8 @@ impl RuntimeFactory for FakeFactory {
 #[derive(Default)]
 struct Guest {
     commands: Mutex<Vec<String>>,
+    /// Who each command ran as, `<kind> <user>` (`-` when it named none), in order.
+    users: Mutex<Vec<String>>,
     /// The boot plan (stdin) of every run of the boot hook, with the sandbox it ran in.
     plans: Mutex<Vec<(String, Vec<u8>)>>,
     /// The environment the sandbox was made with, at every run of the boot hook.
@@ -228,7 +230,7 @@ impl Guest {
         }
         let kind = match (r.program.as_str(), r.args.first().map(String::as_str)) {
             ("/bin/sh", Some("/puddle/boot.sh")) => "boot",
-            ("mkdir", _) => "layout",
+            ("sh", _) if second == Some(PREPARE_SH) => "layout",
             ("sh", _) if r.args.get(2).map(String::as_str) == Some("puddle-start-folder") => {
                 "start-folder"
             }
@@ -243,10 +245,7 @@ impl Guest {
             ("sync", _) => "sync",
             _ => return None,
         };
-        self.commands
-            .lock()
-            .unwrap()
-            .push(format!("{} {kind}", ctx.sandbox()));
+        self.record(ctx, kind, r);
         if kind == "boot" {
             self.boot_envs.lock().unwrap().push(ctx.env().clone());
             self.plans
@@ -276,8 +275,9 @@ impl Guest {
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
                 "",
-                "mkdir: cannot create directory: read-only file system",
+                "cannot create /workspaces/x/.puddle: read-only file system",
             ),
+            "layout" => ExecOutput::new(0, "D\n", ""),
             "locks" => match *self.locks_answer.lock().unwrap() {
                 Some((code, out)) => ExecOutput::new(code, out, ""),
                 None => ExecOutput::new(0, "D\n", ""),
@@ -441,8 +441,30 @@ impl Guest {
         ExecOutput::new(0, format!("{said}puddle-boot: ready\n"), "")
     }
 
+    /// Notes that `r` ran in `ctx`'s sandbox as a command of `kind`, and as whom.
+    fn record(&self, ctx: &ExecContext<'_>, kind: &str, r: &ExecRequest) {
+        self.commands
+            .lock()
+            .unwrap()
+            .push(format!("{} {kind}", ctx.sandbox()));
+        self.users
+            .lock()
+            .unwrap()
+            .push(format!("{kind} {}", r.user.as_deref().unwrap_or("-")));
+    }
+
     fn commands(&self) -> Vec<String> {
         self.commands.lock().unwrap().clone()
+    }
+
+    /// The users the commands of `kind` ran as, in order.
+    fn users_of(&self, kind: &str) -> Vec<String> {
+        self.users
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|u| u.strip_prefix(kind)?.strip_prefix(' ').map(str::to_owned))
+            .collect()
     }
 
     /// Every clone's arguments, joined.
@@ -2029,6 +2051,28 @@ async fn a_list_that_cannot_be_saved_changes_nothing_and_says_so() {
     assert!(reply.body.contains("nothing changed"), "{}", reply.body);
     let ws = api.get("/api/workspaces/adds").await.json();
     assert_eq!(ws["repositories"].as_array().unwrap().len(), 1, "{ws}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_user_switch_that_cannot_be_saved_or_comes_at_shutdown_changes_nothing() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "who").await;
+    let body = json!({"session_user": "root"}).to_string();
+    let switch = || api.put("/api/workspaces/who/session-user", &body);
+    make_unwritable(&list_path(&rig));
+    let reply = switch().await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("was not changed"), "{}", reply.body);
+    let ws = api.get("/api/workspaces/who").await.json();
+    assert_eq!(ws["session_user"], "agent", "{ws}");
+    host.workspaces().close();
+    let reply = switch().await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("shutting down"), "{}", reply.body);
     host.shutdown().await;
 }
 
@@ -3680,6 +3724,93 @@ async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_new_workspace_runs_as_agent_and_a_switch_to_root_applies_at_the_next_start() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let got = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(got["session_user"], "agent", "{got}");
+
+    // The hook adds the user, Puddle's per-user files are in its home, the volume is given to it
+    // (as root) and the clone runs as it.
+    let plan = String::from_utf8(rig.guest.plan_bytes(0)).unwrap();
+    assert!(
+        plan.contains("\npuddle_session_user 'agent' '/home/agent'\n"),
+        "{plan}"
+    );
+    assert!(
+        plan.contains("/home/agent/.gradle/init.d/puddle-proxy.gradle"),
+        "{plan}"
+    );
+    assert!(!plan.contains("/root/.gradle"), "{plan}");
+    assert_eq!(rig.guest.users_of("layout"), ["root"]);
+    assert_eq!(rig.guest.users_of("clone"), ["agent"]);
+
+    // Switched to root while it runs: saved at once, and the running guest keeps agent.
+    let put = api
+        .put(
+            "/api/workspaces/acme/session-user",
+            &json!({"session_user": "root"}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(put.json()["session_user"], "root");
+    let refused = api
+        .put(
+            "/api/workspaces/acme/session-user",
+            &json!({"session_user": "vscode"}).to_string(),
+        )
+        .await;
+    assert_eq!(refused.status, 422, "{}", refused.body);
+    let saved: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(rig.dir.path().join("data/workspaces.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["workspaces"][0]["session_user"], "root", "{saved}");
+
+    // The next start boots as root: no user line, root's home, the volume back to root.
+    let stop = api.post("/api/workspaces/acme/stop", "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let start = api.post("/api/workspaces/acme/start", "").await;
+    assert_eq!(start.status, 202, "{}", start.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let plan = String::from_utf8(rig.guest.plan_bytes(rig.guest.boots() - 1)).unwrap();
+    assert!(!plan.contains("puddle_session_user"), "{plan}");
+    assert!(
+        plan.contains("/root/.gradle/init.d/puddle-proxy.gradle"),
+        "{plan}"
+    );
+    assert_eq!(rig.guest.users_of("layout"), ["root", "root"]);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_saved_before_session_users_keeps_root() {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let book = json!({"version": 2, "workspaces": [{
+        "id": "old", "name": "old", "repositories": [], "start_folder": null,
+        "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+    }]});
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("old").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    let host = rig.start().await;
+    let got = api(&host).get("/api/workspaces/old").await.json();
+    assert_eq!(got["session_user"], "root", "{got}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_interrupted_create_is_dropped_and_its_volume_removed() {
     let rig = Rig::new();
     let data = rig.dir.path().join("data");
@@ -4061,6 +4192,197 @@ async fn a_rename_is_undone_when_the_workspace_list_cannot_be_saved() {
     assert_eq!(
         api.get("/api/workspaces/acme").await.json()["display_name"],
         "acme"
+    );
+    host.shutdown().await;
+}
+
+/// The `workspace_op` records the activity log shows for `query`, oldest first, as the API
+/// answers them.
+async fn workspace_ops(query: &str, api: &Api) -> Vec<serde_json::Value> {
+    let page = api
+        .get(&format!("/api/audit?type=workspace_op&after=0&{query}"))
+        .await;
+    assert_eq!(page.status, 200, "{}", page.body);
+    page.json()["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["record"].clone())
+        .collect()
+}
+
+fn op_summary(record: &serde_json::Value) -> (String, String, String) {
+    let text = |key: &str| record[key].as_str().unwrap_or("").to_owned();
+    (text("op"), text("workspace_id"), text("outcome"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_created_and_a_deleted_workspace_are_in_the_activity_log_with_who_asked() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let accepted = api
+        .delete("/api/workspaces/acme", Some(r#"{"confirm": true}"#))
+        .await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    let ops = workspace_ops("workspace=acme", &api).await;
+    let seen: Vec<_> = ops.iter().map(op_summary).collect();
+    assert_eq!(
+        seen,
+        [
+            ("create".into(), "acme".into(), "succeeded".into()),
+            ("delete".into(), "acme".into(), "succeeded".into()),
+        ]
+    );
+    assert_eq!(ops[0]["actor"], "api", "{}", ops[0]);
+    assert!(ops[1]["detail"].is_null(), "{}", ops[1]);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_workspace_whose_volume_was_already_gone_says_so_in_the_activity_log() {
+    let (_rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let check = api.get("/api/workspaces/acme/delete-check").await.json();
+    let seen = json!({"confirm": true, "fingerprint": check["fingerprint"]}).to_string();
+    api.delete("/api/workspaces/acme", Some(&seen)).await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    // The first record is the create that seeded the workspace.
+    let ops = workspace_ops("outcome=succeeded", &api).await;
+    assert_eq!(ops.len(), 2, "{ops:?}");
+    assert_eq!(op_summary(&ops[1]).0, "delete");
+    assert_eq!(ops[1]["detail"], "deleted; its volume was already gone");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_create_start_and_stop_are_failures_in_the_activity_log_that_the_filter_finds() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    // A create that fails.
+    let parent = shell_init_folder(&rig, "acme")
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&parent);
+    std::fs::write(&parent, "in the way").unwrap();
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    std::fs::remove_file(&parent).unwrap();
+    // A stop that fails, on a workspace that then runs.
+    create(&api, &mut events, "acme").await;
+    rig.runtime
+        .inject(Op::Stop, Fault::once(disk_error("stop")).only_for("acme"));
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    let failed = workspace_ops("outcome=failed", &api).await;
+    let seen: Vec<_> = failed.iter().map(op_summary).collect();
+    assert_eq!(
+        seen,
+        [
+            ("create".into(), "acme".into(), "failed".into()),
+            ("stop".into(), "acme".into(), "failed".into()),
+        ]
+    );
+    for record in &failed {
+        assert!(
+            record["detail"].as_str().is_some_and(|d| !d.is_empty()),
+            "a failure says why: {record}"
+        );
+    }
+    // The outcome filter splits the one successful create from the two failures.
+    let succeeded = workspace_ops("outcome=succeeded", &api).await;
+    assert_eq!(succeeded.len(), 1, "{succeeded:?}");
+    assert_eq!(op_summary(&succeeded[0]).0, "create");
+    // Another workspace's filter finds none of them.
+    assert!(workspace_ops("workspace=other", &api).await.is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_start_is_in_the_activity_log_and_a_start_that_worked_is_not() {
+    let (_rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    // The first record is the create that seeded the workspace.
+    let ops = workspace_ops("", &api).await;
+    assert_eq!(ops.len(), 2, "{ops:?}");
+    assert_eq!(
+        op_summary(&ops[1]),
+        ("start".into(), "acme".into(), "failed".into())
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_started_and_stopped_workspace_leaves_no_start_or_stop_records() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    let seen: Vec<_> = workspace_ops("", &api)
+        .await
+        .iter()
+        .map(op_summary)
+        .collect();
+    assert_eq!(seen, [("create".into(), "acme".into(), "succeeded".into())]);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rename_is_in_the_activity_log_and_so_is_one_that_could_not_be_saved() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let renamed = api
+        .patch("/api/workspaces/acme", &display_name_body("Acme shop"))
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    make_unwritable(&list_path(&rig));
+    let refused = api
+        .patch("/api/workspaces/acme", &display_name_body("Acme store"))
+        .await;
+    assert_eq!(refused.status, 503, "{}", refused.body);
+
+    let ops = workspace_ops("workspace=acme", &api).await;
+    let seen: Vec<_> = ops.iter().map(op_summary).collect();
+    assert_eq!(
+        seen,
+        [
+            ("create".into(), "acme".into(), "succeeded".into()),
+            ("rename".into(), "acme".into(), "succeeded".into()),
+            ("rename".into(), "acme".into(), "failed".into()),
+        ]
+    );
+    assert_eq!(ops[1]["detail"], "renamed to Acme shop");
+    assert!(
+        ops[2]["detail"].as_str().unwrap().contains("not renamed"),
+        "{}",
+        ops[2]
     );
     host.shutdown().await;
 }
@@ -6394,6 +6716,73 @@ async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_repaired() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.docker/config.json"
+    ));
+
+    // A start that finds both files unparsable names each file, the error and what fails.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    *rig.guest.boot_says.lock().unwrap() = "puddle-boot: /root/.docker/config.json left as it is: \
+        the file is not valid JSON: EOF while parsing at line 1 column 1\n\
+        puddle-boot: /root/.vscode-server/data/Machine/settings.json left as it is: \
+        the file is not valid JSON: expected value at line 2 column 3\n"
+        .to_owned();
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let docker = problem_of(&host, "merge-left:acme:/root/.docker/config.json");
+    assert_eq!(
+        docker.title,
+        "Puddle could not update /root/.docker/config.json in acme"
+    );
+    assert!(
+        docker
+            .detail
+            .contains("EOF while parsing at line 1 column 1")
+            && docker.detail.contains("bypasses the proxy")
+            && docker.detail.contains("pulls"),
+        "{}",
+        docker.detail
+    );
+    let machine = problem_of(
+        &host,
+        "merge-left:acme:/root/.vscode-server/data/Machine/settings.json",
+    );
+    assert!(
+        machine.detail.contains("expected value at line 2 column 3")
+            && machine.detail.contains("port forwarding"),
+        "{}",
+        machine.detail
+    );
+
+    // The user repaired the files: the next start says nothing, and the old notices are gone.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.docker/config.json"
+    ));
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.docker/config.json"
+    ));
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.vscode-server/data/Machine/settings.json"
+    ));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_is_noticed_at_a_start_too_but_only_when_author_rules_exist() {
     let rig = Rig::new();
     let host = rig.start().await;
@@ -8579,7 +8968,7 @@ async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at
     ] {
         assert!(env.contains(line), "{line} in {env}");
     }
-    assert!(env.contains("export SSL_CERT_DIR='/root/.aspnet/dev-certs/trust:"));
+    assert!(env.contains("export SSL_CERT_DIR='/home/agent/.aspnet/dev-certs/trust:"));
 
     // After a renewal the next start (the guest boots again) carries the new certificate.
     rig.dev_cert.renew();

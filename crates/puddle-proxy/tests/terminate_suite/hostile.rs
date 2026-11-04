@@ -62,7 +62,7 @@ async fn hostile_hg15_a_request_for_another_host_is_421_and_the_injector_never_h
         "GET https://evil.example/x HTTP/1.1\r\nHost: bound.test\r\n\r\n",
         "GET https://bound.test.evil.example/x HTTP/1.1\r\nHost: bound.test\r\n\r\n",
     ] {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("bound.test:443", None).await.unwrap();
         client.send(request.as_bytes()).await;
         let r = client.response("GET").await;
@@ -86,9 +86,9 @@ async fn hostile_hg15_ssh_to_a_bound_host_on_port_22_is_refused_and_the_injector
         .name("bound.test", server.addr)
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     for authority in ["bound.test:22", "bound.test:443"] {
-        let mut stream = guest.control.open_stream().await.unwrap();
+        let mut stream = guest.open_stream().await;
         stream
             .write_all(
                 format!(
@@ -138,7 +138,7 @@ async fn hostile_hg15_the_connect_name_is_what_counts_not_what_the_guest_says_ne
         .name("unbound.test", other.addr)
         .allow(vec!["bound.test", "unbound.test"])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, reader) = guest.connect_to("unbound.test:443").await;
     assert_eq!(code, 200);
     let config = Guest::client_config(&[rig.ca.certificate().der().clone()], &[]);
@@ -168,8 +168,8 @@ async fn early_bytes_after_the_connect_are_not_lost() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
-    let mut stream = guest.control.open_stream().await.unwrap();
+    let guest = rig.guest();
+    let mut stream = guest.open_stream().await;
     let roots = [rig.ca.certificate().der().clone()];
     let config = Guest::client_config(&roots, &[b"http/1.1"]);
     let mut conn = rustls::ClientConnection::new(
@@ -294,7 +294,7 @@ async fn hostile_hg16_ambiguous_framing_is_refused_before_anything_goes_upstream
         ),
     ];
     for (request, reason) in cases {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("bound.test:443", None).await.unwrap();
         client.send(request.as_bytes()).await;
         // A 400 that says why: a dropped connection would also keep the upstream clean, but it
@@ -333,7 +333,7 @@ async fn hostile_hg16_a_body_is_never_parsed_as_a_second_request() {
         .name("bound.test", server.addr)
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let smuggled = "GET /forbidden HTTP/1.1\r\nHost: bound.test\r\n\r\n";
     client
@@ -375,7 +375,7 @@ async fn hostile_hg16_pipelined_requests_are_each_decided_on_their_own() {
         .name("bound.test", server.addr)
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     // One write, three requests; the middle one is forbidden, and a chunked body ends right
     // before the last.
@@ -393,7 +393,7 @@ async fn hostile_hg16_pipelined_requests_are_each_decided_on_their_own() {
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].target, "/ok");
     // After a chunked body the next request on the wire is its own request.
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"POST /a HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGET /forbidden HTTP/1.1\r\nHost: bound.test\r\n\r\n")
@@ -435,7 +435,7 @@ async fn a_request_puddle_refuses_on_its_own_is_recorded_blocked_with_a_reason()
         ),
     ];
     for (round, (request, status, code)) in cases.iter().enumerate() {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("bound.test:443", None).await.unwrap();
         client.send(request.as_bytes()).await;
         let answer = client.response("GET").await;
@@ -457,7 +457,7 @@ async fn hostile_hg16_an_oversized_head_and_a_stalled_one_are_cut_off() {
         .name("bound.test", server.addr)
         .config(&quick())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let big = format!(
         "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-Big: {}\r\n\r\n",
@@ -486,7 +486,7 @@ async fn hostile_hg16_a_guest_that_stops_sending_a_body_does_not_hold_the_upstre
         .name("bound.test", server.addr)
         .config(&quick())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(
@@ -514,7 +514,7 @@ async fn an_injected_authorization_replaces_the_guests_and_proxy_authorization_n
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"GET /x HTTP/1.1\r\nHost: bound.test\r\nauthorization: Bearer one\r\nAuthorization: Bearer two\r\nProxy-Authorization: Basic three\r\n\r\n")
@@ -561,7 +561,7 @@ async fn hostile_hg06_a_bound_host_that_resolves_to_a_local_address_is_never_dec
     builder.bound = vec!["bound.test", "imds.test", "ten.test"];
     builder.allow = vec!["bound.test", "imds.test", "ten.test"];
     let rig = builder.build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     for authority in ["bound.test:443", "imds.test:443", "ten.test:443"] {
         let (code, _) = guest.connect_to(authority).await;
         assert_eq!(code, 403, "{authority}");
@@ -600,7 +600,7 @@ async fn hostile_hg06_a_bound_host_that_resolves_to_a_local_address_is_never_dec
             LocalAccess::NONE.with_toggle(LocalCategory::Loopback, true),
         ))))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/x").await.status, 200);
     assert_eq!(injector.calls(), 1);
@@ -623,7 +623,7 @@ async fn hostile_hg08_a_bound_host_with_a_mixed_answer_is_connected_at_the_allow
         .injector(injector.clone())
         .address_check(Arc::new(RefusePort(refused_addr.port())))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let r = client.get("bound.test", "/x").await;
     assert_eq!(r.status, 200);
@@ -672,7 +672,7 @@ async fn hostile_hg07_a_bound_host_that_rebinds_is_connected_at_the_checked_addr
         .rebinding("bound.test", trap.local_addr().unwrap())
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     for path in ["/1", "/2", "/3"] {
         assert_eq!(client.get("bound.test", path).await.status, 200, "{path}");
@@ -706,9 +706,9 @@ async fn hostile_hg15_a_plain_http_request_for_a_bound_host_never_asks_the_injec
         .name("bound.test", plain.addr)
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let guest = rig.guest();
     for port in [80, 443] {
-        let mut stream = guest.control.open_stream().await.unwrap();
+        let mut stream = guest.open_stream().await;
         let request = format!(
             "GET http://bound.test:{port}/p HTTP/1.1\r\nHost: bound.test\r\nAuthorization: Bearer mine\r\n\r\n"
         );
@@ -754,7 +754,7 @@ async fn hostile_hg20_the_follow_up_to_a_redirect_carries_no_credential_to_the_n
         .allow(vec!["bound.test", "evil.test"])
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let r = client.get("bound.test", "/start").await;
     assert_eq!(
@@ -822,7 +822,7 @@ async fn hostile_hg19_an_upstream_certificate_that_is_not_accepted_is_a_502_and_
             .name("bound.test", server.addr)
             .injector(injector.clone())
             .build();
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("bound.test:443", None).await.unwrap();
         client
             .send(b"GET /x HTTP/1.1\r\nHost: bound.test\r\nAuthorization: Bearer guest-secret\r\n\r\n")
@@ -873,7 +873,7 @@ async fn hostile_hg19_a_root_the_host_does_not_trust_is_not_trusted_because_the_
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/x").await.status, 502);
     assert!(server.recorded().is_empty());
@@ -889,7 +889,7 @@ async fn hostile_hg28_the_upstream_check_uses_the_hosts_clock_alone() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     assert_eq!(
         guest
             .tls("bound.test:443", None)
@@ -910,7 +910,7 @@ async fn hostile_hg28_the_upstream_check_uses_the_hosts_clock_alone() {
             .name("bound.test", server.addr)
             .tls(tls)
             .build();
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("bound.test:443", None).await.unwrap();
         let status = client.get("bound.test", "/").await.status;
         assert_eq!(status == 200, ok, "clock at {year_secs}");
@@ -948,7 +948,7 @@ async fn hostile_hg29_a_huge_response_head_is_a_502_and_other_connections_are_fi
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut healthy = guest.tls("bound.test:443", None).await.unwrap();
     let mut medium = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(medium.get("bound.test", "/medium").await.text(), "fine");
@@ -977,7 +977,7 @@ async fn hostile_hg29_a_slow_upstream_hits_its_limits_without_slowing_anyone_els
         .name("bound.test", server.addr)
         .config(&quick())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut silent = guest.tls("bound.test:443", None).await.unwrap();
     let mut stalled = guest.tls("bound.test:443", None).await.unwrap();
     silent
@@ -1025,7 +1025,7 @@ async fn hostile_hg29_extra_bytes_from_the_upstream_are_never_taken_for_the_next
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/split").await.text(), "first");
     assert_eq!(client.get("bound.test", "/next").await.text(), "genuine");
@@ -1050,7 +1050,7 @@ async fn hostile_hg29_responses_with_broken_framing_are_a_502() {
         .name("bound.test", server.addr)
         .build();
     for path in ["/fold", "/garbage"] {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("bound.test:443", None).await.unwrap();
         let status = client.get("bound.test", path).await.status;
         assert_eq!(status, 502, "{path}");
@@ -1092,7 +1092,7 @@ async fn no_secret_reaches_a_log_or_the_guest() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"GET /x?token=query-secret HTTP/1.1\r\nHost: bound.test\r\nAuthorization: Bearer header-secret\r\n\r\n")
@@ -1104,7 +1104,7 @@ async fn no_secret_reaches_a_log_or_the_guest() {
     client.close().await;
     // And on failures.
     let failing = RigBuilder::new(&pki).name("bound.test", bad.addr).build();
-    let mut guest = failing.guest().await;
+    let mut guest = failing.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"GET /x HTTP/1.1\r\nHost: bound.test\r\nAuthorization: Bearer header-secret\r\n\r\n")

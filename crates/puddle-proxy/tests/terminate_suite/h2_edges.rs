@@ -90,7 +90,7 @@ async fn an_http11_server_that_was_down_at_the_handshake_is_used_from_the_next_s
     let server = FakeServer::tls(h1_server_config(&pki), Arc::new(|_| Reply::ok("back"))).await;
     let front = down_for_the_first_connection(server.addr).await;
     let rig = RigBuilder::new(&pki).name("bound.test", front).build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let first = client.get("bound.test", "/one").await;
     assert_eq!(first.status, 502, "the first stream has the reason");
@@ -108,7 +108,7 @@ async fn an_http2_server_that_was_down_at_the_handshake_is_used_from_the_next_st
     let server = H2Server::recording(&pki, "bound.test", ok("back")).await;
     let front = down_for_the_first_connection(server.addr).await;
     let rig = RigBuilder::new(&pki).name("bound.test", front).build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/one").await.status, 502);
     assert_eq!(client.get("bound.test", "/two").await.text(), "back");
@@ -120,7 +120,7 @@ async fn an_http11_guest_gets_the_reason_and_the_connection_ends() {
     let server = FakeServer::tls(h1_server_config(&pki), Arc::new(|_| Reply::ok("back"))).await;
     let front = down_for_the_first_connection(server.addr).await;
     let rig = RigBuilder::new(&pki).name("bound.test", front).build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/one").await.status, 502);
     assert!(
@@ -138,7 +138,7 @@ async fn an_idle_http11_connection_the_network_dropped_is_replaced_for_the_next_
     let server = FakeServer::tls(h1_server_config(&pki), Arc::new(|_| Reply::ok("alive"))).await;
     let relay = Relay::to(server.addr).await;
     let rig = RigBuilder::new(&pki).name("bound.test", relay.addr).build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/one").await.text(), "alive");
     relay.cut();
@@ -162,7 +162,7 @@ async fn a_request_the_rules_refuse_leaves_the_http11_connection_for_the_next_st
         .name("bound.test", server.addr)
         .injector(injector)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/one").await.status, 200);
     assert_eq!(client.get("bound.test", "/denied").await.status, 403);
@@ -183,7 +183,7 @@ async fn a_request_the_rules_let_through_keeps_the_guests_own_credentials() {
         .name("bound.test", server.addr)
         .injector(injector)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let got = client
         .request(
@@ -225,7 +225,7 @@ async fn a_server_that_never_finishes_the_tls_handshake_is_a_504_on_the_first_st
         .name("bound.test", addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let got = client.get("bound.test", "/").await;
     assert_eq!(got.status, 504);
@@ -257,7 +257,7 @@ async fn a_server_that_does_not_answer_is_a_504_and_the_connection_goes_on() {
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     assert_eq!(client.get("bound.test", "/slow").await.status, 504);
     assert_eq!(client.get("bound.test", "/fast").await.text(), "quick");
@@ -282,7 +282,7 @@ async fn a_connection_the_server_drops_in_the_middle_of_a_request_is_a_502_with_
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let asking = client.get("bound.test", "/hang");
     let cutting = async {
@@ -308,7 +308,7 @@ async fn an_extended_connect_for_a_protocol_other_than_websocket_is_not_implemen
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let request = http::Request::builder()
         .method("CONNECT")
@@ -328,7 +328,7 @@ async fn a_websocket_over_http2_to_an_http11_server_needs_version_13() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let request = http::Request::builder()
         .method("CONNECT")
@@ -349,7 +349,7 @@ async fn a_websocket_the_http11_server_answers_wrongly_is_a_502() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let request = http::Request::builder()
         .method("CONNECT")
@@ -371,7 +371,7 @@ async fn a_websocket_the_http2_server_refuses_is_its_answer_on_that_stream() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let request = http::Request::builder()
         .method("CONNECT")
@@ -401,7 +401,7 @@ async fn a_guest_that_stops_its_handshake_after_the_hello_is_dropped_at_the_hand
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let guest = rig.guest().await;
+    let guest = rig.guest();
     let (port, _bridge) = guest.bridge("bound.test:443").await;
     let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -437,7 +437,7 @@ async fn a_guest_that_sends_no_hello_at_all_is_dropped_at_the_handshake_timeout(
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, mut tunnel) = guest.connect_to("bound.test:443").await;
     assert_eq!(code, 200);
     let mut sink = Vec::new();
@@ -530,7 +530,7 @@ async fn get_with_a_stalled_handshake(guest_budget: Duration) -> Result<String, 
         .name("bound.test", server.addr)
         .config(&config)
         .build();
-    let guest = rig.guest().await;
+    let guest = rig.guest();
     let (port, _bridge) = guest.bridge("bound.test:443").await;
     let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await

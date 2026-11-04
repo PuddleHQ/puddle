@@ -135,17 +135,16 @@ fn fill(out: &mut [u8], range: Range<usize>) {
 mod tests {
     use super::*;
 
-    /// `blank` on its own thread, failing the test when it has not returned after a few seconds. A scanner
-    /// that stops advancing would otherwise loop and allocate until the process dies of memory, which a
-    /// mutation run (and anyone breaking the loop) would see as a hang instead of a failed test.
+    /// `blank` under a hang guard. A scanner that stops advancing would otherwise loop and allocate
+    /// until the process dies of memory, which a mutation run (and anyone breaking the loop) would see
+    /// as a hang instead of a failed test.
     fn blank_bounded(text: &str) -> Result<Blanked, MergeRefusal> {
         let text = text.to_owned();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(blank(&text));
-        });
-        rx.recv_timeout(std::time::Duration::from_secs(5))
-            .expect("blank did not return: its scan must always advance")
+        puddle_test_kit::returns_within(
+            "blank: its scan must always advance",
+            std::time::Duration::from_secs(5),
+            move || blank(&text),
+        )
     }
 
     fn view(text: &str) -> String {

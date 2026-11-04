@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use puddle_compute::{ExecRequest, ImageConfig};
-use puddle_types::{ApplyKind, GuestEnv, GuestFile, GuestPath};
+use puddle_types::{ApplyKind, GuestEnv, GuestFile, GuestPath, SessionUser};
 
 use crate::assets::{AGENT_GUEST, BOOT_SH_GUEST, MOUNT_DIR_GUEST, guest_path};
 use crate::machine::machine_settings;
@@ -29,6 +29,9 @@ pub const ENV_FILE_GUEST: &str = "/etc/profile.d/01-puddle-env.sh";
 /// Moves an interactive login shell that starts in the home directory to the workspace's start
 /// folder. It sorts after the environment file and the shell init loader.
 pub const START_FOLDER_FILE_GUEST: &str = "/etc/profile.d/03-puddle-start-folder.sh";
+
+/// The sudo rule that gives a non-root session user root without a password.
+pub const SUDOERS_SESSION_GUEST: &str = "/etc/sudoers.d/puddle-session";
 
 /// Puddle's git settings, included from `/etc/gitconfig`.
 pub const GIT_CONFIG_GUEST: &str = "/etc/puddle/gitconfig";
@@ -281,6 +284,7 @@ pub struct BootPlan {
     agent: Option<AgentConfig>,
     agent_env: Vec<(String, String)>,
     capture: bool,
+    session_user: SessionUser,
 }
 
 /// Builds a [`BootPlan`]; see there.
@@ -296,6 +300,7 @@ pub struct BootPlanBuilder {
     agent: Option<AgentConfig>,
     agent_env: Vec<(String, String)>,
     capture: bool,
+    session_user: SessionUser,
 }
 
 impl BootPlan {
@@ -313,7 +318,14 @@ impl BootPlan {
             agent: Some(AgentConfig::default()),
             agent_env: Vec::new(),
             capture: true,
+            session_user: SessionUser::Root,
         }
+    }
+
+    /// The guest user sessions run as; the hook makes it when the image has none.
+    #[must_use]
+    pub fn session_user(&self) -> SessionUser {
+        self.session_user
     }
 
     /// Every file the hook writes, Puddle's own first, then the providers' in the order given.
@@ -382,6 +394,14 @@ impl BootPlan {
             PLAN_HEADER.to_owned(),
             format!("puddle_merge_tool {}", sh_word(self.merge_tool().as_str())),
         ];
+        // First, so the files below the user's home are made as that user's.
+        if !self.session_user.is_root() {
+            lines.push(format!(
+                "puddle_session_user {} {}",
+                sh_word(self.session_user.name()),
+                sh_word(self.session_user.home())
+            ));
+        }
         for f in &self.files {
             if matches!(f.apply(), ApplyKind::Keep) {
                 lines.push(format!("puddle_keep {}", sh_word(f.path().as_str())));
@@ -517,6 +537,14 @@ impl BootPlanBuilder {
         self
     }
 
+    /// Runs sessions as `user` (root by default): the hook makes the user when the image has none,
+    /// the plan's files below its home are that user's, and for a non-root user the plan writes
+    /// [`SUDOERS_SESSION_GUEST`] so the user becomes root with `sudo`.
+    pub fn session_user(mut self, user: SessionUser) -> Self {
+        self.session_user = user;
+        self
+    }
+
     /// Turns transparent capture off (on by default): the agent starts without it and the
     /// resolver stays as the guest had it.
     pub fn no_capture(mut self) -> Self {
@@ -570,10 +598,10 @@ impl BootPlanBuilder {
                 reason: "has more rules than a plan holds",
             });
         }
-        files.push(git_config(self.git.as_ref(), &self.git_rules));
+        files.push(git_config(&self));
         files.extend(git_author_files(&self.git_rules));
         let port = self.agent.as_ref().map_or(DEFAULT_AGENT_PORT, |a| a.port);
-        files.push(machine_settings(port));
+        files.extend(session_files(port, self.session_user));
         files.extend(self.files);
 
         let mounts = guest_path(MOUNT_DIR_GUEST);
@@ -646,8 +674,27 @@ impl BootPlanBuilder {
             agent: self.agent,
             agent_env: self.agent_env,
             capture: self.capture,
+            session_user: self.session_user,
         })
     }
+}
+
+/// The session user's own files: VS Code's Machine settings in its home and, for a user other
+/// than root, [`SUDOERS_SESSION_GUEST`] (every command as any user, no password).
+fn session_files(agent_port: u16, user: SessionUser) -> Vec<GuestFile> {
+    let mut files = vec![machine_settings(agent_port, user)];
+    if !user.is_root() {
+        let text = format!("{GENERATED}{} ALL=(ALL:ALL) NOPASSWD: ALL\n", user.name());
+        #[expect(
+            clippy::expect_used,
+            reason = "invariant: 0o440 is a valid file mode (the boot tests write it)"
+        )]
+        let sudoers = GuestFile::new(guest_path(SUDOERS_SESSION_GUEST), text.into_bytes())
+            .with_mode(0o440)
+            .expect("0o440 is a valid mode");
+        files.push(sudoers);
+    }
+    files
 }
 
 /// Refuses settings the agent can't take: none without an agent, names outside `PUDDLE_AGENT_`,
@@ -731,14 +778,20 @@ fn git_author_name(n: usize) -> String {
 /// Puddle's git settings: `core.fsync=committed` always (ADR 0006: no lost commits on a VM
 /// kill), the identity when set, then one `includeIf` per remote glob of each author rule, in
 /// order (git lets the last match win), each pointing at that rule's author file. Never a
-/// credential helper.
-fn git_config(identity: Option<&GitIdentity>, rules: &[GitAuthorRule]) -> GuestFile {
+/// credential helper. With a session user other than root, `safe.directory = *`: the checkouts
+/// belong to that user, and a root shell (`sudo -i`) would otherwise find every one refused as
+/// "dubious ownership". The check guards one user from another's repository, and in a guest
+/// whose only user becomes root at will there is no other user to guard.
+fn git_config(plan: &BootPlanBuilder) -> GuestFile {
     let mut text = String::from(GENERATED);
     text.push_str("[core]\n\tfsync = committed\n");
-    if let Some(id) = identity {
+    if !plan.session_user.is_root() {
+        text.push_str("[safe]\n\tdirectory = *\n");
+    }
+    if let Some(id) = &plan.git {
         text.push_str(&git_user(id));
     }
-    for (i, rule) in rules.iter().enumerate() {
+    for (i, rule) in plan.git_rules.iter().enumerate() {
         for glob in &rule.globs {
             text.extend([
                 "[includeIf \"hasconfig:remote.*.url:",
@@ -903,6 +956,15 @@ mod tests {
         assert_eq!(
             text(&without_id, GIT_CONFIG_GUEST),
             format!("{GENERATED}[core]\n\tfsync = committed\n")
+        );
+        let as_agent = BootPlan::builder(&ImageConfig::default())
+            .session_user(SessionUser::Agent)
+            .build()
+            .unwrap();
+        assert_eq!(
+            text(&as_agent, GIT_CONFIG_GUEST),
+            format!("{GENERATED}[core]\n\tfsync = committed\n[safe]\n\tdirectory = *\n"),
+            "root may work in the session user's checkouts"
         );
         let id = GitIdentity::new(r#"Ada "the" \Countess"#, "ada@example.org").unwrap();
         assert_eq!(id.name(), r#"Ada "the" \Countess"#);

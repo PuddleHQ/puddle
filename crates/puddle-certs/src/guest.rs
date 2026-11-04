@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use puddle_ca::{CaCertificate, TrustBundle};
-use puddle_types::{GuestEnv, GuestFile, GuestPath};
+use puddle_types::{GuestEnv, GuestFile, GuestPath, SessionUser};
 
 use crate::devcert::GuestDevCert;
 use crate::select::{CorporateRoots, Fingerprint};
@@ -59,6 +59,7 @@ pub struct GuestTrust {
     host: Vec<(Fingerprint, String)>,
     puddle: TrustBundle,
     dev: Option<GuestDevCert>,
+    user: SessionUser,
 }
 
 impl GuestTrust {
@@ -73,7 +74,16 @@ impl GuestTrust {
                 .collect(),
             puddle: puddle.clone(),
             dev: None,
+            user: SessionUser::Root,
         }
+    }
+
+    /// The same trust for a guest whose sessions run as `user` (root when not set): .NET's trust
+    /// folder is in that user's home.
+    #[must_use]
+    pub fn for_user(mut self, user: SessionUser) -> Self {
+        self.user = user;
+        self
     }
 
     /// The same trust with the development certificate: trusted by the guest's system store, by
@@ -159,7 +169,7 @@ impl GuestTrust {
             let _ = env.set(name, value);
         }
         if self.dev.is_some() {
-            env.extend(&GuestDevCert::env());
+            env.extend(&GuestDevCert::env(self.user));
         }
         env
     }
@@ -385,6 +395,22 @@ mod tests {
         assert_eq!(extra.matches("-----BEGIN CERTIFICATE-----").count(), 2);
     }
 
+    #[test]
+    fn a_development_certificate_the_user_also_trusted_in_windows_is_listed_once() {
+        let dev = dev_cert();
+        let der = pem::parse(dev.cert_pem()).unwrap().into_contents();
+        // The same certificate among the host's roots (a leaf is no root `select` would take, so
+        // the host list is built directly).
+        let trust = GuestTrust {
+            host: vec![(Fingerprint::of(&der), dev.cert_pem().to_owned())],
+            puddle: TrustBundle::new(),
+            dev: Some(dev),
+            user: SessionUser::Root,
+        };
+        let extra = text(&trust.guest_files(), EXTRA_CAS_PATH);
+        assert_eq!(extra.matches("-----BEGIN CERTIFICATE-----").count(), 1);
+    }
+
     fn dev_cert() -> GuestDevCert {
         let dir = tempfile::tempdir().unwrap();
         let manager = crate::devcert::DevCertManager::new(dir.path(), crate::devcert::Unsupported);
@@ -435,6 +461,11 @@ mod tests {
                 .unwrap()
                 .starts_with("/root/.aspnet/dev-certs/trust:")
         );
+        let as_agent = trust.clone().for_user(SessionUser::Agent).env();
+        assert_eq!(
+            as_agent.get("SSL_CERT_DIR"),
+            Some("/home/agent/.aspnet/dev-certs/trust:/etc/ssl/certs:/usr/lib/ssl/certs")
+        );
         assert_eq!(env.get("SSL_CERT_FILE"), Some(CA_BUNDLE_PATH));
         let steps: Vec<String> = trust.boot_steps().iter().map(ToString::to_string).collect();
         assert_eq!(
@@ -481,6 +512,7 @@ mod tests {
         let trust = GuestTrust::new(&CorporateRoots::default(), &TrustBundle::new())
             .with_dev_cert(dev.clone());
         let bytes: Vec<u8> = key_body.bytes().collect();
+        assert_eq!(format!("{dev:?}"), "GuestDevCert { .. }");
         let leaked = format!("{dev:?} {trust:?} {:?}", trust.guest_files());
         assert!(!leaked.contains(&key_body), "key text in Debug output");
         assert!(

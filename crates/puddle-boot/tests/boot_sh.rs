@@ -17,11 +17,13 @@ use common::{FakeRoot, alive, kill9, shells, show};
 use puddle_boot::{
     BootHook, BootPlan, CA_DIR_GUEST, ENV_FILE_GUEST, GIT_CONFIG_GUEST, Gate, GateState,
     GitIdentity, MACHINE_SETTINGS_GUEST, PATH_FILE_GUEST, PLAN_HEADER, START_FOLDER_FILE_GUEST,
-    start_folder_file,
+    SUDOERS_SESSION_GUEST, machine_settings_path, start_folder_file,
 };
 use puddle_compute::ImageConfig;
 use puddle_test_kit::eventually_blocking;
-use puddle_types::{GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec};
+use puddle_types::{
+    GuestEnv, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, SessionUser,
+};
 
 const IMAGE_PATH: &str = "/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin";
 
@@ -96,8 +98,12 @@ fn boot_applies_every_step() {
         assert_eq!(fr.read("/proc/sys/fs/inotify/max_user_instances"), "1024\n");
         assert_eq!(fr.read("/proc/sys/fs/inotify/max_user_watches"), "524288\n");
         assert_eq!(fr.read("/proc/sys/kernel/unprivileged_bpf_disabled"), "1\n");
+        assert_eq!(
+            fr.read("/proc/sys/net/ipv4/ip_unprivileged_port_start"),
+            "0\n"
+        );
         let calls = fr.calls();
-        assert_eq!(count(&calls, "sysctl -w"), 3, "{calls:?}");
+        assert_eq!(count(&calls, "sysctl -w"), 4, "{calls:?}");
 
         // Files: contents and modes.
         assert_eq!(fr.read(CA), "CA-1\n");
@@ -1289,4 +1295,165 @@ fn the_start_folder_file_moves_only_an_interactive_shell_that_starts_in_home() {
         assert!(!fr.path("/workspaces/w/pwned").exists());
         assert!(!home.join("pwned").exists());
     }
+}
+
+/// An image's user database: root, and `vscode` at uid 1000 as in the default devcontainer image.
+fn user_database(fr: &FakeRoot, docker_group: bool) {
+    std::fs::write(
+        fr.path("/etc/passwd"),
+        "root:x:0:0:root:/root:/bin/bash\nvscode:x:1000:1000::/home/vscode:/bin/bash\n",
+    )
+    .unwrap();
+    let docker = if docker_group {
+        "docker:x:998:vscode\n"
+    } else {
+        ""
+    };
+    std::fs::write(
+        fr.path("/etc/group"),
+        format!("root:x:0:\nvscode:x:1000:\n{docker}"),
+    )
+    .unwrap();
+    std::fs::write(fr.path("/etc/shadow"), "root:*:19000:0:99999:7:::\n").unwrap();
+}
+
+fn agent_plan(path: &str) -> BootPlan {
+    let spec = MergeSpec::new(
+        MergeFormat::Json,
+        vec![MergeEntry::json(&["proxies"], &serde_json::json!({}))],
+    )
+    .unwrap();
+    BootPlan::builder(&image(&[], &["bash"]))
+        .session_user(SessionUser::Agent)
+        .file(file(path, b"x\n"))
+        .file(GuestFile::merged(
+            GuestPath::new("/home/agent/.docker/config.json").unwrap(),
+            spec,
+        ))
+        .no_agent()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn the_hook_adds_the_session_user_at_the_first_free_uid_and_keeps_it_after() {
+    for sh in shells() {
+        let fr = FakeRoot::new(&sh);
+        user_database(&fr, true);
+        let plan = agent_plan("/home/agent/.gradle/init.d/puddle-proxy.gradle");
+        let out = fr.run(&plan);
+        assert!(out.status.success(), "{}: {}", sh.display(), show(&out));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("session user agent added (uid 1001)"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("no sudo in this image"), "{stdout}");
+
+        let user_rows = fr.read("/etc/passwd");
+        assert!(
+            user_rows.ends_with("agent:x:1001:1001::/home/agent:/bin/sh\n"),
+            "the agent row is not the last line of the user database (uid 1001)"
+        );
+        let group = fr.read("/etc/group");
+        assert!(group.contains("\nagent:x:1001:\n"), "{group}");
+        assert!(group.contains("\ndocker:x:998:vscode,agent\n"), "{group}");
+        assert!(fr.read("/etc/shadow").contains("\nagent:*:"));
+        assert_eq!(
+            fr.read(SUDOERS_SESSION_GUEST).lines().last(),
+            Some("agent ALL=(ALL:ALL) NOPASSWD: ALL")
+        );
+        let mode = std::fs::metadata(fr.path(SUDOERS_SESSION_GUEST))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o440);
+
+        // Everything made below the home is the user's: the home, each new directory, each file.
+        let owned = fr.owned();
+        for path in [
+            "/home/agent",
+            "/home/agent/.gradle",
+            "/home/agent/.gradle/init.d",
+            "/home/agent/.gradle/init.d/puddle-proxy.gradle",
+            "/home/agent/.docker",
+            "/home/agent/.vscode-server/data/Machine",
+        ] {
+            assert!(
+                owned.contains(&format!("1001:1001 {path}")),
+                "{path}: {owned:?}"
+            );
+        }
+        assert!(
+            owned.iter().all(|l| l.starts_with("1001:1001 /home/agent")),
+            "{owned:?}"
+        );
+        // The Machine settings are below the agent's home, not root's.
+        assert!(!fr.path(MACHINE_SETTINGS_GUEST).exists());
+
+        // A second boot finds the user and adds nothing twice. A merged file that exists (the
+        // stub merge tool writes none) is the user's too.
+        let machine = machine_settings_path(SessionUser::Agent);
+        std::fs::write(fr.path(&machine), "{}").unwrap();
+        let out = fr.run(&plan);
+        assert!(out.status.success(), "{}", show(&out));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(!stdout.contains("added"), "{stdout}");
+        assert!(stdout.contains("session user agent (uid 1001)"), "{stdout}");
+        assert_eq!(fr.read("/etc/passwd"), user_rows);
+        assert_eq!(fr.read("/etc/group"), group);
+        assert!(
+            fr.owned().contains(&format!("1001:1001 {machine}")),
+            "{:?}",
+            fr.owned()
+        );
+    }
+}
+
+#[test]
+fn the_session_user_gets_uid_1000_when_it_is_free_and_bash_and_sudo_when_the_image_has_them() {
+    let fr = FakeRoot::new(&shells()[0]);
+    std::fs::write(fr.path("/etc/passwd"), "root:x:0:0:root:/root:/bin/sh\n").unwrap();
+    std::fs::write(fr.path("/etc/group"), "root:x:0:\n").unwrap();
+    for exe in ["/bin/bash", "/usr/bin/sudo"] {
+        std::fs::create_dir_all(fr.path(exe).parent().unwrap()).unwrap();
+        std::fs::write(fr.path(exe), "").unwrap();
+        std::fs::set_permissions(fr.path(exe), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let out = fr.run(&agent_plan("/etc/puddle-test"));
+    assert!(out.status.success(), "{}", show(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("session user agent (uid 1000), sudo at /usr/bin/sudo"),
+        "{stdout}"
+    );
+    assert!(
+        fr.read("/etc/passwd")
+            .ends_with("agent:x:1000:1000::/home/agent:/bin/bash\n")
+    );
+    // No shadow file in this image, and none made; a file outside the home stays root's.
+    assert!(!fr.path("/etc/shadow").exists());
+    assert!(!fr.owned().iter().any(|l| l.ends_with("/etc/puddle-test")));
+}
+
+#[test]
+fn a_root_session_user_changes_no_user_database_and_owns_nothing() {
+    let fr = FakeRoot::new(&shells()[0]);
+    user_database(&fr, true);
+    let plan = BootPlan::builder(&image(&[], &["bash"]))
+        .file(file("/root/.gradle/init.d/puddle-proxy.gradle", b"x\n"))
+        .no_agent()
+        .build()
+        .unwrap();
+    assert_eq!(plan.session_user(), SessionUser::Root);
+    let out = fr.run(&plan);
+    assert!(out.status.success(), "{}", show(&out));
+    assert!(!fr.read("/etc/passwd").contains("agent"));
+    assert!(fr.owned().is_empty(), "{:?}", fr.owned());
+    assert!(!fr.path(SUDOERS_SESSION_GUEST).exists());
+    assert!(
+        !String::from_utf8(plan.render())
+            .unwrap()
+            .contains("puddle_session_user")
+    );
 }

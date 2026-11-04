@@ -19,12 +19,19 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use puddle_types::WorkspaceName;
+use puddle_types::{SessionUser, WorkspaceName};
 
 use crate::ssh_login::{LoginKey, SSH_DIR};
 
 const CONFIG_FILE: &str = "config";
 const KNOWN_HOSTS_DIR: &str = "known_hosts";
+
+/// One workspace's entry: the endpoint `ssh` reaches it through and the guest user it logs in as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Entry {
+    endpoint: PathBuf,
+    user: SessionUser,
+}
 
 /// Where the ssh pieces of the host come from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -51,7 +58,7 @@ pub(crate) struct SshSetup {
     login: Result<LoginKey, String>,
     bridge: Option<PathBuf>,
     user_config: Option<PathBuf>,
-    entries: Mutex<BTreeMap<WorkspaceName, PathBuf>>,
+    entries: Mutex<BTreeMap<WorkspaceName, Entry>>,
 }
 
 impl SshSetup {
@@ -98,14 +105,25 @@ impl SshSetup {
     /// # Errors
     ///
     /// Why the entry could not be written, for the user.
-    pub(crate) fn publish(&self, workspace: &WorkspaceName, endpoint: &Path) -> Result<(), String> {
+    pub(crate) fn publish(
+        &self,
+        workspace: &WorkspaceName,
+        endpoint: &Path,
+        user: SessionUser,
+    ) -> Result<(), String> {
         let login = self.login.as_ref().map_err(Clone::clone)?;
         let bridge = self.bridge.as_deref().ok_or_else(|| {
             "this Puddle has no `puddle` program to run as the ssh bridge".to_owned()
         })?;
         let known_hosts = self.known_hosts(workspace);
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        let before = entries.insert(workspace.clone(), endpoint.to_path_buf());
+        let before = entries.insert(
+            workspace.clone(),
+            Entry {
+                endpoint: endpoint.to_path_buf(),
+                user,
+            },
+        );
         let context = Context {
             bridge,
             identity: login.private_path(),
@@ -114,7 +132,7 @@ impl SshSetup {
         // A sandbox made anew has a new endpoint and a new host key, and a key left over would stop
         // `ssh` from connecting. The same endpoint is the same sandbox: its key stays, so every
         // later attach is checked against it.
-        let endpoint_changed = before.as_deref() != Some(endpoint);
+        let endpoint_changed = before.as_ref().map(|e| e.endpoint.as_path()) != Some(endpoint);
         let written = render(&entries, &context).and_then(|text| {
             if endpoint_changed {
                 match std::fs::remove_file(&known_hosts) {
@@ -171,10 +189,10 @@ impl SshSetup {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(workspace)
-            .cloned()
+            .map(|e| e.endpoint.clone())
     }
 
-    fn write_config(&self, entries: &BTreeMap<WorkspaceName, PathBuf>) -> Result<(), String> {
+    fn write_config(&self, entries: &BTreeMap<WorkspaceName, Entry>) -> Result<(), String> {
         let (Ok(login), Some(bridge)) = (&self.login, &self.bridge) else {
             return puddle_fs::private::write_atomic(&self.config_path(), HEADER.as_bytes())
                 .map_err(|e| e.to_string());
@@ -215,11 +233,11 @@ struct Context<'a> {
 
 /// The whole of Puddle's ssh config for `entries`.
 fn render(
-    entries: &BTreeMap<WorkspaceName, PathBuf>,
+    entries: &BTreeMap<WorkspaceName, Entry>,
     context: &Context<'_>,
 ) -> Result<String, String> {
     let mut text = HEADER.to_owned();
-    for (workspace, endpoint) in entries {
+    for (workspace, Entry { endpoint, user }) in entries {
         let host = ssh_host(workspace);
         let identity = quoted(context.identity)?;
         let known_hosts = quoted(&context.known_hosts_dir.join(workspace.as_str()))?;
@@ -228,7 +246,7 @@ fn render(
             text,
             "\nHost {host}\n\
              \x20   HostName {host}\n\
-             \x20   User root\n\
+             \x20   User {user}\n\
              \x20   ProxyCommand {proxy}\n\
              \x20   IdentityFile {identity}\n\
              \x20   IdentitiesOnly yes\n\
@@ -415,6 +433,13 @@ mod tests {
         WorkspaceName::new(n).unwrap()
     }
 
+    fn entry(endpoint: &str) -> Entry {
+        Entry {
+            endpoint: PathBuf::from(endpoint),
+            user: SessionUser::Root,
+        }
+    }
+
     fn context<'a>(bridge: &'a Path, identity: &'a Path, dir: &'a Path) -> Context<'a> {
         Context {
             bridge,
@@ -427,7 +452,14 @@ mod tests {
     #[test]
     fn an_entry_names_the_bridge_the_endpoint_and_only_puddles_key() {
         let mut entries = BTreeMap::new();
-        entries.insert(name("web"), PathBuf::from("/run/puddle/ep-1"));
+        entries.insert(name("web"), entry("/run/puddle/ep-1"));
+        entries.insert(
+            name("api"),
+            Entry {
+                endpoint: PathBuf::from("/run/puddle/ep-2"),
+                user: SessionUser::Agent,
+            },
+        );
         let text = render(
             &entries,
             &context(
@@ -451,7 +483,11 @@ mod tests {
         ] {
             assert!(text.contains(want), "{want:?} in\n{text}");
         }
-        assert_eq!(text.matches("Host puddle-").count(), 1);
+        assert_eq!(text.matches("Host puddle-").count(), 2);
+        let api =
+            &text[text.find("Host puddle-api\n").unwrap()..text.find("Host puddle-web\n").unwrap()];
+        assert!(api.contains("    User agent\n"), "{api}");
+        assert!(!api.contains("User root"), "{api}");
     }
 
     /// The Windows shape is checked against a real `ssh.exe` (OpenSSH for Windows 9.5): it runs the
@@ -462,7 +498,7 @@ mod tests {
     #[test]
     fn the_windows_entry_quotes_the_program_and_the_endpoint_and_nothing_around_them() {
         let mut entries = BTreeMap::new();
-        entries.insert(name("web"), PathBuf::from(r"\\.\pipe\puddle-ab12"));
+        entries.insert(name("web"), entry(r"\\.\pipe\puddle-ab12"));
         let text = render(
             &entries,
             &context(
@@ -505,12 +541,12 @@ mod tests {
             "/tmp/a\0b",
         ] {
             let mut entries = BTreeMap::new();
-            entries.insert(name("web"), PathBuf::from(hostile));
+            entries.insert(name("web"), entry(hostile));
             let err = render(&entries, &ok).unwrap_err();
             assert!(err.contains("cannot hold safely"), "{hostile:?}: {err}");
             let identity = context(Path::new("/p"), Path::new(hostile), Path::new("/h"));
             let mut entries = BTreeMap::new();
-            entries.insert(name("web"), PathBuf::from("/ep"));
+            entries.insert(name("web"), entry("/ep"));
             assert!(render(&entries, &identity).is_err(), "identity {hostile:?}");
             let program = context(Path::new(hostile), Path::new("/k"), Path::new("/h"));
             assert!(render(&entries, &program).is_err(), "program {hostile:?}");
@@ -537,7 +573,8 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let (ssh, user) = setup(dir.path(), true);
             assert!(ssh.authorized_key().is_some());
-            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-1"), SessionUser::Root)
+                .unwrap();
             let puddle_file = std::fs::read_to_string(ssh.config_path()).unwrap();
             assert!(puddle_file.contains("Host puddle-web"));
             let user_text = std::fs::read_to_string(&user).unwrap();
@@ -559,7 +596,8 @@ mod tests {
         fn a_withdraw_that_cannot_write_says_so_and_the_next_write_drops_the_entry() {
             let dir = tempfile::tempdir().unwrap();
             let (ssh, _) = setup(dir.path(), false);
-            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-1"), SessionUser::Root)
+                .unwrap();
             // A folder with a file in it where Puddle's file should be: the swap fails.
             let file = ssh.config_path();
             std::fs::remove_file(&file).unwrap();
@@ -571,7 +609,8 @@ mod tests {
             );
             assert_eq!(ssh.endpoint(&name("web")), None);
             std::fs::remove_dir_all(&file).unwrap();
-            ssh.publish(&name("db"), Path::new("/run/ep-2")).unwrap();
+            ssh.publish(&name("db"), Path::new("/run/ep-2"), SessionUser::Root)
+                .unwrap();
             let text = std::fs::read_to_string(&file).unwrap();
             assert!(text.contains("Host puddle-db") && !text.contains("puddle-web"));
         }
@@ -588,10 +627,12 @@ mod tests {
         fn an_entry_follows_its_endpoint_and_forgets_the_old_host_key() {
             let dir = tempfile::tempdir().unwrap();
             let (ssh, _) = setup(dir.path(), false);
-            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-1"), SessionUser::Root)
+                .unwrap();
             let known = ssh.known_hosts(&name("web"));
             std::fs::write(&known, "puddle-web ssh-ed25519 AAAA old\n").unwrap();
-            ssh.publish(&name("web"), Path::new("/run/ep-2")).unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-2"), SessionUser::Root)
+                .unwrap();
             assert!(!known.exists());
             let text = std::fs::read_to_string(ssh.config_path()).unwrap();
             assert!(
@@ -604,7 +645,8 @@ mod tests {
         fn a_stale_file_from_a_crashed_run_is_emptied_at_start() {
             let dir = tempfile::tempdir().unwrap();
             let (ssh, _) = setup(dir.path(), false);
-            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-1"), SessionUser::Root)
+                .unwrap();
             drop(ssh);
             let (again, _) = setup(dir.path(), false);
             assert!(
@@ -618,13 +660,17 @@ mod tests {
         fn a_failed_publish_leaves_the_entries_as_they_were() {
             let dir = tempfile::tempdir().unwrap();
             let (ssh, _) = setup(dir.path(), false);
-            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-1"), SessionUser::Root)
+                .unwrap();
             let err = ssh
-                .publish(&name("web"), Path::new("/run/\"x"))
+                .publish(&name("web"), Path::new("/run/\"x"), SessionUser::Root)
                 .unwrap_err();
             assert!(err.contains("cannot hold"));
             assert_eq!(ssh.endpoint(&name("web")), Some(PathBuf::from("/run/ep-1")));
-            assert!(ssh.publish(&name("db"), Path::new("/run/\n")).is_err());
+            assert!(
+                ssh.publish(&name("db"), Path::new("/run/\n"), SessionUser::Root)
+                    .is_err()
+            );
             assert_eq!(ssh.endpoint(&name("db")), None);
         }
 
@@ -634,7 +680,9 @@ mod tests {
             let (ssh, _) = setup(dir.path(), false);
             // A folder where the file should be: removing it as a file fails.
             std::fs::create_dir_all(ssh.known_hosts(&name("web"))).unwrap();
-            let err = ssh.publish(&name("web"), Path::new("/run/ep")).unwrap_err();
+            let err = ssh
+                .publish(&name("web"), Path::new("/run/ep"), SessionUser::Root)
+                .unwrap_err();
             assert!(err.contains("cannot forget the old host key"), "{err}");
             assert_eq!(ssh.endpoint(&name("web")), None);
         }
@@ -644,7 +692,9 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let data = dir.path().join("data");
             let (first, _) = setup(dir.path(), false);
-            first.publish(&name("web"), Path::new("/run/ep")).unwrap();
+            first
+                .publish(&name("web"), Path::new("/run/ep"), SessionUser::Root)
+                .unwrap();
             drop(first);
             let again = SshSetup::open(&data, &SshSettings::default());
             assert_eq!(
@@ -666,7 +716,9 @@ mod tests {
         fn without_a_bridge_program_there_is_no_entry_and_it_says_why() {
             let dir = tempfile::tempdir().unwrap();
             let ssh = SshSetup::open(&dir.path().join("data"), &SshSettings::default());
-            let err = ssh.publish(&name("web"), Path::new("/run/ep")).unwrap_err();
+            let err = ssh
+                .publish(&name("web"), Path::new("/run/ep"), SessionUser::Root)
+                .unwrap_err();
             assert!(err.contains("no `puddle` program"), "{err}");
         }
 
@@ -681,7 +733,9 @@ mod tests {
             };
             let ssh = SshSetup::open(&blocker, &settings);
             assert!(ssh.authorized_key().is_none());
-            let err = ssh.publish(&name("web"), Path::new("/e")).unwrap_err();
+            let err = ssh
+                .publish(&name("web"), Path::new("/e"), SessionUser::Root)
+                .unwrap_err();
             assert!(err.contains("login key"), "{err}");
         }
 
@@ -902,24 +956,30 @@ mod tests {
         fn the_same_endpoint_keeps_the_host_key_and_a_new_one_forgets_it() {
             let dir = tempfile::tempdir().unwrap();
             let (ssh, _) = setup(dir.path(), false);
-            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-1"), SessionUser::Root)
+                .unwrap();
             let known = ssh.known_hosts(&name("web"));
             std::fs::write(&known, "puddle-web ssh-ed25519 AAAA key\n").unwrap();
-            ssh.publish(&name("web"), Path::new("/run/ep-1")).unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-1"), SessionUser::Root)
+                .unwrap();
             assert!(
                 known.exists(),
                 "an attach to the same endpoint keeps the key"
             );
             // Another workspace's publish does not touch it either.
-            ssh.publish(&name("db"), Path::new("/run/ep-9")).unwrap();
+            ssh.publish(&name("db"), Path::new("/run/ep-9"), SessionUser::Root)
+                .unwrap();
             assert!(known.exists());
-            ssh.publish(&name("web"), Path::new("/run/ep-2")).unwrap();
+            ssh.publish(&name("web"), Path::new("/run/ep-2"), SessionUser::Root)
+                .unwrap();
             assert!(!known.exists());
             // A host that starts anew has no entries, so its first publish forgets the key.
             std::fs::write(&known, "puddle-web ssh-ed25519 AAAA key\n").unwrap();
             drop(ssh);
             let (again, _) = setup(dir.path(), false);
-            again.publish(&name("web"), Path::new("/run/ep-2")).unwrap();
+            again
+                .publish(&name("web"), Path::new("/run/ep-2"), SessionUser::Root)
+                .unwrap();
             assert!(!known.exists());
         }
 

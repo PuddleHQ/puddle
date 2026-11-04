@@ -28,7 +28,7 @@ async fn a_bound_host_is_terminated_and_gets_the_credential() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"GET /org/repo/info/refs?service=git-upload-pack HTTP/1.1\r\nHost: bound.test\r\nAuthorization: Bearer guest-token\r\nProxy-Authorization: Basic zzz\r\nConnection: keep-alive\r\nUser-Agent: git/2.47\r\n\r\n")
@@ -76,7 +76,7 @@ async fn an_unbound_host_is_spliced_and_its_real_issuer_reaches_the_guest() {
         .name("unbound.test", other.addr)
         .allow(vec!["bound.test", "unbound.test"])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     // Trusts only the fake internet's root: it works only if the real chain reaches the guest.
     let mut client = guest
         .tls_trusting("unbound.test:443", std::slice::from_ref(&pki.root))
@@ -87,7 +87,7 @@ async fn an_unbound_host_is_spliced_and_its_real_issuer_reaches_the_guest() {
         "the real thing"
     );
     // And the workspace CA is not what vouched for it.
-    let mut other_guest = rig.guest().await;
+    let mut other_guest = rig.guest();
     let refused = other_guest
         .tls_trusting("unbound.test:443", &[rig.ca.certificate().der().clone()])
         .await;
@@ -101,7 +101,7 @@ async fn an_unbound_host_is_spliced_and_its_real_issuer_reaches_the_guest() {
 /// What the guest sees for `name` when it trusts only the fake internet's root: it works only
 /// when the real server's own certificate reaches the guest (the connection is spliced).
 async fn spliced_with_its_real_issuer(rig: &terminate_support::Rig, pki: &Pki, name: &str) -> bool {
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     guest
         .tls_trusting(&format!("{name}:443"), std::slice::from_ref(&pki.root))
         .await
@@ -111,7 +111,7 @@ async fn spliced_with_its_real_issuer(rig: &terminate_support::Rig, pki: &Pki, n
 /// What the guest sees for `name` when it trusts only the workspace CA: it works only when the
 /// proxy terminated the connection with a leaf from that CA.
 async fn terminated_by_the_workspace_ca(rig: &terminate_support::Rig, name: &str) -> bool {
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     guest.tls(&format!("{name}:443"), None).await.is_ok()
 }
 
@@ -139,7 +139,7 @@ async fn a_host_added_while_the_workspace_runs_is_decrypted_on_the_next_connecti
     // The same running workspace gets the host: the CA the guest trusts is the one it booted with.
     rig.set_bound(&["bound.test", "later.test"]);
     assert_eq!(rig.ca.certificate(), &trusted_before);
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("later.test:443", None).await.unwrap();
     assert_eq!(
         client.get("later.test", "/x").await.text(),
@@ -180,7 +180,7 @@ async fn a_host_never_in_the_set_is_spliced_with_its_real_certificate_though_the
     rig.set_bound(&["bound.test", "later.test"]);
     assert!(spliced_with_its_real_issuer(&rig, &pki, "never.test").await);
     assert!(!terminated_by_the_workspace_ca(&rig, "never.test").await);
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest
         .tls_trusting("never.test:443", std::slice::from_ref(&pki.root))
         .await
@@ -217,7 +217,7 @@ async fn a_bound_name_on_another_port_or_plain_is_spliced() {
     let plain = FakeServer::plain(Arc::new(|_| Reply::ok("plain http"))).await;
     let rig = RigBuilder::new(&pki).name("bound.test", plain.addr).build();
     for authority in ["bound.test:80", "bound.test:8443"] {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let (code, mut tunnel) = guest.connect_to(authority).await;
         assert_eq!(code, 200, "{authority}");
         // Bytes pass through untouched: the plain server answers the plain request directly.
@@ -247,20 +247,20 @@ async fn an_http11_server_gets_an_http11_guest_unless_the_guest_speaks_only_h2()
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest
         .tls_with("bound.test:443", None, &[b"h2", b"http/1.1"], true)
         .await
         .unwrap();
     assert_eq!(client.alpn.as_deref(), Some(&b"http/1.1"[..]));
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let none = guest
         .tls_with("bound.test:443", None, &[], true)
         .await
         .unwrap();
     assert_eq!(none.alpn, None);
     // A guest that speaks only h2 is served h2 and the proxy translates to the server.
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let h2_only = guest
         .tls_with("bound.test:443", None, &[b"h2"], true)
         .await
@@ -278,7 +278,7 @@ async fn a_wrong_or_missing_sni_gets_an_alert_and_never_reaches_the_upstream() {
         .injector(injector.clone())
         .build();
     for (sni, send_sni) in [(Some("other.test"), true), (Some("bound.test"), false)] {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let result = guest
             .tls_with("bound.test:443", sni, &[b"http/1.1"], send_sni)
             .await;
@@ -301,7 +301,7 @@ async fn keep_alive_requests_share_one_upstream_connection_and_connections_never
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut a = guest.tls("bound.test:443", None).await.unwrap();
     for path in ["/1", "/2", "/3"] {
         assert_eq!(a.get("bound.test", path).await.status, 200);
@@ -325,8 +325,8 @@ async fn two_workspaces_have_their_own_ca_and_their_own_upstream_connections() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut mine = rig.guest().await;
-    let mut theirs = rig.other_guest().await;
+    let mut mine = rig.guest();
+    let mut theirs = rig.other_guest();
     assert_eq!(
         mine.tls("bound.test:443", None)
             .await
@@ -385,7 +385,7 @@ async fn bodies_are_carried_both_ways_whatever_their_framing() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let body: Vec<u8> = (0..3_000_000_u32)
         .map(|i| u8::try_from((i.wrapping_mul(2_654_435_761) >> 13) & 0xff).unwrap())
@@ -445,7 +445,7 @@ async fn expect_continue_is_answered_by_the_proxy_once_the_request_is_accepted()
         .name("bound.test", server.addr)
         .injector(refusing)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"POST /ok HTTP/1.1\r\nHost: bound.test\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n")
@@ -484,7 +484,7 @@ async fn response_framings_are_rebuilt_for_the_guest() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let r = client.get("bound.test", "/chunked").await;
     assert_eq!((r.status, r.text().as_str()), (200, "hello world"));
@@ -536,7 +536,7 @@ async fn a_redirect_is_passed_on_and_never_followed() {
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let r = client.get("bound.test", "/r").await;
     assert_eq!(r.status, 302);
@@ -559,7 +559,7 @@ async fn a_refusal_from_the_injector_is_sent_and_nothing_goes_upstream() {
         .name("bound.test", server.addr)
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let r = client.get("bound.test", "/denied").await;
     assert_eq!(r.status, 403);
@@ -590,7 +590,7 @@ async fn the_request_the_injector_sees_is_the_one_that_was_checked() {
         .name("bound.test", server.addr)
         .injector(injector.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     // Absolute-form for the same host becomes origin-form upstream.
     client
@@ -609,8 +609,8 @@ async fn the_host_policy_still_applies_and_a_denied_bound_host_is_not_terminated
         .name("bound.test", server.addr)
         .allow(vec![])
         .build();
-    let mut guest = rig.guest().await;
-    let mut stream = guest.control.open_stream().await.unwrap();
+    let guest = rig.guest();
+    let mut stream = guest.open_stream().await;
     stream
         .write_all(b"CONNECT bound.test:443 HTTP/1.1\r\nHost: bound.test:443\r\n\r\n")
         .await

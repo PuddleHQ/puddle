@@ -73,7 +73,7 @@ fn bodies(peek: &Peek) -> Vec<Option<Vec<u8>>> {
 #[tokio::test]
 async fn a_content_length_body_is_read_for_the_injector_and_forwarded_whole() {
     let (server, rig, peek) = h1().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"POST /peek HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 5\r\n\r\nhello")
@@ -94,7 +94,7 @@ async fn a_content_length_body_is_read_for_the_injector_and_forwarded_whole() {
 #[tokio::test]
 async fn a_chunked_body_and_an_empty_one_reach_the_injector_decoded() {
     let (server, rig, peek) = h1().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"POST /peek HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2;x=1\r\nde\r\n0\r\n\r\n")
@@ -111,7 +111,7 @@ async fn a_chunked_body_and_an_empty_one_reach_the_injector_decoded() {
 #[tokio::test]
 async fn other_requests_are_not_read_ahead() {
     let (_server, rig, peek) = h1().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"POST /else HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 3\r\n\r\nabc")
@@ -123,7 +123,7 @@ async fn other_requests_are_not_read_ahead() {
 #[tokio::test]
 async fn expect_continue_is_answered_before_the_body_is_read() {
     let (server, rig, peek) = h1().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"POST /peek HTTP/1.1\r\nHost: bound.test\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n")
@@ -138,7 +138,7 @@ async fn expect_continue_is_answered_before_the_body_is_read() {
 #[tokio::test]
 async fn a_refusal_on_the_body_sends_nothing_upstream_and_is_recorded_with_its_code() {
     let (server, rig, _peek) = h1().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"POST /peek HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 6\r\n\r\nrefuse")
@@ -158,7 +158,7 @@ async fn a_refusal_on_the_body_sends_nothing_upstream_and_is_recorded_with_its_c
 #[tokio::test]
 async fn a_body_over_the_limit_is_413_whether_declared_or_chunked_and_nothing_goes_upstream() {
     let (server, rig, peek) = h1().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(
@@ -196,7 +196,7 @@ async fn a_body_over_the_limit_is_413_whether_declared_or_chunked_and_nothing_go
 #[tokio::test]
 async fn a_body_that_stops_short_or_is_badly_framed_is_a_400_and_nothing_goes_upstream() {
     let (server, rig, _peek) = h1().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"POST /peek HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n")
@@ -226,7 +226,7 @@ async fn h2() -> (H2Server, terminate_support::Rig, Arc<Peek>) {
 #[tokio::test]
 async fn over_http2_the_body_is_read_for_the_injector_and_forwarded_whole() {
     let (server, rig, peek) = h2().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let got = client
         .request(
@@ -263,7 +263,7 @@ async fn over_http2_the_body_is_read_for_the_injector_and_forwarded_whole() {
 #[tokio::test]
 async fn over_http2_a_refusal_on_the_body_and_an_oversized_body_send_nothing_upstream() {
     let (server, rig, peek) = h2().await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let refused = client
         .request(
@@ -337,7 +337,7 @@ async fn a_body_that_does_not_arrive_is_a_408_and_nothing_goes_upstream() {
         .injector(peek.clone())
         .config(&quick())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     client
         .send(b"POST /peek HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 5\r\n\r\nab")
@@ -362,7 +362,7 @@ async fn over_http2_a_body_that_does_not_arrive_is_a_408_and_nothing_goes_upstre
         .injector(peek.clone())
         .config(&quick())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let stalled = client
         .request(
@@ -394,7 +394,7 @@ async fn over_http2_a_stream_cut_short_or_longer_than_it_said_never_reaches_the_
         .name("bound.test", server.addr)
         .injector(peek.clone())
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest
         .tls_with("bound.test:443", None, &[b"h2"], true)
         .await

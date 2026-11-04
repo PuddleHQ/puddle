@@ -18,6 +18,13 @@ pub enum SystemReason {
     CodeServer,
     /// Direct SSH is on for the workspace.
     DirectSsh,
+    /// Direct SSH is on for the workspace, for Cursor.
+    DirectSshCursor,
+    /// Direct SSH is on for the workspace, for `JetBrains` Gateway.
+    #[serde(rename = "direct_ssh_jetbrains")]
+    DirectSshJetBrains,
+    /// Direct SSH is on for the workspace, for Zed.
+    DirectSshZed,
 }
 
 impl SystemReason {
@@ -26,6 +33,9 @@ impl SystemReason {
             store::SystemReason::MicrosoftServer => Self::MicrosoftServer,
             store::SystemReason::CodeServer => Self::CodeServer,
             store::SystemReason::DirectSsh => Self::DirectSsh,
+            store::SystemReason::DirectSshCursor => Self::DirectSshCursor,
+            store::SystemReason::DirectSshJetBrains => Self::DirectSshJetBrains,
+            store::SystemReason::DirectSshZed => Self::DirectSshZed,
             _ => return None,
         })
     }
@@ -95,7 +105,7 @@ pub struct RuleSetEntry {
     pub pattern: String,
     /// Exact or suffix.
     pub pattern_kind: PatternKind,
-    /// Allow or deny (built-in sets only allow).
+    /// Allow or deny (a built-in set's entries all do the same; your own set may mix them).
     pub effect: Effect,
     /// What it is for (built-in sets); empty for your own entries.
     pub note: String,

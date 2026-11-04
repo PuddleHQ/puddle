@@ -82,7 +82,7 @@ async fn h1_rig(
 #[tokio::test]
 async fn a_401_for_a_request_with_an_added_credential_becomes_the_injectors_refusal() {
     let (server, rig, _) = h1_rig(Box::new(injected_and_watched)).await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let answer = client.get("bound.test", "/acme/web.git/info/refs").await;
     assert_eq!(answer.status, 403);
@@ -109,7 +109,7 @@ async fn a_401_for_a_request_with_an_added_credential_becomes_the_injectors_refu
 #[tokio::test]
 async fn a_request_the_server_accepts_is_not_touched_by_the_401_watch() {
     let (_server, rig, _injector) = h1_rig(Box::new(injected_and_watched)).await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let answer = client.get("bound.test", "/acme/web.git/info/refs?ok").await;
     assert_eq!((answer.status, answer.text().as_str()), (200, "fine"));
@@ -122,7 +122,7 @@ async fn any_other_401_is_the_servers_answer_unchanged() {
         || inject(CANARY),
     ] {
         let (_server, rig, _injector) = h1_rig(Box::new(decision)).await;
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("bound.test:443", None).await.unwrap();
         let answer = client.get("bound.test", "/acme/web.git/info/refs").await;
         assert_eq!(answer.status, 401);
@@ -138,7 +138,7 @@ async fn any_other_401_is_the_servers_answer_unchanged() {
 #[tokio::test]
 async fn the_replacement_ends_that_connection_and_the_next_one_works() {
     let (server, rig, _) = h1_rig(Box::new(injected_and_watched)).await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/a/b").await.status, 403);
     assert!(client.closed().await);
@@ -167,7 +167,7 @@ async fn h2_rig(
 async fn over_http2_a_401_for_an_added_credential_becomes_the_injectors_refusal_and_the_next_stream_works()
  {
     let (server, rig) = h2_rig(Box::new(injected_and_watched)).await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let refused = client.get("bound.test", "/acme/web.git/info/refs").await;
     assert_eq!(refused.status, 403);
@@ -186,7 +186,7 @@ async fn over_http2_a_401_for_an_added_credential_becomes_the_injectors_refusal_
 #[tokio::test]
 async fn over_http2_a_401_to_a_request_puddle_added_nothing_to_is_the_servers_own() {
     let (_server, rig) = h2_rig(Box::new(|| InjectDecision::PassThrough)).await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let own = client
         .request(
@@ -217,7 +217,7 @@ async fn a_401_to_a_request_that_is_only_noted_reaches_the_guest_unchanged_and_i
     let noted = Arc::new(AtomicUsize::new(0));
     let again = Arc::clone(&noted);
     let (server, rig, _) = h1_rig(Box::new(move || noting(&again))).await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     let ok = client.get("bound.test", "/acme/web.git/info/refs?ok").await;
     assert_eq!(ok.status, 200);
@@ -242,7 +242,7 @@ async fn over_http2_a_401_to_a_noted_request_is_noted_and_the_servers_own() {
     let noted = Arc::new(AtomicUsize::new(0));
     let again = Arc::clone(&noted);
     let (_server, rig) = h2_rig(Box::new(move || noting(&again))).await;
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let answer = client.get("bound.test", "/x").await;
     assert_eq!(answer.status, 401);

@@ -35,6 +35,11 @@ mutants)
 esac
 F
 chmod +x fake-cargo
+# A small shared cargo home: the sweeps copy it, and the real one can be gigabytes.
+mkdir -p "$tmp/shared/registry/index" "$tmp/shared/git"
+echo seed >"$tmp/shared/registry/index/entry"
+echo '[net]' >"$tmp/shared/config.toml"
+export CARGO_HOME="$tmp/shared"
 export CARGO="$tmp/fake-cargo" FAKE_RUNS="$tmp/runs" MUTANTS_OUT="$tmp/out"
 : >"$FAKE_RUNS"
 sweep() { scripts/mutants.sh sweep --cache "$tmp/cache" "$@" 2>&1; }
@@ -145,4 +150,56 @@ printf 'puddle-a\npuddle-a src/x.rs\n' >scripts/mutants-crates.txt
 scripts/mutants.sh --list >/dev/null 2>&1 && fail "a crate listed whole and by file must be refused"
 printf 'puddle-a src/x.rs extra\n' >scripts/mutants-crates.txt
 scripts/mutants.sh --list >/dev/null 2>&1 && fail "a line of three words must be refused"
+
+# Cargo home. A fake cargo takes a lock in its CARGO_HOME's package cache, as cargo does, and holds it until the
+# other sweep holds its own too: two sweeps on one home wait on each other (the fake gives up after 10 s and
+# fails), two private homes both get through at once.
+echo puddle-a >scripts/mutants-crates.txt
+mkdir -p "$tmp/rv" "$tmp/rv-shared"
+cat >fake-cargo-home <<'F'
+#!/bin/sh
+case $1 in
+mutants)
+    [ "$2" = --version ] && { echo "cargo-mutants 0.0.0"; exit 0; }
+    [ -f "$CARGO_HOME/registry/index/entry" ] && [ -f "$CARGO_HOME/config.toml" ] || exit 7
+    echo "$CARGO_HOME" >>"$FAKE_HOMES"
+    n=0
+    until mkdir "$CARGO_HOME/.package-cache.lock" 2>/dev/null; do
+        n=$((n + 1)) && [ "$n" -lt 100 ] || exit 9
+        sleep 0.1
+    done
+    : >"$FAKE_RV/$$"
+    n=0
+    while [ "$(find "$FAKE_RV" -type f | wc -l)" -lt 2 ]; do
+        n=$((n + 1)) && [ "$n" -lt 100 ] || exit 8
+        sleep 0.1
+    done
+    rmdir "$CARGO_HOME/.package-cache.lock"
+    ;;
+esac
+F
+chmod +x fake-cargo-home
+export CARGO="$tmp/fake-cargo-home" FAKE_HOMES="$tmp/homes" FAKE_RV="$tmp/rv"
+: >"$FAKE_HOMES"
+before=$(find "$tmp/shared" | wc -l)
+MUTANTS_OUT="$tmp/o1" scripts/mutants.sh sweep >/dev/null 2>&1 &
+p1=$!
+MUTANTS_OUT="$tmp/o2" scripts/mutants.sh sweep >/dev/null 2>&1 &
+p2=$!
+wait "$p1" || fail "the first of two concurrent sweeps must not wait on the other"
+wait "$p2" || fail "the second of two concurrent sweeps must not wait on the other"
+[ "$(sort -u "$FAKE_HOMES" | wc -l)" = 2 ] || fail "each sweep must have its own cargo home"
+grep -qx "$tmp/shared" "$FAKE_HOMES" && fail "a sweep must not use the shared cargo home"
+while read -r h; do [ ! -e "$h" ] || fail "a private cargo home must be removed when the sweep ends"; done <"$FAKE_HOMES"
+[ "$(find "$tmp/shared" | wc -l)" = "$before" ] || fail "the shared cargo home must stay untouched"
+# The control: the same two sweeps on the shared home do wait on each other.
+export MUTANTS_SHARED_CARGO_HOME=1 FAKE_RV="$tmp/rv-shared"
+MUTANTS_OUT="$tmp/o1" scripts/mutants.sh sweep >/dev/null 2>&1 &
+p1=$!
+MUTANTS_OUT="$tmp/o2" scripts/mutants.sh sweep >/dev/null 2>&1 &
+p2=$!
+rc=0
+wait "$p1" || rc=1
+wait "$p2" || rc=1
+[ "$rc" = 1 ] || fail "MUTANTS_SHARED_CARGO_HOME=1 must keep the shared home (the control: its sweeps wait on one lock)"
 echo "mutants-test: ok"

@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Runner disk evidence that survives a dead runner. A hosted runner that fills its disk loses its job log, so
+# the only record is what was written to the job summary and the annotations before the runner died.
+#
+#   disk-watch.sh snap <label>   free space and the size of the dirs a job fills, appended to the job summary
+#                                now (a summary is uploaded when its step ends). Under the warning level it also
+#                                lists the biggest top-level dirs and files held open after deletion.
+#   disk-watch.sh guard <label>  loop for the duration of one heavy step (run it with `&`, stop it with `kill`):
+#                                logs free space every interval to $RUNNER_TEMP/disk-watch-<label>.log; under the
+#                                warning level takes one deep snapshot; under the floor takes another, annotates
+#                                `::error`, and stops the processes matching $DISK_WATCH_KILL (an ERE for
+#                                `pkill -f`, passed by env so the guard does not match itself), so the step ends
+#                                with a readable cause and the artifact upload still runs.
+#
+# Evidence only: both modes exit 0 whatever they find (the guard's kill is the one action, and only under the
+# floor). Knobs: DISK_WATCH_WARN_GB (30), DISK_WATCH_FLOOR_GB (5), DISK_WATCH_INTERVAL (2 s),
+# DISK_WATCH_ROOT (/), DISK_WATCH_FREE_FILE (test only: a file holding the free GB instead of df).
+set -uo pipefail
+
+warn_gb=${DISK_WATCH_WARN_GB:-30}
+floor_gb=${DISK_WATCH_FLOOR_GB:-5}
+interval=${DISK_WATCH_INTERVAL:-2}
+root=${DISK_WATCH_ROOT:-/}
+temp=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+sudo_cmd=()
+if [ "$(id -u)" != 0 ] && command -v sudo >/dev/null 2>&1; then sudo_cmd=(sudo -n); fi
+
+free_gb() {
+    if [ -n "${DISK_WATCH_FREE_FILE:-}" ]; then
+        cat "$DISK_WATCH_FREE_FILE"
+    else
+        df -Pk "$root" | awk 'NR == 2 { print int($4 / 1048576) }'
+    fi
+}
+
+say() { # <text>: stdout and the job summary
+    printf '%s\n' "$1"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$1" >>"$GITHUB_STEP_SUMMARY"; fi
+}
+
+# The dirs a job of this repository fills: the runner's temp (archive, extracted tests, msb homes, code-server),
+# the toolchains and caches, the workspace and its target, and the places a crash or a runaway log lands.
+paths() {
+    local w=${GITHUB_WORKSPACE:-$PWD}
+    printf '%s\n' "$temp" "$temp/bundle" "$temp/vmx" "$temp/msb" "$temp/pvm" "$temp/code-server" \
+        "$HOME/.rustup" "$HOME/.cargo" "$HOME/.cache" "$HOME/.npm" "$w" "$w/target" "$w/ui/node_modules" \
+        /var/crash /var/lib/systemd/coredump /var/lib/docker /var/log /var/cache/apt /tmp \
+        /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet /opt/ghc /swapfile
+    printf '%s\n' "$(dirname "$temp")/_diag" "$(dirname "$(dirname "$temp")")/_diag"
+    if [ -n "${DISK_WATCH_PATHS:-}" ]; then printf '%s\n' "$DISK_WATCH_PATHS" | tr ':' '\n'; fi
+}
+
+sizes() { # MiB and path of each existing dir over 50 MiB, biggest first
+    paths | sort -u | while IFS= read -r p; do
+        [ -e "$p" ] || continue
+        mib=$(timeout 20 "${sudo_cmd[@]}" du -xsm "$p" 2>/dev/null | cut -f1)
+        [ -n "$mib" ] && [ "$mib" -ge 50 ] && printf '%8s MiB  %s\n' "$mib" "$p"
+    done | sort -rn
+}
+
+deep() { # what the targeted list can miss: the top level of the disk, and space held by deleted files
+    echo "-- top level of $root (MiB)"
+    timeout 40 "${sudo_cmd[@]}" du -xm -d1 "$root" 2>/dev/null | sort -rn | head -12
+    if command -v lsof >/dev/null 2>&1; then
+        echo "-- files deleted but still open (lsof +L1)"
+        timeout 20 "${sudo_cmd[@]}" lsof -nP +L1 2>/dev/null | head -10
+    fi
+    echo "-- biggest processes (RSS KiB)"
+    ps -eo rss=,pid=,comm= --sort=-rss | head -5
+}
+
+snap() { # <label> [deep]
+    local label=$1 free
+    free=$(free_gb)
+    local body
+    body=$(
+        echo "### disk: $label"
+        echo '```'
+        date -u +%FT%TZ
+        df -h "$root" | tail -n 2
+        df -i "$root" | tail -n 1
+        sizes
+        if [ "${2:-}" = deep ] || [ "$free" -lt "$warn_gb" ]; then deep; fi
+        echo '```'
+    )
+    say "$body"
+    if [ "$free" -lt "$warn_gb" ]; then
+        echo "::warning title=runner disk low::$label: ${free} GB free (warning level ${warn_gb} GB); sizes in the job summary"
+    fi
+}
+
+guard() { # <label>
+    local label=$1 log="$temp/disk-watch-$1.log" free min t0=$SECONDS warned=0
+    mkdir -p "$temp"
+    : >"$log"
+    free=$(free_gb)
+    min=$free
+    finish() {
+        say "disk guard $label: free ${free} GB now, lowest ${min} GB, $((SECONDS - t0)) s watched (samples: $log)"
+        exit 0
+    }
+    trap finish TERM INT
+    while :; do
+        free=$(free_gb)
+        [ "$free" -lt "$min" ] && min=$free
+        echo "$((SECONDS - t0)) s free=${free}GB" >>"$log"
+        if [ "$free" -lt "$floor_gb" ]; then
+            snap "$label: under the floor" deep >/dev/null
+            echo "::error title=runner disk full::$label: ${free} GB free (floor ${floor_gb} GB) after $((SECONDS - t0)) s; stopping the step's processes so the job ends readable. Sizes in the job summary"
+            if [ -n "${DISK_WATCH_KILL:-}" ]; then
+                pkill -TERM -f -- "$DISK_WATCH_KILL"
+                sleep 10 &
+                wait $!
+                pkill -KILL -f -- "$DISK_WATCH_KILL"
+            fi
+            finish
+        elif [ "$free" -lt "$warn_gb" ] && [ "$warned" = 0 ]; then
+            warned=1
+            snap "$label: under the warning level" deep >/dev/null
+            echo "::warning title=runner disk low::$label: ${free} GB free after $((SECONDS - t0)) s (warning level ${warn_gb} GB); sizes in the job summary"
+        fi
+        sleep "$interval" &
+        wait $!
+    done
+}
+
+case "${1:-}" in
+snap) snap "${2:-snapshot}" ;;
+guard) guard "${2:-guard}" ;;
+*) echo "usage: disk-watch.sh snap <label> | guard <label>" >&2 ;;
+esac
+exit 0

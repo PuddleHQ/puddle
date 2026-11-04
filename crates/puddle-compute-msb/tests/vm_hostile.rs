@@ -6,7 +6,7 @@
 mod support;
 
 use std::io::Read as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use puddle_compute::{ExecRequest, Runtime, Sandbox, VsockRoute};
@@ -300,7 +300,10 @@ async fn vm_hostile_hg44_a_guest_written_root_disk_journal_changes_nothing_at_th
         let landed = std::fs::read(&host_journal).ok();
         match rt.start(&n).await {
             Ok(started) => {
-                let marker = sh(&started, "cat /root/hg44-marker").await.stdout_text();
+                let marker = sh(&started, "cat /root/hg44-marker")
+                    .await
+                    .stdout_text()
+                    .into_owned();
                 rounds.push((target.clone(), journal == landed, None, marker));
                 sb = started;
             }

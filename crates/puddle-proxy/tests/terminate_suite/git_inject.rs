@@ -513,8 +513,11 @@ async fn a_public_clone_with_an_identity_that_is_not_signed_in_goes_out_with_no_
     }
     // Nothing of any identity went out, whichever it was.
     let wire = format!("{seen:?}");
-    for secret in [WORK, PERSONAL, REAL_SECRET] {
-        assert!(!wire.contains(secret), "{secret} leaked");
+    for (index, secret) in [WORK, PERSONAL, REAL_SECRET].into_iter().enumerate() {
+        assert!(
+            !wire.contains(secret),
+            "an identity secret (candidate {index}) reached the origin"
+        );
     }
     let events = t.rig.events(3).await;
     assert!(events.iter().all(|e| !e.injected && e.binding_id.is_none()));

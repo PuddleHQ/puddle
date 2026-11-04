@@ -43,8 +43,8 @@
 //!   every stream of an HTTP/2 guest; an HTTP/2 guest talking to an HTTP/1.1 server uses a small
 //!   pool of HTTP/1.1 connections owned by that guest connection.
 //! - **Stand-ins**: after the injector has decided, the workspace's [`StandIns`] are swapped for
-//!   their real values in the header values of the request, toward the hosts each is for, on both
-//!   HTTP versions.
+//!   their real values in the header values of the request (or, for a secret that opts in, in
+//!   one named query parameter or the path), toward the hosts each is for, on both HTTP versions.
 //! - **Responses**: framed by an HTTP client library, then rebuilt for the guest, trailers
 //!   included. Redirects are passed through, never followed. A `401` is replaced by the
 //!   injector's own refusal when the injector added the request's credential ([`Unauthorized`]);
@@ -89,7 +89,7 @@ pub use intercept::{Interception, LEARNED_CAP, LEARNED_TTL, PassThrough};
 pub use request_rules::{RequestRule, RequestRules};
 pub(crate) use session::{Context, Outcome, run};
 pub use set::{PatternError, TerminationSet};
-pub use stand_in::{StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
+pub use stand_in::{Placement, StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
 pub use token_body::{BodyFormat, TokenBody, TokenBodyError};
 
 /// Hosts Puddle decrypts by default: GitHub and Azure DevOps, for git and Git LFS. Not

@@ -1061,7 +1061,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
         let editor = inner
             .kit
-            .editor(id, self.reconnection_grace(name), self.editor_kind())?;
+            .editor(id, self.reconnection_grace(name), self.editor_kind())?
+            .map(|server| server.with_user(session_user));
         let began = inner.injection.begin(name, capture).await?;
         let wanted = authors(&began.git);
         self.report_git_settings(name, &began.git, &wanted);

@@ -69,7 +69,7 @@ const ANSWER_SECS: u32 = 60;
 /// (the tarball is a few hundred MB, over any kind of link).
 const STALL_SECS: u32 = 60;
 /// Where below the data folder the server keeps its own data.
-const SERVER_DATA: &str = "server-data";
+pub(crate) const SERVER_DATA: &str = "server-data";
 /// Where below the data folder its extensions live.
 const EXTENSIONS: &str = "extensions";
 

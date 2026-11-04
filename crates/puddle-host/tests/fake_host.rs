@@ -5463,6 +5463,27 @@ async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server
         seen.get("PUDDLE_AGENT_EDITOR_GRACE").map(String::as_str),
         Some("300")
     );
+    // The server runs as the session user of this start: agent for a new workspace, and after a
+    // switch to root, root (no variable) from the next start.
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_EDITOR_USER").map(String::as_str),
+        Some("agent")
+    );
+    let put = api
+        .put(
+            "/api/workspaces/acme/session-user",
+            &json!({"session_user": "root"}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    for step in ["stop", "start"] {
+        let reply = api.post(&format!("/api/workspaces/acme/{step}"), "").await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+    }
+    let seen = agent_settings(&rig.guest.plan_bytes(rig.guest.boots() - 1));
+    assert!(seen.contains_key("PUDDLE_AGENT_EDITOR_DIR"), "{seen:?}");
+    assert_eq!(seen.get("PUDDLE_AGENT_EDITOR_USER"), None, "{seen:?}");
     host.shutdown().await;
 }
 

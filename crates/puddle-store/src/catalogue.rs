@@ -135,6 +135,14 @@ pub enum SystemReason {
     /// Direct SSH is on for the workspace: desktop VS Code's Remote-SSH installs Microsoft's
     /// server and its extensions in it.
     DirectSsh,
+    /// Direct SSH is on for the workspace: Cursor's Remote SSH installs Cursor's server and its
+    /// extensions in it.
+    DirectSshCursor,
+    /// Direct SSH is on for the workspace: `JetBrains` Gateway downloads the IDE backend there and
+    /// the backend installs plugins.
+    DirectSshJetBrains,
+    /// Direct SSH is on for the workspace: Zed downloads its remote server there.
+    DirectSshZed,
 }
 
 const MICROSOFT_HOSTS: &[CatalogueEntry] = &[
@@ -151,6 +159,30 @@ const MICROSOFT_HOSTS: &[CatalogueEntry] = &[
     entry!("*.gallerycdn.vsassets.io", "Marketplace extension files"),
 ];
 
+const CURSOR_HOSTS: &[CatalogueEntry] = &[
+    entry!("cursor.blob.core.windows.net", "Cursor server downloads"),
+    entry!("marketplace.cursorapi.com", "Cursor extension marketplace"),
+    entry!("marketplace.cursor-cdn.com", "Cursor extension files"),
+];
+
+const JETBRAINS_HOSTS: &[CatalogueEntry] = &[
+    entry!("download.jetbrains.com", "IDE backend downloads"),
+    entry!("download-cdn.jetbrains.com", "IDE backend download files"),
+    entry!("download-cf.jetbrains.com", "IDE backend download files"),
+    entry!("cache-redirector.jetbrains.com", "IDE runtime downloads"),
+    entry!("data.services.jetbrains.com", "list of IDE builds"),
+    entry!("plugins.jetbrains.com", "JetBrains Marketplace"),
+    entry!("downloads.marketplace.jetbrains.com", "plugin files"),
+];
+
+const ZED_HOSTS: &[CatalogueEntry] = &[
+    entry!("github.com", "Zed remote server downloads"),
+    entry!(
+        "release-assets.githubusercontent.com",
+        "Zed remote server download files"
+    ),
+];
+
 const OPEN_VSX_HOSTS: &[CatalogueEntry] = &[
     entry!("open-vsx.org", "Open VSX extensions"),
     entry!("openvsx.eclipsecontent.org", "Open VSX extension files"),
@@ -158,7 +190,14 @@ const OPEN_VSX_HOSTS: &[CatalogueEntry] = &[
 
 impl SystemReason {
     /// Every reason.
-    pub const ALL: [Self; 3] = [Self::MicrosoftServer, Self::CodeServer, Self::DirectSsh];
+    pub const ALL: [Self; 6] = [
+        Self::MicrosoftServer,
+        Self::CodeServer,
+        Self::DirectSsh,
+        Self::DirectSshCursor,
+        Self::DirectSshJetBrains,
+        Self::DirectSshZed,
+    ];
 
     /// The stored and wire name.
     #[must_use]
@@ -167,6 +206,9 @@ impl SystemReason {
             Self::MicrosoftServer => "microsoft_server",
             Self::CodeServer => "code_server",
             Self::DirectSsh => "direct_ssh",
+            Self::DirectSshCursor => "direct_ssh_cursor",
+            Self::DirectSshJetBrains => "direct_ssh_jetbrains",
+            Self::DirectSshZed => "direct_ssh_zed",
         }
     }
 
@@ -189,6 +231,15 @@ impl SystemReason {
             Self::DirectSsh => {
                 "Direct SSH is on for this workspace: desktop VS Code installs Microsoft's VS Code server and its extensions there."
             }
+            Self::DirectSshCursor => {
+                "Direct SSH is on for this workspace: Cursor installs its server and its extensions there."
+            }
+            Self::DirectSshJetBrains => {
+                "Direct SSH is on for this workspace: `JetBrains` Gateway downloads the IDE backend there, and the backend installs plugins."
+            }
+            Self::DirectSshZed => {
+                "Direct SSH is on for this workspace: Zed downloads its remote server there."
+            }
         }
     }
 
@@ -198,6 +249,9 @@ impl SystemReason {
         match self {
             Self::MicrosoftServer | Self::DirectSsh => MICROSOFT_HOSTS,
             Self::CodeServer => OPEN_VSX_HOSTS,
+            Self::DirectSshCursor => CURSOR_HOSTS,
+            Self::DirectSshJetBrains => JETBRAINS_HOSTS,
+            Self::DirectSshZed => ZED_HOSTS,
         }
     }
 }
@@ -325,6 +379,24 @@ mod tests {
             "marketplace.visualstudio.com"
         ));
         assert!(has(SystemReason::CodeServer, "open-vsx.org"));
+        // Each editor's hosts belong to its own reason.
+        assert!(has(
+            SystemReason::DirectSshCursor,
+            "cursor.blob.core.windows.net"
+        ));
+        assert!(!has(
+            SystemReason::DirectSsh,
+            "cursor.blob.core.windows.net"
+        ));
+        assert!(has(
+            SystemReason::DirectSshJetBrains,
+            "downloads.marketplace.jetbrains.com"
+        ));
+        assert!(has(
+            SystemReason::DirectSshZed,
+            "release-assets.githubusercontent.com"
+        ));
+        assert!(!has(SystemReason::DirectSshZed, "plugins.jetbrains.com"));
         assert!(!has(SystemReason::MicrosoftServer, "open-vsx.org"));
     }
 

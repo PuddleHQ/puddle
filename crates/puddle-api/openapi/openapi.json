@@ -15527,7 +15527,10 @@
         "enum": [
           "microsoft_server",
           "code_server",
-          "direct_ssh"
+          "direct_ssh",
+          "direct_ssh_cursor",
+          "direct_ssh_jetbrains",
+          "direct_ssh_zed"
         ]
       },
       "ThemeChoice": {

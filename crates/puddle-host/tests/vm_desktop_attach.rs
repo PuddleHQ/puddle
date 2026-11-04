@@ -404,6 +404,16 @@ mod attach {
         events
             .until(ended(name_static), Duration::from_secs(120))
             .await;
+        // The refused login and the host key refusal above end their sessions with no SSH
+        // disconnect (msb's server calls that "early eof"); neither is a failure of direct SSH.
+        assert!(
+            !events
+                .seen
+                .iter()
+                .any(|event| event["type"] == "workspace_ssh_failed"),
+            "direct SSH reported a failure: {:?}",
+            events.seen
+        );
         let config_text = std::fs::read_to_string(&config).unwrap();
         assert!(
             !config_text.contains("Host puddle-"),

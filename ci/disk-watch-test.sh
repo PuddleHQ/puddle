@@ -50,8 +50,8 @@ has "$tmp/rt/disk-watch-roomy.log" 'free=80GB' "guard samples"
 has "$tmp/sum" 'disk guard roomy: free 80 GB now, lowest 80 GB' "guard end line"
 lacks "$tmp/out" '::error' "guard with room"
 
-# The pattern names the victim by its argv; the guard itself must survive it (the bracket keeps the pattern from
-# matching the guard's own environment-free argv, and the pid keeps it from matching anyone else's process).
+# The pattern names the victim by its argv; the guard itself must survive it (the pattern reaches it by env, not
+# argv). `[.]` is a literal dot, and the pid ties the pattern to this run's victim.
 DISK_WATCH_KILL="sleep 300[.]$$\$" "$script" guard full >"$tmp/out" 2>&1 &
 g=$!
 sleep 0.5

@@ -10,8 +10,8 @@
 #                                logs free space every interval to $RUNNER_TEMP/disk-watch-<label>.log; under the
 #                                warning level takes one deep snapshot; under the floor takes another, annotates
 #                                `::error`, and stops the processes matching $DISK_WATCH_KILL (an ERE for
-#                                `pkill -f`, passed by env so the guard does not match itself; it matches every process of the machine, so
-#                                a caller on a shared host must make it unique to its own step), so the step ends
+#                                `pkill -f`, passed by env so the guard does not match itself; it matches every process on the host,
+#                                so a caller on a shared host must make it unique to its own step), so the step ends
 #                                with a readable cause and the artifact upload still runs.
 #
 # Evidence only: both modes exit 0 whatever they find (the guard's kill is the one action, and only under the

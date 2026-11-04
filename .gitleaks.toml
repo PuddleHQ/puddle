@@ -30,3 +30,12 @@ condition = "AND"
 paths = ['''^crates/puddle-boot/tests/vm_boot\.rs$''', '''^scripts/check-secrets\.sh$''']
 regexTarget = "match"
 regexes = ['''auth\W{1,4}dXNlcjpwdWRkbGU=''']
+
+# The made-up GitHub token of the log canary test, shaped like a real one on purpose so the test
+# searches the trace log for a value a scanner would flag too.
+[[allowlists]]
+description = "the made-up GitHub token of the log canary test"
+condition = "AND"
+paths = ['''^crates/puddle-proxy/tests/terminate_suite/log_canary\.rs$''']
+regexTarget = "match"
+regexes = ['''ghp_R7mQ2xVb9TnLk4Zs8WdYc1HfJe6UoPa3GiXt''']

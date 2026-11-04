@@ -71,4 +71,10 @@ describe("free space on the drive that holds Puddle's data", () => {
     watcher.handle(changed("critical", 2_048));
     expect(center.items.map((n) => n.key)).toEqual(["disk-space"]);
   });
+
+  it("is wanted by default when the stored settings are not loaded yet", () => {
+    const watcher = new NoticeWatcher({ notifier: new InAppNotifier(center) });
+    watcher.handle(changed("low", 15_360));
+    expect(center.items.map((n) => n.key)).toEqual(["disk-space"]);
+  });
 });

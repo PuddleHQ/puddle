@@ -234,7 +234,7 @@ impl Notifier {
 /// the amount left on the drive that holds Puddle's data.
 fn low_disk_space(level: DiskSpaceLevel, free_mib: u64) -> Notice {
     let tenths = free_mib * 10 / 1024;
-    let free = if tenths % 10 == 0 {
+    let free = if tenths.is_multiple_of(10) {
         format!("{}", tenths / 10)
     } else {
         format!("{}.{}", tenths / 10, tenths % 10)

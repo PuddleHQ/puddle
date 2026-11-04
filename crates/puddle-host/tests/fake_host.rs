@@ -6503,6 +6503,73 @@ async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_repaired() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.docker/config.json"
+    ));
+
+    // A start that finds both files unparsable names each file, the error and what fails.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    *rig.guest.boot_says.lock().unwrap() = "puddle-boot: /root/.docker/config.json left as it is: \
+        the file is not valid JSON: EOF while parsing at line 1 column 1\n\
+        puddle-boot: /root/.vscode-server/data/Machine/settings.json left as it is: \
+        the file is not valid JSON: expected value at line 2 column 3\n"
+        .to_owned();
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let docker = problem_of(&host, "merge-left:acme:/root/.docker/config.json");
+    assert_eq!(
+        docker.title,
+        "Puddle could not update /root/.docker/config.json in acme"
+    );
+    assert!(
+        docker
+            .detail
+            .contains("EOF while parsing at line 1 column 1")
+            && docker.detail.contains("bypasses the proxy")
+            && docker.detail.contains("pulls"),
+        "{}",
+        docker.detail
+    );
+    let machine = problem_of(
+        &host,
+        "merge-left:acme:/root/.vscode-server/data/Machine/settings.json",
+    );
+    assert!(
+        machine.detail.contains("expected value at line 2 column 3")
+            && machine.detail.contains("port forwarding"),
+        "{}",
+        machine.detail
+    );
+
+    // The user repaired the files: the next start says nothing, and the old notices are gone.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.docker/config.json"
+    ));
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.docker/config.json"
+    ));
+    assert!(!has_problem(
+        &host,
+        "merge-left:acme:/root/.vscode-server/data/Machine/settings.json"
+    ));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_is_noticed_at_a_start_too_but_only_when_author_rules_exist() {
     let rig = Rig::new();
     let host = rig.start().await;

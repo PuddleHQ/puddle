@@ -61,8 +61,12 @@
         <span class="mono">agent</span> is a plain user that becomes root with
         <span class="mono">sudo</span> (no password;
         <span class="mono">sudo -i</span>
-        for a root shell). <span class="mono">root</span> is what workspaces made
-        before ran as. A change applies the next time the workspace starts.
+        for a root shell); an image without <span class="mono">sudo</span>
+        leaves it no way to root, so choose root there.
+        <span class="mono">root</span> is what workspaces made before ran as. A change
+        applies the next time the workspace starts, and that start gives every file
+        on the workspace's disk to the new user, which takes a while on a disk with
+        many files.
       </p>
     </div>
     <select

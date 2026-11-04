@@ -404,9 +404,11 @@ run_gate() {
             exit 0
         fi
         packages=
+        filter=
         for c in $crates; do
             [ -z "$skip_app" ] || [ "$c" != puddle-app ] || continue
-            packages="$packages -p $c"
+            packages="$packages $c"
+            filter="${filter:+$filter | }package($c)"
         done
         if [ -z "$packages" ]; then
             echo "diff-coverage-fast: only puddle-app changed and it is skipped here; CI measures it"
@@ -424,9 +426,12 @@ run_gate() {
         echo "diff-coverage-fast: tests with coverage for:$packages"
         coverage_scrub "$target"
         trap 'coverage_scrub "$target"' EXIT
-        # shellcheck disable=SC2086 # $packages is a list of `-p <crate>` pairs
-        scripts/coverage-run.sh "$plain_cargo" $packages --all-features --locked \
-            --profile "${NEXTEST_PROFILE:-default}"
+        # The build selects the whole workspace like the `coverage` gate (a `-p` selection resolves other features
+        # for some third-party crates, so their units would hash differently and be built twice); the filterset
+        # picks the tests that run.
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
+        scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
+            --profile "${NEXTEST_PROFILE:-default}" -E "$filter"
         "$plain_cargo" llvm-cov report --lcov --output-path "$lcov"
         # The exclusion notes ("matched nothing in this diff") list every entry of the file that this change does
         # not touch: hundreds of lines, so only their count is printed.

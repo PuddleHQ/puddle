@@ -415,6 +415,9 @@ describe("changing a row", () => {
       within(dialog).getByRole("radio", { name: "In a header (most tools)" }),
     ).toBeChecked();
     expect(within(dialog).queryByLabelText("Parameter name")).toBeNull();
+    expect(dialog).toHaveTextContent(
+      "an error page that repeats the URL hands it back to the workspace",
+    );
     await fireEvent.click(
       within(dialog).getByRole("radio", { name: "In a query parameter" }),
     );

@@ -380,6 +380,15 @@ async fn a_secret_is_swapped_in_headers_unless_it_names_a_query_parameter_or_the
     // A refused place changes nothing.
     let kept = put(&api, "/api/env/T", &secret(None, &["api.example.com"])).await;
     assert_eq!(kept.json()["place"], json!({"in": "header"}));
+
+    // An update that leaves the place out keeps the stored one: a client that only changes the
+    // hosts or the value must not move the secret back to headers.
+    let path = json!({"in": "path"});
+    let body = json!({"kind": "secret", "hosts": ["api.example.com"], "place": path});
+    assert_eq!(put(&api, "/api/env/T", &body).await.json()["place"], path);
+    let rehosted = put(&api, "/api/env/T", &secret(None, &["other.example.com"])).await;
+    assert_eq!(rehosted.status, 200, "{}", rehosted.body);
+    assert_eq!(rehosted.json()["place"], path);
 }
 
 #[tokio::test]

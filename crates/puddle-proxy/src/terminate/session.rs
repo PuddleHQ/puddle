@@ -844,10 +844,14 @@ where
     /// Writes `response` to the guest while the guest's read side is polled (see [`keep_reading`]).
     async fn write_response(
         &mut self,
-        response: ::http::Response<AnswerBody>,
+        mut response: ::http::Response<AnswerBody>,
         parsed: &Parsed,
         config: &ProxyConfig,
     ) -> io::Result<response::Written> {
+        self.cx
+            .termination
+            .stand_ins()
+            .hide_in_answer(response.headers_mut(), &self.cx.target.host);
         tokio::select! {
             written = response::write(
                 &mut self.writer,

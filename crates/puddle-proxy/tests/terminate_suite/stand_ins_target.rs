@@ -287,3 +287,74 @@ async fn hostile_an_http2_stand_in_in_another_place_or_toward_another_host_goes_
         assert_nothing_leaked(&event, &secrets);
     }
 }
+
+#[tokio::test]
+async fn hostile_a_redirect_that_echoes_the_url_hands_the_guest_the_stand_in_not_the_real_value() {
+    let pki = Pki::new();
+    // A server that adds a slash and repeats the URL it got, as many do.
+    let echo: Handler = Arc::new(|request| {
+        let to = format!("https://bound.test{}/", request.target);
+        Reply::status(
+            301,
+            &format!("location: {to}\r\nlink: <{to}>; rel=\"canonical\"\r\n"),
+            "",
+        )
+    });
+    let server = FakeServer::tls(pki.server_config("bound.test", Flaw::None), echo).await;
+    let h2 = H2Server::recording(
+        &pki,
+        "bound.test",
+        Arc::new(|seen| {
+            let mut answer = reply(301, "");
+            answer.headers_mut().insert(
+                "location",
+                format!("https://bound.test{}/", seen.path).parse().unwrap(),
+            );
+            answer
+        }),
+    )
+    .await;
+    let secrets = secrets();
+    let (key, bot) = (&secrets.key, &secrets.bot);
+    let path = format!("/bot{bot}/getMe?appid={key}");
+    let echoed = format!("https://bound.test{path}/");
+
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(pass_through())
+        .stand_ins(&secrets.registry)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client
+        .send(format!("GET {path} HTTP/1.1\r\nHost: bound.test\r\n\r\n").as_bytes())
+        .await;
+    let response = client.response("GET").await;
+    client.close().await;
+    assert_eq!(
+        server.recorded()[0].target,
+        format!("/bot{REAL_BOT}/getMe?appid={REAL_KEY}")
+    );
+    assert_eq!(response.status, 301);
+    assert_eq!(response.header("location"), Some(echoed.as_str()));
+    assert_eq!(
+        response.header("link"),
+        Some(format!("<{echoed}>; rel=\"canonical\"").as_str())
+    );
+    assert_nothing_leaked(&rig.events(1).await[0], &secrets);
+
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", h2.addr)
+        .injector(pass_through())
+        .stand_ins(&secrets.registry)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let got = client
+        .request("GET", "bound.test", &path, &[], full(bytes::Bytes::new()))
+        .await;
+    client.close().await;
+    assert_eq!(got.status, 301);
+    assert_eq!(got.header("location"), Some(echoed.as_str()));
+    assert_nothing_leaked(&rig.events(1).await[0], &secrets);
+}

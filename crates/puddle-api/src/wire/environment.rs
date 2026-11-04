@@ -110,13 +110,17 @@ impl SecretPlace {
         }
     }
 
-    /// The place to store; none given is header values.
+    /// The place to store; none given keeps `stored` (header values for a new secret).
     ///
     /// # Errors
     /// [`store::StoreError::EnvInvalid`] for a query name that is not one.
-    pub(crate) fn into_store(place: Option<Self>) -> Result<store::SecretPlace, store::StoreError> {
+    pub(crate) fn into_store(
+        place: Option<Self>,
+        stored: Option<store::SecretPlace>,
+    ) -> Result<store::SecretPlace, store::StoreError> {
         match place {
-            None | Some(Self::Header {}) => Ok(store::SecretPlace::Header),
+            None => Ok(stored.unwrap_or_default()),
+            Some(Self::Header {}) => Ok(store::SecretPlace::Header),
             Some(Self::Query { name }) => store::SecretPlace::query(&name),
             Some(Self::Path {}) => Ok(store::SecretPlace::Path),
         }
@@ -225,7 +229,8 @@ pub enum EnvSetRequest {
         /// every name below it. A pattern over a domain anyone can register a name under
         /// (`*.github.io`) is refused.
         hosts: Vec<String>,
-        /// Where in a request the stand-in is swapped; header values when left out.
+        /// Where in a request the stand-in is swapped. Left out: the secret's stored place when it
+        /// is a secret already, header values for a new one.
         #[serde(default)]
         place: Option<SecretPlace>,
     },

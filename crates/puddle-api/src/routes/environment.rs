@@ -96,11 +96,11 @@ async fn set(
             place,
         } => {
             let hosts = SecretHost::list(&hosts)?;
-            let place = SecretPlace::into_store(place)?;
-            let kept = match store.env_entry(&scope, &name)?.map(|e| e.value) {
-                Some(EnvValue::Secret(secret)) => Some(secret.id),
-                _ => None,
+            let (kept, stored) = match store.env_entry(&scope, &name)?.map(|e| e.value) {
+                Some(EnvValue::Secret(secret)) => (Some(secret.id), Some(secret.place)),
+                _ => (None, None),
             };
+            let place = SecretPlace::into_store(place, stored)?;
             let (id, fresh) = match &kept {
                 Some(id) => (id.clone(), false),
                 None => (new_stored_id()?, true),

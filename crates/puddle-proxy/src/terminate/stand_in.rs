@@ -546,7 +546,8 @@ fn scan(entries: &[Arc<StandIn>], target: &str) -> Swapped {
     if entries.is_empty() {
         return report;
     }
-    let decoded = percent_decoded(target.as_bytes());
+    // After a swap the target holds real values: the decoded copy is wiped too.
+    let decoded = percent_decoded(target.as_bytes()).map(Zeroizing::new);
     for entry in entries {
         let found = entry.finder.find(target.as_bytes()).is_some()
             || decoded

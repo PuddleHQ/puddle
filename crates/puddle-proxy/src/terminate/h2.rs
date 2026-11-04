@@ -597,7 +597,10 @@ async fn exchange(
     if let Some(refusal) = unauthorized_answer(shared, &response, unauthorized.as_ref()) {
         return Err(refusal);
     }
-    let response = read_exchange_answer(shared, exchange.as_mut(), response).await?;
+    let mut response = read_exchange_answer(shared, exchange.as_mut(), response).await?;
+    cx.termination
+        .stand_ins()
+        .hide_in_answer(response.headers_mut(), &cx.target.host);
     let lease = match route {
         Route::H1(lease) => Some(lease),
         Route::H2(_) => None,
@@ -1031,6 +1034,10 @@ async fn websocket(
     };
     if !agreed {
         // The server said no: its answer goes to the guest as any other.
+        let mut response = response;
+        cx.termination
+            .stand_ins()
+            .hide_in_answer(response.headers_mut(), &cx.target.host);
         let sent = Arc::new(Sent::default());
         sent.finish();
         return Ok(guest_response(

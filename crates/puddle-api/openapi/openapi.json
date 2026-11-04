@@ -11398,7 +11398,7 @@
                 "oneOf": [
                   {
                     "$ref": "#/components/schemas/SecretPlace",
-                    "description": "Where in a request the stand-in is swapped; header values when left out."
+                    "description": "Where in a request the stand-in is swapped. Left out: the secret's stored place when it\nis a secret already, header values for a new one."
                   },
                   {
                     "type": "null"

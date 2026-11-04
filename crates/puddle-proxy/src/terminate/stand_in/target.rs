@@ -6,7 +6,12 @@
 //! and the HTTP/2 check refuse anything else, and neither lets a fragment through.
 
 use std::borrow::Cow;
+use std::cmp::Reverse;
+use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
+
+use ::http::{HeaderMap, HeaderValue};
+use memchr::memmem::Finder;
 
 use puddle_types::Host;
 use zeroize::Zeroizing;
@@ -62,30 +67,134 @@ impl StandIns {
 
     /// `target` as the audit and the logs may show it: every stand-in of this registry in it,
     /// as sent or behind percent-escapes, replaced by `[secret:<name>]` or `[login:<name>]`.
-    /// Neither a stand-in nor (as this is the guest's target) a real value is left in it.
+    /// Neither a stand-in nor (as this is the guest's target) a real value is left in it. The rest
+    /// stays as sent: decoding it would let the guest put a line break or a `?` in the record.
     pub(crate) fn redact_target<'t>(&self, target: &'t str) -> Cow<'t, str> {
         let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
         let entries: &[Arc<StandIn>] = &guard;
         if entries.is_empty() {
             return Cow::Borrowed(target);
         }
-        let label = |entry: &StandIn| {
-            Some(Zeroizing::new(
-                format!("[{}:{}]", entry.origin.label(), entry.name).into_bytes(),
-            ))
-        };
-        let mut ignored = Swapped::default();
-        let text = match swap_bytes(target.as_bytes(), entries, &mut ignored, label) {
-            Some(bytes) => Cow::Owned(String::from_utf8_lossy(&bytes).into_owned()),
-            None => Cow::Borrowed(target),
-        };
-        let hidden = percent_decoded(text.as_bytes())
-            .and_then(|decoded| swap_bytes(&decoded, entries, &mut ignored, label));
-        match hidden {
-            Some(bytes) => Cow::Owned(String::from_utf8_lossy(&bytes).into_owned()),
-            None => text,
+        // The target with its escapes decoded, and where each decoded byte starts in `target`. A
+        // stand-in has no `%`, so one sent as is is found here too.
+        let mut decoded = Vec::with_capacity(target.len());
+        let mut starts = Vec::with_capacity(target.len() + 1);
+        let raw = target.as_bytes();
+        let mut at = 0;
+        while let Some(&byte) = raw.get(at) {
+            starts.push(at);
+            if let Some(value) = escaped_byte(raw, at) {
+                decoded.push(value);
+                at += 3;
+            } else {
+                decoded.push(byte);
+                at += 1;
+            }
+        }
+        starts.push(raw.len());
+        let mut spans: Vec<(usize, usize, &StandIn)> = Vec::new();
+        for entry in entries {
+            let mut from = 0;
+            while let Some(found) = decoded.get(from..).and_then(|rest| entry.finder.find(rest)) {
+                let begin = from + found;
+                from = begin + entry.text.len();
+                if let (Some(&a), Some(&b)) = (starts.get(begin), starts.get(from)) {
+                    spans.push((a, b, entry));
+                }
+            }
+        }
+        if spans.is_empty() {
+            return Cow::Borrowed(target);
+        }
+        spans.sort_by_key(|&(begin, end, _)| (begin, Reverse(end)));
+        let mut out = String::with_capacity(target.len());
+        let mut copied = 0;
+        for (begin, end, entry) in spans {
+            if begin < copied {
+                continue;
+            }
+            out.push_str(target.get(copied..begin).unwrap_or_default());
+            out.push('[');
+            out.push_str(entry.origin.label());
+            out.push(':');
+            out.push_str(&entry.name);
+            out.push(']');
+            copied = end;
+        }
+        out.push_str(target.get(copied..).unwrap_or_default());
+        Cow::Owned(out)
+    }
+
+    /// Puts the stand-in back wherever the headers of an answer from `host` repeat the real value
+    /// of a secret placed in the path or a query parameter for that host, as sent or as Puddle
+    /// encoded it: servers echo the URL they got, in a redirect's `Location` above all, and the
+    /// guest must not read the real value there. A header secret is not looked for (a server
+    /// rarely echoes one; see the accepted risk of echoes in the credentials spec), and neither is
+    /// the body.
+    pub(crate) fn hide_in_answer(&self, headers: &mut HeaderMap, host: &Host) {
+        let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        let mut forms: Vec<(Zeroizing<Vec<u8>>, &str)> = Vec::new();
+        for entry in guard.iter() {
+            if entry.placement == Placement::Header || !entry.hosts.contains(host) {
+                continue;
+            }
+            let real = entry.real.expose();
+            for form in [
+                Zeroizing::new(real.as_bytes().to_vec()),
+                encoded(real, keeps_in_path),
+                encoded(real, keeps_in_query),
+            ] {
+                if !form.is_empty() && !forms.iter().any(|(known, _)| *known == form) {
+                    forms.push((form, &entry.text));
+                }
+            }
+        }
+        if forms.is_empty() {
+            return;
+        }
+        // The longest form first, so a value that holds another is put back whole.
+        forms.sort_by_key(|(form, _)| Reverse(form.len()));
+        for value in headers.values_mut() {
+            let mut text = Zeroizing::new(value.as_bytes().to_vec());
+            let mut changed = false;
+            for (form, stand_in) in &forms {
+                if let Some(new) = replace_all(&text, form, stand_in.as_bytes()) {
+                    text = new;
+                    changed = true;
+                }
+            }
+            if changed {
+                // The stand-in is visible ASCII, so the value stays a valid header value; were it
+                // not, the header would go empty rather than carry the real value.
+                *value = HeaderValue::from_bytes(&text).unwrap_or(HeaderValue::from_static(""));
+            }
         }
     }
+}
+
+/// `input` with every `needle` replaced by `with`, or `None` when it has none.
+fn replace_all(input: &[u8], needle: &[u8], with: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+    let finder = Finder::new(needle);
+    let mut out: Option<Zeroizing<Vec<u8>>> = None;
+    let mut copied = 0;
+    while let Some(found) = input.get(copied..).and_then(|rest| finder.find(rest)) {
+        let out = out.get_or_insert_with(|| Zeroizing::new(Vec::with_capacity(input.len())));
+        out.extend_from_slice(input.get(copied..copied + found)?);
+        out.extend_from_slice(with);
+        copied += found + needle.len();
+    }
+    let mut out = out?;
+    out.extend_from_slice(input.get(copied..)?);
+    Some(out)
+}
+
+/// The byte a `%XX` escape at `at` stands for, or `None` when there is no escape there.
+fn escaped_byte(raw: &[u8], at: usize) -> Option<u8> {
+    if raw.get(at) != Some(&b'%') {
+        return None;
+    }
+    let hex = std::str::from_utf8(raw.get(at + 1..at + 3)?).ok()?;
+    u8::from_str_radix(hex, 16).ok()
 }
 
 /// The query with each parameter that is exactly a [`Placement::Query`] stand-in for `host`,
@@ -99,6 +208,10 @@ fn swap_query(
     report: &mut Swapped,
 ) -> Option<Zeroizing<Vec<u8>>> {
     let params: Vec<Param<'_>> = query.split('&').map(Param::new).collect();
+    let mut given: HashMap<&[u8], usize> = HashMap::new();
+    for param in &params {
+        *given.entry(&param.name).or_default() += 1;
+    }
     let swaps: Vec<Option<Zeroizing<Vec<u8>>>> = params
         .iter()
         .map(|param| {
@@ -107,9 +220,9 @@ fn swap_query(
             let Placement::Query(placed) = &entry.placement else {
                 return None;
             };
-            let is_placed = |other: &Param<'_>| *other.name == *placed.as_bytes();
-            let once = params.iter().filter(|other| is_placed(other)).count() == 1;
-            let swaps = is_placed(param) && once && entry.hosts.contains(host);
+            let is_placed = *param.name == *placed.as_bytes();
+            let once = given.get(placed.as_bytes()) == Some(&1);
+            let swaps = is_placed && once && entry.hosts.contains(host);
             swaps.then(|| {
                 Swapped::note(&mut report.swapped, entry.id());
                 encoded(entry.real.expose(), keeps_in_query)
@@ -165,15 +278,16 @@ fn decoded(text: &str) -> Cow<'_, [u8]> {
     percent_decoded(text.as_bytes()).map_or(Cow::Borrowed(text.as_bytes()), Cow::Owned)
 }
 
-/// A path character that needs no escape inside a segment (RFC 3986 `pchar`, less `%`).
+/// A path character that needs no escape: RFC 3986 `pchar` and `/` (a value may span segments,
+/// as some webhook secrets do), less `%` and `;` (some servers cut a segment at `;`).
 fn keeps_in_path(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@".contains(&byte)
+    byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,=:@/".contains(&byte)
 }
 
 /// A query value character that needs no escape and that no server reads as a separator or a
-/// space (so not `&`, `=`, `+`, `#`).
+/// space (so not `&`, `=`, `+`, `#`, nor `;`, which some servers split on too).
 fn keeps_in_query(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || b"-._~!$'()*,;:@/?".contains(&byte)
+    byte.is_ascii_alphanumeric() || b"-._~!$'()*,:@/?".contains(&byte)
 }
 
 /// `real` with every byte `keeps` refuses percent-encoded, except a `%` that already starts an
@@ -190,7 +304,13 @@ fn encoded(real: &str, keeps: fn(u8) -> bool) -> Zeroizing<Vec<u8>> {
         if escape || keeps(byte) {
             out.push(byte);
         } else {
-            out.extend_from_slice(format!("%{byte:02X}").as_bytes());
+            // Written digit by digit: a formatted string would be a copy of the real byte that
+            // is never wiped.
+            let hex = |nibble: u8| match nibble {
+                0..=9 => b'0' + nibble,
+                _ => b'A' + nibble - 10,
+            };
+            out.extend_from_slice(&[b'%', hex(byte >> 4), hex(byte & 0xF)]);
         }
     }
     out
@@ -405,7 +525,7 @@ mod tests {
             .insert(entry(
                 "Q",
                 KEY,
-                "a b&c=d+e#f/g?h%2Bi%zz",
+                "a b&c=d+e#f/g?h%2Bi%zz;",
                 &["q.example.com"],
                 Placement::query("sig").unwrap(),
             ))
@@ -414,7 +534,7 @@ mod tests {
             .insert(entry(
                 "P",
                 BOT,
-                "a b/c?d#e%2Fx:y@z&",
+                "a b/c?d#e%2Fx:y@z&;",
                 &["q.example.com"],
                 Placement::Path,
             ))
@@ -422,7 +542,7 @@ mod tests {
         let (new, _) = swap(&registry, &format!("/{BOT}?sig={KEY}"), "q.example.com");
         assert_eq!(
             new.as_deref(),
-            Some("/a%20b%2Fc%3Fd%23e%2Fx:y@z&?sig=a%20b%26c%3Dd%2Be%23f/g?h%2Bi%25zz")
+            Some("/a%20b/c%3Fd%23e%2Fx:y@z&%3B?sig=a%20b%26c%3Dd%2Be%23f/g?h%2Bi%25zz%3B")
         );
     }
 
@@ -497,6 +617,80 @@ mod tests {
             StandIns::new().redact_target(&format!("/{BOT}")),
             Cow::Borrowed(_)
         ));
+    }
+
+    #[test]
+    fn hostile_the_audit_target_keeps_every_escape_but_the_stand_ins_own() {
+        let registry = registry();
+        // Decoding the whole line would put a line break and a `?` in the record.
+        let escaped = HDR.replacen('-', "%2D", 1);
+        assert_eq!(
+            registry.redact_target(&format!("/x%0d%0a%3Fy/{escaped}/a%2Fb?q={BOT}&r=%41")),
+            "/x%0d%0a%3Fy/[secret:API_KEY]/a%2Fb?q=[secret:BOT_TOKEN]&r=%41"
+        );
+        // Overlapping copies: each label once, nothing of either stand-in left.
+        assert_eq!(
+            registry.redact_target(&format!("/{HDR}{escaped}")),
+            "/[secret:API_KEY][secret:API_KEY]"
+        );
+    }
+
+    #[test]
+    fn an_answer_header_that_repeats_a_target_secret_gets_the_stand_in_back() {
+        let registry = StandIns::new();
+        registry
+            .insert(entry(
+                "P",
+                BOT,
+                "a b/c",
+                &["q.example.com"],
+                Placement::Path,
+            ))
+            .unwrap();
+        registry
+            .insert(entry(
+                "Q",
+                KEY,
+                "k&1",
+                &["q.example.com"],
+                Placement::query("sig").unwrap(),
+            ))
+            .unwrap();
+        registry
+            .insert(entry(
+                "H",
+                HDR,
+                REAL_HDR,
+                &["q.example.com"],
+                Placement::Header,
+            ))
+            .unwrap();
+        let mut headers = ::http::HeaderMap::new();
+        let sent = "/a%20b/c/x?sig=k%261";
+        headers.insert(
+            "location",
+            format!("https://q.example.com{sent}/").parse().unwrap(),
+        );
+        headers.insert("x-raw", "a b/c and k&1 and k%261".parse().unwrap());
+        headers.insert("x-header-secret", REAL_HDR.parse().unwrap());
+        headers.insert("x-plain", "nothing".parse().unwrap());
+        let mut elsewhere = headers.clone();
+
+        registry.hide_in_answer(&mut headers, &host("q.example.com"));
+        assert_eq!(
+            headers["location"],
+            format!("https://q.example.com/{BOT}/x?sig={KEY}/")
+        );
+        assert_eq!(headers["x-raw"], format!("{BOT} and {KEY} and {KEY}"));
+        assert_eq!(headers["x-header-secret"], REAL_HDR, "not looked for");
+        assert_eq!(headers["x-plain"], "nothing");
+
+        // Toward another host the secrets were never sent, so nothing is changed.
+        let before = elsewhere.clone();
+        registry.hide_in_answer(&mut elsewhere, &host("other.example.com"));
+        assert_eq!(elsewhere, before);
+        StandIns::new().hide_in_answer(&mut elsewhere, &host("q.example.com"));
+        assert_eq!(elsewhere, before);
     }
 
     #[test]

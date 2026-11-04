@@ -84,8 +84,8 @@ pub(crate) fn resolve(
                     SecretValue::new(real.expose()),
                     set,
                 )
-                .map_err(|e| format!("the secret {name} cannot be used: {e}"))?
-                .placed(placement(place));
+                .and_then(|entry| placement(place).map(|at| entry.placed(at)))
+                .map_err(|e| format!("the secret {name} cannot be used: {e}"))?;
                 entries.push(entry);
                 stand_in
             }
@@ -98,12 +98,13 @@ pub(crate) fn resolve(
 }
 
 /// The proxy's placement for a place the store kept. The store checks a query name by the
-/// proxy's rules (a test below keeps them equal), so it is taken as it is.
-fn placement(place: SecretPlace) -> Placement {
+/// same rules (a test below keeps them equal); the proxy checks it again, so a name that got into
+/// the database some other way stops the secret instead of reaching the proxy unchecked.
+fn placement(place: SecretPlace) -> Result<Placement, puddle_proxy::StandInError> {
     match place {
-        SecretPlace::Header => Placement::Header,
-        SecretPlace::Path => Placement::Path,
-        SecretPlace::Query(name) => Placement::Query(name),
+        SecretPlace::Header => Ok(Placement::Header),
+        SecretPlace::Path => Ok(Placement::Path),
+        SecretPlace::Query(name) => Placement::query(&name),
     }
 }
 
@@ -185,6 +186,15 @@ mod tests {
         // The same stand-in at the next start.
         let again = resolve(&store, &vault, &ws("shop")).unwrap();
         assert_eq!(again.guest.get("NPM_TOKEN"), Some(stand_in.as_str()));
+    }
+
+    #[test]
+    fn a_query_name_the_proxy_refuses_stops_the_secret() {
+        assert!(placement(SecretPlace::Query("a&b".to_owned())).is_err());
+        assert_eq!(
+            placement(SecretPlace::Query("appid".to_owned())),
+            Ok(Placement::query("appid").unwrap())
+        );
     }
 
     #[test]

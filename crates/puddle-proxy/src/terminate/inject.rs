@@ -275,8 +275,9 @@ pub enum InjectDecision {
     Inject(Injection),
     /// Forward it as the guest sent it (no credential applies to it).
     PassThrough,
-    /// As [`InjectDecision::PassThrough`], and tell `Unauthorized::noting`'s callback if the
-    /// server answers `401`. The answer is still the server's.
+    /// As [`InjectDecision::PassThrough`], and react if the server answers `401`: an
+    /// `Unauthorized::noting` callback is told and the answer is still the server's; an
+    /// `Unauthorized::new` answers the guest with its refusal instead.
     PassThroughNoting(Unauthorized),
     /// Answer the guest with this error; nothing is sent upstream.
     Refuse(InjectRefusal),

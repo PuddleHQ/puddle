@@ -216,6 +216,7 @@ async fn a_stand_in_toward_another_decrypted_host_goes_out_unchanged_and_is_flag
     assert!(!event.injected, "nothing was added");
     assert_eq!(event.binding_id, None);
     assert!(!captured_logs().contains(REAL_KEY));
+    assert!(captured_logs().contains("a stand-in went out unchanged"));
 }
 
 #[tokio::test]
@@ -264,6 +265,7 @@ async fn another_workspaces_stand_in_is_just_a_string() {
         events[0].unswapped_stand_ins.is_empty(),
         "an unknown stand-in is not one of this workspace's"
     );
+    assert!(!captured_logs().contains("went out unchanged"));
 }
 
 #[tokio::test]

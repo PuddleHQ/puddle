@@ -739,6 +739,19 @@ mod tests {
     use super::*;
     use crate::MsbConfig;
 
+    /// A folder for a test's msb home, owner-only whatever the umask: msb refuses a home with an
+    /// ancestor other accounts can write to, and a umask of `0002` leaves a plain temp folder
+    /// group-writable.
+    fn home_tmp() -> tempfile::TempDir {
+        let mut builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        builder.tempdir().unwrap()
+    }
+
     #[test]
     fn only_the_relay_race_counts_as_a_boot_race() {
         let boot = |message: &str| MicrosandboxError::BootStart {
@@ -814,7 +827,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_gives_the_sdk_the_runtime_pair_and_home_as_arguments() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = home_tmp();
         let base = tmp.path().to_path_buf();
         let config = MsbConfig::new(
             base.join("home"),
@@ -841,7 +854,7 @@ mod tests {
         use puddle_compute::{FileMount, SandboxSpec};
         use puddle_types::GuestPath;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = home_tmp();
         let base = tmp.path().to_path_buf();
         let share = base.join("home").join("guest-share");
         std::fs::create_dir_all(share.join("tree")).unwrap();
@@ -885,7 +898,7 @@ mod tests {
         use puddle_compute::{FileMount, SandboxSpec, VsockRoute};
         use puddle_types::GuestPath;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = home_tmp();
         let base = dunce::canonicalize(tmp.path()).unwrap();
         let home = base.join("data").join("msb");
         let share = base.join("data").join("guest-share");

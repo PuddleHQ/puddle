@@ -529,10 +529,9 @@ mod tests {
         let critical = n.handle(t0, &prefs(), false, &at(DiskSpaceLevel::Critical, 3_584));
         assert_eq!(critical.len(), 1);
         assert_eq!(critical[0].title, "Disk space is almost gone");
-        assert!(
-            critical[0].body.starts_with("3.5 GB are left"),
-            "{}",
-            critical[0].body
+        assert_eq!(
+            critical[0].body.split(". ").next().map(|s| &s[..15]),
+            Some("3.5 GB are left")
         );
         // Partly back (critical to low) and fully back (ok) are good news: no notice.
         assert_eq!(

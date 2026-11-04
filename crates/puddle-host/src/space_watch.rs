@@ -72,22 +72,14 @@ pub(crate) async fn read_once<S: Space>(
     let reading = Arc::clone(space);
     let free = match tokio::task::spawn_blocking(move || reading.free_bytes()).await {
         Ok(Ok(free)) => free,
-        Ok(Err(error)) => {
-            tracing::debug!(%error, "the free space could not be read");
-            return;
-        }
-        Err(error) => {
-            tracing::warn!(%error, "reading the free space stopped unexpectedly");
+        failed => {
+            tracing::debug!(?failed, "the free space could not be read");
             return;
         }
     };
     let level = disk_limits(settings).level(free);
     if let Some(event) = watch.observe(level, free) {
-        tracing::info!(
-            ?level,
-            free_mib = free / (1024 * 1024),
-            "free disk space changed level"
-        );
+        tracing::info!(?level, free, "free disk space changed level");
         events.emit(event);
     }
 }

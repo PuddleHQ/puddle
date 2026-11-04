@@ -1995,8 +1995,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let guest = entry.and_then(|e| e.guest.as_ref());
         let user = guest.map_or(SessionUser::Root, |g| g.session_user);
-        let Some(open) = Self::open_target(record, guest) else {
-            return Err(format!("{name} is not running; start it first"));
+        let open = match guest {
+            Some(guest) => Self::open_target(record, guest),
+            None => return Err(format!("{name} is not running; start it first")),
         };
         let key = problem_key("ssh", name);
         self.inner
@@ -2014,12 +2015,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         })
     }
 
-    /// What an editor opens in the running guest: the multi-root file when the editor opens one,
-    /// else the start folder or the volume root. The desktop and the browser attach share it. `None`
-    /// when the workspace has no running guest.
-    fn open_target(record: &WorkspaceRecord, guest: Option<&GuestState>) -> Option<OpenTarget> {
-        let guest = guest?;
-        Some(match &guest.editor_file {
+    /// What an editor opens in the running `guest`: the multi-root file when the editor opens one,
+    /// else the start folder or the volume root. The desktop and the browser attach share it.
+    fn open_target(record: &WorkspaceRecord, guest: &GuestState) -> OpenTarget {
+        match &guest.editor_file {
             Some(file) => OpenTarget {
                 path: file.path().as_str().to_owned(),
                 is_workspace_file: true,
@@ -2030,7 +2029,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     .to_owned(),
                 is_workspace_file: false,
             },
-        })
+        }
     }
 
     /// Which server the browser editor runs at this start: Microsoft's only when the user chose
@@ -2096,7 +2095,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // Read under the live lock, released before the launcher is asked.
         let open = {
             let live = self.inner.live.lock().await;
-            Self::open_target(record, live.get(name).and_then(|e| e.guest.as_ref()))
+            live.get(name)
+                .and_then(|e| e.guest.as_ref())
+                .map(|guest| Self::open_target(record, guest))
         };
         let target = BrowserTarget {
             origin: puddle_front::origin_of(self.inner.front_addr.port(), name),

@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.25.0"
+    "version": "0.26.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -9166,7 +9166,9 @@
           "deny",
           "pending",
           "blocked",
-          "expired"
+          "expired",
+          "succeeded",
+          "failed"
         ]
       },
       "AuditPage": {
@@ -10061,6 +10063,59 @@
           },
           {
             "type": "object",
+            "description": "A workspace operation, or a change to the identities and repository lists a workspace\nuses: who asked, which workspace and how it ended.",
+            "required": [
+              "ts",
+              "op",
+              "workspace_id",
+              "outcome",
+              "actor",
+              "detail",
+              "type"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "description": "Who asked: `cli`, `ui`, `api` or `system`."
+              },
+              "detail": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why it failed, or what the operation touched; `null` when there is nothing to add."
+              },
+              "op": {
+                "$ref": "#/components/schemas/WorkspaceOpKind",
+                "description": "What was done."
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/WorkspaceOpOutcome",
+                "description": "How it ended."
+              },
+              "ts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Epoch ms.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace_op"
+                ]
+              },
+              "workspace_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The workspace; `null` for a change that belongs to none (an identity)."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "The oldest records were deleted to keep the audit under its size cap.",
             "required": [
               "ts",
@@ -10297,6 +10352,7 @@
           "rule_set_switched",
           "rule_set_changed",
           "system_managed_changed",
+          "workspace_op",
           "audit_trimmed"
         ]
       },
@@ -14767,7 +14823,7 @@
         "properties": {
           "effect": {
             "$ref": "#/components/schemas/Effect",
-            "description": "Allow or deny (built-in sets only allow)."
+            "description": "Allow or deny (a built-in set's entries all do the same; your own set may mix them)."
           },
           "expires_at": {
             "type": [
@@ -16027,6 +16083,33 @@
         "maxLength": 63,
         "minLength": 1,
         "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+      },
+      "WorkspaceOpKind": {
+        "type": "string",
+        "description": "What a `workspace_op` record is about.",
+        "enum": [
+          "create",
+          "delete",
+          "rename",
+          "start",
+          "stop",
+          "identity_created",
+          "identity_updated",
+          "identity_deleted",
+          "identity_default_set",
+          "identities_changed",
+          "repo_added",
+          "repo_switched",
+          "repo_removed"
+        ]
+      },
+      "WorkspaceOpOutcome": {
+        "type": "string",
+        "description": "How a workspace operation ended.",
+        "enum": [
+          "succeeded",
+          "failed"
+        ]
       },
       "WorkspaceOperation": {
         "type": "string",

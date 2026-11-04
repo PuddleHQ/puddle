@@ -183,7 +183,7 @@ async fn a_rule_set_deny_names_the_rule_and_the_set() {
         FnPolicy::new(|_| {
             Ok(Decision::SetDeny {
                 set: RuleSetId::User(2),
-                rule_id: RuleId(8),
+                rule_id: Some(RuleId(8)),
                 pattern: PatternKind::Exact,
             })
         }),
@@ -196,6 +196,72 @@ async fn a_rule_set_deny_names_the_rule_and_the_set() {
     assert_eq!(header(&refusal, "x-puddle-rule-set"), Some("user:2"));
     assert!(
         refusal.message.contains("rule set user:2"),
+        "{}",
+        refusal.message
+    );
+}
+
+#[tokio::test]
+async fn a_built_in_deny_set_names_the_set_and_has_no_rule_to_name() {
+    let p = proxy(
+        FnPolicy::new(|_| {
+            Ok(Decision::SetDeny {
+                set: RuleSetId::BuiltIn("trackers"),
+                rule_id: None,
+                pattern: PatternKind::Suffix,
+            })
+        }),
+        StaticResolver::new(),
+    );
+    let refusal = admit(&p, &request("ads.example")).await.unwrap_err();
+    assert_eq!(refusal.status, "403 Forbidden");
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("deny"));
+    assert_eq!(header(&refusal, "x-puddle-rule"), None);
+    assert_eq!(
+        header(&refusal, "x-puddle-rule-set"),
+        Some("builtin:trackers")
+    );
+    assert!(
+        refusal
+            .message
+            .contains("built-in rule set builtin:trackers"),
+        "{}",
+        refusal.message
+    );
+}
+
+/// A policy that allows a name through a set and denies its address through a set entry.
+struct SetAllowsNameDeniesIp;
+
+impl Policy for SetAllowsNameDeniesIp {
+    fn decide(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Decision, PolicyError> {
+        Ok(Decision::SetAllow {
+            set: RuleSetId::System,
+            rule_id: None,
+            pattern: PatternKind::Exact,
+        })
+    }
+
+    fn lookup(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Option<Decision>, PolicyError> {
+        Ok(Some(Decision::SetDeny {
+            set: RuleSetId::User(3),
+            rule_id: Some(RuleId(5)),
+            pattern: PatternKind::Exact,
+        }))
+    }
+}
+
+#[tokio::test]
+async fn a_set_deny_of_every_address_refuses_the_allowed_name() {
+    let p = proxy(
+        Arc::new(SetAllowsNameDeniesIp),
+        StaticResolver::new().with("example.com", &[ip("1.1.1.1")]),
+    );
+    let refusal = admit(&p, &request("example.com")).await.unwrap_err();
+    assert_eq!(refusal.status, "403 Forbidden");
+    assert_eq!(header(&refusal, "x-puddle-rule"), Some("5"));
+    assert!(
+        refusal.message.contains("denied by a rule"),
         "{}",
         refusal.message
     );

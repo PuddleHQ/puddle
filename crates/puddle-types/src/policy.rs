@@ -126,13 +126,12 @@ pub enum Decision {
         /// How it matched.
         pattern: PatternKind,
     },
-    /// A rule set's deny decided (R-39). Only sets the user made can deny, so there is always
-    /// a rule row: Puddle ships no deny list.
+    /// A rule set's deny decided (R-39).
     SetDeny {
         /// The set.
         set: RuleSetId,
-        /// The entry's rule row.
-        rule_id: RuleId,
+        /// The entry's rule row, for a set the user made; a built-in deny set's entries have none.
+        rule_id: Option<RuleId>,
         /// How it matched.
         pattern: PatternKind,
     },
@@ -359,7 +358,7 @@ mod tests {
         };
         let deny = Decision::SetDeny {
             set: RuleSetId::User(4),
-            rule_id: RuleId(9),
+            rule_id: Some(RuleId(9)),
             pattern: PatternKind::Suffix,
         };
         assert!(allow.is_allow());

@@ -10,7 +10,8 @@ use crate::catalogue;
 use crate::pattern::Pattern;
 use crate::rule::{Effect, Rule, Scope};
 
-/// An entry of a built-in set or of System managed: an allow with no rule row (R-36, R-41).
+/// An entry of a built-in set or of System managed: no rule row (R-36, R-41). System managed
+/// entries always allow; a built-in set's entries all share the set's effect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SetEntry {
     /// The set it belongs to: [`RuleSetId::BuiltIn`] or [`RuleSetId::System`].
@@ -20,6 +21,8 @@ pub(crate) struct SetEntry {
     /// For System managed: the one workspace it applies to, or `None` for every workspace. Built-in
     /// entries apply where their set is switched on.
     pub workspace: Option<WorkspaceName>,
+    /// Allow or deny.
+    pub effect: Effect,
 }
 
 /// Which rule sets are switched on where (R-37): an override per workspace, a value for every
@@ -89,7 +92,7 @@ pub(crate) fn default_on(set: RuleSetId) -> bool {
 pub(crate) enum Hit<'a> {
     /// A rule row: the user's own rule, or an entry of a set the user made.
     Rule(&'a Rule),
-    /// A built-in or System managed entry (always an allow).
+    /// A built-in or System managed entry.
     Entry(&'a SetEntry),
 }
 
@@ -98,7 +101,7 @@ impl Hit<'_> {
     pub(crate) fn effect(self) -> Effect {
         match self {
             Self::Rule(rule) => rule.effect,
-            Self::Entry(_) => Effect::Allow,
+            Self::Entry(entry) => entry.effect,
         }
     }
 
@@ -149,14 +152,21 @@ impl<'a> Hit<'a> {
                 },
                 Effect::Deny => Decision::SetDeny {
                     set,
-                    rule_id: rule.id,
+                    rule_id: Some(rule.id),
                     pattern,
                 },
             },
-            (Self::Entry(entry), _) => Decision::SetAllow {
-                set: entry.set,
-                rule_id: None,
-                pattern,
+            (Self::Entry(entry), _) => match entry.effect {
+                Effect::Allow => Decision::SetAllow {
+                    set: entry.set,
+                    rule_id: None,
+                    pattern,
+                },
+                Effect::Deny => Decision::SetDeny {
+                    set: entry.set,
+                    rule_id: None,
+                    pattern,
+                },
             },
         }
     }
@@ -304,7 +314,7 @@ impl RuleIndex {
                         (RuleSetId::System, Some(s)) => s == workspace,
                         (set, _) => self.switches.is_on(*set, workspace),
                     };
-                    if ignore || !applies {
+                    if !applies || (ignore && entry.effect == Effect::Allow) {
                         continue;
                     }
                     Hit::Entry(entry)
@@ -496,7 +506,7 @@ mod tests {
                 got,
                 Some(Decision::SetDeny {
                     set: RuleSetId::User(1),
-                    rule_id: RuleId(2),
+                    rule_id: Some(RuleId(2)),
                     pattern: PatternKind::Exact,
                 })
             );
@@ -508,6 +518,7 @@ mod tests {
             set: RuleSetId::System,
             pattern: Pattern::parse(pattern).unwrap(),
             workspace: workspace.map(sb),
+            effect: Effect::Allow,
         }
     }
 
@@ -516,6 +527,15 @@ mod tests {
             set: RuleSetId::BuiltIn(slug),
             pattern: Pattern::parse(pattern).unwrap(),
             workspace: None,
+            effect: Effect::Allow,
+        }
+    }
+
+    /// An entry of a built-in deny set.
+    fn built_in_deny(slug: &'static str, pattern: &str) -> SetEntry {
+        SetEntry {
+            effect: Effect::Deny,
+            ..built_in(slug, pattern)
         }
     }
 
@@ -578,7 +598,7 @@ mod tests {
             decision(&blocked, "a", "ads.example.com"),
             Some(Decision::SetDeny {
                 set: RuleSetId::User(7),
-                rule_id: RuleId(2),
+                rule_id: Some(RuleId(2)),
                 pattern: PatternKind::Exact
             })
         );
@@ -624,7 +644,7 @@ mod tests {
         let (name, h) = (sb("a"), host("ads.example.com"));
         let expected = Some(Decision::SetDeny {
             set: RuleSetId::User(7),
-            rule_id: RuleId(2),
+            rule_id: Some(RuleId(2)),
             pattern: PatternKind::Exact,
         });
         assert_eq!(
@@ -729,6 +749,71 @@ mod tests {
             ignore("bad.corp.example"),
             Some(Decision::SetDeny { .. })
         ));
+    }
+
+    fn on(set: RuleSetId) -> Switches {
+        let mut switches = Switches::default();
+        switches.insert(set, None, true);
+        switches
+    }
+
+    #[test]
+    fn r39_a_built_in_deny_set_blocks_only_while_it_is_on() {
+        let set = RuleSetId::BuiltIn("trackers");
+        let entries = || vec![built_in_deny("trackers", "*.tracker.example")];
+        let off = RuleIndex::new(Vec::new(), entries(), Switches::default());
+        assert_eq!(decision(&off, "a", "x.tracker.example"), None);
+        let live = RuleIndex::new(Vec::new(), entries(), on(set));
+        assert_eq!(
+            decision(&live, "a", "x.tracker.example"),
+            Some(Decision::SetDeny {
+                set,
+                rule_id: None,
+                pattern: PatternKind::Suffix,
+            })
+        );
+        // It applies in suffix-ignore mode too: a deny is never dropped there (R-42).
+        assert!(matches!(
+            live.decide(
+                &sb("a"),
+                &host("x.tracker.example"),
+                0,
+                SuffixAllows::Ignore
+            )
+            .map(Hit::decision),
+            Some(Decision::SetDeny { rule_id: None, .. })
+        ));
+        // The user's own allow of the exact name beats it; their allow of the same suffix does too.
+        for pattern in ["x.tracker.example", ".tracker.example"] {
+            let own = RuleIndex::new(
+                vec![rule(1, None, pattern, Effect::Allow)],
+                entries(),
+                on(set),
+            );
+            assert_eq!(winner(&own, "a", "x.tracker.example"), Some(1));
+        }
+    }
+
+    #[test]
+    fn r39_a_mixed_set_decides_by_specificity_then_deny() {
+        let mixed = || {
+            RuleIndex::new(
+                vec![
+                    in_set(1, 7, ".example.com", Effect::Allow),
+                    in_set(2, 7, "ads.example.com", Effect::Deny),
+                    in_set(3, 7, ".cdn.example.com", Effect::Deny),
+                    in_set(4, 7, ".cdn.example.com", Effect::Allow),
+                    in_set(5, 7, "ok.cdn.example.com", Effect::Allow),
+                ],
+                Vec::new(),
+                Switches::default(),
+            )
+        };
+        let id = |h: &str| winner(&mixed(), "a", h);
+        assert_eq!(id("www.example.com"), Some(1));
+        assert_eq!(id("ads.example.com"), Some(2));
+        assert_eq!(id("img.cdn.example.com"), Some(3));
+        assert_eq!(id("ok.cdn.example.com"), Some(5));
     }
 
     #[test]
@@ -901,7 +986,7 @@ mod tests {
         let index = RuleIndex::new(vec![own, deny], Vec::new(), Switches::default());
         let expected = Decision::SetDeny {
             set: RuleSetId::User(1),
-            rule_id: RuleId(2),
+            rule_id: Some(RuleId(2)),
             pattern: PatternKind::Exact,
         };
         let args = (&sb("a"), &host("x.y.example.com"), 0, SuffixAllows::Count);
@@ -989,6 +1074,7 @@ mod tests {
                     } else {
                         None
                     },
+                    effect: Effect::Allow,
                 })
                 .collect();
             let mut on = Switches::default();

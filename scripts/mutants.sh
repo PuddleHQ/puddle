@@ -32,7 +32,7 @@
 # when the run ends (and made only when a mutation run is about to start, so a cache hit costs nothing). Cargo serialises on a lock in the package cache of its CARGO_HOME, and on a host where
 # several runs share ~/.cargo a mutant's tests could wait on another run's lock until the mutant timed out
 # without a single test having started. The private home is seeded from the shared one (its registry, git and
-# config.toml, copied with reflinks where the file system has them), then `cargo fetch --locked` downloads
+# config.toml, copied with reflinks where the file system has them; elsewhere a plain copy, a minute for a few GB, small beside a sweep), then `cargo fetch --locked` downloads
 # whatever is still missing, once, before the first mutant. MUTANTS_SHARED_CARGO_HOME=1 keeps the caller's
 # CARGO_HOME instead. The toolchains stay where they are (RUSTUP_HOME is pinned to the caller's).
 set -eu

@@ -681,3 +681,50 @@ async fn the_contract_lists_the_new_routes_and_the_cloning_operation() {
     }
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn adding_and_removing_an_entry_are_in_the_activity_log() {
+    let api = start().await;
+    running(&api);
+    let reply = add(
+        &api,
+        "web",
+        json!({"kind": "clone", "url": "https://github.com/acme/web", "directory": "site"}),
+    )
+    .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    // Refused calls write nothing.
+    assert_eq!(
+        api.send("DELETE", "/api/workspaces/web/repositories/nope", None)
+            .await
+            .status,
+        404
+    );
+    assert_eq!(
+        api.send("DELETE", "/api/workspaces/web/repositories/site", None)
+            .await
+            .status,
+        200
+    );
+    let page = api
+        .get("/api/audit?type=workspace_op&workspace=web&after=0")
+        .await
+        .json();
+    let seen: Vec<_> = page["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["record"]["op"].clone(), e["record"]["detail"].clone()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (json!("repo_added"), json!("site on the workspace's list")),
+            (
+                json!("repo_removed"),
+                json!("site off the workspace's list")
+            ),
+        ]
+    );
+    api.running.shutdown().await;
+}

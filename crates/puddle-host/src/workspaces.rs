@@ -45,7 +45,7 @@ use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
 use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
-use puddle_store::Clock;
+use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
     CheckoutDir, CpuCount, Event, EventSink, GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib,
     Problem, Problems, WorkspaceId, WorkspaceName, WorkspaceStatus, WorkspaceStep,
@@ -156,6 +156,8 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) events: Arc<dyn EventSink>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) settings: Arc<dyn puddle_api::SettingsRepo>,
+    /// Where the audit log is written.
+    pub(crate) store: Arc<Store>,
     pub(crate) launcher: Arc<dyn Launcher>,
     /// The login key and ssh config of direct SSH.
     pub(crate) ssh: Arc<SshSetup>,
@@ -184,6 +186,21 @@ struct Slot {
     /// The start that is running was refused because the volume is gone; `conclude` turns it
     /// into the `volume_missing` state instead of `crashed`.
     volume_missing: bool,
+    /// What `conclude` adds to the audit record of the delete that is running: set when the
+    /// workspace's volume was already gone.
+    delete_note: Option<&'static str>,
+}
+
+impl Slot {
+    fn new(record: WorkspaceRecord, creating: bool) -> Self {
+        Self {
+            record,
+            creating,
+            deleting: false,
+            volume_missing: false,
+            delete_note: None,
+        }
+    }
 }
 
 struct State {
@@ -245,6 +262,7 @@ struct Inner<R: Runtime + Clone> {
     events: Arc<dyn EventSink>,
     clock: Arc<dyn Clock>,
     settings: Arc<dyn puddle_api::SettingsRepo>,
+    store: Arc<Store>,
     launcher: Arc<dyn Launcher>,
     ssh: Arc<SshSetup>,
     book: WorkspaceBook,
@@ -504,15 +522,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Some(WorkspaceStatus::VolumeMissing) => WorkspaceStatus::VolumeMissing,
                 _ => WorkspaceStatus::Stopped,
             };
-            slots.insert(
-                id,
-                Slot {
-                    record,
-                    creating: false,
-                    deleting: false,
-                    volume_missing: false,
-                },
-            );
+            slots.insert(id, Slot::new(record, false));
         }
         let service = Self {
             inner: Arc::new(Inner {
@@ -523,6 +533,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 events: parts.events,
                 clock: parts.clock,
                 settings: parts.settings,
+                store: parts.store,
                 launcher: parts.launcher,
                 ssh: parts.ssh,
                 book: parts.book,
@@ -813,6 +824,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         slot.record.busy = None;
         slot.deleting = false;
+        let delete_note = slot.delete_note.take();
         let name = slot.record.name.clone();
         let mut status_changed = false;
         // Only a failed create or delete leaves the list different from what is saved: the
@@ -869,6 +881,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let (true, Some(record)) = (status_changed, &record) {
             self.status_event(record);
         }
+        self.audit_operation(&name, op, &result, delete_note);
         match result {
             Ok(()) => self.progress(&name, WorkspaceStep::Done, None),
             Err(reason) => {
@@ -876,6 +889,49 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.progress(&name, WorkspaceStep::Failed, Some(reason));
             }
         }
+    }
+
+    /// Writes what an operation came to into the audit log: a create or a delete either way, a
+    /// start or a stop only when it failed (a start that worked shows in the workspace's state).
+    fn audit_operation(
+        &self,
+        name: &WorkspaceName,
+        op: Operation,
+        result: &Result<(), String>,
+        delete_note: Option<&'static str>,
+    ) {
+        let kind = match op {
+            Operation::Creating => WorkspaceOpKind::Create,
+            Operation::Deleting => WorkspaceOpKind::Delete,
+            Operation::Starting if result.is_err() => WorkspaceOpKind::Start,
+            Operation::Stopping if result.is_err() => WorkspaceOpKind::Stop,
+            _ => return,
+        };
+        let (outcome, detail) = match result {
+            Ok(()) => (
+                WorkspaceOpOutcome::Succeeded,
+                delete_note.map(str::to_owned),
+            ),
+            Err(reason) => (WorkspaceOpOutcome::Failed, Some(reason.clone())),
+        };
+        self.record_op(kind, name, outcome, detail);
+    }
+
+    fn record_op(
+        &self,
+        op: WorkspaceOpKind,
+        name: &WorkspaceName,
+        outcome: WorkspaceOpOutcome,
+        detail: Option<String>,
+    ) {
+        let new = NewWorkspaceOp {
+            op,
+            workspace: Some(name.clone()),
+            outcome,
+            actor: Actor::Api,
+            detail,
+        };
+        self.inner.store.note_workspace_op(&new);
     }
 
     /// The default memory for a workspace made without one: the settings' value. An unreadable
@@ -2811,15 +2867,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         new.name
                     )));
                 }
-                state.slots.insert(
-                    id.clone(),
-                    Slot {
-                        record: record.clone(),
-                        creating: true,
-                        deleting: false,
-                        volume_missing: false,
-                    },
-                );
+                state
+                    .slots
+                    .insert(id.clone(), Slot::new(record.clone(), true));
                 if let Err(e) = self.persist(&state) {
                     state.slots.remove(&id);
                     return Err(WorkspaceError::Unavailable(format!(
@@ -3024,6 +3074,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 if let Some(slot) = state.slots.get_mut(id) {
                     slot.deleting = true;
                 }
+                if report.volume_missing
+                    && let Some(slot) = state.slots.get_mut(id)
+                {
+                    slot.delete_note = Some("deleted; its volume was already gone");
+                }
                 match self.persist(&state) {
                     Ok(()) => Ok(report),
                     Err(e) => Err(WorkspaceError::Unavailable(format!(
@@ -3077,15 +3132,36 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 if let Some(slot) = state.slots.get_mut(id) {
                     slot.record.display_name = before;
                 }
-                return Err(WorkspaceError::Unavailable(format!(
-                    "the workspace was not renamed: {e}; {SAVE_HINT}"
-                )));
+                let name = state.slots.get(id).map(|s| s.record.name.clone());
+                drop(state);
+                let reason = format!("the workspace was not renamed: {e}; {SAVE_HINT}");
+                if let Some(name) = name {
+                    self.record_op(
+                        WorkspaceOpKind::Rename,
+                        &name,
+                        WorkspaceOpOutcome::Failed,
+                        Some(reason.clone()),
+                    );
+                }
+                return Err(WorkspaceError::Unavailable(reason));
             }
-            state
+            let record = state
                 .slots
                 .get(id)
                 .map(|s| s.record.clone())
-                .ok_or_else(|| not_found(id))
+                .ok_or_else(|| not_found(id))?;
+            drop(state);
+            let detail = match &record.display_name {
+                Some(label) => format!("renamed to {label}"),
+                None => "went back to its short name".to_owned(),
+            };
+            self.record_op(
+                WorkspaceOpKind::Rename,
+                &record.name,
+                WorkspaceOpOutcome::Succeeded,
+                Some(detail),
+            );
+            Ok(record)
         })
     }
 

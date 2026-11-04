@@ -179,7 +179,7 @@ readable as JSONL (one record per line).
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
   `rule_created`, `rule_updated`, `rule_deleted`,
   `rule_expired` (with the full rule), `request_rule_created`, `request_rule_deleted` (R-49, the rule on method and path with
-  its host, methods and path, and for a deletion why and by whom), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
+  its host, methods and path, and for a deletion why and by whom), `workspace_op` (R-56), `audit_trimmed` (`deleted_records`, `oldest_ts_kept`), and
   the rule set records of R-43. Records written by earlier versions still read: `pending_suppressed`
   (`workspace_id`, `count`) and `pending_expired` with reason `stale`; nothing writes them any more.
   On a decrypted host whose client refuses Puddle's certificate (it does not
@@ -230,13 +230,29 @@ readable as JSONL (one record per line).
   capped at 5000 *(default)*: the sweeper deletes the oldest ones past it, hosts and all, and writes one
   `connection` record with `reason: merged` and the number deleted as `count`. A flood of requests nobody answers cannot
   fill the audit and push real history out, and nothing is refused (R-44, R-45).
+- **R-56 Workspace operations are audited.** A `workspace_op` record says who asked (`actor`: `cli`,
+  `ui`, `api` or `system`), what was done (`op`), to which workspace (`workspace_id`, `null` for an
+  identity, which belongs to none), how it ended (`outcome`: `succeeded` or `failed`) and a short
+  plain sentence (`detail`, `null` when there is nothing to add). The `op` values are `create`,
+  `delete`, `rename`, `start`, `stop`, `identity_created`, `identity_updated`, `identity_deleted`,
+  `identity_default_set`, `identities_changed`, `repo_added`, `repo_switched` and `repo_removed`.
+  A create or a delete is written whether it worked or not; a start or a stop only when it failed
+  (a start that worked shows in the workspace's state); a rename when it worked, or when the
+  workspace list could not be saved; the identity and repository changes when they worked. A call
+  Puddle refuses before it changes anything (a name taken, a workspace that is not stopped) is the
+  caller's error and writes nothing. A delete of a workspace whose volume was already gone says so in
+  `detail`, and a failure's `detail` is the reason the user was shown. `detail` holds names, labels
+  and ids only, never a secret (R-25). The record is additive: logs written before it read as before.
+  The record is filtered like any other (R-28): `type=workspace_op`, `workspace`, and
+  `outcome=succeeded|failed`, which only this record has. A record that cannot be written is logged
+  and dropped, and the operation it describes stands.
 
 - **R-28 Reading the audit with filters.** The API filters on the server, on stored columns and
   indexes (never by parsing JSON): `workspace`, `type`, `outcome`, `host_contains` (case-folded
   substring), `from` (inclusive) and `to` (exclusive) as epoch ms. All set filters must match.
   `host` is the record's host, or a rule record's pattern. `outcome` (`allow`, `deny`, `pending`,
-  `blocked`, `expired`) exists for `connection` (its `decision`), `pending_created` (`pending`),
-  `pending_decided` (`allow` or `deny`) and `pending_expired` (`expired`); every other record has
+  `blocked`, `expired`, `succeeded`, `failed`) exists for `connection` (its `decision`), `pending_created` (`pending`),
+  `pending_decided` (`allow` or `deny`), `pending_expired` (`expired`) and `workspace_op` (`succeeded` or `failed`); every other record has
   none and never matches an `outcome` filter. `origin` (`workspace` or `puddle`) matches `connection`
   records only (a Puddle record is one without a workspace); every other record has no origin and
   never matches. *`origin` added 2026-10-07.* Pages are at most 500 records: newest first, paged

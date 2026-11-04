@@ -38,6 +38,17 @@
   const id = $props.id();
   const everywhere = $derived(isOn(set, null));
   const mine = $derived(set.kind === "user");
+  // What switching the set on does, in words: a set is all allows, all denies or a mix.
+  const effects = $derived(new Set(set.entries.map((entry) => entry.effect)));
+  const does = $derived(
+    effects.has("deny")
+      ? effects.has("allow")
+        ? "Allows and blocks"
+        : "Blocks"
+      : effects.has("allow")
+        ? "Allows"
+        : null,
+  );
   let workspace = $state("");
   let problem = $state<string | null>(null);
 
@@ -59,6 +70,9 @@
   <header>
     <h3 id="{id}-name">{set.name}</h3>
     <span class="chip">{mine ? "Yours" : "Built in"}</span>
+    {#if does !== null}
+      <span class="chip {does === 'Allows' ? 'allow' : 'deny'}">{does}</span>
+    {/if}
     <span class="muted mono" title="The id refusals and the activity log use"
       >{set.id}</span
     >

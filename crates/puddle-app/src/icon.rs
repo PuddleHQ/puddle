@@ -202,6 +202,7 @@ mod tests {
         Broken.save_workspace(&name, serde_json::json!({})).unwrap();
         Broken.save_app_icon(b"x").unwrap();
         Broken.delete_app_icon().unwrap();
+        Broken.delete_workspace(&name).unwrap();
         let wanted = Wanted::read(&Broken, &prefs(Some(AppIconChoice::Custom)));
         assert_eq!(
             wanted.draw().unwrap(),

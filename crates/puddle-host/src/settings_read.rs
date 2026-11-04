@@ -86,6 +86,7 @@ mod tests {
         assert_eq!(Unreadable.load_app_icon().unwrap(), None);
         Unreadable.save_app_icon(b"x").unwrap();
         Unreadable.delete_app_icon().unwrap();
+        Unreadable.delete_workspace(&a()).unwrap();
     }
 
     #[test]

@@ -59,6 +59,7 @@
 #![forbid(unsafe_code)]
 
 mod consent;
+mod disk_space;
 mod document;
 mod first_run;
 mod global;
@@ -69,6 +70,7 @@ mod values;
 mod workspace;
 
 pub use consent::{Consent, ConsentKind, Consents, TermsVersion, UnixMillis};
+pub use disk_space::{DiskSpaceLimits, FreeGb};
 pub use document::{Loaded, SettingsError};
 pub use first_run::FirstRun;
 pub use global::{

@@ -61,6 +61,7 @@ pub use config::{
     AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, GuestSettings, HostConfig, UpstreamSettings,
 };
 pub use dev_cert::{DevCertSource, GuestCertSource};
+pub use doctor::disk_limits;
 pub use error::HostError;
 pub use files::FileSettings;
 pub use host::{

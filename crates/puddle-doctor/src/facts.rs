@@ -235,6 +235,27 @@ pub enum KeptLogs {
     },
 }
 
+/// The free space on the drive that holds Puddle's data folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiskFacts {
+    /// The space was read.
+    Read {
+        /// The folder whose drive was measured.
+        dir: PathBuf,
+        /// Bytes a normal user can still write there.
+        free_bytes: u64,
+    },
+    /// The folder is known but the OS would not say how much room its drive has.
+    Unreadable {
+        /// The folder.
+        dir: PathBuf,
+        /// The OS error.
+        detail: String,
+    },
+    /// Where Puddle keeps its data could not be worked out, so there is nothing to measure.
+    NoFolder,
+}
+
 /// The Windows job object this process runs in, when there is one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobFacts {

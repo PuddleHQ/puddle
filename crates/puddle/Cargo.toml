@@ -19,6 +19,7 @@ puddle-doctor = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-host = { workspace = true }
 puddle-lifecycle = { workspace = true }
+puddle-settings = { workspace = true }
 puddle-ssh = { workspace = true }
 puddle-types = { workspace = true }
 thiserror = { workspace = true }

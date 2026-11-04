@@ -1,0 +1,57 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+ok    CPU virtualization  on (the hypervisor uses it)
+ok    Hypervisor          /dev/kvm is usable
+ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
+ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot           a test VM booted and ran a program in 1.1 s
+info  Disk space          could not be read; how much room the drive that holds /home/dev/.local/share/puddle has is unknown
+      note: Puddle works; this only means it cannot warn you before the drive fills up.
+      from: Permission denied (os error 13)
+
+No problems found. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": true,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "/dev/kvm is usable"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "ok",
+      "summary": "a test VM booted and ran a program in 1.1 s"
+    },
+    {
+      "id": "disk_space",
+      "status": "info",
+      "summary": "could not be read; how much room the drive that holds /home/dev/.local/share/puddle has is unknown",
+      "finding": "disk_space_unreadable",
+      "fix": "Puddle works; this only means it cannot warn you before the drive fills up.",
+      "detail": "Permission denied (os error 13)"
+    }
+  ],
+  "elapsed_ms": 1234
+}

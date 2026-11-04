@@ -12,8 +12,8 @@ use puddle_runtime::{
 
 use crate::diagnose::Probe;
 use crate::facts::{
-    AccessDenied, BootFacts, CodeIntegrityFacts, GsaFacts, HypervisorFacts, JobFacts, Os,
-    ProcessOutcome, RuntimeFacts, RuntimeState,
+    AccessDenied, BootFacts, CodeIntegrityFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts,
+    Os, ProcessOutcome, RuntimeFacts, RuntimeState,
 };
 use crate::{boot, launch, sys};
 
@@ -24,6 +24,7 @@ pub struct SystemProbe {
     expected: RuntimeVersion,
     dev: DevOverride,
     keep_boot_logs: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
     opened: OnceCell<BundledRuntime>,
 }
 
@@ -37,6 +38,7 @@ impl SystemProbe {
             expected,
             dev,
             keep_boot_logs: None,
+            data_dir: None,
             opened: OnceCell::new(),
         }
     }
@@ -46,6 +48,14 @@ impl SystemProbe {
     #[must_use]
     pub fn with_keep_boot_logs(mut self, dir: impl Into<PathBuf>) -> Self {
         self.keep_boot_logs = Some(dir.into());
+        self
+    }
+
+    /// Measures the free space of the drive that holds `dir`, Puddle's data folder. Unset, the disk
+    /// check says it has nothing to measure.
+    #[must_use]
+    pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.data_dir = Some(dir.into());
         self
     }
 
@@ -166,5 +176,21 @@ impl Probe for SystemProbe {
 
     fn global_secure_access(&self) -> Option<GsaFacts> {
         sys::global_secure_access()
+    }
+
+    fn disk_space(&self) -> DiskFacts {
+        let Some(dir) = &self.data_dir else {
+            return DiskFacts::NoFolder;
+        };
+        match puddle_fs::free_bytes(dir) {
+            Ok(free_bytes) => DiskFacts::Read {
+                dir: dir.clone(),
+                free_bytes,
+            },
+            Err(e) => DiskFacts::Unreadable {
+                dir: dir.clone(),
+                detail: e.to_string(),
+            },
+        }
     }
 }

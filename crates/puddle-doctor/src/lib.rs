@@ -12,6 +12,7 @@
 //! | Bundled runtime | [`puddle_runtime::BundledRuntime::open`], plus opening `msb` for read + execute | missing, wrong version, permissions |
 //! | Runtime starts | `msb --version` with a time limit | `AppLocker`, App Control / Smart App Control, antivirus, EDR, missing DLL, timeout |
 //! | Test boot | `msb run` of a 132-byte probe program in a tiny root file system ([`boot`]) | can't boot a VM, timeout; says where a failed boot's logs were kept, or why not |
+//! | Disk space | free bytes on the drive that holds Puddle's data folder ([`puddle_fs::free_bytes`]) | under 20 GB warns, under 5 GB fails (both lines are settings) |
 //! | Global Secure Access | its client's services | installed: explains the VM limitation; service manager unreadable: an info line with the OS error |
 //!
 //! [`diagnose`] runs the checks against a [`Probe`]: [`SystemProbe`] for the real machine, a fake
@@ -40,9 +41,11 @@ mod report;
 mod sys;
 mod system;
 
-pub use diagnose::{Options, PROBE_EXIT_CODE, Probe, diagnose};
+pub use diagnose::{
+    DEFAULT_DISK_FAIL_BELOW, DEFAULT_DISK_WARN_BELOW, Options, PROBE_EXIT_CODE, Probe, diagnose,
+};
 pub use facts::{
-    AccessDenied, BootFacts, CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi,
+    AccessDenied, BootFacts, CodeIntegrity, CodeIntegrityFacts, DiskFacts, GsaFacts, HypervisorApi,
     HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
     ServiceState,
 };

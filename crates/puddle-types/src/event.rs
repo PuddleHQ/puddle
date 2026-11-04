@@ -319,6 +319,31 @@ pub enum Event {
     /// cause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber
     /// gets it.
     ProblemsChanged {},
+    /// The free space on the drive that holds Puddle's data moved across the warning or the
+    /// failure line, or back above both (`level` is then `ok`). Sent when the level changes, not
+    /// on every read; the first read after Puddle starts counts as a change when it is not `ok`.
+    /// Global: every subscriber gets it.
+    DiskSpaceChanged {
+        /// Where the free space stands now.
+        level: DiskSpaceLevel,
+        /// The free space at the read that changed the level, in whole MiB.
+        free_mib: u64,
+    },
+}
+
+/// How the free space on the drive that holds Puddle's data compares with the warning and the
+/// failure line (settings `ui.disk_warn_free_gb` and `ui.disk_fail_free_gb`). Ordered from fine to
+/// worst, so `level > previous` says the space got tighter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub enum DiskSpaceLevel {
+    /// At or above the warning line.
+    Ok,
+    /// Under the warning line, at or above the failure line.
+    Low,
+    /// Under the failure line.
+    Critical,
 }
 
 /// An open pending request as [`Event::PendingOpened`] carries it. `host` comes from the guest
@@ -489,7 +514,8 @@ impl Event {
             | Self::AuditAppended { .. }
             | Self::NetworkChanged { .. }
             | Self::ProxySignInFailed { .. }
-            | Self::ProblemsChanged {} => None,
+            | Self::ProblemsChanged {}
+            | Self::DiskSpaceChanged { .. } => None,
         }
     }
 }
@@ -1050,7 +1076,8 @@ mod tests {
                 "audit_appended",
                 "network_changed",
                 "proxy_sign_in_failed",
-                "problems_changed"
+                "problems_changed",
+                "disk_space_changed"
             ]
         );
         for v in variants {
@@ -1074,6 +1101,22 @@ mod tests {
         );
         let status = serde_json::to_value(WorkspaceStatus::schema()).unwrap();
         assert_eq!(status["enum"].as_array().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn a_disk_space_change_is_global_and_names_the_level() {
+        let event = Event::DiskSpaceChanged {
+            level: DiskSpaceLevel::Low,
+            free_mib: 12_345,
+        };
+        let json = r#"{"type":"disk_space_changed","level":"low","free_mib":12345}"#;
+        assert_eq!(serde_json::to_string(&event).unwrap(), json);
+        assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+        assert_eq!(event.workspace(), None);
+        assert!(
+            DiskSpaceLevel::Ok < DiskSpaceLevel::Low
+                && DiskSpaceLevel::Low < DiskSpaceLevel::Critical
+        );
     }
 
     #[test]

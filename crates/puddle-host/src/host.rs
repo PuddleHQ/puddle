@@ -635,6 +635,7 @@ impl<R: Runtime + Clone> Host<R> {
             &config.layout,
             &config.paths,
             &config.expected_runtime,
+            settings.clone(),
         ))
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))

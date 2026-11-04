@@ -9,8 +9,9 @@ use serde_json::Value;
 use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
 use crate::{
-    AppIconChoice, CloseBehaviour, ConsentKind, Consents, DensityChoice, FirstRun, HexColour,
-    Loaded, PaletteChoice, ServerChoice, SettingsError, TermsVersion, ThemeChoice, WorkspaceLayer,
+    AppIconChoice, CloseBehaviour, ConsentKind, Consents, DensityChoice, DiskSpaceLimits, FirstRun,
+    FreeGb, HexColour, Loaded, PaletteChoice, ServerChoice, SettingsError, TermsVersion,
+    ThemeChoice, WorkspaceLayer,
 };
 
 /// The version of the terms the enable popup for Microsoft's server shows: the licence's address.
@@ -227,6 +228,17 @@ pub struct UiPrefs {
     /// Start Puddle when the user signs in to the computer; default off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_at_login: Option<bool>,
+    /// Notify when the free space on the drive that holds Puddle's data falls under the warning
+    /// or the failure line; default on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify_low_disk_space: Option<bool>,
+    /// The free space, in GB, under which `puddle doctor` warns and the app says so; default 20.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_warn_free_gb: Option<FreeGb>,
+    /// The free space, in GB, under which `puddle doctor` fails; default 5. Never above the
+    /// warning line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_fail_free_gb: Option<FreeGb>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -252,6 +264,8 @@ impl UiPrefs {
     pub const DEFAULT_INBOX_SHORTCUTS: bool = false;
     /// Puddle's default for [`UiPrefs::start_at_login`].
     pub const DEFAULT_START_AT_LOGIN: bool = false;
+    /// Puddle's default for [`UiPrefs::notify_low_disk_space`].
+    pub const DEFAULT_NOTIFY_LOW_DISK_SPACE: bool = true;
 
     /// The theme in use.
     #[must_use]
@@ -348,6 +362,23 @@ impl UiPrefs {
         self.start_at_login.unwrap_or(Self::DEFAULT_START_AT_LOGIN)
     }
 
+    /// Whether a drive running low on free space notifies.
+    #[must_use]
+    pub fn notify_low_disk_space(&self) -> bool {
+        self.notify_low_disk_space
+            .unwrap_or(Self::DEFAULT_NOTIFY_LOW_DISK_SPACE)
+    }
+
+    /// The warning and failure lines for free space, a failure line above the warning line
+    /// lowered to it.
+    #[must_use]
+    pub fn disk_limits(&self) -> DiskSpaceLimits {
+        DiskSpaceLimits::clamped(
+            self.disk_warn_free_gb.unwrap_or(FreeGb::DEFAULT_WARN),
+            self.disk_fail_free_gb.unwrap_or(FreeGb::DEFAULT_FAIL),
+        )
+    }
+
     fn is_empty(&self) -> bool {
         *self == Self::default()
     }
@@ -375,6 +406,37 @@ mod tests {
             loaded.settings.to_document(),
             json!({ "schema_version": 2 })
         );
+    }
+
+    #[test]
+    fn the_free_space_lines_default_to_20_and_5_gb_and_a_stored_pair_out_of_order_is_clamped() {
+        let defaults = UiPrefs::default();
+        assert!(defaults.notify_low_disk_space());
+        let limits = defaults.disk_limits();
+        assert_eq!((limits.warn().gb(), limits.fail().gb()), (20, 5));
+
+        let loaded = GlobalSettings::from_document(json!({
+            "ui": {"notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10}
+        }))
+        .unwrap();
+        let ui = &loaded.settings.ui;
+        assert!(!ui.notify_low_disk_space());
+        let limits = ui.disk_limits();
+        assert_eq!((limits.warn().gb(), limits.fail().gb()), (50, 10));
+        assert_eq!(
+            loaded.settings.to_document()["ui"],
+            json!({"notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10})
+        );
+
+        let swapped = GlobalSettings::from_document(
+            json!({"ui": {"disk_warn_free_gb": 8, "disk_fail_free_gb": 30}}),
+        )
+        .unwrap();
+        let limits = swapped.settings.ui.disk_limits();
+        assert_eq!((limits.warn().gb(), limits.fail().gb()), (8, 8));
+
+        let zero = GlobalSettings::from_document(json!({"ui": {"disk_warn_free_gb": 0}}));
+        assert!(zero.is_err(), "a line of 0 GB would never warn");
     }
 
     #[test]

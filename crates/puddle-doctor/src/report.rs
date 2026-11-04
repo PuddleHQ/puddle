@@ -58,6 +58,8 @@ pub enum CheckId {
     JobObject,
     /// Microsoft Entra Global Secure Access.
     GlobalSecureAccess,
+    /// Free space on the drive that holds Puddle's data.
+    DiskSpace,
 }
 
 impl CheckId {
@@ -73,6 +75,7 @@ impl CheckId {
             Self::TestBoot => "Test boot",
             Self::JobObject => "Job object",
             Self::GlobalSecureAccess => "Global Secure Access",
+            Self::DiskSpace => "Disk space",
         }
     }
 }
@@ -142,6 +145,12 @@ pub enum Finding {
     GlobalSecureAccessInstalled,
     /// Whether the Global Secure Access client is installed couldn't be read.
     GlobalSecureAccessUnknown,
+    /// Free space is under the warning line.
+    DiskSpaceLow,
+    /// Free space is under the failure line.
+    DiskSpaceCritical,
+    /// How much room the drive has couldn't be read.
+    DiskSpaceUnreadable,
 }
 
 /// One line of the report.

@@ -388,6 +388,9 @@ the API. *Added 2026-10-08.*
   list above, each shown on the Rules screen with its own reason, and an own deny of any host
   overrides it (R-39). The AI, sign-in, licence and telemetry hosts of these editors are not in
   the lists.
+  Zed's list holds `github.com` as a whole, because Zed's release download starts there and Puddle
+  cannot tell that fetch from another one: with direct SSH on, the workspace can reach any GitHub
+  repository, a wider allow than the other lists.
 - **R-42 A set's allow reaches a local destination only like a wildcard.** After resolving a name
   a set allowed, an address in a local category counts as reached by a wildcard rule (R-14): with
   "wildcards reach local addresses" off, it needs an own exact allow of the name or the address,

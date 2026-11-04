@@ -259,11 +259,19 @@ fn the_host_starts_and_stops_from_a_thread_with_the_windows_main_thread_stack() 
     let app = app();
     let handle = app.handle().clone();
     let source = Source::prepare(&options, &Machine::default());
+    let size: usize = std::env::var("PROBE_STACK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1024 * 1024);
     let stopped = std::thread::Builder::new()
-        .stack_size(1024 * 1024)
+        .stack_size(size)
         .spawn(move || {
+            probe::report("enter");
             shell::start(&handle, &options, source).unwrap();
-            shell::stop(&handle)
+            probe::report("after start");
+            let s = shell::stop(&handle);
+            probe::report("after stop");
+            s
         })
         .unwrap()
         .join()
@@ -317,4 +325,52 @@ fn a_build_without_the_fixture_refuses_to_show_it() {
     };
     let err = tauri::async_runtime::block_on(Source::Fixture.start(&options)).unwrap_err();
     assert!(matches!(err, BackendError::NoFixture), "{err}");
+}
+
+#[allow(unsafe_code, clippy::all)]
+mod probe {
+    #[cfg(windows)]
+    #[repr(C)]
+    struct Mbi {
+        base: usize,
+        alloc_base: usize,
+        alloc_protect: u32,
+        partition: u16,
+        region_size: usize,
+        state: u32,
+        protect: u32,
+        ty: u32,
+    }
+    #[cfg(windows)]
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentThreadStackLimits(low: *mut usize, high: *mut usize);
+        fn VirtualQuery(addr: *const u8, buf: *mut Mbi, len: usize) -> usize;
+    }
+    /// Committed span of this thread's stack = the deepest point reached so far (page granular).
+    #[cfg(windows)]
+    pub fn report(at: &str) {
+        let (mut low, mut high) = (0usize, 0usize);
+        unsafe { GetCurrentThreadStackLimits(&mut low, &mut high) };
+        let mut addr = low;
+        let mut lowest_used = high;
+        while addr < high {
+            let mut m: Mbi = unsafe { std::mem::zeroed() };
+            unsafe { VirtualQuery(addr as *const u8, &mut m, std::mem::size_of::<Mbi>()) };
+            if m.state == 0x1000 {
+                lowest_used = m.base;
+                break;
+            }
+            addr = m.base + m.region_size;
+        }
+        let here = &at as *const _ as usize;
+        eprintln!(
+            "PROBE {at}: reserved {} committed-peak {} sp-depth {}",
+            high - low,
+            high - lowest_used,
+            high - here
+        );
+    }
+    #[cfg(not(windows))]
+    pub fn report(_: &str) {}
 }

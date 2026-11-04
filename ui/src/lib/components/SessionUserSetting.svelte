@@ -64,7 +64,7 @@
         for a root shell); an image without <span class="mono">sudo</span>
         leaves it no way to root, so choose root there.
         <span class="mono">root</span> is what workspaces made before ran as. A change
-        applies the next time the workspace starts, and that start gives every file
+        takes effect when the workspace next starts, and that start gives every file
         on the workspace's disk to the new user, which takes a while on a disk with
         many files.
       </p>

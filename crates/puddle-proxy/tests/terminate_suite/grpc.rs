@@ -173,7 +173,7 @@ async fn connect(
     H2Guest,
     tonic::client::Grpc<Channel>,
 ) {
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let client = guest.h2("bound.test:443", &[b"h2"]).await;
     let channel = Channel {
         sender: client.sender.clone(),

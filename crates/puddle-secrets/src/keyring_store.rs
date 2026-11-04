@@ -88,8 +88,13 @@ mod tests {
     }
 
     #[test]
-    fn availability_is_what_the_platform_store_reports() {
-        assert_eq!(keyring_available(), keyring::Entry::store_status().is_ok());
+    fn availability_matches_whether_a_write_to_the_platform_store_works() {
+        let store = KeyringStore::named("puddle-test-availability");
+        let works = store.set(&id(), &Secret::new("v".to_owned())).is_ok();
+        if works {
+            store.delete(&id()).unwrap();
+        }
+        assert_eq!(keyring_available(), works);
     }
 
     #[test]

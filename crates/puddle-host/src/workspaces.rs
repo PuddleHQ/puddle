@@ -48,7 +48,7 @@ use puddle_ssh::SshEndpoint;
 use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
     CheckoutDir, CpuCount, Event, EventSink, GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib,
-    Problem, Problems, WorkspaceId, WorkspaceName, WorkspaceStatus, WorkspaceStep,
+    Problem, Problems, SessionUser, WorkspaceId, WorkspaceName, WorkspaceStatus, WorkspaceStep,
 };
 
 use crate::ssh_config::{SshSetup, ssh_host};
@@ -236,6 +236,9 @@ struct GuestState {
     /// The multi-root file the editor opens when the workspace has two or more checkouts, as the
     /// last attach wrote it; `None` has the hook take Puddle's lines out of it.
     editor_file: Option<GuestFile>,
+    /// The user sessions, clones and checks run as until the next start: the setting as of this
+    /// start (a later change waits for the next one).
+    session_user: SessionUser,
 }
 
 /// What a sandbox owns while this process serves it.
@@ -511,6 +514,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let mut record = WorkspaceRecord::new(id.clone(), name.clone(), stored.repositories);
             record.display_name = stored.display_name;
             record.start_folder = stored.start_folder;
+            record.session_user = stored.session_user;
             record.image = stored.image;
             record.memory = MemoryMib::new(stored.memory_mib).map_err(|e| HostError::State {
                 what: "the workspace list",
@@ -588,6 +592,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 display_name: slot.record.display_name.clone(),
                 repositories: slot.record.repositories.clone(),
                 start_folder: slot.record.start_folder.clone(),
+                session_user: slot.record.session_user,
                 image: slot.record.image.clone(),
                 memory_mib: slot.record.memory.get(),
                 created_at: slot.record.created_at,
@@ -1095,6 +1100,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             &record.name,
             image,
             record.start_folder.as_ref(),
+            record.session_user,
         )
         .await
     }
@@ -1108,6 +1114,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         name: &WorkspaceName,
         image: ImageConfig,
         start_folder: Option<&StartFolder>,
+        session_user: SessionUser,
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
         let inner = &self.inner;
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
@@ -1136,6 +1143,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             start_folder: start_folder.cloned(),
             root,
             editor_file,
+            session_user,
         };
         match inner.kit.plan(
             &state.image,
@@ -1148,6 +1156,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 root: &state.root,
                 start_folder: state.start_folder.as_ref(),
                 editor_file: state.editor_file.as_ref(),
+                session_user: state.session_user,
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),
@@ -1583,6 +1592,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             root: &guest.root,
             start_folder: guest.start_folder.as_ref(),
             editor_file: guest.editor_file.as_ref(),
+            session_user: guest.session_user,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
         let report = kit
@@ -1775,7 +1785,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             inner.problems.clear(&key);
             return;
         };
-        match self.run_shell_init_check(gated, &script).await {
+        match self.run_shell_init_check(name, gated, &script).await {
             Ok(None) => inner.problems.clear(&key),
             Ok(Some(why)) => inner.problems.raise(
                 Problem::new(
@@ -1806,12 +1816,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// nothing, else what is wrong with it.
     async fn run_shell_init_check(
         &self,
+        name: &WorkspaceName,
         gated: &GatedSandbox<R::Sandbox>,
         script: &str,
     ) -> Result<Option<String>, String> {
+        let user = self.booted_user(name).await;
         match gated
             .ungated()
-            .exec(crate::shell_init::check_request(script))
+            .exec(crate::shell_init::check_request(script, user))
             .await
         {
             Ok(output) => match crate::shell_init::verdict(&output)? {
@@ -1886,7 +1898,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let locks = inner
             .workspaces
-            .after_boot(gated.ungated(), id)
+            .after_boot(gated.ungated(), id, self.booted_user(name).await)
             .await
             .map_err(|e| e.to_string())?;
         self.report_locks(name, locks);
@@ -1985,6 +1997,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ));
         };
         let guest = entry.and_then(|e| e.guest.as_ref());
+        let user = guest.map_or(SessionUser::Root, |g| g.session_user);
         let (path, is_workspace_file) = match guest {
             Some(guest) => match &guest.editor_file {
                 Some(file) => (file.path().clone(), true),
@@ -1996,10 +2009,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             None => return Err(format!("{name} is not running; start it first")),
         };
         let key = problem_key("ssh", name);
-        self.inner.ssh.publish(name, &endpoint).map_err(|reason| {
-            self.ssh_not_usable(name, &reason);
-            format!("direct SSH is on but the ssh config could not be written: {reason}")
-        })?;
+        self.inner
+            .ssh
+            .publish(name, &endpoint, user)
+            .map_err(|reason| {
+                self.ssh_not_usable(name, &reason);
+                format!("direct SSH is on but the ssh config could not be written: {reason}")
+            })?;
         self.inner.problems.clear(&key);
         Ok(DesktopTarget {
             ssh_host: ssh_host(name),
@@ -2140,10 +2156,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             match live.get_mut(name).filter(|_| self.direct_ssh_allowed(name)) {
                 Some(entry) => {
                     let stale = entry.ssh.replace(ssh);
+                    let user = entry
+                        .guest
+                        .as_ref()
+                        .map_or(SessionUser::Root, |g| g.session_user);
                     // The entry is written while the lock is held, so a switch turned off
                     // meanwhile (which takes the endpoint under the same lock) removes it
                     // after, never before.
-                    self.publish_entry(name, &endpoint);
+                    self.publish_entry(name, &endpoint, user);
                     stale
                 }
                 None => Some(ssh),
@@ -2154,12 +2174,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// Puts `name`'s entry in Puddle's ssh config, naming `endpoint`. The caller has checked
-    /// [`Self::direct_ssh_allowed`]. A failure is a problem on the workspace: its endpoint is up,
-    /// but nothing can name it.
-    fn publish_entry(&self, name: &WorkspaceName, endpoint: &std::path::Path) {
+    /// Puts `name`'s entry in Puddle's ssh config, naming `endpoint` and logging in as `user`. The
+    /// caller has checked [`Self::direct_ssh_allowed`]. A failure is a problem on the workspace:
+    /// its endpoint is up, but nothing can name it.
+    fn publish_entry(&self, name: &WorkspaceName, endpoint: &std::path::Path, user: SessionUser) {
         let key = problem_key("ssh", name);
-        match self.inner.ssh.publish(name, endpoint) {
+        match self.inner.ssh.publish(name, endpoint, user) {
             Ok(()) => self.inner.problems.clear(&key),
             Err(reason) => self.ssh_not_usable(name, &reason),
         }
@@ -2468,7 +2488,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     &record.id,
                     repository.url.as_str(),
                     &repository.directory,
-                    None,
+                    self.booted_user(&record.name).await,
                 )
                 .await;
             match cloned {
@@ -2487,6 +2507,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .sync(sandbox, &record.id)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// The user the running guest of `name` started with, which its clones and checks run as
+    /// until the next start whatever the setting says now; root when it does not run.
+    async fn booted_user(&self, name: &WorkspaceName) -> SessionUser {
+        self.inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .and_then(|l| l.guest.as_ref())
+            .map_or(SessionUser::Root, |g| g.session_user)
     }
 
     async fn gated(&self, name: &WorkspaceName) -> Result<Arc<GatedSandbox<R::Sandbox>>, String> {
@@ -3210,6 +3242,38 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         })
     }
 
+    fn set_session_user<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        user: SessionUser,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let mut state = self.state();
+            if state.closed {
+                return Err(WorkspaceError::Unavailable(
+                    "Puddle is shutting down".to_owned(),
+                ));
+            }
+            puddle_api::check_session_user_change(state.slots.values().map(|s| &s.record), id)?;
+            let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
+            let before = std::mem::replace(&mut slot.record.session_user, user);
+            if let Err(e) = self.persist(&state) {
+                // Nothing changes when the list can't be saved.
+                if let Some(slot) = state.slots.get_mut(id) {
+                    slot.record.session_user = before;
+                }
+                return Err(WorkspaceError::Unavailable(format!(
+                    "the user the workspace runs as was not changed: {e}; {SAVE_HINT}"
+                )));
+            }
+            state
+                .slots
+                .get(id)
+                .map(|s| s.record.clone())
+                .ok_or_else(|| not_found(id))
+        })
+    }
+
     fn attach<'a>(
         &'a self,
         id: &'a WorkspaceId,
@@ -3297,7 +3361,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     record.name
                 )));
             };
-            match self.run_shell_init_check(&gated, script).await {
+            match self
+                .run_shell_init_check(&record.name, &gated, script)
+                .await
+            {
                 Ok(None) => Ok(ShellInitCheck::Passed),
                 Ok(Some(why)) => Ok(ShellInitCheck::Refused(why)),
                 Err(reason) => Err(WorkspaceError::Unavailable(reason)),

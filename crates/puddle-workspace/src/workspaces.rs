@@ -9,7 +9,7 @@ use puddle_compute::{
     VolumeMount, VolumeSpec,
 };
 use puddle_types::{
-    CheckoutDir, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceId,
+    CheckoutDir, GuestPath, ImageRef, MemoryMib, SandboxName, SessionUser, VolumeName, WorkspaceId,
     WorkspaceStatus,
 };
 use tracing::{debug, info, warn};
@@ -344,32 +344,44 @@ impl Workspaces {
         }
     }
 
-    /// Creates Puddle's directory on the volume (see [`Layout`]); run after every boot. Idempotent.
+    /// Creates Puddle's directory on the volume and gives the volume to `user` (see
+    /// [`Layout::prepare_request`]); run after every boot. Idempotent. When the volume changed
+    /// owner, the number of files given to `user` is logged.
     ///
     /// # Errors
     ///
-    /// [`WorkspaceError::Runtime`]; [`WorkspaceError::Layout`] when `mkdir` fails.
+    /// [`WorkspaceError::Runtime`]; [`WorkspaceError::Layout`] when the script fails or does not
+    /// reach its end.
     pub async fn prepare_layout<S: Sandbox>(
         &self,
         sandbox: &S,
         id: &WorkspaceId,
+        user: SessionUser,
     ) -> Result<(), WorkspaceError> {
-        let request = Layout::new(id)?.prepare_request()?;
+        let request = Layout::new(id)?.prepare_request(user);
         let out = sandbox
             .exec(request)
             .await
             .map_err(|e| WorkspaceError::runtime("prepare the layout", id, e))?;
-        if out.status.success() {
-            Ok(())
-        } else {
-            Err(WorkspaceError::Layout {
-                reason: format!("mkdir failed: {}", out.stderr_text().trim()),
-            })
+        let text = out.stdout_text();
+        if !out.status.success() || text.lines().last() != Some("D") {
+            return Err(WorkspaceError::Layout {
+                reason: format!(
+                    "preparing the volume for {user} failed (exit {}): {}",
+                    out.status.code,
+                    tail(&out.stderr_text())
+                ),
+            });
         }
+        if let Some(count) = text.lines().find_map(|l| l.strip_prefix("R\t")) {
+            info!(workspace = %id, %user, files = count, "the volume changed owner: every file on it given to the session user");
+        }
+        Ok(())
     }
 
-    /// Clones `url` into the checkout directory `dir` of workspace `id`, as `user` (the sandbox's
-    /// default user if `None`), with the sandbox's own environment (the proxy settings). Returns
+    /// Clones `url` into the checkout directory `dir` of workspace `id`, as `user` (named, never
+    /// left to the image's default user), with the sandbox's own environment (the proxy
+    /// settings). Returns
     /// the checkout's path. Call [`Workspaces::sync`] after the last clone before calling it
     /// done: a VMM kill within seconds of a clone could otherwise lose the whole repository
     /// (directory entries aren't covered by `core.fsync=committed` until the first fsync).
@@ -384,14 +396,14 @@ impl Workspaces {
         id: &WorkspaceId,
         url: &str,
         dir: &CheckoutDir,
-        user: Option<&str>,
+        user: SessionUser,
     ) -> Result<GuestPath, WorkspaceError> {
         let layout = Layout::new(id)?;
         let checkout = layout.checkout(dir)?;
-        let mut request = layout.clone_request(url, dir)?.with_timeout(CLONE_TIMEOUT);
-        if let Some(user) = user {
-            request = request.as_user(user);
-        }
+        let request = layout
+            .clone_request(url, dir)?
+            .with_timeout(CLONE_TIMEOUT)
+            .as_user(user.name());
         let out = sandbox
             .exec(request)
             .await
@@ -570,7 +582,8 @@ impl Workspaces {
         Ok(report)
     }
 
-    /// What every boot of a sandbox with workspace `id` runs: [`Workspaces::prepare_layout`],
+    /// What every boot of a sandbox with workspace `id` runs: [`Workspaces::prepare_layout`] for
+    /// `user`,
     /// then [`Workspaces::clear_stale_locks`]. A lock failure is logged and doesn't fail the
     /// boot; it is in the report.
     ///
@@ -581,8 +594,9 @@ impl Workspaces {
         &self,
         sandbox: &S,
         id: &WorkspaceId,
+        user: SessionUser,
     ) -> Result<Result<LockReport, WorkspaceError>, WorkspaceError> {
-        self.prepare_layout(sandbox, id).await?;
+        self.prepare_layout(sandbox, id, user).await?;
         let locks = self.clear_stale_locks(sandbox, id).await;
         if let Err(e) = &locks {
             warn!(workspace = %id, error = %e, "clearing stale git locks failed");

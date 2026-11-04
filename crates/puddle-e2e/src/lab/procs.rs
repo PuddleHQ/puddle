@@ -317,7 +317,10 @@ mod os {
 
     /// When `pid` was created and its user plus kernel time, or `None` for a process this user
     /// may not query or that has ended.
-    #[expect(unsafe_code, reason = "OpenProcess and GetProcessTimes")]
+    #[expect(
+        unsafe_code,
+        reason = "Win32 FFI: std has no call that reads another process's CPU times"
+    )]
     fn times(pid: u32) -> Option<(SystemTime, Duration)> {
         // SAFETY: OpenProcess takes plain values and returns a new handle or null.
         let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
@@ -353,7 +356,10 @@ mod os {
     }
 
     /// Available and total physical memory in bytes.
-    #[expect(unsafe_code, reason = "GlobalMemoryStatusEx")]
+    #[expect(
+        unsafe_code,
+        reason = "Win32 FFI: std has no call that reads the machine's memory status"
+    )]
     pub(super) fn memory() -> Option<(u64, u64)> {
         let mut status = MEMORYSTATUSEX {
             dwLength: u32::try_from(size_of::<MEMORYSTATUSEX>()).ok()?,
@@ -375,7 +381,10 @@ mod os {
 
     /// Every process of the machine (pid, parent, executable name), with the times of those this
     /// user may query.
-    #[expect(unsafe_code, reason = "the Toolhelp process snapshot")]
+    #[expect(
+        unsafe_code,
+        reason = "Win32 FFI: std has no call that lists processes"
+    )]
     pub(super) fn snapshot() -> Vec<Proc> {
         // SAFETY: CreateToolhelp32Snapshot takes plain values and returns a new handle or
         // INVALID_HANDLE_VALUE.

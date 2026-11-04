@@ -24,7 +24,7 @@ mod trust;
 
 pub use guest::{
     DEV_CERT_DIR, DEV_CERT_PATH, DEV_KEY_PATH, DEV_STEP_PATH, DEV_STEP_SH, DEV_SYSTEM_CA_PATH,
-    DOTNET_SSL_CERT_DIR, GuestDevCert,
+    GuestDevCert, dotnet_ssl_cert_dir,
 };
 pub use manager::{DevCertError, DevCertManager, DevCertReport, DevCertStatus, FOLDER, LEAF_FILE};
 pub use material::{DevCertMaterial, Origin, PrivateKey};

@@ -13,7 +13,9 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use puddle_store::Clock;
-use puddle_types::{CheckoutDir, Event, EventSink, WorkspaceId, WorkspaceStatus, WorkspaceStep};
+use puddle_types::{
+    CheckoutDir, Event, EventSink, SessionUser, WorkspaceId, WorkspaceStatus, WorkspaceStep,
+};
 use tokio::sync::watch;
 
 use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
@@ -1012,6 +1014,20 @@ impl WorkspaceService for FakeWorkspaces {
             git.set_up(&name, std::slice::from_ref(&new)).await;
             self.emit_status(&record);
             Ok(record)
+        })
+    }
+
+    fn set_session_user<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        user: SessionUser,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let mut state = lock(&self.inner.state);
+            crate::check_session_user_change(state.entries.values().map(|e| &e.record), id)?;
+            let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+            entry.record.session_user = user;
+            Ok(entry.record.clone())
         })
     }
 

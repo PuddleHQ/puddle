@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 /// assert_eq!(SessionUser::Root.home(), "/root");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SessionUser {
     /// `agent`, with passwordless `sudo`: the default for a new workspace.

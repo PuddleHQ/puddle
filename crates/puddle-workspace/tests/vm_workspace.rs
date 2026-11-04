@@ -38,7 +38,9 @@ use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, Route};
-use puddle_types::{GuestEnv, Host, ImageRef, MemoryMib, NullSink, SandboxName, WorkspaceId};
+use puddle_types::{
+    GuestEnv, Host, ImageRef, MemoryMib, NullSink, SandboxName, SessionUser, WorkspaceId,
+};
 use puddle_vm_tests::{DEBIAN_DEVCONTAINER, Settings, VmEnv};
 use puddle_workspace::{Layout, WorkspaceConfig, Workspaces};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -169,7 +171,10 @@ impl Boot {
         match self.hook.create(rt, spec, &self.plan, &self.gate).await {
             Ok(sb) => {
                 attachment.commit();
-                w.after_boot(sb.ungated(), id).await.unwrap().unwrap();
+                w.after_boot(sb.ungated(), id, SessionUser::Root)
+                    .await
+                    .unwrap()
+                    .unwrap();
                 sb
             }
             Err(e) => {
@@ -876,7 +881,10 @@ async fn vm_kill_right_after_a_synced_clone_keeps_the_repo() {
             "LOST"
         }
     );
-    w.after_boot(sb.ungated(), &id).await.unwrap().unwrap();
+    w.after_boot(sb.ungated(), &id, SessionUser::Root)
+        .await
+        .unwrap()
+        .unwrap();
 
     // The product path, five times: the clone and the sync after it return, the VM is killed
     // at once.
@@ -885,7 +893,7 @@ async fn vm_kill_right_after_a_synced_clone_keeps_the_repo() {
         let checkout = format!("{mount}/repo");
         sh_ok(sb.ungated(), &format!("rm -rf {checkout} && sync")).await;
         let dir = w
-            .clone_checkout(sb.ungated(), &id, &url, &repo_dir(), Some("root"))
+            .clone_checkout(sb.ungated(), &id, &url, &repo_dir(), SessionUser::Root)
             .await
             .unwrap();
         w.sync(sb.ungated(), &id).await.unwrap();
@@ -900,7 +908,10 @@ async fn vm_kill_right_after_a_synced_clone_keeps_the_repo() {
             got.stderr_text().trim()
         );
         kept += usize::from(ok);
-        w.after_boot(sb.ungated(), &id).await.unwrap().unwrap();
+        w.after_boot(sb.ungated(), &id, SessionUser::Root)
+            .await
+            .unwrap()
+            .unwrap();
     }
     w.stop(sb.ungated()).await.unwrap();
     drop(sb);
@@ -978,7 +989,11 @@ async fn vm_kill_mid_commit_then_boot_clears_the_locks() {
         blocked.stderr_text()
     );
 
-    let report = w.after_boot(sb.ungated(), &id).await.unwrap().unwrap();
+    let report = w
+        .after_boot(sb.ungated(), &id, SessionUser::Root)
+        .await
+        .unwrap()
+        .unwrap();
     eprintln!("cleared: {report:?}");
     assert!(!report.skipped_busy);
     assert!(report.removed_count() >= 4, "{report:?}");

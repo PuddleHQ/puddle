@@ -88,8 +88,8 @@ pub use start_folder::{StartFolderRequest, StartFolderSet};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
-    NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest, RepoFindings, Workspace,
-    WorkspaceList, WorkspaceOperation, WorkspaceRepository,
+    NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest, RepoFindings,
+    SessionUserRequest, Workspace, WorkspaceList, WorkspaceOperation, WorkspaceRepository,
 };
 
 // ---------------------------------------------------------------------------------------------

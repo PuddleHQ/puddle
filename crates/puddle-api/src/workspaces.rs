@@ -17,8 +17,8 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use puddle_store::{IdentityId, RepoRef};
 use puddle_types::{
-    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, WorkspaceId, WorkspaceName,
-    WorkspaceStatus,
+    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
+    WorkspaceName, WorkspaceStatus,
 };
 use sha2::{Digest, Sha256};
 
@@ -72,6 +72,8 @@ pub struct WorkspaceRecord {
     pub repositories: Vec<Repository>,
     /// Where new terminals land and what the editor opens; `None` is the volume root.
     pub start_folder: Option<StartFolder>,
+    /// The guest user its sessions, browser editor and clones run as, from the next start.
+    pub session_user: SessionUser,
     /// The image its workspace boots.
     pub image: String,
     /// Its memory, applied at the next start.
@@ -103,6 +105,7 @@ impl WorkspaceRecord {
             display_name: None,
             repositories,
             start_folder: None,
+            session_user: SessionUser::Agent,
             image: DEFAULT_IMAGE.to_owned(),
             memory: MemoryMib::DEFAULT,
             status: WorkspaceStatus::Created,
@@ -562,6 +565,27 @@ pub fn check_start_folder_change<'a>(
     records: impl IntoIterator<Item = &'a WorkspaceRecord>,
     id: &WorkspaceId,
 ) -> Result<(), WorkspaceError> {
+    check_settled(records, id, "its start folder")
+}
+
+/// Whether the session user of workspace `id` may change now; the same rule as
+/// [`check_start_folder_change`].
+///
+/// # Errors
+///
+/// As [`check_start_folder_change`].
+pub fn check_session_user_change<'a>(
+    records: impl IntoIterator<Item = &'a WorkspaceRecord>,
+    id: &WorkspaceId,
+) -> Result<(), WorkspaceError> {
+    check_settled(records, id, "the user it runs as")
+}
+
+fn check_settled<'a>(
+    records: impl IntoIterator<Item = &'a WorkspaceRecord>,
+    id: &WorkspaceId,
+    what: &str,
+) -> Result<(), WorkspaceError> {
     let record = records
         .into_iter()
         .find(|r| &r.id == id)
@@ -569,7 +593,7 @@ pub fn check_start_folder_change<'a>(
     match record.busy {
         Some(busy @ (Operation::Creating | Operation::Deleting)) => {
             Err(WorkspaceError::Conflict(format!(
-                "{} is {busy}; change its start folder when that is done",
+                "{} is {busy}; change {what} when that is done",
                 record.label()
             )))
         }
@@ -1022,6 +1046,15 @@ pub trait WorkspaceService: Send + Sync {
         start_folder: Option<StartFolder>,
     ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>>;
 
+    /// Sets the guest user the workspace's sessions, browser editor and clones run as. It takes
+    /// effect at the next start: a running guest keeps the user it booted with.
+    /// [`WorkspaceError::Conflict`] while the workspace is being created or deleted.
+    fn set_session_user<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        user: SessionUser,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
+
     /// Opens the workspace in an editor. The workspace must be running.
     fn attach<'a>(
         &'a self,
@@ -1364,6 +1397,13 @@ impl WorkspaceService for NoWorkspaces {
     ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>> {
         unavailable()
     }
+    fn set_session_user<'a>(
+        &'a self,
+        _: &'a WorkspaceId,
+        _: SessionUser,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        unavailable()
+    }
     fn attach<'a>(
         &'a self,
         _: &'a WorkspaceId,
@@ -1660,6 +1700,9 @@ mod tests {
             svc.delete_check(&id).await.map(|_| ()),
             svc.delete(&id, None).await.map(|_| ()),
             svc.rename(&id, None).await.map(|_| ()),
+            svc.set_session_user(&id, SessionUser::Root)
+                .await
+                .map(|_| ()),
             svc.attach(&id, AttachMode::Browser).await.map(|_| ()),
             svc.checkouts(&id).await.map(|_| ()),
             svc.add_repository(
@@ -1798,6 +1841,23 @@ mod tests {
         let missing = WorkspaceId::new("nope").unwrap();
         assert!(matches!(
             check_rename([&a, &b], &missing, None),
+            Err(WorkspaceError::NotFound(_))
+        ));
+
+        // The start folder and the session user change on a settled workspace only.
+        a.busy = Some(Operation::Creating);
+        assert!(matches!(
+            check_session_user_change([&a, &b], &ida),
+            Err(WorkspaceError::Conflict(m)) if m == "alpha is creating; change the user it runs as when that is done"
+        ));
+        assert!(matches!(
+            check_start_folder_change([&a, &b], &ida),
+            Err(WorkspaceError::Conflict(m)) if m.ends_with("change its start folder when that is done")
+        ));
+        a.busy = Some(Operation::Starting);
+        assert!(check_session_user_change([&a, &b], &ida).is_ok());
+        assert!(matches!(
+            check_session_user_change([&a, &b], &missing),
             Err(WorkspaceError::NotFound(_))
         ));
     }

@@ -22,7 +22,7 @@ use crate::extract::Path;
 use crate::routes::AppState;
 use crate::wire::{
     AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceIdentity,
-    NewWorkspaceRequest, RenameWorkspaceRequest, Workspace, WorkspaceList,
+    NewWorkspaceRequest, RenameWorkspaceRequest, SessionUserRequest, Workspace, WorkspaceList,
 };
 use crate::workspaces::{GitSetup, LocalSource, NewRepository};
 
@@ -345,6 +345,35 @@ pub(crate) async fn rename_workspace(
     let id = workspace_id(&id)?;
     let display_name = body.into_display_name()?;
     let record = state.workspaces.rename(&id, display_name).await?;
+    Ok(Json(view(&state, record).await))
+}
+
+/// Sets the guest user the workspace's sessions, browser editor and clones run as: `agent`
+/// (passwordless `sudo`) or `root`. It applies at the next start; a running workspace keeps the
+/// user it started with until then. A workspace that is being created or deleted answers 409.
+#[utoipa::path(
+    put,
+    path = "/api/workspaces/{id}/session-user",
+    tag = "workspaces",
+    params(("id" = String, Path, description = "workspace id")),
+    request_body = SessionUserRequest,
+    responses(
+        (status = OK, description = "the workspace with its new session user", body = Workspace),
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
+        (status = CONFLICT, description = "the workspace is being created or deleted", body = ApiErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "not `agent` or `root`", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn put_session_user(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    crate::extract::Json(body): crate::extract::Json<SessionUserRequest>,
+) -> Result<Json<Workspace>, ApiError> {
+    let id = workspace_id(&id)?;
+    let record = state
+        .workspaces
+        .set_session_user(&id, body.session_user)
+        .await?;
     Ok(Json(view(&state, record).await))
 }
 

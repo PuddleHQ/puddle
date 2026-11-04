@@ -18,8 +18,8 @@ pub const DEFAULT_CONTAINER_PROXY: SocketAddr =
 /// Where `puddle-boot` mounts the agent binary in the guest.
 pub const DEFAULT_AGENT: &str = "/puddle/puddle-agent";
 
-/// Home of the user sessions run as (root; `puddle-boot` writes VS Code's Machine settings
-/// there too).
+/// Root's home: where per-user tool settings go unless the caller names the session user's home
+/// in [`ProxySettings::home`].
 pub const DEFAULT_HOME: &str = "/root";
 
 /// Longest host name (RFC 1035).

@@ -6654,6 +6654,7 @@ name = "puddle-types"
 version = "0.0.0"
 dependencies = [
  "proptest",
+ "puddle-test-kit",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

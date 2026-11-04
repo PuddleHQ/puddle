@@ -19,6 +19,7 @@ export function workspace(
       { url: `https://github.com/acme/${name}.git`, directory: name },
     ],
     start_folder: null,
+    session_user: "agent",
     image: "mcr.microsoft.com/devcontainers/base:debian",
     memory_mib: 8192,
     status: "stopped",
@@ -538,6 +539,17 @@ export class FakeWorkspaces {
         exists:
           found.status === "running" && asked.body.path !== null ? true : null,
       });
+    }
+    if (path === "/api/workspaces/{id}/session-user") {
+      const asked = init as unknown as {
+        params: { path: { id: string } };
+        body: { session_user: Workspace["session_user"] };
+      };
+      const found = this.find(asked.params.path.id);
+      if (!found) return this.reply(404, undefined, "no such workspace");
+      const changed = { ...found, session_user: asked.body.session_user };
+      this.list = this.list.map((w) => (w.id === found.id ? changed : w));
+      return this.reply(200, changed);
     }
     const name = init.params.path.workspace;
     this.overrides[name] = init.body.overrides;

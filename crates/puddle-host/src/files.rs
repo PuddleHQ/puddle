@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use puddle_api::{RepoUrl, Repository, SettingsRepo, SettingsRepoError, StartFolder};
-use puddle_types::{CheckoutDir, WorkspaceId, WorkspaceName};
+use puddle_types::{CheckoutDir, SessionUser, WorkspaceId, WorkspaceName};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -205,6 +205,8 @@ pub(crate) struct Stored {
     pub(crate) repositories: Vec<Repository>,
     /// Where terminals land and what the editor opens; `None` is the volume root.
     pub(crate) start_folder: Option<StartFolder>,
+    /// The guest user sessions run as.
+    pub(crate) session_user: SessionUser,
     pub(crate) image: String,
     pub(crate) memory_mib: u32,
     pub(crate) created_at: u64,
@@ -228,12 +230,19 @@ struct EntryV2 {
     repositories: Vec<RepositoryV2>,
     #[serde(default)]
     start_folder: Option<String>,
+    /// Missing in an entry written before workspaces had a session user: those keep root.
+    #[serde(default = "root")]
+    session_user: SessionUser,
     image: String,
     memory_mib: u32,
     created_at: u64,
     disk_size_mib: u64,
     #[serde(default)]
     creating: bool,
+}
+
+const fn root() -> SessionUser {
+    SessionUser::Root
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -273,6 +282,7 @@ impl From<EntryV1> for EntryV2 {
                 directory: directory.clone(),
             }],
             start_folder: Some(directory),
+            session_user: SessionUser::Root,
             image: v1.image,
             memory_mib: v1.memory_mib,
             created_at: v1.created_at,
@@ -318,6 +328,7 @@ impl EntryV2 {
             display_name,
             repositories,
             start_folder,
+            session_user: self.session_user,
             image: self.image,
             memory_mib: self.memory_mib,
             created_at: self.created_at,
@@ -342,6 +353,7 @@ impl From<Stored> for EntryV2 {
                 })
                 .collect(),
             start_folder: s.start_folder.map(|f| f.to_string()),
+            session_user: s.session_user,
             image: s.image,
             memory_mib: s.memory_mib,
             created_at: s.created_at,
@@ -462,6 +474,7 @@ mod tests {
                 repository("https://example.org/a/c.git", "see"),
             ],
             start_folder: Some(StartFolder::parse("see/src").unwrap()),
+            session_user: SessionUser::Agent,
             image: "alpine:3".to_owned(),
             memory_mib: 1024,
             created_at: 7,
@@ -799,6 +812,38 @@ mod tests {
             assert!(entry.get("first_connect_notice_due").is_none(), "{entry}");
         }
         assert_eq!(book.load().unwrap(), loaded);
+    }
+
+    #[test]
+    fn an_entry_from_before_session_users_keeps_root_and_the_user_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workspaces.json");
+        let book = WorkspaceBook::new(&path);
+        let old = json!({"version": 2, "workspaces": [{
+            "id": "a", "name": "a", "repositories": [], "start_folder": null,
+            "image": "i", "memory_mib": 512, "created_at": 0, "disk_size_mib": 1
+        }]});
+        std::fs::write(&path, old.to_string()).unwrap();
+        let loaded = book.load().unwrap();
+        assert_eq!(loaded[0].session_user, SessionUser::Root);
+        book.save(vec![loaded[0].clone(), stored("b")]).unwrap();
+        let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(written["workspaces"][0]["session_user"], "root");
+        assert_eq!(written["workspaces"][1]["session_user"], "agent");
+        let bad = json!({"version": 2, "workspaces": [{
+            "id": "a", "name": "a", "repositories": [], "session_user": "vscode",
+            "image": "i", "memory_mib": 512, "created_at": 0, "disk_size_mib": 1
+        }]});
+        std::fs::write(&path, bad.to_string()).unwrap();
+        assert!(book.load().is_err());
+        // A version 1 book is older still: every workspace in it keeps root.
+        std::fs::write(&path, V1_BOOK).unwrap();
+        assert!(
+            book.load()
+                .unwrap()
+                .iter()
+                .all(|w| w.session_user == SessionUser::Root)
+        );
     }
 
     #[test]

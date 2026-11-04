@@ -1351,6 +1351,15 @@ mod termination {
             .with_termination(terminations, puddle_upstream::TlsClient::new([]).unwrap())
     }
 
+    #[test]
+    fn a_termination_config_debug_names_the_type_and_hides_its_fields() {
+        let config = TerminationConfig {
+            source: Arc::new(Terminations::new()),
+            tls: puddle_upstream::TlsClient::new([]).unwrap(),
+        };
+        assert_eq!(format!("{config:?}"), "TerminationConfig { .. }");
+    }
+
     fn at(h: &str, port: u16, workspace: WorkspaceName) -> EgressRequest {
         EgressRequest::new(workspace, host(h), port)
     }
@@ -1413,4 +1422,69 @@ mod termination {
         let plain = proxy(Arc::new(StaticPolicy::new()), StaticResolver::new());
         assert!(plain.terminating(&request("github.com"), false).is_none());
     }
+}
+
+#[tokio::test]
+async fn a_udp_refusal_is_audited_as_blocked_for_an_ip_address_only() {
+    let log = Arc::new(crate::testing::CollectingConnectionLog::new());
+    let proxy = Arc::new(
+        Proxy::new(Arc::new(StaticPolicy::new()), Arc::new(NullSink))
+            .with_connection_log(log.clone()),
+    );
+    let handler = proxy.handler(workspace());
+    let refusal = |address: &str| puddle_agent_proto::host::UdpRefusal {
+        address: address.into(),
+        port: 5353,
+        count: 1,
+    };
+    handler.udp_refused(refusal("not-an-address.test")).await;
+    assert!(
+        log.events().is_empty(),
+        "a name is the guest's claim, not an address"
+    );
+    handler.udp_refused(refusal("203.0.113.9")).await;
+    let events = log.events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].host, Host::Ip(ip("203.0.113.9")));
+    assert_eq!(events[0].port, 5353);
+    assert_eq!(events[0].workspace, Some(workspace()));
+    assert_eq!(events[0].decision, ConnectionDecision::Blocked);
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::Blocked(BlockReason::UdpUnsupported)
+    );
+}
+
+#[test]
+fn network_timeouts_replace_the_defaults() {
+    let config = ProxyConfig::default()
+        .with_network_timeouts(Duration::from_millis(11), Duration::from_millis(22));
+    assert_eq!(config.resolve_timeout, Duration::from_millis(11));
+    assert_eq!(config.connect_timeout, Duration::from_millis(22));
+}
+
+#[tokio::test]
+async fn forwarding_one_request_counts_the_pipelined_bytes_it_drops() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (guest, mut guest_peer) = tokio::io::duplex(4096);
+    let (upstream, mut upstream_peer) = tokio::io::duplex(4096);
+    let pipelined = b"GET /next HTTP/1.1\r\n\r\n";
+    guest_peer.write_all(b"hello").await.unwrap();
+    guest_peer.write_all(pipelined).await.unwrap();
+    let server = tokio::spawn(async move {
+        let mut body = [0u8; 5];
+        upstream_peer.read_exact(&mut body).await.unwrap();
+        assert_eq!(&body, b"hello");
+        upstream_peer.write_all(b"OK").await.unwrap();
+    });
+    let mut client = BufReader::new(guest);
+    let mut upstream = upstream;
+    let dropped = forward_one_request(&mut client, &mut upstream, Body::Length(5))
+        .await
+        .unwrap();
+    server.await.unwrap();
+    assert_eq!(dropped, pipelined.len());
+    let mut answer = Vec::new();
+    guest_peer.read_to_end(&mut answer).await.unwrap();
+    assert_eq!(answer, b"OK");
 }

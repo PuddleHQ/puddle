@@ -74,7 +74,7 @@ async fn once(
         .allow(vec!["api.test"])
         .request_rules(rules(with))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("api.test:443", None).await.unwrap();
     let answer = send(&mut client, method, target, extra).await;
     client.close().await;
@@ -91,7 +91,7 @@ async fn a_refused_request_is_a_403_that_names_the_rule_and_never_reaches_the_se
         .allow(vec!["api.test"])
         .request_rules(rules(vec![rule(7, "api.test", &["POST"], "/gists")]))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("api.test:443", None).await.unwrap();
     let answer = send(&mut client, "POST", &format!("/gists?token={CANARY}"), "").await;
     assert_eq!(answer.status, 403);
@@ -155,7 +155,7 @@ async fn the_second_request_of_a_connection_is_judged_on_its_own() {
         .allow(vec!["api.test"])
         .request_rules(rules(vec![rule(7, "api.test", &["DELETE"], "/repos/*")]))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.tls("api.test:443", None).await.unwrap();
     assert_eq!(send(&mut client, "GET", "/repos/x", "").await.status, 200);
     let refused = send(&mut client, "DELETE", "/repos/x", "").await;
@@ -223,7 +223,7 @@ async fn no_spelling_of_a_refused_path_gets_through_on_http_1_1() {
         .request_rules(rules(vec![rule(9, "api.test", &["DELETE"], "/admin")]))
         .build();
     for spelling in SPELLINGS {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("api.test:443", None).await.unwrap();
         let answer = send(&mut client, "DELETE", spelling, "").await;
         // 400 is the parser's own refusal of a form it will not read at all: it never goes
@@ -256,7 +256,7 @@ async fn no_spelling_of_a_refused_path_gets_through_on_http_1_1() {
         "/x/%2e%2e/admin",
         "/admin;a=b",
     ] {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("api.test:443", None).await.unwrap();
         assert_eq!(
             send(&mut client, "DELETE", spelling, "").await.status,
@@ -286,7 +286,7 @@ async fn paths_that_are_not_the_refused_one_are_served() {
         "/%61dmin/x",
     ];
     for target in ok {
-        let mut guest = rig.guest().await;
+        let mut guest = rig.guest();
         let mut client = guest.tls("api.test:443", None).await.unwrap();
         assert_eq!(
             send(&mut client, "DELETE", target, "").await.status,
@@ -344,7 +344,7 @@ async fn a_host_with_a_rule_is_decrypted_whatever_the_switch_and_the_never_decry
         .decrypting_all(false, &["api.test"])
         .request_rules(rules(vec![rule(2, "api.test", &["DELETE"], "/**")]))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     // The workspace's CA certifies the name (a client trusting only the real root would refuse).
     let mut client = guest.tls("api.test:443", None).await.unwrap();
     assert_eq!(send(&mut client, "GET", "/", "").await.status, 200);
@@ -372,7 +372,7 @@ async fn a_host_with_a_rule_is_decrypted_and_judged_for_a_client_in_a_container_
         .build();
     // A container's client is passed through on other hosts; this one gets the workspace's
     // certificate because its requests must be read.
-    let mut container = rig.guest().await.in_container();
+    let mut container = rig.guest().in_container();
     let mut client = container.tls("api.test:443", None).await.unwrap();
     assert_eq!(send(&mut client, "POST", "/gists", "").await.status, 403);
     client.close().await;
@@ -400,7 +400,7 @@ async fn a_tunnel_to_another_port_of_a_covered_host_is_refused_because_its_reque
         .allow(vec!["api.test", "other.test"])
         .request_rules(rules(vec![rule(2, "api.test", &["DELETE"], "/**")]))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (status, _) = guest.connect_to("api.test:8443").await;
     assert_eq!(status, 403);
     let events = rig.events(1).await;
@@ -432,8 +432,8 @@ async fn a_plain_http_request_is_judged_like_one_on_a_decrypted_connection() {
         "http://plain.test/%41dmin/./?q=1",
         "http://plain.test//x/../ADMIN",
     ] {
-        let guest = rig.guest().await;
-        let mut stream = guest.control.clone().open_stream().await.unwrap();
+        let guest = rig.guest();
+        let mut stream = guest.open_stream().await;
         stream
             .write_all(
                 format!(
@@ -457,8 +457,8 @@ async fn a_plain_http_request_is_judged_like_one_on_a_decrypted_connection() {
         assert!(!format!("{event:?}").contains("q=1"));
     }
     // Another method on the same path is served.
-    let guest = rig.guest().await;
-    let mut stream = guest.control.clone().open_stream().await.unwrap();
+    let guest = rig.guest();
+    let mut stream = guest.open_stream().await;
     stream
         .write_all(b"GET http://plain.test/admin HTTP/1.1\r\nHost: plain.test\r\n\r\n")
         .await
@@ -484,7 +484,7 @@ async fn on_http_2_one_stream_is_refused_and_the_connection_goes_on() {
         .allow(vec!["api.test"])
         .request_rules(rules(vec![rule(8, "api.test", &["DELETE"], "/admin")]))
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("api.test:443", &[b"h2"]).await;
     let ok = client.get("api.test", "/admin").await;
     assert_eq!(ok.status, 200);
@@ -569,7 +569,7 @@ async fn a_certificate_alert_on_a_host_with_a_rule_never_teaches_the_host_as_pas
         .build();
 
     // A tool whose roots do not hold the workspace CA refuses the certificate.
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (port, _bridge) = guest.bridge("api.test:443").await;
     let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await

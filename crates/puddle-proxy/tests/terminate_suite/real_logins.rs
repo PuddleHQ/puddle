@@ -29,11 +29,10 @@ use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::WorkspaceName;
 use serde_json::{Value, json};
 use terminate_support::{
-    FakeServer, Flaw, Guest, Handler, LOCAL, Pki, Recorded, Reply, Rig, RigBuilder, TestInjector,
+    FakeServer, Flaw, Guest, Handler, Pki, Recorded, Reply, Rig, RigBuilder, TestInjector,
     captured_logs,
 };
 use tokio::io::AsyncWriteExt;
-use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 
@@ -263,25 +262,6 @@ struct Tools {
     _bridge: JoinHandle<()>,
 }
 
-/// A loopback port that is a tool's HTTP proxy: each connection becomes a stream into the
-/// guest's route, as the guest agent relays the proxy port.
-async fn proxy_port(guest: &Guest) -> (u16, JoinHandle<()>) {
-    let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let mut control = guest.control.clone();
-    let task = tokio::spawn(async move {
-        while let Ok((mut tcp, _)) = listener.accept().await {
-            let Ok(mut stream) = control.open_stream().await else {
-                return;
-            };
-            tokio::spawn(async move {
-                let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
-            });
-        }
-    });
-    (port, task)
-}
-
 /// What one run of a tool printed.
 struct Ran {
     ok: bool,
@@ -336,8 +316,8 @@ impl Tools {
             .stand_ins(&registry)
             .exchanges(Arc::new(logins))
             .build();
-        let guest = rig.guest().await;
-        let (port, bridge) = proxy_port(&guest).await;
+        let guest = rig.guest();
+        let (port, bridge) = guest.proxy_port().await;
         let home = tempfile::tempdir().unwrap();
         std::fs::write(home.path().join("ca.pem"), rig.ca.certificate().pem()).unwrap();
         Self {

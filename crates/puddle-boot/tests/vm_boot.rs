@@ -287,25 +287,30 @@ async fn vm_boot_hook_docker_dind() {
 /// How many stop/start rounds [`vm_docker_dind_answers_after_every_restart`] makes.
 const DIND_ROUNDS: u32 = 25;
 
-/// What one `docker:dind` boot came to: the daemon answers (`Ok`), or what the guest said when it
-/// did not (`Err`).
+/// What one `docker:dind` boot came to: the daemon answers (`Ok`), or its entrypoint exited and
+/// what the guest said (`Err`). A daemon that does neither within the wait fails the test there.
 async fn dockerd_answers<S: Sandbox>(sb: &GatedSandbox<S>) -> Result<(), String> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let (code, version) = sh(sb, "docker version --format '{{.Server.Version}}' 2>&1").await;
-        if code == 0 && !version.is_empty() {
-            return Ok(());
-        }
-        // The entrypoint (dockerd) has exited this boot: it will not come up.
-        let (ended, said) = sh(sb, "cat /run/puddle/entrypoint.exit").await;
-        if ended == 0 || tokio::time::Instant::now() >= deadline {
+    eventually_async(
+        "dockerd to answer or its entrypoint to exit",
+        Duration::from_secs(60),
+        || async {
+            let (code, version) =
+                sh(sb, "docker version --format '{{.Server.Version}}' 2>&1").await;
+            if code == 0 && !version.is_empty() {
+                return Ok(Ok(()));
+            }
+            // The entrypoint (dockerd) has exited this boot: it will not come up.
+            let (ended, said) = sh(sb, "cat /run/puddle/entrypoint.exit").await;
+            if ended != 0 {
+                return Err(format!("docker version: {version}"));
+            }
             let (_, log) = sh(sb, "tail -n 5 /run/puddle/entrypoint.log").await;
-            return Err(format!(
+            Ok(Err(format!(
                 "docker version: {version}; entrypoint.exit: {said}; entrypoint.log tail:\n{log}"
-            ));
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+            )))
+        },
+    )
+    .await
 }
 
 /// A stop gives dockerd its SIGTERM and the time to shut down, so its state survives any number

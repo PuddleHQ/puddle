@@ -743,13 +743,16 @@ mod tests {
     /// ancestor other accounts can write to, and a umask of `0002` leaves a plain temp folder
     /// group-writable.
     fn home_tmp() -> tempfile::TempDir {
-        let mut builder = tempfile::Builder::new();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            builder.permissions(std::fs::Permissions::from_mode(0o700));
+            tempfile::Builder::new()
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir()
+                .unwrap()
         }
-        builder.tempdir().unwrap()
+        #[cfg(not(unix))]
+        tempfile::tempdir().unwrap()
     }
 
     #[test]

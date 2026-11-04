@@ -73,9 +73,13 @@ exclude_re = [
     # `RuleIndex::decide` replaces its best hit when a candidate's key is greater; `>=` only differs for
     # an equal key. Rule keys end in the rule id, which is unique, and two entries of one set with equal
     # keys (same kind and length of pattern matching one host, same effect) are the same pattern, so
-    # both give the same answer. The columns are the three `key > best` / `own_key > own_key` comparisons
+    # both give the same answer. The three entries are the `key > best` / `own_key > own_key` comparisons
     # (not the specificity comparison against an own rule, where equal does matter and a test pins it).
-    "engine\\.rs:\\d+:(88|61|93): replace > with >= in RuleIndex::decide",
+    # They hold the position because the function has a fourth `>` that must stay measured; the
+    # `mutants-exclusions` gate fails an entry whose line moved, so re-read the comparisons then.
+    "puddle-store/src/engine\\.rs:303:88: replace > with >= in RuleIndex::decide",
+    "puddle-store/src/engine\\.rs:324:61: replace > with >= in RuleIndex::decide",
+    "puddle-store/src/engine\\.rs:327:93: replace > with >= in RuleIndex::decide",
     # The default body of `SshTarget::failed` is `let _ = reason;`, so `()` is the same code.
     'replace SshTarget::failed with \(\)',
     # `SshEndpoint::drop` aborts the accept task, but dropping the endpoint also drops the `stop`
@@ -92,18 +96,25 @@ exclude_re = [
     # tests), which is what the mutant returns; on a computer that has one, the Windows job sets
     # PUDDLE_REQUIRE_OS_CREDENTIAL_STORE and its real-store tests fail when the answer is `false`.
     'replace keyring_available -> bool with false',
-    # Not measured: the `#[cfg(not(unix))]` `is_executable` (run.rs lines 78 to 82, the Windows one: a
-    # file counts when it exists) is never compiled on Linux. The Unix one is measured and caught.
-    'run\.rs:(79|8[0-2]):5: replace is_executable -> bool',
-    # Not measured: the Windows `allocated_bytes` (allocated.rs lines 30 to 49) is `#[cfg(windows)]`,
-    # so a Linux run never compiles it and every change to it passes. The mutation run covers Linux
-    # only; this function is tested by the Windows test job and is not part of the clean claim.
-    'allocated\.rs:(3\d|4\d):\d+: .* in allocated_bytes',
-    'allocated\.rs:(3\d|4\d):\d+: replace allocated_bytes ',
-    # Not measured: the Windows `free_bytes_of` (free.rs lines 38 to 60) is `#[cfg(windows)]`, so a Linux
-    # run never compiles it and every change to it passes; the Windows test job runs its test. The Unix
-    # one (line 30) is measured and caught.
-    'free\.rs:(3[89]|4\d|5\d|60):\d+: .*free_bytes_of',
+    # Not measured: the `#[cfg(not(unix))]` `is_executable` (the Windows one: a file counts when it
+    # exists) is never compiled on Linux. The Unix one has the same name and is measured and caught, so
+    # the entry holds the Windows body's position; the `mutants-exclusions` gate fails it when it moves.
+    'run\.rs:80:5: replace is_executable -> bool',
+    # Not measured: the Windows `allocated_bytes` is `#[cfg(windows)]`, so a Linux run never compiles it
+    # and every change to it passes. The mutation run covers Linux only; this function is tested by the
+    # Windows test job and is not part of the clean claim. The Unix one has the same name and is
+    # measured, so each entry holds the position of one mutant of the Windows body (the `mutants-exclusions`
+    # gate fails an entry that moves).
+    'puddle-fs/src/allocated\.rs:33:5: replace allocated_bytes ',
+    'puddle-fs/src/allocated\.rs:41:12: replace == with != in allocated_bytes',
+    'puddle-fs/src/allocated\.rs:44:33: replace != with == in allocated_bytes',
+    'puddle-fs/src/allocated\.rs:48:25: replace << with >> in allocated_bytes',
+    'puddle-fs/src/allocated\.rs:48:32: replace \| with [&^] in allocated_bytes',
+    # Not measured: the Windows `free_bytes_of` is `#[cfg(windows)]`, so a Linux run never compiles it and
+    # every change to it passes; the Windows test job runs its test. The Unix one (line 30) has the same
+    # name and is measured and caught, so each entry holds the position of one mutant of the Windows body.
+    'puddle-fs/src/free\.rs:40:5: replace free_bytes_of ',
+    'puddle-fs/src/free\.rs:55:11: replace == with != in free_bytes_of',
     # `high << 4 | low` style join again: in `tlv` the length bytes are folded with `(acc << 8) | byte`,
     # and `acc << 8` has its low eight bits clear, so `|` and `^` give the same length for every input.
     'der\.rs:\d+:\d+: replace \| with \^ in tlv',

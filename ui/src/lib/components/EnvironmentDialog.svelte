@@ -54,6 +54,11 @@
         hosts = editing ? hostsText(editing.hosts) : "";
         refusal = null;
       });
+    } else if (!open && wasOpen) {
+      // A typed secret must not outlive the dialog, whether it was saved, refused or cancelled.
+      untrack(() => {
+        value = "";
+      });
     }
     wasOpen = open;
   });

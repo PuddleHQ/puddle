@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Wire types of the workspaces resource.
 
-use puddle_types::{CheckoutDir, ImageRef, MemoryMib, SandboxName, WorkspaceName, WorkspaceStatus};
+use puddle_types::{
+    CheckoutDir, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceName, WorkspaceStatus,
+};
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
@@ -78,6 +80,11 @@ pub struct Workspace {
     /// for the volume root.
     #[schema(required = true)]
     pub start_folder: Option<String>,
+    /// The guest user its sessions, browser editor and clones run as: `agent` (with passwordless
+    /// `sudo`) for a workspace made since non-root sessions came in, `root` for one made before or
+    /// switched back. A change applies at the next start (`PUT
+    /// /api/workspaces/{id}/session-user`).
+    pub session_user: SessionUser,
     /// The image its workspace boots.
     pub image: String,
     /// Memory in MiB, applied at the next start.
@@ -124,6 +131,7 @@ impl Workspace {
             name,
             repositories,
             start_folder,
+            session_user,
             image,
             memory,
             status,
@@ -140,6 +148,7 @@ impl Workspace {
             display_name,
             repositories: repositories.into_iter().map(Into::into).collect(),
             start_folder: start_folder.map(|f| f.as_str().to_owned()),
+            session_user,
             image,
             memory_mib: memory.get(),
             status,
@@ -434,6 +443,14 @@ impl RenameWorkspaceRequest {
             .transpose()
             .map_err(ApiError::invalid)
     }
+}
+
+/// `PUT /api/workspaces/{id}/session-user`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionUserRequest {
+    /// `agent` (passwordless `sudo`, `sudo -i` for a root shell) or `root`.
+    pub session_user: SessionUser,
 }
 
 /// How to open the workspace in an editor.

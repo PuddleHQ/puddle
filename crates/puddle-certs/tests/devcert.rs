@@ -363,8 +363,11 @@ fn the_manager_debug_names_its_folder_and_nothing_else() {
     let fake = FakeTrust::new(vec![]);
     let text = format!("{:?}", manager(&dir, &fake));
     assert!(text.starts_with("DevCertManager { dir: "), "{text}");
-    // Debug escapes backslashes, so compare against the Debug form of the path.
-    assert!(text.contains(&format!("{:?}", dir.path())), "{text}");
+    // Debug escapes backslashes, and the manager's folder lives inside the temp
+    // folder, so drop the closing quote of the Debug form before matching.
+    let folder = format!("{:?}", dir.path());
+    let folder = folder.trim_end_matches('"');
+    assert!(text.contains(folder), "{text}");
     assert!(text.ends_with(", .. }"), "{text}");
 }
 

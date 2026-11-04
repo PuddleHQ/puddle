@@ -335,10 +335,11 @@ mod tests {
         sparse(&upper, 64 * MIB, 3 * 1024 * 1024);
         let got = usage(&home.mine()).unwrap();
         assert_eq!(got.size, DiskSize::mib(64));
-        assert!(
-            got.used >= DiskSize::mib(3) && got.used < DiskSize::mib(64),
-            "{got:?}"
-        );
+        assert!(got.used >= DiskSize::mib(3), "{got:?}");
+        // NTFS allocates a file extended with `set_len` in full unless it is marked sparse, so
+        // only file systems that make holes can show the file under its length.
+        #[cfg(unix)]
+        assert!(got.used < DiskSize::mib(64), "{got:?}");
     }
 
     #[test]

@@ -523,6 +523,87 @@ describe("a record as a row", () => {
       ).detail,
     ).toContain("because the host has rules on method and path");
   });
+  it("shows a workspace operation with who asked, what it touched and how it ended", () => {
+    const op = (fields: Record<string, unknown>) =>
+      row({
+        type: "workspace_op",
+        ts: 5,
+        workspace_id: "shop",
+        outcome: "succeeded",
+        actor: "api",
+        detail: null,
+        ...fields,
+      } as AuditRecord);
+    expect(op({ op: "create" })).toMatchObject({
+      workspace: "shop",
+      type: "Workspace operation",
+      destination: null,
+      outcome: { label: "Succeeded", tone: "allow" },
+      detail: "Created, by api",
+    });
+    expect(
+      op({
+        op: "delete",
+        detail: "deleted; its volume was already gone",
+      }).detail,
+    ).toBe("Deleted: deleted; its volume was already gone, by api");
+    expect(op({ op: "rename", detail: "renamed to Acme shop" }).detail).toBe(
+      "Renamed: renamed to Acme shop, by api",
+    );
+    // A failure says why and is marked as one.
+    expect(
+      op({ op: "start", outcome: "failed", detail: "no volume" }),
+    ).toMatchObject({
+      outcome: { label: "Failed", tone: "deny" },
+      detail: "Start failed: no volume, by api",
+    });
+    expect(op({ op: "stop", outcome: "failed" }).detail).toBe(
+      "Stop failed, by api",
+    );
+    expect(
+      op({ op: "create", outcome: "failed", detail: "disk full" }).detail,
+    ).toBe("Create failed: disk full, by api");
+    // An identity change belongs to no workspace.
+    expect(
+      op({
+        op: "identity_created",
+        workspace_id: null,
+        detail: "Work",
+      }),
+    ).toMatchObject({
+      workspace: null,
+      detail: "Identity added: Work, by api",
+    });
+    for (const kind of [
+      "identity_updated",
+      "identity_deleted",
+      "identity_default_set",
+      "identities_changed",
+      "repo_added",
+      "repo_switched",
+      "repo_removed",
+    ]) {
+      expect(op({ op: kind }).detail).toMatch(/^[A-Z][a-z ]+, by api$/);
+    }
+  });
+  it("filters on the workspace operation type and its two outcomes", () => {
+    const filter = {
+      ...NO_FILTER,
+      workspace: "shop",
+      type: "workspace_op" as const,
+      outcome: "failed" as const,
+      range: "all" as const,
+    };
+    expect(toQuery(filter, 1)).toEqual({
+      workspace: "shop",
+      type: "workspace_op",
+      outcome: "failed",
+    });
+    expect(fromSearch(toSearch(filter))).toEqual(filter);
+    expect(outcomeLabel("succeeded")).toBe("Succeeded");
+    expect(outcomeLabel("failed")).toBe("Failed");
+    expect(typeLabel("workspace_op")).toBe("Workspace operation");
+  });
   it("shows the records of rules on method and path", () => {
     const rule = {
       id: 7,

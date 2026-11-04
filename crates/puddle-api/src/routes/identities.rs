@@ -8,19 +8,23 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_secrets::{SourceSpec, StoredId, TokenScope};
-use puddle_store::{CredentialBinding, IdentityId};
+use puddle_store::{CredentialBinding, IdentityId, WorkspaceOpKind};
 use puddle_types::{WorkspaceId, WorkspaceName};
 
 use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
-use crate::routes::AppState;
+use crate::routes::{AppState, record_op};
 use crate::wire::{
     AttachIdentityRequest, GitDefaultsView, GitRepoRequest, GitRepoToggles, GitRepoView,
     GitSwitchesRequest, IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest,
     IdentityView, TokenLeft, WorkspaceGitView, WorkspaceIdentitiesRequest,
     WorkspaceSwitchesRequest,
 };
+
+fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
 
 fn view(state: &AppState, identity: puddle_store::Identity) -> Result<IdentityView, ApiError> {
     let workspaces = state.store.identity_workspaces(identity.id)?;
@@ -141,6 +145,12 @@ pub(crate) async fn create_identity(
     let draft = body.into_draft()?;
     let made = blocking(move || {
         let identity = state.store.create_identity(draft)?;
+        record_op(
+            &state.store,
+            WorkspaceOpKind::IdentityCreated,
+            None,
+            Some(identity.label.clone()),
+        );
         view(&state, identity)
     })
     .await?;
@@ -197,6 +207,12 @@ pub(crate) async fn update_identity(
     let (updated, before) = blocking(move || {
         let before = held.store.identity(IdentityId(id))?.credentials;
         let identity = held.store.update_identity(IdentityId(id), draft)?;
+        record_op(
+            &held.store,
+            WorkspaceOpKind::IdentityUpdated,
+            None,
+            Some(identity.label.clone()),
+        );
         Ok((view(&held, identity)?, before))
     })
     .await?;
@@ -228,7 +244,14 @@ pub(crate) async fn delete_identity(
     let store = Arc::clone(&state.store);
     let (detached_from, before) = blocking(move || {
         let gone = store.identity(IdentityId(id))?;
-        Ok((store.delete_identity(IdentityId(id))?, gone.credentials))
+        let left = store.delete_identity(IdentityId(id))?;
+        record_op(
+            &store,
+            WorkspaceOpKind::IdentityDeleted,
+            None,
+            Some(gone.label.clone()),
+        );
+        Ok((left, gone.credentials))
     })
     .await?;
     let tokens_left = forget_unclaimed_tokens(&state, &before).await;
@@ -255,6 +278,12 @@ pub(crate) async fn set_default_identity(
 ) -> Result<Json<IdentityView>, ApiError> {
     let found = blocking(move || {
         let identity = state.store.set_default_identity(IdentityId(id))?;
+        record_op(
+            &state.store,
+            WorkspaceOpKind::IdentityDefaultSet,
+            None,
+            Some(identity.label.clone()),
+        );
         view(&state, identity)
     })
     .await?;
@@ -374,6 +403,12 @@ pub(crate) async fn set_workspace_identities(
     let ids: Vec<_> = body.ids.into_iter().map(IdentityId).collect();
     let set = blocking(move || {
         let git = state.store.set_workspace_identities(&name, &ids)?;
+        record_op(
+            &state.store,
+            WorkspaceOpKind::IdentitiesChanged,
+            Some(&name),
+            Some(format!("the list now has {} identities", ids.len())),
+        );
         git_view(&state, name, git)
     })
     .await?;
@@ -407,6 +442,12 @@ pub(crate) async fn attach_identity(
         let git = state
             .store
             .attach_identity(&name, IdentityId(body.identity), position)?;
+        record_op(
+            &state.store,
+            WorkspaceOpKind::IdentitiesChanged,
+            Some(&name),
+            Some(format!("attached identity {}", body.identity)),
+        );
         git_view(&state, name, git)
     })
     .await?;
@@ -434,6 +475,12 @@ pub(crate) async fn detach_identity(
     let name = workspace(&state, &id).await?;
     let set = blocking(move || {
         let git = state.store.detach_identity(&name, IdentityId(identity))?;
+        record_op(
+            &state.store,
+            WorkspaceOpKind::IdentitiesChanged,
+            Some(&name),
+            Some(format!("took identity {identity} off")),
+        );
         git_view(&state, name, git)
     })
     .await?;
@@ -492,6 +539,12 @@ pub(crate) async fn add_git_repo(
     let repo = body.repo_ref()?;
     let row = blocking(move || {
         let entry = state.store.add_repo(&name, &repo, body.pull, body.push)?;
+        record_op(
+            &state.store,
+            WorkspaceOpKind::RepoAdded,
+            Some(&name),
+            Some(format!("{repo} in the Git settings")),
+        );
         Ok(GitRepoView::from_store(entry))
     })
     .await?;
@@ -523,6 +576,16 @@ pub(crate) async fn set_git_repo(
         let entry = state
             .store
             .set_repo_toggles(&name, repo, body.pull, body.push)?;
+        record_op(
+            &state.store,
+            WorkspaceOpKind::RepoSwitched,
+            Some(&name),
+            Some(format!(
+                "row {repo}: pull {}, push {}",
+                on_off(body.pull),
+                on_off(body.push)
+            )),
+        );
         Ok(GitRepoView::from_store(entry))
     })
     .await?;
@@ -548,6 +611,16 @@ pub(crate) async fn remove_git_repo(
     Path((id, repo)): Path<(String, i64)>,
 ) -> Result<StatusCode, ApiError> {
     let name = workspace(&state, &id).await?;
-    blocking(move || Ok(state.store.remove_repo(&name, repo)?)).await?;
+    blocking(move || {
+        state.store.remove_repo(&name, repo)?;
+        record_op(
+            &state.store,
+            WorkspaceOpKind::RepoRemoved,
+            Some(&name),
+            Some(format!("row {repo} of the Git settings")),
+        );
+        Ok(())
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -41,6 +41,9 @@ def self_test():
     assert stale(ok + [moved], lines) == [moved], "an entry whose position moved must fail"
     assert stale([gone, *ok], lines) == [gone], "an entry for a deleted function must fail"
     assert stale([moved], []) == [moved], "an empty list matches nothing"
+    on, off = "\x1b[38;5;13m", "\x1b[0m"
+    coloured = ["crates/a/src/run.rs:80:5: replace " + on + "is_executable" + off + " -> bool with true"]
+    assert stale(ok[:1], coloured) == ok[:1], "colour escapes split the line, so the entry misses"
     print("mutants-exclusions self-test ok")
 
 
@@ -55,11 +58,19 @@ def main(argv):
     if not lines:
         print("mutants-exclusions: the mutant list is empty (did `cargo mutants --list` fail?)", file=sys.stderr)
         return 1
+    if any("\x1b" in line for line in lines):
+        print(
+            "mutants-exclusions: the mutant list holds colour escapes, so no entry can match; "
+            "list with `cargo mutants --list --no-config --colors never`",
+            file=sys.stderr,
+        )
+        return 1
     patterns = tomllib.loads(CONFIG.read_text(encoding="utf-8")).get("exclude_re", [])
     dead = stale(patterns, lines)
     for pattern in dead:
         print(f"mutants-exclusions: matches no mutant: {pattern}", file=sys.stderr)
     if dead:
+        print(f"mutants-exclusions: the list had {len(lines)} lines; first: {lines[0]}", file=sys.stderr)
         print(
             f"mutants-exclusions: {len(dead)} of {len(patterns)} exclude_re entries in {CONFIG} match nothing; "
             "the code they covered moved or is gone. Re-point each at the code, or delete it.",

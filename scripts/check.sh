@@ -194,10 +194,11 @@ run_gate() {
     git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh ;;
     # An `exclude_re` entry of .cargo/mutants.toml that matches no mutant of `cargo mutants --list` is stale
     # (the code it covered moved): fails, so a position-keyed exclusion cannot rot unseen. A failed
-    # listing is an empty list, which the script refuses.
+    # listing is an empty list, which the script refuses. `--colors never`: CI sets CARGO_TERM_COLOR=always,
+    # which makes cargo-mutants colour the function names inside each line, so no entry matched.
     mutants-exclusions)
         python3 -I scripts/check-mutants-exclusions.py --self-test &&
-            "$cargo" mutants --list --no-config | python3 -I scripts/check-mutants-exclusions.py --list -
+            "$cargo" mutants --list --no-config --colors never | python3 -I scripts/check-mutants-exclusions.py --list -
         ;;
     # Every `unsafe`, lint suppression, `#[ignore]`, product `unwrap` and TODO must say why in place; a site
     # without a reason fails. No baseline file: a new site with a reason is fine (docs/STANDARDS.md, "Quality").

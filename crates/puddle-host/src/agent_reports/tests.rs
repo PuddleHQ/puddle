@@ -244,6 +244,58 @@ fn an_editor_update_problem_is_its_own_problem_beside_the_install_one() {
 }
 
 #[test]
+fn an_editor_run_as_root_is_its_own_problem_that_ends_with_the_report_and_with_the_run() {
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    let _ = sink.take();
+    desk.report(&box_, editor_of(EditorProblemKind::SessionUser, None));
+    assert_eq!(changes(&sink), 0, "nothing was wrong");
+    desk.report(&box_, editor(Some("the keeps-failing download")));
+    desk.report(
+        &box_,
+        editor_of(
+            EditorProblemKind::SessionUser,
+            Some("the user agent is missing in the guest"),
+        ),
+    );
+    let raised = problems.list();
+    assert_eq!(raised.len(), 2, "beside the install problem");
+    let root = raised
+        .iter()
+        .find(|p| p.key == "editor-session-user:box")
+        .unwrap();
+    assert_eq!(
+        root.title,
+        "The browser editor in box runs as root: the user agent is missing in the guest"
+    );
+    assert!(root.detail.contains("belong to root"), "{}", root.detail);
+    assert_eq!(root.workspace, Some(box_.clone()));
+    // The same text again changes nothing the user sees.
+    let _ = sink.take();
+    desk.report(
+        &box_,
+        editor_of(
+            EditorProblemKind::SessionUser,
+            Some("the user agent is missing in the guest"),
+        ),
+    );
+    assert_eq!(changes(&sink), 0);
+    // Ending it leaves the install problem.
+    desk.report(&box_, editor_of(EditorProblemKind::SessionUser, None));
+    let left = problems.list();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].key, "editor-install:box");
+    // A stop ends it too.
+    desk.report(
+        &box_,
+        editor_of(EditorProblemKind::SessionUser, Some("missing")),
+    );
+    desk.end(&box_);
+    assert_eq!(problems.list(), Vec::<Problem>::new());
+}
+
+#[test]
 fn an_editor_report_of_a_kind_this_host_does_not_know_raises_nothing() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");

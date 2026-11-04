@@ -120,7 +120,9 @@ pub enum AgentMessage {
     /// for several tries, and unset once a server launches after it. An
     /// [`EditorProblemKind::Update`] one is sent for a newer build that was refused, one that
     /// started badly and was rolled back, or looks that keep failing, and unset by the next look
-    /// that works. The latest message of a kind replaces the one before; the text is the agent's
+    /// that works. An [`EditorProblemKind::SessionUser`] one is sent once per start of the server
+    /// whose session user the guest does not list, and unset when a start finds it. The latest
+    /// message of a kind replaces the one before; the text is the agent's
     /// own error, at most [`MAX_EDITOR_PROBLEM_CHARS`] characters, and the host cleans it.
     EditorStatus {
         /// Which problem this is about; an agent from before there were two sends none, which
@@ -136,7 +138,7 @@ pub enum AgentMessage {
     Unknown,
 }
 
-/// The two things that can be wrong with the browser editor's server ([`AgentMessage::EditorStatus`]).
+/// The things that can be wrong with the browser editor's server ([`AgentMessage::EditorStatus`]).
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]
@@ -148,6 +150,9 @@ pub enum EditorProblemKind {
     Install,
     /// The editor works on the build it has; a newer one could not be taken.
     Update,
+    /// The editor works, but its server runs as root because the session user is missing in the
+    /// guest.
+    SessionUser,
     /// A kind this side doesn't know (from a newer agent).
     #[serde(other)]
     Unknown,
@@ -568,6 +573,15 @@ mod tests {
         assert_eq!(
             AgentMessage::from_line(&update.to_line().unwrap()).unwrap(),
             update
+        );
+        let user = AgentMessage::editor_status(EditorProblemKind::SessionUser, Some("no agent"));
+        assert_eq!(
+            user.to_line().unwrap(),
+            b"{\"type\":\"editor_status\",\"kind\":\"session_user\",\"problem\":\"no agent\"}\n"
+        );
+        assert_eq!(
+            AgentMessage::from_line(&user.to_line().unwrap()).unwrap(),
+            user
         );
         // A line from an agent from before the kind existed is an install problem.
         assert_eq!(

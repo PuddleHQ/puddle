@@ -367,10 +367,12 @@ mod tests {
     mod windows {
         use super::*;
 
-        const PARENT: &str = r"Software\PuddleAutostartTest";
+        const PREFIX: &str = "PuddleAutostartTest-";
 
-        /// A key under `HKEY_CURRENT_USER` of this test's own (named by a fresh temporary folder,
-        /// so no two runs share one), removed at the end; never the real `Run` key.
+        /// A key directly under `HKEY_CURRENT_USER` of this test's own (named by a fresh temporary
+        /// folder, so no two runs share one), removed at the end; never the real `Run` key. There
+        /// is no shared parent key: removing a parent while another test creates a key under it
+        /// fails that creation with "marked for deletion".
         struct Throwaway {
             key: String,
             _unique: tempfile::TempDir,
@@ -386,7 +388,7 @@ mod tests {
                     .to_string_lossy()
                     .into_owned();
                 Self {
-                    key: format!(r"{PARENT}\{name}"),
+                    key: format!(r"Software\{PREFIX}{name}"),
                     _unique: unique,
                 }
             }
@@ -400,8 +402,6 @@ mod tests {
             fn drop(&mut self) {
                 let root = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
                 let _ = root.delete_subkey_all(&self.key);
-                // Fails while another test's key is still under it, which is what is wanted.
-                let _ = root.delete_subkey(PARENT);
             }
         }
 
@@ -434,6 +434,29 @@ mod tests {
             created.set_value(ENTRY_NAME, &7_u32).unwrap();
             assert_eq!(apply(&entry, false, &exe()).unwrap(), Applied::Removed);
             assert_eq!(entry.command().unwrap(), None);
+        }
+
+        #[test]
+        fn throwaway_keys_made_and_dropped_at_the_same_time_never_disturb_each_other() {
+            // Every test of this module (and every test process) makes and removes its own key
+            // at the same moment: one removal must never invalidate another's creation.
+            let workers: Vec<_> = (0..4)
+                .map(|_| {
+                    std::thread::spawn(|| {
+                        for _ in 0..300 {
+                            let key = Throwaway::new();
+                            let (created, _) =
+                                winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+                                    .create_subkey(&key.key)
+                                    .unwrap();
+                            created.set_value(ENTRY_NAME, &7_u32).unwrap();
+                        }
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().unwrap();
+            }
         }
 
         #[test]

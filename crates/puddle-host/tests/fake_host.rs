@@ -2055,6 +2055,28 @@ async fn a_list_that_cannot_be_saved_changes_nothing_and_says_so() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_user_switch_that_cannot_be_saved_or_comes_at_shutdown_changes_nothing() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "who").await;
+    let body = json!({"session_user": "root"}).to_string();
+    let switch = || api.put("/api/workspaces/who/session-user", &body);
+    make_unwritable(&list_path(&rig));
+    let reply = switch().await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("was not changed"), "{}", reply.body);
+    let ws = api.get("/api/workspaces/who").await.json();
+    assert_eq!(ws["session_user"], "agent", "{ws}");
+    host.workspaces().close();
+    let reply = switch().await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("shutting down"), "{}", reply.body);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn nothing_is_added_once_shutdown_has_begun() {
     let rig = Rig::new();
     let host = rig.start().await;

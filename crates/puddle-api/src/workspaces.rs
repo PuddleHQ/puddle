@@ -1720,6 +1720,23 @@ mod tests {
             check_rename([&a, &b], &missing, None),
             Err(WorkspaceError::NotFound(_))
         ));
+
+        // The start folder and the session user change on a settled workspace only.
+        a.busy = Some(Operation::Creating);
+        assert!(matches!(
+            check_session_user_change([&a, &b], &ida),
+            Err(WorkspaceError::Conflict(m)) if m == "alpha is creating; change the user it runs as when that is done"
+        ));
+        assert!(matches!(
+            check_start_folder_change([&a, &b], &ida),
+            Err(WorkspaceError::Conflict(m)) if m.ends_with("change its start folder when that is done")
+        ));
+        a.busy = Some(Operation::Starting);
+        assert!(check_session_user_change([&a, &b], &ida).is_ok());
+        assert!(matches!(
+            check_session_user_change([&a, &b], &missing),
+            Err(WorkspaceError::NotFound(_))
+        ));
     }
 
     fn draft(url: &str) -> RepositoryDraft {

@@ -2,13 +2,17 @@
 //! [`SshEndpoint`]: serves SSH to every client of a sandbox's owner-only endpoint.
 
 use std::future::Future;
+use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use puddle_boot::{BootHook, GatedError, GatedSandbox};
 use puddle_compute::{Sandbox, SshStream};
 use puddle_ipc::{Connection, Endpoint, IpcError, Listener};
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, ReadBuf};
 use tokio::sync::oneshot;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{info, warn};
@@ -243,14 +247,75 @@ async fn session<T: SshTarget>(target: Arc<T>, mut conn: Connection, id: u64) {
         return;
     }
     info!(sandbox = %label, session = id, "ssh session started");
+    let (conn, client_closed) = ClientWatch::new(conn);
     match target.serve(conn).await {
         Ok(()) => info!(sandbox = %label, session = id, "ssh session ended"),
+        // A client that stops at a host key prompt or after a refused login, or that is killed,
+        // closes the stream without an SSH disconnect, and the server calls that an error. The
+        // endpoint is fine and a restart would change nothing: no notice to the user.
+        Err(e) if client_closed.load(Ordering::Acquire) => {
+            info!(sandbox = %label, session = id, error = %e, "ssh client closed without a disconnect");
+        }
         Err(e) => {
             warn!(sandbox = %label, session = id, error = %e, "ssh session ended with an error");
             target.failed(&format!(
                 "an SSH session ended with an error: {e}; connect again, and restart the workspace if it keeps happening"
             ));
         }
+    }
+}
+
+/// A client's stream that notes when the client closed its side: a read that ends the stream.
+struct ClientWatch<S> {
+    inner: S,
+    closed: Arc<AtomicBool>,
+}
+
+impl<S> ClientWatch<S> {
+    fn new(inner: S) -> (Self, Arc<AtomicBool>) {
+        let closed = Arc::new(AtomicBool::new(false));
+        let watch = Self {
+            inner,
+            closed: Arc::clone(&closed),
+        };
+        (watch, closed)
+    }
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for ClientWatch<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let before = buf.filled().len();
+        let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
+        // Ready with nothing added to a buffer that had room is the end of the stream.
+        if matches!(polled, Poll::Ready(Ok(())))
+            && buf.filled().len() == before
+            && buf.remaining() > 0
+        {
+            self.closed.store(true, Ordering::Release);
+        }
+        polled
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for ClientWatch<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 

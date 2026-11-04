@@ -28,12 +28,6 @@ impl Rgb {
     pub const fn new(red: u8, green: u8, blue: u8) -> Self {
         Self(red, green, blue)
     }
-
-    /// The channels, red first.
-    #[must_use]
-    pub const fn channels(self) -> [u8; 3] {
-        [self.0, self.1, self.2]
-    }
 }
 
 impl fmt::Display for Rgb {

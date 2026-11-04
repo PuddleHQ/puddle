@@ -27,6 +27,14 @@
 # conservative on purpose (a change to a dependency re-runs every crate above it) and a dirty tree
 # never uses it. Only a passing run is recorded, so a cache never hides a survivor. `--uncached` runs
 # everything and, when a crate has a cache entry, says so if the two outcomes differ (the weekly run).
+#
+# Cargo home: `diff` and `sweep` run cargo with a private CARGO_HOME, a fresh directory per run that is removed
+# when the run ends (and made only when a mutation run is about to start, so a cache hit costs nothing). Cargo serialises on a lock in the package cache of its CARGO_HOME, and on a host where
+# several runs share ~/.cargo a mutant's tests could wait on another run's lock until the mutant timed out
+# without a single test having started. The private home is seeded from the shared one (its registry, git and
+# config.toml, copied with reflinks where the file system has them), then `cargo fetch --locked` downloads
+# whatever is still missing, once, before the first mutant. MUTANTS_SHARED_CARGO_HOME=1 keeps the caller's
+# CARGO_HOME instead. The toolchains stay where they are (RUSTUP_HOME is pinned to the caller's).
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -40,6 +48,8 @@ out="${MUTANTS_OUT:-$target/mutants-out}"
 # another job's mutant (a different set of mutants survived on each of two runs). So it is not passed on.
 unset CARGO_TARGET_DIR
 list=scripts/mutants-crates.txt
+# The home cargo would use without our private one, taken before it is replaced.
+shared_home="${CARGO_HOME:-${HOME:-}/.cargo}"
 # Mutants tested at the same time (each copies the tree and builds it): MUTANTS_JOBS, default 2.
 jobs="${MUTANTS_JOBS:-2}"
 
@@ -92,6 +102,21 @@ report() {
     done
 }
 
+# Points CARGO_HOME at a private, seeded copy of the shared one (see the header). Removed when the script exits.
+private_cargo_home() {
+    [ "${MUTANTS_SHARED_CARGO_HOME:-0}" != 1 ] || return 0
+    [ -z "${home:-}" ] || return 0
+    [ -n "${RUSTUP_HOME:-}" ] || ! [ -n "${HOME:-}" ] || export RUSTUP_HOME="$HOME/.rustup"
+    home=$(mktemp -d "${TMPDIR:-/tmp}/mutants-cargo-home.XXXXXX")
+    trap 'rm -rf "$home"' EXIT
+    for item in registry git config.toml; do
+        [ -e "$shared_home/$item" ] || continue
+        cp -a --reflink=auto "$shared_home/$item" "$home/$item" 2>/dev/null || cp -a "$shared_home/$item" "$home/$item"
+    done
+    export CARGO_HOME="$home"
+    "$cargo" fetch --locked >&2
+}
+
 mode=${1:-}
 [ "$#" -eq 0 ] || shift
 check_list || exit 2
@@ -127,6 +152,7 @@ diff)
         echo "mutants: no change in the listed crates ($(crates | tr '\n' ' ')), nothing to mutate"
         exit 0
     fi
+    private_cargo_home
     # shellcheck disable=SC2086 # -p flags are words by design
     "$cargo" mutants $args --in-diff "$patch" -j "$jobs" --output "$out/diff" || status=$?
     report "$out/diff/mutants.out"
@@ -175,6 +201,7 @@ sweep)
         file_args=
         for x in $files; do file_args="$file_args -f crates/$c/$x"; done
         mkdir -p "$dir"
+        private_cargo_home
         rc=0
         # shellcheck disable=SC2086 # shard_args and file_args are words by design
         "$cargo" mutants -p "$c" -j "$jobs" $shard_args $file_args --output "$dir" </dev/null || rc=$?

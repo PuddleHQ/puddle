@@ -2549,6 +2549,7 @@ export interface components {
             hosts: string[];
             /** @enum {string} */
             kind: "secret";
+            place?: components["schemas"]["SecretPlace"] | null;
             /**
              * Format: password
              * @description The value: written once, kept in the operating system's credential store, never shown
@@ -2577,6 +2578,7 @@ export interface components {
              *     `true` in a workspace's list.
              */
             overridden: boolean;
+            place: components["schemas"]["SecretPlace"] | null;
             /** @description Where it applies. */
             scope: components["schemas"]["EnvScope"];
             /** @description A plain variable's value; `null` for a secret. */
@@ -4119,6 +4121,22 @@ export interface components {
          * @enum {string}
          */
         ScopeChoice: "workspace" | "global";
+        /**
+         * @description Where in a request Puddle swaps a secret's stand-in for its real value, toward the secret's
+         *     hosts only. Anywhere else the stand-in goes out unchanged.
+         */
+        SecretPlace: {
+            /** @enum {string} */
+            in: "header";
+        } | {
+            /** @enum {string} */
+            in: "query";
+            /** @description The parameter's name: 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`. */
+            name: string;
+        } | {
+            /** @enum {string} */
+            in: "path";
+        };
         /**
          * @description Which VS Code server browser VS Code runs.
          * @enum {string}

@@ -248,6 +248,12 @@ impl StandIn {
         self
     }
 
+    /// Where it is swapped.
+    #[must_use]
+    pub fn placement(&self) -> &Placement {
+        &self.placement
+    }
+
     /// Whether it is swapped in a header value (or a refresh field) toward `host`.
     fn swaps_in_headers(&self, host: &Host) -> bool {
         self.placement == Placement::Header && self.hosts.contains(host)

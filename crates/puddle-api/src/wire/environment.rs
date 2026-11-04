@@ -47,6 +47,9 @@ pub struct EnvVariable {
     /// The hosts a secret's real value may be sent to (names, or `*.` and a name for every name
     /// below it); empty for a plain variable.
     pub hosts: Vec<String>,
+    /// Where in a request a secret's stand-in is swapped; `null` for a plain variable.
+    #[schema(required = true)]
+    pub place: Option<SecretPlace>,
     /// A global variable that the workspace's own variable of the same name hides. Only ever
     /// `true` in a workspace's list.
     pub overridden: bool,
@@ -56,12 +59,13 @@ pub struct EnvVariable {
 
 impl EnvVariable {
     pub(crate) fn from_store(entry: store::EnvEntry, overridden: bool) -> Self {
-        let (kind, value, hosts) = match entry.value {
-            store::EnvValue::Plain(value) => (EnvKind::Plain, Some(value), Vec::new()),
+        let (kind, value, hosts, place) = match entry.value {
+            store::EnvValue::Plain(value) => (EnvKind::Plain, Some(value), Vec::new(), None),
             store::EnvValue::Secret(secret) => (
                 EnvKind::Secret,
                 None,
                 secret.hosts.iter().map(ToString::to_string).collect(),
+                Some(SecretPlace::from_store(secret.place)),
             ),
         };
         Self {
@@ -73,8 +77,48 @@ impl EnvVariable {
             kind,
             value,
             hosts,
+            place,
             overridden,
             changed_at: entry.changed_at,
+        }
+    }
+}
+
+/// Where in a request Puddle swaps a secret's stand-in for its real value, toward the secret's
+/// hosts only. Anywhere else the stand-in goes out unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "in", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SecretPlace {
+    /// The values of request headers: what almost every tool uses.
+    Header {},
+    /// The one query parameter `name` (`appid`, `access_token`, `key`), for an API that takes its
+    /// key nowhere else.
+    Query {
+        /// The parameter's name: 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`.
+        name: String,
+    },
+    /// The path (a Telegram bot's `/bot<token>/`, a webhook URL).
+    Path {},
+}
+
+impl SecretPlace {
+    fn from_store(place: store::SecretPlace) -> Self {
+        match place {
+            store::SecretPlace::Header => Self::Header {},
+            store::SecretPlace::Query(name) => Self::Query { name },
+            store::SecretPlace::Path => Self::Path {},
+        }
+    }
+
+    /// The place to store; none given is header values.
+    ///
+    /// # Errors
+    /// [`store::StoreError::EnvInvalid`] for a query name that is not one.
+    pub(crate) fn into_store(place: Option<Self>) -> Result<store::SecretPlace, store::StoreError> {
+        match place {
+            None | Some(Self::Header {}) => Ok(store::SecretPlace::Header),
+            Some(Self::Query { name }) => store::SecretPlace::query(&name),
+            Some(Self::Path {}) => Ok(store::SecretPlace::Path),
         }
     }
 }
@@ -181,6 +225,9 @@ pub enum EnvSetRequest {
         /// every name below it. A pattern over a domain anyone can register a name under
         /// (`*.github.io`) is refused.
         hosts: Vec<String>,
+        /// Where in a request the stand-in is swapped; header values when left out.
+        #[serde(default)]
+        place: Option<SecretPlace>,
     },
 }
 

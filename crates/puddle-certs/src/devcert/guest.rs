@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use puddle_types::{GuestEnv, GuestFile, GuestPath};
+use puddle_types::{GuestEnv, GuestFile, GuestPath, SessionUser};
 use zeroize::Zeroizing;
 
 use super::DevCertMaterial;
@@ -30,11 +30,26 @@ pub const DEV_STEP_PATH: &str = "/usr/local/lib/puddle/dev-cert.sh";
 /// The step script's text.
 pub const DEV_STEP_SH: &str = include_str!("../../guest/dev-cert.sh");
 
-/// `SSL_CERT_DIR` for the guest: .NET's own trust folder first (where `dotnet dev-certs https
-/// --trust` writes), then the system's hashed certificates. Without it .NET reports the
-/// certificate as untrusted although every OpenSSL client accepts it. The guest user is root.
-pub const DOTNET_SSL_CERT_DIR: &str =
-    "/root/.aspnet/dev-certs/trust:/etc/ssl/certs:/usr/lib/ssl/certs";
+/// `SSL_CERT_DIR` for a guest whose sessions run as `user`: .NET's own trust folder in the user's
+/// home first (where `dotnet dev-certs https --trust` writes), then the system's hashed
+/// certificates. Without it .NET reports the certificate as untrusted although every OpenSSL
+/// client accepts it.
+///
+/// ```
+/// use puddle_certs::devcert::dotnet_ssl_cert_dir;
+/// use puddle_types::SessionUser;
+/// assert_eq!(
+///     dotnet_ssl_cert_dir(SessionUser::Agent),
+///     "/home/agent/.aspnet/dev-certs/trust:/etc/ssl/certs:/usr/lib/ssl/certs"
+/// );
+/// ```
+#[must_use]
+pub fn dotnet_ssl_cert_dir(user: SessionUser) -> String {
+    format!(
+        "{}/.aspnet/dev-certs/trust:/etc/ssl/certs:/usr/lib/ssl/certs",
+        user.home()
+    )
+}
 
 /// The development certificate and its key, ready for one workspace's boot plan.
 ///
@@ -94,13 +109,14 @@ impl GuestDevCert {
     }
 
     /// The variables: the file paths for tools that take them (Vite, Angular, Next.js), .NET's
-    /// trust folder, and no generated .NET certificate of its own.
-    pub(crate) fn env() -> GuestEnv {
+    /// trust folder in `user`'s home, and no generated .NET certificate of its own.
+    pub(crate) fn env(user: SessionUser) -> GuestEnv {
         let mut env = GuestEnv::new();
+        let cert_dir = dotnet_ssl_cert_dir(user);
         for (name, value) in [
             ("DEV_CERT_PEM", DEV_CERT_PATH),
             ("DEV_KEY_PEM", DEV_KEY_PATH),
-            ("SSL_CERT_DIR", DOTNET_SSL_CERT_DIR),
+            ("SSL_CERT_DIR", cert_dir.as_str()),
             ("DOTNET_GENERATE_ASPNET_CERTIFICATE", "false"),
         ] {
             // Fixed, valid names and values: can't fail.

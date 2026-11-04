@@ -1463,16 +1463,15 @@ mod tests {
         assert_eq!(value["path_truncated"], true);
     }
 
-    /// `to_line` on its own thread, failing the test when it has not returned after a few seconds. The
-    /// shortening loop ends only because every pass cuts a string; a pass that cuts nothing would
-    /// spin for ever, which a mutation run would see as a hang instead of a failed test.
+    /// `to_line` under a hang guard. The shortening loop ends only because every pass cuts a string; a
+    /// pass that cuts nothing would spin for ever, which a mutation run would see as a hang instead of
+    /// a failed test.
     fn to_line_bounded(record: AuditRecord) -> Result<String, AuditError> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(record.to_line());
-        });
-        rx.recv_timeout(std::time::Duration::from_secs(5))
-            .expect("to_line did not return: its shortening loop must always end")
+        puddle_test_kit::returns_within(
+            "to_line: its shortening loop must always end",
+            std::time::Duration::from_secs(5),
+            move || record.to_line(),
+        )
     }
 
     #[test]

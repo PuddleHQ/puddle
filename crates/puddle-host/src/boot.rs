@@ -19,7 +19,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
 use puddle_store::Store;
 use puddle_types::{
-    GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, WorkspaceId, WorkspaceName,
+    GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId, WorkspaceName,
 };
 use puddle_workspace::Layout;
 
@@ -87,6 +87,9 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) start_folder: Option<&'a StartFolder>,
     /// The multi-root file for the editor, when the workspace has two or more checkouts.
     pub(crate) editor_file: Option<&'a GuestFile>,
+    /// The guest user sessions run as: the boot hook adds it, and per-user settings go to its
+    /// home.
+    pub(crate) session_user: SessionUser,
 }
 
 impl BootKit {
@@ -175,9 +178,14 @@ impl BootKit {
         // `DOCKER_CONFIG` land where the user pointed them.
         let mut image_env = image.env.clone();
         image_env.extend(guest.env.iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
-        let proxy =
-            guest_proxy_config(&ProxySettings::default(), &image_env).map_err(|e| e.to_string())?;
-        let mut trust = GuestTrust::new(&self.roots, &TrustBundle::new().with(guest.ca.clone()));
+        let user = guest.session_user;
+        let settings = ProxySettings {
+            home: GuestPath::new(user.home()).map_err(|e| e.to_string())?,
+            ..ProxySettings::default()
+        };
+        let proxy = guest_proxy_config(&settings, &image_env).map_err(|e| e.to_string())?;
+        let mut trust =
+            GuestTrust::new(&self.roots, &TrustBundle::new().with(guest.ca.clone())).for_user(user);
         if let Some(dev) = guest.dev_cert {
             trust = trust.with_dev_cert(dev.clone());
         }
@@ -185,6 +193,7 @@ impl BootKit {
         env.extend(&proxy.env);
         env.extend(&trust.env());
         let mut builder = BootPlan::builder(image)
+            .session_user(user)
             .env(&env)
             .files(proxy.files)
             .files(trust.guest_files())

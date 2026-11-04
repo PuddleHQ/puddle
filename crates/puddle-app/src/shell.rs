@@ -530,6 +530,14 @@ fn init_logging(puddle_log: Option<&str>, rust_log: Option<&str>) {
     }
 }
 
+/// [`init_logging`] with the two variables as the process has them.
+fn init_logging_from_env() {
+    init_logging(
+        std::env::var(PUDDLE_LOG_VAR).ok().as_deref(),
+        std::env::var(RUST_LOG_VAR).ok().as_deref(),
+    );
+}
+
 /// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
 /// say ([`desktop`]).
 ///
@@ -537,10 +545,7 @@ fn init_logging(puddle_log: Option<&str>, rust_log: Option<&str>) {
 ///
 /// [`ShellError`] if the app can't start.
 pub fn run(options: &Options) -> Result<(), ShellError> {
-    init_logging(
-        std::env::var(PUDDLE_LOG_VAR).ok().as_deref(),
-        std::env::var(RUST_LOG_VAR).ok().as_deref(),
-    );
+    init_logging_from_env();
     // Every panic after this writes a crash file into the data folder (nothing is sent).
     if let Some(folder) = data_folder(options) {
         crash::install(folder.join(crash::FOLDER));
@@ -601,6 +606,7 @@ pub(crate) mod tests {
     #[test]
     fn logging_starts_for_a_good_value_and_for_a_bad_one() {
         init_logging(None, None);
+        init_logging_from_env();
         init_logging(None, Some("puddle=loud"));
         init_logging(Some("loud"), None);
     }

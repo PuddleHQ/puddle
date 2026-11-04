@@ -244,6 +244,7 @@ mod tests {
             tracing::trace!(target: "hyper::x", "from hyper trace");
             tracing::info!(target: "hyper::x", "from hyper info");
         });
+        std::io::Write::flush(&mut buf.clone()).unwrap();
         let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
         assert!(
             log.contains("from the proxy") && log.contains("from hyper info"),

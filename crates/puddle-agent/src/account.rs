@@ -183,4 +183,17 @@ mod tests {
         // A name that is only a prefix of an entry is not that entry.
         assert_eq!(Account::find("age", PASSWD, GROUP), None);
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn this_systems_root_is_read_and_a_user_it_lacks_is_not_found() {
+        let root = Account::read("root").unwrap();
+        assert_eq!((root.uid, root.gid, root.groups[0]), (0, 0, 0));
+        let missing = Account::read("puddle-no-such-user").unwrap_err();
+        assert_eq!(missing.kind(), io::ErrorKind::NotFound);
+        assert!(
+            missing.to_string().contains("puddle-no-such-user"),
+            "{missing}"
+        );
+    }
 }

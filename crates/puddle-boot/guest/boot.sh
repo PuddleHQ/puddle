@@ -420,9 +420,10 @@ done <"$RUN/triggers"
 
 # Provider steps: scripts the plan itself wrote, run at every boot in plan order, after the
 # triggers so they see the updated system CA store (a step can merge the image's CA bundle here).
+# A step that writes per-user files learns the session user's home and owner from the environment.
 while IFS= read -r step; do
     [ -n "$step" ] || continue
-    out=$(/bin/sh "$ROOT$step" </dev/null 2>&1) || die "step $step failed: $out"
+    out=$(PUDDLE_SESSION_HOME=$SESSION_HOME PUDDLE_SESSION_OWNER=$SESSION_OWNER /bin/sh "$ROOT$step" </dev/null 2>&1) || die "step $step failed: $out"
     say "step $step: ${out:-done}"
 done <"$RUN/steps"
 

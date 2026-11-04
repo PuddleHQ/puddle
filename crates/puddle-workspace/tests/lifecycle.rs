@@ -12,8 +12,10 @@ use puddle_compute::{
     ComputeError, DiskSize, ExecOutput, ExecRequest, Runtime, Sandbox, SandboxSpec, VolumeMount,
     VolumeSpec,
 };
-use puddle_types::{GuestPath, ImageRef, SandboxName, WorkspaceId, WorkspaceStatus};
-use puddle_workspace::{DELETE_CHECK_SH, HoldKind, WorkspaceConfig, WorkspaceError, Workspaces};
+use puddle_types::{GuestPath, ImageRef, SandboxName, SessionUser, WorkspaceId, WorkspaceStatus};
+use puddle_workspace::{
+    DELETE_CHECK_SH, HoldKind, PREPARE_SH, WorkspaceConfig, WorkspaceError, Workspaces,
+};
 
 fn ws(s: &str) -> WorkspaceId {
     WorkspaceId::new(s).unwrap()
@@ -856,24 +858,56 @@ async fn maintenance_waits_for_a_create_in_progress() {
     att.abort(&rt).await.unwrap();
 }
 
+/// Answers the preparation script with `code` and `output`, checking it runs as root for `user`.
+fn stub_prepare(rt: &FakeRuntime, user: SessionUser, code: i32, output: &'static str) {
+    rt.on_exec(move |_: &mut ExecContext<'_>, r: &ExecRequest| {
+        (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(PREPARE_SH)).then(|| {
+            assert_eq!(r.user.as_deref(), Some("root"));
+            assert_eq!(
+                r.args.iter().skip(3).collect::<Vec<_>>(),
+                ["/workspaces/acme", user.name()]
+            );
+            ExecOutput::new(code, output, "chown: no such user\n")
+        })
+    });
+}
+
 #[tokio::test]
-async fn prepare_layout_makes_the_puddle_dir() {
+async fn prepare_layout_gives_the_volume_to_the_session_user() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();
     let id = ws("acme");
     let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
-    // The fake has no mkdir.
-    let err = w.prepare_layout(&sb, &id).await.unwrap_err();
-    assert!(err.to_string().contains("mkdir failed"), "{err}");
-    rt.on_exec(|_: &mut ExecContext<'_>, r: &ExecRequest| {
-        (r.program == "mkdir").then(|| ExecOutput::new(0, "", ""))
-    });
-    w.prepare_layout(&sb, &id).await.unwrap();
-    assert!(
-        rt.calls()
-            .iter()
-            .any(|c| c.detail.as_deref() == Some("mkdir -p -m 0700 /workspaces/acme/.puddle"))
-    );
+    // The fake runs no shell.
+    let err = w
+        .prepare_layout(&sb, &id, SessionUser::Agent)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, WorkspaceError::Layout { .. }), "{err}");
+    stub_prepare(&rt, SessionUser::Agent, 0, "R\t12\nD\n");
+    w.prepare_layout(&sb, &id, SessionUser::Agent)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_preparation_that_fails_or_stops_short_fails_the_boot() {
+    for (code, out) in [(1, "D\n"), (0, "R\t3\n"), (0, "")] {
+        let rt = FakeRuntime::new();
+        let w = Workspaces::default();
+        let id = ws("acme");
+        let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+        stub_prepare(&rt, SessionUser::Root, code, out);
+        let err = w
+            .prepare_layout(&sb, &id, SessionUser::Root)
+            .await
+            .unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("for root failed") && text.contains("no such user"),
+            "{code} {out:?}: {text}"
+        );
+    }
 }
 
 /// Records every exec's program (and first args) in order, answering with `code` for `program`.
@@ -913,7 +947,7 @@ async fn a_clone_goes_into_its_directory_and_the_sync_after_it_runs_as_root() {
             &id,
             "https://h.example/acme/api.git",
             &dir("api-2"),
-            Some("root"),
+            SessionUser::Agent,
         )
         .await
         .unwrap();
@@ -922,7 +956,7 @@ async fn a_clone_goes_into_its_directory_and_the_sync_after_it_runs_as_root() {
     assert_eq!(
         *seen.lock().unwrap(),
         [
-            "git clone -- https://h.example/acme/api.git /workspaces/acme/api-2 [root]",
+            "git clone -- https://h.example/acme/api.git /workspaces/acme/api-2 [agent]",
             "sync  [root]"
         ]
     );
@@ -947,7 +981,7 @@ async fn a_failed_clone_is_an_error_naming_what_git_said() {
             &id,
             "https://h.example/acme/api.git",
             &dir("api"),
-            None,
+            SessionUser::Root,
         )
         .await
         .unwrap_err();
@@ -958,7 +992,7 @@ async fn a_failed_clone_is_an_error_naming_what_git_said() {
         1,
         "a clone runs no sync of its own"
     );
-    assert!(seen.lock().unwrap()[0].ends_with("[default]"));
+    assert!(seen.lock().unwrap()[0].ends_with("[root]"));
 }
 
 #[tokio::test]
@@ -993,9 +1027,13 @@ async fn after_a_boot_the_layout_is_made_and_stale_locks_are_cleared() {
     let w = Workspaces::default();
     let id = ws("acme");
     let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
-    record_execs(&rt, &[("mkdir", 0, "")]);
+    stub_prepare(&rt, SessionUser::Agent, 0, "D\n");
     stub_clear_locks(&rt, 0, "L\tapi/.git/index.lock\nL\tapi/.git/HEAD.lock\nD\n");
-    let report = w.after_boot(&sb, &id).await.unwrap().unwrap();
+    let report = w
+        .after_boot(&sb, &id, SessionUser::Agent)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         report.removed,
         ["api/.git/index.lock", "api/.git/HEAD.lock"]
@@ -1005,10 +1043,10 @@ async fn after_a_boot_the_layout_is_made_and_stale_locks_are_cleared() {
         .calls()
         .into_iter()
         .filter_map(|c| c.detail)
-        .filter(|d| d.starts_with("mkdir") || d.starts_with("sh -c"))
-        .map(|d| d.split(' ').next().unwrap().to_owned())
+        .filter(|d| d.starts_with("sh -c"))
+        .map(|d| d.contains("puddle-prepare"))
         .collect();
-    assert_eq!(programs, ["mkdir", "sh"], "layout first, then the locks");
+    assert_eq!(programs, [true, false], "layout first, then the locks");
 }
 
 #[tokio::test]
@@ -1017,9 +1055,9 @@ async fn a_lock_clearing_failure_does_not_fail_the_boot() {
     let w = Workspaces::default();
     let id = ws("acme");
     let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
-    record_execs(&rt, &[("mkdir", 0, "")]);
+    stub_prepare(&rt, SessionUser::Root, 0, "D\n");
     stub_clear_locks(&rt, 3, "E\t.\tcannot enter /workspaces/acme\n");
-    let locks = w.after_boot(&sb, &id).await.unwrap();
+    let locks = w.after_boot(&sb, &id, SessionUser::Root).await.unwrap();
     let err = locks.unwrap_err();
     assert!(matches!(err, WorkspaceError::Locks { .. }), "{err}");
     assert!(err.to_string().contains("cannot enter"), "{err}");

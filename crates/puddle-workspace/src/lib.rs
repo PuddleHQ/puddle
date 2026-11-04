@@ -62,7 +62,7 @@ pub use checkouts::{
 };
 pub use error::WorkspaceError;
 pub use import::{FINISH_IMPORT_SH, Import, LocalCheckout, https_form, import_mount};
-pub use layout::{LOST_AND_FOUND, Layout, PUDDLE_DIR, WORKSPACES_ROOT};
+pub use layout::{LOST_AND_FOUND, Layout, PREPARE_SH, PUDDLE_DIR, WORKSPACES_ROOT};
 pub use locks::{CLEAR_LOCKS_SH, CLEAR_LOCKS_TIMEOUT, LockReport, MAX_LOCKS};
 pub use registry::{HoldKind, Holder};
 pub use trim::{TRIM_TIMEOUT, TrimReport};

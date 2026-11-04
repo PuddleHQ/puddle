@@ -43,7 +43,7 @@ async fn get(
 #[tokio::test]
 async fn on_a_git_path_the_three_cases_of_the_authorization_header() {
     let t = GitRig::new().await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     // No header: the covering identity's credential, and the record says so.
     assert_eq!(get(&mut guest, FETCH, None).await.status, 200);
     // The workspace's own header, and a value no stand-in entry covers: exactly as sent.
@@ -73,7 +73,7 @@ async fn on_a_git_path_the_three_cases_of_the_authorization_header() {
 #[tokio::test]
 async fn on_a_bound_path_that_is_not_git_nothing_is_added_and_the_header_passes_unchanged() {
     let t = GitRig::new().await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     for authorization in [None, Some(OWN), Some(UNKNOWN_STAND_IN)] {
         assert_eq!(
             get(&mut guest, "/acme/web/archive/main.zip", authorization)
@@ -105,7 +105,7 @@ fn real_for(stand_in: &str) -> [(String, String); 2] {
 #[tokio::test]
 async fn a_stand_in_is_swapped_on_a_git_path_and_on_a_bound_path_that_is_not_git() {
     let t = GitRig::new().await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let pairs = real_for(&t.stand_in);
     let mut expected = Vec::new();
     for path in [FETCH, "/acme/web/archive/main.zip"] {
@@ -137,7 +137,7 @@ async fn a_stand_in_is_swapped_on_a_git_path_and_on_a_bound_path_that_is_not_git
 #[tokio::test]
 async fn a_stand_in_does_not_open_a_push_the_list_refuses() {
     let t = GitRig::new().await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let sent = format!("Bearer {}", t.stand_in);
     let refused = get(
         &mut guest,
@@ -156,7 +156,7 @@ async fn a_stand_in_does_not_open_a_push_the_list_refuses() {
 #[tokio::test]
 async fn each_owner_gets_its_own_identitys_credential_and_never_the_others() {
     let t = GitRig::new().await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     assert_eq!(
         get(
             &mut guest,
@@ -184,7 +184,7 @@ async fn each_owner_gets_its_own_identitys_credential_and_never_the_others() {
         [token_basic(PERSONAL)]
     );
     // The other workspace (no injector of ours) never gets either.
-    let mut other = t.rig.other_guest().await;
+    let mut other = t.rig.other_guest();
     let mut client = other.tls("bound.test:443", None).await.unwrap();
     assert_eq!(
         client
@@ -201,7 +201,7 @@ async fn each_owner_gets_its_own_identitys_credential_and_never_the_others() {
 #[tokio::test]
 async fn a_push_off_the_list_is_refused_in_one_readable_line_and_recorded() {
     let t = GitRig::new().await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let answer = get(
         &mut guest,
         "/acme/other.git/info/refs?service=git-receive-pack",
@@ -237,7 +237,7 @@ async fn a_push_off_the_list_is_refused_in_one_readable_line_and_recorded() {
 async fn the_pull_list_refuses_a_fetch_with_the_same_kind_of_line() {
     let t = GitRig::new().await;
     t.world.switches(true, true);
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let answer = get(
         &mut guest,
         "/someone/else.git/info/refs?service=git-upload-pack",
@@ -260,7 +260,7 @@ async fn the_pull_list_refuses_a_fetch_with_the_same_kind_of_line() {
 #[tokio::test]
 async fn a_path_that_names_a_repository_two_ways_is_a_400_and_never_goes_upstream() {
     let t = GitRig::new().await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     for path in [
         "/acme/web.git/../other.git/info/refs?service=git-receive-pack",
         "/acme%2Fother/web.git/info/refs",
@@ -283,7 +283,7 @@ async fn a_path_that_names_a_repository_two_ways_is_a_400_and_never_goes_upstrea
 #[tokio::test]
 async fn an_lfs_batch_is_read_by_its_operation_and_forwarded_whole() {
     let t = GitRig::new().await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let download = r#"{"operation":"download","objects":[{"oid":"aa","size":1}]}"#;
     let upload = r#"{"operation":"upload","objects":[{"oid":"aa","size":1}]}"#;
     for (path, body, status) in [
@@ -323,7 +323,7 @@ async fn an_lfs_batch_is_read_by_its_operation_and_forwarded_whole() {
 #[tokio::test]
 async fn a_401_to_the_credential_puddle_added_is_ours_forgets_the_token_and_asks_for_a_sign_in() {
     let t = GitRig::with_host(Host { revoked: true }).await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let answer = get(
         &mut guest,
         "/acme/private.git/info/refs?service=git-upload-pack",
@@ -371,7 +371,7 @@ async fn a_request_no_identity_covers_goes_out_as_sent_and_its_401_is_the_server
             .detach_identity(&t.world.workspace, identity.id)
             .unwrap();
     }
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     // A tool that has a token of its own sends it after this 401, so the 401 must reach it.
     let private = get(
         &mut guest,
@@ -413,7 +413,7 @@ async fn a_request_no_identity_covers_goes_out_as_sent_and_its_401_is_the_server
 #[tokio::test]
 async fn a_401_to_the_workspaces_own_header_is_the_servers_answer_as_without_puddle() {
     let t = GitRig::with_host(Host { revoked: true }).await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     // Its own token, which the host does not accept (`Bearer other`), on a git path.
     let answer = get(
         &mut guest,
@@ -462,7 +462,7 @@ async fn a_push_with_an_identity_that_is_not_signed_in_is_a_502_never_a_401_and_
  {
     let t = GitRig::new().await;
     sign_out(&t.world);
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let answer = get(&mut guest, PUSH_ADVERT, None).await;
     assert_eq!(answer.status, 502);
     assert_eq!(
@@ -492,7 +492,7 @@ async fn a_push_with_an_identity_that_is_not_signed_in_is_a_502_never_a_401_and_
 async fn a_public_clone_with_an_identity_that_is_not_signed_in_goes_out_with_no_credential() {
     let t = GitRig::new().await;
     sign_out(&t.world);
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     for path in [
         "/acme/open.git/info/refs?service=git-upload-pack",
         "/acme/open.git/info/lfs/objects/abc",
@@ -513,12 +513,10 @@ async fn a_public_clone_with_an_identity_that_is_not_signed_in_goes_out_with_no_
     }
     // Nothing of any identity went out, whichever it was.
     let wire = format!("{seen:?}");
-    for (index, secret) in [WORK, PERSONAL, REAL_SECRET].into_iter().enumerate() {
-        assert!(
-            !wire.contains(secret),
-            "an identity secret (candidate {index}) reached the origin"
-        );
-    }
+    let leaked = [WORK, PERSONAL, REAL_SECRET]
+        .into_iter()
+        .any(|secret| wire.contains(secret));
+    assert!(!leaked, "an identity secret reached the origin");
     let events = t.rig.events(3).await;
     assert!(events.iter().all(|e| !e.injected && e.binding_id.is_none()));
 }
@@ -527,7 +525,7 @@ async fn a_public_clone_with_an_identity_that_is_not_signed_in_goes_out_with_no_
 async fn a_private_clone_with_an_identity_that_is_not_signed_in_fails_with_the_sign_in_notice() {
     let t = GitRig::new().await;
     sign_out(&t.world);
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let answer = get(
         &mut guest,
         "/acme/private.git/info/refs?service=git-upload-pack",
@@ -565,7 +563,7 @@ async fn a_private_clone_with_an_identity_that_is_not_signed_in_fails_with_the_s
 async fn an_anonymous_read_that_the_host_redirects_is_passed_on_and_never_followed() {
     let t = GitRig::new().await;
     sign_out(&t.world);
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let answer = get(
         &mut guest,
         "/acme/moved.git/info/refs?service=git-upload-pack",
@@ -584,7 +582,7 @@ async fn a_pull_off_the_list_is_refused_before_an_anonymous_read_goes_out() {
     let t = GitRig::new().await;
     sign_out(&t.world);
     t.world.switches(true, true);
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let answer = get(
         &mut guest,
         "/acme/open.git/info/refs?service=git-upload-pack",
@@ -599,7 +597,7 @@ async fn a_pull_off_the_list_is_refused_before_an_anonymous_read_goes_out() {
 // The same over HTTP/2.
 
 async fn h2_batch(t: &H2GitRig, body: &'static str) -> terminate_support::h2_rig::Got {
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     client
         .request(
@@ -631,7 +629,7 @@ fn h2_get<'a>(
 #[tokio::test]
 async fn over_http2_the_three_cases_the_lists_and_the_401s() {
     let t = H2GitRig::new(Host::default()).await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
 
     // No header, the workspace's own header, a stand-in: the credential, then exactly as sent.
@@ -693,7 +691,7 @@ async fn over_http2_the_three_cases_the_lists_and_the_401s() {
 #[tokio::test]
 async fn over_http2_a_stand_in_is_swapped_on_a_git_path_and_on_a_bound_path_that_is_not_git() {
     let t = H2GitRig::new(Host::default()).await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let pairs = real_for(&t.stand_in);
     let mut expected = Vec::new();
@@ -722,7 +720,7 @@ async fn over_http2_a_stand_in_is_swapped_on_a_git_path_and_on_a_bound_path_that
 #[tokio::test]
 async fn over_http2_a_401_is_ours_only_when_puddle_chose_the_credential() {
     let t = H2GitRig::new(Host { revoked: true }).await;
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let private = "/acme/private.git/info/refs?service=git-upload-pack";
     let ours = h2_get(&mut client, private, None).await;
@@ -754,7 +752,7 @@ async fn over_http2_a_401_is_ours_only_when_puddle_chose_the_credential() {
 async fn over_http2_an_identity_that_is_not_signed_in_still_reads_in_public_and_never_pushes() {
     let t = H2GitRig::new(Host::default()).await;
     sign_out(&t.world);
-    let mut guest = t.rig.guest().await;
+    let mut guest = t.rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let public = h2_get(
         &mut client,

@@ -55,7 +55,7 @@ async fn a_stand_in_is_swapped_on_an_http2_request_to_an_http2_server() {
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2", b"http/1.1"]).await;
     let basic = format!(
         "Basic {}",
@@ -129,7 +129,7 @@ async fn an_http2_guest_gets_its_stand_in_swapped_toward_an_http11_server_too() 
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let got = client
         .request(
@@ -172,7 +172,7 @@ async fn an_http2_stand_in_toward_another_decrypted_host_goes_out_unchanged_and_
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("elsewhere.test:443", &[b"h2"]).await;
     let got = client
         .request(
@@ -206,7 +206,7 @@ async fn an_http2_stand_in_is_swapped_alongside_an_injected_credential() {
         .injector(TestInjector::always())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
     let got = client
         .request(
@@ -242,7 +242,7 @@ async fn an_h2_stand_in_in_the_path_goes_out_unchanged_and_the_record_names_it()
         .injector(pass_through())
         .stand_ins(&stand_ins)
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2", b"http/1.1"]).await;
     let target = format!("/v1/{stand_in}/models");
     let got = client

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use puddle_secrets::SecretStore;
-use puddle_store::{Clock, Store};
+use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
 use tokio::sync::{Mutex, watch};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -46,6 +46,25 @@ pub(crate) mod settings;
 mod shell_init;
 mod start_folder;
 mod workspaces;
+
+/// Writes a `workspace_op` record for a change a request made (all of them reach Puddle through
+/// the API, so the actor is `api`). The change has happened, so a record that cannot be written
+/// is logged and dropped rather than turned into an error the user would read as "not done".
+pub(crate) fn record_op(
+    store: &Store,
+    op: WorkspaceOpKind,
+    workspace: Option<&puddle_types::WorkspaceName>,
+    detail: Option<String>,
+) {
+    let new = NewWorkspaceOp {
+        op,
+        workspace: workspace.cloned(),
+        outcome: WorkspaceOpOutcome::Succeeded,
+        actor: Actor::Api,
+        detail,
+    };
+    store.note_workspace_op(&new);
+}
 
 /// What the handlers share.
 #[derive(Clone)]

@@ -429,10 +429,16 @@ impl ConnectionEvent {
                 Some(rule_id),
                 None,
             ),
-            Decision::Deny { rule_id, .. } | Decision::SetDeny { rule_id, .. } => (
+            Decision::Deny { rule_id, .. } => (
                 ConnectionDecision::Deny,
                 ConnectionReason::Rule,
                 Some(rule_id),
+                None,
+            ),
+            Decision::SetDeny { rule_id, .. } => (
+                ConnectionDecision::Deny,
+                ConnectionReason::Rule,
+                rule_id,
                 None,
             ),
             Decision::Pending(outcome) => (
@@ -658,7 +664,7 @@ mod tests {
             &r,
             &Decision::SetDeny {
                 set: RuleSetId::User(2),
-                rule_id: RuleId(8),
+                rule_id: Some(RuleId(8)),
                 pattern: PatternKind::Suffix,
             },
         );

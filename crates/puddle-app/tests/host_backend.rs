@@ -251,7 +251,7 @@ fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_hos
 /// The host's start-up and quit run on the program's main thread (the setup hook and the exit
 /// hook), whose stack `build.rs` links at 8 MiB on Windows. Here they run on a thread with half of
 /// that, so the program keeps at least twice what the work needs. A debug build on Windows needs
-/// about 1.04 MB (the OpenAPI document the API router builds holds the largest frames), so Windows'
+/// about 1.04 MB (the API router's schema builders hold the largest frames), so Windows'
 /// default 1 MiB does not fit; the Windows smoke test checks the program's real main thread.
 #[test]
 fn the_host_starts_and_stops_on_half_the_programs_main_thread_stack() {

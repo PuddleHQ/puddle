@@ -42,7 +42,7 @@ async fn a_half_closed_tunnel_still_delivers_a_download_larger_than_the_stream_w
         .name("plain.test", server)
         .allow(vec!["plain.test"])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let (code, mut tunnel) = guest.connect_to("plain.test:443").await;
     assert_eq!(code, 200);
     tunnel.write_all(b"GET /big\r\n\r\n").await.unwrap();

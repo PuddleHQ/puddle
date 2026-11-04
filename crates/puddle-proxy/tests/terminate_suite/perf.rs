@@ -192,7 +192,7 @@ async fn terminating_costs_little_next_to_splicing() {
         .allow(vec!["bound.test", "unbound.test"])
         .build();
     let _ = host("bound.test");
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     let mut decrypted = guest.tls("bound.test:443", None).await.unwrap();
     let mut passed = guest
         .tls_trusting("unbound.test:443", std::slice::from_ref(&pki.root))
@@ -231,7 +231,7 @@ async fn a_download_larger_than_the_stream_window_arrives() {
     let pki = Pki::new();
     let bound = bulk_server(&pki, "bound.test").await;
     let rig = RigBuilder::new(&pki).name("bound.test", bound).build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     for _ in 0..8 {
         let mut client = guest.tls("bound.test:443", None).await.unwrap();
         let took = tokio::time::timeout(
@@ -370,10 +370,10 @@ async fn http2_costs_little_next_to_http11() {
         .allow(vec!["bound.test", "unbound.test"])
         .build();
     let rig_translated = RigBuilder::new(&pki).name("bound.test", h1).build();
-    let mut g1 = rig_h1.guest().await;
-    let mut g2 = rig_h2.guest().await;
-    let mut g3 = rig_translated.guest().await;
-    let mut g4 = rig_h2.guest().await;
+    let mut g1 = rig_h1.guest();
+    let mut g2 = rig_h2.guest();
+    let mut g3 = rig_translated.guest();
+    let mut g4 = rig_h2.guest();
     let mut http11 = g1.tls("bound.test:443", None).await.unwrap();
     let mut http2 = g2.h2_bulk("bound.test:443").await;
     let mut translated = g3.h2_bulk("bound.test:443").await;
@@ -481,7 +481,7 @@ async fn idle_memory(kind: &str) {
         )
         .allow(vec!["bound.test", "unbound.test"])
         .build();
-    let mut guest = rig.guest().await;
+    let mut guest = rig.guest();
     // Warm up the allocator, the TLS tables and the runtime, then take the baseline.
     for _ in 0..16 {
         match kind {

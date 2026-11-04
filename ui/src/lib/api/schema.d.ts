@@ -4033,7 +4033,7 @@ export interface components {
         };
         /** @description One entry of a rule set. */
         RuleSetEntry: {
-            /** @description Allow or deny (built-in sets only allow). */
+            /** @description Allow or deny (a built-in set's entries all do the same; your own set may mix them). */
             effect: components["schemas"]["Effect"];
             /**
              * Format: int64

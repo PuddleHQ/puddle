@@ -14787,7 +14787,7 @@
         "properties": {
           "effect": {
             "$ref": "#/components/schemas/Effect",
-            "description": "Allow or deny (built-in sets only allow)."
+            "description": "Allow or deny (a built-in set's entries all do the same; your own set may mix them)."
           },
           "expires_at": {
             "type": [

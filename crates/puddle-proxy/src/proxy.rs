@@ -1277,9 +1277,13 @@ fn ip_rule(
             rule_id,
             pattern: PatternKind::Exact,
         }) => IpRule::Allow(rule_id),
-        Some(Decision::Deny { rule_id, .. } | Decision::SetDeny { rule_id, .. }) => {
-            IpRule::Deny(rule_id)
-        }
+        Some(
+            Decision::Deny { rule_id, .. }
+            | Decision::SetDeny {
+                rule_id: Some(rule_id),
+                ..
+            },
+        ) => IpRule::Deny(rule_id),
         _ => IpRule::NoRule,
     })
 }
@@ -1363,16 +1367,25 @@ fn allowed(
             Ok(PatternKind::Suffix)
         }
         Ok(Decision::SetDeny { set, rule_id, .. }) => {
-            tracing::info!(%workspace, %host, port, %set, rule = %rule_id, "denied by a rule set");
-            Err(Refusal::new(
-                "403 Forbidden",
-                format!(
-                    "{host} is denied by rule {rule_id} of your rule set {set} (listed under Rules, Rule sets); delete that entry, switch the set off for this workspace, or add an exact allow of your own"
+            tracing::info!(%workspace, %host, port, %set, rule = ?rule_id, "denied by a rule set");
+            let refusal = match rule_id {
+                Some(rule_id) => Refusal::new(
+                    "403 Forbidden",
+                    format!(
+                        "{host} is denied by rule {rule_id} of your rule set {set} (listed under Rules, Rule sets); delete that entry, switch the set off for this workspace, or add an exact allow of your own"
+                    ),
+                )
+                .header("x-puddle-rule", rule_id.to_string()),
+                None => Refusal::new(
+                    "403 Forbidden",
+                    format!(
+                        "{host} is on the built-in rule set {set} (listed under Rules, Rule sets), which blocks it; switch the set off for this workspace, or add an exact allow of your own"
+                    ),
                 ),
-            )
-            .header("x-puddle-decision", "deny")
-            .header("x-puddle-rule", rule_id.to_string())
-            .header("x-puddle-rule-set", set.to_string()))
+            };
+            Err(refusal
+                .header("x-puddle-decision", "deny")
+                .header("x-puddle-rule-set", set.to_string()))
         }
         Ok(Decision::Pending(outcome)) => {
             tracing::info!(%workspace, %host, port, pending = ?outcome.pending_id(), "pending approval");

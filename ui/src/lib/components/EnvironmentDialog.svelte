@@ -6,14 +6,18 @@
     hostsText,
     nameProblem,
     parseHosts,
+    PLACE_HINT,
+    placeOf,
     SECRET_NEVER_IN,
+    SWAP_LIMITS,
     type EnvSet,
     type EnvVariable,
+    type PlaceChoice,
   } from "#lib/environment/model.ts";
   import FormDialog from "./FormDialog.svelte";
 
-  // Adds a variable or a secret, or edits one: a plain variable's value, or a secret's hosts and
-  // (when typed) its new value. A secret's current value is not known here and is never asked back.
+  // Adds a variable or a secret, or edits one: a plain variable's value, or a secret's hosts, the
+  // place in a request it is swapped in, and (when typed) its new value. A secret's current value is not known here and is never asked back.
   // `onSubmit` returns the service's refusal as text, or `null` when it went through.
   let {
     open = $bindable(false),
@@ -37,6 +41,8 @@
   let kind = $state<"plain" | "secret">("plain");
   let value = $state("");
   let hosts = $state("");
+  let place = $state<PlaceChoice>("header");
+  let queryName = $state("");
   let refusal = $state<string | null>(null);
   let busy = $state(false);
 
@@ -52,6 +58,8 @@
         kind = editing?.kind ?? "plain";
         value = editing?.kind === "plain" ? (editing.value ?? "") : "";
         hosts = editing ? hostsText(editing.hosts) : "";
+        place = editing?.place?.in ?? "header";
+        queryName = editing?.place?.in === "query" ? editing.place.name : "";
         refusal = null;
       });
     }
@@ -74,6 +82,11 @@
         refusal = "Name at least one host the secret may be sent to.";
         return;
       }
+      const swappedIn = placeOf(place, queryName);
+      if ("problem" in swappedIn) {
+        refusal = swappedIn.problem;
+        return;
+      }
       if (value === "" && !keepsValue) {
         refusal = "A new secret needs its value.";
         return;
@@ -81,6 +94,7 @@
       body = {
         kind: "secret",
         hosts: list,
+        place: swappedIn,
         ...(value === "" ? {} : { value }),
       };
     }
@@ -181,6 +195,39 @@
           {DECRYPT_HOSTS}
         </p>
       </div>
+      <fieldset aria-describedby="{id}-place-hint">
+        <legend>Where the tool sends it</legend>
+        <label class="choice">
+          <input type="radio" bind:group={place} value="header" />
+          In a header (most tools)
+        </label>
+        <label class="choice">
+          <input type="radio" bind:group={place} value="query" />
+          In a query parameter
+        </label>
+        {#if place === "query"}
+          <div class="field">
+            <label for="{id}-query">Parameter name</label>
+            <input
+              id="{id}-query"
+              type="text"
+              class="mono"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              placeholder="appid"
+              bind:value={queryName}
+              oninput={() => (refusal = null)}
+            />
+          </div>
+        {/if}
+        <label class="choice">
+          <input type="radio" bind:group={place} value="path" />
+          In the path of the URL
+        </label>
+        <p class="hint" id="{id}-place-hint">{PLACE_HINT}</p>
+      </fieldset>
+      <p class="hint" role="note">{SWAP_LIMITS}</p>
     {/if}
     {#if problem}
       <p class="error" id="{id}-error" role="alert">{problem}</p>

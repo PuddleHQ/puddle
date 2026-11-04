@@ -1404,6 +1404,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/session-user": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sets the guest user the workspace's sessions, browser editor and clones run as: `agent`
+         *     (passwordless `sudo`) or `root`. It applies at the next start; a running workspace keeps the
+         *     user it started with until then. A workspace that is being created or deleted answers 409.
+         */
+        put: operations["put_session_user"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/shell-init": {
         parameters: {
             query?: never;
@@ -4125,6 +4146,25 @@ export interface components {
          */
         ServerChoice: "code_server" | "microsoft";
         /**
+         * @description Who sessions run as in the guest. The default is the one for a new workspace; a boot plan that
+         *     names no user stays `root` (see `puddle-boot`), so nothing changes for a caller that never asks.
+         *
+         *     ```
+         *     use puddle_types::SessionUser;
+         *     assert_eq!(SessionUser::default(), SessionUser::Agent);
+         *     assert_eq!(SessionUser::Agent.name(), "agent");
+         *     assert_eq!(SessionUser::Agent.home(), "/home/agent");
+         *     assert_eq!(SessionUser::Root.home(), "/root");
+         *     ```
+         * @enum {string}
+         */
+        SessionUser: "agent" | "root";
+        /** @description `PUT /api/workspaces/{id}/session-user`. */
+        SessionUserRequest: {
+            /** @description `agent` (passwordless `sudo`, `sudo -i` for a root shell) or `root`. */
+            session_user: components["schemas"]["SessionUser"];
+        };
+        /**
          * @description Which level an effective value came from.
          * @enum {string}
          */
@@ -4454,6 +4494,13 @@ export interface components {
             name: components["schemas"]["WorkspaceName"];
             /** @description The repositories Puddle manages for it, in the order they were added (0 to 100). */
             repositories: components["schemas"]["WorkspaceRepository"][];
+            /**
+             * @description The guest user its sessions, browser editor and clones run as: `agent` (with passwordless
+             *     `sudo`) for a workspace made since non-root sessions came in, `root` for one made before or
+             *     switched back. A change applies at the next start (`PUT
+             *     /api/workspaces/{id}/session-user`).
+             */
+            session_user: components["schemas"]["SessionUser"];
             /**
              * @description Why `direct_ssh` is only a guess: the settings could not be read, so it counts as off.
              *     `null` when the settings were read.
@@ -11352,6 +11399,96 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_session_user: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionUserRequest"];
+            };
+        };
+        responses: {
+            /** @description the workspace with its new session user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is being created or deleted */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not `agent` or `root` */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

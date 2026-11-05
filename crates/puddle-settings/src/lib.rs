@@ -79,7 +79,7 @@ pub use global::{
 pub use layer::{LocalToggles, WorkspaceLayer};
 pub use resolve::{Effective, EffectiveToggles, Resolved, Source, resolve};
 pub use values::{
-    AppIconChoice, ClipboardRead, CloseBehaviour, DensityChoice, HexColour, PaletteChoice,
-    ReconnectionGrace, ServerChoice, ThemeChoice,
+    AppIconChoice, ClipboardRead, CloseBehaviour, DensityChoice, DiskWarningPercent, HexColour,
+    PaletteChoice, ReconnectionGrace, ServerChoice, ThemeChoice,
 };
 pub use workspace::{WORKSPACE_SCHEMA_VERSION, WorkspaceSettings};

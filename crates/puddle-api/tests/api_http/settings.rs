@@ -39,9 +39,8 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         view["ui"],
         json!({"theme": null, "density": null, "palette": null, "custom_accent": null, "custom_background": null,
                "custom_surface": null, "custom_text": null, "notifications": null, "sound": null, "close_behaviour": null,
-               "minimize_to_tray": null, "app_icon": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_unexpected_stop": null,
-               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null,
-               "notify_low_disk_space": null, "disk_warn_free_gb": null, "disk_fail_free_gb": null})
+               "minimize_to_tray": null, "app_icon": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_disk_full": null, "disk_warning_percent": null, "notify_unexpected_stop": null,
+               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null, "notify_low_disk_space": null, "disk_warn_free_gb": null, "disk_fail_free_gb": null})
     );
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
@@ -391,9 +390,8 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     let body = json!({
         "vscode_server": {"server": "microsoft", "telemetry": false},
         "ui": {"theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0A6A85", "custom_text": "#102030", "notifications": false, "sound": true, "close_behaviour": "quit",
-                "minimize_to_tray": true, "app_icon": "duck_night", "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_unexpected_stop": false,
-                "confirm_global_rules": false, "inbox_shortcuts": true, "start_at_login": true,
-                "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10}
+                "minimize_to_tray": true, "app_icon": "duck_night", "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_disk_full": false, "disk_warning_percent": 90, "notify_unexpected_stop": false,
+                "confirm_global_rules": false, "inbox_shortcuts": true, "start_at_login": true, "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10}
     });
     let reply = api.send("PUT", "/api/settings", Some(&body)).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -409,11 +407,13 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         "notify_only_unfocused",
         "badge",
         "notify_oom",
+        "notify_disk_full",
         "notify_unexpected_stop",
         "confirm_global_rules",
     ] {
         assert_eq!(view["ui"][key], false, "{key}");
     }
+    assert_eq!(view["ui"]["disk_warning_percent"], 90);
     assert_eq!(view["ui"]["inbox_shortcuts"], true);
     assert_eq!(view["ui"]["start_at_login"], true);
     assert_eq!(view["ui"]["notify_low_disk_space"], false);

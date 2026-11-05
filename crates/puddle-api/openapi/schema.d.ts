@@ -1404,6 +1404,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/reset-root-disk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Removes the stopped workspace's sandbox and with it the root disk, so the next start makes a
+         *     fresh one: what was installed or cached outside the volume is lost, the volume is untouched.
+         *     Nothing runs by itself: this is the user's choice. Answers 202.
+         */
+        post: operations["reset_root_disk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/session-user": {
         parameters: {
             query?: never;
@@ -2452,6 +2473,11 @@ export interface components {
          */
         DevCertificate: "not_checked" | "reusing_existing" | "trusted" | "needs_trust" | "trust_declined" | "trust_failed" | "unsupported";
         /**
+         * @description Which of a workspace's two disks an event or figure is about.
+         * @enum {string}
+         */
+        DiskKind: "root" | "volume";
+        /**
          * @description How the free space on the drive that holds Puddle's data compares with the warning and the
          *     failure line (settings `ui.disk_warn_free_gb` and `ui.disk_fail_free_gb`). Ordered from fine to
          *     worst, so `level > previous` says the space got tighter.
@@ -2642,6 +2668,18 @@ export interface components {
             /** @enum {string} */
             type: "oom_kill";
             /** @description The workspace whose guest killed the process. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
+            /** @description Which disk. */
+            disk: components["schemas"]["DiskKind"];
+            /**
+             * Format: int32
+             * @description How full it is, in whole percent (rounded down), 0 to 100.
+             */
+            percent: number;
+            /** @enum {string} */
+            type: "disk_nearly_full";
+            /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
             /**
@@ -4459,12 +4497,20 @@ export interface components {
              *     app says so; 1 to 10000, default 20.
              */
             disk_warn_free_gb: number | null;
+            /**
+             * Format: int32
+             * @description How full a workspace's root disk or volume gets, in percent, before Puddle warns on the
+             *     workspace and, with `notify_disk_full`, notifies; 50 to 100 (default 95).
+             */
+            disk_warning_percent: number | null;
             /** @description The inbox's single-key shortcuts A, D, J and K (default off). */
             inbox_shortcuts: boolean | null;
             /** @description Minimizing hides the window to the tray instead of the taskbar (default off). */
             minimize_to_tray: boolean | null;
             /** @description A system notification for a new request (default on). */
             notifications: boolean | null;
+            /** @description Notify when a workspace's root disk or volume reaches `disk_warning_percent` (default on). */
+            notify_disk_full: boolean | null;
             /**
              * @description Notify when the free space on the drive that holds Puddle's data falls under the warning or
              *     the failure line (default on).
@@ -4519,6 +4565,11 @@ export interface components {
              */
             disk_used_mib: number | null;
             /**
+             * @description Which disks are at or over the warning threshold (`ui.disk_warning_percent` in the global
+             *     settings): `root`, `volume`, both or neither.
+             */
+            disk_warnings: components["schemas"]["DiskKind"][];
+            /**
              * @description What the user calls the workspace: the name until they rename it (`PATCH
              *     /api/workspaces/{id}`). Show this one; `name` and `id` never change.
              */
@@ -4548,6 +4599,18 @@ export interface components {
             name: components["schemas"]["WorkspaceName"];
             /** @description The repositories Puddle manages for it, in the order they were added (0 to 100). */
             repositories: components["schemas"]["WorkspaceRepository"][];
+            /**
+             * Format: int64
+             * @description The root disk's size in MiB: the most the home directory, tool caches and installed
+             *     packages can take. `null` when not known.
+             */
+            root_disk_size_mib: number | null;
+            /**
+             * Format: int64
+             * @description What the root disk holds in MiB; `null` when not known. A root disk that is nearly full
+             *     can be reset (`POST /api/workspaces/{id}/reset-root-disk`).
+             */
+            root_disk_used_mib: number | null;
             /**
              * @description The guest user its sessions, browser editor and clones run as: `agent` (with passwordless
              *     `sudo`) for a workspace made since non-root sessions came in, `root` for one made before or
@@ -4627,7 +4690,7 @@ export interface components {
          *     `workspace_progress` events.
          * @enum {string}
          */
-        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "cloning" | "deleting";
+        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "resetting_root_disk" | "cloning" | "deleting";
         /** @description What a workspace's Ports tab lists. */
         WorkspacePorts: {
             /** @description The ports, by number: the ones that listen, the ones forwarded, the ones pinned. */
@@ -4674,7 +4737,7 @@ export interface components {
          * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
          * @enum {string}
          */
-        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "stopping" | "removing" | "done" | "failed";
+        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "stopping" | "removing" | "done" | "failed";
         /** @description Changes a workspace's two switches; a switch left out stays as it is. */
         WorkspaceSwitchesRequest: {
             /** @description "Only pull from listed repos": the workspace's own value. */
@@ -11443,6 +11506,83 @@ export interface operations {
                 };
             };
             /** @description the workspace is not running or is busy, or the directory is there */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    reset_root_disk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description reset accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description busy, or not stopped */
             409: {
                 headers: {
                     [name: string]: unknown;

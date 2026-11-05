@@ -353,6 +353,8 @@ struct Background {
     _editor_updates: AbortOnDrop,
     // Says when the free space on the drive that holds the data folder crosses a line.
     _space_watch: AbortOnDrop,
+    // Reads the disks' use now and then and warns when one reaches the threshold.
+    _disk_watch: AbortOnDrop,
 }
 
 /// Aborts its task when dropped, so a forwarder never outlives the host.
@@ -623,6 +625,7 @@ impl<R: Runtime + Clone> Host<R> {
             settings.clone(),
             events.clone() as Arc<dyn EventSink>,
         ));
+        let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
         steps.push(Step::WorkspacesReady);
 
         let services = Services::new(
@@ -679,6 +682,7 @@ impl<R: Runtime + Clone> Host<R> {
                 _sign_in_notices: sign_in_notices,
                 _editor_updates: editor_updates,
                 _space_watch: space_watch,
+                _disk_watch: disk_watch,
             })),
             steps: Mutex::new(steps),
             reconcile: report,

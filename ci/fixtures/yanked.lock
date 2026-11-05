@@ -1,0 +1,11 @@
+# Fixture for ci/deny-fresh-test.sh: a lock file that names async-executor 1.14.0, a version crates.io yanked.
+# Only the name and version lines are read (by the test's stand-in for cargo-deny); it is not a cargo lock file.
+[[package]]
+name = "async-executor"
+version = "1.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "cc"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"

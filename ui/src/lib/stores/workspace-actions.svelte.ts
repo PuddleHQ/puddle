@@ -33,6 +33,7 @@ type Store = Pick<
   | "startWorkspace"
   | "stopWorkspace"
   | "reclaim"
+  | "resetRootDisk"
   | "rename"
   | "attach"
   | "setDirectSsh"
@@ -47,6 +48,8 @@ const DONE_WORDS: Record<string, (label: string) => string> = {
   starting: (name) => `${name} is running.`,
   stopping: (name) => `Stopped ${name}.`,
   reclaiming: (name) => `Reclaimed free space on ${name}.`,
+  resetting_root_disk: (name) =>
+    `Reset the root disk of ${name}; it is made again at the next start.`,
   cloning: (name) => `Cloned a repository into ${name}.`,
   deleting: (name) => `Deleted ${name}.`,
 };
@@ -131,6 +134,11 @@ export class WorkspaceActions {
 
   reclaim = async (w: Workspace): Promise<void> => {
     const result = await this.#store.reclaim(w.id);
+    if (!result.ok) this.#fail(result.message);
+  };
+
+  resetRootDisk = async (w: Workspace): Promise<void> => {
+    const result = await this.#store.resetRootDisk(w.id);
     if (!result.ok) this.#fail(result.message);
   };
 

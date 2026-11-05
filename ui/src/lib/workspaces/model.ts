@@ -32,6 +32,9 @@ export const canDelete = (w: Workspace): boolean =>
   isIdle(w) && isDown(w.status);
 export const canReclaim = (w: Workspace): boolean =>
   isIdle(w) && (w.status === "running" || w.status === "stopped");
+/** The root disk goes with the sandbox, so a reset needs the workspace down. */
+export const canResetRootDisk = (w: Workspace): boolean =>
+  isIdle(w) && (w.status === "stopped" || w.status === "crashed");
 
 const STATUS_WORDS: Record<Status, string> = {
   created: "Not started",
@@ -67,6 +70,7 @@ const OPERATION_WORDS: Record<Operation, string> = {
   starting: "Starting",
   stopping: "Stopping",
   reclaiming: "Reclaiming space",
+  resetting_root_disk: "Resetting the root disk",
   cloning: "Cloning",
   deleting: "Deleting",
 };
@@ -81,6 +85,7 @@ const STEP_WORDS: Record<Step, string> = {
   syncing: "Syncing your settings",
   checking: "Checking for unsaved work",
   reclaiming: "Reclaiming free space",
+  resetting_root_disk: "Resetting the root disk",
   stopping: "Stopping the workspace",
   removing: "Removing the workspace",
   done: "Done",
@@ -95,6 +100,7 @@ const SCRIPTS: Record<Operation, readonly Step[]> = {
   starting: ["starting", "syncing"],
   stopping: ["stopping", "reclaiming"],
   reclaiming: ["reclaiming"],
+  resetting_root_disk: ["resetting_root_disk"],
   cloning: ["cloning"],
   deleting: ["checking", "removing"],
 };
@@ -218,6 +224,28 @@ export function diskLabel(w: Workspace): string {
   return w.disk_used_mib === null
     ? `${formatMib(w.disk_size_mib)} disk`
     : `${formatMib(w.disk_used_mib)} of ${formatMib(w.disk_size_mib)} used`;
+}
+
+export type DiskKind = components["schemas"]["DiskKind"];
+
+/** The root disk's use in words, or `null` when the host cannot say (no sandbox yet). */
+export function rootDiskLabel(w: Workspace): string | null {
+  if (w.root_disk_size_mib === null) return null;
+  return w.root_disk_used_mib === null
+    ? `${formatMib(w.root_disk_size_mib)} root disk`
+    : `${formatMib(w.root_disk_used_mib)} of ${formatMib(w.root_disk_size_mib)} used`;
+}
+
+/** Whether the host flagged this disk as at or over the warning threshold. */
+export const diskWarned = (w: Workspace, kind: DiskKind): boolean =>
+  w.disk_warnings.includes(kind);
+
+/** Percent used, rounded down; `null` when the use or the size is not known. */
+export function diskPercent(w: Workspace, kind: DiskKind): number | null {
+  const used = kind === "root" ? w.root_disk_used_mib : w.disk_used_mib;
+  const size = kind === "root" ? w.root_disk_size_mib : w.disk_size_mib;
+  if (used === null || size === null || size === 0) return null;
+  return Math.min(100, Math.floor((used * 100) / size));
 }
 
 /** What the user calls them orders the list; the store sorts again after a rename. */

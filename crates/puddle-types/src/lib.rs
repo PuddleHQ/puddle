@@ -48,7 +48,7 @@ pub use cpus::CpuCount;
 pub use error::ValidationError;
 pub use event::DiskSpaceLevel;
 pub use event::{
-    CollectingSink, Event, EventSink, GitAccess, LoginProblemKind, NullSink, PendingEnd,
+    CollectingSink, DiskKind, Event, EventSink, GitAccess, LoginProblemKind, NullSink, PendingEnd,
     PendingSummary, WorkspaceStatus, WorkspaceStep,
 };
 pub use fill::{Fill, Rgb, SET_PALETTE};

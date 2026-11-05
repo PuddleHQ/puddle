@@ -526,6 +526,7 @@ describe("notification and inbox switches", () => {
     ],
     ["Show the number of waiting requests", "badge", true],
     ["A workspace runs out of memory", "notify_oom", true],
+    ["A workspace's disk is nearly full", "notify_disk_full", true],
     ["A workspace stops on its own", "notify_unexpected_stop", true],
     [
       "The drive that holds Puddle's data runs low on space",
@@ -553,6 +554,28 @@ describe("notification and inbox switches", () => {
     expect(putBodies()).toHaveLength(0);
     await save();
     for (const [, key, on] of rows) expect(api.ui[key]).toBe(!on);
+  });
+
+  it("checks and saves the disk warning percentage", async () => {
+    await open();
+    const input = screen.getByLabelText("Warn when a disk is this full (%)");
+    expect(input).toHaveValue("95");
+    for (const bad of ["49", "101", "lots", ""]) {
+      await fireEvent.input(input, { target: { value: bad } });
+      await fireEvent.change(input);
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    }
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Enter a whole number of percent.")).toBeVisible();
+    // With another edit waiting, the bar says why Save is off.
+    await fireEvent.click(screen.getByLabelText("Sound"));
+    expect(
+      screen.getByText("Fix the disk warning percentage to save."),
+    ).toBeVisible();
+    await fireEvent.input(input, { target: { value: "90 %" } });
+    await fireEvent.change(input);
+    await save();
+    expect(api.ui.disk_warning_percent).toBe(90);
   });
 
   it("shows what is stored", async () => {

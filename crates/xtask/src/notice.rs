@@ -21,6 +21,16 @@ pub fn render(facts: &ForkFacts, os: HostOs, firmware_files: &str) -> String {
         HostOs::Windows => "config-libkrunfw-windows_x86_64",
         HostOs::Linux | HostOs::MacOs => "the kernel configuration of its Linux build",
     };
+    let provenance = match os {
+        HostOs::Windows => format!(
+            "built from the source below by the release {} of {} (the Windows firmware msb loads)",
+            facts.tag, facts.fork_repo
+        ),
+        HostOs::Linux | HostOs::MacOs => format!(
+            "as published by microsandbox's release {}, unchanged",
+            facts.upstream_tag
+        ),
+    };
     let kernel_series = fw.kernel_version.split('.').next().unwrap_or_default();
     let mut out = format!(
         "\
@@ -62,7 +72,7 @@ in THIRD-PARTY-msb.txt.
 2. libkrunfw {lv} - LGPL-2.1-only (LGPL-2.1.txt), with Linux {kv} - GPL-2.0-only (GPL-2.0.txt)
 ----------------------------------------------------------------------------------------------
 
-The firmware library in this folder ({firmware_files}) is libkrunfw {lv} as published by microsandbox's release {upstream_tag}, unchanged. The
+The firmware library in this folder ({firmware_files}) is libkrunfw {lv}, {provenance}. The
 library code is LGPL-2.1-only; it contains a Linux {kv} kernel, with patches and a kernel
 configuration, which is GPL-2.0-only. msb loads it as a separate library, which you may replace.
 
@@ -88,7 +98,6 @@ Puddle itself is GPL-3.0-or-later. Its third-party crates are listed in THIRD-PA
         repo = fw.repo_url,
         commit = fw.commit,
         series = kernel_series,
-        upstream_tag = facts.upstream_tag,
         contact = SOURCE_REQUEST_CONTACT,
         tag = facts.tag,
     );
@@ -162,7 +171,8 @@ mod tests {
     fn names_the_files_of_the_runtime_it_describes() {
         let win = windows(vec![]);
         assert!(win.contains("msb.exe is built from") && win.contains("msb.exe statically links"));
-        assert!(win.contains("(libkrunfw.dll) is libkrunfw 5.6.1"));
+        assert!(win.contains("(libkrunfw.dll) is libkrunfw 5.6.1, built from the source below by the release v0.7.7-puddle.1 of PuddleHQ/microsandbox"));
+        assert!(!win.contains("unchanged. The"));
         assert!(win.contains("config-libkrunfw-windows_x86_64"));
 
         let linux = render(

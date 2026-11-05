@@ -17,7 +17,7 @@ use crate::tools::{Cargo, Features, git_command, run};
 pub const MSB_ASSET: &str = "msb-windows-x86_64.exe";
 /// The fork's Linux msb asset, built by the same release run as the Windows one.
 pub const MSB_LINUX_ASSET: &str = "msb-linux-x86_64";
-/// Upstream's Windows firmware asset (the fork uses upstream's firmware).
+/// The Windows firmware asset of the fork's release (the dll the VM tests run).
 pub const LIBKRUNFW_ASSET: &str = "libkrunfw-windows-x86_64.dll";
 /// Upstream's Linux firmware asset: the same library the Linux runtime folder holds under its
 /// SONAME and versioned names.

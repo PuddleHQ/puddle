@@ -129,7 +129,7 @@ jobs:
       # No Rust cache here: this job's nextest archive build restored an entry on 0 of the last 22 pull
       # requests, and with the ci entry restored (exact) it was no faster than a cold build, so the
       # restore only cost time and the repo's 10 GB cap more space (cache-gc.yml, budget table).
-      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -200,6 +200,10 @@ jobs:
       fail-fast: false
       matrix:
         partition: [1, 2, 3, 4]
+    env:
+      # The hosted runner has passwordless sudo; the doctor test that hands a folder to another uid
+      # fails without it instead of skipping.
+      PUDDLE_REQUIRE_CHOWN: "1"
     steps:
       # A runner that starts nearly full ends in "No space left on device" in its own log, with the job log lost;
       # this line shows the free space and the image of the runner a failed job had. A normal runner starts with
@@ -236,7 +240,7 @@ jobs:
           ls -l /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           echo "ok=true" >> "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         if: steps.kvm.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146

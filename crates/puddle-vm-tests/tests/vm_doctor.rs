@@ -226,6 +226,95 @@ fn vm_doctor_reports_a_runtime_this_user_may_not_run() {
     assert_eq!(status(&report, CheckId::Launch), Status::Skipped);
 }
 
+/// A real folder above the data folder that another user owns: the doctor names the folder and
+/// the `chown` that fixes it. Needs root (or passwordless sudo) to hand a folder to another
+/// uid, so a host without either says so and skips; the hosted runners have sudo.
+#[cfg(target_os = "linux")]
+#[test]
+fn vm_doctor_names_a_folder_above_the_data_folder_that_another_user_owns() {
+    use std::os::unix::fs::MetadataExt;
+
+    const OTHER_UID: u32 = 4242;
+    let root = tempfile::tempdir().unwrap();
+    let mine = std::fs::metadata(root.path()).unwrap().uid();
+    let foreign = root.path().join("foreign");
+    let data = foreign.join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    for folder in [root.path(), &foreign, &data] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let Some(_restore) = ChownGuard::give(&foreign, OTHER_UID, mine) else {
+        assert!(
+            std::env::var_os("PUDDLE_REQUIRE_CHOWN").is_none(),
+            "PUDDLE_REQUIRE_CHOWN is set but neither root nor passwordless sudo can chown"
+        );
+        eprintln!("skipped: no root or passwordless sudo to chown with");
+        return;
+    };
+    let dir = root.path().join(RUNTIME_DIR_NAME);
+    std::fs::create_dir_all(&dir).unwrap();
+    let probe =
+        SystemProbe::new(dir, RuntimeVersion::built_for(), DevOverride::none()).with_data_dir(data);
+    let report = diagnose(&probe, &Options::default(), "vm-test");
+    eprintln!("{}", report.to_text());
+    let check = report.check(CheckId::DataPath).unwrap();
+    assert_eq!(check.finding, Some(Finding::DataPathBlocked), "{check:?}");
+    let named = std::fs::canonicalize(&foreign).unwrap();
+    let named = named.to_string_lossy();
+    assert!(check.summary.contains(&*named), "{}", check.summary);
+    assert!(check.summary.contains("4242"), "{}", check.summary);
+    let fix = check.fix.as_deref().unwrap();
+    assert!(fix.contains(&*named) && fix.contains("chown"), "{fix}");
+    assert!(!report.ok);
+}
+
+/// Hands a folder to another uid and, on drop, back to its owner so the temp dir can be removed.
+#[cfg(target_os = "linux")]
+struct ChownGuard {
+    path: PathBuf,
+    back_to: u32,
+}
+
+#[cfg(target_os = "linux")]
+impl ChownGuard {
+    /// `None` when this account may not change owners.
+    fn give(path: &Path, uid: u32, back_to: u32) -> Option<Self> {
+        Self::chown(path, uid).then(|| Self {
+            path: path.to_owned(),
+            back_to,
+        })
+    }
+
+    fn chown(path: &Path, uid: u32) -> bool {
+        let uid = uid.to_string();
+        let direct = std::process::Command::new("chown")
+            .arg(&uid)
+            .arg(path)
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        direct
+            || std::process::Command::new("sudo")
+                .args(["-n", "chown", &uid])
+                .arg(path)
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for ChownGuard {
+    fn drop(&mut self) {
+        assert!(
+            Self::chown(&self.path, self.back_to),
+            "restoring {}",
+            self.path.display()
+        );
+    }
+}
+
 /// Undoes [`deny_run`] on drop, so the temp dir can be removed.
 struct Restore {
     #[cfg(windows)]

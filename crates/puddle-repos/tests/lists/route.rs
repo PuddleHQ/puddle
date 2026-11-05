@@ -24,7 +24,7 @@ use puddle_upstream::{
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpSocket};
 use tokio_rustls::TlsAcceptor;
 
 const CANARY: &str = "CANARY-route-token-3b19";
@@ -224,6 +224,20 @@ impl Server {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
+}
+
+/// A port on which a connect is refused and that no other test can be handed meanwhile.
+///
+/// Binding and dropping a listener frees the port for any other process on the machine, and a test
+/// binary that runs beside this one may bind it for a TLS server of its own, so the connect would
+/// reach that server and fail the handshake instead of being refused. A socket that is bound but
+/// never listens keeps the number reserved and still refuses every connect. Keep the first value
+/// alive for as long as the port is used.
+fn refused_port() -> (TcpSocket, u16) {
+    let socket = TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let port = socket.local_addr().unwrap().port();
+    (socket, port)
 }
 
 fn direct_chain() -> Arc<Chain> {
@@ -656,15 +670,23 @@ async fn an_address_instead_of_a_name_is_refused_before_anything_is_sent() {
 #[tokio::test]
 async fn a_host_nothing_listens_on_is_unreachable() {
     let pki = Pki::new("localhost");
-    let closed = {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        listener.local_addr().unwrap().port()
-    };
+    let (_reserved, closed) = refused_port();
     let err = api(direct_chain(), &pki)
-        .get(request(&format!("localhost:{closed}"), "/user"))
+        .get(request(&format!("127.0.0.1:{closed}"), "/user"))
         .await
         .unwrap_err();
     assert!(matches!(err, TransportError::Unreachable(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_port_held_for_a_refusal_refuses_connects_and_cannot_be_taken_by_a_server() {
+    let (_reserved, port) = refused_port();
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    // A server of another test binary could only have been handed this port if the bind worked.
+    let taken = TcpListener::bind(addr).await.unwrap_err();
+    assert_eq!(taken.kind(), std::io::ErrorKind::AddrInUse);
+    let refused = tokio::net::TcpStream::connect(addr).await.unwrap_err();
+    assert_eq!(refused.kind(), std::io::ErrorKind::ConnectionRefused);
 }
 
 #[tokio::test]
@@ -806,10 +828,7 @@ async fn a_listing_request_that_failed_says_why_in_the_audit() {
     )
     .await;
     let host = format!("localhost:{}", server.addr.port());
-    let closed = {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        listener.local_addr().unwrap().port()
-    };
+    let (_reserved, closed) = refused_port();
 
     let (api_ok, refused) = logged(direct_chain(), &pki);
     assert_eq!(
@@ -820,7 +839,7 @@ async fn a_listing_request_that_failed_says_why_in_the_audit() {
     api_tls.get(request(&host, "/user")).await.unwrap_err();
     let (api_gone, gone) = logged(direct_chain(), &pki);
     api_gone
-        .get(request(&format!("localhost:{closed}"), "/user"))
+        .get(request(&format!("127.0.0.1:{closed}"), "/user"))
         .await
         .unwrap_err();
 

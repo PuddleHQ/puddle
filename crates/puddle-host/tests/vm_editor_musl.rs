@@ -57,7 +57,7 @@ async fn vm_editor_on_an_alpine_image_says_why_it_is_unavailable_and_the_workspa
     let key = format!("editor-install:{name}");
     let problem = puddle_test_kit::eventually_async(
         "the browser editor's musl problem",
-        Duration::from_secs(120),
+        Duration::from_secs(60),
         || async { host.problems().list().into_iter().find(|p| p.key == key) },
     )
     .await;

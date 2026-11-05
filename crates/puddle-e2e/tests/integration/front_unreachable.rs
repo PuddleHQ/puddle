@@ -123,6 +123,7 @@ async fn rig() -> Rig {
             server: editor,
             password_file,
             boot_id: dir.path().join("boot_id"),
+            root: dir.path().join("root"),
         }),
         ..Config::default()
     })

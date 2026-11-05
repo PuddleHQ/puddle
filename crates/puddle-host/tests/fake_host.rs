@@ -2507,6 +2507,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
             server: editor,
             password_file: password_file.clone(),
             boot_id: dir.path().join("boot_id"),
+            root: dir.path().join("root"),
         }),
         ..puddle_agent::Config::default()
     })

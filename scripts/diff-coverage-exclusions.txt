@@ -188,7 +188,7 @@ crates/puddle-app/src/shell.rs | crash::install(folder.join(crash::FOLDER)); | `
 crates/puddle-app/src/shell.rs | crash::install(folder.join(crash::FOLDER));\n} | closing lines of the `run` statements listed above
 crates/puddle-app/src/shell.rs | if let Err(err) = desktop::install_quit_shortcut(app.handle()) { | `run` drives the real window system's event loop, which a test process cannot start; the Ctrl+Q menu is covered by the Windows smoke test and a hands-on check
 crates/puddle-app/src/shell.rs | if let Some(folder) = data_folder(options) { | `run` drives the real window system's event loop, which a test process cannot start; `crash::install` has its own test program
-crates/puddle-app/src/shell.rs | init_logging_from_env(); | x2 | the call in `run`, which drives the real window system's event loop that a test process cannot start (a test makes the second call); `init_logging` and `log_targets` are tested in shell.rs
+crates/puddle-app/src/shell.rs | init_logging_from_env(); | the call in `run`, which drives the real window system's event loop that a test process cannot start (`init_logging_from_env` has its own test); `init_logging` and `log_targets` are tested in shell.rs
 crates/puddle-app/src/shell.rs | let _ = stop(handle); | `run` drives the real window system's event loop, which a test process cannot start; the steps it chains are tested on the mock runtime (shell.rs, tests/host_backend.rs) and the program by the Windows smoke test on both backends
 crates/puddle-app/src/shell.rs | let _ = stop(handle);\n} | closing lines of the `run` statements listed above
 crates/puddle-app/src/shell.rs | let _ = stop(handle);\n}\n}); | the end of the click-time opener closure listed above; it runs only in a real webview

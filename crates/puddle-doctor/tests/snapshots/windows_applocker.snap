@@ -12,6 +12,7 @@ FAIL  Runtime starts        an AppLocker or Software Restriction policy blocks m
       from: This program is blocked by group policy. For more information, contact your system
             administrator. (os error 1260)
 skip  Test boot             not checked: the runtime doesn't start
+ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Global Secure Access  client not installed
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
@@ -56,6 +57,11 @@ ok    Global Secure Access  client not installed
       "id": "test_boot",
       "status": "skipped",
       "summary": "not checked: the runtime doesn't start"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
     },
     {
       "id": "global_secure_access",

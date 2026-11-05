@@ -10,6 +10,7 @@ FAIL  Runtime starts      msb was killed by a signal instead of answering
             may have stopped the process. Otherwise reinstall Puddle and include the lines below
             when you report it.
 skip  Test boot           not checked: no usable hypervisor
+ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 
 2 problems to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -50,6 +51,11 @@ skip  Test boot           not checked: no usable hypervisor
       "id": "test_boot",
       "status": "skipped",
       "summary": "not checked: no usable hypervisor"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
     }
   ],
   "elapsed_ms": 1234

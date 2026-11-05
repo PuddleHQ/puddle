@@ -108,11 +108,13 @@ pub struct Deleted {
 enum Job {
     Check,
     Trim,
+    Checkouts,
 }
 
 enum JobOutput {
     Check(Findings),
     Trim(TrimReport),
+    Checkouts(CheckoutList),
 }
 
 /// The workspace lifecycle (ADR 0006): one named disk volume `ws-<id>` per workspace, mounted at
@@ -465,6 +467,34 @@ impl Workspaces {
         checkouts::run(sandbox, id, None).await
     }
 
+    /// Lists the checkouts on the volume of workspace `id` when no sandbox runs with it, in a
+    /// short-lived maintenance sandbox that has the volume and no route out; it is removed again
+    /// whatever the outcome. For a volume nothing lists, so the caller has no running workspace
+    /// to ask. A volume a running sandbox holds, or a create or another maintenance run has, is
+    /// [`WorkspaceError::InUse`] and is not touched.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::NotFound`] when the volume does not exist; [`WorkspaceError::InUse`];
+    /// [`WorkspaceError::Checkouts`] when the listing fails; [`WorkspaceError::Runtime`].
+    pub async fn list_checkouts_of_unheld_volume<R: Runtime>(
+        &self,
+        rt: &R,
+        id: &WorkspaceId,
+    ) -> Result<CheckoutList, WorkspaceError> {
+        let info = self.volume(rt, id).await?;
+        if let Some(holder) = self.running_holder(id, &info)? {
+            return Err(WorkspaceError::InUse {
+                workspace: id.to_string(),
+                holder: holder.to_string(),
+            });
+        }
+        match self.maintenance(rt, id, &info, Job::Checkouts).await? {
+            JobOutput::Checkouts(list) => Ok(list),
+            JobOutput::Check(_) | JobOutput::Trim(_) => unreachable_job(id),
+        }
+    }
+
     /// Reads the checkout `dir` of workspace `id` again: `None` when it is not a checkout (it is
     /// missing, a link, or has no `.git`).
     ///
@@ -655,7 +685,7 @@ impl Workspaces {
         }
         match self.maintenance(rt, id, &info, Job::Trim).await? {
             JobOutput::Trim(report) => Ok(report),
-            JobOutput::Check(_) => unreachable_job(id),
+            JobOutput::Check(_) | JobOutput::Checkouts(_) => unreachable_job(id),
         }
     }
 
@@ -711,7 +741,7 @@ impl Workspaces {
                 removes_sandbox,
                 volume_missing: false,
             }),
-            JobOutput::Trim(_) => unreachable_job(id),
+            JobOutput::Trim(_) | JobOutput::Checkouts(_) => unreachable_job(id),
         }
     }
 
@@ -774,7 +804,7 @@ impl Workspaces {
     ) -> Result<Deleted, WorkspaceError> {
         let findings = match self.run_maintenance(rt, id, info, Job::Check).await? {
             JobOutput::Check(f) => f,
-            JobOutput::Trim(_) => return unreachable_job(id),
+            JobOutput::Trim(_) | JobOutput::Checkouts(_) => return unreachable_job(id),
         };
         if findings != confirmed.findings || owner != confirmed.removes_sandbox {
             return Err(WorkspaceError::Changed {
@@ -1145,6 +1175,10 @@ impl Workspaces {
         let output = match job {
             Job::Check => check::run(&sandbox, id).await.map(JobOutput::Check),
             Job::Trim => self.trim(&sandbox, id).await.map(JobOutput::Trim),
+            Job::Checkouts => self
+                .list_checkouts(&sandbox, id)
+                .await
+                .map(JobOutput::Checkouts),
         };
         let stopped = sandbox.stop().await;
         drop(sandbox);

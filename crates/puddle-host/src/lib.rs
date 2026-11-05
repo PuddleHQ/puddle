@@ -51,6 +51,7 @@ mod ports;
 mod proxy_passwords;
 mod settings_read;
 mod shell_init;
+mod space_watch;
 mod ssh_config;
 mod ssh_login;
 mod ssh_target;
@@ -59,9 +60,11 @@ mod vscode;
 mod workspaces;
 
 pub use config::{
-    AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, GuestSettings, HostConfig, UpstreamSettings,
+    AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, FreeSpaceTiming, GuestSettings, HostConfig,
+    UpstreamSettings,
 };
 pub use dev_cert::{DevCertSource, GuestCertSource};
+pub use doctor::disk_limits;
 pub use error::HostError;
 pub use files::FileSettings;
 pub use host::{

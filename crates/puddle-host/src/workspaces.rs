@@ -73,6 +73,9 @@ use crate::merge_notice::{merge_notice_prefix, merge_notices};
 #[path = "repositories.rs"]
 mod repositories;
 
+#[path = "orphans.rs"]
+pub(crate) mod orphans;
+
 impl<R: Runtime + Clone> crate::editor_updates::Builds for HostWorkspaces<R> {
     fn on_microsoft_server(&self) -> Vec<WorkspaceName> {
         self.inner.flavours.on_microsoft()
@@ -3539,6 +3542,19 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 Err(reason) => Err(WorkspaceError::Unavailable(reason)),
             }
         })
+    }
+
+    fn orphan_volumes(&self) -> BoxFuture<'_, Result<Vec<WorkspaceId>, WorkspaceError>> {
+        Box::pin(async move { self.orphan_volume_ids().await })
+    }
+
+    fn restore_orphan<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        repository: Option<puddle_api::RepoUrl>,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move { self.restore_orphan_volume(id, repository, git).await })
     }
 
     fn checkouts<'a>(

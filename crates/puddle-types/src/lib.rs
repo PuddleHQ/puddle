@@ -46,6 +46,7 @@ pub use connection::{
 };
 pub use cpus::CpuCount;
 pub use error::ValidationError;
+pub use event::DiskSpaceLevel;
 pub use event::{
     CollectingSink, DiskKind, Event, EventSink, GitAccess, LoginProblemKind, NullSink, PendingEnd,
     PendingSummary, WorkspaceStatus, WorkspaceStep,

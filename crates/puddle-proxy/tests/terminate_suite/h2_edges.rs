@@ -291,10 +291,13 @@ async fn a_connection_the_server_drops_in_the_middle_of_a_request_is_a_502_with_
     };
     let (got, ()) = tokio::join!(asking, cutting);
     assert_eq!(got.status, 502);
+    let text = got.text();
+    let cause = text
+        .strip_prefix("puddle: the request to bound.test failed: ")
+        .unwrap_or_else(|| panic!("{text}"));
     assert!(
-        got.text().contains("the request to bound.test failed"),
-        "{}",
-        got.text()
+        !cause.trim().is_empty(),
+        "the answer names no cause: {text}"
     );
 }
 
@@ -580,4 +583,72 @@ async fn a_guest_that_stalls_in_its_handshake_past_its_own_budget_is_dropped() {
         ended.is_err(),
         "the 1 s stall outlasts a 300 ms budget: {ended:?}"
     );
+}
+
+#[tokio::test]
+async fn a_request_with_a_large_header_goes_through_over_http2() {
+    // Cookies and tokens of several kilobytes are ordinary; the limit on a header list is far above.
+    let pki = Pki::new();
+    let server = H2Server::recording(&pki, "bound.test", ok("fine")).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let cookie = "c".repeat(8 * 1024);
+    let got = client
+        .request(
+            "GET",
+            "bound.test",
+            "/big",
+            &[("cookie", &cookie)],
+            full(bytes::Bytes::new()),
+        )
+        .await;
+    assert_eq!((got.status, got.text().as_str()), (200, "fine"));
+    assert_eq!(server.recorded()[0].header("cookie"), Some(cookie.as_str()));
+}
+
+/// A TCP front on `host` for `target`: the first connection it takes is relayed, and when
+/// `once` is set the listener is closed after it, so later connections to it are refused.
+async fn front_on(host: &str, target: SocketAddr, once: bool) -> SocketAddr {
+    let listener = TcpListener::bind((host, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut tcp, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                if let Ok(mut up) = tokio::net::TcpStream::connect(target).await {
+                    let _ = tokio::io::copy_bidirectional(&mut tcp, &mut up).await;
+                }
+            });
+            if once {
+                return;
+            }
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn the_audit_keeps_the_address_of_the_first_connection_when_the_server_is_reached_again_elsewhere()
+ {
+    let pki = Pki::new();
+    let server = H2Server::recording(&pki, "bound.test", ok("again")).await;
+    let first = front_on("127.0.0.1", server.addr, true).await;
+    let second = front_on("127.0.0.2", server.addr, false).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", first)
+        .name("bound.test", second)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    assert_eq!(client.get("bound.test", "/1").await.text(), "again");
+    server.drop_connections();
+    rig.upstream_ended(1).await;
+    // The first front is gone, so this stream's new connection goes to the second address.
+    assert_eq!(client.get("bound.test", "/2").await.text(), "again");
+    assert_eq!(server.accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+    client.close().await;
+    let event = &rig.events(1).await[0];
+    assert_eq!(event.resolved_ip, Some(first.ip()));
 }

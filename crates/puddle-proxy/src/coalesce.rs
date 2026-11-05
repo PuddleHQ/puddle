@@ -126,6 +126,7 @@ impl<R: Resolver> Resolver for Coalescing<R> {
 
 #[cfg(test)]
 mod tests {
+    use futures_util::FutureExt as _;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -197,23 +198,19 @@ mod tests {
         assert!(poll_once(&mut second).await.is_pending());
         tokio::time::advance(Duration::from_secs(6)).await;
         // The first caller ran the lookup; the second has not been polled since and still waits.
-        let Poll::Ready(answer) = poll_once(&mut first).await else {
-            panic!("the lookup is over");
-        };
+        let answer = (&mut first).now_or_never().expect("the lookup is over");
         assert_eq!(ip(&answer.unwrap()), 1);
 
         let mut later = Box::pin(r.resolve(&n, 443));
         assert!(poll_once(&mut later).await.is_pending(), "a new lookup");
         tokio::time::advance(Duration::from_secs(6)).await;
-        let Poll::Ready(answer) = poll_once(&mut later).await else {
-            panic!("the new lookup is over");
-        };
+        let answer = (&mut later).now_or_never().expect("the new lookup is over");
         assert_eq!(ip(&answer.unwrap()), 2);
         assert_eq!(r.inner.lookups.load(Ordering::SeqCst), 2);
 
-        let Poll::Ready(answer) = poll_once(&mut second).await else {
-            panic!("the old waiter gets the old answer");
-        };
+        let answer = (&mut second)
+            .now_or_never()
+            .expect("the old waiter gets the old answer");
         assert_eq!(ip(&answer.unwrap()), 1);
     }
 

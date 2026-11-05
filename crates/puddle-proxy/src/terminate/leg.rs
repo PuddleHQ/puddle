@@ -394,9 +394,7 @@ mod tests {
             .handshake::<_, UpBody>(TokioIo::new(client))
             .await
             .unwrap();
-        let driver = tokio::spawn(async move {
-            let _ = connection.with_upgrades().await;
-        });
+        let driver = tokio::spawn(async move { drop(connection.with_upgrades().await) });
         let request = http::Request::builder()
             .uri("/")
             .header("host", "bound.test")

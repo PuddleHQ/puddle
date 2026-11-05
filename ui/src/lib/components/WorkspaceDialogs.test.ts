@@ -79,7 +79,7 @@ describe("WorkspaceDialogs", () => {
     ];
     await workspaces.refresh();
     render(WorkspaceDialogs);
-    actions.openRename(workspaces.byName("demo")!);
+    actions.openRename(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("dialog", {
       name: "Rename workspace",
     });
@@ -107,7 +107,7 @@ describe("WorkspaceDialogs", () => {
       expect(api.calls).toContain("PATCH /api/workspaces/{id}"),
     );
     await vi.waitFor(() => expect(actions.renameOpen).toBe(false));
-    expect(workspaces.byName("demo")?.display_name).toBe("Web shop");
+    expect(workspaces.byId("w-demo")?.display_name).toBe("Web shop");
     expect(toasts.items.map((t) => t.message)).toEqual([
       "Renamed to Web shop.",
     ]);
@@ -116,7 +116,7 @@ describe("WorkspaceDialogs", () => {
   it("closes the rename dialog on Cancel without saving", async () => {
     await workspaces.refresh();
     render(WorkspaceDialogs);
-    actions.openRename(workspaces.byName("demo")!);
+    actions.openRename(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("dialog", {
       name: "Rename workspace",
     });
@@ -134,7 +134,7 @@ describe("WorkspaceDialogs", () => {
       message: "demo is deleting; rename it when that is done",
     });
     render(WorkspaceDialogs);
-    actions.openRename(workspaces.byName("demo")!);
+    actions.openRename(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("dialog", {
       name: "Rename workspace",
     });
@@ -161,7 +161,7 @@ describe("WorkspaceDialogs", () => {
 
   it("offers the browser editor on top, and desktop VS Code only once direct SSH is on", async () => {
     render(WorkspaceDialogs);
-    actions.connect(workspaces.byName("demo")!);
+    actions.connect(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("dialog", {
       name: "Connect to demo",
     });
@@ -184,7 +184,7 @@ describe("WorkspaceDialogs", () => {
 
   it("opens the browser editor from the step without direct SSH and closes the step", async () => {
     render(WorkspaceDialogs);
-    actions.connect(workspaces.byName("demo")!);
+    actions.connect(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("dialog", {
       name: "Connect to demo",
     });
@@ -204,7 +204,7 @@ describe("WorkspaceDialogs", () => {
 
   it("says what direct SSH trusts when the switch is ticked, and changes nothing until the yes", async () => {
     render(WorkspaceDialogs);
-    actions.connect(workspaces.byName("demo")!);
+    actions.connect(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("dialog", {
       name: "Connect to demo",
     });
@@ -239,7 +239,7 @@ describe("WorkspaceDialogs", () => {
 
   it("cancelling the trust text leaves direct SSH off", async () => {
     render(WorkspaceDialogs);
-    actions.connect(workspaces.byName("demo")!);
+    actions.connect(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("dialog", {
       name: "Connect to demo",
     });
@@ -251,14 +251,14 @@ describe("WorkspaceDialogs", () => {
     );
     await vi.waitFor(() => expect(actions.trustFor).toBeNull());
     expect(api.calls).not.toContain("PUT /api/settings/workspaces/{workspace}");
-    expect(workspaces.byName("demo")?.direct_ssh).toBe(false);
+    expect(workspaces.byId("w-demo")?.direct_ssh).toBe(false);
   });
 
   it("turns direct SSH off from the step without asking, and opens desktop VS Code when on", async () => {
     api.list = [workspace("demo", { status: "running", direct_ssh: true })];
     await workspaces.refresh();
     render(WorkspaceDialogs);
-    actions.connect(workspaces.byName("demo")!);
+    actions.connect(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("dialog", {
       name: "Connect to demo",
     });
@@ -275,7 +275,7 @@ describe("WorkspaceDialogs", () => {
     api.list = [workspace("demo", { status: "running", direct_ssh: true })];
     await workspaces.refresh();
     render(WorkspaceDialogs);
-    actions.connect(workspaces.byName("demo")!);
+    actions.connect(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("dialog", {
       name: "Connect to demo",
     });
@@ -287,7 +287,7 @@ describe("WorkspaceDialogs", () => {
     );
     expect(screen.queryByRole("alertdialog")).toBeNull();
     await vi.waitFor(() =>
-      expect(workspaces.byName("demo")?.direct_ssh).toBe(false),
+      expect(workspaces.byId("w-demo")?.direct_ssh).toBe(false),
     );
   });
 
@@ -296,7 +296,7 @@ describe("WorkspaceDialogs", () => {
     api.check = dirty("demo");
     await workspaces.refresh();
     render(WorkspaceDialogs);
-    await actions.askDelete(workspaces.byName("demo")!);
+    await actions.askDelete(workspaces.byId("w-demo")!);
     const dialog = await screen.findByRole("alertdialog", {
       name: "Delete demo?",
     });
@@ -316,7 +316,7 @@ describe("WorkspaceDialogs", () => {
     api.check = dirty("demo");
     await workspaces.refresh();
     render(WorkspaceDialogs);
-    await actions.askDelete(workspaces.byName("demo")!);
+    await actions.askDelete(workspaces.byId("w-demo")!);
     await screen.findByRole("alertdialog", { name: "Delete demo?" });
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await vi.waitFor(() => expect(actions.deleteOpen).toBe(false));

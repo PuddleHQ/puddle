@@ -8,7 +8,10 @@ import {
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const url = vi.hoisted(() => ({ pathname: "/workspaces/demo", id: "demo" }));
+const url = vi.hoisted(() => ({
+  pathname: "/workspaces/w-demo",
+  id: "w-demo",
+}));
 vi.mock("$app/state", () => ({
   page: {
     get url() {
@@ -127,8 +130,8 @@ async function settingsOf(name: string) {
 }
 
 function reset() {
-  url.pathname = "/workspaces/demo";
-  url.id = "demo";
+  url.pathname = "/workspaces/w-demo";
+  url.id = "w-demo";
   goto.mockReset();
   inbox.open = [];
   inbox.rules = [];
@@ -216,7 +219,7 @@ describe("the detail layout", () => {
     );
     expect(tabs.getByRole("link", { name: "Settings" })).toHaveAttribute(
       "href",
-      "/workspaces/demo/settings",
+      "/workspaces/w-demo/settings",
     );
   });
 
@@ -234,13 +237,13 @@ describe("the detail layout", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
       "href",
-      "/workspaces/demo/settings",
+      "/workspaces/w-demo/settings",
     );
     await fireEvent.click(
       screen.getByRole("button", { name: "Rename Web shop" }),
     );
     expect(workspaceActions.renameOpen).toBe(true);
-    expect(workspaceActions.renaming?.id).toBe("demo");
+    expect(workspaceActions.renaming?.id).toBe("w-demo");
   });
 
   it("renames a running workspace but not one that is being created or deleted", async () => {
@@ -293,8 +296,8 @@ describe("the detail layout", () => {
   });
 
   it("marks another tab, and counts what waits on the network tab", async () => {
-    url.pathname = "/workspaces/demo/network";
-    inbox.add(request(1, { workspace: "demo" as never }), "example.com");
+    url.pathname = "/workspaces/w-demo/network";
+    inbox.add(request(1, { workspace: "w-demo" as never }), "example.com");
     inbox.add(request(2, { workspace: "other" as never }), "example.com");
     await load();
     render(DetailLayout, { children: (() => {}) as never });
@@ -327,7 +330,7 @@ describe("the detail layout", () => {
     ];
     await load();
     workspaces.progress = {
-      demo: {
+      "w-demo": {
         step: "cloning",
         detail: null,
         repository: "api",
@@ -392,19 +395,19 @@ describe("the trusted mark", () => {
 describe("the overview", () => {
   it("shows state, image, repository, resources and the network summary", async () => {
     rules.rules = [
-      rule(1, { scope: { type: "workspace", workspace: "demo" } }),
+      rule(1, { scope: { type: "workspace", workspace: "w-demo" } }),
       rule(2),
       rule(3, { expires_at: 1 }),
     ];
-    inbox.add(request(1, { workspace: "demo" as never }), "example.com");
+    inbox.add(request(1, { workspace: "w-demo" as never }), "example.com");
     const entry = {
       url: "https://github.com/acme/demo.git",
       directory: "demo",
     };
-    api.checkouts["demo"] = listing([checkout("demo", { entry })]);
+    api.checkouts["w-demo"] = listing([checkout("demo", { entry })]);
     await load();
     render(Overview);
-    expect(await screen.findByText("ws-demo")).toBeInTheDocument();
+    expect(await screen.findByText("ws-w-demo")).toBeInTheDocument();
     expect(
       await screen.findByRole("list", { name: "Checkouts of demo" }),
     ).toHaveTextContent("https://github.com/acme/demo.git");
@@ -424,8 +427,8 @@ describe("the overview", () => {
 
   it("says where the memory comes from, and copes with settings that can't be read", async () => {
     await workspaces.refresh();
-    api.overrides["demo"] = {
-      ...(await settingsOf("demo")),
+    api.overrides["w-demo"] = {
+      ...(await settingsOf("w-demo")),
       memory: 4096,
     };
     await load();
@@ -439,18 +442,18 @@ describe("the overview", () => {
       message: "x",
     });
     render(Overview);
-    await screen.findByText("ws-demo");
+    await screen.findByText("ws-w-demo");
     expect(screen.queryByText("workspace override")).toBeNull();
   });
 
   it("shows an out-of-memory notice that can be dismissed", async () => {
     await load();
     render(Overview);
-    await screen.findByText("ws-demo");
+    await screen.findByText("ws-w-demo");
     expect(screen.queryByRole("alert")).toBeNull();
     workspaces.handleEvent({
       type: "oom_kill",
-      workspace: "demo",
+      workspace: "w-demo",
       pid: 77,
       process: "node",
     });
@@ -460,7 +463,7 @@ describe("the overview", () => {
     expect(alert).toHaveTextContent("process 77");
     expect(
       within(alert).getByRole("link", { name: "Change memory" }),
-    ).toHaveAttribute("href", "/workspaces/demo/settings");
+    ).toHaveAttribute("href", "/workspaces/w-demo/settings");
     await fireEvent.click(
       within(alert).getByRole("button", { name: "Dismiss" }),
     );
@@ -496,10 +499,10 @@ describe("the overview", () => {
     render(Overview);
     expect(await screen.findByText("Identifier")).toBeInTheDocument();
     expect(screen.getByText("Identifier").nextElementSibling).toHaveTextContent(
-      "demo",
+      /^w-demo$/,
     );
     // The disk is still named after the identifier.
-    expect(screen.getByText("ws-demo")).toBeInTheDocument();
+    expect(screen.getByText("ws-w-demo")).toBeInTheDocument();
   });
 
   it("can't delete a running workspace and says why", async () => {
@@ -516,7 +519,7 @@ describe("the overview", () => {
 
   it("checks what a delete would lose, then opens the dialog with it", async () => {
     api.list = [workspace("demo", { status: "stopped" })];
-    api.check = dirtyCheck("demo");
+    api.check = dirtyCheck("w-demo");
     await load();
     render(Overview);
     const del = await screen.findByRole("button", {
@@ -534,8 +537,8 @@ describe("the overview", () => {
   it("says on the workspace's page why its browser editor could not be installed", async () => {
     api.problems = [
       {
-        key: "editor-install:demo",
-        workspace: "demo",
+        key: "editor-install:w-demo",
+        workspace: "w-demo",
         title:
           "The browser editor could not be installed in demo: the download does not match",
         detail: "Terminals and desktop VS Code are not affected.",
@@ -569,8 +572,8 @@ describe("the overview", () => {
   it("says on the workspace's page that its browser editor could not update, and that the editor keeps working", async () => {
     api.problems = [
       {
-        key: "editor-update:demo",
-        workspace: "demo",
+        key: "editor-update:w-demo",
+        workspace: "w-demo",
         title:
           "The browser editor in demo could not update: the newer build exited before it started, so the previous one runs again",
         detail: "The editor keeps working on the build it has.",
@@ -597,7 +600,7 @@ describe("the overview", () => {
 
   it("says a workspace with no volume can be restored or deleted, and that deleting loses nothing", async () => {
     api.list = [workspace("demo", { status: "volume_missing" })];
-    api.check = cleanCheck("demo", { volume_missing: true });
+    api.check = cleanCheck("w-demo", { volume_missing: true });
     await load();
     render(Overview);
     expect(await screen.findByText(/Its disk is gone/)).toBeInTheDocument();
@@ -646,13 +649,13 @@ describe("the overview", () => {
 
 describe("the network tab", () => {
   beforeEach(() => {
-    url.pathname = "/workspaces/demo/network";
+    url.pathname = "/workspaces/w-demo/network";
   });
 
   it("lists this workspace's waiting requests, newest first, and not another's", async () => {
     inbox.add(
       request(1, {
-        workspace: "demo" as never,
+        workspace: "w-demo" as never,
         host: "old.example.com",
         first_seen: 1,
       }),
@@ -660,7 +663,7 @@ describe("the network tab", () => {
     );
     inbox.add(
       request(2, {
-        workspace: "demo" as never,
+        workspace: "w-demo" as never,
         host: "new.example.com",
         first_seen: 9,
       }),
@@ -724,11 +727,11 @@ describe("the network tab", () => {
 
   it("warns above the lists when a refresh failed after rows were read", async () => {
     inbox.add(
-      request(1, { workspace: "demo" as never, host: "a.example.com" }),
+      request(1, { workspace: "w-demo" as never, host: "a.example.com" }),
       "example.com",
     );
     rules.rules = [
-      rule(1, { scope: { type: "workspace", workspace: "demo" } }),
+      rule(1, { scope: { type: "workspace", workspace: "w-demo" } }),
     ];
     await load();
     render(Network);
@@ -746,7 +749,7 @@ describe("the network tab", () => {
 
   it("allows a request with one click, and the row leaves", async () => {
     inbox.add(
-      request(1, { workspace: "demo" as never, host: "a.example.com" }),
+      request(1, { workspace: "w-demo" as never, host: "a.example.com" }),
       "example.com",
     );
     await load();
@@ -766,7 +769,7 @@ describe("the network tab", () => {
     rules.rules = [
       rule(1, {
         pattern: "mine.example.com",
-        scope: { type: "workspace", workspace: "demo" },
+        scope: { type: "workspace", workspace: "w-demo" },
       }),
       rule(2, { pattern: "everyone.example.com" }),
       rule(3, {
@@ -793,7 +796,7 @@ describe("the network tab", () => {
         host: "api.example.com",
         methods: ["DELETE"],
         path: "/repos/**",
-        workspace: "demo",
+        workspace: "w-demo",
       }),
       requestRule(2, {
         host: "*.example.org",
@@ -846,7 +849,7 @@ describe("the network tab", () => {
 
 describe("the settings tab", () => {
   beforeEach(() => {
-    url.pathname = "/workspaces/demo/settings";
+    url.pathname = "/workspaces/w-demo/settings";
   });
 
   async function open() {
@@ -882,7 +885,7 @@ describe("the settings tab", () => {
     await open();
     expect(screen.queryByText(/fields this Puddle doesn't know/)).toBeNull();
     cleanup();
-    api.unknown = { demo: ["clipboard_reed"] };
+    api.unknown = { "w-demo": ["clipboard_reed"] };
     await open();
     expect(
       screen.getByText(/fields this Puddle doesn't know/),
@@ -893,14 +896,14 @@ describe("the settings tab", () => {
     const memory = await open();
     await fireEvent.change(memory, { target: { value: "16384" } });
     await screen.findByText("Memory saved.");
-    expect(api.overrides["demo"]?.memory).toBe(16_384);
+    expect(api.overrides["w-demo"]?.memory).toBe(16_384);
     expect(
       await screen.findByText(
         "The new memory applies the next time the workspace starts.",
       ),
     ).toBeInTheDocument();
     await fireEvent.change(memory, { target: { value: "" } });
-    await vi.waitFor(() => expect(api.overrides["demo"]?.memory).toBeNull());
+    await vi.waitFor(() => expect(api.overrides["w-demo"]?.memory).toBeNull());
   });
 
   it("saves a CPU count at once; a running workspace is told it keeps its count until the next start", async () => {
@@ -915,12 +918,12 @@ describe("the settings tab", () => {
     ).toBeInTheDocument();
     await fireEvent.change(cpus, { target: { value: "4" } });
     await screen.findByText("CPUs saved.");
-    expect(api.overrides["demo"]?.cpus).toBe(4);
+    expect(api.overrides["w-demo"]?.cpus).toBe(4);
     expect(
       await screen.findByText(/The new CPU count applies the next time/),
     ).toBeInTheDocument();
     await fireEvent.change(cpus, { target: { value: "" } });
-    await vi.waitFor(() => expect(api.overrides["demo"]?.cpus).toBeNull());
+    await vi.waitFor(() => expect(api.overrides["w-demo"]?.cpus).toBeNull());
   });
 
   it("says nothing of a restart for a stopped workspace and puts the CPU choice back when the save is refused", async () => {
@@ -957,14 +960,14 @@ describe("the settings tab", () => {
     await fireEvent.change(select, { target: { value: "on" } });
     expect(workspaceActions.trustOpen).toBe(true);
     expect(workspaceActions.trustFor?.name).toBe("demo");
-    expect(api.overrides["demo"]?.direct_ssh ?? null).toBeNull();
+    expect(api.overrides["w-demo"]?.direct_ssh ?? null).toBeNull();
     expect(select.value).toBe("inherit");
     await fireEvent.change(select, { target: { value: "off" } });
     await screen.findByText("Allow direct SSH saved.");
-    expect(api.overrides["demo"]?.direct_ssh).toBe(false);
+    expect(api.overrides["w-demo"]?.direct_ssh).toBe(false);
     await fireEvent.change(select, { target: { value: "inherit" } });
     await vi.waitFor(() =>
-      expect(api.overrides["demo"]?.direct_ssh).toBeNull(),
+      expect(api.overrides["w-demo"]?.direct_ssh).toBeNull(),
     );
   });
 
@@ -979,7 +982,7 @@ describe("the settings tab", () => {
     ).toBeInTheDocument();
     await fireEvent.change(select, { target: { value: "off" } });
     await screen.findByText("Login capture saved.");
-    expect(api.overrides["demo"]?.capture_logins).toBe(false);
+    expect(api.overrides["w-demo"]?.capture_logins).toBe(false);
     expect(
       await screen.findByText(
         "The new login setting applies the next time the workspace starts.",
@@ -987,7 +990,7 @@ describe("the settings tab", () => {
     ).toBeInTheDocument();
     await fireEvent.change(select, { target: { value: "inherit" } });
     await vi.waitFor(() =>
-      expect(api.overrides["demo"]?.capture_logins).toBeNull(),
+      expect(api.overrides["w-demo"]?.capture_logins).toBeNull(),
     );
   });
 
@@ -999,7 +1002,7 @@ describe("the settings tab", () => {
     expect(box.checked).toBe(false);
     await fireEvent.click(box);
     await screen.findByText("Puddle now decrypts every host.");
-    expect(api.interception["demo"]?.decrypt_all).toBe(true);
+    expect(api.interception["w-demo"]?.decrypt_all).toBe(true);
     const names = screen.getByRole("textbox", {
       name: "Never decrypt in this workspace",
     });
@@ -1008,13 +1011,13 @@ describe("the settings tab", () => {
     });
     await fireEvent.click(screen.getByRole("button", { name: "Keep names" }));
     await screen.findByText("Saved.");
-    expect(api.interception["demo"]?.never_decrypt).toEqual([
+    expect(api.interception["w-demo"]?.never_decrypt).toEqual([
       "*.corp.test",
       "bank.example",
     ]);
     await fireEvent.click(box);
     await screen.findByText("Puddle decrypts only hosts with a credential.");
-    expect(api.interception["demo"]?.decrypt_all).toBe(false);
+    expect(api.interception["w-demo"]?.decrypt_all).toBe(false);
   });
 
   it("names the global never-decrypt list read-only, and puts the switch back when the save is refused", async () => {
@@ -1036,7 +1039,7 @@ describe("the settings tab", () => {
   });
 
   it("lists the hosts a tool refused Puddle's certificate for and decrypts them again", async () => {
-    api.learned["demo"] = [
+    api.learned["w-demo"] = [
       { host: "pinned.example", expires_in_secs: 600 },
       { host: "other.example", expires_in_secs: 7200 },
     ];
@@ -1061,7 +1064,7 @@ describe("the settings tab", () => {
   });
 
   it("says why a host could not be decrypted again and keeps the list", async () => {
-    api.learned["demo"] = [{ host: "pinned.example", expires_in_secs: 600 }];
+    api.learned["w-demo"] = [{ host: "pinned.example", expires_in_secs: 600 }];
     await open();
     await screen.findByText("pinned.example");
     api.refuse.set("DELETE /api/workspaces/{id}/interception/learned/{host}", {
@@ -1116,7 +1119,7 @@ describe("the settings tab", () => {
   });
 
   it("lists the kept logins on the settings page, forgets one after a confirmation, and ends its notice", async () => {
-    api.kept["demo"] = {
+    api.kept["w-demo"] = {
       store_readable: true,
       logins: [
         { service: "claude", name: "Claude Code", since: 1_761_480_000_000 },
@@ -1124,7 +1127,7 @@ describe("the settings tab", () => {
       ],
     };
     notices.add({
-      key: "login:demo:Claude Code:capture_off",
+      key: "login:w-demo:Claude Code:capture_off",
       tone: "warning",
       title: "Claude Code login in demo can't be used.",
     });
@@ -1154,12 +1157,14 @@ describe("the settings tab", () => {
     expect(within(list).getAllByRole("listitem")).toHaveLength(1);
     expect(list).toHaveTextContent("Forgot the Claude Code login.");
     expect(
-      notices.items.some((n) => n.key === "login:demo:Claude Code:capture_off"),
+      notices.items.some(
+        (n) => n.key === "login:w-demo:Claude Code:capture_off",
+      ),
     ).toBe(false);
   });
 
   it("keeps the row and says why when the forget is refused, and Cancel closes the dialog", async () => {
-    api.kept["demo"] = {
+    api.kept["w-demo"] = {
       store_readable: true,
       logins: [{ service: "claude", name: "Claude Code", since: null }],
     };
@@ -1195,7 +1200,7 @@ describe("the settings tab", () => {
       await screen.findByText(/keeps no logins for this workspace/),
     ).toBeInTheDocument();
     cleanup();
-    api.kept["demo"] = { logins: [], store_readable: false };
+    api.kept["w-demo"] = { logins: [], store_readable: false };
     await open();
     expect(
       await screen.findByText(/couldn't read this computer's credential store/),
@@ -1218,10 +1223,10 @@ describe("the settings tab", () => {
   });
 
   it("reads the kept logins again when the credential store did not answer and the user retries", async () => {
-    api.kept["demo"] = { logins: [], store_readable: false };
+    api.kept["w-demo"] = { logins: [], store_readable: false };
     await open();
     await screen.findByText(/couldn't read this computer's credential store/);
-    api.kept["demo"] = { logins: [], store_readable: true };
+    api.kept["w-demo"] = { logins: [], store_readable: true };
     await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
       await screen.findByText(/keeps no logins for this workspace/),
@@ -1234,8 +1239,8 @@ describe("the settings tab", () => {
       target: { value: "on" },
     });
     await screen.findByText("Private networks saved.");
-    expect(api.overrides["demo"]?.local_toggles.private).toBe(true);
-    expect(api.overrides["demo"]?.local_toggles.loopback).toBeNull();
+    expect(api.overrides["w-demo"]?.local_toggles.private).toBe(true);
+    expect(api.overrides["w-demo"]?.local_toggles.loopback).toBeNull();
     await fireEvent.change(
       screen.getByLabelText("Pages reading the clipboard"),
       {
@@ -1243,8 +1248,8 @@ describe("the settings tab", () => {
       },
     );
     await screen.findByText("Clipboard saved.");
-    expect(api.overrides["demo"]?.clipboard_read).toBe("deny");
-    expect(api.overrides["demo"]?.local_toggles.private).toBe(true);
+    expect(api.overrides["w-demo"]?.clipboard_read).toBe("deny");
+    expect(api.overrides["w-demo"]?.local_toggles.private).toBe(true);
     await fireEvent.change(
       screen.getByLabelText("Pages reading the clipboard"),
       {
@@ -1252,13 +1257,13 @@ describe("the settings tab", () => {
       },
     );
     await vi.waitFor(() =>
-      expect(api.overrides["demo"]?.clipboard_read).toBeNull(),
+      expect(api.overrides["w-demo"]?.clipboard_read).toBeNull(),
     );
     await fireEvent.change(screen.getByLabelText("Private networks"), {
       target: { value: "off" },
     });
     await vi.waitFor(() =>
-      expect(api.overrides["demo"]?.local_toggles.private).toBe(false),
+      expect(api.overrides["w-demo"]?.local_toggles.private).toBe(false),
     );
   });
 

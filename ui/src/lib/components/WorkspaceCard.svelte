@@ -37,7 +37,8 @@
     onDismiss: (w: Workspace) => void;
   } = $props();
 
-  const titleId = $derived(`ws-${workspace.name}`);
+  const uid = $props.id();
+  const titleId = $derived(`${uid}-title`);
 </script>
 
 <article class="card" aria-labelledby={titleId}>
@@ -85,7 +86,7 @@
     {/if}
   </p>
   {#if workspace.status === "volume_missing" && workspace.busy === null}
-    <VolumeMissingNotice name={workspace.name} />
+    <VolumeMissingNotice id={workspace.id} />
   {/if}
   <ProgressLine
     busy={workspace.busy}

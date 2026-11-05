@@ -8,7 +8,7 @@ import {
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const url = vi.hoisted(() => ({ id: "web" }));
+const url = vi.hoisted(() => ({ id: "w-web" }));
 vi.mock("$app/state", () => ({
   page: {
     get params() {
@@ -40,9 +40,9 @@ import Page from "./+page.svelte";
 const { api, source, workspace } = h;
 
 beforeEach(() => {
-  url.id = "web";
+  url.id = "w-web";
   workspaces.list = [workspace("web", { status: "running" })];
-  api.shell = { web: { content: "export A=1\n", changed_at: 10 } };
+  api.shell = { "w-web": { content: "export A=1\n", changed_at: 10 } };
   api.shellChecked = { checked: true, reason: null };
   api.calls = [];
   api.down = false;
@@ -86,7 +86,7 @@ describe("the editor", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Saved. Puddle ran it once in the workspace and it printed nothing.",
     );
-    expect(api.shell["web"]?.content).toBe("export A=2\n");
+    expect(api.shell["w-web"]?.content).toBe("export A=2\n");
     expect(field).toHaveValue("export A=2\n");
     expect(button("Save")).toBeDisabled();
     expect(toasts.items.at(-1)?.message).toBe("Saved the shell init.");
@@ -118,7 +118,7 @@ describe("the editor", () => {
     await fireEvent.click(button("Save"));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Not saved. it printed: hello");
-    expect(api.shell["web"]?.content).toBe("export A=1\n");
+    expect(api.shell["w-web"]?.content).toBe("export A=1\n");
     expect(field).toHaveValue("echo hello");
     expect(field).toHaveAttribute("aria-invalid", "true");
     await fireEvent.input(field, { target: { value: "ls" } });
@@ -143,14 +143,16 @@ describe("the editor", () => {
     render(Page);
     const field = await box();
     await fireEvent.click(button("Remove the script"));
-    await waitFor(() => expect(api.shell["web"]).toBeUndefined());
+    await waitFor(() => expect(api.shell["w-web"]).toBeUndefined());
     await waitFor(() => expect(field).toHaveValue("export A=1\n"));
     await waitFor(() => expect(button("Save")).toBeEnabled());
     expect(toasts.items.at(-1)?.message).toContain(
       "Its text is still in the box",
     );
     await fireEvent.click(button("Save"));
-    await waitFor(() => expect(api.shell["web"]?.content).toBe("export A=1\n"));
+    await waitFor(() =>
+      expect(api.shell["w-web"]?.content).toBe("export A=1\n"),
+    );
   });
 
   it("says when the removal fails", async () => {
@@ -169,7 +171,7 @@ describe("what happens behind the page", () => {
     render(Page);
     await box();
     expect(screen.queryByText(/Puddle put your saved text back/)).toBeNull();
-    source.emit({ type: "workspace_shell_init_restored", workspace: "web" });
+    source.emit({ type: "workspace_shell_init_restored", workspace: "w-web" });
     expect(
       await screen.findByText(/Puddle put your saved text back/),
     ).toBeTruthy();
@@ -180,8 +182,8 @@ describe("what happens behind the page", () => {
   it("follows a save made elsewhere when the box is untouched", async () => {
     render(Page);
     const field = await box();
-    api.shell["web"] = { content: "export B=1\n", changed_at: 20 };
-    source.emit({ type: "workspace_shell_init_changed", workspace: "web" });
+    api.shell["w-web"] = { content: "export B=1\n", changed_at: 20 };
+    source.emit({ type: "workspace_shell_init_changed", workspace: "w-web" });
     await waitFor(() => expect(field).toHaveValue("export B=1\n"));
     expect(screen.queryByText(/changed while you were editing/)).toBeNull();
   });
@@ -190,8 +192,8 @@ describe("what happens behind the page", () => {
     render(Page);
     const field = await box();
     await fireEvent.input(field, { target: { value: "my edit" } });
-    api.shell["web"] = { content: "export B=1\n", changed_at: 20 };
-    source.emit({ type: "workspace_shell_init_changed", workspace: "web" });
+    api.shell["w-web"] = { content: "export B=1\n", changed_at: 20 };
+    source.emit({ type: "workspace_shell_init_changed", workspace: "w-web" });
     expect(
       await screen.findByText(/changed while you were editing/),
     ).toBeTruthy();
@@ -208,7 +210,7 @@ describe("loading", () => {
     render(Page);
     expect(screen.getByText(/Loading shell init/)).toBeTruthy();
     cleanup();
-    url.id = "web";
+    url.id = "w-web";
     api.down = true;
     render(Page);
     expect(

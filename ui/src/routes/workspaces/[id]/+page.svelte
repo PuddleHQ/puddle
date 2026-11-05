@@ -28,12 +28,12 @@
   const id = $derived(page.params["id"] ?? "");
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
   const editorProblem = $derived(
-    workspace ? editorProblems.of(workspace.name) : null,
+    workspace ? editorProblems.of(workspace.id) : null,
   );
   const editorUpdateProblem = $derived(
-    workspace ? editorProblems.updateOf(workspace.name) : null,
+    workspace ? editorProblems.updateOf(workspace.id) : null,
   );
-  const oom = $derived(workspace ? workspaces.oom[workspace.name] : undefined);
+  const oom = $derived(workspace ? workspaces.oom[workspace.id] : undefined);
 
   let now = $state(Date.now());
   let dismissedOom = $state<number | null>(null);
@@ -53,15 +53,15 @@
   });
 
   // Where the memory figure comes from, so "workspace override" and "global default" say true.
-  const name = $derived(workspace?.name);
+  const wid = $derived(workspace?.id);
   const memoryMib = $derived(workspace?.memory_mib);
   $effect(() => {
-    if (!name) return;
+    if (!wid) return;
     void memoryMib; // read again when the figure changes
     void (async () => {
       try {
         const { data } = await api.GET("/api/settings/workspaces/{workspace}", {
-          params: { path: { workspace: name } },
+          params: { path: { workspace: wid } },
         });
         memorySource = data?.effective.memory.source ?? null;
       } catch {
@@ -71,13 +71,12 @@
   });
 
   const waiting = $derived(
-    pending.rows.filter((r) => r.request.workspace === workspace?.name).length,
+    pending.rows.filter((r) => r.request.workspace === workspace?.id).length,
   );
   const ruleCounts = $derived.by(() => {
     const active = rulesStore.rules.filter((r) => !isExpired(r, now));
     return {
-      workspace: active.filter((r) => workspaceOf(r) === workspace?.name)
-        .length,
+      workspace: active.filter((r) => workspaceOf(r) === workspace?.id).length,
       global: active.filter((r) => workspaceOf(r) === null).length,
     };
   });
@@ -123,7 +122,7 @@
       <dl>
         {#if workspace.display_name !== workspace.name}
           <dt>Identifier</dt>
-          <dd class="mono">{workspace.name}</dd>
+          <dd class="mono">{workspace.id}</dd>
         {/if}
         <dt>State</dt>
         <dd><StatusChip status={workspace.status} busy={workspace.busy} /></dd>
@@ -139,7 +138,7 @@
         <dd class="mono">{workspace.image}</dd>
       </dl>
       {#if workspace.status === "volume_missing" && workspace.busy === null}
-        <VolumeMissingNotice name={workspace.name} detail />
+        <VolumeMissingNotice id={workspace.id} detail />
       {/if}
       {#if editorProblem}
         <EditorInstallNotice
@@ -176,7 +175,7 @@
         <dt>Disk</dt>
         <dd>{diskLabel(workspace)}</dd>
         <dt>Volume</dt>
-        <dd class="mono">ws-{workspace.name}</dd>
+        <dd class="mono">ws-{workspace.id}</dd>
       </dl>
       <p class="hint">
         Reclaiming space gives disk the workspace no longer uses back to your
@@ -226,7 +225,7 @@
           onclick={() => void actions.askDelete(workspace)}
         >
           <Trash2 aria-hidden="true" size={16} />{actions.checking ===
-          workspace.name
+          workspace.id
             ? "Checking…"
             : "Delete workspace…"}
         </button>

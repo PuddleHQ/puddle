@@ -34,14 +34,14 @@
 
   const store = new CheckoutsStore();
   const git = new WorkspaceGitStore();
-  const name = $derived(workspace.name);
+  const wid = $derived(workspace.id);
 
   onMount(() => identities.start());
   $effect(() => {
-    if (name) return store.start(name);
+    if (wid) return store.start(wid);
   });
   $effect(() => {
-    if (name) return git.start(name);
+    if (wid) return git.start(wid);
   });
 
   const listing = $derived(store.listing);
@@ -50,7 +50,7 @@
   const missing = $derived(missingEntries(entries, listing));
   const addOff = $derived(addProblem(workspace));
   const cloneOff = $derived(cloneAgainProblem(workspace));
-  const progress = $derived(workspaces.progress[name]);
+  const progress = $derived(workspaces.progress[wid]);
   const onDisk = $derived(listing?.checkouts.map((c) => c.directory) ?? []);
   // A listing with nothing on it and no entry has nothing to show; a stopped workspace with no
   // listing still shows its list entries, unchecked.

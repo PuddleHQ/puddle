@@ -100,7 +100,7 @@ describe("WorkspaceCard", () => {
     const calls = mount({}, workspace("demo", { status: "volume_missing" }));
     const card = screen.getByRole("article");
     expect(card).toHaveTextContent("Volume missing");
-    expect(card).toHaveTextContent("Restore the volume ws-demo");
+    expect(card).toHaveTextContent("Restore the volume ws-w-demo");
     expect(card).toHaveTextContent("open Details to delete it");
     expect(screen.getByRole("button", { name: /Start/ })).toBeEnabled();
     expect(calls.start).not.toHaveBeenCalled();
@@ -118,7 +118,7 @@ describe("WorkspaceCard", () => {
     mount({ waiting: 2 });
     expect(screen.getByRole("link", { name: "2 waiting" })).toHaveAttribute(
       "href",
-      "/workspaces/demo/network",
+      "/workspaces/w-demo/network",
     );
     cleanup();
     mount({ waiting: 0 });

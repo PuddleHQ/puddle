@@ -12,7 +12,7 @@ export function workspace(
   over: Partial<Workspace> = {},
 ): Workspace {
   return {
-    id: name,
+    id: "w-" + name,
     name,
     display_name: name,
     repositories: [
@@ -70,12 +70,13 @@ export function listing(
   };
 }
 
+/** What a delete check of the workspace with this id says. */
 export function cleanCheck(
-  name: string,
+  id: string,
   over: Partial<DeleteCheck> = {},
 ): DeleteCheck {
   return {
-    workspace: name,
+    workspace: id,
     clean: true,
     repos: [],
     other: { items: [], more: 0 },
@@ -303,12 +304,12 @@ export class FakeWorkspaces {
           vscode_server: {},
         });
       case "/api/settings/workspaces/{workspace}": {
-        const name = String(id);
+        const key = String(id);
         return this.reply(200, {
-          workspace: name,
-          overrides: this.overrides[name] ?? noLayer(),
-          effective: this.effective(name),
-          unknown_fields: this.unknown[name] ?? [],
+          workspace: key,
+          overrides: this.overrides[key] ?? noLayer(),
+          effective: this.effective(key),
+          unknown_fields: this.unknown[key] ?? [],
         });
       }
     }
@@ -330,7 +331,11 @@ export class FakeWorkspaces {
     if (path === "/api/workspaces") {
       const body = init.body ?? {};
       const name = String(body["name"]);
-      if (this.find(name))
+      if (
+        this.list.some(
+          (w) => w.display_name.toLowerCase() === name.toLowerCase(),
+        )
+      )
         return this.reply(
           409,
           undefined,
@@ -479,7 +484,7 @@ export class FakeWorkspaces {
       never_decrypt: [],
     };
     return {
-      workspace: w.name,
+      workspace: w.id,
       decrypt_all: own.decrypt_all,
       never_decrypt: own.never_decrypt,
       global_never_decrypt: this.globalNeverDecrypt,
@@ -546,17 +551,17 @@ export class FakeWorkspaces {
       this.list = this.list.map((w) => (w.id === found.id ? changed : w));
       return this.reply(200, changed);
     }
-    const name = init.params.path.workspace;
-    this.overrides[name] = init.body.overrides;
+    const key = init.params.path.workspace;
+    this.overrides[key] = init.body.overrides;
     this.list = this.list.map((w) =>
-      w.name === name
+      w.id === key
         ? { ...w, direct_ssh: init.body.overrides.direct_ssh === true }
         : w,
     );
     return this.reply(200, {
-      workspace: name,
-      overrides: this.overrides[name],
-      effective: this.effective(name),
+      workspace: key,
+      overrides: this.overrides[key],
+      effective: this.effective(key),
       unknown_fields: [],
     });
   };

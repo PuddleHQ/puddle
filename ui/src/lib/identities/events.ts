@@ -29,16 +29,16 @@ export function isRepoListsChanged(v: unknown): v is RepoListsChanged {
   return isObject(v) && v["type"] === "repo_lists_changed";
 }
 
-/** A change to a workspace's Git settings; `name` narrows it to one workspace. */
+/** A change to a workspace's Git settings; `id` narrows it to one workspace. */
 export function isWorkspaceGitChanged(
   v: unknown,
-  name?: string,
+  id?: string,
 ): v is WorkspaceGitChanged {
   return (
     isObject(v) &&
     v["type"] === "workspace_git_changed" &&
     typeof v["workspace"] === "string" &&
-    (name === undefined || v["workspace"] === name)
+    (id === undefined || v["workspace"] === id)
   );
 }
 

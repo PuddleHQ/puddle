@@ -194,7 +194,7 @@ export class WorkspaceActions {
   }
 
   async #setDirectSsh(w: Workspace, on: boolean): Promise<void> {
-    const result = await this.#store.setDirectSsh(w.name, on);
+    const result = await this.#store.setDirectSsh(w.id, on);
     if (!result.ok) {
       this.#fail(result.message);
       return;
@@ -236,7 +236,7 @@ export class WorkspaceActions {
   /** Reads what deleting would lose, then asks. */
   askDelete = async (w: Workspace): Promise<void> => {
     if (this.checking !== null) return;
-    this.checking = w.name;
+    this.checking = w.id;
     const result = await this.#store.checkDelete(w.id);
     this.checking = null;
     if (!result.ok) {
@@ -246,7 +246,7 @@ export class WorkspaceActions {
     this.deleting = {
       workspace: w,
       check: result.value,
-      removes: await this.#removed(w.name),
+      removes: await this.#removed(w.id),
       working: false,
       error: null,
     };
@@ -278,7 +278,7 @@ export class WorkspaceActions {
         this.deleting = {
           ...state,
           check: again.value,
-          removes: await this.#removed(state.workspace.name),
+          removes: await this.#removed(state.workspace.id),
           working: false,
           error: result.message,
         };
@@ -289,7 +289,7 @@ export class WorkspaceActions {
   };
 
   dismissProgress = (w: Workspace): void => {
-    this.#store.dismissProgress(w.name);
+    this.#store.dismissProgress(w.id);
   };
 }
 

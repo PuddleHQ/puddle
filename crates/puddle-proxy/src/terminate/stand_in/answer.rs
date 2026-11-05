@@ -873,5 +873,4 @@ pub(crate) fn limit_accept_encoding(headers: &mut HeaderMap) {
 }
 
 #[cfg(test)]
-#[path = "answer_tests.rs"]
 mod tests;

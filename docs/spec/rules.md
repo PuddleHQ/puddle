@@ -115,6 +115,26 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   approvable; one record per destination at most every ten seconds).
   *Changed 2026-10-06: the exact-IP case was added, following the principle that a local destination
   needs an exact name or IP entry; before, only an exact name rule or an approval counted.*
+- **Company-network destinations** are a sixth category next to the local ones, with its own toggle
+  (global, with a per-workspace override, off by default). A resolved address is in the category when
+  the host sees one of these signals: the system proxy configuration answers direct for the URL while
+  the same configuration sends other URLs through a proxy (`pac_direct`); the name falls under a DNS
+  suffix the host is configured with, as its primary or connection-specific suffix, on the search list
+  or in a name-resolution policy namespace (`dns_suffix`); the address is in `100.64.0.0/10` while a
+  private-access network client is present (`private_access_cgnat`); or the address is in RFC 1918
+  space and is routed through a VPN interface rather than the physical LAN (`vpn_route`). An address
+  that also fits local/private network counts as company network. An address on the physical LAN's own
+  subnet stays local/private network, and `100.64.0.0/10` with no private-access client stays there
+  too. Loopback, link-local, metadata, special-use and Puddle's own endpoints are never company
+  network. A signal the host cannot read counts as no signal, so the address stays local/private
+  network: the company toggle never opens what the private toggle guards. With the toggle off, a
+  company-network destination is blocked before the rules are asked, with no pending row, and the
+  block names the signal and the switch. With it on, the rules of this section apply unchanged: only an
+  exact allow counts, and a suffix allow reaches the destination only when "wildcards reach local
+  addresses" is on. The toggle allows nothing by itself. On a proxied route the check is made on the
+  address the host resolves for the name, with a short timeout. An answer that is public, missing or
+  late does not deny, because the company proxy may be the only resolver.
+  *Added 2026-11-05.*
 - **R-27 An exact IP deny wins for a resolved address** (the proxy applies this to every address an
   allowed name resolves to, before R-14). The proxy looks up each address's own rules
   (`Policy::lookup`, R-5 to R-7 as for a request to that literal): if they deny it, the address is
@@ -171,8 +191,8 @@ readable as JSONL (one record per line).
   reason `sandbox_deleted`, and read as `workspace_id`, `workspace`, `workspace` and
   `workspace_deleted`.
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
-  `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
-  `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
+  `resolved_ip`, `category` (`company_network` for a destination in that category, `null` otherwise and in older records), `signal` (`pac_direct`, `dns_suffix`, `private_access_cgnat` or `vpn_route`: the signal that put it there, `null` when none is known), `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
+  `toggle:<category>`, `company_network_off`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
   `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
   went out unchanged: to a host outside their hosts, or in the path or query; also `stale-stand-in:secret:<name>` and
   `stale-stand-in:github` for a value shaped like a stand-in that the workspace does not hold),

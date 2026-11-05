@@ -26,8 +26,8 @@ use crate::error::{Result, XtaskError};
 use crate::inventory::Inventory;
 use crate::notice;
 use crate::source::{
-    CHECKSUMS_ASSET, FIRMWARE_FORK, Firmware, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET, MSB_ASSET,
-    MSB_LINUX_ASSET, Origin, ReleaseSource,
+    CHECKSUMS_ASSET, FIRMWARE_FORK, Firmware, ForkFacts, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET,
+    MSB_ASSET, MSB_LINUX_ASSET, Origin, ReleaseSource,
 };
 
 /// The licence texts shipped with every runtime.
@@ -232,6 +232,42 @@ fn fetch_verified(
     Ok((file, sha))
 }
 
+/// Downloads and verifies the firmware library. Windows: the fork release's dll, the one
+/// `ci/fetch-msb.sh` pins and the VM tests run, so the installer ships the tested firmware. Linux:
+/// the pinned libkrunfw fork release, else upstream's.
+fn fetch_firmware(
+    source: &dyn ReleaseSource,
+    facts: &ForkFacts,
+    os: HostOs,
+    target: &Target,
+    downloads: &Path,
+) -> Result<(PathBuf, String)> {
+    let fw_origin = match os {
+        HostOs::Windows => Origin::Fork,
+        HostOs::Linux | HostOs::MacOs => firmware_origin(target, &facts.firmware)?,
+    };
+    let fw_list = match (fw_origin, &facts.firmware.fork_tag) {
+        (Origin::Fork, _) => format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
+        (Origin::FirmwareFork, Some(fork_tag)) => {
+            format!("{FIRMWARE_FORK} {fork_tag} {CHECKSUMS_ASSET}")
+        }
+        _ => format!(
+            "{} {} {CHECKSUMS_ASSET}",
+            facts.upstream_repo, facts.upstream_tag
+        ),
+    };
+    fetch_verified(
+        source,
+        fw_origin,
+        match os {
+            HostOs::Windows => LIBKRUNFW_ASSET,
+            HostOs::Linux | HostOs::MacOs => LIBKRUNFW_LINUX_ASSET,
+        },
+        &downloads.join("firmware"),
+        &fw_list,
+    )
+}
+
 /// Copies the downloaded files into `staging` under the names of `layout`.
 fn place(layout: &[(String, Part)], msb: &Path, fw: &Path, staging: &Path) -> Result<()> {
     for (name, part) in layout {
@@ -291,32 +327,7 @@ fn build(
             found: found.unwrap_or_else(|| "none".into()),
         });
     }
-    // Windows: the fork release's dll, the one `ci/fetch-msb.sh` pins and the VM tests run, so the
-    // installer ships the tested firmware. Linux: the pinned libkrunfw fork release, else upstream's.
-    let fw_origin = match os {
-        HostOs::Windows => Origin::Fork,
-        HostOs::Linux | HostOs::MacOs => firmware_origin(target, &facts.firmware)?,
-    };
-    let fw_list = match (fw_origin, &facts.firmware.fork_tag) {
-        (Origin::Fork, _) => format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
-        (Origin::FirmwareFork, Some(fork_tag)) => {
-            format!("{FIRMWARE_FORK} {fork_tag} {CHECKSUMS_ASSET}")
-        }
-        _ => format!(
-            "{} {} {CHECKSUMS_ASSET}",
-            facts.upstream_repo, facts.upstream_tag
-        ),
-    };
-    let (fw, libkrunfw_sha256) = fetch_verified(
-        source,
-        fw_origin,
-        match os {
-            HostOs::Windows => LIBKRUNFW_ASSET,
-            HostOs::Linux | HostOs::MacOs => LIBKRUNFW_LINUX_ASSET,
-        },
-        &downloads.join("firmware"),
-        &fw_list,
-    )?;
+    let (fw, libkrunfw_sha256) = fetch_firmware(source, &facts, os, target, &downloads)?;
     let msb_inventory = source.msb_inventory(os)?;
     msb_inventory.check()?;
     puddle.check()?;

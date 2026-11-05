@@ -2,7 +2,7 @@
 //! Developer and release tasks, run as `cargo xtask <command>` (alias in `.cargo/config.toml`).
 //!
 //! - `runtime`: assembles the bundled msb runtime folder of this OS ([`assemble`]): on Windows the
-//!   fork's `msb.exe` and upstream's `libkrunfw.dll`; on Linux a given msb (the fork releases none)
+//!   fork's `msb.exe` and the fork release's `libkrunfw.dll` (the one the VM tests run); on Linux a given msb (the fork releases none)
 //!   and upstream's firmware under `libkrunfw.so.5` and the versioned name msb looks for. Downloads
 //!   are checksum verified, the embedded msb version is checked against the tag, and `licenses/`
 //!   holds the licence texts, the NOTICE (fork commits, written offer) and the third-party notices

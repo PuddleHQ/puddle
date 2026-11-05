@@ -304,6 +304,7 @@ mod tests {
         // Another test may already have run the call site with no subscriber and cached "off".
         tracing::callsite::rebuild_interest_cache();
         run.await;
+        io::Write::flush(&mut capture.clone()).unwrap();
         let bytes = capture.0.lock().unwrap().clone();
         String::from_utf8(bytes).unwrap()
     }

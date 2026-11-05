@@ -353,4 +353,33 @@ mod tests {
         );
         assert_eq!(company_signal(true, ip("::ffff:10.9.1.1"), None, &s), None);
     }
+    #[test]
+    fn a_prefix_longer_than_the_address_matches_nothing() {
+        let s = StaticSignals::new()
+            .with_vpn_route(ip("10.0.0.0"), 33)
+            .with_vpn_route(ip("fd00::"), 129);
+        assert!(!s.vpn_routed(ip("10.0.0.1")));
+        assert!(!s.vpn_routed(ip("fd00::1")));
+    }
+
+    /// A host that can read only the proxy script: the signals it cannot read answer "no".
+    struct PacOnly;
+
+    impl CompanySignals for PacOnly {
+        fn pac_direct(&self, name: &str) -> bool {
+            name == "nexus.corp.example"
+        }
+    }
+
+    #[test]
+    fn a_signal_the_host_cannot_read_never_widens_access() {
+        let signal = |addr: &str, name: &str| company_signal(true, ip(addr), Some(name), &PacOnly);
+        assert_eq!(
+            signal("10.1.2.3", "nexus.corp.example"),
+            Some(CompanySignal::PacDirect)
+        );
+        // Not on a physical LAN as far as it can tell, but no other signal either.
+        assert_eq!(signal("100.64.3.7", "other.corp.example"), None);
+        assert_eq!(signal("10.8.0.9", "other.corp.example"), None);
+    }
 }

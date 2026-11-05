@@ -237,8 +237,17 @@ mod tests {
                 format!("\"{}\"", s.code())
             );
             assert_eq!(s.to_string(), s.code());
-            assert_ne!(s.describe(), "");
         }
+        let described: Vec<_> = CompanySignal::ALL.iter().map(|s| s.describe()).collect();
+        assert_eq!(
+            described,
+            [
+                "your company's proxy settings, which send it direct",
+                "your company's DNS suffix",
+                "a private-access client",
+                "your VPN"
+            ]
+        );
     }
 
     #[test]

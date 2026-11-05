@@ -625,6 +625,7 @@ fn fixture_updating(telemetry: bool, auto_update: bool) -> Fixture {
         server,
         password_file: dir.path().join("run/editor-password"),
         boot_id: dir.path().join("boot_id"),
+        root: dir.path().join("root"),
     };
     Fixture {
         _dir: dir,

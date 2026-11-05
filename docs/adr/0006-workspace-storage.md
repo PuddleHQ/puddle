@@ -35,6 +35,11 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 
 - **Git with default settings lost HEAD in 5/5 VMM kills;** with `core.fsync=committed`, 5/5 repos
   passed `git fsck --full`.
+- **Host power loss lost no acknowledged commit with `core.fsync=committed`** (31 cuts of the disk
+  behind the volume; 30 more with `added`), and `e2fsck` passed on the volume image after all 66
+  cuts, git's default lost the newest commits in the first cut. Two git files are not covered: the
+  index (2 corrupt in 31 cuts with `committed`, none with `added`) and `HEAD` after a branch switch
+  (1 zero-filled in 61 cuts; no `core.fsync` value syncs it). Neither loses a commit.
 - **Disk images never shrink on delete.** The volume held 8.8 GB allocated after `rm -rf` of
   everything; `fstrim` in the guest brought it to 104 MB. msb mounts volumes without `discard`. The
   layered root disk refused `fstrim /` (`discard not supported`), and held 5.4 GB.
@@ -65,8 +70,10 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 6. **Guest git uses `core.fsync=committed`.** There is no image of our own to bake it into
    (ADR 0005), so Puddle's boot-time guest setup writes it into its own git config file in the guest
    (`/etc/puddle/gitconfig`), which `/etc/gitconfig` pulls in with one `include` line, next to
-   the other boot setup (inotify limits, proxy config, PATH fix, git identity). The write cost is
-   not measured yet.
+   the other boot setup (inotify limits, proxy config, PATH fix, git identity). Measured on a busy
+   host: 1 000 commits take about 4 times as long (113 s against 29 s, 3 fsyncs per commit), a
+   `git add -A` of 50 000 new files 33 times as long (692 s against 21 s), and a checkout is
+   unchanged.
 7. **Puddle trims workspace volumes:** `fstrim` on the volume's mount point when a sandbox is
    stopped by Puddle (before the VM goes down), plus a manual "reclaim space" action per workspace.
    A timer for long-running sandboxes can come later if disk use shows it is needed.
@@ -105,8 +112,10 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
   journal commits for a guest's first writes), and a trim never returns it. Each sandbox's root disk
   grows too; `fstrim /` never works (the root is an overlay, which does not forward the trim), but the
   runtime's fork can expose the root disk's own ext4 at `/.msb/rootfs/upperfs`, which `fstrim` accepts.
-- **Crash safety:** filesystem-level consistency after a VMM crash is measured; host power loss is
-  not (it depends on msb turning a guest flush into `FlushFileBuffers`).
+- **Crash safety:** filesystem-level consistency after a VMM crash and after host power loss is
+  measured (on Linux, where msb turns a guest flush into an `fsync` of the image; the Windows
+  `FlushFileBuffers` path is not). A power cut can leave a zero-filled git index or `HEAD`, which a
+  boot repair would have to handle.
 
 ## Open risks
 
@@ -119,11 +128,12 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
   session and can only be reclaimed by recreating the sandbox. Options (undecided): redirect caches
   onto the workspace volume or a second owned disk, or offer "recreate sandbox" as the reclaim path
   (cheap, since the workspace survives it).
-- **Power-loss durability** is untested (see Consequences).
+- **Power-loss durability on Windows** is untested; on Linux it is measured (see Consequences).
 - **Single writer** is only shown for a *running* first sandbox; a second sandbox attaching while
   the first is merely stopped, and whether `msb rm` ever touches a named volume, are untested.
   Puddle's own tracking (8) covers this in practice.
-- **`core.fsync=committed` cost** on commit-heavy workloads is unmeasured.
+- **`core.fsync=committed` cost** is measured (see decision 6); `core.fsyncMethod=batch` would cut
+  the bulk-add cost (41 s instead of 692 s for 50 000 files) but has not been run under a power cut.
 - **#1638** has no fix date. It doesn't affect this decision, but blocks any writable host-folder
   feature until fixed (and re-measured: the speed gap stands regardless).
 

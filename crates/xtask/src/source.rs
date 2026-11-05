@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Where the runtime's parts come from: the fork's GitHub release (msb), upstream's release (the
-//! firmware), the fork's source at the tag (commits, firmware source, licences of msb's tree), or a
-//! fixture folder with the same parts for tests and offline runs.
+//! Where the runtime's parts come from: the fork's GitHub release (msb), upstream's release or a
+//! release of Puddle's libkrunfw fork (the firmware), the fork's source at the tag (commits,
+//! firmware source, licences of msb's tree), or a fixture folder with the same parts for tests and
+//! offline runs.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,6 +25,8 @@ pub const LIBKRUNFW_ASSET: &str = "libkrunfw-windows-x86_64.dll";
 pub const LIBKRUNFW_LINUX_ASSET: &str = "libkrunfw-linux-x86_64.so";
 /// Every release's checksum list.
 pub const CHECKSUMS_ASSET: &str = "checksums.sha256";
+/// Puddle's libkrunfw fork, whose releases carry a Linux firmware built without `/dev/mem`.
+pub const FIRMWARE_FORK: &str = "PuddleHQ/libkrunfw";
 
 /// The msb package and features msb is built from (upstream's release steps).
 const MSB_MANIFEST: &str = "crates/cli/Cargo.toml";
@@ -45,6 +48,8 @@ pub enum Origin {
     Fork,
     /// Upstream's release at the base tag.
     Upstream,
+    /// The release of [`FIRMWARE_FORK`] the firmware facts name ([`Firmware::fork_tag`]).
+    FirmwareFork,
 }
 
 impl Origin {
@@ -52,6 +57,7 @@ impl Origin {
         match self {
             Self::Fork => "fork",
             Self::Upstream => "upstream",
+            Self::FirmwareFork => "firmware",
         }
     }
 }
@@ -74,8 +80,12 @@ pub struct Firmware {
     pub kernel_version: String,
     /// The libkrunfw repository (`https://github.com/...`).
     pub repo_url: String,
-    /// The libkrunfw commit msb's tag pins as a submodule.
+    /// The libkrunfw commit the library is built from: the one msb's tag pins as a submodule, or
+    /// the commit of [`Self::fork_tag`].
     pub commit: String,
+    /// The release of [`FIRMWARE_FORK`] the library comes from; `None` for upstream's library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_tag: Option<String>,
 }
 
 /// Facts about the fork tag for the NOTICE file.
@@ -173,6 +183,8 @@ pub struct GitHubSource {
     pub tag: String,
     /// Upstream's base tag.
     pub upstream_tag: String,
+    /// The release of [`FIRMWARE_FORK`] to take the firmware from; `None` takes upstream's.
+    pub firmware_tag: Option<String>,
     /// Where the fork's source is cloned (reused when present).
     pub work: PathBuf,
     /// The cargo-about config for msb's tree.
@@ -182,10 +194,17 @@ pub struct GitHubSource {
 }
 
 impl GitHubSource {
-    fn repo(&self, origin: Origin) -> (&str, &str) {
+    fn repo(&self, origin: Origin) -> Result<(&str, &str)> {
         match origin {
-            Origin::Fork => (&self.fork, &self.tag),
-            Origin::Upstream => (&self.upstream, &self.upstream_tag),
+            Origin::Fork => Ok((&self.fork, &self.tag)),
+            Origin::Upstream => Ok((&self.upstream, &self.upstream_tag)),
+            Origin::FirmwareFork => self
+                .firmware_tag
+                .as_deref()
+                .map(|tag| (FIRMWARE_FORK, tag))
+                .ok_or_else(|| {
+                    XtaskError::parse("firmware", "no release of the libkrunfw fork is pinned")
+                }),
         }
     }
 
@@ -213,7 +232,26 @@ impl GitHubSource {
         let modules = std::fs::read_to_string(src.join(".gitmodules"))
             .map_err(|e| XtaskError::io("reading .gitmodules", e))?;
         let repo_url = parse_submodule_url(&modules, LIBKRUNFW_SUBMODULE)?;
-        let slug = github_slug(&repo_url)?;
+        Self::firmware_at(&github_slug(&repo_url)?, commit, None)
+    }
+
+    /// The firmware of the libkrunfw fork's release `tag`: the commit the tag names.
+    fn fork_firmware(tag: &str) -> Result<Firmware> {
+        let commit = run(Command::new("gh").args([
+            "api",
+            "--jq",
+            ".sha",
+            &format!("repos/{FIRMWARE_FORK}/commits/{tag}"),
+        ]))?;
+        Self::firmware_at(
+            FIRMWARE_FORK,
+            commit.trim().to_owned(),
+            Some(tag.to_owned()),
+        )
+    }
+
+    /// The firmware facts of libkrunfw `slug` at `commit`, from its Makefile there.
+    fn firmware_at(slug: &str, commit: String, fork_tag: Option<String>) -> Result<Firmware> {
         let makefile = run(Command::new("gh").args([
             "api",
             "-H",
@@ -226,13 +264,14 @@ impl GitHubSource {
             kernel_version,
             repo_url: format!("https://github.com/{slug}"),
             commit,
+            fork_tag,
         })
     }
 }
 
 impl ReleaseSource for GitHubSource {
     fn fetch(&self, origin: Origin, name: &str, dir: &Path) -> Result<PathBuf> {
-        let (repo, tag) = self.repo(origin);
+        let (repo, tag) = self.repo(origin)?;
         run(Command::new("gh")
             .args([
                 "release",
@@ -262,7 +301,10 @@ impl ReleaseSource for GitHubSource {
             tag: self.tag.clone(),
             upstream_tag: self.upstream_tag.clone(),
             commits,
-            firmware: Self::firmware(&src)?,
+            firmware: match &self.firmware_tag {
+                Some(tag) => Self::fork_firmware(tag)?,
+                None => Self::firmware(&src)?,
+            },
         })
     }
 
@@ -473,19 +515,33 @@ mod tests {
         assert!(parse_compare("{}").is_err());
     }
 
-    #[test]
-    fn github_source_maps_origins_to_repos() {
-        let s = GitHubSource {
+    fn github_source(firmware_tag: Option<&str>) -> GitHubSource {
+        GitHubSource {
             fork: "f/m".into(),
             upstream: "u/m".into(),
             tag: "v1.0.0-puddle.1".into(),
             upstream_tag: "v1.0.0".into(),
+            firmware_tag: firmware_tag.map(ToOwned::to_owned),
             work: PathBuf::from("/w"),
             about_config: PathBuf::from("/c"),
             cargo: Cargo::from_env(true),
-        };
-        assert_eq!(s.repo(Origin::Fork), ("f/m", "v1.0.0-puddle.1"));
-        assert_eq!(s.repo(Origin::Upstream), ("u/m", "v1.0.0"));
+        }
+    }
+
+    #[test]
+    fn github_source_maps_origins_to_repos() {
+        let s = github_source(Some("v5.6.1-puddle.1"));
+        assert_eq!(s.repo(Origin::Fork).unwrap(), ("f/m", "v1.0.0-puddle.1"));
+        assert_eq!(s.repo(Origin::Upstream).unwrap(), ("u/m", "v1.0.0"));
+        assert_eq!(
+            s.repo(Origin::FirmwareFork).unwrap(),
+            (FIRMWARE_FORK, "v5.6.1-puddle.1")
+        );
+        let err = github_source(None)
+            .repo(Origin::FirmwareFork)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("libkrunfw fork"), "{err}");
     }
 
     #[test]

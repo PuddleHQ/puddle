@@ -62,7 +62,7 @@ in THIRD-PARTY-msb.txt.
 2. libkrunfw {lv} - LGPL-2.1-only (LGPL-2.1.txt), with Linux {kv} - GPL-2.0-only (GPL-2.0.txt)
 ----------------------------------------------------------------------------------------------
 
-The firmware library in this folder ({firmware_files}) is libkrunfw {lv} as published by microsandbox's release {upstream_tag}, unchanged. The
+{origin} The
 library code is LGPL-2.1-only; it contains a Linux {kv} kernel, with patches and a kernel
 configuration, which is GPL-2.0-only. msb loads it as a separate library, which you may replace.
 
@@ -83,12 +83,23 @@ This offer is valid for anyone in receipt of this runtime.
 
 Puddle itself is GPL-3.0-or-later. Its third-party crates are listed in THIRD-PARTY-puddle.txt.
 ",
+        origin = match &fw.fork_tag {
+            Some(fork_tag) => format!(
+                "The firmware library in this folder ({firmware_files}) is libkrunfw {lv} built by Puddle from {repo} at tag {fork_tag}: upstream's libkrunfw with a changed kernel configuration (no /dev/mem). Puddle's changes are the commits of that repository on top of upstream's.",
+                lv = fw.libkrunfw_version,
+                repo = fw.repo_url,
+            ),
+            None => format!(
+                "The firmware library in this folder ({firmware_files}) is libkrunfw {lv} as published by microsandbox's release {upstream_tag}, unchanged.",
+                lv = fw.libkrunfw_version,
+                upstream_tag = facts.upstream_tag,
+            ),
+        },
         lv = fw.libkrunfw_version,
         kv = fw.kernel_version,
         repo = fw.repo_url,
         commit = fw.commit,
         series = kernel_series,
-        upstream_tag = facts.upstream_tag,
         contact = SOURCE_REQUEST_CONTACT,
         tag = facts.tag,
     );
@@ -112,6 +123,7 @@ mod tests {
                 kernel_version: "6.12.109".into(),
                 repo_url: "https://github.com/superradcompany/libkrunfw".into(),
                 commit: "21f169f7e94798c8916315f8ac6f5999d5b88566".into(),
+                fork_tag: None,
             },
         }
     }

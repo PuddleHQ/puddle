@@ -12,13 +12,15 @@
 #     Linux:   the release's msb-linux-x86_64 and libkrunfw-linux-x86_64.so (the fork's release job
 #              builds msb from the tag with the release's own agentd embedded), installed as msb and as
 #              libkrunfw.so.5 plus a copy under the versioned name msb looks for beside itself
-#              (libkrunfw.so.<version>, pinned in ci/msb-runtime.sha256). A tag whose release has
+#              (libkrunfw.so.<version>, pinned in ci/msb-runtime.sha256). A tag that pins
+#              libkrunfw-linux-tag takes the firmware from that release of Puddle's libkrunfw fork
+#              (PuddleHQ/libkrunfw, a kernel built without /dev/mem) instead. A tag whose release has
 #              no Linux msb pinned (older releases, or an asset the release job failed to make) is
 #              built from the tag's source instead (commit pinned) with the guest agent embedded: the
 #              release's own agentd-x86_64 when the tag has one pinned (the fork builds it from the
 #              same source as msb, and the host and guest must agree on their limits), else
-#              upstream's; libkrunfw from upstream's release v<release> (the fork keeps upstream's
-#              firmware). That build needs cargo and libcap-ng-dev and takes ~10 min cold;
+#              upstream's; the firmware from the libkrunfw fork as above, else from upstream's
+#              release v<release>. That build needs cargo and libcap-ng-dev and takes ~10 min cold;
 #              MSB_BUILD_DIR (default <dest-dir>/../msb-build) holds the checkout, its target dir
 #              and the result msb-<commit>, which is reused when present (a CI cache keeps only that
 #              file).
@@ -71,6 +73,7 @@ x86_64 | amd64) arch=x86_64 ;;
 esac
 
 fork_repo=PuddleHQ/microsandbox
+firmware_repo=PuddleHQ/libkrunfw
 upstream_repo=superradcompany/microsandbox
 case "$tag" in
 v*-puddle.*) release=${tag%%-puddle.*} ;;
@@ -92,6 +95,16 @@ fetch() {
     echo "fetch-msb: $1 $2 $3 verified ($got)" >&2
 }
 
+# fetch_firmware <repo> <tag> <out>: the Linux firmware for $tag: from Puddle's libkrunfw fork when
+# the tag pins a release of it (libkrunfw-linux-tag), else <repo>'s release <tag>.
+fetch_firmware() {
+    if has_pin "$tag" libkrunfw-linux-tag; then
+        fetch "$firmware_repo" "$(pinned "$tag" libkrunfw-linux-tag)" "libkrunfw-linux-$arch.so" "$3"
+    else
+        fetch "$1" "$2" "libkrunfw-linux-$arch.so" "$3"
+    fi
+}
+
 mkdir -p "$dest"
 # Absolute: the source build below runs from other directories and gets paths under $dest.
 dest=$(cd "$dest" && pwd)
@@ -102,10 +115,10 @@ case "$tag/$os" in
     ;;
 *-puddle.*/linux)
     if has_pin "$tag" "msb-linux-$arch"; then
-        # Prebuilt by the fork's release job; the firmware is the same file as upstream's.
+        # Prebuilt by the fork's release job.
         fetch "$fork_repo" "$tag" "msb-linux-$arch" "$dest/msb"
         chmod +x "$dest/msb"
-        fetch "$fork_repo" "$tag" "libkrunfw-linux-$arch.so" "$dest/libkrunfw.so.5"
+        fetch_firmware "$fork_repo" "$tag" "$dest/libkrunfw.so.5"
     else
         echo "fetch-msb: $tag has no Linux msb pinned, building it from source (about 10 minutes)" >&2
         [ -z "${GITHUB_ACTIONS:-}" ] || echo "::warning::$tag has no Linux msb pinned in ci/msb-runtime.sha256: building msb from source (about 10 minutes); pin the release's msb-linux-$arch" >&2
@@ -116,7 +129,7 @@ case "$tag/$os" in
             "$here/apt-retry.sh" sudo apt-get update -q
             "$here/apt-retry.sh" sudo apt-get install -y -q libcap-ng-dev
         fi
-        fetch "$upstream_repo" "$release" "libkrunfw-linux-$arch.so" "$dest/libkrunfw.so.5"
+        fetch_firmware "$upstream_repo" "$release" "$dest/libkrunfw.so.5"
         build=${MSB_BUILD_DIR:-$dest/../msb-build}
         built=$build/msb-$commit
         if [ -x "$built" ]; then

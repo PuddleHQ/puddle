@@ -15,6 +15,7 @@
 //! | Disk space | free bytes on the drive that holds Puddle's data folder ([`puddle_fs::free_bytes`]) | under 20 GB warns, under 5 GB fails (both lines are settings) |
 //! | Data folder path (Linux) | the mode of every folder from `/` down to Puddle's data folder, by msb's own rule | a group- or world-writable folder that is not sticky: names it and the `chmod g-w` that fixes it |
 //! | Global Secure Access | its client's services | installed: explains the VM limitation; service manager unreadable: an info line with the OS error |
+//! | Guest kernel (Windows) | none: a fact of the Windows runtime | its guest kernel has `/dev/mem` (info): guest root can map device registers |
 //!
 //! [`diagnose`] runs the checks against a [`Probe`]: [`SystemProbe`] for the real machine, a fake
 //! in tests. The [`Report`] renders as text or as JSON with a [`SCHEMA_VERSION`] (it may be

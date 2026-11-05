@@ -133,6 +133,9 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     if let Some(path) = probe.data_path() {
         checks.push(data_path(&path));
     }
+    if os == Os::Windows {
+        checks.push(windows_guest_kernel());
+    }
 
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
@@ -976,6 +979,22 @@ it must be allowed to start virtual machines through the hypervisor. Otherwise r
 and run puddle doctor again, and include the lines below when you report it.";
 
 // ---- Global Secure Access ----
+
+/// The Windows runtime's guest kernel is built with `/dev/mem` (the Linux runtime's is not), so a
+/// root process in a sandbox can map the virtual devices' registers past the guest kernel.
+fn windows_guest_kernel() -> Check {
+    Check::new(
+        CheckId::GuestKernel,
+        Status::Info,
+        "the guest kernel of the Windows runtime has /dev/mem",
+    )
+    .finding(Finding::GuestDevMemPresent)
+    .fix(
+        "Puddle works. Root in a sandbox can map the virtual devices' registers through /dev/mem, \
+so the runtime's own checks on every register access are the only line there. The Linux runtime's \
+guest kernel is built without /dev/mem.",
+    )
+}
 
 fn global_secure_access(gsa: &GsaFacts) -> Check {
     let id = CheckId::GlobalSecureAccess;

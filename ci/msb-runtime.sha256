@@ -9,6 +9,11 @@
 #
 # Fork tags (PuddleHQ/microsandbox, 2026-10-06). The tag's source commit pins the Linux build.
 # Older tags stay listed so earlier commits still fetch their runtime (e.g. windows-e2e.ps1 -Bisect).
+# `<tag> libkrunfw-linux-tag <release>` takes the tag's Linux firmware from that release of
+# Puddle's libkrunfw fork (PuddleHQ/libkrunfw: the libkrunfw commit the tag pins, with a guest
+# kernel built without /dev/mem) instead of the msb release's; the release's own lines follow.
+v0.7.12-puddle.3 libkrunfw-linux-tag v5.6.1-puddle.1
+v5.6.1-puddle.1 libkrunfw-linux-x86_64.so 1924653612efb1f22eb6a355fd35ab074e7d91e1f58417100852d9773ba362e5
 v0.7.12-puddle.3 msb-windows-x86_64.exe f3ed68d92f25da37d09a63835b8f5ffc00cf320c8b1e37f7c8d65eaa532746b0
 v0.7.12-puddle.3 libkrunfw-windows-x86_64.dll a0bcc5aabfca7185a54ce72ea619be4c815064046eb809262bcbd595d6a48e4a
 v0.7.12-puddle.3 agentd-x86_64 17486e66924b08999edc64448184afe95f23499c4522af762145fc782d33e2a4

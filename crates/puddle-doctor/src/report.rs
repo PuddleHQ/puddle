@@ -62,6 +62,8 @@ pub enum CheckId {
     DiskSpace,
     /// The folders above Puddle's data: can other accounts write in them.
     DataPath,
+    /// What the runtime's guest kernel lets guest root reach.
+    GuestKernel,
 }
 
 impl CheckId {
@@ -79,6 +81,7 @@ impl CheckId {
             Self::GlobalSecureAccess => "Global Secure Access",
             Self::DiskSpace => "Disk space",
             Self::DataPath => "Data folder path",
+            Self::GuestKernel => "Guest kernel",
         }
     }
 }
@@ -158,6 +161,8 @@ pub enum Finding {
     DataPathWritable,
     /// The folders above Puddle's data couldn't be read.
     DataPathUnreadable,
+    /// The runtime's guest kernel has `/dev/mem`, so guest root can map device registers.
+    GuestDevMemPresent,
 }
 
 /// One line of the report.

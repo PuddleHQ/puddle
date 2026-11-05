@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 12;
+pub const SCHEMA_VERSION: u32 = 13;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -405,6 +405,12 @@ CREATE TABLE request_rules (
 CREATE INDEX request_rules_workspace ON request_rules (workspace_id);
 ";
 
+/// The colour of a rule set the user made: a JSON `Fill` (`{"kind":"solid","color":"#rrggbb"}`),
+/// or `NULL` for the default of its number. Sets written before this column have `NULL`.
+const V13: &str = r"
+ALTER TABLE rule_sets ADD COLUMN fill TEXT;
+";
+
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.
 ///
 /// # Errors
@@ -549,6 +555,26 @@ mod tests {
 
     /// A database a Puddle from before the rename left behind: rows in every table that names the
     /// owner, then migrated.
+    /// A set written before sets had a colour reads back with none stored, and a stored colour
+    /// that is not readable is the same as none.
+    #[test]
+    fn v13_adds_the_colour_column_and_old_sets_have_none() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_up_to(&mut conn, 12).unwrap();
+        conn.execute_batch(
+            "INSERT INTO rule_sets (name, created_at, created_by) VALUES ('old', 1, 'ui');",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 12);
+        assert_eq!(version(&conn), SCHEMA_VERSION);
+        let fill: Option<String> = conn
+            .query_row("SELECT fill FROM rule_sets WHERE name = 'old'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(fill, None);
+    }
+
     #[test]
     fn v4_renames_the_owner_everywhere_and_keeps_the_rows() {
         let conn = migrated_from_the_rename();

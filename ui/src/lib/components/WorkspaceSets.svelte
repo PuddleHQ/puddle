@@ -13,6 +13,7 @@
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import LoadNotice from "./LoadNotice.svelte";
+  import SetChip from "./SetChip.svelte";
   import SystemManagedList from "./SystemManagedList.svelte";
   import "#lib/theme/controls.css";
 
@@ -59,7 +60,9 @@
     <ul>
       {#each store.sets as ruleSet (ruleSet.id)}
         <li>
-          <span class="name">{ruleSet.name}</span>
+          <span class="name"
+            ><SetChip name={ruleSet.name} fill={ruleSet.fill} /></span
+          >
           <span class="muted">{stateFor(ruleSet, workspace)}</span>
           <span class="actions">
             <button

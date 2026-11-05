@@ -55,6 +55,26 @@ await fireEvent.click(
 cleanup();
 
 describe("OptionsPopover", () => {
+  it("shows a set's colour beside its name, and the name still names the choice", async () => {
+    mount({
+      sets: [
+        {
+          id: 4,
+          name: "Client X",
+          fill: { kind: "solid", color: "#7a5bc7" },
+          everywhere: false,
+        },
+      ],
+    });
+    const dialog = await show();
+    const radio = within(dialog).getByRole("radio", {
+      name: /Into rule set Client X/,
+    });
+    expect(radio.closest("label")?.querySelector(".set-dotted")).toHaveStyle(
+      "--set-fill: #7a5bc7",
+    );
+  });
+
   it("offers your rule sets that are on here, and sends the one chosen", async () => {
     const { onDecide } = mount({
       sets: [

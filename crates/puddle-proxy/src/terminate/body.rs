@@ -332,6 +332,12 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_chunk_may_end_in_a_bare_line_feed() {
+        let input = b"3\nabc\n2\r\nde\n0\n\n";
+        assert_eq!(decode(input, Body::Chunked).await.unwrap(), b"abcde");
+    }
+
+    #[tokio::test]
     async fn endless_trailers_are_cut_off() {
         let mut input = b"0\r\n".to_vec();
         for _ in 0..10_000 {

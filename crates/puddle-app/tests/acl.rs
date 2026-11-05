@@ -213,6 +213,7 @@ mod sandbox_windows {
         });
         let target = Target {
             workspace: workspace.clone(),
+            display_name: name.to_owned(),
             origin: origin.clone(),
             data_folder: data.join(name),
             settings: WindowSettings {

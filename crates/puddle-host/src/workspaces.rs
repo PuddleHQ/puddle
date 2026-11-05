@@ -2867,9 +2867,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         failed
     }
 
-    /// The editor's origin is `<name>.localhost`, so a workspace of this name would reach the
+    /// The editor's origin is `<id>.localhost`, so a workspace with this id would reach the
     /// browser data an earlier one left (a delete cut short, or made where no window could clean
-    /// it). No window can exist for a workspace that is still being created: clear it once the name is reserved.
+    /// it). No window can exist for a workspace that is still being created: clear it once the id is reserved.
     async fn clear_left_over_browser_state(
         &self,
         id: &WorkspaceId,

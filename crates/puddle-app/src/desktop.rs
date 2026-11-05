@@ -26,7 +26,7 @@ use tokio::sync::broadcast::error::RecvError;
 use url::Url;
 
 use crate::autostart::{self, LoginEntry};
-use crate::backend::Backend;
+use crate::backend::{Backend, WorkspaceLabel};
 use crate::badge::{self, OpenRequests};
 use crate::icon::{self, Wanted};
 use crate::notify::{self, Notice, Notifier, REQUEST_EXTRA};
@@ -371,6 +371,8 @@ struct Loop {
     settings: Arc<dyn SettingsRepo>,
     open: OpenRequests,
     notifier: Notifier,
+    /// What the user calls a workspace, asked before its event is turned into a notice.
+    labels: WorkspaceLabel,
     prefs: UiPrefs,
     /// The badge as last shown, so only a change reaches the outputs.
     shown: (usize, bool),
@@ -446,6 +448,11 @@ impl Loop {
         self.reload_icon().await;
         if self.open.apply(event) {
             self.refresh_badge();
+        }
+        if let Some(workspace) = notify::workspace_of(event)
+            && let Some(label) = (self.labels)(workspace.clone()).await
+        {
+            self.notifier.name(workspace, &label);
         }
         let front = (self.out.in_front)();
         let notices = self
@@ -592,6 +599,7 @@ fn attach_with<R: Runtime>(
         settings,
         open,
         notifier: Notifier::default(),
+        labels: backend.label(),
         prefs,
         shown,
         icon,
@@ -997,6 +1005,7 @@ mod behaviour_tests {
             settings,
             open,
             notifier,
+            labels: rig.backend.label(),
             prefs,
             shown,
             icon,
@@ -1021,6 +1030,7 @@ mod behaviour_tests {
             settings: rig.backend.settings().clone(),
             open: OpenRequests::default(),
             notifier: Notifier::default(),
+            labels: rig.backend.label(),
             prefs: UiPrefs::default(),
             shown: (0, true),
             icon: Wanted::read(rig.backend.settings().as_ref(), &UiPrefs::default()),
@@ -1197,6 +1207,7 @@ mod behaviour_tests {
             store: rig.backend.store().clone(),
             open: open_requests(rig.backend.store()),
             notifier: Notifier::default(),
+            labels: rig.backend.label(),
             shown: (1, prefs.badge()),
             icon: Wanted::read(settings.as_ref(), &prefs),
             login: Some(prefs.start_at_login()),

@@ -370,6 +370,7 @@ fn open_probe<R: Runtime>(
         origin,
         data_folder: sandbox_window::data_folder(&data.join(WEBVIEW_FOLDER), &probe.workspace),
         workspace: probe.workspace.clone(),
+        display_name: probe.workspace.to_string(),
         settings: WindowSettings {
             zoom_hotkeys: true,
             clipboard_read: ClipboardRead::Ask,
@@ -764,6 +765,7 @@ pub(crate) mod tests {
             origin: "http://demo.localhost:4800/".parse().unwrap(),
             data_folder: sandbox_window::data_folder(data.path(), &demo),
             workspace: demo.clone(),
+            display_name: "demo".to_owned(),
             settings: WindowSettings {
                 zoom_hotkeys: true,
                 clipboard_read: ClipboardRead::Ask,

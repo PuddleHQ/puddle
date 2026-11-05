@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Nightly fuzzing of what a guest's first bytes reach (fuzz/):
-# ten minutes per target on a nightly toolchain, by hand with a different length. It is not a
+# Fuzzing of what a guest's first bytes reach (fuzz/): ten minutes per target every night and one hour
+# per target every Sunday, on a nightly toolchain, by hand with a different length. Each parser has
+# a byte-level target and a grammar target (`dns_message_grammar`, `resolve_line_grammar`) that builds
+# well-formed headers, names, pointers and lines first. It is not a
 # required check and gates nothing; a crash fails the run and uploads the input as an artifact, which
 # is committed under fuzz/corpus/<target>/ as a regression (fuzz/README.md). The checked-in corpus
 # is replayed on every push by the `fuzz_corpus` tests of puddle-proxy, puddle-agent-proto and puddle-agent.
@@ -9,10 +11,12 @@ name: fuzz
 on:
   schedule:
     - cron: "13 3 * * *"
+    # The weekly long run: one hour per target.
+    - cron: "17 4 * * 0"
   workflow_dispatch:
     inputs:
       seconds:
-        description: "Seconds per target"
+        description: "Seconds per target (at most 3600)"
         default: "600"
 
 permissions:
@@ -30,16 +34,16 @@ jobs:
   fuzz:
     name: fuzz (${{ matrix.target }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        target: [head_parser, connect_target, normalise_host, agent_preamble, resolve_line, dns_message]
+        target: [head_parser, connect_target, normalise_host, agent_preamble, resolve_line, resolve_line_grammar, dns_message, dns_message_grammar]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Nightly toolchain
         run: rustup toolchain install nightly --profile minimal && rustc +nightly --version
-      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
           tool: cargo-fuzz@0.13.2
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -49,7 +53,7 @@ jobs:
       # The prebuilt cargo-fuzz is a musl binary and defaults to the musl target, which the runner lacks.
       - name: fuzz ${{ matrix.target }}
         env:
-          SECONDS_PER_TARGET: ${{ inputs.seconds || '600' }}
+          SECONDS_PER_TARGET: ${{ inputs.seconds || (github.event.schedule == '17 4 * * 0' && '3600') || '600' }}
         working-directory: fuzz
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "${{ matrix.target }}" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=2048
       - name: the crashing input

@@ -313,10 +313,14 @@ impl ApiServer {
         // Registered before anything can serve, so there is no moment a guest could reach it.
         let registration = services.endpoints.register(addr, EndpointKind::Api);
         let (stop, shutdown) = watch::channel(false);
+        let settings_lock = services
+            .workspaces
+            .settings_lock()
+            .unwrap_or_else(|| Arc::new(Mutex::new(())));
         let state = AppState {
             store: services.store,
             settings: services.settings,
-            settings_lock: Arc::new(Mutex::new(())),
+            settings_lock,
             events: services.events,
             problems: services.problems,
             clock: services.clock,

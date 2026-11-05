@@ -4764,7 +4764,7 @@ export interface components {
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "repo_added" | "repo_switched" | "repo_removed";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed";
         /**
          * @description How a workspace operation ended.
          * @enum {string}

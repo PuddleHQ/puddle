@@ -402,6 +402,8 @@ pub enum WorkspaceOpKind {
     IdentityDefaultSet,
     /// A workspace's identity list changed (one attached, one taken off, or a new order).
     IdentitiesChanged,
+    /// The user's order of the identities changed.
+    IdentitiesReordered,
     /// A repository added to a workspace's list.
     RepoAdded,
     /// A repository's pull or push switch changed.

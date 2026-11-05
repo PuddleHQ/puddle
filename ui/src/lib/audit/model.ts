@@ -328,6 +328,10 @@ const WORKSPACE_OPS: Record<
     done: "Identities changed",
     failed: "Changing identities failed",
   },
+  identities_reordered: {
+    done: "Identities reordered",
+    failed: "Reordering identities failed",
+  },
   repo_added: {
     done: "Repository added",
     failed: "Adding a repository failed",

@@ -1060,6 +1060,11 @@ async fn websocket(
             .map_err(|never| match never {})
             .boxed_unsync(),
     );
+    cx.termination.stand_ins().scrub_answer_headers(
+        response.headers_mut(),
+        &cx.target.host,
+        &shared.scrubbed,
+    );
     for (name, value) in ws::answer_headers(response.headers(), false) {
         answer.headers_mut().append(name, value);
     }

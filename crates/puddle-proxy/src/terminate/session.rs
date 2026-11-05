@@ -892,6 +892,13 @@ where
         response: &mut ::http::Response<hyper::body::Incoming>,
     ) -> Flow {
         let upgraded = hyper::upgrade::on(&mut *response);
+        let notes = ScrubNotes::default();
+        self.cx.termination.stand_ins().scrub_answer_headers(
+            response.headers_mut(),
+            &self.cx.target.host,
+            &notes,
+        );
+        self.outcome.record_scrubbed(&notes);
         let mut head =
             b"HTTP/1.1 101 Switching Protocols\r\nconnection: upgrade\r\nupgrade: websocket\r\n"
                 .to_vec();

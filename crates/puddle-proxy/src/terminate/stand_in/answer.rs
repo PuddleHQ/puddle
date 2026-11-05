@@ -3,8 +3,9 @@
 //!
 //! A host a stand-in is for sees the real value, and it can hand it back: an error page or a debug
 //! endpoint that echoes the request, a redirect that repeats the URL, a token in a cookie. The
-//! answer of every terminated request to such a host is read on its way to the guest, headers and
-//! body, and each real value in it is replaced by the stand-in the workspace already holds, so the
+//! answer of every terminated request to such a host is read on its way to the guest, headers,
+//! body and trailers (of a WebSocket only the upgrade's headers: its frames are a byte pipe and are
+//! not read), and each real value in it is replaced by the stand-in the workspace already holds, so the
 //! guest sees exactly what it sent and a tool that checks a token's shape finds the shape it knows.
 //!
 //! - **Forms**: the value as it is, percent-encoded (as a whole component, either hex case, the
@@ -53,9 +54,13 @@ use crate::proxy::Refusal;
 /// would be short enough to turn up in unrelated base64 data and cut answers off for nothing.
 const MIN_CORE_VALUE: usize = 12;
 
-/// How many compressed bytes are decoded at once, so one piece of a body never inflates
-/// without bound before it is scrubbed.
+/// How many compressed bytes go to a decoder at once. It bounds how much one write inflates
+/// (about 4 MiB for gzip), not the output of a whole piece of the body: a host that sends a
+/// compression bomb can make one piece large. The host is one trusted with the secret.
 const DECODE_STEP: usize = 4096;
+
+/// The largest zstd window accepted (2^27 bytes, the format's usual decoder limit).
+const ZSTD_WINDOW_LOG_MAX: u32 = 27;
 
 /// One form of a real value and what replaces it.
 struct Pattern {
@@ -153,6 +158,18 @@ impl StandIns {
         }
         cache.insert(host.clone(), made.clone());
         made
+    }
+
+    /// Scrubs the headers of an answer from `host` whose body is not read (a WebSocket upgrade).
+    pub(crate) fn scrub_answer_headers(
+        &self,
+        headers: &mut HeaderMap,
+        host: &Host,
+        notes: &ScrubNotes,
+    ) {
+        if let Some(scrubber) = self.answer_scrubber(host) {
+            scrubber.scrub_headers(headers, notes);
+        }
     }
 
     /// Whether answers from `host` are scrubbed: a stand-in is for it.
@@ -534,6 +551,10 @@ impl Decoder {
                 brotli_decompressor::DecompressorWriter::new(Vec::new(), DECODE_STEP),
             )))),
             ["zstd"] => zstd::stream::write::Decoder::new(Vec::new())
+                .and_then(|mut decoder| {
+                    decoder.window_log_max(ZSTD_WINDOW_LOG_MAX)?;
+                    Ok(decoder)
+                })
                 .map(|decoder| Some(Self::Zstd(decoder)))
                 .map_err(|_| ()),
             _ => Err(()),
@@ -792,6 +813,7 @@ pub(crate) async fn scrub_answer(
         if let Ok(length) = HeaderValue::from_str(&body.len().to_string()) {
             parts.headers.insert(header::CONTENT_LENGTH, length);
         }
+        parts.headers.remove(header::TRANSFER_ENCODING);
         return Ok(Response::from_parts(
             parts,
             AnswerBody::Buffered(Some(body)),
@@ -833,10 +855,10 @@ async fn hold(body: &mut AnswerBody, idle: Duration) -> Result<Bytes, NotScrubbe
         let Some(frame) = frame else { break };
         let frame = frame.map_err(|_| NotScrubbed::Failed)?;
         if let Ok(data) = frame.into_data() {
-            whole.extend_from_slice(&data);
-            if whole.len() > MAX_HELD {
+            if whole.len() + data.len() > MAX_HELD {
                 return Err(NotScrubbed::Failed);
             }
+            whole.extend_from_slice(&data);
         }
     }
     Ok(Bytes::from(whole))

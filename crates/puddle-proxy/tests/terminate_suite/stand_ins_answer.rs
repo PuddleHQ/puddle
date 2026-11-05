@@ -286,3 +286,40 @@ async fn an_http2_answer_split_across_data_frames_and_its_trailers_get_the_stand
     let event = &rig.events(1).await[0];
     assert_eq!(event.scrubbed_stand_ins, ["stand-in:secret:API_KEY"]);
 }
+
+#[tokio::test]
+async fn a_head_answer_gets_its_headers_scrubbed_and_keeps_its_length() {
+    let pki = Pki::new();
+    let server = h1_upstream(
+        &pki,
+        Arc::new(|_| {
+            Reply::raw(format!(
+                "HTTP/1.1 200 OK\r\nset-cookie: k={REAL}\r\ncontent-length: 1234\r\n\r\n"
+            ))
+        }),
+    )
+    .await;
+    let (stand_ins, stand_in) = registry();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(pass_through())
+        .stand_ins(&stand_ins)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client
+        .send(b"HEAD / HTTP/1.1\r\nHost: bound.test\r\n\r\n")
+        .await;
+    let response = client.response("HEAD").await;
+    assert_eq!(
+        response.header("set-cookie"),
+        Some(format!("k={stand_in}").as_str())
+    );
+    assert_eq!(response.header("content-length"), Some("1234"));
+    assert!(response.body.is_empty());
+    client.close().await;
+    assert_eq!(
+        rig.events(1).await[0].scrubbed_stand_ins,
+        ["stand-in:secret:API_KEY"]
+    );
+}

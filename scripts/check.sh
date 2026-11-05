@@ -175,7 +175,7 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
+        scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/check-tmp-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
@@ -428,7 +428,7 @@ run_gate() {
         lcov=$target/diff-coverage-fast.lcov
         echo "diff-coverage-fast: tests with coverage for:$packages"
         coverage_scrub "$target"
-        trap 'coverage_scrub "$target"' EXIT
+        trap 'coverage_scrub "$target"; check_tmp_cleanup' EXIT
         # The build selects the whole workspace like the `coverage` gate (a `-p` selection resolves other features
         # for some third-party crates, so their units would hash differently and be built twice); the filterset
         # picks the tests that run.
@@ -507,6 +507,27 @@ requested=
 for arg in "$@"; do
     requested="$requested $(gates_of "$arg" | tr '\n' ' ')"
 done
+
+# Temp dir: cargo, nextest, the tests' fixtures, vitest and Playwright write scratch files to $TMPDIR, by default
+# /tmp, which on a host with a RAM-backed tmpfs is small and shared (one gate run filling it fails every other
+# process there). A run therefore points TMPDIR at a fresh directory under the target dir (CHECK_TMPDIR=DIR uses
+# DIR/check-tmp.* instead), removed when the run ends, also on a failure or a signal. A real run of the test, ui
+# and ui-e2e gates (cargo, nextest, vitest, Playwright with Chromium and WebKit) added nothing to /tmp or /dev/shm.
+# A tool that hardcodes a path still writes there, and a socket path under a deep target dir can pass the 107 bytes
+# of sun_path (the one test that nests two roots uses a short base).
+check_tmp=
+check_tmp_cleanup() { [ -z "$check_tmp" ] || rm -rf "$check_tmp"; }
+private_tmp() {
+    base="${CHECK_TMPDIR:-${CARGO_TARGET_DIR:-target}}"
+    case $base in /*) ;; *) base="$PWD/$base" ;; esac
+    mkdir -p "$base"
+    check_tmp=$(mktemp -d "$base/check-tmp.XXXXXX")
+    trap check_tmp_cleanup EXIT
+    trap 'check_tmp_cleanup; exit 130' INT
+    trap 'check_tmp_cleanup; exit 143' TERM HUP
+    export TMPDIR="$check_tmp"
+}
+private_tmp
 
 # The gates that need the UI's npm packages (the UI itself, and coverage for its ratchet script):
 # installed once, before the concurrent streams start, so no two of them run `npm ci` at once.

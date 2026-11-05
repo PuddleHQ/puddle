@@ -106,6 +106,29 @@ describe("NoticeWatcher", () => {
     expect(n?.link?.href).toBe("/workspaces/my%20web/settings");
   });
 
+  it("says a disk is nearly full, which one and how full, with a link to the workspace", () => {
+    const w = make();
+    w.handle({
+      type: "disk_nearly_full",
+      workspace: "my web",
+      disk: "root",
+      percent: 96,
+    });
+    w.handle({
+      type: "disk_nearly_full",
+      workspace: "my web",
+      disk: "volume",
+      percent: 100,
+    });
+    expect(keys()).toEqual(["disk:my web:root", "disk:my web:volume"]);
+    const [root, volume] = center.items;
+    expect(root?.title).toBe("my web: the root disk is 96 % full.");
+    expect(root?.detail).toContain("reset the root disk");
+    expect(volume?.title).toBe("my web: the volume is 100 % full.");
+    expect(volume?.detail).toContain("cannot grow");
+    expect(root?.link?.href).toBe("/workspaces/my%20web");
+  });
+
   it("says direct SSH failed with the reason, and withdraws that once the workspace stops", () => {
     const w = make();
     w.handle({

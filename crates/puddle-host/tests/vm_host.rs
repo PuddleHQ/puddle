@@ -3146,6 +3146,127 @@ async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceName, nam
     password
 }
 
+/// What the guest says about Docker's data folder: its mount, the mounts of the root and of the
+/// workspace volume for comparison, and the folder's size in bytes.
+fn docker_disk_script(name: &str) -> String {
+    format!(
+        r#"echo "docker=$(awk '$2=="/var/lib/docker"{{print $1" "$3}}' /proc/mounts)"
+echo "volume=$(awk '$2=="/workspaces/{name}"{{print $1}}' /proc/mounts)"
+echo "root=$(awk '$2=="/"{{print $1" "$3}}' /proc/mounts | tail -1)"
+echo "size=$(df -P -B1 /var/lib/docker | awk 'NR==2{{print $2}}')"
+echo "marker=$(cat /var/lib/docker/puddle-marker 2>/dev/null)""#
+    )
+}
+
+/// The value of `key=` in the guest's reply, empty when the line is missing (the assertions on it
+/// then fail with the whole reply in their message).
+fn said<'a>(reply: &'a str, key: &str) -> &'a str {
+    reply
+        .lines()
+        .find_map(|l| l.strip_prefix(&format!("{key}=")))
+        .unwrap_or_default()
+}
+
+/// Docker's data folder is a disk of the sandbox itself: ext4, neither the root nor the workspace
+/// volume, about the size the host asks for. What is written there (a pulled image's layers)
+/// survives a stop and start, and a rebuilt sandbox starts with an empty one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_dockers_data_is_on_a_disk_of_the_sandbox_that_a_rebuild_replaces() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("dkdisk").await;
+    let name = format!("{}-dkdisk", settings.prefix.as_str());
+    let sandbox = WorkspaceName::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    let script = docker_disk_script(&name);
+    let first = guest(&runtime, &sandbox, &script).await;
+    let docker = said(&first, "docker");
+    assert!(
+        docker.starts_with("/dev/") && docker.ends_with(" ext4"),
+        "{first}"
+    );
+    let device = docker.split(' ').next().unwrap();
+    assert_ne!(
+        device,
+        said(&first, "volume"),
+        "on the workspace volume: {first}"
+    );
+    assert_ne!(docker, said(&first, "root"), "on the root: {first}");
+    let size: u64 = said(&first, "size").parse().unwrap();
+    let gib = 1024_u64 * 1024 * 1024;
+    assert!(
+        (18 * gib..=20 * gib).contains(&size),
+        "{size} bytes: {first}"
+    );
+    guest(
+        &runtime,
+        &sandbox,
+        "echo layer >/var/lib/docker/puddle-marker && sync && echo old-sandbox >/tmp/old-sandbox",
+    )
+    .await;
+
+    // A stop and start keeps the sandbox and its disk.
+    for step in ["stop", "start"] {
+        let reply = api
+            .post(&format!("/api/workspaces/{name}/{step}"), "")
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        let end = events
+            .until(ended(name_static), Duration::from_secs(300))
+            .await;
+        assert_eq!(end["step"], "done", "{end}");
+    }
+    let kept = guest(&runtime, &sandbox, &script).await;
+    assert_eq!(said(&kept, "marker"), "layer", "{kept}");
+
+    // A rebuild (a changed variable makes the next start create a new sandbox) leaves it behind.
+    let changed = api
+        .put(
+            &format!("/api/workspaces/{name}/env/REBUILD"),
+            &json!({"kind": "plain", "value": "1"}).to_string(),
+        )
+        .await;
+    assert_eq!(changed.status, 200, "{}", changed.body);
+    for step in ["stop", "start"] {
+        let reply = api
+            .post(&format!("/api/workspaces/{name}/{step}"), "")
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        let end = events
+            .until(ended(name_static), Duration::from_secs(300))
+            .await;
+        assert_eq!(end["step"], "done", "{end}");
+    }
+    let rebuilt = guest(
+        &runtime,
+        &sandbox,
+        &format!("{script}\ntest -e /tmp/old-sandbox && echo same-sandbox || true"),
+    )
+    .await;
+    assert!(!rebuilt.contains("same-sandbox"), "not rebuilt: {rebuilt}");
+    assert!(said(&rebuilt, "docker").ends_with(" ext4"), "{rebuilt}");
+    assert_eq!(said(&rebuilt, "marker"), "", "{rebuilt}");
+
+    host.shutdown().await;
+}
+
 /// K tier. The bundled code-server runs in the guest, started by the agent from the read-only
 /// mount: it listens on loopback with a password only its owner can read, signs a client in, and
 /// keeps its data on the workspace volume, so a rebuilt sandbox finds it again. (The Windows tier
@@ -3186,6 +3307,25 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     editor_up(&runtime, &sandbox).await;
     let data = format!("/workspaces/{name}/.puddle/code-server");
     let password = check_editor_session(&runtime, &sandbox, &name).await;
+    // A new workspace's server runs as its session user, agent, and its folders are agent's. The
+    // match is anchored on the program so this script's own shell, whose command line holds the
+    // same words, is not counted.
+    let owners = guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "for p in /proc/[0-9]*; do \
+               case \"$(tr '\\0' ' ' <$p/cmdline 2>/dev/null)\" in \
+                 /puddle/code-server/*--bind-addr*) stat -c 'server %U' $p;; esac; \
+             done | sort -u; stat -c 'data %U' {data}/user-data {data}/extensions"
+        ),
+    )
+    .await;
+    assert_eq!(
+        owners.trim(),
+        "server agent\ndata agent\ndata agent",
+        "{owners}"
+    );
     // Data on the volume: the server made its folders there, and a marker we add stays.
     guest(
         &runtime,

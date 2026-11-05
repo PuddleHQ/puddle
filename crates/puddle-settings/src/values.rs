@@ -84,6 +84,79 @@ impl From<ReconnectionGrace> for u32 {
     }
 }
 
+/// How full a workspace's disk (the root disk or the volume) may get, in percent, before Puddle
+/// warns about it.
+///
+/// ```
+/// use puddle_settings::DiskWarningPercent;
+/// assert_eq!(DiskWarningPercent::default().get(), 95);
+/// assert!(DiskWarningPercent::new(49).is_err());
+/// assert!(DiskWarningPercent::new(101).is_err());
+/// assert!(DiskWarningPercent::new(100).is_ok());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct DiskWarningPercent(u8);
+
+impl DiskWarningPercent {
+    /// Lowest accepted threshold: below half full a warning is noise.
+    pub const MIN: DiskWarningPercent = DiskWarningPercent(50);
+    /// Highest accepted threshold: warn only when the disk is full.
+    pub const MAX: DiskWarningPercent = DiskWarningPercent(100);
+    /// Puddle's default: 95 %.
+    pub const DEFAULT: DiskWarningPercent = DiskWarningPercent(95);
+
+    /// Checks `percent` and wraps it.
+    ///
+    /// # Errors
+    ///
+    /// When it is under [`Self::MIN`] or over [`Self::MAX`].
+    pub fn new(percent: u8) -> Result<Self, ValidationError> {
+        if (Self::MIN.0..=Self::MAX.0).contains(&percent) {
+            Ok(Self(percent))
+        } else {
+            Err(ValidationError::new(
+                "disk warning threshold",
+                &format!("{percent} %"),
+                format_args!("must be between {} and {} %", Self::MIN.0, Self::MAX.0),
+            ))
+        }
+    }
+
+    /// The threshold in percent.
+    #[must_use]
+    pub fn get(self) -> u8 {
+        self.0
+    }
+
+    /// Whether `used` of `size` (any one unit) is at or over the threshold. A disk of no size
+    /// is never full.
+    #[must_use]
+    pub fn reached(self, used: u64, size: u64) -> bool {
+        size > 0 && u128::from(used) * 100 >= u128::from(size) * u128::from(self.0)
+    }
+}
+
+impl Default for DiskWarningPercent {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl TryFrom<u8> for DiskWarningPercent {
+    type Error = ValidationError;
+
+    fn try_from(percent: u8) -> Result<Self, Self::Error> {
+        Self::new(percent)
+    }
+}
+
+impl From<DiskWarningPercent> for u8 {
+    fn from(p: DiskWarningPercent) -> u8 {
+        p.0
+    }
+}
+
 /// What happens when a page in a workspace window reads the clipboard programmatically.
 ///
 /// The default asks once per workspace; the answer is stored as that workspace's override.

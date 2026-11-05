@@ -9,8 +9,9 @@ use serde_json::Value;
 use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
 use crate::{
-    AppIconChoice, CloseBehaviour, ConsentKind, Consents, DensityChoice, FirstRun, HexColour,
-    Loaded, PaletteChoice, ServerChoice, SettingsError, TermsVersion, ThemeChoice, WorkspaceLayer,
+    AppIconChoice, CloseBehaviour, ConsentKind, Consents, DensityChoice, DiskWarningPercent,
+    FirstRun, HexColour, Loaded, PaletteChoice, ServerChoice, SettingsError, TermsVersion,
+    ThemeChoice, WorkspaceLayer,
 };
 
 /// The version of the terms the enable popup for Microsoft's server shows: the licence's address.
@@ -215,6 +216,14 @@ pub struct UiPrefs {
     /// Notify when a workspace is killed for running out of memory; default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify_oom: Option<bool>,
+    /// Notify when a workspace's root disk or volume reaches the warning threshold; default on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify_disk_full: Option<bool>,
+    /// How full a workspace's root disk or volume gets, in percent, before Puddle warns
+    /// (the banner on the workspace and, when [`UiPrefs::notify_disk_full`] is on, the
+    /// notification); default 95.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_warning_percent: Option<DiskWarningPercent>,
     /// Notify when a workspace stops or crashes without being asked to; default on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify_unexpected_stop: Option<bool>,
@@ -244,6 +253,8 @@ impl UiPrefs {
     pub const DEFAULT_BADGE: bool = true;
     /// Puddle's default for [`UiPrefs::notify_oom`].
     pub const DEFAULT_NOTIFY_OOM: bool = true;
+    /// Puddle's default for [`UiPrefs::notify_disk_full`].
+    pub const DEFAULT_NOTIFY_DISK_FULL: bool = true;
     /// Puddle's default for [`UiPrefs::notify_unexpected_stop`].
     pub const DEFAULT_NOTIFY_UNEXPECTED_STOP: bool = true;
     /// Puddle's default for [`UiPrefs::confirm_global_rules`].
@@ -319,6 +330,19 @@ impl UiPrefs {
     #[must_use]
     pub fn notify_oom(&self) -> bool {
         self.notify_oom.unwrap_or(Self::DEFAULT_NOTIFY_OOM)
+    }
+
+    /// Whether a disk reaching the warning threshold notifies.
+    #[must_use]
+    pub fn notify_disk_full(&self) -> bool {
+        self.notify_disk_full
+            .unwrap_or(Self::DEFAULT_NOTIFY_DISK_FULL)
+    }
+
+    /// How full a disk gets before Puddle warns.
+    #[must_use]
+    pub fn disk_warning_percent(&self) -> DiskWarningPercent {
+        self.disk_warning_percent.unwrap_or_default()
     }
 
     /// Whether an unexpected stop or crash notifies.

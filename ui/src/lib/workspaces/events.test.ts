@@ -18,6 +18,13 @@ describe("asWorkspaceEvent", () => {
     };
     expect(asWorkspaceEvent(status)).toEqual(status);
     expect(asWorkspaceEvent(oom)).toEqual(oom);
+    const disk = {
+      type: "disk_nearly_full",
+      workspace: "w",
+      disk: "root",
+      percent: 96,
+    };
+    expect(asWorkspaceEvent(disk)).toEqual(disk);
     expect(asWorkspaceEvent(progress)).toEqual(progress);
   });
 
@@ -37,6 +44,8 @@ describe("asWorkspaceEvent", () => {
     { type: "status_changed", workspace: 1, status: "running" },
     { type: "oom_kill", workspace: "w", pid: "7", process: "node" },
     { type: "oom_kill", workspace: "w", pid: 7 },
+    { type: "disk_nearly_full", workspace: "w", disk: "root" },
+    { type: "disk_nearly_full", workspace: "w", disk: "home", percent: 96 },
     { type: "workspace_progress", workspace: "w" },
     { type: "pending_opened", workspace: "w" },
     { type: "rules_changed" },

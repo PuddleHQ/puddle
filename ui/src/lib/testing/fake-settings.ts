@@ -42,6 +42,8 @@ const noUi = (): S["UiPrefs"] => ({
   notify_only_unfocused: null,
   badge: null,
   notify_oom: null,
+  notify_disk_full: null,
+  disk_warning_percent: null,
   notify_unexpected_stop: null,
   confirm_global_rules: null,
   inbox_shortcuts: null,

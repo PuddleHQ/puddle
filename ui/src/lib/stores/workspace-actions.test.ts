@@ -44,6 +44,8 @@ describe("start, stop and reclaim", () => {
     expect(api.calls).toContain("POST /api/workspaces/{id}/stop");
     await actions.reclaim(w("trusted"));
     expect(api.calls).toContain("POST /api/workspaces/{id}/reclaim");
+    await actions.resetRootDisk(w("down"));
+    expect(api.calls).toContain("POST /api/workspaces/{id}/reset-root-disk");
     expect(toasts.items).toHaveLength(0);
   });
 
@@ -64,7 +66,17 @@ describe("start, stop and reclaim", () => {
       message: "busy too",
     });
     await actions.reclaim(w("down"));
-    expect(messages()).toEqual(["busy", "not running", "busy too"]);
+    api.refuse.set("POST /api/workspaces/{id}/reset-root-disk", {
+      status: 409,
+      message: "stop it first",
+    });
+    await actions.resetRootDisk(w("down"));
+    expect(messages()).toEqual([
+      "busy",
+      "not running",
+      "busy too",
+      "stop it first",
+    ]);
   });
 });
 
@@ -518,6 +530,10 @@ describe("settledMessage", () => {
     [
       { operation: "reclaiming", failed: false, detail: null },
       "Reclaimed free space on w.",
+    ],
+    [
+      { operation: "resetting_root_disk", failed: false, detail: null },
+      "Reset the root disk of w; it is made again at the next start.",
     ],
     [
       { operation: "cloning", failed: false, detail: null },

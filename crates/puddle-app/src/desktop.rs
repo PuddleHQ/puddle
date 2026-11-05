@@ -676,7 +676,9 @@ mod behaviour_tests {
     use std::sync::atomic::AtomicUsize;
 
     use puddle_test_kit::eventually_blocking;
-    use puddle_types::{EventSink, PendingEnd, PendingSummary, WorkspaceName, WorkspaceStatus};
+    use puddle_types::{
+        DiskKind, EventSink, PendingEnd, PendingSummary, WorkspaceName, WorkspaceStatus,
+    };
     use serde_json::json;
     use tauri::test::{MockRuntime, mock_builder};
     use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -843,10 +845,18 @@ mod behaviour_tests {
         let rig = rig(TrayState::Shown);
         save(
             &rig,
-            &json!({"notifications": false, "notify_oom": false, "notify_unexpected_stop": false}),
+            &json!({"notifications": false, "notify_oom": false, "notify_disk_full": false, "notify_unexpected_stop": false}),
         );
         settled_after_quiet(&rig, opened(902));
         settled_after_quiet(&rig, Event::oom_kill(workspace(), 3, "node"));
+        settled_after_quiet(
+            &rig,
+            Event::DiskNearlyFull {
+                workspace: workspace(),
+                disk: DiskKind::Volume,
+                percent: 97,
+            },
+        );
         settled_after_quiet(
             &rig,
             Event::StatusChanged {

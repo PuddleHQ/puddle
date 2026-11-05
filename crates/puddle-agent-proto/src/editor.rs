@@ -32,6 +32,8 @@
 
 use std::fmt;
 
+use puddle_types::SessionUser;
+
 /// The folder with the code-server release, as the guest mounts it.
 pub const GUEST_DIR: &str = "/puddle/code-server";
 
@@ -56,6 +58,9 @@ pub const ENV_TELEMETRY: &str = "PUDDLE_AGENT_EDITOR_TELEMETRY";
 
 /// The automatic-update variable of Microsoft's server.
 pub const ENV_AUTO_UPDATE: &str = "PUDDLE_AGENT_EDITOR_AUTO_UPDATE";
+
+/// The user the server runs as. Unset: root, the agent's own user.
+pub const ENV_USER: &str = "PUDDLE_AGENT_EDITOR_USER";
 
 /// The folder below the data folder that holds Microsoft's builds, one folder per build.
 pub const MICROSOFT_BUILDS: &str = "servers";
@@ -107,6 +112,9 @@ pub struct EditorServer {
     pub workspace_file: Option<String>,
     /// The reconnection grace in seconds ([`MIN_GRACE_SECS`] to [`MAX_GRACE_SECS`]).
     pub grace_secs: u32,
+    /// The user the server runs as: the workspace's session user, so its terminals are that
+    /// user's.
+    pub user: SessionUser,
 }
 
 impl EditorServer {
@@ -122,6 +130,7 @@ impl EditorServer {
             folder: folder.into(),
             workspace_file: None,
             grace_secs,
+            user: SessionUser::Root,
         }
     }
 
@@ -151,6 +160,13 @@ impl EditorServer {
         self
     }
 
+    /// The same server, run as `user`.
+    #[must_use]
+    pub fn with_user(mut self, user: SessionUser) -> Self {
+        self.user = user;
+        self
+    }
+
     /// The variables that tell the agent to run this server.
     #[must_use]
     pub fn env(&self) -> Vec<(&'static str, String)> {
@@ -163,6 +179,9 @@ impl EditorServer {
         ];
         if let Some(file) = &self.workspace_file {
             env.push((ENV_WORKSPACE_FILE, file.clone()));
+        }
+        if !self.user.is_root() {
+            env.push((ENV_USER, self.user.name().to_owned()));
         }
         if let ServerKind::Microsoft {
             telemetry,
@@ -265,6 +284,12 @@ impl EditorServer {
                 .map(|file| path(ENV_WORKSPACE_FILE, file))
                 .transpose()?,
             grace_secs,
+            user: match get(ENV_USER).as_deref() {
+                None => SessionUser::Root,
+                Some(name) if name == SessionUser::Agent.name() => SessionUser::Agent,
+                Some(name) if name == SessionUser::Root.name() => SessionUser::Root,
+                Some(_) => return Err(EditorEnvError::new(ENV_USER, "expected agent or root")),
+            },
         }))
     }
 }
@@ -325,6 +350,22 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((minimal.port, minimal.grace_secs), (DEFAULT_PORT, 300));
+    }
+
+    #[test]
+    fn the_session_user_reads_back_and_a_missing_one_is_root() {
+        let server = EditorServer::new("/d", "/f", 300).with_user(SessionUser::Agent);
+        let env = server.env();
+        assert!(env.contains(&(ENV_USER, "agent".to_owned())));
+        let vars: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        assert_eq!(read(&vars), Ok(Some(server)));
+        let root = EditorServer::new("/d", "/f", 300);
+        assert!(root.env().iter().all(|(k, _)| *k != ENV_USER));
+        let base = [(ENV_DIR, "/e"), (ENV_DATA, "/d"), (ENV_FOLDER, "/f")];
+        assert_eq!(read(&base).unwrap().unwrap().user, SessionUser::Root);
+        let named = |user| read(&[base[0], base[1], base[2], (ENV_USER, user)]);
+        assert_eq!(named("root").unwrap().unwrap().user, SessionUser::Root);
+        assert_eq!(named("vscode").unwrap_err().var, ENV_USER);
     }
 
     #[test]

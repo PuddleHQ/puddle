@@ -54,6 +54,32 @@ describe("WorkspaceCard", () => {
     expect(card).toHaveTextContent("3 hours ago");
   });
 
+  it("says in words how full each disk is and flags the ones over the threshold", () => {
+    mount(
+      {},
+      workspace("demo", {
+        root_disk_size_mib: 4096,
+        root_disk_used_mib: 3900,
+        disk_used_mib: 32_000,
+        disk_warnings: ["root", "volume"],
+      }),
+    );
+    const card = screen.getByRole("article");
+    expect(card).toHaveTextContent("Root disk 3.8 GiB of 4 GiB used");
+    expect(card).toHaveTextContent("Root disk 95 % full");
+    expect(card).toHaveTextContent("Volume 97 % full");
+  });
+
+  it("shows no root disk and no flag when the host cannot say", () => {
+    mount(
+      {},
+      workspace("demo", { root_disk_size_mib: null, root_disk_used_mib: null }),
+    );
+    const card = screen.getByRole("article");
+    expect(card).not.toHaveTextContent("Root disk");
+    expect(card).not.toHaveTextContent("% full");
+  });
+
   it("shows the first repository and how many more, or that there is none", () => {
     const repo = (n: string) => ({
       url: `https://github.com/acme/${n}.git`,

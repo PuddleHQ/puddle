@@ -6,6 +6,7 @@
   import { page } from "$app/state";
   import EditorInstallNotice from "#lib/components/EditorInstallNotice.svelte";
   import RepositoriesSection from "#lib/components/RepositoriesSection.svelte";
+  import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
   import StatusChip from "#lib/components/StatusChip.svelte";
   import VolumeMissingNotice from "#lib/components/VolumeMissingNotice.svelte";
   import { api } from "#lib/api/client.ts";
@@ -19,8 +20,12 @@
   import {
     canDelete,
     canReclaim,
+    canResetRootDisk,
     diskLabel,
+    diskPercent,
+    diskWarned,
     formatMib,
+    rootDiskLabel,
   } from "#lib/workspaces/model.ts";
   import { tabHref } from "#lib/workspaces/tabs.ts";
   import "#lib/theme/controls.css";
@@ -33,10 +38,17 @@
   const editorUpdateProblem = $derived(
     workspace ? editorProblems.updateOf(workspace.id) : null,
   );
+  const editorSessionUserProblem = $derived(
+    workspace ? editorProblems.sessionUserOf(workspace.id) : null,
+  );
   const oom = $derived(workspace ? workspaces.oom[workspace.id] : undefined);
 
   let now = $state(Date.now());
   let dismissedOom = $state<number | null>(null);
+  let resetOpen = $state(false);
+  function openReset() {
+    resetOpen = true;
+  }
   let memorySource = $state<"workspace" | "global" | "default" | null>(null);
 
   onMount(() => {
@@ -96,6 +108,35 @@
 </script>
 
 {#if workspace}
+  {#each workspace.disk_warnings as kind (kind)}
+    <div class="warn" role="alert" data-testid="disk-warning-{kind}">
+      <TriangleAlert aria-hidden="true" size={20} />
+      {#if kind === "root"}
+        <p>
+          <b>Root disk nearly full:</b>
+          {diskPercent(workspace, "root")} % used. It holds what was installed or
+          cached outside the volume. Resetting it removes that (packages reinstall
+          on the next start); the volume and your work are untouched. Puddle never
+          does this by itself.
+        </p>
+        <button
+          type="button"
+          class="btn"
+          disabled={!canResetRootDisk(workspace)}
+          onclick={openReset}>Reset root disk…</button
+        >
+        {#if workspace.busy === null && !canResetRootDisk(workspace)}
+          <span class="hint">Stop the workspace first.</span>
+        {/if}
+      {:else}
+        <p>
+          <b>Volume nearly full:</b>
+          {diskPercent(workspace, "volume")} % used. The volume cannot grow: delete
+          what you no longer need in the workspace, then use Reclaim space.
+        </p>
+      {/if}
+    </div>
+  {/each}
   {#if oom && dismissedOom !== oom.at}
     <div class="warn" role="alert">
       <TriangleAlert aria-hidden="true" size={20} />
@@ -152,6 +193,12 @@
           detail={editorUpdateProblem.detail}
         />
       {/if}
+      {#if editorSessionUserProblem}
+        <EditorInstallNotice
+          title={editorSessionUserProblem.title}
+          detail={editorSessionUserProblem.detail}
+        />
+      {/if}
     </section>
 
     <RepositoriesSection {workspace} />
@@ -172,14 +219,27 @@
             >
           {/if}
         </dd>
+        {#if rootDiskLabel(workspace) !== null}
+          <dt>Root disk</dt>
+          <dd class:full={diskWarned(workspace, "root")}>
+            {rootDiskLabel(workspace)}{diskWarned(workspace, "root")
+              ? " (nearly full)"
+              : ""}
+          </dd>
+        {/if}
         <dt>Disk</dt>
-        <dd>{diskLabel(workspace)}</dd>
+        <dd class:full={diskWarned(workspace, "volume")}>
+          {diskLabel(workspace)}{diskWarned(workspace, "volume")
+            ? " (nearly full)"
+            : ""}
+        </dd>
         <dt>Volume</dt>
         <dd class="mono">ws-{workspace.id}</dd>
       </dl>
       <p class="hint">
         Reclaiming space gives disk the workspace no longer uses back to your
-        computer.
+        computer. Resetting the root disk (a stopped workspace) removes what was
+        installed outside the volume.
       </p>
       <div class="row">
         <button
@@ -187,6 +247,12 @@
           class="btn"
           disabled={!canReclaim(workspace)}
           onclick={() => void actions.reclaim(workspace)}>Reclaim space</button
+        >
+        <button
+          type="button"
+          class="btn"
+          disabled={!canResetRootDisk(workspace)}
+          onclick={openReset}>Reset root disk…</button
         >
       </div>
     </section>
@@ -232,6 +298,15 @@
       </div>
     </section>
   </div>
+  <ConfirmDialog
+    bind:open={resetOpen}
+    title="Reset the root disk of {workspace.display_name}?"
+    summary="Everything installed or cached outside the volume is removed."
+    detail="Packages and tools installed outside the volume, the home directory and tool caches are lost, including any file kept there that is not in a repository on the volume; packages reinstall and caches rebuild on the next start. The volume, with your repositories and files, is untouched."
+    confirmLabel="Reset root disk"
+    tone="deny"
+    onConfirm={() => void actions.resetRootDisk(workspace)}
+  />
 {/if}
 
 <style>
@@ -303,6 +378,10 @@
     flex: 1;
     min-width: 12rem;
     overflow-wrap: anywhere;
+  }
+  .full {
+    color: var(--color-warning);
+    font-weight: 600;
   }
   .btn:disabled {
     cursor: default;

@@ -178,7 +178,7 @@ run_gate() {
         scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
-            ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
+            ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
             ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/vm-tests-report-test.sh
         ;;
     git-env)
@@ -254,7 +254,9 @@ run_gate() {
     # touched the lock file. Pull requests to develop run only `deny` (ci.yml); `advisories` runs on pull
     # requests to main, on pushes to develop and nightly, where it also keeps one tracking issue.
     deny) "$cargo" deny --locked check bans licenses sources ;;
-    advisories) "$cargo" deny --locked check advisories ;;
+    # ci/deny-fresh.sh fetches the advisory database and registry index first, so a crate yanked since the last
+    # fetch fails here as it does in the scheduled job (and says so when the database was over a day old).
+    advisories) DENY="$cargo deny" ci/deny-fresh.sh --locked check advisories ;;
     notices)
         # Every shipped dependency has a licence entry in the third-party notices (cargo-about).
         # The verdict is a function of the dependency manifests and lock, the cargo-about config, the

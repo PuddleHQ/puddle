@@ -9,7 +9,10 @@
   import type { OomEvent, Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
     diskLabel,
+    diskPercent,
+    diskWarned,
     formatMib,
+    rootDiskLabel,
     type Workspace,
   } from "#lib/workspaces/model.ts";
   import "#lib/theme/controls.css";
@@ -67,7 +70,20 @@
   </header>
   <p class="meta">
     <span>{formatMib(workspace.memory_mib)} memory</span>
-    <span>{diskLabel(workspace)}</span>
+    {#if rootDiskLabel(workspace) !== null}
+      <span class:full={diskWarned(workspace, "root")}
+        >Root disk {rootDiskLabel(workspace)}</span
+      >
+    {/if}
+    <span class:full={diskWarned(workspace, "volume")}
+      >{diskLabel(workspace)}</span
+    >
+    {#each workspace.disk_warnings as kind (kind)}
+      <span class="flag warn"
+        >{kind === "root" ? "Root disk" : "Volume"}
+        {diskPercent(workspace, kind)} % full</span
+      >
+    {/each}
     <span>
       Created
       <time datetime={new Date(workspace.created_at).toISOString()}
@@ -161,6 +177,10 @@
   }
   .flag.warn {
     border-color: var(--color-warning);
+  }
+  .full {
+    color: var(--color-warning);
+    font-weight: 600;
   }
   .acts {
     display: flex;

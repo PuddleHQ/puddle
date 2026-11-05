@@ -2771,7 +2771,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 problem_key("start-refused", name),
                 format!("{name} was not started"),
                 format!(
-                    "Puddle refused to start it, and nothing was attached: {cause}. {}",
+                    "The runtime refused to start it, and nothing was attached: {cause}. {}",
                     cause.way_out()
                 ),
             )

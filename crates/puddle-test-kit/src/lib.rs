@@ -23,7 +23,7 @@ pub use cpu::cpu_time;
 pub use events::{
     EventSource, next_event_matching, next_event_within, no_event_for, no_event_matching,
 };
-pub use resources::{ReservedPort, TestDir, accepts, bound_port, quiet_port};
+pub use resources::{ReservedPort, TestDir, accepts, bound_port, private_tempdir, quiet_port};
 pub use wait::{
     MAX_WAIT, Outcome, Step, eventually, eventually_async, eventually_blocking, returns_within,
 };

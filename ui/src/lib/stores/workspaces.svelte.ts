@@ -43,8 +43,9 @@ export interface Progress {
 }
 
 export interface Settled {
-  name: string;
-  /** What the user calls it (its display name), for words; `name` when it is no longer listed. */
+  /** The workspace's id, which events and every call use. */
+  id: string;
+  /** What the user calls it (its display name), for words; `id` when it is no longer listed. */
   label: string;
   operation: Operation | null;
   failed: boolean;
@@ -116,8 +117,13 @@ export class WorkspaceStore {
     this.#pollMs = deps.pollMs ?? 60_000;
   }
 
-  byName(name: string): Workspace | undefined {
-    return this.list.find((w) => w.name === name);
+  byId(id: string): Workspace | undefined {
+    return this.list.find((w) => w.id === id);
+  }
+
+  /** The words for a workspace: its display name, or the id when it is not listed (deleted). */
+  labelOf(id: string): string {
+    return this.byId(id)?.display_name ?? id;
   }
 
   /** Reads the list; never throws. Calls that overlap share one run, and one more follows. */
@@ -158,7 +164,7 @@ export class WorkspaceStore {
   }
 
   #put(next: Workspace): void {
-    const others = this.list.filter((w) => w.name !== next.name);
+    const others = this.list.filter((w) => w.id !== next.id);
     this.list = sortWorkspaces([...others, next]);
   }
 
@@ -171,10 +177,10 @@ export class WorkspaceStore {
   }
 
   #apply(event: WorkspaceEvent): void {
-    const name = event.workspace;
+    const id = event.workspace;
     switch (event.type) {
       case "status_changed": {
-        const w = this.byName(name);
+        const w = this.byId(id);
         if (!w) {
           // Created somewhere else (the command line): read it.
           void this.refresh();
@@ -194,23 +200,23 @@ export class WorkspaceStore {
       case "oom_kill":
         this.oom = {
           ...this.oom,
-          [name]: { process: event.process, pid: event.pid, at: this.#now() },
+          [id]: { process: event.process, pid: event.pid, at: this.#now() },
         };
         return;
       case "workspace_progress": {
-        const w = this.byName(name);
+        const w = this.byId(id);
         const operation =
           w?.busy ??
-          this.progress[name]?.operation ??
+          this.progress[id]?.operation ??
           operationOfStep(event.step);
         if (event.step === "done" || event.step === "failed") {
           const failed = event.step === "failed";
-          this.#ended.set(name, (this.#ended.get(name) ?? 0) + 1);
-          const { [name]: _gone, ...rest } = this.progress;
+          this.#ended.set(id, (this.#ended.get(id) ?? 0) + 1);
+          const { [id]: _gone, ...rest } = this.progress;
           this.progress = failed
             ? {
                 ...rest,
-                [name]: {
+                [id]: {
                   step: event.step,
                   detail: event.detail,
                   repository: event.repository ?? null,
@@ -222,8 +228,8 @@ export class WorkspaceStore {
           // `busy` is cleared before this event: the record now says what is left.
           void this.refresh();
           this.onSettled?.({
-            name,
-            label: w?.display_name ?? name,
+            id,
+            label: w?.display_name ?? id,
             operation,
             failed,
             detail: event.detail,
@@ -232,7 +238,7 @@ export class WorkspaceStore {
         }
         this.progress = {
           ...this.progress,
-          [name]: {
+          [id]: {
             step: event.step,
             detail: event.detail,
             repository: event.repository ?? null,
@@ -247,14 +253,14 @@ export class WorkspaceStore {
   }
 
   /** Forgets a failure the user has seen. */
-  dismissProgress(name: string): void {
-    const { [name]: _gone, ...rest } = this.progress;
+  dismissProgress(id: string): void {
+    const { [id]: _gone, ...rest } = this.progress;
     this.progress = rest;
   }
 
   /** A new operation hides the failure of the last one, but not steps of its own. */
-  #forgetFailure(name: string): void {
-    if (this.progress[name]?.failed) this.dismissProgress(name);
+  #forgetFailure(id: string): void {
+    if (this.progress[id]?.failed) this.dismissProgress(id);
   }
 
   /**
@@ -263,20 +269,20 @@ export class WorkspaceStore {
    * `startsOperation` also hides the last operation's failure, again only if this one has not ended.
    */
   #accept(
-    name: string,
+    id: string,
     before: number,
     record: Workspace,
     startsOperation = false,
   ): void {
-    if ((this.#ended.get(name) ?? 0) === before) {
+    if ((this.#ended.get(id) ?? 0) === before) {
       // A failure that arrived before this answer belongs to this operation: keep it.
-      if (startsOperation) this.#forgetFailure(name);
+      if (startsOperation) this.#forgetFailure(id);
       this.#put(record);
     } else void this.refresh();
   }
 
-  #endedCount(name: string): number {
-    return this.#ended.get(name) ?? 0;
+  #endedCount(id: string): number {
+    return this.#ended.get(id) ?? 0;
   }
 
   async #post<T>(
@@ -310,12 +316,18 @@ export class WorkspaceStore {
 
   /** Creates a workspace; the clone runs on and reports through progress events. */
   async create(body: NewWorkspace): Promise<ActionResult<Workspace>> {
-    const before = this.#endedCount(body.name);
+    // The id is not known until the answer: remember every count, then read the new one's.
+    const counts = new Map(this.#ended);
     const result = await this.#post(() =>
       this.#api.POST("/api/workspaces", { body }),
     );
     if (result.ok) {
-      this.#accept(result.value.name, before, result.value, true);
+      this.#accept(
+        result.value.id,
+        counts.get(result.value.id) ?? 0,
+        result.value,
+        true,
+      );
     } else if (!result.field && result.reason === "conflict") {
       return { ...result, field: "name" };
     }
@@ -332,7 +344,7 @@ export class WorkspaceStore {
       this.#api.POST(path, { params: { path: { id } } }),
     );
     if (result.ok) {
-      this.#accept(result.value.name, before, result.value, true);
+      this.#accept(result.value.id, before, result.value, true);
     }
     return result;
   }
@@ -363,7 +375,7 @@ export class WorkspaceStore {
         body: { confirm: true, fingerprint },
       }),
     );
-    if (result.ok) this.#accept(result.value.name, before, result.value);
+    if (result.ok) this.#accept(result.value.id, before, result.value);
     return result;
   }
 
@@ -399,10 +411,10 @@ export class WorkspaceStore {
    * Turns direct SSH on or off for one workspace by setting its own switch (the API replaces a
    * workspace's whole settings layer, so this reads it first and sends it back with the change).
    */
-  async setDirectSsh(name: string, on: boolean): Promise<ActionResult> {
+  async setDirectSsh(id: string, on: boolean): Promise<ActionResult> {
     try {
       const mine = await this.#api.GET("/api/settings/workspaces/{workspace}", {
-        params: { path: { workspace: name } },
+        params: { path: { workspace: id } },
       });
       if (!mine.data) {
         return {
@@ -413,7 +425,7 @@ export class WorkspaceStore {
       const saved = await this.#api.PUT(
         "/api/settings/workspaces/{workspace}",
         {
-          params: { path: { workspace: name } },
+          params: { path: { workspace: id } },
           body: { overrides: { ...mine.data.overrides, direct_ssh: on } },
         },
       );

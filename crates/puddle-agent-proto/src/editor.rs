@@ -34,6 +34,12 @@ use std::fmt;
 
 use puddle_types::SessionUser;
 
+/// Why the editor server cannot run in a guest whose image has musl and no glibc (for example
+/// Alpine). The agent sends it as the editor's install problem and answers the host's editor
+/// requests with it; the host words the problem for the user from it.
+pub const NEEDS_GLIBC: &str =
+    "the browser editor needs an image with glibc; this image uses musl (for example Alpine)";
+
 /// The folder with the code-server release, as the guest mounts it.
 pub const GUEST_DIR: &str = "/puddle/code-server";
 

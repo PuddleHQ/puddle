@@ -81,7 +81,7 @@
         <p class="error" id="{id}-error" role="alert">{shown}</p>
       {:else}
         <p class="hint" id="{id}-hint">
-          Identifier: <span class="mono">{workspace.name}</span>. It names the
+          Identifier: <span class="mono">{workspace.id}</span>. It names the
           disk and does not change.
         </p>
       {/if}

@@ -9,7 +9,7 @@ import {
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const url = vi.hoisted(() => ({ id: "web" }));
+const url = vi.hoisted(() => ({ id: "w-web" }));
 vi.mock("$app/state", () => ({
   page: {
     get params() {
@@ -42,13 +42,13 @@ import Page from "./+page.svelte";
 const { api, source, workspace } = h;
 
 beforeEach(() => {
-  url.id = "web";
+  url.id = "w-web";
   workspaces.list = [
     workspace("web", { status: "running" }),
     workspace("docs", { status: "stopped" }),
   ];
   api.ports = {
-    web: {
+    "w-web": {
       running: true,
       ports: [
         port(3000),
@@ -56,7 +56,7 @@ beforeEach(() => {
         port(8080, { forwarded: true, pinned: true, host_port: 8080 }),
       ],
     },
-    docs: {
+    "w-docs": {
       running: false,
       ports: [
         port(4000, {
@@ -103,7 +103,7 @@ describe("the table", () => {
   });
 
   it("says a stopped workspace's kept forward is not open, with its problem, and offers no forward", async () => {
-    url.id = "docs";
+    url.id = "w-docs";
     render(Page);
     const table = await screen.findByRole("table", { name: "Ports of docs" });
     const row = within(table).getAllByRole("row")[1] as HTMLElement;
@@ -120,13 +120,13 @@ describe("the table", () => {
   });
 
   it("says when nothing listens", async () => {
-    api.ports["web"] = { running: true, ports: [] };
+    api.ports["w-web"] = { running: true, ports: [] };
     render(Page);
     expect(
       await screen.findByText(/Nothing listens in the workspace/),
     ).toBeTruthy();
     cleanup();
-    api.ports["web"] = { running: false, ports: [] };
+    api.ports["w-web"] = { running: false, ports: [] };
     render(Page);
     expect(await screen.findByText("No forward is kept.")).toBeTruthy();
   });
@@ -136,7 +136,7 @@ describe("the table", () => {
     render(Page);
     expect(screen.getByText(/Loading ports/)).toBeTruthy();
     cleanup();
-    url.id = "web";
+    url.id = "w-web";
     api.down = true;
     render(Page);
     expect(await screen.findByText(/Couldn't read the ports/)).toBeTruthy();
@@ -145,8 +145,8 @@ describe("the table", () => {
   it("follows the events that change the list", async () => {
     render(Page);
     await rowOf(3000);
-    api.ports["web"]!.ports.push(port(9000));
-    source.emit({ type: "workspace_ports_changed", workspace: "web" });
+    api.ports["w-web"]!.ports.push(port(9000));
+    source.emit({ type: "workspace_ports_changed", workspace: "w-web" });
     await waitFor(async () => expect(await rowOf(9000)).toBeTruthy());
   });
 });
@@ -222,7 +222,7 @@ describe("forwarding", () => {
       within(row).getByLabelText(/Keep the forward of 5432/),
     );
     await waitFor(() =>
-      expect(api.ports["web"]!.ports[1]).toMatchObject({ pinned: true }),
+      expect(api.ports["w-web"]!.ports[1]).toMatchObject({ pinned: true }),
     );
     expect(api.bodies.at(-1)).toEqual({ host_port: 15432, pinned: true });
     const kept = await rowOf(8080);
@@ -230,7 +230,7 @@ describe("forwarding", () => {
       within(kept).getByLabelText(/Keep the forward of 8080/),
     );
     await waitFor(() =>
-      expect(api.ports["web"]!.ports[2]).toMatchObject({ pinned: false }),
+      expect(api.ports["w-web"]!.ports[2]).toMatchObject({ pinned: false }),
     );
   });
 

@@ -63,7 +63,7 @@ describe("the start folder setting", () => {
     mount({ start_folder: "api/services/web" });
     expect(field()).toHaveValue("api/services/web");
     expect(
-      screen.getByText(/land in \/workspaces\/dev\/api\/services\/web/),
+      screen.getByText(/land in \/workspaces\/w-dev\/api\/services\/web/),
     ).toBeInTheDocument();
   });
 
@@ -133,7 +133,7 @@ describe("the start folder setting", () => {
   it("warns that the folder does not exist when the host lists that problem", async () => {
     api.problems = [
       {
-        key: "start-folder:dev",
+        key: "start-folder:w-dev",
         title: "Start folder missing",
         detail: "api/web is not in the workspace",
         workspace: "dev",
@@ -180,7 +180,7 @@ describe("the start folder setting", () => {
     expect(screen.queryByText("The folder does not exist.")).toBeNull();
     api.problems = [
       {
-        key: "start-folder:dev",
+        key: "start-folder:w-dev",
         title: "Start folder missing",
         detail: "gone",
         workspace: "dev",

@@ -105,7 +105,7 @@ impl SecretPlace {
     fn from_store(place: store::SecretPlace) -> Self {
         match place {
             store::SecretPlace::Header => Self::Header {},
-            store::SecretPlace::Query(name) => Self::Query { name },
+            store::SecretPlace::Query(name) => Self::Query { name: name.into() },
             store::SecretPlace::Path => Self::Path {},
         }
     }
@@ -121,7 +121,9 @@ impl SecretPlace {
         match place {
             None => Ok(stored.unwrap_or_default()),
             Some(Self::Header {}) => Ok(store::SecretPlace::Header),
-            Some(Self::Query { name }) => store::SecretPlace::query(&name),
+            Some(Self::Query { name }) => puddle_types::QueryName::new(&name)
+                .map(store::SecretPlace::Query)
+                .map_err(|e| store::StoreError::EnvInvalid(e.to_string())),
             Some(Self::Path {}) => Ok(store::SecretPlace::Path),
         }
     }

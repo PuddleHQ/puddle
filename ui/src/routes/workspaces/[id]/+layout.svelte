@@ -20,7 +20,7 @@
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
   const current = $derived(activeTab(page.url.pathname, id));
   const waiting = $derived(
-    pending.rows.filter((r) => r.request.workspace === workspace?.name).length,
+    pending.rows.filter((r) => r.request.workspace === workspace?.id).length,
   );
 
   // A workspace that was here and is gone (deleted, here or elsewhere) takes you back to the list.
@@ -65,7 +65,7 @@
   {/if}
   <ProgressLine
     busy={workspace.busy}
-    progress={workspaces.progress[workspace.name]}
+    progress={workspaces.progress[workspace.id]}
     repositories={workspace.repositories}
     onDismiss={() => actions.dismissProgress(workspace)}
   />

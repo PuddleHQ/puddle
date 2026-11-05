@@ -15,14 +15,14 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
  */
 export function isEnvChanged(
   event: unknown,
-  scope: { kind: "global" } | { kind: "workspace"; name: string },
+  scope: { kind: "global" } | { kind: "workspace"; id: string },
 ): boolean {
   if (!isObject(event)) return false;
   if (event["type"] === "global_env_changed") return true;
   return (
     scope.kind === "workspace" &&
     event["type"] === "workspace_env_changed" &&
-    event["workspace"] === scope.name
+    event["workspace"] === scope.id
   );
 }
 

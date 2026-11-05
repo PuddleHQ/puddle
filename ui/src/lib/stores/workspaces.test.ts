@@ -50,8 +50,8 @@ describe("reading the list", () => {
     await store.refresh();
     expect(store.status).toBe("ready");
     expect(store.list.map((w) => w.name)).toEqual(["a-shop", "b-site"]);
-    expect(store.byName("a-shop")?.status).toBe("running");
-    expect(store.byName("nope")).toBeUndefined();
+    expect(store.byId("w-a-shop")?.status).toBe("running");
+    expect(store.byId("w-nope")).toBeUndefined();
   });
 
   it("fails quietly while it has never worked, and keeps what it has after", async () => {
@@ -100,20 +100,20 @@ describe("events", () => {
   });
 
   it("applies a status change in place and keeps the order", () => {
-    store.handleEvent(status("b-site", "running"));
-    expect(store.byName("b-site")?.status).toBe("running");
+    store.handleEvent(status("w-b-site", "running"));
+    expect(store.byId("w-b-site")?.status).toBe("running");
     expect(store.list.map((w) => w.name)).toEqual(["a-shop", "b-site"]);
   });
 
   it("reads the list when a workspace it doesn't know changes", async () => {
     api.list.push(workspace("c-new", { status: "created" }));
-    store.handleEvent(status("c-new", "starting"));
-    await vi.waitFor(() => expect(store.byName("c-new")).toBeDefined());
+    store.handleEvent(status("w-c-new", "starting"));
+    await vi.waitFor(() => expect(store.byId("w-c-new")).toBeDefined());
   });
 
   it("reads the list again when a workspace's repositories change", async () => {
     api.list = api.list.map((w) =>
-      w.name === "a-shop"
+      w.id === "w-a-shop"
         ? {
             ...w,
             repositories: [
@@ -124,37 +124,37 @@ describe("events", () => {
     );
     store.handleEvent({
       type: "workspace_repositories_changed",
-      workspace: "a-shop",
+      workspace: "w-a-shop",
     });
     await vi.waitFor(() =>
-      expect(store.byName("a-shop")?.repositories[0]?.directory).toBe("x"),
+      expect(store.byId("w-a-shop")?.repositories[0]?.directory).toBe("x"),
     );
   });
 
   it("remembers the last out-of-memory kill with the time the page heard it", () => {
     store.handleEvent({
       type: "oom_kill",
-      workspace: "a-shop",
+      workspace: "w-a-shop",
       pid: 9,
       process: "node",
     });
-    expect(store.oom["a-shop"]).toEqual({ process: "node", pid: 9, at: 777 });
+    expect(store.oom["w-a-shop"]).toEqual({ process: "node", pid: 9, at: 777 });
   });
 
   it("reads the list again when a disk reaches the warning threshold", async () => {
     api.list = api.list.map((w) =>
-      w.name === "a-shop"
+      w.id === "w-a-shop"
         ? { ...w, disk_used_mib: 31_000, disk_warnings: ["volume" as const] }
         : w,
     );
     store.handleEvent({
       type: "disk_nearly_full",
-      workspace: "a-shop",
+      workspace: "w-a-shop",
       disk: "volume",
       percent: 94,
     });
     await vi.waitFor(() =>
-      expect(store.byName("a-shop")?.disk_warnings).toEqual(["volume"]),
+      expect(store.byId("w-a-shop")?.disk_warnings).toEqual(["volume"]),
     );
   });
 
@@ -166,11 +166,11 @@ describe("events", () => {
 
   it("shows a step, and the record's operation with it", async () => {
     api.list = api.list.map((w) =>
-      w.name === "b-site" ? { ...w, busy: "starting" } : w,
+      w.id === "w-b-site" ? { ...w, busy: "starting" } : w,
     );
     await store.refresh();
-    store.handleEvent(step("b-site", "syncing", "files"));
-    expect(store.progress["b-site"]).toEqual({
+    store.handleEvent(step("w-b-site", "syncing", "files"));
+    expect(store.progress["w-b-site"]).toEqual({
       step: "syncing",
       detail: "files",
       repository: null,
@@ -182,34 +182,37 @@ describe("events", () => {
   it("keeps the checkout a cloning step names", async () => {
     await store.refresh();
     store.handleEvent({
-      ...step("b-site", "cloning", "https://x/api.git"),
+      ...step("w-b-site", "cloning", "https://x/api.git"),
       repository: "api",
     });
-    expect(store.progress["b-site"]?.repository).toBe("api");
-    store.handleEvent({ ...step("b-site", "failed", "no"), repository: "api" });
-    expect(store.progress["b-site"]?.repository).toBe("api");
+    expect(store.progress["w-b-site"]?.repository).toBe("api");
+    store.handleEvent({
+      ...step("w-b-site", "failed", "no"),
+      repository: "api",
+    });
+    expect(store.progress["w-b-site"]?.repository).toBe("api");
   });
 
   it("reads the record when progress arrives for a workspace that isn't marked busy", async () => {
     const before = api.calls.length;
-    store.handleEvent(step("b-site", "starting"));
+    store.handleEvent(step("w-b-site", "starting"));
     await vi.waitFor(() => expect(api.calls.length).toBeGreaterThan(before));
   });
 
   it("clears the step on done, reads the list and tells who finished what", async () => {
-    store.handleEvent(step("b-site", "starting"));
+    store.handleEvent(step("w-b-site", "starting"));
     await store.refresh(); // the step made it read the record; events wait for the read
     api.list = api.list.map((w) =>
-      w.name === "b-site" ? { ...w, busy: null, status: "running" } : w,
+      w.id === "w-b-site" ? { ...w, busy: null, status: "running" } : w,
     );
-    store.handleEvent(step("b-site", "done"));
-    expect(store.progress["b-site"]).toBeUndefined();
+    store.handleEvent(step("w-b-site", "done"));
+    expect(store.progress["w-b-site"]).toBeUndefined();
     await vi.waitFor(() =>
-      expect(store.byName("b-site")?.status).toBe("running"),
+      expect(store.byId("w-b-site")?.status).toBe("running"),
     );
     expect(settled).toEqual([
       {
-        name: "b-site",
+        id: "w-b-site",
         label: "b-site",
         operation: "starting",
         failed: false,
@@ -219,15 +222,15 @@ describe("events", () => {
   });
 
   it("keeps a failure, with its reason, until it is dismissed", () => {
-    store.handleEvent(step("b-site", "failed", "no boot"));
-    expect(store.progress["b-site"]).toMatchObject({
+    store.handleEvent(step("w-b-site", "failed", "no boot"));
+    expect(store.progress["w-b-site"]).toMatchObject({
       step: "failed",
       detail: "no boot",
       failed: true,
     });
     expect(settled[0]).toMatchObject({ failed: true, detail: "no boot" });
-    store.dismissProgress("b-site");
-    expect(store.progress["b-site"]).toBeUndefined();
+    store.dismissProgress("w-b-site");
+    expect(store.progress["w-b-site"]).toBeUndefined();
   });
 
   it("applies events that arrive during a read after it, so the read can't undo them", async () => {
@@ -244,11 +247,11 @@ describe("events", () => {
     };
     const reading = store.refresh();
     await vi.waitFor(() => expect(api.calls.length).toBeGreaterThan(1));
-    store.handleEvent(status("b-site", "running"));
-    expect(store.byName("b-site")?.status).toBe("stopped");
+    store.handleEvent(status("w-b-site", "running"));
+    expect(store.byId("w-b-site")?.status).toBe("stopped");
     release();
     await reading;
-    expect(store.byName("b-site")?.status).toBe("running");
+    expect(store.byId("w-b-site")?.status).toBe("running");
   });
 });
 
@@ -259,7 +262,7 @@ describe("actions", () => {
 
   it("creates a workspace and lists it as busy", async () => {
     store.progress = {
-      "new-one": {
+      "w-new-one": {
         step: "failed",
         detail: "old",
         repository: null,
@@ -275,8 +278,8 @@ describe("actions", () => {
       ok: true,
       value: { name: "new-one", busy: "creating" },
     });
-    expect(store.byName("new-one")?.busy).toBe("creating");
-    expect(store.progress["new-one"]).toBeUndefined();
+    expect(store.byId("w-new-one")?.busy).toBe("creating");
+    expect(store.progress["w-new-one"]).toBeUndefined();
     expect(api.bodies.at(-1)).toEqual({
       name: "new-one",
       repositories: [{ url: "https://github.com/acme/new-one.git" }],
@@ -327,7 +330,7 @@ describe("actions", () => {
     "%s marks the workspace busy at once",
     async (method, state, busy) => {
       store.progress = {
-        "b-site": {
+        "w-b-site": {
           step: "failed",
           detail: null,
           repository: null,
@@ -335,12 +338,12 @@ describe("actions", () => {
           failed: true,
         },
       };
-      const result = await store[method]("b-site");
+      const result = await store[method]("w-b-site");
       expect(result.ok).toBe(true);
-      const w = store.byName("b-site");
+      const w = store.byId("w-b-site");
       expect(w?.busy).toBe(busy);
       expect(w?.status).toBe(state);
-      expect(store.progress["b-site"]).toBeUndefined();
+      expect(store.progress["w-b-site"]).toBeUndefined();
     },
   );
 
@@ -349,24 +352,24 @@ describe("actions", () => {
     const real = api.POST;
     api.POST = async (path: string, init: Parameters<typeof real>[1]) => {
       const answer = await real(path, init);
-      store.handleEvent(step("b-site", "starting"));
-      store.handleEvent(step("b-site", "syncing"));
-      store.handleEvent(status("b-site", "running"));
+      store.handleEvent(step("w-b-site", "starting"));
+      store.handleEvent(step("w-b-site", "syncing"));
+      store.handleEvent(status("w-b-site", "running"));
       api.list = api.list.map((w) =>
-        w.name === "b-site" ? { ...w, busy: null, status: "running" } : w,
+        w.id === "w-b-site" ? { ...w, busy: null, status: "running" } : w,
       );
-      store.handleEvent(step("b-site", "done"));
+      store.handleEvent(step("w-b-site", "done"));
       return answer;
     };
-    await store.startWorkspace("b-site");
+    await store.startWorkspace("w-b-site");
     await store.refresh();
     // The answer said "busy starting"; it is older than the end of the operation, so it is not shown.
-    expect(store.byName("b-site")).toMatchObject({
+    expect(store.byId("w-b-site")).toMatchObject({
       busy: null,
       status: "running",
     });
     expect(settled.at(-1)).toMatchObject({
-      name: "b-site",
+      id: "w-b-site",
       operation: "starting",
       failed: false,
     });
@@ -374,7 +377,7 @@ describe("actions", () => {
 
   it("keeps the steps of a new operation but forgets the last one's failure", async () => {
     store.progress = {
-      "b-site": {
+      "w-b-site": {
         step: "failed",
         detail: "old",
         repository: null,
@@ -382,11 +385,11 @@ describe("actions", () => {
         failed: true,
       },
     };
-    await store.startWorkspace("b-site");
-    expect(store.progress["b-site"]).toBeUndefined();
-    store.handleEvent(step("b-site", "syncing"));
-    await store.stopWorkspace("b-site");
-    expect(store.progress["b-site"]).toMatchObject({
+    await store.startWorkspace("w-b-site");
+    expect(store.progress["w-b-site"]).toBeUndefined();
+    store.handleEvent(step("w-b-site", "syncing"));
+    await store.stopWorkspace("w-b-site");
+    expect(store.progress["w-b-site"]).toMatchObject({
       step: "syncing",
       failed: false,
     });
@@ -397,12 +400,12 @@ describe("actions", () => {
     const real = api.POST;
     api.POST = async (path: string, init: Parameters<typeof real>[1]) => {
       const answer = await real(path, init);
-      store.handleEvent(step("b-site", "starting"));
-      store.handleEvent(step("b-site", "failed", "boom"));
+      store.handleEvent(step("w-b-site", "starting"));
+      store.handleEvent(step("w-b-site", "failed", "boom"));
       return answer;
     };
-    await store.startWorkspace("b-site");
-    expect(store.progress["b-site"]).toMatchObject({
+    await store.startWorkspace("w-b-site");
+    expect(store.progress["w-b-site"]).toMatchObject({
       step: "failed",
       detail: "boom",
       failed: true,
@@ -414,13 +417,13 @@ describe("actions", () => {
       status: 409,
       message: "already running",
     });
-    const conflict = await store.startWorkspace("b-site");
+    const conflict = await store.startWorkspace("w-b-site");
     expect(conflict).toEqual({
       ok: false,
       message: "already running",
       reason: "conflict",
     });
-    const gone = await store.startWorkspace("ghost");
+    const gone = await store.startWorkspace("w-ghost");
     expect(gone).toEqual({
       ok: false,
       message: "That workspace no longer exists.",
@@ -429,23 +432,23 @@ describe("actions", () => {
   });
 
   it("reads what a delete would lose", async () => {
-    api.check = cleanCheck("b-site");
-    const result = await store.checkDelete("b-site");
+    api.check = cleanCheck("w-b-site");
+    const result = await store.checkDelete("w-b-site");
     expect(result).toMatchObject({
       ok: true,
       value: { fingerprint: "fp-clean" },
     });
-    expect(await store.checkDelete("ghost")).toMatchObject({
+    expect(await store.checkDelete("w-ghost")).toMatchObject({
       ok: false,
       reason: "gone",
     });
   });
 
   it("deletes with the fingerprint the user saw", async () => {
-    const result = await store.remove("b-site", "fp-1");
+    const result = await store.remove("w-b-site", "fp-1");
     expect(result.ok).toBe(true);
     expect(api.bodies.at(-1)).toEqual({ confirm: true, fingerprint: "fp-1" });
-    expect(store.byName("b-site")?.busy).toBe("deleting");
+    expect(store.byId("w-b-site")?.busy).toBe("deleting");
   });
 
   it("passes on a refused delete", async () => {
@@ -453,7 +456,7 @@ describe("actions", () => {
       status: 409,
       message: "changed since",
     });
-    expect(await store.remove("b-site", "old")).toMatchObject({
+    expect(await store.remove("w-b-site", "old")).toMatchObject({
       ok: false,
       reason: "conflict",
       message: "changed since",
@@ -461,7 +464,7 @@ describe("actions", () => {
   });
 
   it("attaches in the mode asked", async () => {
-    const result = await store.attach("a-shop", "desktop");
+    const result = await store.attach("w-a-shop", "desktop");
     expect(result).toMatchObject({ ok: true, value: { opened: true } });
     expect(api.bodies.at(-1)).toEqual({ mode: "desktop" });
   });
@@ -470,29 +473,29 @@ describe("actions", () => {
 describe("renaming", () => {
   it("shows the new name in place and sorts by it", async () => {
     await store.refresh();
-    const result = await store.rename("a-shop", "Zed");
+    const result = await store.rename("w-a-shop", "Zed");
     expect(result.ok).toBe(true);
     expect(api.bodies.at(-1)).toEqual({ display_name: "Zed" });
     expect(store.list.map((w) => w.display_name)).toEqual(["b-site", "Zed"]);
     // Looked up by its name: a rename never changes what events and settings call it.
-    expect(store.byName("a-shop")?.display_name).toBe("Zed");
+    expect(store.byId("w-a-shop")?.display_name).toBe("Zed");
   });
 
   it("a clash is a conflict the form can show, and the list is read again", async () => {
     await store.refresh();
-    const result = await store.rename("b-site", "A-SHOP");
+    const result = await store.rename("w-b-site", "A-SHOP");
     expect(result).toMatchObject({ ok: false, reason: "conflict" });
-    expect(store.byName("b-site")?.display_name).toBe("b-site");
+    expect(store.byId("w-b-site")?.display_name).toBe("b-site");
   });
 
   it("a workspace deleted meanwhile is gone, and a dead service says so", async () => {
     await store.refresh();
-    expect(await store.rename("ghost", "x")).toMatchObject({
+    expect(await store.rename("w-ghost", "x")).toMatchObject({
       ok: false,
       reason: "gone",
     });
     api.down = true;
-    expect(await store.rename("b-site", "x")).toEqual({
+    expect(await store.rename("w-b-site", "x")).toEqual({
       ok: false,
       message: "Puddle's service isn't answering.",
     });
@@ -500,15 +503,36 @@ describe("renaming", () => {
 
   it("the end of an operation carries the name the user gave", async () => {
     await store.refresh();
-    await store.rename("a-shop", "Shop");
-    store.handleEvent(step("a-shop", "done"));
-    expect(settled).toMatchObject([{ name: "a-shop", label: "Shop" }]);
+    await store.rename("w-a-shop", "Shop");
+    store.handleEvent(step("w-a-shop", "done"));
+    expect(settled).toMatchObject([{ id: "w-a-shop", label: "Shop" }]);
     await store.refresh(); // events wait for a read that is running
-    store.handleEvent(step("unlisted", "failed", "x"));
+    store.handleEvent(step("w-unlisted", "failed", "x"));
     expect(settled.at(-1)).toMatchObject({
-      name: "unlisted",
-      label: "unlisted",
+      id: "w-unlisted",
+      label: "w-unlisted",
     });
+  });
+});
+
+describe("ids and names", () => {
+  it("keys events, progress and the list by id, whatever the name says", async () => {
+    await store.refresh();
+    await store.rename("w-a-shop", "Shop"); // the name is shown only
+    store.handleEvent(status("w-a-shop", "crashed"));
+    expect(store.byId("w-a-shop")?.status).toBe("crashed");
+    expect(store.byId("w-b-site")?.status).toBe("stopped");
+    store.handleEvent(step("w-a-shop", "stopping"));
+    expect(Object.keys(store.progress)).toEqual(["w-a-shop"]);
+    expect(store.labelOf("w-a-shop")).toBe("Shop");
+  });
+
+  it("asks for settings by id", async () => {
+    await store.refresh();
+    await store.setDirectSsh("w-b-site", true);
+    expect(api.calls).toContain("PUT /api/settings/workspaces/{workspace}");
+    expect(api.overrides["w-b-site"]?.direct_ssh).toBe(true);
+    expect(store.byId("w-b-site")?.direct_ssh).toBe(true);
   });
 });
 
@@ -521,8 +545,8 @@ describe("listening", () => {
     const reads = () =>
       api.calls.filter((c) => c === "GET /api/workspaces").length;
     expect(reads()).toBe(1);
-    source.emit(status("b-site", "running"));
-    expect(store.byName("b-site")?.status).toBe("running");
+    source.emit(status("w-b-site", "running"));
+    expect(store.byId("w-b-site")?.status).toBe("running");
     source.resync();
     await vi.advanceTimersByTimeAsync(0);
     expect(reads()).toBe(2);
@@ -530,8 +554,8 @@ describe("listening", () => {
     expect(reads()).toBeGreaterThanOrEqual(3);
     stop();
     const after = reads();
-    source.emit(status("b-site", "crashed"));
-    expect(store.byName("b-site")?.status).toBe("stopped");
+    source.emit(status("w-b-site", "crashed"));
+    expect(store.byId("w-b-site")?.status).toBe("stopped");
     await vi.advanceTimersByTimeAsync(5000);
     expect(reads()).toBe(after);
   });

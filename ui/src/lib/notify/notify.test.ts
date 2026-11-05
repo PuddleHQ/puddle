@@ -86,7 +86,7 @@ describe("NoticeWatcher", () => {
     listFails = false;
     list = {
       workspaces: [
-        { name: "web", status: "running" },
+        { id: "web", name: "web", status: "running" },
         { name: "docs", status: "stopped" },
       ],
     };
@@ -249,7 +249,7 @@ describe("NoticeWatcher", () => {
     const w = make();
     const stop = w.start();
     await settle();
-    list = { workspaces: [{ name: "late", status: "running" }] };
+    list = { workspaces: [{ id: "late", name: "late", status: "running" }] };
     source.resync();
     await settle();
     source.emit(status("late", "stopped"));

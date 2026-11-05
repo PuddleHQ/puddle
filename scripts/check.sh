@@ -58,6 +58,16 @@ IFS=$ifs_saved
 
 cd "$(dirname "$0")/.."
 
+# Local runs build without debug info: the default dev and test profile writes full DWARF, which is most
+# of every test executable (a full workspace test build links about 200 of them and fills tens of GB).
+# No gate reads it. A panic message still names file:line; only RUST_BACKTRACE frames lose their lines.
+# CI keeps the default. A value already set wins: CARGO_PROFILE_DEV_DEBUG=line-tables-only for frame
+# lines, =2 for a debugger.
+if [ -z "${CI:-}" ]; then
+    export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
+    export CARGO_PROFILE_TEST_DEBUG="${CARGO_PROFILE_TEST_DEBUG:-0}"
+fi
+
 # The directory of a concurrent run's per-gate logs (scripts/gate-sched.sh); unset when gates run inline.
 run_tmp=
 

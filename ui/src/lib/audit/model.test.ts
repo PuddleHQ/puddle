@@ -291,6 +291,19 @@ describe("a record as a row", () => {
     );
     expect(row(connection(2, {}).record).detail).not.toContain("stand-in");
   });
+  it("says an answer's real values were put back as stand-ins", () => {
+    const view = row(
+      connection(1, {
+        scrubbed_stand_ins: ["stand-in:secret:GH_TOKEN", "stand-in:login:work"],
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "the answer held the real value of GH_TOKEN, login work; the workspace got the stand-in back",
+    );
+    expect(row(connection(2, {}).record).detail).not.toContain(
+      "the answer held",
+    );
+  });
   it("says a stale stand-in is no longer held, naming a secret but never a token", () => {
     const view = row(
       connection(1, {
@@ -368,6 +381,8 @@ describe("a record as a row", () => {
       "credential_ambiguous",
       "git_settings_unavailable",
       "body_too_large",
+      "answer_encoding",
+      "answer_withheld",
       "bad_request",
       "misdirected_host",
       "expectation_unsupported",

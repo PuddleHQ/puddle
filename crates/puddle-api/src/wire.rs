@@ -1074,6 +1074,13 @@ pub enum AuditRecord {
         #[serde(default)]
         #[schema(required = true)]
         unswapped_stand_ins: Vec<String>,
+        /// The ids of the stand-ins whose real values an answer from one of their hosts held, put back as
+        /// the stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),
+        /// each once, at most 16. Records written
+        /// before it existed read as empty.
+        #[serde(default)]
+        #[schema(required = true)]
+        scrubbed_stand_ins: Vec<String>,
         /// HTTP method, where the proxy saw the request in clear.
         #[schema(required = true)]
         method: Option<String>,
@@ -1295,6 +1302,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             binding_id,
             injected,
             unswapped_stand_ins,
+            scrubbed_stand_ins,
             method,
             path,
             path_truncated,
@@ -1322,6 +1330,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             binding_id,
             injected,
             unswapped_stand_ins,
+            scrubbed_stand_ins,
             method,
             path,
             path_truncated,
@@ -3279,7 +3288,7 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "10.0.0.9", "decision": "deny", "reason": "rule", "rule_id": 4,
             "refused_address": "10.0.0.9", "refused_reason": "ip_rule", "pending_id": null, "binding_id": null,
-            "injected": false, "unswapped_stand_ins": [], "method": null, "path": null,
+            "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "method": null, "path": null,
             "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
         });
         let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
@@ -3296,7 +3305,7 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
-            "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
+            "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [],
             "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
         });

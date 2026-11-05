@@ -31,7 +31,8 @@ use http_body_util::BodyExt as _;
 use hyper::body::Incoming;
 use puddle_types::Host;
 
-use super::stand_in::{StandIns, Swapped};
+use super::leg::BoxError;
+use super::stand_in::{ScrubBody, StandIns, Swapped};
 use super::token_body::TokenBody;
 use crate::destination::BoxFuture;
 
@@ -185,23 +186,30 @@ pub(crate) enum AnswerBody {
         first: Option<Bytes>,
         rest: Incoming,
     },
+    /// One of the above with the real values in it put back as stand-ins.
+    Scrubbed(Box<ScrubBody>),
+}
+
+fn boxed(err: hyper::Error) -> BoxError {
+    Box::new(err)
 }
 
 impl Body for AnswerBody {
     type Data = Bytes;
-    type Error = hyper::Error;
+    type Error = BoxError;
 
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, hyper::Error>>> {
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         match &mut *self {
-            Self::Streaming(body) => Pin::new(body).poll_frame(cx),
+            Self::Streaming(body) => Pin::new(body).poll_frame(cx).map_err(boxed),
             Self::Buffered(bytes) => Poll::Ready(bytes.take().map(|b| Ok(Frame::data(b)))),
             Self::Rejoined { first, rest } => match first.take() {
                 Some(bytes) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
-                None => Pin::new(rest).poll_frame(cx),
+                None => Pin::new(rest).poll_frame(cx).map_err(boxed),
             },
+            Self::Scrubbed(body) => Pin::new(&mut **body).poll_frame(cx),
         }
     }
 
@@ -210,6 +218,7 @@ impl Body for AnswerBody {
             Self::Streaming(body) => body.is_end_stream(),
             Self::Buffered(bytes) => bytes.is_none(),
             Self::Rejoined { .. } => false,
+            Self::Scrubbed(body) => body.is_end_stream(),
         }
     }
 
@@ -230,6 +239,7 @@ impl Body for AnswerBody {
                 hint.set_lower(inner.lower().saturating_add(held));
                 hint
             }
+            Self::Scrubbed(body) => body.size_hint(),
         }
     }
 }

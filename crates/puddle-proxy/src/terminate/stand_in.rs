@@ -48,7 +48,13 @@ use super::set::TerminationSet;
 use super::stale;
 use super::token_body::TokenBody;
 
+mod answer;
 mod target;
+
+pub(crate) use answer::{
+    ANSWER_WITHHELD, NotScrubbed, ScrubBody, ScrubNotes, answer_encoding_refusal,
+    answer_failed_refusal, limit_accept_encoding, scrub_answer,
+};
 
 /// The shortest stand-in accepted. A short one would match inside ordinary header text and swap
 /// it.

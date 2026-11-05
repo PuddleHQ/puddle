@@ -1857,6 +1857,13 @@ export interface components {
             /** @description The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`). */
             rule_set: string | null;
             /**
+             * @description The ids of the stand-ins whose real values an answer from one of their hosts held, put back as
+             *     the stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),
+             *     each once, at most 16. Records written
+             *     before it existed read as empty.
+             */
+            scrubbed_stand_ins: string[];
+            /**
              * Format: int64
              * @description Epoch ms.
              */

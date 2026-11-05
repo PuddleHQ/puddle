@@ -202,6 +202,10 @@ const REASONS: Record<string, string> = {
   credential_ambiguous: "two identities cover the repository",
   git_settings_unavailable: "the workspace's Git settings could not be read",
   body_too_large: "the request body was too large for Puddle to read",
+  answer_encoding:
+    "the answer came in an encoding Puddle cannot read, so it could not be checked for real secret values",
+  answer_withheld:
+    "the answer held a real secret value in a form Puddle cannot replace, so it was cut off",
   bad_request: "the request was malformed",
   misdirected_host: "the request was for another host than its connection",
   expectation_unsupported: "the request asked for more than Puddle supports",
@@ -440,6 +444,12 @@ function connectionDetail(
   }
   if (record.unswapped_stand_ins.length > 0) {
     parts.push(unswappedNote(record.unswapped_stand_ins));
+  }
+  if (record.scrubbed_stand_ins.length > 0) {
+    const names = record.scrubbed_stand_ins.map(standInLabel).join(", ");
+    parts.push(
+      `the answer held the real value of ${names}; the workspace got the stand-in back`,
+    );
   }
   return parts.join(" · ");
 }

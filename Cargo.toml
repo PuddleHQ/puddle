@@ -147,6 +147,11 @@ rustls-platform-verifier = "0.7"
 tar = { version = "0.4", default-features = false }
 # Unpacks the bundled code-server release (cargo xtask code-server); already in the tree.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# Encoded answers of a terminated connection are decoded so the proxy can find real secret values
+# in them: gzip and deflate through flate2 above, Brotli (pure Rust) and zstd (already in the tree
+# through microsandbox's async-compression).
+brotli-decompressor = { version = "6.2", default-features = false, features = ["std"] }
+zstd = { version = "0.14", default-features = false }
 # Desktop shell. Tauri 2.12 (3.0 is alpha). `wry` is the webview; `x11` is the Linux
 # display backend. No `common-controls-v6` (the unit-test executables have no manifest, so they
 # fail to load with 0xc0000139; nothing here shows a dialog) and no `compression`

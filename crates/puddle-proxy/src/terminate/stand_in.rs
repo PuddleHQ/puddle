@@ -11,10 +11,12 @@
 //! (user secrets, captured logins) and consulted by every terminated request. The rules the swap
 //! follows:
 //!
-//! - **Where**: header values only. Never names, the request target, the query string or a body;
-//!   a stand-in found in the target is reported, not swapped ([`StandIns::scan_target`]).
-//!   A value that starts with `Basic ` is decoded, swapped and encoded again, because git sends
-//!   `user:stand-in` base64-encoded. Headers an injector sets are never looked at.
+//! - **Where**: each stand-in has one [`Placement`]. By default that is header values: never
+//!   names, the request target or a body. A value that starts with `Basic ` is decoded, swapped
+//!   and encoded again, because git sends `user:stand-in` base64-encoded. Headers an injector sets
+//!   are never looked at. A secret may instead opt in to one named query parameter or the path,
+//!   for APIs that take a key nowhere else ([`StandIns::swap_target`]); then it is swapped there
+//!   and nowhere else. A stand-in in any other place goes out unchanged and is reported.
 //! - **Which hosts**: the connection's host (the one the certificate, `Host`/`:authority` and the
 //!   `CONNECT` agree on) must match one of the stand-in's hosts. A stand-in seen on any other
 //!   terminated host goes out unchanged and is reported for the audit. Plain HTTP and spliced
@@ -46,6 +48,8 @@ use super::set::TerminationSet;
 use super::stale;
 use super::token_body::TokenBody;
 
+mod target;
+
 /// The shortest stand-in accepted. A short one would match inside ordinary header text and swap
 /// it.
 const MIN_STAND_IN_LEN: usize = 16;
@@ -61,6 +65,42 @@ const LENIENT_BASE64: GeneralPurpose = GeneralPurpose::new(
     &alphabet::STANDARD,
     GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
 );
+
+/// The longest query parameter name a [`Placement::Query`] may have.
+const MAX_QUERY_NAME: usize = 64;
+
+/// Where in a request a stand-in is swapped for its real value. Anywhere else it goes out
+/// unchanged and is reported, also toward its own hosts.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Placement {
+    /// The values of request headers (and a captured login's refresh field).
+    #[default]
+    Header,
+    /// The value of the one query parameter with this name, when the whole value is the
+    /// stand-in. Built with [`Placement::query`].
+    Query(String),
+    /// Anywhere in the path (not the query): a path segment, or part of one (`/bot<stand-in>/`).
+    Path,
+}
+
+impl Placement {
+    /// The query parameter `name`: 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`.
+    ///
+    /// # Errors
+    /// [`StandInError::QueryName`] for any other name.
+    pub fn query(name: &str) -> Result<Self, StandInError> {
+        let ok = (1..=MAX_QUERY_NAME).contains(&name.len())
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_graphic() && !matches!(b, b'&' | b'=' | b'#' | b'%' | b'+'));
+        if ok {
+            Ok(Self::Query(name.to_owned()))
+        } else {
+            Err(StandInError::QueryName(name.to_owned()))
+        }
+    }
+}
 
 /// Where a stand-in came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -112,6 +152,9 @@ pub enum StandInError {
     /// The operating system has no randomness to give.
     #[error("the operating system has no randomness to give")]
     Random,
+    /// A query parameter name is 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`.
+    #[error("{0:?} is not a query parameter name a stand-in can be swapped in")]
+    QueryName(String),
     /// An entry handed to [`StandIns::replace_origin`] is of another origin than the one being
     /// replaced.
     #[error("an entry is not of the origin being replaced")]
@@ -127,6 +170,7 @@ pub struct StandIn {
     finder: Finder<'static>,
     real: SecretValue,
     hosts: TerminationSet,
+    placement: Placement,
 }
 
 impl std::fmt::Debug for StandIn {
@@ -135,6 +179,7 @@ impl std::fmt::Debug for StandIn {
         f.debug_struct("StandIn")
             .field("id", &self.id())
             .field("hosts", &self.hosts)
+            .field("placement", &self.placement)
             .finish_non_exhaustive()
     }
 }
@@ -194,7 +239,26 @@ impl StandIn {
             finder: Finder::new(stand_in).into_owned(),
             real,
             hosts,
+            placement: Placement::Header,
         })
+    }
+
+    /// The same entry, swapped only in `placement` (header values unless this is called).
+    #[must_use]
+    pub fn placed(mut self, placement: Placement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    /// Where it is swapped.
+    #[must_use]
+    pub fn placement(&self) -> &Placement {
+        &self.placement
+    }
+
+    /// Whether it is swapped in a header value (or a refresh field) toward `host`.
+    fn swaps_in_headers(&self, host: &Host) -> bool {
+        self.placement == Placement::Header && self.hosts.contains(host)
     }
 
     /// What the audit and logs call it: `stand-in:secret:<name>` or `stand-in:login:<name>`.
@@ -366,6 +430,7 @@ impl StandIns {
             finder: old.finder.clone(),
             real,
             hosts: old.hosts.clone(),
+            placement: old.placement.clone(),
         });
         Ok(true)
     }
@@ -437,35 +502,22 @@ impl StandIns {
 
 impl StandIns {
     /// Finds the stand-ins in the request `target` (path and query), read as sent and with its
-    /// percent-escapes decoded. Nothing is swapped there: the stand-in goes out unchanged, so it
-    /// is reported whatever host the request is for. The registry's own stand-ins are named, and a value
-    /// shaped like a stand-in it does not hold is flagged as stale.
-    pub(crate) fn scan_target(&self, target: &str) -> Swapped {
-        let mut report = Swapped::default();
-        let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
-        let decoded = percent_decoded(target.as_bytes());
-        for text in std::iter::once(target.as_bytes()).chain(decoded.as_deref()) {
-            for id in stale::find(text, &|token| holds(&guard, token)) {
-                Swapped::note(&mut report.unswapped, id);
-            }
-        }
-        for entry in guard.iter() {
-            let found = entry.finder.find(target.as_bytes()).is_some()
-                || decoded
-                    .as_deref()
-                    .is_some_and(|decoded| entry.finder.find(decoded).is_some());
-            if found {
-                Swapped::note(&mut report.unswapped, entry.id());
-            }
-        }
-        report
+    /// percent-escapes decoded, to report them as gone out unchanged. The registry's own
+    /// stand-ins are named, and a value shaped like a stand-in it does not hold is flagged as
+    /// stale.
+    #[cfg(test)]
+    fn scan_target(&self, target: &str) -> Swapped {
+        scan(
+            &self.entries.read().unwrap_or_else(PoisonError::into_inner),
+            target,
+        )
     }
 
     /// Swaps, in the token message `body`, the text of each of the top-level `fields` that is one
-    /// of this registry's stand-ins and is for `host`, for the real value. This is the one place a
-    /// body is swapped: only a named field and only an exact match, never a search of the body. A
-    /// stand-in in such a field that is not for `host` is left as it is and reported, as in a
-    /// header. `true` in the second place when anything changed.
+    /// of this registry's header stand-ins and is for `host`, for the real value. This is the one
+    /// place a body is swapped: only a named field and only an exact match, never a search of the
+    /// body. A stand-in in such a field that is not for `host` (or placed elsewhere) is left as it
+    /// is and reported, as in a header. `true` in the second place when anything changed.
     pub(crate) fn swap_fields(
         &self,
         body: &mut TokenBody,
@@ -484,7 +536,7 @@ impl StandIns {
             }) else {
                 continue;
             };
-            if found.hosts.contains(host) {
+            if found.swaps_in_headers(host) {
                 changed |= body.set_text(field, found.real.expose());
                 Swapped::note(&mut report.swapped, found.id());
             } else {
@@ -493,6 +545,30 @@ impl StandIns {
         }
         (report, changed)
     }
+}
+
+/// The stand-ins of `entries` in the request `target`, read as sent and with its percent-escapes
+/// decoded, as gone out unchanged; a value shaped like a stand-in the registry does not hold is
+/// flagged as stale.
+fn scan(entries: &[Arc<StandIn>], target: &str) -> Swapped {
+    let mut report = Swapped::default();
+    // After a swap the target holds real values: the decoded copy is wiped too.
+    let decoded = percent_decoded(target.as_bytes()).map(Zeroizing::new);
+    for text in std::iter::once(target.as_bytes()).chain(decoded.as_deref().map(Vec::as_slice)) {
+        for id in stale::find(text, &|token| holds(entries, token)) {
+            Swapped::note(&mut report.unswapped, id);
+        }
+    }
+    for entry in entries {
+        let found = entry.finder.find(target.as_bytes()).is_some()
+            || decoded
+                .as_deref()
+                .is_some_and(|decoded| entry.finder.find(decoded).is_some());
+        if found {
+            Swapped::note(&mut report.unswapped, entry.id());
+        }
+    }
+    report
 }
 
 /// Whether the registry holds a stand-in inside `token`.
@@ -548,12 +624,17 @@ fn swap_value(
     host: &Host,
     report: &mut Swapped,
 ) -> Option<HeaderValue> {
-    if let Some(new) = swap_bytes(value, entries, host, report) {
+    let real = |entry: &StandIn| {
+        entry
+            .swaps_in_headers(host)
+            .then(|| Zeroizing::new(entry.real.expose().as_bytes().to_vec()))
+    };
+    if let Some(new) = swap_bytes(value, entries, report, real) {
         return HeaderValue::from_bytes(&new).ok();
     }
     let token = basic_credentials(value)?;
     let decoded = Zeroizing::new(LENIENT_BASE64.decode(token).ok()?);
-    let new = swap_bytes(&decoded, entries, host, report)?;
+    let new = swap_bytes(&decoded, entries, report, real)?;
     let scheme = value.get(..5)?;
     let mut out = Zeroizing::new(scheme.to_vec());
     out.push(b' ');
@@ -573,14 +654,15 @@ fn basic_credentials(value: &[u8]) -> Option<&[u8]> {
     (separated && !credentials.is_empty()).then(|| credentials.trim_ascii_end())
 }
 
-/// Swaps every stand-in in `input` that is for `host`, in one left-to-right pass, so a real value
-/// is never searched for stand-ins. At each place the longest stand-in wins. `None` when nothing
-/// was swapped.
+/// Swaps every stand-in in `input` for which `replacement` gives the bytes to put in its place, in
+/// one left-to-right pass, so a replacement is never searched for stand-ins. At each place the
+/// longest stand-in wins; one `replacement` refuses is left and reported. `None` when nothing was
+/// swapped.
 fn swap_bytes(
     input: &[u8],
     entries: &[Arc<StandIn>],
-    host: &Host,
     report: &mut Swapped,
+    replacement: impl Fn(&StandIn) -> Option<Zeroizing<Vec<u8>>>,
 ) -> Option<Zeroizing<Vec<u8>>> {
     // Every place each stand-in occurs, found with one scan per stand-in: the work is bounded by
     // the stand-ins times the value, however many copies a guest puts in it.
@@ -600,10 +682,10 @@ fn swap_bytes(
             continue;
         }
         let end = at + entry.text.len();
-        if entry.hosts.contains(host) {
+        if let Some(new) = replacement(entry) {
             let out = out.get_or_insert_with(|| Zeroizing::new(Vec::with_capacity(input.len())));
             out.extend_from_slice(input.get(copied..at)?);
-            out.extend_from_slice(entry.real.expose().as_bytes());
+            out.extend_from_slice(&new);
             copied = end;
             Swapped::note(&mut report.swapped, entry.id());
         } else {

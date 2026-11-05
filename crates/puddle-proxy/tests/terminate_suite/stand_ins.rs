@@ -465,6 +465,11 @@ async fn stand_ins_in_the_path_or_an_escaped_query_go_out_unchanged_and_the_reco
         "both toward their own host, each named once"
     );
     assert!(!event.injected, "nothing was swapped");
+    assert_eq!(
+        event.http.as_ref().unwrap().path(),
+        "/repos/[secret:GH_TOKEN]/x",
+        "the record names the stand-in in the path, never its text"
+    );
     assert!(!captured_logs().contains(REAL_KEY));
     assert!(!captured_logs().contains(REAL_TOKEN));
 }

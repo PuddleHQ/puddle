@@ -4,6 +4,7 @@
   import {
     hostsSummary,
     ordered,
+    placeSummary,
     PLAIN_AT_NEXT_START,
     SECRET_AT_ONCE,
     type EnvSet,
@@ -128,7 +129,8 @@
               {#if row.kind === "secret"}
                 <span class="chip">Secret</span>
                 Stored in Puddle, never shown. Sent only to
-                <span class="mono">{hostsSummary(row.hosts)}</span>.
+                <span class="mono">{hostsSummary(row.hosts)}</span
+                >{placeSummary(row.place)}.
               {:else}
                 <span class="mono">{row.value}</span>
               {/if}

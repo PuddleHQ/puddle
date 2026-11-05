@@ -8,6 +8,8 @@ import {
   nameProblem,
   ordered,
   parseHosts,
+  placeOf,
+  placeSummary,
   plural,
 } from "./model.ts";
 
@@ -65,5 +67,47 @@ describe("a list", () => {
     ).toEqual({ variables: 1, secrets: 2 });
     expect(plural(1, "secret")).toBe("1 secret");
     expect(plural(0, "secret")).toBe("0 secrets");
+  });
+});
+
+describe("where a secret is swapped", () => {
+  it("is a header or the path whatever the parameter name says", () => {
+    expect(placeOf("header", "ignored")).toEqual({ in: "header" });
+    expect(placeOf("path", "")).toEqual({ in: "path" });
+  });
+
+  it("names a query parameter by the service's rules", () => {
+    expect(placeOf("query", " appid ")).toEqual({ in: "query", name: "appid" });
+    expect(placeOf("query", "a[b]")).toEqual({ in: "query", name: "a[b]" });
+    expect(placeOf("query", "n".repeat(64))).toEqual({
+      in: "query",
+      name: "n".repeat(64),
+    });
+    expect(placeOf("query", "  ")).toEqual({
+      problem: "Name the query parameter the tool puts the secret in.",
+    });
+    for (const bad of [
+      "a&b",
+      "a=b",
+      "a#",
+      "a%41",
+      "a+b",
+      "a b",
+      "é",
+      "n".repeat(65),
+    ]) {
+      expect(placeOf("query", bad)).toEqual({
+        problem: expect.stringContaining("without spaces or & = # % +"),
+      });
+    }
+  });
+
+  it("is said after a row's hosts, and nothing for header values", () => {
+    expect(placeSummary({ in: "query", name: "appid" })).toBe(
+      " in the query parameter appid",
+    );
+    expect(placeSummary({ in: "path" })).toBe(" in the path");
+    expect(placeSummary({ in: "header" })).toBe("");
+    expect(placeSummary(null)).toBe("");
   });
 });

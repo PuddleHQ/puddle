@@ -23,6 +23,7 @@ export function variable(
     scope: "workspace",
     value: "1",
     hosts: [],
+    place: null,
     overridden: false,
     changed_at: 1_000_000,
     ...over,
@@ -34,7 +35,13 @@ export function secret(
   hosts: string[],
   over: Partial<EnvVariable> = {},
 ): EnvVariable {
-  return variable(name, { kind: "secret", value: null, hosts, ...over });
+  return variable(name, {
+    kind: "secret",
+    value: null,
+    hosts,
+    place: { in: "header" },
+    ...over,
+  });
 }
 
 export function port(guest: number, over: Partial<PortEntry> = {}): PortEntry {
@@ -105,7 +112,8 @@ export class FakeEnvApi {
       } else if (old?.kind !== "secret") {
         return this.reply(422, undefined, "a new secret needs its value");
       }
-      entry = secret(name, body["hosts"] as string[]);
+      const place = (body["place"] as EnvVariable["place"]) ?? { in: "header" };
+      entry = secret(name, body["hosts"] as string[], { place });
     }
     entry = { ...entry, changed_at: this.#clock++ };
     const at = list.findIndex((v) => v.name === name);

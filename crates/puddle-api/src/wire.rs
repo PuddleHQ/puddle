@@ -50,7 +50,7 @@ pub use credentials::{
 };
 pub use doctor::{DoctorCheck, DoctorReport, DoctorStatus};
 pub use environment::{
-    EnvKind, EnvList, EnvScope, EnvSetRequest, EnvVariable, SecretText, WorkspaceEnv,
+    EnvKind, EnvList, EnvScope, EnvSetRequest, EnvVariable, SecretPlace, SecretText, WorkspaceEnv,
 };
 pub use first_run::{DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest};
 pub use identities::{

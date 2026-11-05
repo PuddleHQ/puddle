@@ -34,9 +34,9 @@ pub use catalogue::{BUILT_IN_SETS, BuiltInSet, CatalogueEntry, SystemReason, bui
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use environment::{
     EnvChange, EnvDraft, EnvEntry, EnvName, EnvRow, EnvScope, EnvSecret, EnvValue,
-    MAX_ENTRIES_PER_SCOPE, MAX_NAME_LEN, MAX_PLAIN_VALUE_BYTES, MAX_SCOPE_BYTES, MAX_SECRET_HOSTS,
-    MAX_SECRET_VALUE_CHARS, PUDDLE_OWNED_NAMES, SecretHost, StartValue, StartVar,
-    check_secret_value,
+    MAX_ENTRIES_PER_SCOPE, MAX_NAME_LEN, MAX_PLAIN_VALUE_BYTES, MAX_QUERY_NAME_LEN,
+    MAX_SCOPE_BYTES, MAX_SECRET_HOSTS, MAX_SECRET_VALUE_CHARS, PUDDLE_OWNED_NAMES, SecretHost,
+    SecretPlace, StartValue, StartVar, check_secret_value,
 };
 pub use error::StoreError;
 pub use identity::{

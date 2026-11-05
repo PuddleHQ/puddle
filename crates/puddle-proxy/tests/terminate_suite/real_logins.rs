@@ -26,7 +26,7 @@ use std::time::Duration;
 use puddle_logins::{LoginNotices, Logins, Problem, Profile, builtin};
 use puddle_proxy::{InjectDecision, StandIns};
 use puddle_secrets::{MemoryStore, SecretStore};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::{
     FakeServer, Flaw, Guest, Handler, Pki, Recorded, Reply, Rig, RigBuilder, TestInjector,
@@ -63,7 +63,7 @@ const HOSTS: [&str; 7] = [
 struct Notices(Mutex<Vec<Problem>>);
 
 impl LoginNotices for Notices {
-    fn problem(&self, _: &WorkspaceName, _: &Profile, problem: Problem) {
+    fn problem(&self, _: &WorkspaceId, _: &Profile, problem: Problem) {
         self.0.lock().unwrap().push(problem);
     }
 }
@@ -301,7 +301,7 @@ impl Tools {
         let notices = Arc::new(Notices::default());
         let registry = Arc::new(StandIns::new());
         let logins = Logins::new(
-            WorkspaceName::new("box").unwrap(),
+            WorkspaceId::new("box").unwrap(),
             true,
             builtin(),
             Arc::clone(&registry),

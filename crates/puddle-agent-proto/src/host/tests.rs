@@ -57,8 +57,8 @@ struct Harness {
     _driver: JoinHandle<()>,
 }
 
-fn name() -> WorkspaceName {
-    WorkspaceName::new("box").unwrap()
+fn name() -> WorkspaceId {
+    WorkspaceId::new("box").unwrap()
 }
 
 fn start_with(config: HostConfig) -> Harness {

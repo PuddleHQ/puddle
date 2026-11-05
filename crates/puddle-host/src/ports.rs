@@ -9,7 +9,7 @@ use puddle_api::wire::{PortEntry, WorkspacePorts};
 use puddle_api::{PortsService, PortsServiceError};
 use puddle_ports::{Pin, Pins, PinsError, PortRow, Ports, PortsError};
 use puddle_store::{PinnedPort, Store};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 /// Pinned forwards in the database.
 pub(crate) struct StorePins {
@@ -34,21 +34,21 @@ fn failed(what: &str, err: &puddle_store::StoreError) -> PinsError {
 }
 
 impl Pins for StorePins {
-    fn pinned(&self, workspace: &WorkspaceName) -> Result<Vec<Pin>, PinsError> {
+    fn pinned(&self, workspace: &WorkspaceId) -> Result<Vec<Pin>, PinsError> {
         self.store
             .pinned_ports(workspace)
             .map(|pins| pins.into_iter().map(pinned).collect())
             .map_err(|e| failed("read", &e))
     }
 
-    fn all(&self) -> Result<Vec<(WorkspaceName, Pin)>, PinsError> {
+    fn all(&self) -> Result<Vec<(WorkspaceId, Pin)>, PinsError> {
         self.store
             .all_pinned_ports()
             .map(|pins| pins.into_iter().map(|(w, p)| (w, pinned(p))).collect())
             .map_err(|e| failed("read", &e))
     }
 
-    fn pin(&self, workspace: &WorkspaceName, pin: Pin) -> Result<(), PinsError> {
+    fn pin(&self, workspace: &WorkspaceId, pin: Pin) -> Result<(), PinsError> {
         self.store
             .pin_port(
                 workspace,
@@ -60,7 +60,7 @@ impl Pins for StorePins {
             .map_err(|e| failed("saved", &e))
     }
 
-    fn unpin(&self, workspace: &WorkspaceName, guest_port: u16) -> Result<bool, PinsError> {
+    fn unpin(&self, workspace: &WorkspaceId, guest_port: u16) -> Result<bool, PinsError> {
         self.store
             .unpin_port(workspace, guest_port)
             .map_err(|e| failed("changed", &e))
@@ -104,7 +104,7 @@ fn refusal(err: &PortsError) -> PortsServiceError {
 impl PortsService for HostPorts {
     fn list(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
     ) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>> {
         let view = self.ports.view(workspace);
         Box::pin(async move {
@@ -118,7 +118,7 @@ impl PortsService for HostPorts {
 
     fn forward(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         guest_port: u16,
         host_port: Option<u16>,
         pinned: bool,
@@ -135,7 +135,7 @@ impl PortsService for HostPorts {
 
     fn release(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         guest_port: u16,
     ) -> BoxFuture<'_, Result<(), PortsServiceError>> {
         let workspace = workspace.clone();

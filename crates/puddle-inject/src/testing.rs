@@ -20,7 +20,7 @@ use puddle_store::{
     Author, Coverage, CredentialBinding, IdentityDraft, IdentityId, Limits, ManualClock, Owner,
     RepoRef, Store, WorkspaceGit,
 };
-use puddle_types::{CollectingSink, WorkspaceName};
+use puddle_types::{CollectingSink, WorkspaceId};
 
 use crate::injector::GitInjector;
 use crate::source::{CredentialSource, GitSettings, SettingsError, StoreSettings};
@@ -141,7 +141,7 @@ pub struct World {
     /// The store.
     pub store: Arc<Store>,
     /// The workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The secrets the identities' sources give.
     pub credentials: Arc<StaticCredentials>,
     /// The events the injector raised.
@@ -175,7 +175,7 @@ impl World {
             )
             .unwrap(),
         );
-        let workspace = WorkspaceName::new("box").unwrap();
+        let workspace = WorkspaceId::new("box").unwrap();
         let credentials = StaticCredentials::new();
         let events = Arc::new(CollectingSink::default());
         let injector = Arc::new(GitInjector::new(

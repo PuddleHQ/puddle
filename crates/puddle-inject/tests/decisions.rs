@@ -1054,7 +1054,7 @@ fn the_injector_prints_no_settings() {
     let w = World::default();
     assert_eq!(
         format!("{:?}", w.injector),
-        "GitInjector { workspace: WorkspaceName(\"box\"), .. }"
+        "GitInjector { workspace: WorkspaceId(\"box\"), .. }"
     );
 }
 

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use puddle_settings as settings;
 use puddle_store as store;
-use puddle_types::{CpuCount, MemoryMib, WorkspaceName};
+use puddle_types::{CpuCount, MemoryMib, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -205,7 +205,7 @@ pub struct PendingRequest {
     /// Row id, never reused.
     pub id: i64,
     /// The requesting workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The requested host: a normalised name (punycode, lower case) or an IP literal. Untrusted
     /// (it comes from the guest): escape it when rendering.
     pub host: String,
@@ -310,7 +310,7 @@ pub enum RuleScope {
     /// One workspace.
     Workspace {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     },
     /// An entry of a rule set you made: it applies wherever the set is on, and your own global
     /// and workspace rules decide first.
@@ -2448,7 +2448,7 @@ impl GlobalSettingsView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct WorkspaceSettingsView {
     /// The workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// Its overrides; `null` inherits.
     pub overrides: SettingsLayer,
     /// What it gets.
@@ -2940,7 +2940,7 @@ mod tests {
 
     #[test]
     fn rules_map_with_their_scope_and_pattern_kind() {
-        let workspace = WorkspaceName::new("box").unwrap();
+        let workspace = WorkspaceId::new("box").unwrap();
         let rule = store::Rule {
             id: RuleId(3),
             scope: store::Scope::Workspace(workspace.clone()),
@@ -3002,7 +3002,7 @@ mod tests {
     fn pending_rows_always_carry_every_field() {
         let row = store::PendingRow {
             id: PendingId(1),
-            workspace: WorkspaceName::new("box").unwrap(),
+            workspace: WorkspaceId::new("box").unwrap(),
             host: Host::parse_normalised("example.com").unwrap(),
             port: 443,
             first_seen: 1,

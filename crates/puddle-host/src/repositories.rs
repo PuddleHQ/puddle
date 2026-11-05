@@ -66,7 +66,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let cache = self.listing_cache(id);
         let mut cached = cache.lock().await;
         let gated = if record.status == WorkspaceStatus::Running {
-            self.gated(&record.name).await
+            self.gated(&record.id).await
         } else {
             Err("the workspace is not running; start it to see its checkouts".to_owned())
         };
@@ -100,7 +100,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Ok(view)
             }
             Err(e) => {
-                tracing::warn!(workspace = %record.name, error = %e, "the checkouts could not be listed");
+                tracing::warn!(workspace = %record.id, error = %e, "the checkouts could not be listed");
                 Ok(checkouts_view(
                     true,
                     None,
@@ -154,7 +154,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         to: &str,
     ) -> Result<Arc<GatedSandbox<R::Sandbox>>, WorkspaceError> {
         Self::ready_to(record, to)?;
-        self.gated(&record.name)
+        self.gated(&record.id)
             .await
             .map_err(WorkspaceError::Conflict)
     }
@@ -178,7 +178,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
-    fn repositories_changed(&self, name: &WorkspaceName) {
+    fn repositories_changed(&self, name: &WorkspaceId) {
         self.inner.events.emit(Event::WorkspaceRepositoriesChanged {
             workspace: name.clone(),
         });
@@ -271,9 +271,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             slot.record.busy = Some(Operation::Cloning);
             slot.record.clone()
         };
-        git.set_up(&record.name, std::slice::from_ref(&new)).await;
+        git.set_up(&record.id, std::slice::from_ref(&new)).await;
         if add {
-            self.repositories_changed(&record.name);
+            self.repositories_changed(&record.id);
         }
         let this = self.clone();
         let work = record.clone();
@@ -291,9 +291,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         record: &WorkspaceRecord,
         repository: &Repository,
     ) -> Result<(), String> {
-        let gated = self.gated(&record.name).await?;
-        self.progress_cloning(&record.name, repository);
-        let key = clone_problem_key(&record.name, &repository.directory);
+        let gated = self.gated(&record.id).await?;
+        self.progress_cloning(&record.id, repository);
+        let key = clone_problem_key(&record.id, &repository.directory);
         let cloned = self
             .inner
             .workspaces
@@ -302,7 +302,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 &record.id,
                 repository.url.as_str(),
                 &repository.directory,
-                self.booted_user(&record.name).await,
+                self.booted_user(&record.id).await,
             )
             .await;
         match cloned {
@@ -321,7 +321,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                         .iter()
                         .any(|r| r.directory == repository.directory)
                 });
-                tracing::warn!(workspace = %record.name, url = %repository.url, %reason, "a repository was not cloned");
+                tracing::warn!(workspace = %record.id, url = %repository.url, %reason, "a repository was not cloned");
                 if listed {
                     self.raise_clone_problem(record, repository, &reason, false);
                 }
@@ -348,7 +348,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         self.inner.problems.raise(
             Problem::new(
-                clone_problem_key(&record.name, &repository.directory),
+                clone_problem_key(&record.id, &repository.directory),
                 format!(
                     "Puddle could not clone {} into {}",
                     repository.url,
@@ -361,7 +361,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     repository.url, record.id, repository.directory
                 ),
             )
-            .about(record.name.clone()),
+            .about(record.id.clone()),
         );
     }
 
@@ -422,8 +422,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.save_repositories(&mut state, id, before)?;
             record
         };
-        git.set_up(&record.name, std::slice::from_ref(&new)).await;
-        self.repositories_changed(&record.name);
+        git.set_up(&record.id, std::slice::from_ref(&new)).await;
+        self.repositories_changed(&record.id);
         Ok(record)
     }
 
@@ -458,8 +458,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         self.inner
             .problems
-            .clear(&clone_problem_key(&record.name, directory));
-        self.repositories_changed(&record.name);
+            .clear(&clone_problem_key(&record.id, directory));
+        self.repositories_changed(&record.id);
         Ok(record)
     }
 }

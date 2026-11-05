@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use puddle_compute::{ExecRequest, Runtime, Sandbox};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended};
 use vm_support::{VmHost, guest, start_vm_host};
@@ -53,7 +53,7 @@ const ROOT_REFUSAL: &str = "cannot be used with root/sudo privileges";
 
 /// Runs `script` in bash as `user`, the way a terminal of the workspace does (a login shell), and
 /// returns its exit code and its output.
-async fn run_as(vm: &VmHost, sandbox: &WorkspaceName, user: &str, script: &str) -> (i32, String) {
+async fn run_as(vm: &VmHost, sandbox: &WorkspaceId, user: &str, script: &str) -> (i32, String) {
     let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
     let out = handle
         .exec(
@@ -75,7 +75,7 @@ async fn run_as(vm: &VmHost, sandbox: &WorkspaceName, user: &str, script: &str) 
 }
 
 /// [`run_as`] that must succeed.
-async fn ok_as(vm: &VmHost, sandbox: &WorkspaceName, user: &str, script: &str) -> String {
+async fn ok_as(vm: &VmHost, sandbox: &WorkspaceId, user: &str, script: &str) -> String {
     let (code, said) = run_as(vm, sandbox, user, script).await;
     assert_eq!(code, 0, "as {user}: {script}\n{said}\n({LIVE_NOTE})");
     said
@@ -87,7 +87,7 @@ async fn vm_radar_session_user_agent_runs_the_real_tools_at_their_widest_and_a_s
     let vm = start_vm_host("sesu").await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let name = format!("{}-sesu", vm.settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     for site in LIVE {
         vm.host
             .store()
@@ -155,7 +155,7 @@ async fn vm_radar_session_user_agent_runs_the_real_tools_at_their_widest_and_a_s
 
 /// Who the session is, root at will, system packages and npm's global install through `sudo`,
 /// and Claude Code at its widest.
-async fn check_identity_and_claude_code(vm: &VmHost, sandbox: &WorkspaceName) {
+async fn check_identity_and_claude_code(vm: &VmHost, sandbox: &WorkspaceId) {
     let who = ok_as(
         vm,
         sandbox,
@@ -221,7 +221,7 @@ async fn check_identity_and_claude_code(vm: &VmHost, sandbox: &WorkspaceName) {
 
 /// Python packages in agent's home and a virtual environment, a clone and a commit in the volume,
 /// and a port below 1024, all as agent.
-async fn check_python_git_and_low_ports(vm: &VmHost, sandbox: &WorkspaceName, volume: &str) {
+async fn check_python_git_and_low_ports(vm: &VmHost, sandbox: &WorkspaceId, volume: &str) {
     // Python: pip into agent's own home, and a virtual environment.
     let python = ok_as(
         vm,

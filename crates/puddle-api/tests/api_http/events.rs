@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use puddle_test_kit::eventually;
-use puddle_types::{Event, EventSink, WorkspaceName, WorkspaceStatus};
+use puddle_types::{Event, EventSink, WorkspaceId, WorkspaceStatus};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -70,8 +70,8 @@ impl Stream {
     }
 }
 
-fn name(s: &str) -> WorkspaceName {
-    WorkspaceName::new(s).unwrap()
+fn name(s: &str) -> WorkspaceId {
+    WorkspaceId::new(s).unwrap()
 }
 
 #[tokio::test]

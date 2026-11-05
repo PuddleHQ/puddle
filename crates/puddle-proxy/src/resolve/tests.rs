@@ -12,7 +12,7 @@ use puddle_agent_proto::resolve::{Record, RecordType, ResolveAnswer, ResolveQuer
 use puddle_netpolicy::{LocalAccess, NetPolicy};
 use puddle_types::{
     Decision, DomainName, EgressRequest, Host, NullSink, PatternKind, Policy, PolicyError, RuleId,
-    SuffixAllows, WorkspaceName,
+    SuffixAllows, WorkspaceId,
 };
 use puddle_upstream::{
     Chain, Config, Discovery, FakeOs, Hop, NoAuth, ProxyAddr, ProxyConfig as OsProxyConfig,
@@ -23,8 +23,8 @@ use crate::records::{RecordError, RecordResolver, Records};
 use crate::testing::{AnyAddress, StaticPolicy, StaticRecords, StaticResolver};
 use crate::{Proxy, ProxyConfig, Upstream, WorkspaceHandler};
 
-fn workspace() -> WorkspaceName {
-    WorkspaceName::new("box").unwrap()
+fn workspace() -> WorkspaceId {
+    WorkspaceId::new("box").unwrap()
 }
 
 fn host(h: &str) -> Host {

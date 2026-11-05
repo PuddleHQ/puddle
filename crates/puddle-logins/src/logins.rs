@@ -29,7 +29,7 @@ use puddle_proxy::{
     StandIn, StandInError, StandInOrigin, StandIns, TerminationSet, TokenBody,
 };
 use puddle_secrets::SecretStore;
-use puddle_types::{Host, WorkspaceName};
+use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroizing;
 
 use crate::marker::Marker;
@@ -64,7 +64,7 @@ pub enum Problem {
 /// Where a [`Problem`] goes. Implementations must not block.
 pub trait LoginNotices: Send + Sync {
     /// Tells the user that `profile`'s login in `workspace` has `problem`.
-    fn problem(&self, workspace: &WorkspaceName, profile: &Profile, problem: Problem);
+    fn problem(&self, workspace: &WorkspaceId, profile: &Profile, problem: Problem);
 }
 
 /// A login Puddle holds for a workspace, as the user is shown it: no value.
@@ -109,7 +109,7 @@ struct Route {
 }
 
 struct Inner {
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     enabled: bool,
     profiles: &'static [Profile],
     routes: Vec<Route>,
@@ -184,7 +184,7 @@ impl Logins {
     /// the store.
     #[must_use]
     pub fn new(
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         enabled: bool,
         profiles: &'static [Profile],
         registry: Arc<StandIns>,
@@ -540,7 +540,7 @@ impl Logins {
     #[must_use]
     pub fn delete_workspace(
         store: &Arc<dyn SecretStore>,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         profiles: &[Profile],
     ) -> usize {
         let vault = Vault::new(Arc::clone(store), workspace);

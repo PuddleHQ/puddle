@@ -19,7 +19,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, ProxyConfig, Route};
 use puddle_test_kit::{EventSource, next_event_within};
-use puddle_types::{ConnectionLog, Host, NullConnectionLog, NullSink, WorkspaceName};
+use puddle_types::{ConnectionLog, Host, NullConnectionLog, NullSink, WorkspaceId};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
@@ -155,11 +155,11 @@ pub(crate) async fn rig_logged(config: &ProxyConfig, log: Arc<dyn ConnectionLog>
     let root = IpcRoot::new().unwrap();
     let attacked = proxy.serve_route(
         root.listen().unwrap(),
-        WorkspaceName::new("attacked").unwrap(),
+        WorkspaceId::new("attacked").unwrap(),
     );
     let bystander = proxy.serve_route(
         root.listen().unwrap(),
-        WorkspaceName::new("bystander").unwrap(),
+        WorkspaceId::new("bystander").unwrap(),
     );
     let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
     let echo = listener.local_addr().unwrap();

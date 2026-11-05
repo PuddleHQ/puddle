@@ -83,7 +83,7 @@ pub(crate) async fn add_repository(
     let status = match &add {
         AddRepository::Clone(new) => {
             let requests: Vec<_> = git_request(new).into_iter().collect();
-            let (store, name) = (state.store.clone(), record.name.clone());
+            let (store, name) = (state.store.clone(), record.id.clone());
             blocking(move || Ok(store.check_repository_git(&name, &requests)?)).await?;
             StatusCode::ACCEPTED
         }
@@ -95,7 +95,7 @@ pub(crate) async fn add_repository(
         AddRepository::Existing { directory, .. } => directory.to_string(),
     };
     let record = state.workspaces.add_repository(&id, add, &git).await?;
-    let (store, name) = (state.store.clone(), record.name.clone());
+    let (store, name) = (state.store.clone(), record.id.clone());
     blocking(move || {
         record_op(
             &store,
@@ -165,7 +165,7 @@ pub(crate) async fn remove_repository(
 ) -> Result<Json<Workspace>, ApiError> {
     let (id, directory) = (workspace_id(&id)?, entry_directory(&directory)?);
     let record = state.workspaces.remove_repository(&id, &directory).await?;
-    let (store, name) = (state.store.clone(), record.name.clone());
+    let (store, name) = (state.store.clone(), record.id.clone());
     blocking(move || {
         record_op(
             &store,

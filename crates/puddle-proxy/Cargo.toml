@@ -59,6 +59,7 @@ tonic = { workspace = true }
 tonic-prost = { workspace = true }
 proptest = { workspace = true }
 puddle-inject = { workspace = true, features = ["testing"] }
+puddle-log = { workspace = true }
 puddle-logins = { workspace = true }
 puddle-proxy = { path = ".", features = ["testing", "fuzzing"] }
 puddle-secrets = { workspace = true }

@@ -288,4 +288,8 @@ async fn an_h2_stand_in_in_the_path_goes_out_unchanged_and_the_record_names_it()
     let event = &rig.events(1).await[0];
     assert_eq!(event.unswapped_stand_ins, ["stand-in:secret:API_KEY"]);
     assert!(!event.injected);
+    assert_eq!(
+        event.http.as_ref().unwrap().path(),
+        "/v1/[secret:API_KEY]/models"
+    );
 }

@@ -526,6 +526,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_head_may_hold_exactly_the_most_headers() {
+        let with = |n: usize| format!("GET http://x/ HTTP/1.1\r\n{}\r\n", "A: b\r\n".repeat(n));
+        assert_eq!(
+            head(with(MAX_HEADERS).as_bytes())
+                .await
+                .unwrap()
+                .headers
+                .len(),
+            MAX_HEADERS
+        );
+        assert_eq!(
+            head(with(MAX_HEADERS + 1).as_bytes()).await,
+            Err(HeadError::TooLarge)
+        );
+    }
+
+    #[tokio::test]
     async fn malformed_heads_are_bad_requests() {
         for bad in [
             &b"GET http://x/ HTTP/1.1\r\nA: \xff\r\n\r\n"[..],
@@ -534,6 +551,8 @@ mod tests {
             b"GET http://x/ HTTP/1.1",
             b"GET http://x/ HTTP/1.1\r\nA: b\r\n",
             b"GET http://x/ HTTP/2\r\n\r\n",
+            b"GET  HTTP/1.1\r\n\r\n",
+            b" http://x/ HTTP/1.1\r\n\r\n",
             b"GET a b c HTTP/1.1\r\n\r\n",
             b"GET  http://x/ HTTP/1.1\r\n\r\n",
             b"G(T http://x/ HTTP/1.1\r\n\r\n",
@@ -616,6 +635,46 @@ mod tests {
         let mut r = tokio::io::BufReader::new(&b"anything"[..]);
         copy_body(&mut r, &mut out, Body::None).await.unwrap();
         assert_eq!(out.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn chunk_data_may_hold_blank_lines_and_a_trailer_line_may_be_long() {
+        // A blank line inside chunk data is data, not the end of the body.
+        let blank = b"2\r\n\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
+        let input = [&blank[..], b"NEXT"].concat();
+        let mut r = tokio::io::BufReader::new(&input[..]);
+        let mut out = Vec::new();
+        copy_body(&mut r, &mut out, Body::Chunked).await.unwrap();
+        assert_eq!(out, blank);
+
+        // A trailer line longer than a chunk-size line is allowed up to its own limit.
+        let long = format!("0\r\nX-T: {}\r\n\r\n", "a".repeat(2000));
+        let mut r = tokio::io::BufReader::new(long.as_bytes());
+        let mut out = Vec::new();
+        copy_body(&mut r, &mut out, Body::Chunked).await.unwrap();
+        assert_eq!(out, long.as_bytes());
+
+        // A bare line feed ends a chunk too, and anything else after the data is refused even
+        // when a valid body follows it.
+        let bare = b"5\nhello\n0\n\n";
+        let mut r = tokio::io::BufReader::new(&bare[..]);
+        let mut out = Vec::new();
+        copy_body(&mut r, &mut out, Body::Chunked).await.unwrap();
+        assert_eq!(out, bare);
+        let mut r = tokio::io::BufReader::new(&b"5\r\nhelloXX0\r\n\r\n"[..]);
+        assert!(
+            copy_body(&mut r, &mut Vec::new(), Body::Chunked)
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_chunk_size_is_hexadecimal_digits_only() {
+        assert_eq!(chunk_size(b"1a;ext=1\r\n").unwrap(), 26);
+        for bad in [&b"+5\r\n"[..], b"-5\r\n", b"0x5\r\n", b"\r\n", b";x\r\n"] {
+            assert!(chunk_size(bad).is_err(), "{}", String::from_utf8_lossy(bad));
+        }
     }
 
     #[tokio::test]

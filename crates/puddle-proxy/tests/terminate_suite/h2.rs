@@ -9,7 +9,9 @@ use http_body_util::BodyExt as _;
 use puddle_proxy::ProxyConfig;
 use puddle_types::{ConnectionDecision, ConnectionReason};
 use terminate_support::h2_rig::{H2Server, Script, full, reply};
-use terminate_support::{CANARY, FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, refuse};
+use terminate_support::{
+    CANARY, FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, inject, refuse,
+};
 
 fn ok(text: &'static str) -> Script {
     Arc::new(move |_| reply(200, text))
@@ -154,7 +156,7 @@ async fn a_refusal_of_the_injector_is_a_response_on_that_stream_only() {
         if view.path() == "/denied" {
             refuse(403, "not-on-the-list")
         } else {
-            terminate_support::inject("x")
+            inject("x")
         }
     });
     let rig = RigBuilder::new(&pki)
@@ -560,8 +562,10 @@ async fn a_websocket_over_http2_to_an_http2_server_is_passed_as_extended_connect
         })
     });
     let server = H2Server::streaming_with_connect(&pki, "bound.test", handler).await;
+    let injector = TestInjector::always();
     let rig = RigBuilder::new(&pki)
         .name("bound.test", server.addr)
+        .injector(injector.clone())
         .build();
     let mut guest = rig.guest();
     let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
@@ -580,6 +584,9 @@ async fn a_websocket_over_http2_to_an_http2_server_is_passed_as_extended_connect
     let mut echo = [0_u8; 10];
     io.read_exact(&mut echo).await.unwrap();
     assert_eq!(&echo, b"through h2");
+    // The rules judged the extended `CONNECT` the server was sent.
+    let asked = injector.seen.lock().unwrap().clone();
+    assert_eq!(asked, vec![("CONNECT".to_owned(), "/chat".to_owned())]);
     // The guest hangs up: the pipe ends and the connection is recorded.
     drop(io);
     drop(response);
@@ -687,4 +694,33 @@ async fn an_http11_server_that_closes_after_every_answer_is_reconnected_for_each
         let got = client.get("bound.test", &format!("/{i}")).await;
         assert_eq!(got.text(), "one shot", "request {i}");
     }
+}
+
+#[tokio::test]
+async fn a_plain_request_over_http2_to_an_http11_server_is_judged_without_upgrade_headers() {
+    let pki = Pki::new();
+    let server = FakeServer::tls(
+        pki.server_config("bound.test", Flaw::None),
+        Arc::new(|_| Reply::ok("plain")),
+    )
+    .await;
+    let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let injector = {
+        let lines = Arc::clone(&lines);
+        TestInjector::new(move |view| {
+            lines.lock().unwrap().push((
+                view.header("connection").map(str::to_owned),
+                view.header("upgrade").map(str::to_owned),
+            ));
+            inject(CANARY)
+        })
+    };
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(injector)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    assert_eq!(client.get("bound.test", "/plain").await.text(), "plain");
+    assert_eq!(*lines.lock().unwrap(), [(None, None)]);
 }

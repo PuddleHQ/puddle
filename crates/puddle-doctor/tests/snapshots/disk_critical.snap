@@ -1,0 +1,60 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+ok    CPU virtualization  on (the hypervisor uses it)
+ok    Hypervisor          /dev/kvm is usable
+ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
+ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot           a test VM booted and ran a program in 1.1 s
+FAIL  Disk space          only 3 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle), under the 5 GB line
+      fix:  Workspace volumes and root disks, package caches and builds inside a workspace all
+            grow on this drive, and a full drive stops them with errors that do not name the
+            cause (a build that dies halfway, a tool that cannot write). Free space before you
+            start or build anything in a workspace: delete workspaces you no longer use and
+            files you do not need. The line is the setting "Fail when free space is under" in
+            Settings.
+
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "/dev/kvm is usable"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "ok",
+      "summary": "a test VM booted and ran a program in 1.1 s"
+    },
+    {
+      "id": "disk_space",
+      "status": "fail",
+      "summary": "only 3 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle), under the 5 GB line",
+      "finding": "disk_space_critical",
+      "fix": "Workspace volumes and root disks, package caches and builds inside a workspace all grow on this drive, and a full drive stops them with errors that do not name the cause (a build that dies halfway, a tool that cannot write). Free space before you start or build anything in a workspace: delete workspaces you no longer use and files you do not need. The line is the setting \"Fail when free space is under\" in Settings."
+    }
+  ],
+  "elapsed_ms": 1234
+}

@@ -5971,6 +5971,8 @@ dependencies = [
  "puddle-host",
  "puddle-ipc",
  "puddle-lifecycle",
+ "puddle-log",
+ "puddle-settings",
  "puddle-ssh",
  "puddle-test-kit",
  "puddle-types",
@@ -5998,6 +6000,7 @@ dependencies = [
  "puddle-front",
  "puddle-guest-env",
  "puddle-ipc",
+ "puddle-log",
  "puddle-proxy",
  "puddle-test-kit",
  "puddle-types",
@@ -6092,6 +6095,7 @@ dependencies = [
  "puddle-fs",
  "puddle-host",
  "puddle-lifecycle",
+ "puddle-log",
  "puddle-runtime",
  "puddle-secrets",
  "puddle-settings",
@@ -6231,6 +6235,7 @@ dependencies = [
  "object",
  "puddle-fs",
  "puddle-runtime",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
@@ -6325,6 +6330,7 @@ version = "0.0.0"
 dependencies = [
  "dirs",
  "getrandom 0.4.3",
+ "rustix",
  "tempfile",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
@@ -6447,6 +6453,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-log"
+version = "0.0.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "puddle-logins"
 version = "0.0.0"
 dependencies = [
@@ -6519,6 +6534,7 @@ dependencies = [
  "puddle-ca",
  "puddle-inject",
  "puddle-ipc",
+ "puddle-log",
  "puddle-logins",
  "puddle-netpolicy",
  "puddle-proxy",

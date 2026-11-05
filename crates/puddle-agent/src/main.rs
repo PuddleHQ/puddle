@@ -47,10 +47,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            tracing_subscriber::fmt()
-                .with_writer(std::io::stderr)
-                .with_max_level(config.log)
-                .init();
+            puddle_log::init_stderr(puddle_log::ScopedFilter::at(config.log.into()), false);
             fd_limit.log(FDS_NEEDED);
             match run(config) {
                 Ok(()) => ExitCode::SUCCESS,

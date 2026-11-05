@@ -6,6 +6,7 @@ info  Code integrity        memory integrity (HVCI) on; App Control policy for p
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot             a test VM booted and ran a program in 1.1 s
+ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Global Secure Access  client not installed
 
 No problems found. (1.2 s)
@@ -47,6 +48,11 @@ No problems found. (1.2 s)
       "id": "test_boot",
       "status": "ok",
       "summary": "a test VM booted and ran a program in 1.1 s"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
     },
     {
       "id": "global_secure_access",

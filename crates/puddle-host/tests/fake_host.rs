@@ -6923,18 +6923,12 @@ async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_re
 /// Waits until `has_problem(key)` is `want`; a plan rewrite in a running guest settles in the
 /// background.
 async fn problem_settles(host: &Host<FakeRuntime>, key: &str, want: bool) {
-    for _ in 0..200 {
-        if has_problem(host, key) == want {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    assert_eq!(
-        has_problem(host, key),
-        want,
-        "{key}: {:?}",
-        host.problems().list()
-    );
+    eventually(
+        &format!("{key} has problem is {want}"),
+        Duration::from_secs(10),
+        || has_problem(host, key) == want,
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Shell init rows in the store.
 
-use puddle_types::{Event, WorkspaceName};
+use puddle_types::{Event, WorkspaceId};
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::{Store, lock, sql_ts};
 use crate::error::StoreError;
 use crate::shell_init::{ShellInit, ShellInitText};
 
-fn changed(fx: &mut Vec<Event>, workspace: &WorkspaceName) {
+fn changed(fx: &mut Vec<Event>, workspace: &WorkspaceId) {
     fx.push(Event::WorkspaceShellInitChanged {
         workspace: workspace.clone(),
     });
@@ -19,7 +19,7 @@ impl Store {
     ///
     /// # Errors
     /// A database error, or a stored row that does not parse.
-    pub fn shell_init(&self, workspace: &WorkspaceName) -> Result<Option<ShellInit>, StoreError> {
+    pub fn shell_init(&self, workspace: &WorkspaceId) -> Result<Option<ShellInit>, StoreError> {
         let conn = lock(&self.conn);
         let row: Option<(String, i64)> = conn
             .query_row(
@@ -48,7 +48,7 @@ impl Store {
     /// A database error; nothing changes then.
     pub fn set_shell_init(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         content: &ShellInitText,
     ) -> Result<ShellInit, StoreError> {
         let before = self.shell_init(workspace)?;
@@ -74,7 +74,7 @@ impl Store {
     ///
     /// # Errors
     /// A database error; nothing changes then.
-    pub fn clear_shell_init(&self, workspace: &WorkspaceName) -> Result<bool, StoreError> {
+    pub fn clear_shell_init(&self, workspace: &WorkspaceId) -> Result<bool, StoreError> {
         self.change(|tx, _now, fx| {
             let had = tx.execute(
                 "DELETE FROM shell_init WHERE workspace_id = ?1",
@@ -92,7 +92,7 @@ impl Store {
 /// gone), so none is sent here.
 pub(super) fn delete_workspace_rows(
     tx: &Transaction<'_>,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
 ) -> Result<(), StoreError> {
     tx.execute(
         "DELETE FROM shell_init WHERE workspace_id = ?1",
@@ -120,8 +120,8 @@ mod tests {
         }
     }
 
-    fn ws(text: &str) -> WorkspaceName {
-        WorkspaceName::new(text).unwrap()
+    fn ws(text: &str) -> WorkspaceId {
+        WorkspaceId::new(text).unwrap()
     }
 
     fn text(t: &str) -> ShellInitText {

@@ -9,7 +9,7 @@ mod vm_support;
 
 use std::time::Duration;
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended, hermetic_options};
 use vm_support::{VmHost, guest, start_vm_host_config};
@@ -29,7 +29,7 @@ async fn vm_editor_on_an_alpine_image_says_why_it_is_unavailable_and_the_workspa
     })
     .await;
     let name = format!("{}-musl", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());

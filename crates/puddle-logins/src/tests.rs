@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use puddle_proxy::{AnswerHead, Exchange, ExchangeRewriter, StandIns};
 use puddle_secrets::{MemoryStore, SecretStore};
-use puddle_types::{Host, WorkspaceName};
+use puddle_types::{Host, WorkspaceId};
 use serde_json::{Value, json};
 
 use crate::profile::{CLAUDE, GITHUB, Profile, Role, builtin};
@@ -29,7 +29,7 @@ const REFRESH_B: &str =
 struct Notices(Mutex<Vec<(String, Problem)>>);
 
 impl LoginNotices for Notices {
-    fn problem(&self, _: &WorkspaceName, profile: &Profile, problem: Problem) {
+    fn problem(&self, _: &WorkspaceId, profile: &Profile, problem: Problem) {
         self.0
             .lock()
             .unwrap()
@@ -50,8 +50,8 @@ struct Rig {
     notices: Arc<Notices>,
 }
 
-fn workspace() -> WorkspaceName {
-    WorkspaceName::new("alpha").unwrap()
+fn workspace() -> WorkspaceId {
+    WorkspaceId::new("alpha").unwrap()
 }
 
 fn rig_on(store: &Arc<MemoryStore>, enabled: bool) -> Rig {
@@ -820,7 +820,7 @@ async fn deleting_the_workspace_deletes_every_token_kept_for_it() {
     let other = {
         let registry = Arc::new(StandIns::new());
         Logins::new(
-            WorkspaceName::new("beta").unwrap(),
+            WorkspaceId::new("beta").unwrap(),
             true,
             builtin(),
             registry,
@@ -846,7 +846,7 @@ async fn a_workspaces_logins_never_reach_another_workspace() {
     let one = rig();
     claude_login(&one, REAL_ACCESS, REAL_REFRESH).await;
     let beta = Logins::new(
-        WorkspaceName::new("beta").unwrap(),
+        WorkspaceId::new("beta").unwrap(),
         true,
         builtin(),
         Arc::new(StandIns::new()),

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use puddle_agent_proto::forward::{GuestLink, OpenError};
 use puddle_ports::Ports;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 /// A byte stream to the editor server.
@@ -92,14 +92,14 @@ impl std::fmt::Debug for Target {
 /// refused at once and one that starts is served at once.
 pub trait Guests: Send + Sync {
     /// The editor of `workspace`, `None` while the workspace is not running.
-    fn target(&self, workspace: &WorkspaceName) -> Option<Target>;
+    fn target(&self, workspace: &WorkspaceId) -> Option<Target>;
 }
 
 /// The workspaces [`Ports`] holds an agent link for: a workspace is served while its agent is
 /// connected. Which server runs there is the caller's to say.
 pub struct PortsGuests {
     ports: Ports,
-    flavour: Box<dyn Fn(&WorkspaceName) -> Flavour + Send + Sync>,
+    flavour: Box<dyn Fn(&WorkspaceId) -> Flavour + Send + Sync>,
 }
 
 impl PortsGuests {
@@ -107,7 +107,7 @@ impl PortsGuests {
     #[must_use]
     pub fn new(
         ports: Ports,
-        flavour: impl Fn(&WorkspaceName) -> Flavour + Send + Sync + 'static,
+        flavour: impl Fn(&WorkspaceId) -> Flavour + Send + Sync + 'static,
     ) -> Self {
         Self {
             ports,
@@ -117,7 +117,7 @@ impl PortsGuests {
 }
 
 impl Guests for PortsGuests {
-    fn target(&self, workspace: &WorkspaceName) -> Option<Target> {
+    fn target(&self, workspace: &WorkspaceId) -> Option<Target> {
         let link = self.ports.guest_link(workspace)?;
         Some(Target {
             editor: Arc::new(link),

@@ -21,7 +21,7 @@ use puddle_front::{
 };
 use puddle_netpolicy::{EndpointKind, PuddleEndpoints};
 use puddle_test_kit::eventually;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -183,7 +183,7 @@ impl Running {
 }
 
 impl Guests for Running {
-    fn target(&self, workspace: &WorkspaceName) -> Option<Target> {
+    fn target(&self, workspace: &WorkspaceId) -> Option<Target> {
         self.0.lock().unwrap().get(workspace.as_str()).cloned()
     }
 }
@@ -264,7 +264,7 @@ fn host(rig: &Rig, name: &str) -> String {
     format!("{name}.localhost:{}", rig.front.local_addr().port())
 }
 
-fn ws(name: &WorkspaceName) -> WorkspaceName {
+fn ws(name: &WorkspaceId) -> WorkspaceId {
     name.clone()
 }
 
@@ -470,7 +470,7 @@ async fn a_forwarded_port_s_websocket_works_and_is_not_an_editor_window() {
     let app = Server::start("app").await;
     rig.running
         .start_with_ports("a", None, Flavour::CodeServer, &[(5173, app.addr)]);
-    let name = WorkspaceName::new("a").unwrap();
+    let name = WorkspaceId::new("a").unwrap();
     let h = forward_host(&rig, 5173, "a");
     let (mut socket, head) = upgrade(&rig, &h, &format!("Origin: http://{h}\r\n")).await;
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
@@ -673,7 +673,7 @@ async fn a_websocket_upgrade_carries_bytes_both_ways_and_is_counted_while_it_is_
     let rig = rig().await;
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
-    let name = WorkspaceName::new("a").unwrap();
+    let name = WorkspaceId::new("a").unwrap();
     let h = host(&rig, "a");
     assert_eq!(rig.front.connected(&name), 0);
     let (mut one, head) = upgrade(&rig, &h, &format!("Origin: http://{h}\r\n")).await;
@@ -706,7 +706,7 @@ async fn a_window_that_ends_its_socket_is_no_longer_counted_though_the_server_ho
     let rig = rig().await;
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
-    let name = WorkspaceName::new("a").unwrap();
+    let name = WorkspaceId::new("a").unwrap();
     let h = host(&rig, "a");
     let (stream, head) = upgrade_at(&rig, "/ws-held", &h, "").await;
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
@@ -732,7 +732,7 @@ async fn a_socket_the_server_ends_ends_for_the_window_and_is_no_longer_counted()
     let rig = rig().await;
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
-    let name = WorkspaceName::new("a").unwrap();
+    let name = WorkspaceId::new("a").unwrap();
     let h = host(&rig, "a");
     let (mut stream, head) = upgrade_at(&rig, "/ws-gone", &h, "").await;
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
@@ -759,7 +759,7 @@ async fn a_websocket_from_another_origin_is_refused_before_the_editor_hears_of_i
     let (_stream, head) = upgrade(&rig, &h, "Origin: http://b.localhost:1\r\n").await;
     assert!(head.starts_with("HTTP/1.1 403"), "{head}");
     assert_eq!(a.seen.connections.load(Ordering::SeqCst), 0);
-    assert_eq!(rig.front.connected(&WorkspaceName::new("a").unwrap()), 0);
+    assert_eq!(rig.front.connected(&WorkspaceId::new("a").unwrap()), 0);
 }
 
 #[tokio::test]
@@ -888,7 +888,7 @@ async fn the_key_survives_a_new_front_and_differs_between_workspaces() {
     assert_eq!(again.body, key_a);
 
     // Forgetting the workspace gives the name a new key.
-    halves.forget(&WorkspaceName::new("a").unwrap()).unwrap();
+    halves.forget(&WorkspaceId::new("a").unwrap()).unwrap();
     let after = ask(
         &front,
         &format!("POST {MINT} HTTP/1.1\r\nHost: {h}\r\nConnection: close\r\nContent-Length: 0\r\nCookie: {client}\r\n\r\n"),
@@ -946,7 +946,7 @@ async fn the_usual_port_is_kept_when_free_and_replaced_when_taken() {
     assert_ne!(moved.local_addr().port(), free);
     assert!(moved.preferred_port_was_taken());
     assert_eq!(
-        moved.origin(&WorkspaceName::new("a").unwrap()),
+        moved.origin(&WorkspaceId::new("a").unwrap()),
         format!("http://a.localhost:{}", moved.local_addr().port())
     );
 }
@@ -955,11 +955,11 @@ async fn the_usual_port_is_kept_when_free_and_replaced_when_taken() {
 async fn the_password_comes_from_the_workspaces_editor_and_only_while_it_runs() {
     let rig = rig().await;
     rig.running.start("a", None, Flavour::CodeServer);
-    let a = WorkspaceName::new("a").unwrap();
+    let a = WorkspaceId::new("a").unwrap();
     assert_eq!(rig.front.password(&a).await.unwrap(), "sekrit");
     let err = rig
         .front
-        .password(&WorkspaceName::new("b").unwrap())
+        .password(&WorkspaceId::new("b").unwrap())
         .await
         .unwrap_err();
     assert!(err.0.contains("not running"), "{err}");
@@ -978,6 +978,6 @@ async fn the_front_and_its_targets_print_without_leaking_what_they_hold() {
         target.contains("CodeServer") && !target.contains("sekrit"),
         "{target}"
     );
-    let a = WorkspaceName::new("a").unwrap();
+    let a = WorkspaceId::new("a").unwrap();
     assert_eq!(rig.front.windows().connected(&a), 0);
 }

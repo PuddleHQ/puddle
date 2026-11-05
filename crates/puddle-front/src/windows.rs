@@ -7,17 +7,17 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use tokio::sync::watch;
 
 /// The connection counts of every workspace. Cheap to clone; clones share the counts.
 #[derive(Debug, Clone, Default)]
 pub struct Windows {
-    counts: Arc<Mutex<HashMap<WorkspaceName, watch::Sender<usize>>>>,
+    counts: Arc<Mutex<HashMap<WorkspaceId, watch::Sender<usize>>>>,
 }
 
 impl Windows {
-    fn sender(&self, workspace: &WorkspaceName) -> watch::Sender<usize> {
+    fn sender(&self, workspace: &WorkspaceId) -> watch::Sender<usize> {
         let mut counts = self.counts.lock().unwrap_or_else(PoisonError::into_inner);
         counts
             .entry(workspace.clone())
@@ -27,7 +27,7 @@ impl Windows {
 
     /// Counts one more connection of `workspace` until the returned guard is dropped.
     #[must_use]
-    pub fn open(&self, workspace: &WorkspaceName) -> Connected {
+    pub fn open(&self, workspace: &WorkspaceId) -> Connected {
         let sender = self.sender(workspace);
         sender.send_modify(|n| *n += 1);
         Connected { sender }
@@ -35,13 +35,13 @@ impl Windows {
 
     /// How many connections `workspace` has now.
     #[must_use]
-    pub fn connected(&self, workspace: &WorkspaceName) -> usize {
+    pub fn connected(&self, workspace: &WorkspaceId) -> usize {
         *self.sender(workspace).borrow()
     }
 
     /// The count as it changes, for waiting until it is zero.
     #[must_use]
-    pub fn watch(&self, workspace: &WorkspaceName) -> watch::Receiver<usize> {
+    pub fn watch(&self, workspace: &WorkspaceId) -> watch::Receiver<usize> {
         self.sender(workspace).subscribe()
     }
 }
@@ -66,8 +66,8 @@ mod tests {
     fn the_count_follows_the_guards_per_workspace() {
         let windows = Windows::default();
         let (a, b) = (
-            WorkspaceName::new("a").unwrap(),
-            WorkspaceName::new("b").unwrap(),
+            WorkspaceId::new("a").unwrap(),
+            WorkspaceId::new("b").unwrap(),
         );
         let one = windows.open(&a);
         let two = windows.open(&a);
@@ -82,7 +82,7 @@ mod tests {
     #[tokio::test]
     async fn a_watcher_sees_the_count_reach_zero() {
         let windows = Windows::default();
-        let a = WorkspaceName::new("a").unwrap();
+        let a = WorkspaceId::new("a").unwrap();
         let guard = windows.open(&a);
         let mut seen = windows.watch(&a);
         let wait = tokio::spawn(async move { seen.wait_for(|n| *n == 0).await.map(|n| *n) });

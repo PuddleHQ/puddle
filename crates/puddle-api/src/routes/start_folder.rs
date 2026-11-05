@@ -39,7 +39,7 @@ pub(crate) async fn put_start_folder(
     let start_folder = body.into_start_folder()?;
     let change = state.workspaces.set_start_folder(&id, start_folder).await?;
     state.events.emit(Event::WorkspaceRepositoriesChanged {
-        workspace: change.record.name.clone(),
+        workspace: change.record.id.clone(),
     });
     Ok(Json(change.into()))
 }

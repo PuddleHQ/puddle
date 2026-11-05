@@ -24,7 +24,7 @@ use puddle_proxy::testing::{
 use puddle_proxy::{AddressCheck, AddressVerdict, Proxy, ProxyConfig, Route};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, LocalCategory,
-    NullSink, PendingId, RefusedReason, WorkspaceName,
+    NullSink, PendingId, RefusedReason, WorkspaceId,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -36,8 +36,8 @@ fn host(h: &str) -> Host {
     Host::parse_normalised(h).unwrap()
 }
 
-fn workspace(name: &str) -> WorkspaceName {
-    WorkspaceName::new(name).unwrap()
+fn workspace(name: &str) -> WorkspaceId {
+    WorkspaceId::new(name).unwrap()
 }
 
 /// A proxy serving one route, its policy and IPC root.
@@ -105,7 +105,7 @@ impl Rig {
 struct RefuseOneAddress(IpAddr);
 
 impl AddressCheck for RefuseOneAddress {
-    fn check(&self, _workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
+    fn check(&self, _workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
         if addr.ip() == self.0 {
             AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Loopback))
         } else {
@@ -1078,7 +1078,7 @@ async fn an_allowed_connect_is_reported_with_address_and_bytes() {
     let event = &events[0];
     assert_eq!(
         (
-            event.workspace.as_ref().map(WorkspaceName::as_str),
+            event.workspace.as_ref().map(WorkspaceId::as_str),
             event.host.to_string(),
             event.port
         ),
@@ -1380,10 +1380,10 @@ async fn a_tunnel_only_ever_reaches_the_checked_address_whatever_it_carries() {
 
 /// Keeps every agent report with the workspace the proxy gave it.
 #[derive(Default)]
-struct KeptReports(std::sync::Mutex<Vec<(WorkspaceName, AgentReport)>>);
+struct KeptReports(std::sync::Mutex<Vec<(WorkspaceId, AgentReport)>>);
 
 impl AgentReports for KeptReports {
-    fn report(&self, workspace: &WorkspaceName, report: AgentReport) {
+    fn report(&self, workspace: &WorkspaceId, report: AgentReport) {
         self.0.lock().unwrap().push((workspace.clone(), report));
     }
 }
@@ -1391,16 +1391,16 @@ impl AgentReports for KeptReports {
 /// What a workspace's agent told the watcher.
 #[derive(Default)]
 struct Watched {
-    link: std::sync::Mutex<Option<(WorkspaceName, puddle_agent_proto::forward::GuestLink)>>,
-    ports: std::sync::Mutex<Vec<(WorkspaceName, Vec<u16>)>>,
+    link: std::sync::Mutex<Option<(WorkspaceId, puddle_agent_proto::forward::GuestLink)>>,
+    ports: std::sync::Mutex<Vec<(WorkspaceId, Vec<u16>)>>,
 }
 
 impl puddle_agent_proto::host::GuestWatcher for Watched {
-    fn link(&self, workspace: &WorkspaceName, link: puddle_agent_proto::forward::GuestLink) {
+    fn link(&self, workspace: &WorkspaceId, link: puddle_agent_proto::forward::GuestLink) {
         *self.link.lock().unwrap() = Some((workspace.clone(), link));
     }
 
-    fn ports(&self, workspace: &WorkspaceName, ports: Vec<u16>) {
+    fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>) {
         self.ports.lock().unwrap().push((workspace.clone(), ports));
     }
 }

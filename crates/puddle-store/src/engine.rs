@@ -4,7 +4,7 @@
 use std::cmp::Reverse;
 use std::collections::HashMap;
 
-use puddle_types::{Decision, Host, RuleId, RuleSetId, SuffixAllows, WorkspaceName};
+use puddle_types::{Decision, Host, RuleId, RuleSetId, SuffixAllows, WorkspaceId};
 
 use crate::catalogue;
 use crate::pattern::Pattern;
@@ -20,7 +20,7 @@ pub(crate) struct SetEntry {
     pub pattern: Pattern,
     /// For System managed: the one workspace it applies to, or `None` for every workspace. Built-in
     /// entries apply where their set is switched on.
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// Allow or deny.
     pub effect: Effect,
 }
@@ -30,17 +30,12 @@ pub(crate) struct SetEntry {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Switches {
     global: HashMap<RuleSetId, bool>,
-    workspace: HashMap<(RuleSetId, WorkspaceName), bool>,
+    workspace: HashMap<(RuleSetId, WorkspaceId), bool>,
 }
 
 impl Switches {
     /// Records one stored switch.
-    pub(crate) fn insert(
-        &mut self,
-        set: RuleSetId,
-        workspace: Option<WorkspaceName>,
-        enabled: bool,
-    ) {
+    pub(crate) fn insert(&mut self, set: RuleSetId, workspace: Option<WorkspaceId>, enabled: bool) {
         match workspace {
             Some(workspace) => {
                 self.workspace.insert((set, workspace), enabled);
@@ -57,7 +52,7 @@ impl Switches {
     }
 
     /// The workspaces that override `set`, sorted by name.
-    pub(crate) fn overrides(&self, set: RuleSetId) -> Vec<(WorkspaceName, bool)> {
+    pub(crate) fn overrides(&self, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
         let mut out: Vec<_> = self
             .workspace
             .iter()
@@ -69,7 +64,7 @@ impl Switches {
     }
 
     /// Whether `set` is on for `workspace`.
-    pub(crate) fn is_on(&self, set: RuleSetId, workspace: &WorkspaceName) -> bool {
+    pub(crate) fn is_on(&self, set: RuleSetId, workspace: &WorkspaceId) -> bool {
         self.workspace
             .get(&(set, workspace.clone()))
             .or_else(|| self.global.get(&set))
@@ -271,7 +266,7 @@ impl RuleIndex {
     /// suffix allows and every set allow are treated as no match (R-14, R-42).
     pub(crate) fn decide(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         host: &Host,
         now: u64,
         suffix_allows: SuffixAllows,
@@ -383,7 +378,7 @@ mod tests {
         Rule {
             id: RuleId(id),
             scope: scope.map_or(Scope::Global, |s| {
-                Scope::Workspace(WorkspaceName::new(s).unwrap())
+                Scope::Workspace(WorkspaceId::new(s).unwrap())
             }),
             pattern: Pattern::parse(pattern).unwrap(),
             effect,
@@ -394,8 +389,8 @@ mod tests {
         }
     }
 
-    fn sb(s: &str) -> WorkspaceName {
-        WorkspaceName::new(s).unwrap()
+    fn sb(s: &str) -> WorkspaceId {
+        WorkspaceId::new(s).unwrap()
     }
 
     fn host(s: &str) -> Host {
@@ -875,7 +870,7 @@ mod tests {
     }
 
     /// The precedence of R-6, written as plainly as possible, for the property test below.
-    fn reference(rules: &[Rule], workspace: &WorkspaceName, h: &Host, now: u64) -> Option<RuleId> {
+    fn reference(rules: &[Rule], workspace: &WorkspaceId, h: &Host, now: u64) -> Option<RuleId> {
         let mut best: Option<&Rule> = None;
         for r in rules {
             let applies = r.pattern.matches(h)
@@ -926,7 +921,7 @@ mod tests {
     /// checked one by one.
     fn reference_p3(
         index: &RuleIndex,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         h: &Host,
         now: u64,
         suffix_allows: SuffixAllows,

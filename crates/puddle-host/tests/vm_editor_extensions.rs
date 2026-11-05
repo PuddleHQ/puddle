@@ -17,7 +17,7 @@ mod vm_support;
 
 use std::time::Duration;
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use support::{Api, ended, hermetic_options};
 use vm_support::{VmHost, guest, guest_live, start_vm_host_config};
@@ -71,7 +71,7 @@ async fn vm_editor_installs_an_extension_from_open_vsx_with_no_rule_added() {
     })
     .await;
     let name = format!("{}-ovx", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
 
     // A fresh install: no rule of the user's own, no rule set switched on, the default editor

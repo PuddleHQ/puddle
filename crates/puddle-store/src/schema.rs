@@ -9,10 +9,10 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 13;
+pub const SCHEMA_VERSION: u32 = 14;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -411,6 +411,12 @@ const V13: &str = r"
 ALTER TABLE rule_sets ADD COLUMN fill TEXT;
 ";
 
+const V14: &str = r"
+-- Where in a request a secret's stand-in is swapped: NULL for header values, `path`, or
+-- `query:<name>`. Only a secret has a place.
+ALTER TABLE env_vars ADD COLUMN place TEXT CHECK (place IS NULL OR kind = 'secret');
+";
+
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.
 ///
 /// # Errors
@@ -778,6 +784,35 @@ mod tests {
         conn.execute("DELETE FROM env_vars WHERE id = 1", [])
             .unwrap();
         assert_eq!(count("SELECT count(*) FROM env_stand_ins"), 0);
+    }
+
+    /// A secret stored before places existed keeps its row and is swapped in header values (no
+    /// place); only a secret can have a place.
+    #[test]
+    fn v13_gives_existing_secrets_no_place_and_a_plain_variable_none() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_up_to(&mut conn, 12).unwrap();
+        conn.execute_batch(
+            "INSERT INTO env_vars (workspace_id, name, kind, value, secret_id, hosts, changed_at)
+                VALUES (NULL, 'S', 'secret', NULL, 'id', '[\"a.example.com\"]', 1);
+             INSERT INTO env_vars (workspace_id, name, kind, value, changed_at)
+                VALUES (NULL, 'P', 'plain', 'v', 1);",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 12);
+        let place = |name: &str| -> Option<String> {
+            conn.query_row("SELECT place FROM env_vars WHERE name = ?1", [name], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!((place("S"), place("P")), (None, None));
+        conn.execute("UPDATE env_vars SET place = 'path' WHERE name = 'S'", [])
+            .unwrap();
+        assert!(
+            conn.execute("UPDATE env_vars SET place = 'path' WHERE name = 'P'", [])
+                .is_err()
+        );
     }
 
     /// A workspace that set its switches before the defaults existed keeps them as explicit

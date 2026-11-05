@@ -2954,6 +2954,199 @@
         }
       }
     },
+    "/api/orphan-volumes": {
+      "get": {
+        "tags": [
+          "orphan-volumes"
+        ],
+        "summary": "The workspace disks Puddle keeps that no workspace in its list claims, read fresh from the\nruntime on every call. Puddle cannot tell from outside whether such a disk holds any files.\nA client refetches on `problems_changed` and when the workspace list changes.",
+        "operationId": "list_orphan_volumes",
+        "responses": {
+          "200": {
+            "description": "the unclaimed workspace disks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrphanVolumeList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the runtime cannot list its disks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orphan-volumes/{id}/restore": {
+      "post": {
+        "tags": [
+          "orphan-volumes"
+        ],
+        "summary": "Adds a list entry for an unclaimed workspace disk, named after the disk. Its repositories are\nthe checkouts on the disk that have a readable remote address (read in a short-lived\nmaintenance sandbox with no route out); when there is none, `repository` is used. Nothing is\nwritten to the disk and an existing list entry is never replaced. The workspace is stopped:\nstart it to use it.",
+        "operationId": "restore_orphan_volume",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "the disk's workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreOrphanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the workspace, now in the list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace disk",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the list already names the workspace, or something holds the disk",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "no address could be read from the disk and none was given, or the address is refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the list cannot be saved, or the disk cannot be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/pending": {
       "get": {
         "tags": [
@@ -11506,6 +11699,17 @@
                   "secret"
                 ]
               },
+              "place": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SecretPlace",
+                    "description": "Where in a request the stand-in is swapped. Left out: the secret's stored place when it\nis a secret already, header values for a new one."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "value": {
                 "type": [
                   "string",
@@ -11529,6 +11733,7 @@
           "kind",
           "value",
           "hosts",
+          "place",
           "overridden",
           "changed_at"
         ],
@@ -11557,6 +11762,17 @@
           "overridden": {
             "type": "boolean",
             "description": "A global variable that the workspace's own variable of the same name hides. Only ever\n`true` in a workspace's list."
+          },
+          "place": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SecretPlace",
+                "description": "Where in a request a secret's stand-in is swapped; `null` for a plain variable."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "scope": {
             "$ref": "#/components/schemas/EnvScope",
@@ -13625,6 +13841,40 @@
         },
         "additionalProperties": false
       },
+      "OrphanVolumeList": {
+        "type": "object",
+        "description": "The workspace disks the list does not name, in id order.",
+        "required": [
+          "volumes"
+        ],
+        "properties": {
+          "volumes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrphanVolumeView"
+            },
+            "description": "Empty when the list names every workspace disk."
+          }
+        }
+      },
+      "OrphanVolumeView": {
+        "type": "object",
+        "description": "A workspace disk Puddle keeps whose workspace its list does not name. Puddle cannot tell from\noutside whether the disk holds any files, so none of this says so.",
+        "required": [
+          "id",
+          "volume"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The id a restore names; also the name of the workspace a restore makes."
+          },
+          "volume": {
+            "type": "string",
+            "description": "The disk's name in the runtime, `ws-` and the id."
+          }
+        }
+      },
       "PacState": {
         "type": "string",
         "description": "Whether the PAC script or WPAD answered.",
@@ -14685,6 +14935,20 @@
           }
         }
       },
+      "RestoreOrphanRequest": {
+        "type": "object",
+        "description": "`POST /api/orphan-volumes/{id}/restore`.",
+        "properties": {
+          "repository": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address of the repository on the disk, used only when Puddle cannot read one from the\nremote of a checkout there. An HTTPS address; an SSH one is refused as in a create."
+          }
+        },
+        "additionalProperties": false
+      },
       "Rgb": {
         "type": "string",
         "description": "A colour as `#rrggbb`.",
@@ -15270,6 +15534,61 @@
           "workspace",
           "global"
         ]
+      },
+      "SecretPlace": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The values of request headers: what almost every tool uses.",
+            "required": [
+              "in"
+            ],
+            "properties": {
+              "in": {
+                "type": "string",
+                "enum": [
+                  "header"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The one query parameter `name` (`appid`, `access_token`, `key`), for an API that takes its\nkey nowhere else.",
+            "required": [
+              "name",
+              "in"
+            ],
+            "properties": {
+              "in": {
+                "type": "string",
+                "enum": [
+                  "query"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "description": "The parameter's name: 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The path (a Telegram bot's `/bot<token>/`, a webhook URL).",
+            "required": [
+              "in"
+            ],
+            "properties": {
+              "in": {
+                "type": "string",
+                "enum": [
+                  "path"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Where in a request Puddle swaps a secret's stand-in for its real value, toward the secret's\nhosts only. Anywhere else the stand-in goes out unchanged."
       },
       "ServerChoice": {
         "type": "string",
@@ -16601,6 +16920,10 @@
     {
       "name": "logins",
       "description": "The logins Puddle kept for a workspace: listing them and forgetting one"
+    },
+    {
+      "name": "orphan-volumes",
+      "description": "Workspace disks the workspace list does not name, and restoring one as a workspace"
     },
     {
       "name": "start-folder",

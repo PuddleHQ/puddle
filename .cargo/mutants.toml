@@ -30,6 +30,12 @@ exclude_globs = [
 
 # Equivalent mutants, each with its reason:
 exclude_re = [
+    # `send_and_pump` cuts the upload off when the response came before the body was in. Without the
+    # cut-off the sender is dropped with the function, so the body still ends in error for a declared
+    # length and, for a chunked body, hyper's connection task would have to write the closing chunk
+    # before the connection is dropped a moment later: no test can fix that order, so the two
+    # outcomes cannot be told apart. (A failed pump has already cut the upload off in the loop.)
+    'session\.rs:\d+:8: delete ! in send_and_pump',
     # `SPLIT_FIRST | ESCAPED_DOTS` combines two flags that share no bit, so `^` gives the same value.
     'replace \| with \^ in Read::all_for',
     # `c != ' '` offers `STRICT_DOTS` for nearly any text. The flag only changes a reading when the

@@ -32,6 +32,7 @@ mod identities;
 mod interception;
 mod logins;
 mod network_health;
+mod orphans;
 mod ports;
 mod repos;
 mod repositories;
@@ -49,7 +50,7 @@ pub use credentials::{
 };
 pub use doctor::{DoctorCheck, DoctorReport, DoctorStatus};
 pub use environment::{
-    EnvKind, EnvList, EnvScope, EnvSetRequest, EnvVariable, SecretText, WorkspaceEnv,
+    EnvKind, EnvList, EnvScope, EnvSetRequest, EnvVariable, SecretPlace, SecretText, WorkspaceEnv,
 };
 pub use first_run::{DevCertTrustResult, DevCertificate, FirstRun, FirstRunRequest};
 pub use identities::{
@@ -70,6 +71,7 @@ pub use network_health::{
     ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,
     SignInReport, SignInResult, SkippedRoot, SyncedRoot,
 };
+pub use orphans::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest};
 pub use ports::{PortEntry, PortForwardRequest, WorkspacePorts};
 pub use repos::{
     AccountProfile, AccountProfileRequest, RepoListState, RepoListing, RepoNote, RepoNoteCode,

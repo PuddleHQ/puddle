@@ -4,6 +4,8 @@
 //! what the Unixes share.
 
 #[cfg(target_os = "linux")]
+mod ancestors;
+#[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -12,6 +14,8 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 
+#[cfg(target_os = "linux")]
+pub(crate) use ancestors::data_path;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::hypervisor;
 #[cfg(target_os = "macos")]
@@ -22,6 +26,12 @@ pub(crate) use unix::hypervisor;
 pub(crate) use unix::{code_integrity, file_access, global_secure_access, job};
 #[cfg(windows)]
 pub(crate) use windows::{code_integrity, file_access, global_secure_access, hypervisor, job};
+
+/// msb's rule about the folders above its catalog exists only on Linux here; the probe never asks elsewhere.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn data_path(_dir: Option<&std::path::Path>) -> crate::facts::DataPathFacts {
+    crate::facts::DataPathFacts::NoFolder
+}
 
 #[cfg(not(any(unix, windows)))]
 compile_error!("puddle-doctor supports unix and windows hosts");

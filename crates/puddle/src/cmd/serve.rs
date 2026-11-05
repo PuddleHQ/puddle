@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 use puddle_host::{Host, HostConfig, HostOptions, MsbFactory, SystemPlatform, prepare};
 use puddle_lifecycle::{Role, supervise, wait_for_shutdown};
-use tracing_subscriber::filter::LevelFilter;
+use puddle_log::{ScopedFilter, init_stderr};
 
 use crate::cli::{Command, UsageError};
 
@@ -22,7 +22,8 @@ pub const AGENT_VAR: &str = "PUDDLE_AGENT_BIN";
 /// The environment variable that overrides the bundled code-server folder (development builds).
 pub const CODE_SERVER_VAR: &str = "PUDDLE_CODE_SERVER_DIR";
 
-/// The environment variable that sets the log level (`error`..`trace`, default `info`).
+/// The environment variable that sets the log level (`error`..`trace`, default `info`) for
+/// Puddle's crates, with `crate=level` entries to turn a dependency up (`trace,hyper=debug`).
 pub const LOG_VAR: &str = "PUDDLE_LOG";
 
 /// How `puddle serve` should run.
@@ -96,18 +97,18 @@ pub fn config(
     Ok(config)
 }
 
-/// The level `PUDDLE_LOG` asks for, `info` when unset. Any other value is an error: a typo must
+/// The filter `PUDDLE_LOG` asks for, `info` when unset. Any other value is an error: a typo must
 /// not quietly give the default level.
-fn log_level(value: Option<&OsStr>) -> Result<LevelFilter, String> {
+fn log_filter(value: Option<&OsStr>) -> Result<ScopedFilter, String> {
     let Some(value) = value else {
-        return Ok(LevelFilter::INFO);
+        return Ok(ScopedFilter::default());
     };
     value
         .to_str()
-        .and_then(|text| text.parse().ok())
+        .and_then(|text| ScopedFilter::parse(text).ok())
         .ok_or_else(|| {
             format!(
-                "{LOG_VAR} has the invalid value {:?}: expected error, warn, info, debug or trace",
+                "{LOG_VAR} has the invalid value {:?}: expected error, warn, info, debug or trace, optionally followed by crate=level entries",
                 value.to_string_lossy()
             )
         })
@@ -133,18 +134,14 @@ pub fn run(args: &ServeArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let level = match log_level(std::env::var_os(LOG_VAR).as_deref()) {
-        Ok(level) => level,
+    let filter = match log_filter(std::env::var_os(LOG_VAR).as_deref()) {
+        Ok(filter) => filter,
         Err(e) => {
             eprintln!("puddle: {e}");
             return ExitCode::FAILURE;
         }
     };
-    tracing_subscriber::fmt()
-        .with_max_level(level)
-        .with_ansi(false)
-        .with_writer(std::io::stderr)
-        .init();
+    init_stderr(filter, false);
     // Everything up to the async runtime happens while this is the only thread.
     let prepared = match std::env::current_exe()
         .map_err(|e| puddle_host::HostError::DataDir(e.to_string()))
@@ -278,10 +275,22 @@ mod tests {
     }
 
     #[test]
-    fn the_log_level_is_info_unless_puddle_log_names_a_level() {
-        assert_eq!(log_level(None), Ok(LevelFilter::INFO));
-        assert_eq!(log_level(Some(OsStr::new("debug"))), Ok(LevelFilter::DEBUG));
-        let err = log_level(Some(OsStr::new("loud"))).unwrap_err();
+    fn the_log_filter_is_info_unless_puddle_log_says_otherwise() {
+        let level = |value: Option<&str>, target: &str, level: tracing::Level| {
+            log_filter(value.map(OsStr::new))
+                .unwrap()
+                .would_enable(target, &level)
+        };
+        assert!(level(None, "puddle_host", tracing::Level::INFO));
+        assert!(!level(None, "puddle_host", tracing::Level::DEBUG));
+        assert!(level(Some("trace"), "puddle_host", tracing::Level::TRACE));
+        assert!(!level(Some("trace"), "hyper", tracing::Level::DEBUG));
+        assert!(level(
+            Some("trace,hyper=debug"),
+            "hyper",
+            tracing::Level::DEBUG
+        ));
+        let err = log_filter(Some(OsStr::new("loud"))).unwrap_err();
         assert!(err.starts_with("PUDDLE_LOG"), "{err}");
         assert!(err.contains("\"loud\""), "{err}");
     }

@@ -71,6 +71,11 @@ async fn echo() -> u16 {
 /// itself is not started: its port is taken, as by a server an earlier agent started), or no
 /// editor at all.
 async fn rig(tag: &str, editor: Option<(u16, Option<&str>)>) -> Rig {
+    rig_in(tag, editor, None).await
+}
+
+/// [`rig`] in a guest whose root holds `files` (relative paths), or the default empty root.
+async fn rig_in(tag: &str, editor: Option<(u16, Option<&str>)>, files: Option<&[&str]>) -> Rig {
     let dir = common::TempDir::new(tag);
     let socket = dir.0.join("route.sock");
     let host = Host::default();
@@ -107,6 +112,14 @@ async fn rig(tag: &str, editor: Option<(u16, Option<&str>)>) -> Rig {
             server,
             password_file,
             boot_id: dir.0.join("boot_id"),
+            root: {
+                let root = dir.0.join("root");
+                for file in files.unwrap_or_default() {
+                    std::fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+                    std::fs::write(root.join(file), "").unwrap();
+                }
+                root
+            },
         }
     });
     let config = Config {
@@ -219,4 +232,25 @@ async fn the_front_reaches_the_editor_through_the_link_and_hears_why_when_it_can
     assert!(connect.0.contains("no editor server"), "{connect}");
     let refusal = Editor::password(&link).await.unwrap_err();
     assert!(refusal.0.contains("no editor server"), "{refusal}");
+}
+
+#[tokio::test]
+async fn on_a_musl_image_both_requests_are_refused_with_the_reason() {
+    let port = echo().await;
+    let rig = rig_in(
+        "editor-musl",
+        Some((port, Some(PASSWORD))),
+        Some(&["lib/ld-musl-x86_64.so.1"]),
+    )
+    .await;
+    let link = rig.link().await;
+    for err in [
+        link.open_editor().await.map(|_| ()).unwrap_err(),
+        link.editor_password().await.map(|_| ()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(&err, OpenError::Refused(why) if why.contains("needs an image with glibc")),
+            "{err}"
+        );
+    }
 }

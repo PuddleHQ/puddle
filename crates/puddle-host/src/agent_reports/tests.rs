@@ -313,6 +313,25 @@ fn an_editor_report_of_a_kind_this_host_does_not_know_raises_nothing() {
 }
 
 #[test]
+fn an_image_without_glibc_is_a_plain_editor_problem_that_points_at_desktop_vs_code() {
+    let (_sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_);
+    desk.report(&box_, editor(Some(NEEDS_GLIBC)));
+    let raised = problems.list();
+    assert_eq!(raised.len(), 1);
+    assert_eq!(raised[0].key, "editor-install:box");
+    assert_eq!(
+        raised[0].title,
+        "The browser editor is not available in box: its image uses musl"
+    );
+    assert!(raised[0].detail.contains("glibc"), "{}", raised[0].detail);
+    assert!(raised[0].detail.contains("desktop VS Code over direct SSH"));
+    assert!(!raised[0].detail.contains("tries again"));
+    assert_eq!(raised[0].workspace, Some(box_));
+}
+
+#[test]
 fn a_refused_editor_install_is_a_problem_that_names_the_reason_and_ends_when_it_works() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");

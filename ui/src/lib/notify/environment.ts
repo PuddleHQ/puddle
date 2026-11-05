@@ -2,6 +2,7 @@
 // Notices for two background failures a workspace's tabs cannot show unless they are open: a
 // change to its variables or secrets that did not reach it while it ran, and a kept port forward
 // that could not be opened again at a start. Each says why and links to the tab that fixes it.
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { asEnvFailed } from "#lib/environment/events.ts";
 import { asPortForwardFailed } from "#lib/workspaces/ports.ts";
 import type { Notifier } from "./notifier.ts";
@@ -23,7 +24,7 @@ export class EnvironmentNotices {
       this.#notifier.notify({
         key: `env:${env.workspace}`,
         tone: "warning",
-        title: `A change to the environment of ${env.workspace} did not reach it.`,
+        title: `A change to the environment of ${workspaces.labelOf(env.workspace)} did not reach it.`,
         detail: env.reason,
         link: {
           href: tab(env.workspace, "environment"),
@@ -37,7 +38,7 @@ export class EnvironmentNotices {
       this.#notifier.notify({
         key: `port:${port.workspace}:${port.guest_port}`,
         tone: "warning",
-        title: `Port ${port.guest_port} of ${port.workspace} could not be forwarded to 127.0.0.1:${port.host_port}.`,
+        title: `Port ${port.guest_port} of ${workspaces.labelOf(port.workspace)} could not be forwarded to 127.0.0.1:${port.host_port}.`,
         detail: port.reason,
         link: { href: tab(port.workspace, "ports"), label: "Open the ports" },
       });

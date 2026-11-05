@@ -84,7 +84,7 @@ pub(crate) fn resolve(
                     SecretValue::new(real.expose()),
                     set,
                 )
-                .and_then(|entry| placement(place).map(|at| entry.placed(at)))
+                .map(|entry| entry.placed(placement(place)))
                 .map_err(|e| format!("the secret {name} cannot be used: {e}"))?;
                 entries.push(entry);
                 stand_in
@@ -97,14 +97,13 @@ pub(crate) fn resolve(
     Ok(Resolved { guest, entries })
 }
 
-/// The proxy's placement for a place the store kept. The store checks a query name by the
-/// same rules (a test below keeps them equal); the proxy checks it again, so a name that got into
-/// the database some other way stops the secret instead of reaching the proxy unchecked.
-fn placement(place: SecretPlace) -> Result<Placement, puddle_proxy::StandInError> {
+/// The proxy's placement for a place the store kept. A query name is the same type on both sides,
+/// so a name the store refuses cannot reach the proxy.
+fn placement(place: SecretPlace) -> Placement {
     match place {
-        SecretPlace::Header => Ok(Placement::Header),
-        SecretPlace::Path => Ok(Placement::Path),
-        SecretPlace::Query(name) => Placement::query(&name),
+        SecretPlace::Header => Placement::Header,
+        SecretPlace::Path => Placement::Path,
+        SecretPlace::Query(name) => Placement::Query(name),
     }
 }
 
@@ -120,7 +119,7 @@ mod tests {
     use puddle_store::{
         EnvDraft, EnvName, EnvScope, Limits, ManualClock, PUDDLE_OWNED_NAMES, SecretHost,
     };
-    use puddle_types::Host;
+    use puddle_types::{Host, QueryName};
 
     use super::*;
 
@@ -189,15 +188,6 @@ mod tests {
     }
 
     #[test]
-    fn a_query_name_the_proxy_refuses_stops_the_secret() {
-        assert!(placement(SecretPlace::Query("a&b".to_owned())).is_err());
-        assert_eq!(
-            placement(SecretPlace::Query("appid".to_owned())),
-            Ok(Placement::query("appid").unwrap())
-        );
-    }
-
-    #[test]
     fn each_secret_reaches_the_proxy_with_the_place_it_is_swapped_in() {
         let store = store();
         let vault = MemoryStore::new();
@@ -207,8 +197,8 @@ mod tests {
             ("B_PATH", SecretPlace::Path, Placement::Path),
             (
                 "C_QUERY",
-                SecretPlace::query("appid").unwrap(),
-                Placement::query("appid").unwrap(),
+                SecretPlace::Query(QueryName::new("appid").unwrap()),
+                Placement::Query(QueryName::new("appid").unwrap()),
             ),
         ];
         for (n, place, _) in &places {
@@ -229,38 +219,6 @@ mod tests {
             .map(|(n, _, placement)| (format!("stand-in:secret:{n}"), placement))
             .collect();
         assert_eq!(got, want);
-    }
-
-    #[test]
-    fn the_query_names_the_store_accepts_are_the_ones_the_proxy_accepts() {
-        let long = "n".repeat(65);
-        let cases = [
-            "appid",
-            "access_token",
-            "key",
-            "sig",
-            "a[b]",
-            "x.y-z~",
-            "",
-            "a&b",
-            "a=b",
-            "a#",
-            "a%41",
-            "a+b",
-            "a b",
-            "\u{e9}",
-            "tab\tx",
-            long.as_str(),
-        ];
-        for case in cases {
-            assert_eq!(
-                SecretPlace::query(case).is_ok(),
-                Placement::query(case).is_ok(),
-                "{case:?}"
-            );
-        }
-        assert!(SecretPlace::query(&"n".repeat(64)).is_ok());
-        assert!(Placement::query(&"n".repeat(64)).is_ok());
     }
 
     #[test]

@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use puddle_secrets::StoredId;
-use puddle_types::WorkspaceId;
+use puddle_types::{QueryName, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
 use crate::error::StoreError;
@@ -277,12 +277,8 @@ impl From<SecretHost> for String {
     }
 }
 
-/// The longest query parameter name a secret may be placed in.
-pub const MAX_QUERY_NAME_LEN: usize = 64;
-
 /// Where in a request the proxy swaps a secret's stand-in for its real value (credentials spec
-/// §9). Anywhere else the stand-in goes out unchanged. The same rules as the proxy's own
-/// placement (a test in `puddle-host` keeps them equal).
+/// §9). Anywhere else the stand-in goes out unchanged. The query name is the type the proxy uses.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SecretPlace {
     /// The values of request headers: what almost every tool uses.
@@ -290,30 +286,12 @@ pub enum SecretPlace {
     Header,
     /// The one query parameter with this name (`appid`, `access_token`, `key`, `sig`), for an API
     /// that takes its key nowhere else.
-    Query(String),
+    Query(QueryName),
     /// The path (`/bot<token>/` of a Telegram bot, a webhook URL).
     Path,
 }
 
 impl SecretPlace {
-    /// The query parameter `name`: 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`.
-    ///
-    /// # Errors
-    /// [`StoreError::EnvInvalid`]; the text says why.
-    pub fn query(name: &str) -> Result<Self, StoreError> {
-        let ok = (1..=MAX_QUERY_NAME_LEN).contains(&name.len())
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_graphic() && !matches!(b, b'&' | b'=' | b'#' | b'%' | b'+'));
-        if ok {
-            Ok(Self::Query(name.to_owned()))
-        } else {
-            Err(invalid(format!(
-                "{name:?} is not a query parameter name: 1 to {MAX_QUERY_NAME_LEN} visible characters, none of & = # % + or a space"
-            )))
-        }
-    }
-
     /// The place as the database keeps it: `None` for headers, `path`, or `query:<name>`.
     pub(crate) fn column(&self) -> Option<String> {
         match self {
@@ -329,7 +307,9 @@ impl SecretPlace {
             None => Ok(Self::Header),
             Some("path") => Ok(Self::Path),
             Some(text) => match text.strip_prefix("query:") {
-                Some(name) => Self::query(name),
+                Some(name) => QueryName::new(name)
+                    .map(Self::Query)
+                    .map_err(|e| invalid(e.to_string())),
                 None => Err(invalid(format!(
                     "{text:?} is not a place a secret is swapped in"
                 ))),
@@ -637,33 +617,19 @@ mod tests {
     fn a_place_is_a_header_a_path_or_a_query_parameter_with_a_checked_name() {
         assert_eq!(SecretPlace::default(), SecretPlace::Header);
         for good in ["appid", "access_token", "key", "a[b]", "x.y-z~"] {
-            let place = SecretPlace::query(good).unwrap();
-            assert_eq!(place, SecretPlace::Query(good.to_owned()));
+            let place = SecretPlace::Query(QueryName::new(good).unwrap());
             assert_eq!(
                 SecretPlace::from_column(place.column().as_deref()).unwrap(),
                 place
             );
         }
-        assert!(SecretPlace::query(&"n".repeat(MAX_QUERY_NAME_LEN)).is_ok());
-        let long = "n".repeat(MAX_QUERY_NAME_LEN + 1);
-        for bad in [
-            "",
-            "a&b",
-            "a=b",
-            "a#",
-            "a%41",
-            "a+b",
-            "a b",
-            "\u{e9}",
-            long.as_str(),
-        ] {
-            let err = SecretPlace::query(bad).unwrap_err().to_string();
-            assert!(err.contains("query parameter name"), "{bad:?}: {err}");
-        }
         for (place, column) in [
             (SecretPlace::Header, None),
             (SecretPlace::Path, Some("path")),
-            (SecretPlace::Query("appid".to_owned()), Some("query:appid")),
+            (
+                SecretPlace::Query(QueryName::new("appid").unwrap()),
+                Some("query:appid"),
+            ),
         ] {
             assert_eq!(place.column().as_deref(), column);
             assert_eq!(SecretPlace::from_column(column).unwrap(), place);
@@ -671,6 +637,8 @@ mod tests {
         for bad in ["header", "query:", "query:a&b", "Path", ""] {
             assert!(SecretPlace::from_column(Some(bad)).is_err(), "{bad:?}");
         }
+        let err = SecretPlace::from_column(Some("query:a&b")).unwrap_err();
+        assert!(err.to_string().contains("query parameter name"), "{err}");
         let id = StoredId::new("env-1").unwrap();
         let hosts = vec![SecretHost::new("api.telegram.org").unwrap()];
         assert_eq!(

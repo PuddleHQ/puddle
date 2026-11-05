@@ -97,7 +97,7 @@ beforeEach(() => {
     }),
     identity(2, { label: "Personal", is_default: false }),
   ];
-  idApi.git = { dev: { ids: [1], repos: [], push: true, pull: false } };
+  idApi.git = { "w-dev": { ids: [1], repos: [], push: true, pull: false } };
   identities.identities = [];
   identities.status = "loading";
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
@@ -117,7 +117,7 @@ async function mount(
     ...over,
   });
   api.list = [ws];
-  api.checkouts["dev"] = seen;
+  api.checkouts["w-dev"] = seen;
   workspaces.list = [ws];
   render(RepositoriesSection, { workspace: ws });
   await waitFor(() =>
@@ -534,11 +534,14 @@ describe("states without a live listing", () => {
 
   it("reads the listing again when the list changes", async () => {
     await mount();
-    api.checkouts["dev"] = listing([
+    api.checkouts["w-dev"] = listing([
       checkout("api", { entry: own }),
       checkout("new"),
     ]);
-    h.source.emit({ type: "workspace_repositories_changed", workspace: "dev" });
+    h.source.emit({
+      type: "workspace_repositories_changed",
+      workspace: "w-dev",
+    });
     expect(await section().findByText("new")).toBeInTheDocument();
   });
 
@@ -571,11 +574,11 @@ describe("identities and empty states", () => {
   });
 
   it("points to the Git tab when no identity covers a listed repository", async () => {
-    idApi.git = { dev: { ids: [], repos: [], push: true, pull: false } };
+    idApi.git = { "w-dev": { ids: [], repos: [], push: true, pull: false } };
     await mount();
     expect(
       await section().findByRole("link", { name: "open the Git tab" }),
-    ).toHaveAttribute("href", "/workspaces/dev/git");
+    ).toHaveAttribute("href", "/workspaces/w-dev/git");
   });
 
   it("says why Clone again is off on a stopped workspace", async () => {

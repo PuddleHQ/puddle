@@ -162,14 +162,20 @@ describe("reading the log", () => {
     await older;
     expect(ids(store)).toEqual(shown);
   });
-  it("reads the workspace names for the filter, sorted, and keeps them on failure", async () => {
+  it("reads the workspaces for the filter (id and name), sorted by name, and keeps them on failure", async () => {
     api.workspaces = ["web-shop", "api"];
     const store = make();
     await store.loadWorkspaces();
-    expect(store.workspaces).toEqual(["api", "web-shop"]);
+    expect(store.workspaces).toEqual([
+      { id: "w-api", label: "api" },
+      { id: "w-web-shop", label: "web-shop" },
+    ]);
     api.down = true;
     await store.loadWorkspaces();
-    expect(store.workspaces).toEqual(["api", "web-shop"]);
+    expect(store.workspaces).toEqual([
+      { id: "w-api", label: "api" },
+      { id: "w-web-shop", label: "web-shop" },
+    ]);
   });
 });
 

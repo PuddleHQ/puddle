@@ -39,18 +39,18 @@ function seed() {
   api.workspaces = ["shop", "api"];
   api.entries = [
     connection(1, {
-      workspace_id: "shop",
+      workspace_id: "w-shop",
       host: "github.com",
       ts: now - 1000,
     }),
     connection(2, {
-      workspace_id: "api",
+      workspace_id: "w-api",
       host: "evil.test",
       decision: "deny",
       ts: now - 900,
     }),
     connection(3, {
-      workspace_id: "shop",
+      workspace_id: "w-shop",
       host: "crates.io",
       ts: now - 800,
     }),
@@ -107,11 +107,11 @@ describe("the activity page", () => {
     window.history.replaceState(
       {},
       "",
-      "/activity?workspace=shop&type=connection&outcome=allow&host=git&range=all",
+      "/activity?workspace=w-shop&type=connection&outcome=allow&host=git&range=all",
     );
     await open();
     expect(api.queries[0]).toMatchObject({
-      workspace: "shop",
+      workspace: "w-shop",
       type: "connection",
       outcome: "allow",
       host_contains: "git",
@@ -120,18 +120,18 @@ describe("the activity page", () => {
     expect(api.queries[0]?.from).toBeUndefined();
     expect(hosts()).toEqual(["github.com:443"]);
     expect(screen.getByLabelText("Host contains")).toHaveValue("git");
-    expect(screen.getByLabelText("Workspace")).toHaveValue("shop");
+    expect(screen.getByLabelText("Workspace")).toHaveValue("w-shop");
     expect(screen.getByLabelText("Time range")).toHaveValue("all");
   });
   it("offers the workspaces, and one the address names that no longer exists", async () => {
-    window.history.replaceState({}, "", "/activity?workspace=gone");
+    window.history.replaceState({}, "", "/activity?workspace=w-gone");
     render(ActivityPage);
     await waitFor(() =>
       expect(
         [...screen.getByLabelText("Workspace").querySelectorAll("option")].map(
           (o) => o.textContent,
         ),
-      ).toEqual(["All workspaces", "api", "gone", "shop"]),
+      ).toEqual(["All workspaces", "api", "shop", "w-gone"]),
     );
   });
   it("reads again on a select change and keeps the address in step", async () => {
@@ -174,7 +174,7 @@ describe("the activity page", () => {
     await waitFor(() => expect(hosts()).toEqual(["evil.test:443"]));
   });
   it("clears the filters back to the default view", async () => {
-    window.history.replaceState({}, "", "/activity?workspace=api&range=all");
+    window.history.replaceState({}, "", "/activity?workspace=w-api&range=all");
     await open();
     await fireEvent.click(
       screen.getByRole("button", { name: "Clear filters" }),
@@ -305,7 +305,7 @@ describe("the activity page", () => {
     it("saves the filtered records as JSON lines, oldest first", async () => {
       await open();
       await fireEvent.change(screen.getByLabelText("Workspace"), {
-        target: { value: "shop" },
+        target: { value: "w-shop" },
       });
       await waitFor(() => expect(rows()).toHaveLength(2));
       await fireEvent.click(
@@ -319,7 +319,10 @@ describe("the activity page", () => {
       expect(
         lines.map((l) => (JSON.parse(l) as { host: string }).host),
       ).toEqual(["github.com", "crates.io"]);
-      expect(api.queries.at(-1)).toMatchObject({ workspace: "shop", after: 0 });
+      expect(api.queries.at(-1)).toMatchObject({
+        workspace: "w-shop",
+        after: 0,
+      });
     });
     it("says so when nothing matches, and saves no file", async () => {
       api.entries = [];

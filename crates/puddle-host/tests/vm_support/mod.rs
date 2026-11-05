@@ -4,6 +4,7 @@
 #![expect(
     clippy::expect_used,
     clippy::unwrap_used,
+    clippy::panic,
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 #![allow(dead_code, reason = "each test binary uses some of the helpers")]
@@ -419,6 +420,34 @@ async fn guest_with_third_party(
         out.stderr_text()
     );
     format!("{}{}", out.stdout_text(), out.stderr_text())
+}
+
+/// Runs `script` in a login shell as `user`, the way a terminal of the workspace does and
+/// returns its exit code and what it printed. The script is an argument, not stdin, so a tool that
+/// reads stdin cannot eat the rest of it.
+pub(crate) async fn guest_as(
+    runtime: &MsbRuntime,
+    sandbox: &WorkspaceId,
+    user: &str,
+    script: &str,
+    timeout: Duration,
+) -> (i32, String) {
+    let handle = runtime.get(&sandbox.sandbox_name()).await.unwrap();
+    let out = handle
+        .exec(
+            ExecRequest::sh(format!(
+                "cd && exec sh -l -c '{}'",
+                script.replace('\'', "'\\''")
+            ))
+            .as_user(user)
+            .with_timeout(timeout),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("the guest script did not finish: {e}\n{script}"));
+    (
+        out.status.code,
+        format!("{}{}", out.stdout_text(), out.stderr_text()),
+    )
 }
 
 /// Kills the VM of `sandbox` the hard way (no shutdown, no flush), the way a crash or a power cut

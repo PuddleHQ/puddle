@@ -123,6 +123,7 @@ async fn start_agent(dir: &tempfile::TempDir, mut server: EditorServer) -> (Host
             server,
             password_file: dir.path().join("run/editor-password"),
             boot_id: dir.path().join("boot_id"),
+            root: dir.path().join("root"),
         }),
         ..Config::default()
     };

@@ -34,7 +34,7 @@ beforeEach(async () => {
 });
 
 const messages = () => toasts.items.map((t) => t.message);
-const w = (name: string) => store.byName(name)!;
+const w = (name: string) => store.byId("w-" + name)!;
 
 describe("start, stop and reclaim", () => {
   it("start and stop go to the service", async () => {
@@ -84,7 +84,7 @@ describe("renaming", () => {
   it("opens the dialog for a workspace", () => {
     actions.openRename(w("up"));
     expect(actions.renameOpen).toBe(true);
-    expect(actions.renaming?.id).toBe("up");
+    expect(actions.renaming?.id).toBe("w-up");
   });
 
   it("sends the trimmed name, shows it everywhere and says so", async () => {
@@ -96,7 +96,7 @@ describe("renaming", () => {
     await actions.openDesktop(w("trusted"));
     expect(
       settledMessage({
-        name: "up",
+        id: "w-up",
         label: w("up").display_name,
         operation: "stopping",
         failed: false,
@@ -152,7 +152,7 @@ describe("connecting", () => {
   });
 
   it("keeps the other overrides of the workspace when it turns direct SSH on", async () => {
-    api.overrides["up"] = {
+    api.overrides["w-up"] = {
       capture_logins: null,
       clipboard_read: null,
       direct_ssh: null,
@@ -337,7 +337,7 @@ describe("deleting", () => {
   it("reads the check, then asks with what it found", async () => {
     api.check = dirtyCheck("down");
     const asking = actions.askDelete(w("down"));
-    expect(actions.checking).toBe("down");
+    expect(actions.checking).toBe("w-down");
     await asking;
     expect(actions.checking).toBeNull();
     expect(actions.deleteOpen).toBe(true);
@@ -488,7 +488,7 @@ describe("the rest", () => {
 
   it("dismisses a failure the user saw", () => {
     store.progress = {
-      down: {
+      "w-down": {
         step: "failed",
         detail: "x",
         repository: null,
@@ -497,19 +497,19 @@ describe("the rest", () => {
       },
     };
     actions.dismissProgress(w("down"));
-    expect(store.progress["down"]).toBeUndefined();
+    expect(store.progress["w-down"]).toBeUndefined();
   });
 
   it("toasts the end of an operation, and a failure as an error", () => {
     actions.settled({
-      name: "up",
+      id: "w-up",
       label: "up",
       operation: "starting",
       failed: false,
       detail: null,
     });
     actions.settled({
-      name: "up",
+      id: "w-up",
       label: "up",
       operation: "stopping",
       failed: true,
@@ -558,12 +558,12 @@ describe("settledMessage", () => {
       "Something went wrong with w.",
     ],
   ] as const)("%j", (rest, text) => {
-    expect(settledMessage({ name: "w", label: "w", ...rest })).toBe(text);
+    expect(settledMessage({ id: "w-w", label: "w", ...rest })).toBe(text);
   });
 
   it("speaks of the workspace by the name the user gave it", () => {
     const settled = {
-      name: "w",
+      id: "w-w",
       label: "Web shop",
       operation: "starting",
       failed: false,

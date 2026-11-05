@@ -566,7 +566,7 @@ mod tests {
             )
             .unwrap()
         };
-        let appid = SecretPlace::query("appid").unwrap();
+        let appid = SecretPlace::Query(puddle_types::QueryName::new("appid").unwrap());
         let made = store
             .set_env(&scope, &name("OWM_KEY"), draft(appid.clone()))
             .unwrap();

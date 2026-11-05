@@ -604,14 +604,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn logging_starts_for_a_good_value_and_for_a_bad_one() {
-        init_logging(None, None);
-        init_logging_from_env();
-        init_logging(None, Some("puddle=loud"));
-        init_logging(Some("loud"), None);
-    }
-
-    #[test]
     fn puddle_log_wins_over_rust_log_and_scopes_the_level_to_puddle_crates() {
         let (filter, said) = log_filter(Some("trace"), Some("error"));
         assert!(said.is_none());
@@ -847,6 +839,34 @@ pub(crate) mod tests {
         std::io::Write::flush(&mut capture.clone()).unwrap();
         let bytes = capture.0.lock().unwrap().clone();
         String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn init_logging_says_once_that_a_bad_filter_gave_info_and_stays_quiet_for_a_good_one() {
+        let bad = logged(|| init_logging(Some("loud"), None));
+        assert_eq!(
+            bad.matches("PUDDLE_LOG=\"loud\" is not a log filter; logging at info")
+                .count(),
+            1,
+            "{bad}"
+        );
+        let bad_rust = logged(|| init_logging(None, Some("puddle=loud")));
+        assert!(
+            bad_rust.contains("RUST_LOG=\"puddle=loud\" is not a log filter"),
+            "{bad_rust}"
+        );
+        assert_eq!(logged(|| init_logging(None, None)), "");
+        assert_eq!(logged(|| init_logging(Some("debug"), Some("loud"))), "");
+    }
+
+    #[test]
+    fn init_logging_from_env_only_ever_complains_about_a_filter() {
+        let log = logged(init_logging_from_env);
+        assert!(
+            log.lines()
+                .all(|line| line.contains("is not a log filter; logging at info")),
+            "{log}"
+        );
     }
 
     #[test]

@@ -724,7 +724,13 @@ async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceName,
     // dockerd answers (the image's entrypoint starts it after the boot), and the image is built
     // in the guest from files the guest has, `FROM scratch`.
     eventually_async("dockerd to answer", Duration::from_secs(100), || async {
-        let (code, out) = as_agent(vm, workspace, "dsudo info >/dev/null 2>&1").await;
+        let (code, out) = as_agent(
+            vm,
+            workspace,
+            "id; command -v sudo docker nft busybox; dsudo info 2>&1 >/dev/null | tail -3; \
+             dsudo info >/dev/null 2>&1",
+        )
+        .await;
         (code == 0).then_some(()).ok_or(out)
     })
     .await;

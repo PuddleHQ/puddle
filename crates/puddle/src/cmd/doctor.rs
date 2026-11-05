@@ -84,10 +84,13 @@ fn data_folder(found: Result<PathBuf, puddle_fs::DataDirError>) -> Option<PathBu
 }
 
 /// `probe`, keeping a failed test boot's logs in the data folder (`data`) like the system check
-/// in the app does. Without a data folder nothing is kept.
+/// in the app does, and checking the folders above it. Without a data folder nothing is kept and
+/// the path check says so.
 fn keeping_logs(probe: SystemProbe, data: Option<&Path>) -> SystemProbe {
     match data {
-        Some(data) => probe.with_keep_boot_logs(boot_logs_dir(data)),
+        Some(data) => probe
+            .with_keep_boot_logs(boot_logs_dir(data))
+            .with_data_dir(data),
         None => probe,
     }
 }
@@ -151,6 +154,9 @@ mod tests {
             }
         }
         fn code_integrity(&self) -> Option<CodeIntegrityFacts> {
+            None
+        }
+        fn data_path(&self) -> Option<puddle_doctor::DataPathFacts> {
             None
         }
         fn runtime(&self) -> RuntimeFacts {

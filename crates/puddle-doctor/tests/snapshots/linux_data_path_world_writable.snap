@@ -1,0 +1,61 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+ok    CPU virtualization  on (the hypervisor uses it)
+ok    Hypervisor          /dev/kvm is usable
+ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
+ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot           a test VM booted and ran a program in 1.1 s
+FAIL  Data folder path    /data is writable by everyone and not sticky, so msb will not open Puddle's data below it
+      fix:  msb opens its catalog only below folders where other accounts cannot rename entries,
+            so every sandbox start fails until the write permission is gone. A user created with
+            a private group and umask 0002 (the Ubuntu default) often leaves ~/.local at 0775.
+            Run:
+              chmod go-w /data
+      from: /data mode 0757
+
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "/dev/kvm is usable"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "ok",
+      "summary": "a test VM booted and ran a program in 1.1 s"
+    },
+    {
+      "id": "data_path",
+      "status": "fail",
+      "summary": "/data is writable by everyone and not sticky, so msb will not open Puddle's data below it",
+      "finding": "data_path_writable",
+      "fix": "msb opens its catalog only below folders where other accounts cannot rename entries, so every sandbox start fails until the write permission is gone. A user created with a private group and umask 0002 (the Ubuntu default) often leaves ~/.local at 0775. Run:\n  chmod go-w /data",
+      "detail": "/data mode 0757"
+    }
+  ],
+  "elapsed_ms": 1234
+}

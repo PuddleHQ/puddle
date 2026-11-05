@@ -34,10 +34,12 @@ pub(crate) fn system_doctor(
     })))
 }
 
-/// The probe of the runtime in `runtime_dir`, keeping failed boots' logs under `data`.
+/// The probe of the runtime in `runtime_dir`, keeping failed boots' logs under `data` and
+/// checking the folders above `data`.
 fn probe(runtime_dir: &Path, expected: RuntimeVersion, data: &Path) -> SystemProbe {
     SystemProbe::new(runtime_dir.to_path_buf(), expected, DevOverride::from_env())
         .with_keep_boot_logs(boot_logs_dir(data))
+        .with_data_dir(data)
 }
 
 #[cfg(test)]

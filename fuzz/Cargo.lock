@@ -1228,6 +1228,7 @@ dependencies = [
  "nix",
  "puddle-agent-proto",
  "puddle-fd-limit",
+ "puddle-log",
  "puddle-types",
  "rustix",
  "serde",
@@ -1238,13 +1239,13 @@ dependencies = [
  "tokio",
  "tokio-yamux",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
 name = "puddle-agent-proto"
 version = "0.0.0"
 dependencies = [
+ "arbitrary",
  "futures-util",
  "puddle-types",
  "serde",
@@ -1281,6 +1282,7 @@ version = "0.0.0"
 dependencies = [
  "dirs",
  "getrandom 0.4.3",
+ "rustix",
  "thiserror",
  "windows-sys 0.61.2",
 ]
@@ -1289,6 +1291,7 @@ dependencies = [
 name = "puddle-fuzz"
 version = "0.0.0"
 dependencies = [
+ "arbitrary",
  "libfuzzer-sys",
  "puddle-agent",
  "puddle-agent-proto",
@@ -1306,6 +1309,15 @@ dependencies = [
  "tokio",
  "tracing",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "puddle-log"
+version = "0.0.0"
+dependencies = [
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

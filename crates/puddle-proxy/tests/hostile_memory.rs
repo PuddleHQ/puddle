@@ -34,10 +34,16 @@ async fn hostile_hg10_the_heap_does_not_follow_what_a_guest_sends() {
         return;
     }
     let rig = rig().await;
-    // The counter sees what it must: holding 16 MiB moves the peak by at least that much.
-    let before = HEAP.restart_peak();
+    // The counter sees what it must: holding 16 MiB puts the peak at no less than that. The peak is
+    // read against zero, not against the heap before: the proxy's own tasks still free memory
+    // from starting up, and a free landing before the allocation would make a rise look too small.
+    HEAP.restart_peak();
     let held = vec![1_u8; 16 * 1024 * 1024];
-    assert!(HEAP.rose_above(before) >= held.len());
+    assert!(
+        HEAP.rose_above(0) >= held.len(),
+        "the counter missed a 16 MiB allocation (peak {} bytes)",
+        HEAP.rose_above(0)
+    );
     drop(held);
 
     let before = HEAP.restart_peak();

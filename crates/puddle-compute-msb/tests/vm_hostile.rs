@@ -549,3 +549,91 @@ async fn vm_hostile_hg02_no_other_vsock_address_accepts() {
     }
     assert_eq!(lines.await.unwrap(), ["hello-hg02-control"]);
 }
+
+/// Finds the virtio-mmio register windows (in `/proc/iomem`, else the kernel command line's
+/// `virtio_mmio.device=` entries), then does what guest root would do to reach a device's
+/// registers past the guest kernel: open `/dev/mem` read-write (or a node it makes for char 1:1
+/// when the kernel has none) and map each window read-write. Prints `slot <addr>` per window,
+/// `devmem present|absent`, `node <path> open|refused: <why>` and, per window it tried,
+/// `<addr> mapped <magic>` or `<addr> refused: <errno>`.
+const DEVMEM_PROBE: &str = r#"
+use strict; use warnings;
+my %seen; my @slots;
+if (open(my $io, "<", "/proc/iomem")) {
+  while (<$io>) { push @slots, hex($1) if /^\s*([0-9a-f]+)-[0-9a-f]+ : .*virtio/i && !$seen{$1}++ }
+}
+if (!@slots && open(my $cl, "<", "/proc/cmdline")) {
+  my $c = <$cl>;
+  push @slots, hex($1) while $c =~ /virtio_mmio\.device=\w+@(0x[0-9a-f]+)/gi;
+}
+printf "slot 0x%x\n", $_ for @slots;
+my $node = "/dev/mem";
+my $made = 0;
+if (-e $node) { print "devmem present\n" } else {
+  print "devmem absent\n";
+  $node = "/dev/puddle-probe-mem";
+  unlink $node;
+  system("mknod", $node, "c", "1", "1") == 0 or do { print "node $node refused: mknod failed\n"; exit 0 };
+  $made = 1;
+}
+my $fd;
+if (!open($fd, "+<", $node)) { print "node $node refused: $!\n"; unlink $node if $made; exit 0 }
+print "node $node open\n";
+for my $slot (@slots) {
+  # mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, fd, slot): x86_64 syscall 9.
+  my $addr = syscall(9, 0, 4096, 3, 1, fileno($fd), $slot);
+  if ($addr == -1) { printf "0x%x refused: %s\n", $slot, $!; next }
+  # A virtio-mmio window starts with its magic value register ("virt").
+  printf "0x%x mapped 0x%08x\n", $slot, unpack("L", unpack("P4", pack("Q", $addr)));
+  syscall(11, $addr, 4096);
+}
+unlink $node if $made;
+"#;
+
+/// Guest root cannot reach a device's MMIO registers through physical memory: the guest kernel
+/// has no `/dev/mem`, and a node root makes for it (char 1:1) cannot be opened, so not one of the
+/// virtio-mmio windows maps. With `/dev/mem`, root could map every window read-write and drive a
+/// device (the memory balloon among them) past the guest kernel, leaving the device model's own
+/// checks as the only line. The probe is proven by finding the windows it tries.
+#[cfg_attr(
+    windows,
+    ignore = "the Windows firmware is built from a kernel configuration that still has /dev/mem"
+)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_hostile_hg54_guest_root_cannot_map_device_registers_through_physical_memory() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let s = spec(&settings, "hg54");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let out = sb
+        .exec(
+            ExecRequest::new("perl", ["-e", DEVMEM_PROBE])
+                .as_user("root")
+                .with_timeout(Duration::from_secs(60)),
+        )
+        .await
+        .expect("devmem probe");
+    sb.stop().await.unwrap();
+    cleanup(&rt, &[&n]).await;
+    let report = out.stdout_text();
+    eprintln!("{report}{}", out.stderr_text());
+    assert_eq!(out.status.code, 0, "{}", out.stderr_text());
+    let slots = report.lines().filter(|l| l.starts_with("slot ")).count();
+    assert!(slots > 0, "the probe found no virtio-mmio window: {report}");
+    let mapped = report.lines().filter(|l| l.contains(" mapped ")).count();
+    assert!(
+        report.lines().any(|l| l == "devmem absent"),
+        "the guest has /dev/mem: {report}"
+    );
+    assert!(
+        report
+            .lines()
+            .any(|l| l.starts_with("node ") && l.contains(" refused: ")),
+        "root opened a physical-memory node: {report}"
+    );
+    assert_eq!(
+        mapped, 0,
+        "{mapped} of {slots} device windows mapped: {report}"
+    );
+}

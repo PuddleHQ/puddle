@@ -62,7 +62,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 13] = [
+const BUILT_IN: [(&str, &str); 14] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -86,6 +86,10 @@ const BUILT_IN: [(&str, &str); 13] = [
     (
         "volume-missing",
         include_str!("../../../../ui/e2e/fixtures/volume-missing.json"),
+    ),
+    (
+        "disks-full",
+        include_str!("../../../../ui/e2e/fixtures/disks-full.json"),
     ),
     (
         "git-identities",
@@ -836,6 +840,8 @@ impl State {
         };
         record.created_at = now.saturating_sub(seed.ago_ms);
         record.disk_used_mib = seed.disk_used_mib;
+        record.root_disk_size_mib = seed.root_disk_size_mib;
+        record.root_disk_used_mib = seed.root_disk_used_mib;
         let list = |items: &[String]| Listing {
             items: items.to_vec(),
             more: 0,

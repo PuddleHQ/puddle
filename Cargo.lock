@@ -6715,6 +6715,7 @@ dependencies = [
  "puddle-compute-msb",
  "puddle-ipc",
  "puddle-proxy",
+ "puddle-settings",
  "puddle-test-kit",
  "puddle-types",
  "puddle-vm-tests",

@@ -202,4 +202,41 @@ rc=0
 wait "$p1" || rc=1
 wait "$p2" || rc=1
 [ "$rc" = 1 ] || fail "MUTANTS_SHARED_CARGO_HOME=1 must keep the shared home (the control: its sweeps wait on one lock)"
+# Temp dir: cargo-mutants runs with TMPDIR under the target dir (never the system temp dir), removed when the run
+# ends, and the jobs are capped to what the free space holds.
+unset MUTANTS_SHARED_CARGO_HOME
+export CARGO_TARGET_DIR="$tmp/target"
+cat >fake-cargo-tmp <<'F'
+#!/bin/sh
+case $1 in
+mutants)
+    [ "$2" = --version ] && { echo "cargo-mutants 0.0.0"; exit 0; }
+    echo "TMPDIR=$TMPDIR CARGO_HOME=$CARGO_HOME $*" >>"$FAKE_TMPS"
+    : >"$TMPDIR/copy"
+    ;;
+esac
+F
+chmod +x fake-cargo-tmp
+export CARGO="$tmp/fake-cargo-tmp" FAKE_TMPS="$tmp/tmps"
+: >"$FAKE_TMPS"
+MUTANTS_JOBS=4 MUTANTS_FREE_GB=1000 scripts/mutants.sh sweep >/dev/null 2>&1
+grep -q -e ' -j 4 ' "$FAKE_TMPS" || fail "with room for every job the cap must not lower them"
+used=$(sed 's/^TMPDIR=\([^ ]*\) .*/\1/' "$FAKE_TMPS")
+case $used in "$tmp"/target/mutants-tmp.*) ;; *) fail "TMPDIR must be a mutants-tmp dir under the target dir, was $used" ;; esac
+[ ! -e "$used" ] || fail "the private TMPDIR must be removed when the run ends"
+grep -q "CARGO_HOME=$used/" "$FAKE_TMPS" || fail "the private cargo home must sit inside the private TMPDIR"
+: >"$FAKE_TMPS"
+err=$(MUTANTS_JOBS=4 MUTANTS_FREE_GB=30 scripts/mutants.sh sweep 2>&1 >/dev/null)
+grep -q -e ' -j 2 ' "$FAKE_TMPS" || fail "30 GB free must cap four jobs at two"
+echo "$err" | grep -q 'running 2 job(s) instead of 4' || fail "a lowered job count must be said"
+: >"$FAKE_TMPS"
+MUTANTS_JOBS=4 MUTANTS_FREE_GB=1 scripts/mutants.sh sweep >/dev/null 2>&1
+grep -q -e ' -j 1 ' "$FAKE_TMPS" || fail "never fewer than one job"
+: >"$FAKE_TMPS"
+MUTANTS_TMPDIR="$tmp/elsewhere" MUTANTS_FREE_GB=1000 scripts/mutants.sh sweep >/dev/null 2>&1
+grep -q "^TMPDIR=$tmp/elsewhere/mutants-tmp\." "$FAKE_TMPS" || fail "MUTANTS_TMPDIR must pick the directory"
+[ -z "$(ls "$tmp/elsewhere")" ] || fail "MUTANTS_TMPDIR must be left empty after the run"
+: >"$FAKE_TMPS"
+MUTANTS_SHARED_CARGO_HOME=1 MUTANTS_FREE_GB=1000 scripts/mutants.sh sweep >/dev/null 2>&1
+grep -q "^TMPDIR=$tmp/target/mutants-tmp\." "$FAKE_TMPS" || fail "the private TMPDIR must not depend on the cargo home choice"
 echo "mutants-test: ok"

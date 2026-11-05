@@ -12,7 +12,11 @@ import {
   canReclaim,
   canStart,
   canStop,
+  canResetRootDisk,
   diskLabel,
+  diskPercent,
+  diskWarned,
+  rootDiskLabel,
   formatMib,
   isDown,
   losses,
@@ -252,6 +256,66 @@ describe("memory", () => {
     expect(diskLabel(workspace("w", { disk_used_mib: null }))).toBe(
       "32 GiB disk",
     );
+  });
+
+  it("says what the root disk holds, only its size when unknown, nothing without a sandbox", () => {
+    expect(
+      rootDiskLabel(
+        workspace("w", { root_disk_size_mib: 4096, root_disk_used_mib: 3900 }),
+      ),
+    ).toBe("3.8 GiB of 4 GiB used");
+    expect(
+      rootDiskLabel(
+        workspace("w", { root_disk_size_mib: 4096, root_disk_used_mib: null }),
+      ),
+    ).toBe("4 GiB root disk");
+    expect(
+      rootDiskLabel(
+        workspace("w", { root_disk_size_mib: null, root_disk_used_mib: null }),
+      ),
+    ).toBeNull();
+  });
+
+  it("rounds the percent down, caps it at full and needs both figures", () => {
+    const w = (over: Record<string, unknown>) => workspace("w", over);
+    expect(
+      diskPercent(
+        w({ root_disk_size_mib: 1000, root_disk_used_mib: 949 }),
+        "root",
+      ),
+    ).toBe(94);
+    expect(
+      diskPercent(
+        w({ root_disk_size_mib: 1000, root_disk_used_mib: 5000 }),
+        "root",
+      ),
+    ).toBe(100);
+    expect(
+      diskPercent(w({ disk_size_mib: 1000, disk_used_mib: 999 }), "volume"),
+    ).toBe(99);
+    expect(diskPercent(w({ root_disk_size_mib: null }), "root")).toBeNull();
+    expect(diskPercent(w({ disk_used_mib: null }), "volume")).toBeNull();
+    expect(
+      diskPercent(w({ root_disk_size_mib: 0, root_disk_used_mib: 0 }), "root"),
+    ).toBeNull();
+  });
+
+  it("flags the disks the host listed and offers a reset only to a stopped, idle workspace", () => {
+    const w = workspace("w", { disk_warnings: ["volume"] });
+    expect(diskWarned(w, "volume")).toBe(true);
+    expect(diskWarned(w, "root")).toBe(false);
+    for (const status of ["stopped", "crashed"] as const)
+      expect(canResetRootDisk(workspace("w", { status }))).toBe(true);
+    for (const status of [
+      "running",
+      "starting",
+      "draining",
+      "created",
+    ] as const)
+      expect(canResetRootDisk(workspace("w", { status }))).toBe(false);
+    expect(
+      canResetRootDisk(workspace("w", { status: "stopped", busy: "starting" })),
+    ).toBe(false);
   });
 });
 

@@ -551,6 +551,7 @@ impl Runtime for MsbRuntime {
                 .map(|h| SandboxInfo {
                     name: h.name().to_owned(),
                     status: status(h.status_snapshot()),
+                    root_disk: root_disk::usage(&self.sandbox_dir(h.name())),
                     // A record whose stored config can't be read is not claimed as Puddle's.
                     puddle_owned: h.config().is_ok_and(|c| {
                         c.spec.labels.get(OWNER_LABEL).map(String::as_str)

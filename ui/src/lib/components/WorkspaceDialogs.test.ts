@@ -85,7 +85,7 @@ describe("WorkspaceDialogs", () => {
     });
     const field = within(dialog).getByRole("textbox", { name: "Name" });
     expect(field).toHaveValue("demo");
-    expect(dialog).toHaveTextContent("Identifier: demo");
+    expect(dialog).toHaveTextContent("Identifier: w-demo");
     await fireEvent.input(field, { target: { value: "handbook" } });
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       'Another workspace is already called "Handbook".',

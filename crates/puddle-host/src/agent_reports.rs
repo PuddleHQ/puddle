@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use puddle_agent_proto::editor::NEEDS_GLIBC;
 use puddle_agent_proto::host::{AgentReport, AgentReports};
 use puddle_agent_proto::{EditorProblemKind, StubDnsTrouble};
 use puddle_types::{Problem, Problems, WorkspaceName};
@@ -82,6 +83,18 @@ pub(crate) fn entrypoint_problem(name: &WorkspaceName, failure: &str) -> Problem
 /// The problem for an editor server that could not be installed (a refused download, or a network
 /// that kept failing); `reason` is the agent's cleaned text.
 fn editor_install_problem(name: &WorkspaceName, reason: &str) -> Problem {
+    if reason == NEEDS_GLIBC {
+        return Problem::new(
+            editor_install_key(name),
+            format!("The browser editor is not available in {name}: its image uses musl"),
+            "The browser editor's server needs glibc, and this image uses musl (for example \
+             Alpine), so the editor cannot open in this workspace. Use desktop VS Code over \
+             direct SSH, or a workspace image with glibc. Terminals and desktop VS Code are not \
+             affected."
+                .to_owned(),
+        )
+        .about(name.clone());
+    }
     Problem::new(
         editor_install_key(name),
         format!("The browser editor could not be installed in {name}: {reason}"),

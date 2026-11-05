@@ -282,6 +282,27 @@ impl WritableFolder {
     }
 }
 
+/// Why msb refuses a folder above Puddle's data apart from its permission bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockedBy {
+    /// It is not a folder (a file, or another kind of entry).
+    NotAFolder,
+    /// A user other than this one and root owns it.
+    OtherOwner {
+        /// The owner's user id.
+        uid: u32,
+    },
+}
+
+/// A folder above Puddle's data that msb refuses because of what it is or who owns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockedFolder {
+    /// The folder, symlinks resolved.
+    pub path: PathBuf,
+    /// Why msb refuses it.
+    pub by: BlockedBy,
+}
+
 /// The folders from `/` down to Puddle's data folder, read the way msb reads them before it opens
 /// its catalog (Linux only).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,8 +311,10 @@ pub enum DataPathFacts {
     Checked {
         /// The data folder (or its nearest existing parent).
         dir: PathBuf,
-        /// The offending folders; empty when msb has no objection.
+        /// The writable folders msb refuses; empty when msb has no objection.
         writable: Vec<WritableFolder>,
+        /// The folders msb refuses for what they are or who owns them, top first.
+        blocked: Vec<BlockedFolder>,
     },
     /// A folder on the way could not be read.
     Unreadable {

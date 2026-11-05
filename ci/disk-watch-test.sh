@@ -3,7 +3,7 @@
 # Self-test of ci/disk-watch.sh with a free-space file in place of df, so each level is set by hand. Cases: a snapshot
 # lists the dirs and writes the job summary; a snapshot under the warning level annotates and goes deep; a guard with
 # room to spare stops no process and logs its samples; a guard under the floor annotates an error, writes the sizes
-# and stops the process the pattern names (and nothing else). Not seen: a real full disk or the runner's annotations.
+# and stops the processes of the step it was started for, grandchildren included (and nothing outside that tree, though the pattern matches it). Not seen: a real full disk or the runner's annotations.
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -46,19 +46,35 @@ sleep 1
 kill "$g"
 wait "$g" 2>/dev/null
 kill -0 "$victim" 2>/dev/null || bad "a guard with room stopped a process"
+kill "$victim" 2>/dev/null; wait "$victim" 2>/dev/null
 has "$tmp/rt/disk-watch-roomy.log" 'free=80GB' "guard samples"
 has "$tmp/sum" 'disk guard roomy: free 80 GB now, lowest 80 GB' "guard end line"
 lacks "$tmp/out" '::error' "guard with room"
 
-# The pattern names the victim by its argv; the guard itself must survive it (the pattern reaches it by env, not
-# argv). `[.]` is a literal dot, and the pid ties the pattern to this run's victim.
-DISK_WATCH_KILL="sleep 300[.]$$\$" "$script" guard full >"$tmp/out" 2>&1 &
-g=$!
-sleep 0.5
+# The step is a shell that starts the guard and the heavy processes (its children). A foreign process outside that
+# tree (`setsid sleep`, as another job on a shared host or a pre-commit hook would run) carries an argv the pattern
+# also matches, and must survive. Its argv ends in this run's pid, so another run of this test is no target either.
+setsid sleep "301.$$" &
+foreign=$!
+cat >"$tmp/step.sh" <<EOS
+#!/usr/bin/env bash
+"$script" guard full >"$tmp/out" 2>&1 &
+sleep "300.$$" &
+bash -c 'sleep "302.$$" & wait' &
+wait
+EOS
+chmod +x "$tmp/step.sh"
+DISK_WATCH_KILL='sleep 30[012][.]'"$$"'$' "$tmp/step.sh" &
+step=$!
+sleep 1
+pgrep -f "sleep 300[.]$$" >/dev/null || bad "the step's process did not start"
 echo 2 >"$tmp/free"
-for _ in $(seq 1 300); do kill -0 "$g" 2>/dev/null || break; sleep 0.2; done
-kill -0 "$g" 2>/dev/null && { bad "the guard did not end after stopping the step"; kill "$g"; }
-kill -0 "$victim" 2>/dev/null && { bad "the guard under the floor left the process running"; kill "$victim"; }
+for _ in $(seq 1 300); do kill -0 "$step" 2>/dev/null || break; sleep 0.2; done
+if kill -0 "$step" 2>/dev/null; then bad "the step did not end after the guard stopped its processes"; kill "$step"; fi
+pgrep -f "sleep 300[.]$$" >/dev/null && { bad "the guard under the floor left the step's process running"; pkill -f "sleep 300[.]$$"; }
+pgrep -f "sleep 302[.]$$" >/dev/null && { bad "the guard under the floor left the step's grandchild running"; pkill -f "sleep 302[.]$$"; }
+kill -0 "$foreign" 2>/dev/null || bad "the guard stopped a process outside its step's tree"
+kill "$foreign" 2>/dev/null
 has "$tmp/out" '::error title=runner disk full::full: 2 GB free' "floor annotation"
 has "$tmp/sum" 'under the floor' "floor snapshot in the summary"
 has "$tmp/sum" 'lowest 2 GB' "floor end line"

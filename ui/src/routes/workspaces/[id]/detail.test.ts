@@ -1118,6 +1118,21 @@ describe("the settings tab", () => {
     );
   });
 
+  it("reads the direct SSH override again when the workspace's own direct SSH flips elsewhere", async () => {
+    await open();
+    const select = screen.getByLabelText(
+      "Allow direct SSH",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("inherit");
+    api.overrides["w-demo"] = {
+      ...(await settingsOf("w-demo")),
+      direct_ssh: true,
+    };
+    api.list = [workspace("demo", { direct_ssh: true })];
+    await workspaces.refresh();
+    await vi.waitFor(() => expect(select.value).toBe("on"));
+  });
+
   it("keeps logins by default, turns capture off or back to the global default, and says the next start applies it", async () => {
     await open();
     const select = screen.getByLabelText(

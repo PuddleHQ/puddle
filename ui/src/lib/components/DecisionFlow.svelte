@@ -47,6 +47,7 @@
       ? setsOnFor(sets.sets, optionsRow.request.workspace).map((set) => ({
           id: userSetNumber(set) ?? 0,
           name: set.name,
+          fill: set.fill,
           everywhere: isOn(set, null),
         }))
       : [],

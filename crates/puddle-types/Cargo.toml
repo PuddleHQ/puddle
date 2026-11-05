@@ -26,6 +26,9 @@ utoipa = { workspace = true, optional = true }
 [dev-dependencies]
 proptest = { workspace = true }
 puddle-test-kit = { workspace = true }
+# Turns `openapi` on for this crate's own tests, so a test of the schema code runs (and the mutation run
+# mutates it) when the crate is tested alone.
+puddle-types = { workspace = true, features = ["openapi"] }
 url = { workspace = true }
 
 [lints]

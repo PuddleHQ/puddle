@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The host's problems about a workspace's browser editor server: it could not be installed
 // (`editor-install:<workspace>`, told on the workspace's page and in the Connect dialog) or could
-// not take a newer build (`editor-update:<workspace>`, the page only: the editor still opens).
+// not take a newer build (`editor-update:<workspace>`, the page only: the editor still opens) or
+// runs as root because its session user is missing (`editor-session-user:<workspace>`, the page
+// only).
 // Read again when the host says its problem list changed.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import {
   editorInstallProblemOf,
+  editorSessionUserProblemOf,
   editorUpdateProblemOf,
   type Problem,
 } from "#lib/workspaces/problem-links.ts";
@@ -33,6 +36,11 @@ export class EditorProblemsStore {
   /** What `workspace`'s update problem says, `null` when the host lists none. */
   updateOf(workspace: string): Problem | null {
     return editorUpdateProblemOf(this.problems, workspace) ?? null;
+  }
+
+  /** What `workspace`'s run-as-root problem says, `null` when the host lists none. */
+  sessionUserOf(workspace: string): Problem | null {
+    return editorSessionUserProblemOf(this.problems, workspace) ?? null;
   }
 
   /** Reads the list. A failed read leaves what the page shows as it is. */

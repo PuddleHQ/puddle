@@ -187,6 +187,10 @@ export class WorkspaceStore {
         // The list of repositories is part of the record: read it again.
         void this.refresh();
         return;
+      case "disk_nearly_full":
+        // The figures and the warning flags are part of the record: read it again.
+        void this.refresh();
+        return;
       case "oom_kill":
         this.oom = {
           ...this.oom,
@@ -320,7 +324,7 @@ export class WorkspaceStore {
 
   async #operate(
     id: string,
-    op: "start" | "stop" | "reclaim",
+    op: "start" | "stop" | "reclaim" | "reset-root-disk",
   ): Promise<ActionResult<Workspace>> {
     const path = `/api/workspaces/{id}/${op}` as const;
     const before = this.#endedCount(id);
@@ -336,6 +340,7 @@ export class WorkspaceStore {
   startWorkspace = (id: string) => this.#operate(id, "start");
   stopWorkspace = (id: string) => this.#operate(id, "stop");
   reclaim = (id: string) => this.#operate(id, "reclaim");
+  resetRootDisk = (id: string) => this.#operate(id, "reset-root-disk");
 
   /** What deleting would lose. */
   checkDelete(id: string): Promise<ActionResult<DeleteCheck>> {

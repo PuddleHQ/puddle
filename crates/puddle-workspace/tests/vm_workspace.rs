@@ -1107,6 +1107,15 @@ async fn vm_zero_filled_head_and_index_are_repaired_at_boot() {
     eprintln!("repaired: {report:?}");
     assert_eq!(report.repaired.len(), 2, "{report:?}");
     assert!(report.damaged.is_empty(), "{report:?}");
+    assert_eq!(
+        sh_ok(
+            sb.ungated(),
+            &format!("stat -c %u {repo}/.git/HEAD {repo}/.git/index")
+        )
+        .await,
+        "1000\n1000",
+        "the repaired files keep the repository's owner (read before the test's own git runs as root)"
+    );
     sh_ok(
         sb.ungated(),
         &format!("{safe} cd {repo} && git fsck --full"),
@@ -1127,15 +1136,6 @@ async fn vm_zero_filled_head_and_index_are_repaired_at_boot() {
         )
         .await,
         " M f"
-    );
-    assert_eq!(
-        sh_ok(
-            sb.ungated(),
-            &format!("stat -c %u {repo}/.git/HEAD {repo}/.git/index")
-        )
-        .await,
-        "1000\n1000",
-        "the repaired files keep the repository's owner"
     );
     w.stop(sb.ungated()).await.unwrap();
     drop(sb);

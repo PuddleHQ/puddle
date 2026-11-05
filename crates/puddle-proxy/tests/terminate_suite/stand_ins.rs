@@ -324,7 +324,10 @@ async fn hostile_hg40_a_stale_stand_in_is_flagged_and_the_flag_reveals_no_real_c
         !everything.contains(&forgotten),
         "the flag never repeats the token"
     );
-    assert!(!captured_logs().contains("went out unchanged"));
+    assert!(
+        everything.contains("a stand-in went out unchanged"),
+        "the stale flag is logged, so the checks above read the log that carries it"
+    );
 }
 
 #[tokio::test]

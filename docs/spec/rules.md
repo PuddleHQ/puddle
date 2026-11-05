@@ -270,13 +270,19 @@ readable as JSONL (one record per line).
 
 - **R-28 Reading the audit with filters.** The API filters on the server, on stored columns and
   indexes (never by parsing JSON): `workspace`, `type`, `outcome`, `host_contains` (case-folded
-  substring), `from` (inclusive) and `to` (exclusive) as epoch ms. All set filters must match.
+  substring), `q` (the search box, below), `from` (inclusive) and `to` (exclusive) as epoch ms. All
+  set filters must match.
   `host` is the record's host, or a rule record's pattern. `outcome` (`allow`, `deny`, `pending`,
   `blocked`, `expired`, `succeeded`, `failed`) exists for `connection` (its `decision`), `pending_created` (`pending`),
   `pending_decided` (`allow` or `deny`), `pending_expired` (`expired`) and `workspace_op` (`succeeded` or `failed`); every other record has
   none and never matches an `outcome` filter. `origin` (`workspace` or `puddle`) matches `connection`
   records only (a Puddle record is one without a workspace); every other record has no origin and
-  never matches. *`origin` added 2026-10-07.* Pages are at most 500 records: newest first, paged
+  never matches. *`origin` added 2026-10-07.* `q` is a case-folded (ASCII) substring over one stored
+  text column that holds, for a `connection`, its host, method, path and reason, for a rule on
+  method and path its host and path, and for any other record its host (a rule's pattern); a record
+  with none of these never matches. It is a plain substring, not a pattern, and a control character
+  in it is refused, so one field's end and the next one's start can't match together. *`q` added
+  2026-11-05.* Pages are at most 500 records: newest first, paged
   back with `before`, or oldest first from `after` to follow the tail.
 - **R-29 Events.** After each commit the store emits, per change: `pending_opened` (a new open
   row), `pending_updated` (a repeat: `attempts`, `last_seen`), `pending_closed` (decided by a user

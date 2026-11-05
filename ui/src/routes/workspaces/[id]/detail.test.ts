@@ -564,6 +564,36 @@ describe("the overview", () => {
     await screen.findByText("Status");
     expect(screen.queryByText(/could not be installed/)).toBeNull();
     expect(screen.queryByText(/could not update/)).toBeNull();
+    expect(screen.queryByText(/runs as root/)).toBeNull();
+  });
+
+  it("says on the workspace's page that its browser editor runs as root for want of the session user", async () => {
+    api.problems = [
+      {
+        key: "editor-session-user:demo",
+        workspace: "demo",
+        title:
+          "The browser editor in demo runs as root: its user agent is missing in the guest",
+        detail: "The editor opens and works, but the files belong to root.",
+      },
+      {
+        key: "editor-session-user:other",
+        workspace: "other",
+        title: "The browser editor in other runs as root: no",
+        detail: "x",
+      },
+    ];
+    await load();
+    render(Overview);
+    expect(
+      await screen.findByText(
+        /in demo runs as root: its user agent is missing in the guest/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/The editor opens and works, but the files belong/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/in other runs as root/)).toBeNull();
   });
 
   it("says on the workspace's page that its browser editor could not update, and that the editor keeps working", async () => {

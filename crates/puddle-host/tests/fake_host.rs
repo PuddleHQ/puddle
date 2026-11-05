@@ -9660,6 +9660,57 @@ async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_o
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_editor_server_that_runs_as_root_for_want_of_its_user_is_a_problem_until_a_start_finds_the_user()
+ {
+    use puddle_agent_proto::{AgentMessage, EditorProblemKind};
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::SessionUser,
+            Some("its user agent is missing in the guest"),
+        )],
+    )
+    .await;
+    let (title, detail) = problem_is(&api, "editor-session-user:acme", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        title,
+        "The browser editor in acme runs as root: its user agent is missing in the guest"
+    );
+    assert!(detail.contains("belong to root"), "{detail}");
+    assert!(
+        detail.contains("switch the workspace's session user to root"),
+        "{detail}"
+    );
+
+    let fixed = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::SessionUser,
+            None,
+        )],
+    )
+    .await;
+    assert!(
+        problem_is(&api, "editor-session-user:acme", false)
+            .await
+            .is_none()
+    );
+    fixed.abort();
+    session.abort();
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn capture_rules_the_guest_tore_down_or_that_cannot_install_are_problems_until_they_are_fixed_or_it_stops()
  {
     use puddle_agent_proto::AgentMessage;

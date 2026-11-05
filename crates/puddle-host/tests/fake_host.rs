@@ -2507,6 +2507,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
             server: editor,
             password_file: password_file.clone(),
             boot_id: dir.path().join("boot_id"),
+            root: dir.path().join("root"),
         }),
         ..puddle_agent::Config::default()
     })
@@ -9826,6 +9827,16 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     assert!(detail.contains("left as it is"), "{detail}");
     attach().await;
     assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
+
+    // Another merged file left first does not hide it: the notice looks at every left file.
+    *rig.guest.boot_says.lock().unwrap() = format!(
+        "puddle-boot: /home/agent/.docker/config.json left as it is: the file is not UTF-8\n\
+         puddle-boot: /workspaces/acme/{file} left as it is: expected a value at line 1\n"
+    );
+    attach().await;
+    let (_, detail) = problem_is(&api, "editor-file:acme", true).await.unwrap();
+    assert!(detail.contains(file), "{detail}");
+    assert!(!detail.contains("docker"), "{detail}");
 }
 
 /// A workspace that runs, with nothing else going on in its guest.
@@ -10775,6 +10786,29 @@ async fn a_restore_makes_a_working_list_entry_with_the_disk_untouched_and_ends_i
     assert_eq!(listed["workspaces"][0]["name"], "lost", "{listed}");
     assert_eq!(orphan_ids(&api2).await, ["other"]);
     again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_whose_list_cannot_be_saved_leaves_no_entry_and_the_disk_unclaimed() {
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    let host = rig.start().await;
+    let api = api(&host);
+    make_unwritable(&list_path(&rig));
+
+    let reply = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("was not restored"), "{}", reply.body);
+    assert!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(orphan_ids(&api).await, ["lost"]);
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

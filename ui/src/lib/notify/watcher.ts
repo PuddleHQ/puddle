@@ -6,6 +6,7 @@
 // draining or being removed since it last ran. A stop with none of those, or a crash, is not.
 // Statuses are tracked here from the events, seeded from the workspace list; a workspace never
 // seen before can't be called unexpected.
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import {
@@ -87,7 +88,7 @@ export class NoticeWatcher {
       if (!data) return;
       for (const w of data.workspaces) {
         // An event that already told us more recent news wins over the list.
-        if (!this.#status.has(w.name)) this.#status.set(w.name, w.status);
+        if (!this.#status.has(w.id)) this.#status.set(w.id, w.status);
       }
     } catch {
       // Without a list, the events alone still work for workspaces they name.
@@ -109,16 +110,17 @@ export class NoticeWatcher {
     if (this.#sshFailed(raw)) return;
     const event = asWorkspaceEvent(raw);
     if (!event) return;
-    const name = event.workspace;
+    const id = event.workspace;
+    const name = workspaces.labelOf(id);
     switch (event.type) {
       case "oom_kill":
         this.#notifier.notify({
-          key: oomKey(name),
+          key: oomKey(id),
           tone: "warning",
           title: `${name} ran out of memory and a process was killed.`,
           detail: `${event.process} (process ${event.pid}) was stopped. Give the workspace more memory in its settings; it applies at the next restart.`,
           link: {
-            href: `/workspaces/${encodeURIComponent(name)}/settings`,
+            href: `/workspaces/${encodeURIComponent(id)}/settings`,
             label: "Workspace settings",
           },
         });
@@ -140,11 +142,11 @@ export class NoticeWatcher {
         return;
       case "workspace_progress":
         if (event.step === "stopping" || event.step === "removing") {
-          this.#expected.add(name);
+          this.#expected.add(id);
         }
         return;
       case "status_changed":
-        this.#onStatus(name, event.status);
+        this.#onStatus(id, event.status);
         return;
     }
   }
@@ -170,7 +172,7 @@ export class NoticeWatcher {
     this.#notifier.notify({
       key: sshKey(workspace),
       tone: "warning",
-      title: `Direct SSH to ${workspace} failed.`,
+      title: `Direct SSH to ${workspaces.labelOf(workspace)} failed.`,
       detail: `${reason} The workspace itself keeps running.`,
       link: {
         href: `/workspaces/${encodeURIComponent(workspace)}`,
@@ -180,57 +182,58 @@ export class NoticeWatcher {
     return true;
   }
 
-  #onStatus(name: string, status: Status): void {
-    const before = this.#status.get(name);
-    this.#status.set(name, status);
+  #onStatus(id: string, status: Status): void {
+    const name = workspaces.labelOf(id);
+    const before = this.#status.get(id);
+    this.#status.set(id, status);
     if (!RUNNING.includes(status) && status !== "draining") {
       // The endpoint it reported on is gone; the next start opens a new one.
-      this.#notifier.resolve(sshKey(name));
+      this.#notifier.resolve(sshKey(id));
     }
     if (status === "draining") {
-      this.#expected.add(name);
+      this.#expected.add(id);
       return;
     }
     if (RUNNING.includes(status) || status === "created") {
-      this.#expected.delete(name);
-      this.#notifier.resolve(stopKey(name));
+      this.#expected.delete(id);
+      this.#notifier.resolve(stopKey(id));
       return;
     }
     const wasUp =
       before !== undefined && [...RUNNING, "draining"].includes(before);
     if (status === "crashed") {
       this.#notifier.notify({
-        key: stopKey(name),
+        key: stopKey(id),
         tone: "warning",
         title: `${name} crashed.`,
         detail:
           "Its machine stopped working. Start it again from the workspace list.",
         link: {
-          href: `/workspaces/${encodeURIComponent(name)}`,
+          href: `/workspaces/${encodeURIComponent(id)}`,
           label: "Open workspace",
         },
       });
     } else if (status === "volume_missing") {
       this.#notifier.notify({
-        key: stopKey(name),
+        key: stopKey(id),
         tone: "warning",
         title: `${name} can't start: its disk is missing.`,
         detail:
           "Restore the volume and start it again, or delete the workspace.",
         link: {
-          href: `/workspaces/${encodeURIComponent(name)}`,
+          href: `/workspaces/${encodeURIComponent(id)}`,
           label: "Open workspace",
         },
       });
-    } else if (status === "stopped" && wasUp && !this.#expected.has(name)) {
+    } else if (status === "stopped" && wasUp && !this.#expected.has(id)) {
       this.#notifier.notify({
-        key: stopKey(name),
+        key: stopKey(id),
         tone: "warning",
         title: `${name} stopped without being asked to.`,
         detail:
           "Nothing in Puddle stopped it. Start it again from the workspace list.",
         link: {
-          href: `/workspaces/${encodeURIComponent(name)}`,
+          href: `/workspaces/${encodeURIComponent(id)}`,
           label: "Open workspace",
         },
       });

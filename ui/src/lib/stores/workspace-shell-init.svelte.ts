@@ -23,7 +23,7 @@ export class ShellInitStore {
   status = $state<Status>("loading");
   /** Puddle put the saved text back after something in the workspace changed it. */
   restored = $state(false);
-  #name = "";
+  #id = "";
   #ticket = 0;
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
@@ -37,13 +37,13 @@ export class ShellInitStore {
   }
 
   /** Reads the saved script. `quiet` keeps the page as it is while it does. */
-  async load(name: string, quiet = false): Promise<void> {
-    this.#name = name;
+  async load(id: string, quiet = false): Promise<void> {
+    this.#id = id;
     if (!quiet) this.status = "loading";
     const ticket = ++this.#ticket;
     try {
       const { data } = await this.#api.GET("/api/workspaces/{id}/shell-init", {
-        params: { path: { id: name } },
+        params: { path: { id } },
       });
       if (ticket !== this.#ticket) return;
       if (data) {
@@ -57,17 +57,17 @@ export class ShellInitStore {
     }
   }
 
-  /** Reads `name` now and keeps it current; returns the function that stops listening. */
-  start(name: string): () => void {
+  /** Reads workspace `id` now and keeps it current; returns the function that stops listening. */
+  start(id: string): () => void {
     this.restored = false;
-    void this.load(name);
+    void this.load(id);
     const unsubscribe = this.#source?.subscribe({
       event: (event) => {
-        const kind = shellInitEvent(event, name);
-        if (kind === "changed") void this.load(name, true);
+        const kind = shellInitEvent(event, id);
+        if (kind === "changed") void this.load(id, true);
         if (kind === "restored") this.restored = true;
       },
-      resync: () => void this.load(name, true),
+      resync: () => void this.load(id, true),
     });
     return () => unsubscribe?.();
   }
@@ -80,7 +80,7 @@ export class ShellInitStore {
     try {
       const { data, error } = await this.#api.PUT(
         "/api/workspaces/{id}/shell-init",
-        { params: { path: { id: this.#name } }, body: { content } },
+        { params: { path: { id: this.#id } }, body: { content } },
       );
       if (!data) {
         return {
@@ -101,12 +101,12 @@ export class ShellInitStore {
     try {
       const { response } = await this.#api.DELETE(
         "/api/workspaces/{id}/shell-init",
-        { params: { path: { id: this.#name } } },
+        { params: { path: { id: this.#id } } },
       );
       if (!response.ok && response.status !== 404) {
         return { ok: false, message: "Puddle couldn't remove the script." };
       }
-      await this.load(this.#name, true);
+      await this.load(this.#id, true);
       return { ok: true };
     } catch {
       return { ok: false, message: DOWN };

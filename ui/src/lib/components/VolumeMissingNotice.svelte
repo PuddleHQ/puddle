@@ -1,16 +1,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
-  let { name, detail = false }: { name: string; detail?: boolean } = $props();
+  let { id, detail = false }: { id: string; detail?: boolean } = $props();
 </script>
 
 <p class="notice" role="status">
   <b>Its disk is gone, so it can't start.</b>
   {#if detail}
-    Restore the volume <span class="mono">ws-{name}</span> and start it again, or
-    delete the workspace below; nothing is lost by deleting it.
+    Restore the volume <span class="mono">ws-{id}</span> and start it again, or delete
+    the workspace below; nothing is lost by deleting it.
   {:else}
-    Restore the volume <span class="mono">ws-{name}</span> and start it again, or
-    open Details to delete it.
+    Restore the volume <span class="mono">ws-{id}</span> and start it again, or open
+    Details to delete it.
   {/if}
 </p>
 

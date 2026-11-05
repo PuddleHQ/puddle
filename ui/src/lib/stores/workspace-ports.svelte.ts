@@ -18,7 +18,7 @@ export class WorkspacePortsStore {
   /** The workspace runs, so a port can be forwarded. */
   running = $state(false);
   status = $state<Status>("loading");
-  #name = "";
+  #id = "";
   #ticket = 0;
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
@@ -32,13 +32,13 @@ export class WorkspacePortsStore {
   }
 
   /** Reads the list. `quiet` keeps the page as it is while it does. */
-  async load(name: string, quiet = false): Promise<void> {
-    this.#name = name;
+  async load(id: string, quiet = false): Promise<void> {
+    this.#id = id;
     if (!quiet) this.status = "loading";
     const ticket = ++this.#ticket;
     try {
       const { data } = await this.#api.GET("/api/workspaces/{id}/ports", {
-        params: { path: { id: name } },
+        params: { path: { id } },
       });
       if (ticket !== this.#ticket) return;
       if (data) {
@@ -53,14 +53,14 @@ export class WorkspacePortsStore {
     }
   }
 
-  /** Reads `name` now and keeps it current; returns the function that stops listening. */
-  start(name: string): () => void {
-    void this.load(name);
+  /** Reads workspace `id` now and keeps it current; returns the function that stops listening. */
+  start(id: string): () => void {
+    void this.load(id);
     const unsubscribe = this.#source?.subscribe({
       event: (event) => {
-        if (isPortsEvent(event, name)) void this.load(name, true);
+        if (isPortsEvent(event, id)) void this.load(id, true);
       },
-      resync: () => void this.load(name, true),
+      resync: () => void this.load(id, true),
     });
     return () => unsubscribe?.();
   }
@@ -78,7 +78,7 @@ export class WorkspacePortsStore {
       const { data, error } = await this.#api.PUT(
         "/api/workspaces/{id}/ports/{port}",
         {
-          params: { path: { id: this.#name, port: guest } },
+          params: { path: { id: this.#id, port: guest } },
           body: { host_port: host, pinned },
         },
       );
@@ -88,7 +88,7 @@ export class WorkspacePortsStore {
           message: sentence(error?.message ?? "Puddle refused the forward"),
         };
       }
-      await this.load(this.#name, true);
+      await this.load(this.#id, true);
       return { ok: true };
     } catch {
       return { ok: false, message: DOWN };
@@ -100,12 +100,12 @@ export class WorkspacePortsStore {
     try {
       const { response } = await this.#api.DELETE(
         "/api/workspaces/{id}/ports/{port}",
-        { params: { path: { id: this.#name, port: guest } } },
+        { params: { path: { id: this.#id, port: guest } } },
       );
       if (!response.ok && response.status !== 404) {
         return { ok: false, message: "Puddle couldn't stop the forward." };
       }
-      await this.load(this.#name, true);
+      await this.load(this.#id, true);
       return { ok: true };
     } catch {
       return { ok: false, message: DOWN };

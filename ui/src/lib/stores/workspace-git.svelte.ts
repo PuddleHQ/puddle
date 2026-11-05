@@ -26,7 +26,7 @@ const DOWN = "Puddle's service isn't answering.";
 export class WorkspaceGitStore {
   git = $state.raw<WorkspaceGit | null>(null);
   status = $state<Status>("loading");
-  #name = "";
+  #id = "";
   /** Calls to `load` in order, so a slow answer never overwrites a newer one. */
   #ticket = 0;
   readonly #api: StoreApi;
@@ -41,13 +41,13 @@ export class WorkspaceGitStore {
   }
 
   /** Reads the workspace's Git settings. `quiet` keeps the page as it is while it does. */
-  async load(name: string, quiet = false): Promise<void> {
-    this.#name = name;
+  async load(id: string, quiet = false): Promise<void> {
+    this.#id = id;
     if (!quiet) this.status = "loading";
     const ticket = ++this.#ticket;
     try {
       const { data } = await this.#api.GET("/api/workspaces/{id}/git", {
-        params: { path: { id: name } },
+        params: { path: { id } },
       });
       if (ticket !== this.#ticket) return;
       if (data) {
@@ -61,16 +61,16 @@ export class WorkspaceGitStore {
     }
   }
 
-  /** Reads `name` now and keeps it current; returns the function that stops listening. */
-  start(name: string): () => void {
-    void this.load(name);
+  /** Reads workspace `id` now and keeps it current; returns the function that stops listening. */
+  start(id: string): () => void {
+    void this.load(id);
     const unsubscribe = this.#source?.subscribe({
       event: (event) => {
-        if (isWorkspaceGitChanged(event, name) || isIdentitiesChanged(event)) {
-          void this.load(name, true);
+        if (isWorkspaceGitChanged(event, id) || isIdentitiesChanged(event)) {
+          void this.load(id, true);
         }
       },
-      resync: () => void this.load(name, true),
+      resync: () => void this.load(id, true),
     });
     return () => unsubscribe?.();
   }
@@ -93,7 +93,7 @@ export class WorkspaceGitStore {
   }
 
   #path() {
-    return { params: { path: { id: this.#name } } };
+    return { params: { path: { id: this.#id } } };
   }
 
   /** Puts the identities of the workspace in this order (every one once). */
@@ -131,7 +131,7 @@ export class WorkspaceGitStore {
     try {
       const { data, error } = await this.#api.DELETE(
         "/api/workspaces/{id}/identities/{identity}",
-        { params: { path: { id: this.#name, identity } } },
+        { params: { path: { id: this.#id, identity } } },
       );
       if (!data) {
         return {
@@ -180,7 +180,7 @@ export class WorkspaceGitStore {
           body: repo,
         }),
       "Puddle refused the repository",
-      () => this.load(this.#name, true),
+      () => this.load(this.#id, true),
     );
   }
 
@@ -189,7 +189,7 @@ export class WorkspaceGitStore {
     return this.#send(
       () =>
         this.#api.PUT("/api/workspaces/{id}/git/repos/{repo}", {
-          params: { path: { id: this.#name, repo: row.id } },
+          params: { path: { id: this.#id, repo: row.id } },
           body: { pull, push },
         }),
       "Puddle refused the change",
@@ -209,7 +209,7 @@ export class WorkspaceGitStore {
     try {
       const { response } = await this.#api.DELETE(
         "/api/workspaces/{id}/git/repos/{repo}",
-        { params: { path: { id: this.#name, repo: row.id } } },
+        { params: { path: { id: this.#id, repo: row.id } } },
       );
       if (!response.ok && response.status !== 404) {
         return { ok: false, message: "Puddle couldn't remove the repository." };

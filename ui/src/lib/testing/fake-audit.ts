@@ -112,7 +112,11 @@ export class FakeAudit {
     if (this.down) throw new TypeError("down");
     if (path === "/api/workspaces") {
       return this.reply(200, {
-        workspaces: this.workspaces.map((name) => ({ name, id: name })),
+        workspaces: this.workspaces.map((name) => ({
+          name,
+          display_name: name,
+          id: "w-" + name,
+        })),
       } satisfies {
         workspaces: Partial<components["schemas"]["Workspace"]>[];
       });

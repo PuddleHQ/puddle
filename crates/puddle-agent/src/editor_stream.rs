@@ -13,7 +13,7 @@ use puddle_agent_proto::relay::splice;
 use tokio::io::AsyncWriteExt;
 use tokio_yamux::StreamHandle;
 
-use crate::editor::EditorConfig;
+use crate::editor::{EditorConfig, unsupported_image};
 use crate::forward::{answer, connect};
 
 /// What the host may reach of the editor server.
@@ -23,6 +23,9 @@ pub struct EditorAccess {
     pub port: u16,
     /// The file the server's password is in.
     pub password_file: PathBuf,
+    /// Why no editor server can run in this image, when it cannot (musl, no glibc): every request
+    /// is answered with it.
+    pub unsupported: Option<&'static str>,
 }
 
 impl EditorAccess {
@@ -32,6 +35,7 @@ impl EditorAccess {
         Self {
             port: config.server.port,
             password_file: config.password_file.clone(),
+            unsupported: unsupported_image(&config.root),
         }
     }
 }
@@ -57,6 +61,10 @@ pub async fn serve(mut stream: StreamHandle, access: Option<&EditorAccess>) {
         answer(&mut stream, &Answer::refused(NO_SERVER)).await;
         return;
     };
+    if let Some(reason) = access.unsupported {
+        answer(&mut stream, &Answer::refused(reason)).await;
+        return;
+    }
     match request {
         Request::Connect => connect_through(stream, access.port).await,
         Request::Password => send_password(stream, access).await,

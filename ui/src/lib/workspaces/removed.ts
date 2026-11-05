@@ -13,16 +13,16 @@ export interface Removed {
 }
 
 /**
- * The counts for the workspace called `name`, or `null` when either list could not be read (the
+ * The counts for the workspace with this `id`, or `null` when either list could not be read (the
  * dialog then says nothing about them, rather than a wrong number).
  */
 export async function readRemoved(
-  name: string,
+  id: string,
   api: Pick<ApiClient, "GET"> = defaultApi,
 ): Promise<Removed | null> {
   try {
     const [env, rules] = await Promise.all([
-      api.GET("/api/workspaces/{id}/env", { params: { path: { id: name } } }),
+      api.GET("/api/workspaces/{id}/env", { params: { path: { id } } }),
       api.GET("/api/rules"),
     ]);
     if (!env.data || !rules.data) return null;
@@ -31,7 +31,7 @@ export async function readRemoved(
     );
     return {
       ...own,
-      rules: rules.data.rules.filter((r) => workspaceOf(r) === name).length,
+      rules: rules.data.rules.filter((r) => workspaceOf(r) === id).length,
     };
   } catch {
     return null;

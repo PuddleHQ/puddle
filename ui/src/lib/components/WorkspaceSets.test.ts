@@ -45,6 +45,15 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe("a workspace's rule sets", () => {
+  it("shows each set's colour as a dot before its name", async () => {
+    render(WorkspaceSets, { props: { store, workspace: "api" } } as never);
+    const work = (await screen.findByText("Work")).closest(".set-dotted");
+    expect(work).toHaveStyle("--set-fill: #2ea06e");
+    expect(screen.getByText("GitHub").closest(".set-dotted")).toHaveStyle(
+      "--set-fill: #2f80c9",
+    );
+  });
+
   it("says a read failed instead of showing an empty list, and warns about a stale one", async () => {
     store.loadError = "Disk is full.";
     store.status = "failed";

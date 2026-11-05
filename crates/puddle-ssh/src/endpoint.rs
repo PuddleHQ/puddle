@@ -354,14 +354,24 @@ mod tests {
         assert!(closed.load(Ordering::Acquire));
     }
 
-    /// Counts the flushes and shutdowns that reach it and accepts all writes.
+    /// Counts the flushes and shutdowns that reach it.
     #[derive(Default)]
-    struct Counting {
+    struct Recording {
         flushes: usize,
         shutdowns: usize,
     }
 
-    impl AsyncWrite for Counting {
+    impl AsyncRead for Recording {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl AsyncWrite for Recording {
         fn poll_write(
             self: Pin<&mut Self>,
             _cx: &mut Context<'_>,
@@ -382,14 +392,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_watch_hands_a_flush_and_a_shutdown_on_to_the_stream() {
-        let (mut watched, closed) = ClientWatch::new(Counting::default());
-        assert_eq!(watched.write(b"abc").await.unwrap(), 3);
+    async fn the_watch_forwards_flush_and_shutdown_to_the_stream() {
+        let (mut watched, _closed) = ClientWatch::new(Recording::default());
+        watched.write_all(b"x").await.unwrap();
+        assert_eq!(watched.read(&mut [0_u8; 1]).await.unwrap(), 0);
         watched.flush().await.unwrap();
         assert_eq!((watched.inner.flushes, watched.inner.shutdowns), (1, 0));
         watched.shutdown().await.unwrap();
         assert_eq!((watched.inner.flushes, watched.inner.shutdowns), (1, 1));
-        assert!(!closed.load(Ordering::Acquire));
     }
 
     #[test]

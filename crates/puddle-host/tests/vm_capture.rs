@@ -627,12 +627,11 @@ dsudo() { if [ -x /usr/bin/sudo ] || [ -x /usr/local/bin/sudo ]; then sudo env D
 "#;
 
 /// Builds the probe image `FROM scratch`: busybox and the loader it needs, copied from the guest's
-/// own files, and the page the server container serves. No registry is involved.
+/// own files, and nothing else. No registry is involved.
 const PROBE_IMAGE: &str = r"d=/tmp/probe-image
-mkdir -p $d/rootfs/bin $d/rootfs/lib $d/rootfs/www
+mkdir -p $d/rootfs/bin $d/rootfs/lib
 cp /bin/busybox $d/rootfs/bin/busybox
 for l in /lib/ld-musl-*.so.1; do cp -L $l $d/rootfs/lib/; done
-echo inner > $d/rootfs/www/index.html
 printf 'FROM scratch\nCOPY rootfs/ /\n' > $d/Dockerfile
 dsudo build -q -t probe:local $d";
 
@@ -674,7 +673,7 @@ nft -a list ruleset | grep '^table '"#,
 fn container_fetch(docker: &str, network: &str, url: &str) -> String {
     format!(
         "s=$(now); {docker} run --rm --pull=never --network {network} probe:local /bin/busybox \
-         sh -c 'env | grep -i proxy; /bin/busybox wget -T 10 -q -O - {url}' 2>&1; \
+         sh -c '/bin/busybox env | /bin/busybox grep -i proxy; /bin/busybox wget -T 10 -q -O - {url}' 2>&1; \
          echo \"exit=$? ms=$(( $(now) - s ))\""
     )
 }
@@ -781,7 +780,8 @@ async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceName,
         workspace,
         &format!(
             "{docker} network create {bridge} >/dev/null && {docker} run -d --name {server} \
-             --pull=never --network {bridge} probe:local /bin/busybox httpd -f -p 8080 -h /www"
+             --pull=never --network {bridge} probe:local /bin/busybox sh -c 'while true; do \
+             printf \"HTTP/1.0 200 OK\\r\\n\\r\\ninner\\n\" | /bin/busybox nc -l -p 8080; done'"
         ),
     )
     .await;

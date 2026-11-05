@@ -748,6 +748,15 @@ pub enum Step {
         #[serde(default = "yes")]
         store_readable: bool,
     },
+    /// Adds a workspace disk the workspace list does not name, which the workspace list offers to
+    /// restore; a restore makes a workspace of it.
+    OrphanVolume {
+        /// The disk's workspace id (its disk is `ws-<id>`).
+        id: String,
+        /// The repository address a read of its checkout finds; left out, a restore asks for one.
+        #[serde(default)]
+        remote: Option<String>,
+    },
     /// Replaces the network-health report and sends `network_changed` with its epoch, as a
     /// network or proxy change would.
     NetworkHealth(Box<NetworkHealth>),

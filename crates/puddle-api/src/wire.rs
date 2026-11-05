@@ -32,6 +32,7 @@ mod identities;
 mod interception;
 mod logins;
 mod network_health;
+mod orphans;
 mod ports;
 mod repos;
 mod repositories;
@@ -70,6 +71,7 @@ pub use network_health::{
     ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,
     SignInReport, SignInResult, SkippedRoot, SyncedRoot,
 };
+pub use orphans::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest};
 pub use ports::{PortEntry, PortForwardRequest, WorkspacePorts};
 pub use repos::{
     AccountProfile, AccountProfileRequest, RepoListState, RepoListing, RepoNote, RepoNoteCode,

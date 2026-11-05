@@ -1213,27 +1213,12 @@ async fn reconcile_with<R: Runtime>(
 /// things and what happened to them. None when it found nothing to say.
 fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem> {
     let mut problems = Vec::new();
-    if !report.unknown_volumes.is_empty() {
-        let names: Vec<_> = report
-            .unknown_volumes
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        problems.push(Problem::new(
-            "reconcile-unknown-volumes",
-            format!(
-                "Puddle found {} workspace disk{} that no workspace in its list claims",
-                names.len(),
-                if names.len() == 1 { "" } else { "s" }
-            ),
-            format!(
-                "{}. Puddle kept them and changed nothing. If the workspace list is missing or \
-                 out of date, restore it and restart Puddle; if they belong to workspaces you \
-                 deleted, remove the volumes yourself once you are sure.",
-                names.join(", ")
-            ),
-        ));
-    }
+    let unknown: Vec<puddle_types::WorkspaceId> = report
+        .unknown_volumes
+        .iter()
+        .filter_map(puddle_types::VolumeName::workspace_id)
+        .collect();
+    problems.extend(crate::workspaces::orphans::problem(&unknown));
     if !report.removed.is_empty() {
         let names: Vec<_> = report.removed.iter().map(ToString::to_string).collect();
         problems.push(Problem::new(

@@ -10,7 +10,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use puddle_certs::devcert::{DevCertManager, GuestDevCert, LEAF_FILE, Unsupported};
@@ -283,6 +283,9 @@ pub(crate) struct TestDevCert {
     folder: tempfile::TempDir,
     manager: DevCertManager<Unsupported>,
     given: AtomicBool,
+    /// How many times the host asked for the certificate: a real one may open a system
+    /// confirmation each time.
+    asked: AtomicUsize,
 }
 
 impl TestDevCert {
@@ -293,7 +296,12 @@ impl TestDevCert {
             folder,
             manager,
             given: AtomicBool::new(false),
+            asked: AtomicUsize::new(0),
         }
+    }
+
+    pub(crate) fn asked(&self) -> usize {
+        self.asked.load(Ordering::SeqCst)
     }
 
     pub(crate) fn give(&self) {
@@ -309,6 +317,7 @@ impl TestDevCert {
 
 impl GuestCertSource for TestDevCert {
     fn guest_cert(&self) -> Option<GuestDevCert> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
         self.given.load(Ordering::SeqCst).then(|| {
             let report = self.manager.ensure(std::time::SystemTime::now()).unwrap();
             GuestDevCert::new(&report.material)

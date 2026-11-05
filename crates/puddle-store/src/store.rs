@@ -13,7 +13,7 @@ use std::time::Duration;
 use puddle_types::{
     ConnectionEvent, ConnectionLog, ConnectionOrigin, Decision, EgressRequest, Event, EventSink,
     Host, NullSink, PendingEnd, PendingId, PendingOutcome, PendingSummary, Policy, PolicyError,
-    RuleId, SuffixAllows, WorkspaceName,
+    RuleId, SuffixAllows, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
@@ -84,7 +84,7 @@ pub struct NewWorkspaceOp {
     /// What was done.
     pub op: WorkspaceOpKind,
     /// The workspace it was done to; `None` for an identity change that belongs to none.
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// How it ended.
     pub outcome: WorkspaceOpOutcome,
     /// Who asked.
@@ -98,7 +98,7 @@ pub struct NewWorkspaceOp {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AuditFilter {
     /// Records about this workspace.
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// Records of this `type` (one of [`AuditRecord::KINDS`]).
     pub kind: Option<&'static str>,
     /// Records with this outcome. Records that have none never match.
@@ -195,13 +195,13 @@ impl Store {
 
 /// A finished second's excess of `connection` records that [`Store::flush_limits`] took out of
 /// memory: the workspace (`None` for Puddle's own), its start and count.
-struct Flushed(Option<WorkspaceName>, u64, u64);
+struct Flushed(Option<WorkspaceId>, u64, u64);
 
 /// Puddle's rules, pending requests and audit log, in one SQLite database.
 pub struct Store {
     conn: Mutex<Connection>,
     rules: RwLock<Arc<RuleIndex>>,
-    workspaces: Mutex<HashMap<WorkspaceName, WorkspaceState>>,
+    workspaces: Mutex<HashMap<WorkspaceId, WorkspaceState>>,
     /// The connection limit of Puddle's own connections, which have no workspace.
     puddle_connections: Mutex<ConnectionWindow>,
     clock: Arc<dyn Clock>,
@@ -627,7 +627,7 @@ impl Store {
     /// A database error, or [`StoreError::Corrupt`].
     pub fn open_pending(
         &self,
-        workspace: Option<&WorkspaceName>,
+        workspace: Option<&WorkspaceId>,
     ) -> Result<Vec<PendingRow>, StoreError> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(&format!(
@@ -635,7 +635,7 @@ impl Store {
              WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1)
              ORDER BY last_seen DESC, id DESC"
         ))?;
-        let rows = stmt.query_map([workspace.map(WorkspaceName::as_str)], raw_pending)?;
+        let rows = stmt.query_map([workspace.map(WorkspaceId::as_str)], raw_pending)?;
         rows.map(|raw| pending_from_raw(&raw?)).collect()
     }
 
@@ -741,7 +741,7 @@ impl Store {
     /// A database or audit error; nothing changes then.
     pub fn delete_workspace(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
     ) -> Result<WorkspaceDeletion, StoreError> {
         let deletion = self.change(|tx, now, fx| {
             let mut stmt = tx.prepare(&format!(
@@ -873,7 +873,7 @@ impl Store {
         };
         let mut merged = 0u64;
         for (workspace, count) in over {
-            let name = WorkspaceName::new(&workspace)
+            let name = WorkspaceId::new(&workspace)
                 .map_err(|_| corrupt("audit", 0, "invalid workspace name"))?;
             let mut stmt = tx.prepare(
                 "DELETE FROM audit WHERE id IN (
@@ -1217,7 +1217,7 @@ fn insert_rule(
     if let Some(set) = new.scope.set() {
         sets::require_user_set(tx, set)?;
     }
-    let workspace = new.scope.workspace().map(WorkspaceName::as_str);
+    let workspace = new.scope.workspace().map(WorkspaceId::as_str);
     let kind = match new.pattern {
         Pattern::Exact(_) => "exact",
         Pattern::Suffix(_) => "suffix",
@@ -1319,7 +1319,7 @@ fn close_decided_rows(
         "SELECT {PENDING_COLUMNS} FROM pending
          WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1) ORDER BY id"
     ))?;
-    let workspace = rule.scope.workspace().map(WorkspaceName::as_str);
+    let workspace = rule.scope.workspace().map(WorkspaceId::as_str);
     let open = stmt
         .query_map([workspace], raw_pending)?
         .map(|raw| pending_from_raw(&raw?))
@@ -1428,7 +1428,7 @@ fn rule_from_raw(raw: &RawRule) -> Result<Rule, StoreError> {
     let scope = match (raw.scope.as_str(), raw.workspace_id.as_deref(), raw.set_id) {
         ("global", None, None) => Scope::Global,
         ("workspace", Some(id), None) => {
-            Scope::Workspace(WorkspaceName::new(id).map_err(|e| bad(&e.to_string()))?)
+            Scope::Workspace(WorkspaceId::new(id).map_err(|e| bad(&e.to_string()))?)
         }
         ("set", None, Some(set)) => Scope::Set(set),
         _ => return Err(bad("scope")),
@@ -1523,7 +1523,7 @@ fn pending_from_raw(raw: &RawPending) -> Result<PendingRow, StoreError> {
     let ts = |value: i64| stored_ts("pending", raw.id, value);
     Ok(PendingRow {
         id: PendingId(raw.id),
-        workspace: WorkspaceName::new(&raw.workspace_id).map_err(|e| bad(&e.to_string()))?,
+        workspace: WorkspaceId::new(&raw.workspace_id).map_err(|e| bad(&e.to_string()))?,
         host: Host::parse_normalised(&raw.host).map_err(|e| bad(&e.to_string()))?,
         port: u16::try_from(raw.port).map_err(|_| bad("port"))?,
         first_seen: ts(raw.first_seen)?,
@@ -1771,7 +1771,7 @@ mod tests {
 
     fn request(workspace: &str, host: &str) -> EgressRequest {
         EgressRequest::new(
-            WorkspaceName::new(workspace).unwrap(),
+            WorkspaceId::new(workspace).unwrap(),
             Host::parse_normalised(host).unwrap(),
             443,
         )

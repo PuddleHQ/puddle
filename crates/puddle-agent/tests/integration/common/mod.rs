@@ -16,7 +16,7 @@ use puddle_agent::{Agent, Config};
 use puddle_agent_proto::host::{HostConfig, serve_session};
 use puddle_agent_proto::testing::AllowAll;
 use puddle_test_kit::eventually;
-use puddle_types::{Event, EventSink, WorkspaceName};
+use puddle_types::{Event, EventSink, WorkspaceId};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -50,8 +50,8 @@ impl Drop for TempDir {
     }
 }
 
-pub fn workspace() -> WorkspaceName {
-    WorkspaceName::new("agent").unwrap()
+pub fn workspace() -> WorkspaceId {
+    WorkspaceId::new("agent").unwrap()
 }
 
 pub struct Rig {

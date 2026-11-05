@@ -6,7 +6,7 @@ use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CheckoutDir, WorkspaceName};
+use crate::{CheckoutDir, WorkspaceId};
 
 /// A workspace's state: its sandbox's state as the runtime reports it (msb's states, one for one).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -81,7 +81,7 @@ pub enum Event {
     /// A workspace changed state.
     StatusChanged {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// Its new state.
         status: WorkspaceStatus,
     },
@@ -91,7 +91,7 @@ pub enum Event {
     /// [`Event::oom_kill`], which bounds and cleans the name, and escape it when rendering.
     OomKill {
         /// The workspace whose guest killed the process.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// The killed process's id inside the guest.
         pid: u32,
         /// The killed process's name (`comm`), cleaned by [`Event::oom_kill`].
@@ -102,7 +102,7 @@ pub enum Event {
     /// again only after it has dropped below it.
     DiskNearlyFull {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// Which disk.
         disk: DiskKind,
         /// How full it is, in whole percent (rounded down), 0 to 100.
@@ -112,7 +112,7 @@ pub enum Event {
     /// with one event whose step is [`WorkspaceStep::Done`] or [`WorkspaceStep::Failed`].
     WorkspaceProgress {
         /// The workspace's workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// What it is doing now.
         step: WorkspaceStep,
         /// More about the step, or why it failed; `null` when there is nothing to add. A cloning
@@ -133,7 +133,7 @@ pub enum Event {
     /// An open pending request was seen again.
     PendingUpdated {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// The pending request's id.
         id: i64,
         /// Requests the row stands for now.
@@ -144,7 +144,7 @@ pub enum Event {
     /// A pending request is no longer open: decided by a user or by a rule, or expired.
     PendingClosed {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// The pending request's id.
         id: i64,
         /// How it ended.
@@ -169,7 +169,7 @@ pub enum Event {
     /// identity it has changed). Refetch `GET /api/workspaces/{id}/git`.
     WorkspaceGitChanged {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     },
     /// The global environment (variables and secrets every workspace gets) changed. Carries no
     /// data: refetch `GET /api/env`, and a workspace's page refetches its own list too.
@@ -178,7 +178,7 @@ pub enum Event {
     /// a value.
     WorkspaceEnvChanged {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     },
     /// A change to a workspace's environment could not be applied to it while it runs, or what a
     /// deleted workspace held could not be removed. `reason` names the variable and says what is
@@ -186,21 +186,21 @@ pub enum Event {
     /// had; the change applies at its next start, or when the next change succeeds.
     WorkspaceEnvFailed {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// What went wrong, for the user.
         reason: String,
     },
     /// A workspace's shell init was saved or removed. Refetch `GET /api/workspaces/{id}/shell-init`.
     WorkspaceShellInitChanged {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     },
     /// The workspace's own copy of its shell init (or the lines that load it) differed from the
     /// host's when it started, and Puddle put the host's back. Something inside the workspace
     /// changed it: tell the user.
     WorkspaceShellInitRestored {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     },
     /// A workspace's direct SSH did not work: its endpoint could not be opened or stopped
     /// accepting, or a client's session ended with an error. `reason` says what failed and may
@@ -208,7 +208,7 @@ pub enum Event {
     /// is told why on its own terminal.
     WorkspaceSshFailed {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// What went wrong, for the user.
         reason: String,
     },
@@ -216,26 +216,26 @@ pub enum Event {
     /// that said it kept trying. The app withdraws that notice.
     WorkspaceSshRecovered {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     },
     /// A workspace's repository list changed (an entry was added, managed, cloned again or
     /// removed). Carries nothing more: refetch `GET /api/workspaces/{id}` and its checkouts.
     WorkspaceRepositoriesChanged {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     },
     /// The ports a workspace listens on, its forwards or its pinned forwards changed. Carries no
     /// data: refetch `GET /api/workspaces/{id}/ports`.
     WorkspacePortsChanged {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     },
     /// A forward could not be set up or kept: a pinned forward that could not be restored at the
     /// workspace's start, or one whose port on this computer another program took. `reason` names
     /// the port and, when known, who has it; it may quote the operating system's error.
     WorkspacePortForwardFailed {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// The port in the workspace.
         guest_port: u16,
         /// The port on this computer.
@@ -248,7 +248,7 @@ pub enum Event {
     /// the user decrypts it again). Refetch `GET /api/workspaces/{id}/interception/learned`.
     PassThroughLearned {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// The host, lower case.
         host: String,
     },
@@ -266,7 +266,7 @@ pub enum Event {
     /// `.git`), so the notice can add the row as it is.
     GitAccessDenied {
         /// The workspace that tried.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// The Git host.
         host: String,
         /// The user or organisation.
@@ -282,7 +282,7 @@ pub enum Event {
     /// `repo` is the table's spelling, as in [`Event::GitAccessDenied`].
     GitNoIdentity {
         /// The workspace that asked.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// The Git host.
         host: String,
         /// The user or organisation no identity covers.
@@ -295,7 +295,7 @@ pub enum Event {
     /// anything the guest sent. Names only, never a value.
     LoginProblem {
         /// The workspace the login is in.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// The service as the user knows it (`Claude Code`, `GitHub`).
         service: String,
         /// What is wrong.
@@ -365,7 +365,7 @@ pub struct PendingSummary {
     /// The pending request's id.
     pub id: i64,
     /// The workspace that asked.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The requested host, normalised.
     pub host: String,
     /// The host's registrable domain (`example.co.uk` for `api.example.co.uk`; the IP literal
@@ -482,12 +482,12 @@ impl Event {
     /// replaced by `?`, since it comes from the guest.
     ///
     /// ```
-    /// use puddle_types::{Event, WorkspaceName};
-    /// let e = Event::oom_kill(WorkspaceName::new("a").unwrap(), 42, "node\u{1b}[2J");
+    /// use puddle_types::{Event, WorkspaceId};
+    /// let e = Event::oom_kill(WorkspaceId::new("a").unwrap(), 42, "node\u{1b}[2J");
     /// assert!(matches!(e, Event::OomKill { ref process, .. } if process == "node?[2J"));
     /// ```
     #[must_use]
-    pub fn oom_kill(workspace: WorkspaceName, pid: u32, process: &str) -> Self {
+    pub fn oom_kill(workspace: WorkspaceId, pid: u32, process: &str) -> Self {
         let process = process
             .chars()
             .take(MAX_PROCESS_NAME_CHARS)
@@ -503,12 +503,12 @@ impl Event {
     /// The workspace this event is about, or `None` for a global event.
     ///
     /// ```
-    /// use puddle_types::{Event, WorkspaceName};
-    /// let a = WorkspaceName::new("a").unwrap();
+    /// use puddle_types::{Event, WorkspaceId};
+    /// let a = WorkspaceId::new("a").unwrap();
     /// assert_eq!(Event::oom_kill(a.clone(), 1, "x").workspace(), Some(&a));
     /// ```
     #[must_use]
-    pub fn workspace(&self) -> Option<&WorkspaceName> {
+    pub fn workspace(&self) -> Option<&WorkspaceId> {
         match self {
             Self::StatusChanged { workspace, .. }
             | Self::OomKill { workspace, .. }
@@ -563,9 +563,9 @@ impl EventSink for NullSink {
 /// A sink that keeps every event in memory, for tests.
 ///
 /// ```
-/// use puddle_types::{CollectingSink, Event, EventSink, WorkspaceName};
+/// use puddle_types::{CollectingSink, Event, EventSink, WorkspaceId};
 /// let sink = CollectingSink::default();
-/// sink.emit(Event::oom_kill(WorkspaceName::new("a").unwrap(), 1, "x"));
+/// sink.emit(Event::oom_kill(WorkspaceId::new("a").unwrap(), 1, "x"));
 /// assert_eq!(sink.take().len(), 1);
 /// assert!(sink.take().is_empty());
 /// ```
@@ -612,8 +612,8 @@ mod tests {
 
     use super::*;
 
-    fn name() -> WorkspaceName {
-        WorkspaceName::new("box").unwrap()
+    fn name() -> WorkspaceId {
+        WorkspaceId::new("box").unwrap()
     }
 
     #[test]
@@ -849,10 +849,10 @@ mod tests {
             ),
             (
                 Event::WorkspaceGitChanged {
-                    workspace: WorkspaceName::new("box").unwrap(),
+                    workspace: WorkspaceId::new("box").unwrap(),
                 },
                 r#"{"type":"workspace_git_changed","workspace":"box"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
+                Some(WorkspaceId::new("box").unwrap()),
             ),
             (
                 Event::AuditAppended { id: 99 },
@@ -898,20 +898,20 @@ mod tests {
         for (event, json, workspace) in [
             (
                 Event::WorkspacePortsChanged {
-                    workspace: WorkspaceName::new("box").unwrap(),
+                    workspace: WorkspaceId::new("box").unwrap(),
                 },
                 r#"{"type":"workspace_ports_changed","workspace":"box"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
+                Some(WorkspaceId::new("box").unwrap()),
             ),
             (
                 Event::WorkspacePortForwardFailed {
-                    workspace: WorkspaceName::new("box").unwrap(),
+                    workspace: WorkspaceId::new("box").unwrap(),
                     guest_port: 3000,
                     host_port: 3001,
                     reason: "port 3001 is in use".into(),
                 },
                 r#"{"type":"workspace_port_forward_failed","workspace":"box","guest_port":3000,"host_port":3001,"reason":"port 3001 is in use"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
+                Some(WorkspaceId::new("box").unwrap()),
             ),
         ] {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);
@@ -930,33 +930,33 @@ mod tests {
             ),
             (
                 Event::WorkspaceEnvChanged {
-                    workspace: WorkspaceName::new("box").unwrap(),
+                    workspace: WorkspaceId::new("box").unwrap(),
                 },
                 r#"{"type":"workspace_env_changed","workspace":"box"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
+                Some(WorkspaceId::new("box").unwrap()),
             ),
             (
                 Event::WorkspaceEnvFailed {
-                    workspace: WorkspaceName::new("box").unwrap(),
+                    workspace: WorkspaceId::new("box").unwrap(),
                     reason: "cannot read the secret T".into(),
                 },
                 r#"{"type":"workspace_env_failed","workspace":"box","reason":"cannot read the secret T"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
+                Some(WorkspaceId::new("box").unwrap()),
             ),
             (
                 Event::WorkspaceSshFailed {
-                    workspace: WorkspaceName::new("box").unwrap(),
+                    workspace: WorkspaceId::new("box").unwrap(),
                     reason: "no SSH endpoint: the listener failed".into(),
                 },
                 r#"{"type":"workspace_ssh_failed","workspace":"box","reason":"no SSH endpoint: the listener failed"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
+                Some(WorkspaceId::new("box").unwrap()),
             ),
             (
                 Event::WorkspaceSshRecovered {
-                    workspace: WorkspaceName::new("box").unwrap(),
+                    workspace: WorkspaceId::new("box").unwrap(),
                 },
                 r#"{"type":"workspace_ssh_recovered","workspace":"box"}"#,
-                Some(WorkspaceName::new("box").unwrap()),
+                Some(WorkspaceId::new("box").unwrap()),
             ),
             (
                 Event::CredentialSignInNeeded {
@@ -1141,7 +1141,7 @@ mod tests {
         assert!(global["properties"].get("workspace").is_none());
         assert_eq!(
             variants[0]["properties"]["workspace"]["$ref"],
-            "#/components/schemas/WorkspaceName"
+            "#/components/schemas/WorkspaceId"
         );
         let status = serde_json::to_value(WorkspaceStatus::schema()).unwrap();
         assert_eq!(status["enum"].as_array().unwrap().len(), 8);
@@ -1178,12 +1178,12 @@ mod tests {
     #[test]
     fn a_learned_pass_through_host_has_a_fixed_shape() {
         let event = Event::PassThroughLearned {
-            workspace: WorkspaceName::new("box").unwrap(),
+            workspace: WorkspaceId::new("box").unwrap(),
             host: "pinned.example".into(),
         };
         let json = r#"{"type":"pass_through_learned","workspace":"box","host":"pinned.example"}"#;
         assert_eq!(serde_json::to_string(&event).unwrap(), json);
         assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
-        assert_eq!(event.workspace(), Some(&WorkspaceName::new("box").unwrap()));
+        assert_eq!(event.workspace(), Some(&WorkspaceId::new("box").unwrap()));
     }
 }

@@ -20,8 +20,8 @@ fn store() -> Store {
     store_with(Limits::default()).1
 }
 
-fn workspace() -> WorkspaceName {
-    WorkspaceName::new("box").unwrap()
+fn workspace() -> WorkspaceId {
+    WorkspaceId::new("box").unwrap()
 }
 
 fn request(host: &str) -> EgressRequest {
@@ -489,7 +489,7 @@ fn a_workspace_operation_that_cannot_be_recorded_is_logged_and_dropped() {
     let store = store();
     let op = NewWorkspaceOp {
         op: WorkspaceOpKind::Create,
-        workspace: Some(WorkspaceName::new("acme").unwrap()),
+        workspace: Some(WorkspaceId::new("acme").unwrap()),
         outcome: WorkspaceOpOutcome::Succeeded,
         actor: Actor::Api,
         detail: None,

@@ -235,7 +235,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 local: None,
             })
             .collect();
-        git.set_up(&name, &new).await;
+        git.set_up(id, &new).await;
         self.status_event(&record);
         self.refresh_orphan_problem().await;
         Ok(record)

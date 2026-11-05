@@ -20,7 +20,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Limits, ManualClock, Store};
-use puddle_types::{NullSink, WorkspaceName};
+use puddle_types::{NullSink, WorkspaceId};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -47,7 +47,7 @@ async fn rig() -> Rig {
     let root = IpcRoot::new().unwrap();
     let route = proxy.serve_route(
         root.listen().unwrap(),
-        WorkspaceName::new("e2e-names").unwrap(),
+        WorkspaceId::new("e2e-names").unwrap(),
     );
     let agent = Agent::start(Config {
         listen: SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 0),

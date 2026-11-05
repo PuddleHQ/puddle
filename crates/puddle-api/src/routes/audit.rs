@@ -4,7 +4,7 @@
 use axum::Json;
 use axum::extract::State;
 use puddle_store::{AuditCursor, AuditFilter};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
@@ -57,7 +57,7 @@ impl AuditQuery {
             .workspace
             .filter(|s| !s.is_empty())
             .map(|s| {
-                WorkspaceName::new(&s).map_err(|err| ApiError::invalid(format!("workspace: {err}")))
+                WorkspaceId::new(&s).map_err(|err| ApiError::invalid(format!("workspace: {err}")))
             })
             .transpose()?;
         let host_contains = self.host_contains.filter(|h| !h.is_empty());

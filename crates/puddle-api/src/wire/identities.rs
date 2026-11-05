@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use puddle_secrets::{AccountName, HostName, OrgName, SourceSpec, StoredId, TokenScope, UrlPath};
 use puddle_store as store;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -291,7 +291,7 @@ pub struct IdentityView {
     /// Whether it is the default: what a new workspace gets when no identity covers its URL.
     pub is_default: bool,
     /// The workspaces it is on.
-    pub workspaces: Vec<WorkspaceName>,
+    pub workspaces: Vec<WorkspaceId>,
     /// Epoch ms it was made.
     pub created_at: u64,
     /// Epoch ms it last changed.
@@ -301,7 +301,7 @@ pub struct IdentityView {
 impl IdentityView {
     pub(crate) fn from_store(
         identity: store::Identity,
-        workspaces: Vec<WorkspaceName>,
+        workspaces: Vec<WorkspaceId>,
         credentials: &dyn crate::CredentialService,
     ) -> Self {
         Self {
@@ -377,7 +377,7 @@ pub struct IdentityOrderRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct IdentityDeleted {
     /// The workspaces it was taken off.
-    pub detached_from: Vec<WorkspaceName>,
+    pub detached_from: Vec<WorkspaceId>,
     /// The pasted tokens it read that no other identity reads and that the credential store would
     /// not give up (it is locked or unreachable). They stay there until the sweep at the next
     /// start; empty when every token went.
@@ -443,7 +443,7 @@ impl GitRepoView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct WorkspaceGitView {
     /// The workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// Its identities in order (the order breaks author ties; coverage picks the credential).
     pub identities: Vec<IdentityView>,
     /// The repository table.

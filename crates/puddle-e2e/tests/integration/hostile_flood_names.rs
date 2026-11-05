@@ -17,7 +17,7 @@ use puddle_proxy::Proxy;
 use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_store::{Actor, Limits, ManualClock, PendingState, Resolution, Store};
 use puddle_test_kit::cpu_time;
-use puddle_types::{NullSink, WorkspaceName};
+use puddle_types::{NullSink, WorkspaceId};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const NOW: u64 = 1_800_000_000_000;
@@ -59,7 +59,7 @@ async fn hostile_hg12_a_hundred_thousand_unmatched_names_wait_and_are_never_deni
     let root = IpcRoot::new().unwrap();
     let route = proxy.serve_route(
         root.listen().unwrap(),
-        WorkspaceName::new("e2e-flood").unwrap(),
+        WorkspaceId::new("e2e-flood").unwrap(),
     );
     let conn = puddle_ipc::connect(route.endpoint().path()).await.unwrap();
     let mut session = Session::new_client(conn, client_config());

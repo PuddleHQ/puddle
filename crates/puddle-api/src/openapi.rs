@@ -36,7 +36,7 @@ const BEARER: &str = "bearer";
         crate::wire::AuditOutcome,
         crate::wire::ConnectionOrigin,
         crate::wire::ConnectionOutcome,
-        puddle_types::WorkspaceName
+        puddle_types::WorkspaceId
     )),
     tags(
         (name = "service", description = "Who is answering"),

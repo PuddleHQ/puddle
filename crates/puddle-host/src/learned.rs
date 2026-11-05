@@ -8,7 +8,7 @@ use std::sync::Arc;
 use puddle_api::LearnedService;
 use puddle_api::wire::LearnedHost;
 use puddle_proxy::{PassThrough, TerminationSource, Terminations};
-use puddle_types::{Host, WorkspaceName};
+use puddle_types::{Host, WorkspaceId};
 
 /// The learned list of every running workspace.
 pub(crate) struct HostLearned {
@@ -20,7 +20,7 @@ impl HostLearned {
         Self { terminations }
     }
 
-    fn list_of(&self, workspace: &WorkspaceName) -> Option<Arc<PassThrough>> {
+    fn list_of(&self, workspace: &WorkspaceId) -> Option<Arc<PassThrough>> {
         self.terminations
             .termination(workspace)
             .map(|t| Arc::clone(t.interception().learned()))
@@ -28,7 +28,7 @@ impl HostLearned {
 }
 
 impl LearnedService for HostLearned {
-    fn list(&self, workspace: &WorkspaceName) -> Vec<LearnedHost> {
+    fn list(&self, workspace: &WorkspaceId) -> Vec<LearnedHost> {
         self.list_of(workspace)
             .map(|list| {
                 list.list()
@@ -43,7 +43,7 @@ impl LearnedService for HostLearned {
             .unwrap_or_default()
     }
 
-    fn forget(&self, workspace: &WorkspaceName, host: &str) -> bool {
+    fn forget(&self, workspace: &WorkspaceId, host: &str) -> bool {
         let Ok(host) = Host::parse_normalised(host) else {
             return false;
         };
@@ -51,7 +51,7 @@ impl LearnedService for HostLearned {
             .is_some_and(|list| list.forget(&host))
     }
 
-    fn clear(&self, workspace: &WorkspaceName) -> usize {
+    fn clear(&self, workspace: &WorkspaceId) -> usize {
         self.list_of(workspace).map_or(0, |list| list.clear())
     }
 }

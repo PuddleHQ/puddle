@@ -20,7 +20,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_proxy::{Proxy, Route, Upstream};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
-use puddle_types::{NullSink, WorkspaceName};
+use puddle_types::{NullSink, WorkspaceId};
 use puddle_upstream::{
     BasicAuth, Chain, Config as DiscoveryConfig, Credentials, Discovery, FakeOs, Hop, OsProxy,
     ProxyAddr, ProxyAuth, ProxyConfig,
@@ -29,8 +29,8 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
-pub(crate) fn workspace() -> WorkspaceName {
-    WorkspaceName::new("e2e").unwrap()
+pub(crate) fn workspace() -> WorkspaceId {
+    WorkspaceId::new("e2e").unwrap()
 }
 
 pub(crate) struct Rig {

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_secrets::{Secret, SecretStore, StoredId};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize as _, Zeroizing};
@@ -74,7 +74,7 @@ pub(crate) struct Vault {
 }
 
 impl Vault {
-    pub(crate) fn new(store: Arc<dyn SecretStore>, workspace: &WorkspaceName) -> Self {
+    pub(crate) fn new(store: Arc<dyn SecretStore>, workspace: &WorkspaceId) -> Self {
         Self {
             store,
             workspace: workspace.to_string(),
@@ -165,8 +165,8 @@ mod tests {
     use super::*;
     use crate::profile::{CLAUDE, GITHUB};
 
-    fn workspace(name: &str) -> WorkspaceName {
-        WorkspaceName::new(name).unwrap()
+    fn workspace(name: &str) -> WorkspaceId {
+        WorkspaceId::new(name).unwrap()
     }
 
     fn vault(store: &Arc<MemoryStore>, name: &str) -> Vault {

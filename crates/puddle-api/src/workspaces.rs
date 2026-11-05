@@ -713,6 +713,15 @@ impl NewWorkspace {
         }
     }
 
+    /// The id the new workspace gets. Today it is the name; generated ids replace this.
+    ///
+    /// # Errors
+    ///
+    /// When the name is not a valid id (longer than [`WorkspaceId::MAX_LEN`]).
+    pub fn id(&self) -> Result<WorkspaceId, puddle_types::ValidationError> {
+        WorkspaceId::new(self.name.as_str())
+    }
+
     /// The entries the new workspace's list holds.
     #[must_use]
     pub fn entries(&self) -> Vec<Repository> {
@@ -731,7 +740,7 @@ pub trait GitSetup: Send + Sync {
     /// Sets up `repositories` of `workspace`, in order.
     fn set_up<'a>(
         &'a self,
-        workspace: &'a WorkspaceName,
+        workspace: &'a WorkspaceId,
         repositories: &'a [NewRepository],
     ) -> BoxFuture<'a, ()>;
 }
@@ -741,7 +750,7 @@ pub trait GitSetup: Send + Sync {
 pub struct NoGitSetup;
 
 impl GitSetup for NoGitSetup {
-    fn set_up<'a>(&'a self, _: &'a WorkspaceName, _: &'a [NewRepository]) -> BoxFuture<'a, ()> {
+    fn set_up<'a>(&'a self, _: &'a WorkspaceId, _: &'a [NewRepository]) -> BoxFuture<'a, ()> {
         Box::pin(async {})
     }
 }
@@ -1250,7 +1259,7 @@ pub trait Launcher: Send + Sync {
     /// Closes the workspace's editor windows the way a user would, because its guest is about to
     /// stop or go. Asks and returns: a window that is slow to close is not waited for. The default
     /// has no window.
-    fn close_browser<'a>(&'a self, _workspace: &'a WorkspaceName) -> BoxFuture<'a, ()> {
+    fn close_browser<'a>(&'a self, _workspace: &'a WorkspaceId) -> BoxFuture<'a, ()> {
         Box::pin(async {})
     }
 
@@ -1263,7 +1272,7 @@ pub trait Launcher: Send + Sync {
     /// still holds it).
     fn forget_browser<'a>(
         &'a self,
-        _workspace: &'a WorkspaceName,
+        _workspace: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async { Ok(()) })
     }
@@ -1603,10 +1612,15 @@ mod tests {
         futures_util::FutureExt::now_or_never(NoWindow.open_desktop(&record, &desktop))
             .unwrap()
             .unwrap();
-        futures_util::FutureExt::now_or_never(NoWindow.close_browser(&name)).unwrap();
-        futures_util::FutureExt::now_or_never(NoWindow.forget_browser(&name))
-            .unwrap()
-            .unwrap();
+        futures_util::FutureExt::now_or_never(
+            NoWindow.close_browser(&WorkspaceId::new("demo").unwrap()),
+        )
+        .unwrap();
+        futures_util::FutureExt::now_or_never(
+            NoWindow.forget_browser(&WorkspaceId::new("demo").unwrap()),
+        )
+        .unwrap()
+        .unwrap();
     }
 
     #[test]

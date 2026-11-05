@@ -140,6 +140,27 @@ impl SettingsRepo for FileSettings {
         Ok(())
     }
 
+    fn delete_workspace(&self, workspace: &WorkspaceId) -> Result<(), SettingsRepoError> {
+        let mut cache = self.cache();
+        // Both places, whatever the first one does: a copy left under the old name would be read
+        // again.
+        let mut failed = Vec::new();
+        for path in [self.workspace_path(workspace), self.legacy_path(workspace)] {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => failed.push(format!("cannot remove {}: {e}", path.display())),
+            }
+        }
+        if !failed.is_empty() {
+            // The cache may now disagree with the disk; the next read looks again.
+            cache.workspaces.remove(workspace);
+            return Err(SettingsRepoError::new(failed.join("; ")));
+        }
+        cache.workspaces.insert(workspace.clone(), None);
+        Ok(())
+    }
+
     fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
         let mut cache = self.cache();
         if cache.app_icon_read {
@@ -503,6 +524,59 @@ mod tests {
             again.load_global().unwrap(),
             Some(json!({"schema_version": 1}))
         );
+    }
+
+    #[test]
+    fn deleting_a_workspace_document_removes_both_copies_and_a_missing_one_is_fine() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = WorkspaceId::new("a").unwrap();
+        let repo = FileSettings::new(dir.path());
+        // Nothing stored: not an error.
+        repo.delete_workspace(&a).unwrap();
+        repo.save_workspace(&a, json!({"overrides": {"direct_ssh": true}}))
+            .unwrap();
+        let old = dir.path().join("sandboxes");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("a.json"), br#"{"overrides":{"cpus":2}}"#).unwrap();
+        repo.delete_workspace(&a).unwrap();
+        assert!(!dir.path().join("workspaces").join("a.json").exists());
+        assert!(!old.join("a.json").exists());
+        assert_eq!(repo.load_workspace(&a).unwrap(), None);
+        assert_eq!(
+            FileSettings::new(dir.path()).load_workspace(&a).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_workspace_document_that_cannot_be_removed_is_an_error_and_the_other_copy_still_goes() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = WorkspaceId::new("a").unwrap();
+        let repo = FileSettings::new(dir.path());
+        // A non-empty folder where the file belongs: removing it fails on every OS.
+        let blocked = dir.path().join("workspaces").join("a.json");
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::write(blocked.join("keep"), b"x").unwrap();
+        let old = dir.path().join("sandboxes");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("a.json"), b"{}").unwrap();
+        let err = repo.delete_workspace(&a).unwrap_err();
+        assert!(err.to_string().contains("a.json"), "{err}");
+        assert!(!old.join("a.json").exists());
+    }
+
+    #[test]
+    fn a_failed_delete_does_not_leave_the_cache_claiming_the_old_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = WorkspaceId::new("a").unwrap();
+        let repo = FileSettings::new(dir.path());
+        repo.save_workspace(&a, json!({"overrides": {}})).unwrap();
+        let blocked = dir.path().join("sandboxes").join("a.json");
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::write(blocked.join("keep"), b"x").unwrap();
+        repo.delete_workspace(&a).unwrap_err();
+        // The document is gone and the old copy cannot be read: the next load says so.
+        repo.load_workspace(&a).unwrap_err();
     }
 
     #[test]

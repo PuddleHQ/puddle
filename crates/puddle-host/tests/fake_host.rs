@@ -4603,6 +4603,66 @@ async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
     host.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_workspace_does_not_inherit_the_settings_of_a_deleted_one_of_the_same_name() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    let name = WorkspaceId::new("acme").unwrap();
+    assert!(host.workspaces().direct_ssh_allowed(&name));
+    let file = rig
+        .dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces")
+        .join("acme.json");
+    assert!(file.is_file());
+    stop_and_wait(&api, &mut events, "acme").await;
+    delete_and_wait(&api, &mut events, "acme").await;
+    assert!(!file.exists(), "a delete removes the settings file");
+    create(&api, &mut events, "acme").await;
+    let view = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(view["direct_ssh"], false, "{view}");
+    assert!(!host.workspaces().direct_ssh_allowed(&name));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    let file = rig
+        .dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces")
+        .join("acme.json");
+    make_unwritable(&file);
+    delete_and_wait(&api, &mut events, "acme").await;
+    let problem = problem_of(&host, "settings:acme");
+    assert!(problem.title.contains("acme"), "{problem:?}");
+    assert!(problem.detail.contains("settings"), "{problem:?}");
+    let list = api.get("/api/workspaces").await;
+    assert!(!list.body.contains("acme"), "{}", list.body);
+    // Once the file is dealt with, the next delete of that name withdraws the notice.
+    std::fs::remove_dir_all(&file).unwrap();
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    delete_and_wait(&api, &mut events, "acme").await;
+    assert!(!has_problem(&host, "settings:acme"));
+    host.shutdown().await;
+}
+
 /// A session the runtime cannot serve ends the client's `ssh` with nothing to read, so the user
 /// is told through the event stream.
 #[tokio::test(flavor = "multi_thread")]
@@ -5143,6 +5203,39 @@ async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the
     let reply = put_start_folder(&api, "acme", Some("api")).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let folder = attach().await;
+    assert_eq!(folder.path, "/workspaces/acme/api");
+    assert!(!folder.is_workspace_file);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_browser_editor_gets_the_same_place_to_open_as_the_desktop_one_with_the_server_already_running()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let open = || async { browser_target(&rig, &api, "acme").await.open.unwrap() };
+    let root = open().await;
+    assert_eq!(root.path, "/workspaces/acme");
+    assert!(!root.is_workspace_file);
+
+    // The workspace keeps running; two checkouts appear, and the attach alone brings the file.
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    rig.guest
+        .put_checkout("web", "https://example.org/acme/web.git");
+    let multi = open().await;
+    assert_eq!(
+        multi.path,
+        "/workspaces/acme/.puddle/editor/acme.code-workspace"
+    );
+    assert!(multi.is_workspace_file);
+
+    let reply = put_start_folder(&api, "acme", Some("api")).await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let folder = open().await;
     assert_eq!(folder.path, "/workspaces/acme/api");
     assert!(!folder.is_workspace_file);
     host.shutdown().await;
@@ -6342,7 +6435,7 @@ async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_
         Op::Start,
         Fault::once(puddle_compute::ComputeError::StartRefused {
             sandbox: name("beta").sandbox_name().to_string(),
-            cause: puddle_compute::StartRefusal::RootDiskOutsideFolder,
+            cause: puddle_compute::StartRefusal::RootDiskNeedsRecovery,
         }),
     );
     api.post("/api/workspaces/beta/start", "").await;
@@ -6356,7 +6449,7 @@ async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_
     );
     for want in [
         "nothing was attached",
-        "root-disk journal names a file outside its own folder",
+        "the runtime cannot verify its stored root disk after an upgrade",
         "create it again",
     ] {
         assert!(problem.detail.contains(want), "{problem:?}");
@@ -6939,6 +7032,55 @@ async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_re
         &host,
         "merge-left:acme:/root/.vscode-server/data/Machine/settings.json"
     ));
+    host.shutdown().await;
+}
+
+/// Waits until `has_problem(key)` is `want`; a plan rewrite in a running guest settles in the
+/// background.
+async fn problem_settles(host: &Host<FakeRuntime>, key: &str, want: bool) {
+    eventually(
+        &format!("{key} has problem is {want}"),
+        Duration::from_secs(10),
+        || has_problem(host, key) == want,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plan_rewrite_in_a_running_workspace_raises_and_ends_the_merge_notice() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let key = "merge-left:acme:/etc/ssh/ssh_config";
+    assert!(!has_problem(&host, key));
+
+    // A variable changed while it runs: the hook runs again, finds the file unreadable, and says so.
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: /etc/ssh/ssh_config left as it is: the file is not UTF-8\n".to_owned();
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/A_VAR",
+        json!({"kind": "plain", "value": "1"}),
+    )
+    .await;
+    problem_settles(&host, key, true).await;
+    let problem = problem_of(&host, key);
+    assert!(
+        problem.detail.contains("not UTF-8") && problem.detail.contains("Connection closed"),
+        "{}",
+        problem.detail
+    );
+
+    // The next rewrite finds it repaired: the notice ends without a restart.
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/A_VAR",
+        json!({"kind": "plain", "value": "2"}),
+    )
+    .await;
+    problem_settles(&host, key, false).await;
     host.shutdown().await;
 }
 

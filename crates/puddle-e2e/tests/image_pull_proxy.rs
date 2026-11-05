@@ -374,7 +374,7 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
 
     let (root, tls) = lab::lab_pki();
     let tls = Arc::new(tls);
-    let home = tempfile::tempdir().unwrap();
+    let home = puddle_test_kit::private_tempdir();
     let seen = Arc::new(Seen::default());
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

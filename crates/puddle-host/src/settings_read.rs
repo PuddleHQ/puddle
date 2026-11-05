@@ -61,6 +61,9 @@ mod tests {
         fn save_workspace(&self, _: &WorkspaceId, _: Value) -> Result<(), SettingsRepoError> {
             Ok(())
         }
+        fn delete_workspace(&self, _: &WorkspaceId) -> Result<(), SettingsRepoError> {
+            Ok(())
+        }
         fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
             Ok(None)
         }
@@ -83,6 +86,7 @@ mod tests {
         assert_eq!(Unreadable.load_app_icon().unwrap(), None);
         Unreadable.save_app_icon(b"x").unwrap();
         Unreadable.delete_app_icon().unwrap();
+        Unreadable.delete_workspace(&a()).unwrap();
     }
 
     #[test]

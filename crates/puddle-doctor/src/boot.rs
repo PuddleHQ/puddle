@@ -135,7 +135,7 @@ pub fn test_boot(
         };
     };
     let start = Instant::now();
-    let work = match tempfile::Builder::new().prefix("puddle-doctor-").tempdir() {
+    let work = match work_dir() {
         Ok(dir) => dir,
         Err(e) => {
             return BootFacts::SetupFailed {
@@ -173,6 +173,20 @@ pub fn test_boot(
         .filter(|_| !booted)
         .map(|dir| keep_boot_logs(layout.home(), dir));
     BootFacts::Ran { outcome, kept_logs }
+}
+
+/// The throwaway folder that holds the test boot's msb home and root file system. It is
+/// owner-only whatever the umask: msb refuses a catalog with an ancestor that other accounts
+/// can write to, and a umask of `0002` would otherwise leave this folder group-writable.
+fn work_dir() -> std::io::Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("puddle-doctor-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    builder.tempdir()
 }
 
 /// Copies the test sandbox's log files from msb `home` to a new folder in `dir`. Keeping is best
@@ -482,6 +496,15 @@ mod tests {
         assert_eq!(names.len(), KEPT_BOOT_LOGS, "{names:?}");
         assert!(!kept_dir(&kept[0]).exists());
         assert!(kept_dir(&kept[3]).join("logs/runtime.log").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_test_boot_folder_is_owner_only_so_msb_accepts_it_as_a_catalog_ancestor() {
+        use std::os::unix::fs::PermissionsExt;
+        let work = work_dir().unwrap();
+        let mode = std::fs::metadata(work.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o700, "{}", work.path().display());
     }
 
     #[cfg(unix)]

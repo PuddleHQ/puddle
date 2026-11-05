@@ -282,7 +282,7 @@ async fn lab(cuts: usize, cut_after: usize) -> Lab {
         .with_resolver(Arc::new(lab::LabResolver(addr)));
     let proxy_url = proxy.proxy_url().expose().to_owned();
     let route = proxy.serve().unwrap();
-    let home = tempfile::tempdir().unwrap();
+    let home = puddle_test_kit::private_tempdir();
     // Pulling needs no msb binary: the paths only go into msb's config.json.
     let config = MsbConfig::new(
         home.path().join("msb-home"),

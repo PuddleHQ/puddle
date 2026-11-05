@@ -602,6 +602,26 @@ async fn the_editor_gets_the_request_without_hop_by_hop_headers_and_with_the_hos
 }
 
 #[tokio::test]
+async fn the_window_s_start_address_reaches_the_editor_with_its_query_as_the_shell_built_it() {
+    let rig = rig().await;
+    let a = Server::start("alpha").await;
+    rig.running.start("a", Some(a.addr), Flavour::CodeServer);
+    let h = host(&rig, "a");
+    for target in [
+        "/?workspace=%2Fworkspaces%2Fa%2F.puddle%2Feditor%2Fa.code-workspace",
+        "/?folder=%2Fworkspaces%2Fa%2Fapi",
+    ] {
+        let answer = ask(&rig.front, &get(&rig, &h, target, "")).await;
+        assert_eq!(answer.status, 200);
+        let head = a.seen.heads.lock().unwrap().last().cloned().unwrap();
+        assert!(
+            head.starts_with(&format!("GET {target} HTTP/1.1")),
+            "{head}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn every_answer_carries_the_frame_headers_next_to_the_servers_own_policy() {
     let rig = rig().await;
     let a = Server::start("alpha").await;

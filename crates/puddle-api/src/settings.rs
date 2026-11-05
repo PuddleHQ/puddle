@@ -44,6 +44,14 @@ pub trait SettingsRepo: Send + Sync {
         document: Value,
     ) -> Result<(), SettingsRepoError>;
 
+    /// Removes one workspace's document (and a copy under the old folder name). A workspace
+    /// with none is not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`SettingsRepoError`] if a document exists and cannot be removed.
+    fn delete_workspace(&self, workspace: &WorkspaceId) -> Result<(), SettingsRepoError>;
+
     /// The user's own app icon (a PNG made by `puddle-appicon`), or `None` if none was given.
     ///
     /// # Errors
@@ -126,6 +134,14 @@ impl SettingsRepo for MemorySettings {
         Ok(())
     }
 
+    fn delete_workspace(&self, workspace: &WorkspaceId) -> Result<(), SettingsRepoError> {
+        self.workspaces
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(workspace);
+        Ok(())
+    }
+
     fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
         Ok(self
             .app_icon
@@ -167,6 +183,13 @@ mod tests {
             repo.load_workspace(&a).unwrap(),
             Some(json!({"overrides": {}}))
         );
+        let b = WorkspaceId::new("b").unwrap();
+        repo.save_workspace(&b, json!({"overrides": {"cpus": 2}}))
+            .unwrap();
+        repo.delete_workspace(&a).unwrap();
+        repo.delete_workspace(&a).unwrap();
+        assert_eq!(repo.load_workspace(&a).unwrap(), None);
+        assert!(repo.load_workspace(&b).unwrap().is_some());
         assert_eq!(repo.load_app_icon().unwrap(), None);
         repo.save_app_icon(b"png").unwrap();
         assert_eq!(repo.load_app_icon().unwrap(), Some(b"png".to_vec()));

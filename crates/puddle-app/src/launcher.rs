@@ -125,7 +125,9 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
             };
             // Building a window waits for the window system: not on an async worker.
             let (windows, app) = (windows.clone(), self.app.clone());
-            let built = tokio::task::spawn_blocking(move || windows.open(&app, &window));
+            let open = target.open.clone();
+            let built =
+                tokio::task::spawn_blocking(move || windows.open_at(&app, &window, open.as_ref()));
             built
                 .await
                 .map_err(not_opened)?
@@ -185,6 +187,7 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
 
 #[cfg(test)]
 mod tests {
+    use puddle_api::OpenTarget;
     use std::net::SocketAddr;
     use std::sync::{Arc, Mutex};
 
@@ -276,6 +279,7 @@ mod tests {
                 None::<&puddle_settings::WorkspaceSettings>,
             ),
             login,
+            open: None,
         }
     }
 
@@ -314,6 +318,76 @@ mod tests {
             .unwrap();
         assert_eq!(app.webview_windows().len(), 1);
         assert_eq!(logins.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_browser_attach_opens_the_multi_root_file_or_the_start_folder_the_target_names() {
+        let cases = [
+            (
+                OpenTarget {
+                    path: "/workspaces/w/.puddle/editor/w.code-workspace".into(),
+                    is_workspace_file: true,
+                },
+                "/?workspace=%2Fworkspaces%2Fw%2F.puddle%2Feditor%2Fw.code-workspace",
+            ),
+            (
+                OpenTarget {
+                    path: "/workspaces/w/api".into(),
+                    is_workspace_file: false,
+                },
+                "/?folder=%2Fworkspaces%2Fw%2Fapi",
+            ),
+        ];
+        for (open, expected) in cases {
+            let app = tauri::test::mock_app();
+            let data = tempfile::tempdir().unwrap();
+            let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
+            launcher.install(windows());
+            let mut target = target("127.0.0.1:1".parse().unwrap(), None);
+            target.open = Some(open);
+
+            launcher
+                .open_browser(&record("demo"), &target)
+                .await
+                .unwrap();
+
+            let window = app.get_webview_window("vs-demo").unwrap();
+            assert_eq!(
+                window.url().unwrap().as_str(),
+                format!("{}{expected}", target.origin)
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_signed_in_browser_attach_navigates_to_the_place_after_the_cookie() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let launcher = AppLauncher::new(app.handle().clone(), data.path().join("webview"));
+        launcher.install(windows());
+        let secret = password("right");
+        let (addr, _logins) = front(&secret).await;
+        let mut target = target(addr, Some(EditorSignIn::Form(Arc::new(Password(secret)))));
+        target.open = Some(OpenTarget {
+            path: "/workspaces/w/.puddle/editor/w.code-workspace".into(),
+            is_workspace_file: true,
+        });
+
+        launcher
+            .open_browser(&record("demo"), &target)
+            .await
+            .unwrap();
+
+        let url = app
+            .get_webview_window("vs-demo")
+            .unwrap()
+            .url()
+            .unwrap()
+            .to_string();
+        assert!(
+            url.starts_with(&format!("{}/?workspace=", target.origin)),
+            "{url}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

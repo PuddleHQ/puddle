@@ -30,6 +30,7 @@ use puddle_types::HttpRequestLine;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Notify;
 use tokio::time::Instant;
+use zeroize::Zeroizing;
 
 use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
 use super::guest::{ALPN_H2, ALPN_HTTP11};
@@ -517,16 +518,17 @@ async fn exchange(
     let checked = check(&request, &cx.target).inspect_err(|refusal| {
         tracing::info!(host = %cx.target.host, status = %refusal.status, "terminated request refused: {}", refusal.message);
     })?;
+    let shown = cx.termination.stand_ins().redact_target(&checked.path);
     {
         let mut outcome = shared
             .outcome
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if outcome.http.is_none() {
-            outcome.http = Some(HttpRequestLine::new(checked.method.as_str(), &checked.path));
+            outcome.http = Some(HttpRequestLine::new(checked.method.as_str(), &shown));
         }
     }
-    tracing::debug!(host = %cx.target.host, method = %checked.method, path = %puddle_types::request_path(&checked.path), "terminated request (h2)");
+    tracing::debug!(host = %cx.target.host, method = %checked.method, path = %puddle_types::request_path(&shown), "terminated request (h2)");
     refuse_by_rule(shared, &checked, request.headers())?;
     if let Some(protocol) = &checked.protocol
         && protocol.as_str() != "websocket"
@@ -570,10 +572,13 @@ async fn exchange(
     let mut headers =
         request::upstream_headers_h2(request.headers(), &cx.target, injection.as_ref(), version)?;
     record_injection(shared, injection.as_ref());
-    swap_stand_ins(shared, &mut headers, &checked.path, injection.as_ref());
+    let swapped_path = swap_stand_ins(shared, &mut headers, &checked.path, injection.as_ref());
+    let path = swapped_path
+        .as_ref()
+        .map_or(checked.path.as_str(), |path| path.as_str());
     if checked.protocol.is_some() {
         let guest_upgrade = hyper::upgrade::on(&mut request);
-        return websocket(shared, guest_upgrade, &checked, route, headers, guard).await;
+        return websocket(shared, guest_upgrade, &checked, path, route, headers, guard).await;
     }
     let (mut exchange, prefetched) =
         match begin_exchange(shared, &checked, &mut request, &mut headers, prefetched).await {
@@ -588,13 +593,15 @@ async fn exchange(
     let sent = Arc::new(Sent::default());
     let (_, body) = request.into_parts();
     let body = request_body(body, prefetched, injection.as_ref(), &activity, &sent);
-    let upstream_request =
-        build_request(cx, version, checked.method, &checked.path, headers, body)?;
+    let upstream_request = build_request(cx, version, checked.method, path, headers, body)?;
     let response = send(shared, &mut route, upstream_request, &sent).await?;
     if let Some(refusal) = unauthorized_answer(shared, &response, unauthorized.as_ref()) {
         return Err(refusal);
     }
-    let response = read_exchange_answer(shared, exchange.as_mut(), response).await?;
+    let mut response = read_exchange_answer(shared, exchange.as_mut(), response).await?;
+    cx.termination
+        .stand_ins()
+        .hide_in_answer(response.headers_mut(), &cx.target.host);
     let lease = match route {
         Route::H1(lease) => Some(lease),
         Route::H2(_) => None,
@@ -731,7 +738,14 @@ fn refuse_by_rule(shared: &Shared, checked: &Checked, headers: &HeaderMap) -> Re
         .refused_by_rule
         .get_or_insert_with(|| Refused {
             rule,
-            line: HttpRequestLine::new(checked.method.as_str(), &checked.path),
+            line: HttpRequestLine::new(
+                checked.method.as_str(),
+                &shared
+                    .cx
+                    .termination
+                    .stand_ins()
+                    .redact_target(&checked.path),
+            ),
         });
     Err(request_rules::refusal(
         rule,
@@ -974,6 +988,7 @@ async fn websocket(
     shared: &Arc<Shared>,
     guest_upgrade: hyper::upgrade::OnUpgrade,
     checked: &Checked,
+    path: &str,
     mut route: Route,
     mut headers: HeaderMap,
     guard: StreamGuard,
@@ -1001,7 +1016,7 @@ async fn websocket(
     let empty: UpBody = http_body_util::Empty::<Bytes>::new()
         .map_err(|never| match never {})
         .boxed_unsync();
-    let mut upstream_request = build_request(cx, version, method, &checked.path, headers, empty)?;
+    let mut upstream_request = build_request(cx, version, method, path, headers, empty)?;
     if version == UpstreamVersion::H2
         && let Some(protocol) = &checked.protocol
     {
@@ -1020,6 +1035,10 @@ async fn websocket(
     };
     if !agreed {
         // The server said no: its answer goes to the guest as any other.
+        let mut response = response;
+        cx.termination
+            .stand_ins()
+            .hide_in_answer(response.headers_mut(), &cx.target.host);
         let sent = Arc::new(Sent::default());
         sent.finish();
         return Ok(guest_response(
@@ -1075,28 +1094,29 @@ fn no_random_bytes() -> Refusal {
     Refusal::new("502 Bad Gateway", "no random bytes for the WebSocket key")
 }
 
-/// Swaps the workspace's stand-ins in `headers` for their real values, as the HTTP/1.1 path does
-/// (the injected headers are left alone), reports the ones in the request `target`, and notes
-/// both for the audit.
+/// Swaps the workspace's stand-ins in `headers` (the injected headers are left alone) and in the
+/// request `target` for their real values, as the HTTP/1.1 path does, and notes both for the
+/// audit. The target to send when one was swapped in it.
 fn swap_stand_ins(
     shared: &Shared,
     headers: &mut HeaderMap,
     target: &str,
     injection: Option<&Injection>,
-) {
+) -> Option<Zeroizing<String>> {
     let host = &shared.cx.target.host;
     let swapped = shared
         .cx
         .termination
         .stand_ins()
         .swap(headers, host, injection);
-    let in_target = shared.cx.termination.stand_ins().scan_target(target);
+    let (target, in_target) = shared.cx.termination.stand_ins().swap_target(target, host);
     let mut outcome = shared
         .outcome
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     outcome.record_stand_ins(host, &swapped);
     outcome.record_stand_ins(host, &in_target);
+    target
 }
 
 fn record_injection(shared: &Shared, injection: Option<&Injection>) {

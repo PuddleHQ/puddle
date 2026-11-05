@@ -116,6 +116,11 @@ exclude_re = [
     'puddle-fs/src/allocated\.rs:44:33: replace != with == in allocated_bytes',
     'puddle-fs/src/allocated\.rs:48:25: replace << with >> in allocated_bytes',
     'puddle-fs/src/allocated\.rs:48:32: replace \| with [&^] in allocated_bytes',
+    # Not measured: the Windows `free_bytes_of` is `#[cfg(windows)]`, so a Linux run never compiles it and
+    # every change to it passes; the Windows test job runs its test. The Unix one (line 30) has the same
+    # name and is measured and caught, so each entry holds the position of one mutant of the Windows body.
+    'puddle-fs/src/free\.rs:40:5: replace free_bytes_of ',
+    'puddle-fs/src/free\.rs:55:11: replace == with != in free_bytes_of',
     # `high << 4 | low` style join again: in `tlv` the length bytes are folded with `(acc << 8) | byte`,
     # and `acc << 8` has its low eight bits clear, so `|` and `^` give the same length for every input.
     'der\.rs:\d+:\d+: replace \| with \^ in tlv',

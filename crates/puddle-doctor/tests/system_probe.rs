@@ -13,7 +13,8 @@ use std::time::Duration;
 use object::write::{Object, StandardSection};
 use object::{Architecture, BinaryFormat, Endianness, SectionKind};
 use puddle_doctor::{
-    CheckId, Finding, Options, Probe, ProcessOutcome, RuntimeState, Status, SystemProbe, diagnose,
+    CheckId, DiskFacts, Finding, Options, Probe, ProcessOutcome, RuntimeState, Status, SystemProbe,
+    diagnose,
 };
 use puddle_runtime::{
     DevOverride, LIBKRUNFW_FILE_NAME, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeError, RuntimeVersion,
@@ -60,6 +61,7 @@ fn no_boot() -> Options {
         boot: false,
         launch_limit: Duration::from_secs(10),
         budget: Duration::from_secs(28),
+        ..Options::default()
     }
 }
 
@@ -221,4 +223,40 @@ fn boot_uses_the_probes_runtime_folder() {
         };
         assert_eq!(os_error, Some(2));
     }
+}
+
+#[test]
+fn the_real_probe_measures_the_drive_of_the_data_folder_even_before_the_folder_exists() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("not-yet").join("puddle");
+    let probe = SystemProbe::new(root.path().join("runtime"), expected(), DevOverride::none())
+        .with_data_dir(&data);
+    let DiskFacts::Read { dir, free_bytes } = probe.disk_space() else {
+        panic!("a temp folder's drive can be measured");
+    };
+    assert_eq!(dir, data);
+    assert!(free_bytes > 0);
+    let report = diagnose(&probe, &no_boot(), "0.1.0");
+    let disk = report.check(CheckId::DiskSpace).unwrap();
+    assert!(
+        disk.summary
+            .contains("free on the drive that holds Puddle's data"),
+        "{disk:?}"
+    );
+}
+
+#[test]
+fn a_probe_without_a_data_folder_has_nothing_to_measure() {
+    let probe = SystemProbe::new("runtime".into(), expected(), DevOverride::none());
+    assert_eq!(probe.disk_space(), DiskFacts::NoFolder);
+}
+
+#[test]
+fn a_data_folder_the_os_cannot_measure_is_unreadable_not_a_failure() {
+    let probe =
+        SystemProbe::new("runtime".into(), expected(), DevOverride::none()).with_data_dir("");
+    let DiskFacts::Unreadable { detail, .. } = probe.disk_space() else {
+        panic!("an empty path has no drive");
+    };
+    assert!(detail.contains("do not exist"), "{detail}");
 }

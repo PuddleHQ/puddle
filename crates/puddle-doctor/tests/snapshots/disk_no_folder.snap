@@ -1,0 +1,52 @@
+puddle doctor (puddle 0.1.0, linux x86_64)
+
+ok    CPU virtualization  on (the hypervisor uses it)
+ok    Hypervisor          /dev/kvm is usable
+ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
+ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot           a test VM booted and ran a program in 1.1 s
+skip  Disk space          not checked: Puddle's data folder could not be found
+
+No problems found. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "linux",
+  "arch": "x86_64",
+  "ok": true,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "/dev/kvm is usable"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "ok",
+      "summary": "a test VM booted and ran a program in 1.1 s"
+    },
+    {
+      "id": "disk_space",
+      "status": "skipped",
+      "summary": "not checked: Puddle's data folder could not be found"
+    }
+  ],
+  "elapsed_ms": 1234
+}

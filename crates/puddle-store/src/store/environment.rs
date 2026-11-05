@@ -12,11 +12,11 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use super::{Store, lock, sql_ts};
 use crate::environment::{
     EnvChange, EnvDraft, EnvEntry, EnvName, EnvRow, EnvScope, EnvSecret, EnvValue,
-    MAX_ENTRIES_PER_SCOPE, MAX_SCOPE_BYTES, SecretHost, StartValue, StartVar,
+    MAX_ENTRIES_PER_SCOPE, MAX_SCOPE_BYTES, SecretHost, SecretPlace, StartValue, StartVar,
 };
 use crate::error::StoreError;
 
-const COLUMNS: &str = "id, workspace_id, name, kind, value, secret_id, hosts, changed_at";
+const COLUMNS: &str = "id, workspace_id, name, kind, value, secret_id, hosts, changed_at, place";
 
 /// The same scope in SQL: the global scope is a NULL workspace, which an expression index and the
 /// `ifnull` make comparable.
@@ -31,6 +31,7 @@ struct Raw {
     secret_id: Option<String>,
     hosts: Option<String>,
     changed_at: i64,
+    place: Option<String>,
 }
 
 fn raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<Raw> {
@@ -43,6 +44,7 @@ fn raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<Raw> {
         secret_id: row.get(5)?,
         hosts: row.get(6)?,
         changed_at: row.get(7)?,
+        place: row.get(8)?,
     })
 }
 
@@ -65,7 +67,9 @@ fn entry_of(raw: Raw) -> Result<EnvEntry, StoreError> {
             let id = StoredId::new(id).map_err(|e| corrupt(e.to_string()))?;
             let hosts: Vec<SecretHost> =
                 serde_json::from_str(&hosts).map_err(|e| corrupt(e.to_string()))?;
-            EnvValue::Secret(EnvSecret { id, hosts })
+            let place = SecretPlace::from_column(raw.place.as_deref())
+                .map_err(|e| corrupt(e.to_string()))?;
+            EnvValue::Secret(EnvSecret { id, hosts, place })
         }
         (kind, ..) => return Err(corrupt(format!("a {kind} variable of the wrong shape"))),
     };
@@ -201,11 +205,15 @@ impl Store {
         self.change(|tx, now, fx| {
             let before = list(tx, scope)?;
             let replaced = before.iter().find(|e| &e.name == name).cloned();
-            let (kind, value, secret_id, hosts) = match draft {
-                EnvDraft::Plain(value) => ("plain", Some(value), None, None),
-                EnvDraft::Secret { id, hosts } => {
-                    ("secret", None, Some(id), Some(hosts_json(&hosts)?))
-                }
+            let (kind, value, secret_id, hosts, place) = match draft {
+                EnvDraft::Plain(value) => ("plain", Some(value), None, None, None),
+                EnvDraft::Secret { id, hosts, place } => (
+                    "secret",
+                    None,
+                    Some(id),
+                    Some(hosts_json(&hosts)?),
+                    place.column(),
+                ),
             };
             let (value, secret_id) = (value.as_deref(), secret_id.as_ref().map(StoredId::as_str));
             let others: Vec<EnvEntry> = before
@@ -227,9 +235,9 @@ impl Store {
             }
             let id = if let Some(old) = &replaced {
                 tx.execute(
-                    "UPDATE env_vars SET kind = ?2, value = ?3, secret_id = ?4, hosts = ?5, changed_at = ?6
-                     WHERE id = ?1",
-                    params![old.id, kind, value, secret_id, hosts, sql_ts(now)],
+                    "UPDATE env_vars SET kind = ?2, value = ?3, secret_id = ?4, hosts = ?5, changed_at = ?6,
+                     place = ?7 WHERE id = ?1",
+                    params![old.id, kind, value, secret_id, hosts, sql_ts(now), place],
                 )?;
                 if kind == "plain" {
                     tx.execute("DELETE FROM env_stand_ins WHERE env_id = ?1", [old.id])?;
@@ -237,8 +245,8 @@ impl Store {
                 old.id
             } else {
                 tx.execute(
-                    "INSERT INTO env_vars (workspace_id, name, kind, value, secret_id, hosts, changed_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO env_vars (workspace_id, name, kind, value, secret_id, hosts, changed_at, place)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         scope.column(),
                         name.as_str(),
@@ -246,7 +254,8 @@ impl Store {
                         value,
                         secret_id,
                         hosts,
-                        sql_ts(now)
+                        sql_ts(now),
+                        place
                     ],
                 )?;
                 tx.last_insert_rowid()
@@ -301,10 +310,11 @@ impl Store {
                 .map(|entry| {
                     let value = match entry.value {
                         EnvValue::Plain(value) => StartValue::Plain(value),
-                        EnvValue::Secret(EnvSecret { id, hosts }) => StartValue::Secret {
+                        EnvValue::Secret(EnvSecret { id, hosts, place }) => StartValue::Secret {
                             stand_in: stand_in(tx, workspace, entry.id, &entry.name, mint)?,
                             id,
                             hosts,
+                            place,
                         },
                     };
                     Ok(StartVar {
@@ -542,6 +552,79 @@ mod tests {
             })
             .unwrap();
         assert_eq!((value, secret_id.as_deref()), (None, Some("env-1")));
+    }
+
+    #[test]
+    fn a_secret_keeps_its_place_changes_it_and_a_workspace_starts_with_it() {
+        let store = store();
+        let scope = EnvScope::Workspace(ws("shop"));
+        let draft = |place: SecretPlace| {
+            EnvDraft::secret_in(
+                StoredId::new("env-1").unwrap(),
+                vec![SecretHost::new("api.openweathermap.org").unwrap()],
+                place,
+            )
+            .unwrap()
+        };
+        let appid = SecretPlace::query("appid").unwrap();
+        let made = store
+            .set_env(&scope, &name("OWM_KEY"), draft(appid.clone()))
+            .unwrap();
+        assert_eq!(made.entry.value.as_secret().unwrap().place, appid);
+        assert!(matches!(
+            &start(&store, "shop")[0].value,
+            StartValue::Secret { place, .. } if *place == appid
+        ));
+        let column = |store: &Store| -> Option<String> {
+            lock(&store.conn)
+                .query_row("SELECT place FROM env_vars", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(column(&store).as_deref(), Some("query:appid"));
+
+        for place in [SecretPlace::Path, SecretPlace::Header] {
+            store
+                .set_env(&scope, &name("OWM_KEY"), draft(place.clone()))
+                .unwrap();
+            let entry = store.env_entry(&scope, &name("OWM_KEY")).unwrap().unwrap();
+            assert_eq!(entry.value.as_secret().unwrap().place, place);
+        }
+        assert_eq!(column(&store), None, "header values: no place stored");
+
+        // A secret that becomes plain loses its place; the database refuses a plain one with one.
+        store
+            .set_env(&scope, &name("OWM_KEY"), draft(SecretPlace::Path))
+            .unwrap();
+        store.set_env(&scope, &name("OWM_KEY"), plain("x")).unwrap();
+        assert_eq!(column(&store), None);
+        let refused = lock(&store.conn).execute("UPDATE env_vars SET place = 'path'", []);
+        assert!(refused.is_err(), "a plain variable has no place");
+    }
+
+    #[test]
+    fn a_damaged_place_is_reported_as_corrupt() {
+        let store = store();
+        store
+            .set_env(
+                &EnvScope::Global,
+                &name("T"),
+                secret("env-1", &["api.example.com"]),
+            )
+            .unwrap();
+        lock(&store.conn)
+            .execute("UPDATE env_vars SET place = 'query:a&b'", [])
+            .unwrap();
+        let err = store.env_entries(&EnvScope::Global).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                StoreError::Corrupt {
+                    table: "env_vars",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]

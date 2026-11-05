@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use puddle_doctor::{
-    AccessDenied, BootFacts, CheckId, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, Finding,
-    GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe,
+    AccessDenied, BootFacts, CheckId, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, DiskFacts,
+    Finding, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe,
     ProcessOutcome, Report, RuntimeFacts, RuntimeState, Status, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
@@ -23,6 +23,7 @@ use puddle_runtime::RuntimeError;
 const DIR: &str = r"C:\Users\dev\AppData\Local\Programs\puddle\runtime";
 const MSB: &str = r"C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe";
 /// The runtime folder of the non-Windows machines (a Linux package puts it next to the program).
+const DATA: &str = "/home/dev/.local/share/puddle";
 const UNIX_DIR: &str = "/opt/puddle/runtime";
 const UNIX_MSB: &str = "/opt/puddle/runtime/msb";
 const EXPECTED: &str = "0.7.7-puddle.2";
@@ -38,6 +39,7 @@ struct Fake {
     boot: BootFacts,
     job: Option<JobFacts>,
     gsa: Option<GsaFacts>,
+    disk: DiskFacts,
     data_path: Option<DataPathFacts>,
     launches: Cell<u32>,
     boots: Cell<u32>,
@@ -63,6 +65,18 @@ fn status(code: u32) -> i32 {
     i32::from_ne_bytes(code.to_ne_bytes())
 }
 
+/// A data folder whose drive has `gb` GB (1024 x 1024 x 1024 bytes) free.
+fn disk_with_gb(gb: u64) -> DiskFacts {
+    disk_with_bytes(gb * 1024 * 1024 * 1024)
+}
+
+fn disk_with_bytes(free_bytes: u64) -> DiskFacts {
+    DiskFacts::Read {
+        dir: PathBuf::from(DATA),
+        free_bytes,
+    }
+}
+
 /// A healthy Windows workstation.
 fn windows() -> Fake {
     Fake {
@@ -86,6 +100,7 @@ fn windows() -> Fake {
         boot: booted(),
         job: None,
         gsa: Some(GsaFacts::NotInstalled),
+        disk: disk_with_gb(120),
         data_path: None,
         launches: Cell::new(0),
         boots: Cell::new(0),
@@ -147,6 +162,9 @@ impl Probe for Fake {
     }
     fn global_secure_access(&self) -> Option<GsaFacts> {
         self.gsa.clone()
+    }
+    fn disk_space(&self) -> DiskFacts {
+        self.disk.clone()
     }
     fn data_path(&self) -> Option<DataPathFacts> {
         self.data_path.clone()
@@ -1121,9 +1139,106 @@ fn json_schema_is_versioned_and_stable() {
             "runtime",
             "launch",
             "test_boot",
+            "disk_space",
             "global_secure_access"
         ]
     );
+}
+
+const GB: u64 = 1024 * 1024 * 1024;
+
+fn disk_check(name: &str, disk: DiskFacts, expected: Option<Finding>) -> Report {
+    let fake = Fake { disk, ..linux() };
+    check(name, &fake, CheckId::DiskSpace, expected)
+}
+
+#[test]
+fn disk_with_room_is_ok() {
+    let r = disk_check("disk_ok", disk_with_gb(37), None);
+    assert!(r.ok);
+    assert_eq!(r.check(CheckId::DiskSpace).unwrap().status, Status::Ok);
+}
+
+#[test]
+fn disk_under_the_warning_line_warns_without_failing_the_report() {
+    let r = disk_check("disk_low", disk_with_gb(12), Some(Finding::DiskSpaceLow));
+    assert!(r.ok, "a warning doesn't fail the report");
+    assert_eq!(r.check(CheckId::DiskSpace).unwrap().status, Status::Warn);
+}
+
+#[test]
+fn disk_under_the_failure_line_fails_the_report() {
+    let r = disk_check(
+        "disk_critical",
+        disk_with_gb(3),
+        Some(Finding::DiskSpaceCritical),
+    );
+    assert!(!r.ok);
+    assert_eq!(r.check(CheckId::DiskSpace).unwrap().status, Status::Fail);
+}
+
+#[test]
+fn each_line_is_crossed_one_byte_under_it() {
+    let at = |free| {
+        run(
+            &Fake {
+                disk: disk_with_bytes(free),
+                ..linux()
+            },
+            &Options::default(),
+        )
+    };
+    let status = |r: &Report| r.check(CheckId::DiskSpace).unwrap().status;
+    assert_eq!(status(&at(20 * GB)), Status::Ok);
+    assert_eq!(status(&at(20 * GB - 1)), Status::Warn);
+    assert_eq!(status(&at(5 * GB)), Status::Warn);
+    assert_eq!(status(&at(5 * GB - 1)), Status::Fail);
+    assert_eq!(status(&at(0)), Status::Fail);
+}
+
+#[test]
+fn the_lines_come_from_the_options() {
+    let options = Options {
+        disk_warn_below: 50 * GB,
+        disk_fail_below: 40 * GB,
+        ..Options::default()
+    };
+    let at = |gb| {
+        run(
+            &Fake {
+                disk: disk_with_gb(gb),
+                ..linux()
+            },
+            &options,
+        )
+        .check(CheckId::DiskSpace)
+        .unwrap()
+        .status
+    };
+    assert_eq!(at(60), Status::Ok);
+    assert_eq!(at(45), Status::Warn);
+    assert_eq!(at(39), Status::Fail);
+}
+
+#[test]
+fn disk_that_cannot_be_read_is_an_info_line_with_the_os_error() {
+    let r = disk_check(
+        "disk_unreadable",
+        DiskFacts::Unreadable {
+            dir: PathBuf::from(DATA),
+            detail: "Permission denied (os error 13)".into(),
+        },
+        Some(Finding::DiskSpaceUnreadable),
+    );
+    assert!(r.ok);
+    assert_eq!(r.check(CheckId::DiskSpace).unwrap().status, Status::Info);
+}
+
+#[test]
+fn without_a_data_folder_the_disk_check_is_skipped() {
+    let r = disk_check("disk_no_folder", DiskFacts::NoFolder, None);
+    assert!(r.ok);
+    assert_eq!(r.check(CheckId::DiskSpace).unwrap().status, Status::Skipped);
 }
 
 fn folder(path: &str, mode: u32, owned: bool) -> WritableFolder {

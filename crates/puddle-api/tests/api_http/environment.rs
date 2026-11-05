@@ -323,6 +323,75 @@ async fn a_secret_keeps_its_value_when_only_its_hosts_change_and_a_new_one_needs
 }
 
 #[tokio::test]
+async fn a_secret_is_swapped_in_headers_unless_it_names_a_query_parameter_or_the_path() {
+    let api = start().await;
+    let made = put(
+        &api,
+        "/api/env/T",
+        &secret(Some(canary()), &["api.example.com"]),
+    )
+    .await;
+    assert_eq!(made.status, 200, "{}", made.body);
+    assert_eq!(made.json()["place"], json!({"in": "header"}));
+    let plain_one = put(&api, "/api/env/P", &plain("x")).await.json();
+    assert_eq!(plain_one["place"], Value::Null);
+
+    for place in [
+        json!({"in": "query", "name": "appid"}),
+        json!({"in": "path"}),
+        json!({"in": "header"}),
+    ] {
+        let body = json!({"kind": "secret", "hosts": ["api.example.com"], "place": place});
+        let moved = put(&api, "/api/env/T", &body).await;
+        assert_eq!(moved.status, 200, "{}", moved.body);
+        assert_eq!(moved.json()["place"], place);
+        let listed = api.get("/api/env").await.json();
+        let row = listed["variables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["name"] == "T")
+            .unwrap()
+            .clone();
+        assert_eq!(row["place"], place);
+    }
+
+    for (place, why) in [
+        (
+            json!({"in": "query", "name": "a&b"}),
+            "query parameter name",
+        ),
+        (json!({"in": "query", "name": ""}), "query parameter name"),
+        (json!({"in": "query"}), "name"),
+        (json!({"in": "body"}), "body"),
+        (json!({"in": "path", "name": "x"}), "name"),
+    ] {
+        let body = json!({"kind": "secret", "hosts": ["api.example.com"], "place": place});
+        let refused = put(&api, "/api/env/T", &body).await;
+        assert!(
+            refused.status == 400 || refused.status == 422,
+            "{place}: {} {}",
+            refused.status,
+            refused.body
+        );
+        assert!(refused.body.contains(why), "{place}: {}", refused.body);
+        assert!(!refused.body.contains(canary()));
+    }
+    // A refused place changes nothing.
+    let kept = put(&api, "/api/env/T", &secret(None, &["api.example.com"])).await;
+    assert_eq!(kept.json()["place"], json!({"in": "header"}));
+
+    // An update that leaves the place out keeps the stored one: a client that only changes the
+    // hosts or the value must not move the secret back to headers.
+    let path = json!({"in": "path"});
+    let body = json!({"kind": "secret", "hosts": ["api.example.com"], "place": path});
+    assert_eq!(put(&api, "/api/env/T", &body).await.json()["place"], path);
+    let rehosted = put(&api, "/api/env/T", &secret(None, &["other.example.com"])).await;
+    assert_eq!(rehosted.status, 200, "{}", rehosted.body);
+    assert_eq!(rehosted.json()["place"], path);
+}
+
+#[tokio::test]
 async fn removing_a_secret_or_turning_it_into_a_plain_variable_removes_its_value() {
     let api = start().await;
     put(

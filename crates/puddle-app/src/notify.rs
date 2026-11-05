@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use puddle_settings::UiPrefs;
-use puddle_types::{DiskKind, Event, PendingSummary, WorkspaceId, WorkspaceStatus};
+use puddle_types::{DiskKind, DiskSpaceLevel, Event, PendingSummary, WorkspaceId, WorkspaceStatus};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
@@ -79,6 +79,8 @@ struct Group {
 pub struct Notifier {
     window: Duration,
     groups: HashMap<WorkspaceId, Group>,
+    /// The free-space level the last event named, so tighter space notifies and recovery does not.
+    disk: DiskSpaceLevel,
 }
 
 impl Default for Notifier {
@@ -100,6 +102,7 @@ impl Notifier {
         Self {
             window,
             groups: HashMap::new(),
+            disk: DiskSpaceLevel::Ok,
         }
     }
 
@@ -164,6 +167,16 @@ impl Notifier {
                     .to_owned(),
                 request: None,
             }],
+            Event::DiskSpaceChanged { level, free_mib } => {
+                // Told apart from `allowed`: the level is remembered even while the switch is off,
+                // so turning it on later does not announce a state that was there all along.
+                let tighter = *level > std::mem::replace(&mut self.disk, *level);
+                if tighter && allowed(prefs, prefs.notify_low_disk_space(), in_front) {
+                    vec![low_disk_space(*level, *free_mib)]
+                } else {
+                    Vec::new()
+                }
+            }
             _ => Vec::new(),
         }
     }
@@ -238,6 +251,32 @@ impl Notifier {
             }
         }
         notices
+    }
+}
+
+/// The notice for free space that fell under the warning line or the failure line. `free_mib` is
+/// the amount left on the drive that holds Puddle's data.
+fn low_disk_space(level: DiskSpaceLevel, free_mib: u64) -> Notice {
+    let tenths = free_mib * 10 / 1024;
+    let free = if tenths.is_multiple_of(10) {
+        format!("{}", tenths / 10)
+    } else {
+        format!("{}.{}", tenths / 10, tenths % 10)
+    };
+    let (title, advice) = match level {
+        DiskSpaceLevel::Critical => (
+            "Disk space is almost gone",
+            "Free space now: a build or a tool in a workspace can stop halfway when the drive is full.",
+        ),
+        _ => (
+            "Disk space is running low",
+            "Delete workspaces you no longer use and files you do not need before it runs out.",
+        ),
+    };
+    Notice {
+        title: title.to_owned(),
+        body: format!("{free} GB are left on the drive that holds Puddle's data. {advice}"),
+        request: None,
     }
 }
 
@@ -496,6 +535,84 @@ mod tests {
         off.notify_oom = Some(false);
         assert_eq!(Notifier::default().handle(t0, &off, false, &kill), NONE);
         assert_eq!(Notifier::default().handle(t0, &prefs(), true, &kill), NONE);
+    }
+
+    #[test]
+    fn free_space_notifies_when_it_gets_tighter_by_its_own_switch_and_not_when_it_recovers() {
+        let t0 = Instant::now();
+        let at = |level, free_mib| Event::DiskSpaceChanged { level, free_mib };
+        let mut n = Notifier::default();
+        let low = n.handle(t0, &prefs(), false, &at(DiskSpaceLevel::Low, 15_360));
+        assert_eq!(low.len(), 1);
+        assert_eq!(low[0].title, "Disk space is running low");
+        assert_eq!(
+            low[0].body.split(". ").next(),
+            Some("15 GB are left on the drive that holds Puddle's data")
+        );
+        assert_eq!(low[0].request, None);
+        let critical = n.handle(t0, &prefs(), false, &at(DiskSpaceLevel::Critical, 3_584));
+        assert_eq!(critical.len(), 1);
+        assert_eq!(critical[0].title, "Disk space is almost gone");
+        assert_eq!(
+            critical[0].body.split(". ").next().map(|s| &s[..15]),
+            Some("3.5 GB are left")
+        );
+        // Partly back (critical to low) and fully back (ok) are good news: no notice.
+        assert_eq!(
+            n.handle(t0, &prefs(), false, &at(DiskSpaceLevel::Low, 8_192)),
+            NONE
+        );
+        assert_eq!(
+            n.handle(t0, &prefs(), false, &at(DiskSpaceLevel::Ok, 30_720)),
+            NONE
+        );
+        // Crossing the same line again is a new crossing.
+        assert_eq!(
+            n.handle(t0, &prefs(), false, &at(DiskSpaceLevel::Low, 9_000))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_free_space_switch_and_the_in_front_switch_decide_and_the_level_is_remembered_while_off()
+    {
+        let t0 = Instant::now();
+        let at = |level| Event::DiskSpaceChanged {
+            level,
+            free_mib: 4_096,
+        };
+        let mut off = prefs();
+        off.notify_low_disk_space = Some(false);
+        let mut n = Notifier::default();
+        assert_eq!(n.handle(t0, &off, false, &at(DiskSpaceLevel::Low)), NONE);
+        // Its own switch only: the others being off changes nothing.
+        let mut others = prefs();
+        others.notify_oom = Some(false);
+        others.notifications = Some(false);
+        assert_eq!(
+            Notifier::default()
+                .handle(t0, &others, false, &at(DiskSpaceLevel::Low))
+                .len(),
+            1
+        );
+        // The state that was there while the switch was off is not announced when it comes on.
+        assert_eq!(
+            n.handle(t0, &prefs(), false, &at(DiskSpaceLevel::Low)),
+            NONE
+        );
+        assert_eq!(
+            Notifier::default().handle(t0, &prefs(), true, &at(DiskSpaceLevel::Low)),
+            NONE
+        );
+        let mut always = prefs();
+        always.notify_only_unfocused = Some(false);
+        assert_eq!(
+            Notifier::default()
+                .handle(t0, &always, true, &at(DiskSpaceLevel::Low))
+                .len(),
+            1
+        );
     }
 
     #[test]

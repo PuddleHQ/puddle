@@ -672,6 +672,16 @@ impl State {
                     },
                 );
             }
+            Step::OrphanVolume { id, remote } => {
+                let id =
+                    WorkspaceId::new(id).map_err(|err| format!("workspace id {id:?}: {err}"))?;
+                let remote = remote
+                    .as_deref()
+                    .map(puddle_api::RepoUrl::parse)
+                    .transpose()?;
+                self.workspaces.add_orphan_volume(&id, remote);
+                self.events.emit(Event::ProblemsChanged {});
+            }
             Step::NetworkHealth(report) => {
                 let epoch = report.proxy.epoch;
                 self.network.set((**report).clone());

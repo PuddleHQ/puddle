@@ -317,9 +317,10 @@ pub struct ConnectionEvent {
     /// Whether a credential was injected.
     pub injected: bool,
     /// The ids of the secret stand-ins that went out unchanged, each once: to a host outside the
-    /// hosts they are for, or inside the request's path or query, which is never swapped. A
-    /// stand-in is worthless there; the list shows a wrong host list, a tool that sends its
-    /// secret in the URL, or a workspace that sends its environment somewhere it should not.
+    /// hosts they are for, or in a place they are not swapped in (a header secret in the path or
+    /// query, a path or query secret in a header or another parameter). A stand-in is worthless
+    /// there; the list shows a wrong host list or place, or a workspace that sends its
+    /// environment somewhere it should not.
     /// An id reads `stand-in:<secret|login>:<name>`; it never carries a value.
     pub unswapped_stand_ins: Vec<String>,
     /// Method and path, when the proxy saw the request in clear.

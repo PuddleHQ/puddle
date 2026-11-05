@@ -40,7 +40,7 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         json!({"theme": null, "density": null, "palette": null, "custom_accent": null, "custom_background": null,
                "custom_surface": null, "custom_text": null, "notifications": null, "sound": null, "close_behaviour": null,
                "minimize_to_tray": null, "app_icon": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_disk_full": null, "disk_warning_percent": null, "notify_unexpected_stop": null,
-               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null})
+               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null, "notify_low_disk_space": null, "disk_warn_free_gb": null, "disk_fail_free_gb": null})
     );
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
@@ -336,6 +336,27 @@ async fn consents_are_recorded_with_the_server_time() {
 }
 
 #[tokio::test]
+async fn the_free_space_lines_are_in_range_and_never_cross() {
+    let api = start().await;
+    // The free-space lines: a range of 1 to 10000 GB, and the failure line never above the warning line.
+    for bad in [
+        json!({"ui": {"disk_warn_free_gb": 0}}),
+        json!({"ui": {"disk_fail_free_gb": 10_001}}),
+        json!({"ui": {"disk_warn_free_gb": 10, "disk_fail_free_gb": 11}}),
+        json!({"ui": {"disk_fail_free_gb": 25}}),
+    ] {
+        let reply = api.send("PUT", "/api/settings", Some(&bad)).await;
+        assert_eq!(reply.status, 422, "{bad}: {}", reply.body);
+    }
+    assert_eq!(
+        api.settings.load_global().unwrap(),
+        None,
+        "a refused change stores nothing"
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     let api = start().await;
     let ms = json!({"vscode_server": {"server": "microsoft"}});
@@ -370,7 +391,7 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
         "vscode_server": {"server": "microsoft", "telemetry": false},
         "ui": {"theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0A6A85", "custom_text": "#102030", "notifications": false, "sound": true, "close_behaviour": "quit",
                 "minimize_to_tray": true, "app_icon": "duck_night", "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_disk_full": false, "disk_warning_percent": 90, "notify_unexpected_stop": false,
-                "confirm_global_rules": false, "inbox_shortcuts": true, "start_at_login": true}
+                "confirm_global_rules": false, "inbox_shortcuts": true, "start_at_login": true, "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10}
     });
     let reply = api.send("PUT", "/api/settings", Some(&body)).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -395,6 +416,9 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     assert_eq!(view["ui"]["disk_warning_percent"], 90);
     assert_eq!(view["ui"]["inbox_shortcuts"], true);
     assert_eq!(view["ui"]["start_at_login"], true);
+    assert_eq!(view["ui"]["notify_low_disk_space"], false);
+    assert_eq!(view["ui"]["disk_warn_free_gb"], 50);
+    assert_eq!(view["ui"]["disk_fail_free_gb"], 10);
     assert_eq!(view["ui"]["app_icon"], "duck_night");
     let stored = api.settings.load_global().unwrap().unwrap();
     assert_eq!(stored["ui"]["theme"], "dark");

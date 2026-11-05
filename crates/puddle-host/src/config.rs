@@ -107,6 +107,27 @@ pub struct HostConfig {
     pub guest: GuestSettings,
     /// The ssh config of direct SSH.
     pub ssh: SshSettings,
+    /// When the host reads the free space of the drive that holds its data, and how often after.
+    pub free_space: FreeSpaceTiming,
+}
+
+/// When the host reads the free space of the drive that holds its data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FreeSpaceTiming {
+    /// Wait before the first read, so a window that opens with Puddle is listening when it says
+    /// the drive is already low.
+    pub first_read: Duration,
+    /// Time between reads.
+    pub period: Duration,
+}
+
+impl Default for FreeSpaceTiming {
+    fn default() -> Self {
+        Self {
+            first_read: Duration::from_secs(10),
+            period: Duration::from_mins(1),
+        }
+    }
 }
 
 impl HostConfig {
@@ -131,6 +152,7 @@ impl HostConfig {
             operations_grace: Duration::from_secs(20),
             guest,
             ssh: SshSettings::default(),
+            free_space: FreeSpaceTiming::default(),
         }
     }
 

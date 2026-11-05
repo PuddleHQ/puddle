@@ -125,6 +125,9 @@ struct State {
     guest: BTreeMap<WorkspaceId, FoundList>,
     /// The last listing made of each workspace, with its time (epoch ms).
     last_listing: BTreeMap<WorkspaceId, (u64, FoundList)>,
+    /// The workspace disks the list does not name, each with the remote address a read of its
+    /// checkout finds (`None`: no readable address).
+    orphans: BTreeMap<WorkspaceId, Option<crate::workspaces::RepoUrl>>,
 }
 
 struct Inner {
@@ -187,6 +190,7 @@ impl FakeWorkspaces {
                     kept_logins: BTreeMap::new(),
                     guest: BTreeMap::new(),
                     last_listing: BTreeMap::new(),
+                    orphans: BTreeMap::new(),
                 }),
                 events,
                 clock,
@@ -239,6 +243,12 @@ impl FakeWorkspaces {
         lock(&self.inner.state)
             .kept_logins
             .insert(id.to_string(), kept);
+    }
+
+    /// Adds a workspace disk the list does not name. `remote` is the address a read of its
+    /// checkout finds; `None` makes a restore ask for one.
+    pub fn add_orphan_volume(&self, id: &WorkspaceId, remote: Option<crate::workspaces::RepoUrl>) {
+        lock(&self.inner.state).orphans.insert(id.clone(), remote);
     }
 
     /// Makes forgetting a login fail the way a credential store that refuses does.
@@ -970,6 +980,77 @@ impl WorkspaceService for FakeWorkspaces {
                 record: entry.record.clone(),
                 exists,
             })
+        })
+    }
+
+    fn orphan_volumes(&self) -> BoxFuture<'_, Result<Vec<WorkspaceId>, WorkspaceError>> {
+        Box::pin(async move { Ok(lock(&self.inner.state).orphans.keys().cloned().collect()) })
+    }
+
+    fn restore_orphan<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        repository: Option<crate::workspaces::RepoUrl>,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let name = puddle_types::WorkspaceName::new(id.as_str()).map_err(|e| {
+                WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
+            })?;
+            let (record, new) = {
+                let mut state = lock(&self.inner.state);
+                let Some(found) = state.orphans.get(id).cloned() else {
+                    return Err(WorkspaceError::NotFound(format!(
+                        "no workspace disk {}",
+                        id.volume_name()
+                    )));
+                };
+                if state.entries.contains_key(id)
+                    || crate::label_taken(
+                        state.entries.values().map(|e| &e.record),
+                        name.as_str(),
+                        None,
+                    )
+                    .is_some()
+                {
+                    return Err(WorkspaceError::Conflict(format!(
+                        "a workspace named {name} already exists; nothing was replaced"
+                    )));
+                }
+                let Some(url) = found.or(repository) else {
+                    return Err(WorkspaceError::Invalid(format!(
+                        "Puddle could not read a repository address from {}; enter the address of the repository on it",
+                        id.volume_name()
+                    )));
+                };
+                let entry = crate::workspaces::Repository {
+                    directory: CheckoutDir::from_url(url.as_str()),
+                    url,
+                };
+                let mut record =
+                    WorkspaceRecord::new(id.clone(), name.clone(), vec![entry.clone()]);
+                record.created_at = self.inner.clock.now_ms();
+                record.status = WorkspaceStatus::Stopped;
+                state.orphans.remove(id);
+                state.entries.insert(
+                    id.clone(),
+                    Entry {
+                        record: record.clone(),
+                        unsaved: Unsaved::default(),
+                    },
+                );
+                let new = NewRepository {
+                    repository: entry,
+                    identity: None,
+                    pull: true,
+                    push: true,
+                    local: None,
+                };
+                (record, new)
+            };
+            git.set_up(id, std::slice::from_ref(&new)).await;
+            self.emit_status(&record);
+            Ok(record)
         })
     }
 

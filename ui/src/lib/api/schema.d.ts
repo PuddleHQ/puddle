@@ -554,6 +554,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orphan-volumes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The workspace disks Puddle keeps that no workspace in its list claims, read fresh from the
+         *     runtime on every call. Puddle cannot tell from outside whether such a disk holds any files.
+         *     A client refetches on `problems_changed` and when the workspace list changes.
+         */
+        get: operations["list_orphan_volumes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orphan-volumes/{id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Adds a list entry for an unclaimed workspace disk, named after the disk. Its repositories are
+         *     the checkouts on the disk that have a readable remote address (read in a short-lived
+         *     maintenance sandbox with no route out); when there is none, `repository` is used. Nothing is
+         *     written to the disk and an existing list entry is never replaced. The workspace is stopped:
+         *     start it to use it.
+         */
+        post: operations["restore_orphan_volume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/pending": {
         parameters: {
             query?: never;
@@ -2477,6 +2521,13 @@ export interface components {
          * @enum {string}
          */
         DiskKind: "root" | "volume";
+        /**
+         * @description How the free space on the drive that holds Puddle's data compares with the warning and the
+         *     failure line (settings `ui.disk_warn_free_gb` and `ui.disk_fail_free_gb`). Ordered from fine to
+         *     worst, so `level > previous` says the space got tighter.
+         * @enum {string}
+         */
+        DiskSpaceLevel: "ok" | "low" | "critical";
         /** @description One line of the system check. */
         DoctorCheck: {
             /** @description Raw evidence: an OS error, the runtime's last output lines; `null` when there is none. */
@@ -2597,6 +2648,7 @@ export interface components {
             hosts: string[];
             /** @enum {string} */
             kind: "secret";
+            place?: components["schemas"]["SecretPlace"] | null;
             /**
              * Format: password
              * @description The value: written once, kept in the operating system's credential store, never shown
@@ -2625,6 +2677,7 @@ export interface components {
              *     `true` in a workspace's list.
              */
             overridden: boolean;
+            place: components["schemas"]["SecretPlace"] | null;
             /** @description Where it applies. */
             scope: components["schemas"]["EnvScope"];
             /** @description A plain variable's value; `null` for a secret. */
@@ -2883,6 +2936,16 @@ export interface components {
         } | {
             /** @enum {string} */
             type: "problems_changed";
+        } | {
+            /**
+             * Format: int64
+             * @description The free space at the read that changed the level, in whole MiB.
+             */
+            free_mib: number;
+            /** @description Where the free space stands now. */
+            level: components["schemas"]["DiskSpaceLevel"];
+            /** @enum {string} */
+            type: "disk_space_changed";
         };
         /** @description What a rule set is painted with: one solid colour today. A gradient would be another `kind`. */
         Fill: {
@@ -3448,6 +3511,21 @@ export interface components {
              */
             start_folder?: string | null;
         };
+        /** @description The workspace disks the list does not name, in id order. */
+        OrphanVolumeList: {
+            /** @description Empty when the list names every workspace disk. */
+            volumes: components["schemas"]["OrphanVolumeView"][];
+        };
+        /**
+         * @description A workspace disk Puddle keeps whose workspace its list does not name. Puddle cannot tell from
+         *     outside whether the disk holds any files, so none of this says so.
+         */
+        OrphanVolumeView: {
+            /** @description The id a restore names; also the name of the workspace a restore makes. */
+            id: string;
+            /** @description The disk's name in the runtime, `ws-` and the id. */
+            volume: string;
+        };
         /**
          * @description Whether the PAC script or WPAD answered.
          * @enum {string}
@@ -3949,6 +4027,14 @@ export interface components {
              */
             value: number;
         };
+        /** @description `POST /api/orphan-volumes/{id}/restore`. */
+        RestoreOrphanRequest: {
+            /**
+             * @description The address of the repository on the disk, used only when Puddle cannot read one from the
+             *     remote of a checkout there. An HTTPS address; an SSH one is refused as in a create.
+             */
+            repository?: string | null;
+        };
         /**
          * @description A colour as `#rrggbb`.
          * @example #0a6a85
@@ -4198,6 +4284,22 @@ export interface components {
          * @enum {string}
          */
         ScopeChoice: "workspace" | "global";
+        /**
+         * @description Where in a request Puddle swaps a secret's stand-in for its real value, toward the secret's
+         *     hosts only. Anywhere else the stand-in goes out unchanged.
+         */
+        SecretPlace: {
+            /** @enum {string} */
+            in: "header";
+        } | {
+            /** @enum {string} */
+            in: "query";
+            /** @description The parameter's name: 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`. */
+            name: string;
+        } | {
+            /** @enum {string} */
+            in: "path";
+        };
         /**
          * @description Which VS Code server browser VS Code runs.
          * @enum {string}
@@ -4470,6 +4572,18 @@ export interface components {
             density: components["schemas"]["DensityChoice"] | null;
             /**
              * Format: int32
+             * @description The free space, in GB, under which `puddle doctor` fails; 1 to 10000, default 5, never above
+             *     the warning line.
+             */
+            disk_fail_free_gb: number | null;
+            /**
+             * Format: int32
+             * @description The free space, in GB (1024 x 1024 x 1024 bytes), under which `puddle doctor` warns and the
+             *     app says so; 1 to 10000, default 20.
+             */
+            disk_warn_free_gb: number | null;
+            /**
+             * Format: int32
              * @description How full a workspace's root disk or volume gets, in percent, before Puddle warns on the
              *     workspace and, with `notify_disk_full`, notifies; 50 to 100 (default 95).
              */
@@ -4482,6 +4596,11 @@ export interface components {
             notifications: boolean | null;
             /** @description Notify when a workspace's root disk or volume reaches `disk_warning_percent` (default on). */
             notify_disk_full: boolean | null;
+            /**
+             * @description Notify when the free space on the drive that holds Puddle's data falls under the warning or
+             *     the failure line (default on).
+             */
+            notify_low_disk_space: boolean | null;
             /** @description Notify only while Puddle's window is not focused (default on). */
             notify_only_unfocused: boolean | null;
             /** @description Notify when a workspace is killed for running out of memory (default on). */
@@ -7221,6 +7340,170 @@ export interface operations {
                 };
             };
             /** @description the report is not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_orphan_volumes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the unclaimed workspace disks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrphanVolumeList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the runtime cannot list its disks */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    restore_orphan_volume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the disk's workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreOrphanRequest"];
+            };
+        };
+        responses: {
+            /** @description the workspace, now in the list */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace disk */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the list already names the workspace, or something holds the disk */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no address could be read from the disk and none was given, or the address is refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the list cannot be saved, or the disk cannot be read */
             503: {
                 headers: {
                     [name: string]: unknown;

@@ -6213,6 +6213,7 @@ dependencies = [
  "puddle-proxy",
  "puddle-runtime",
  "puddle-store",
+ "puddle-test-kit",
  "puddle-types",
  "puddle-vm-tests",
  "rusqlite",

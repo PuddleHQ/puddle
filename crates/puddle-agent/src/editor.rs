@@ -1246,7 +1246,7 @@ mod tests {
             io::ErrorKind::NotFound,
             "the password file is not written yet"
         );
-        write_password(&code_server.password_file, "x").unwrap();
+        write_password(&code_server.password_file, &new_password().unwrap()).unwrap();
         give_to(&account, &code_server).unwrap();
         let microsoft = config(microsoft);
         assert_eq!(

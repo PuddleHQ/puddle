@@ -1418,6 +1418,22 @@ mod termination {
     }
 
     #[test]
+    fn a_registry_returns_the_termination_set_and_forgets_a_removed_workspace() {
+        let set = TerminationSet::parse(["github.com"]).unwrap();
+        let ca = Arc::new(CaBuilder::new("test").build().unwrap());
+        let terminations = Terminations::new();
+        terminations.insert(
+            workspace(),
+            Termination::new(set, ca, Arc::new(NoInjection)),
+        );
+        let found = terminations.termination(&workspace()).unwrap();
+        assert!(found.set().contains(&host("github.com")));
+        assert!(!found.set().contains(&host("example.com")));
+        terminations.remove(&workspace());
+        assert!(terminations.termination(&workspace()).is_none());
+    }
+
+    #[test]
     fn a_termination_config_debug_names_the_type_and_hides_its_fields() {
         let config = TerminationConfig {
             source: Arc::new(Terminations::new()),

@@ -618,10 +618,12 @@ const DOCKER_SITES: [&str; 4] = [
 
 /// Shell prelude of every command the Docker test runs as the session user: a millisecond clock
 /// and a Docker config of its own, so no proxy variable from the CLI's config reaches a container.
+/// `dsudo` is `sudo docker` where the image has `sudo`, and plain `docker` (the `docker` group,
+/// which the boot grants the session user) where it has none, as `docker:dind` has not.
 const DOCKER_PRELUDE: &str = r#"now() { echo $(( $(date +%s%N) / 1000000 )); }
 export DOCKER_CONFIG=/tmp/docker-without-proxy
 mkdir -p "$DOCKER_CONFIG"
-dsudo() { sudo env DOCKER_CONFIG="$DOCKER_CONFIG" docker "$@"; }
+dsudo() { if [ -x /usr/bin/sudo ] || [ -x /usr/local/bin/sudo ]; then sudo env DOCKER_CONFIG="$DOCKER_CONFIG" docker "$@"; else docker "$@"; fi; }
 "#;
 
 /// Builds the probe image `FROM scratch`: busybox and the loader it needs, copied from the guest's
@@ -727,7 +729,7 @@ async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceName,
         let (code, out) = as_agent(
             vm,
             workspace,
-            "id; command -v sudo docker nft busybox; dsudo info 2>&1 >/dev/null | tail -3; \
+            "id; ls -l /usr/bin/sudo /usr/local/bin/docker /usr/sbin/nft /bin/busybox; dsudo info 2>&1 >/dev/null | tail -3; \
              dsudo info >/dev/null 2>&1",
         )
         .await;
@@ -742,8 +744,15 @@ async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceName,
     .await;
     assert_eq!(code, 0, "{phase}: building the probe image: {built}");
 
-    // Both firewalls are there at once.
-    let (code, ruleset) = as_agent(vm, workspace, "sudo nft list ruleset").await;
+    // Both firewalls are there at once (read as root: the image has no `sudo`).
+    let (code, ruleset) = guest_as(
+        &vm.runtime,
+        workspace,
+        "root",
+        "nft list ruleset",
+        Duration::from_secs(60),
+    )
+    .await;
     eprintln!("{phase}: ruleset\n{ruleset}");
     assert_eq!(code, 0, "{phase}: {ruleset}");
     assert!(ruleset.contains("table inet puddle"), "{phase}: {ruleset}");
@@ -751,16 +760,9 @@ async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceName,
         ruleset.contains("chain DOCKER") || ruleset.contains("docker-bridges"),
         "{phase}: Docker's tables are missing: {ruleset}"
     );
-
-    // The group decides whether plain `docker` works for `agent`; `sudo docker` always does.
     let (_, groups) = as_agent(vm, workspace, "id -nG").await;
-    let plain = groups.split_whitespace().any(|g| g == "docker");
-    eprintln!("{phase}: agent's groups: {groups}; plain docker: {plain}");
-    let docker = if plain {
-        "env DOCKER_CONFIG=$DOCKER_CONFIG docker"
-    } else {
-        "dsudo"
-    };
+    eprintln!("{phase}: agent's groups: {groups}");
+    let docker = "dsudo";
 
     // A container on the default bridge.
     refused_then_approved(

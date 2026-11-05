@@ -2,7 +2,7 @@
 //! Settings and consents through the API, over the versioned documents of `puddle-settings`.
 
 use puddle_api::SettingsRepo;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
 use crate::common::{START_MS, start};
@@ -126,7 +126,7 @@ async fn global_and_workspace_values_resolve_in_order() {
     assert_eq!(plain["effective"]["memory"]["value"], 4096);
     assert_eq!(plain["effective"]["cpus"]["value"], 2);
     assert_eq!(plain["effective"]["capture_logins"]["value"], true);
-    let name = WorkspaceName::new("plain").unwrap();
+    let name = WorkspaceId::new("plain").unwrap();
     assert_eq!(api.settings.load_workspace(&name).unwrap(), None);
 
     // Stored documents are sparse and versioned.
@@ -176,7 +176,7 @@ async fn unknown_stored_fields_are_listed_and_kept() {
             json!({"schema_version": 1, "rule_sets": ["x"], "workspace_defaults": {"swap": 2}}),
         )
         .unwrap();
-    let name = WorkspaceName::new("box").unwrap();
+    let name = WorkspaceId::new("box").unwrap();
     api.settings
         .save_workspace(&name, json!({"overrides": {"gpu": true}}))
         .unwrap();
@@ -264,7 +264,7 @@ async fn damaged_settings_are_a_conflict_that_says_what_is_wrong() {
     // One workspace's damaged document names that workspace, and only its page fails.
     api.settings.save_global(json!({})).unwrap();
     api.settings
-        .save_workspace(&WorkspaceName::new("box").unwrap(), json!("x"))
+        .save_workspace(&WorkspaceId::new("box").unwrap(), json!("x"))
         .unwrap();
     let reply = api.get("/api/settings/workspaces/box").await;
     assert_eq!(reply.status, 409, "{}", reply.body);

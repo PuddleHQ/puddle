@@ -9,7 +9,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_secrets::{SourceSpec, StoredId, TokenScope};
 use puddle_store::{CredentialBinding, IdentityId, WorkspaceOpKind};
-use puddle_types::{WorkspaceId, WorkspaceName};
+use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
@@ -37,7 +37,7 @@ fn view(state: &AppState, identity: puddle_store::Identity) -> Result<IdentityVi
 
 fn git_view(
     state: &AppState,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     git: puddle_store::WorkspaceGit,
 ) -> Result<WorkspaceGitView, ApiError> {
     Ok(WorkspaceGitView {
@@ -55,11 +55,11 @@ fn git_view(
     })
 }
 
-/// The workspace a path names, as the name the store keys it by; 404 for none.
-pub(super) async fn workspace(state: &AppState, raw: &str) -> Result<WorkspaceName, ApiError> {
+/// The workspace a path names, as the id the store keys it by; 404 for none.
+pub(super) async fn workspace(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
     let id =
         WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
-    Ok(state.workspaces.get(&id).await?.name)
+    Ok(state.workspaces.get(&id).await?.id)
 }
 
 /// Removes the pasted tokens in `before` that no identity and no environment secret reads now, and
@@ -307,9 +307,19 @@ pub(crate) async fn reorder_identities(
 ) -> Result<Json<IdentityList>, ApiError> {
     let ids: Vec<_> = body.ids.into_iter().map(IdentityId).collect();
     let list = blocking(move || {
-        let identities = state
-            .store
-            .reorder_identities(&ids)?
+        let ordered = state.store.reorder_identities(&ids)?;
+        let order = ordered
+            .iter()
+            .map(|identity| identity.label.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        record_op(
+            &state.store,
+            WorkspaceOpKind::IdentitiesReordered,
+            None,
+            Some(order),
+        );
+        let identities = ordered
             .into_iter()
             .map(|identity| view(&state, identity))
             .collect::<Result<_, _>>()?;

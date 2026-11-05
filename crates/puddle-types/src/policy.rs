@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use crate::{CompanySignal, Host, LocalCategory, WorkspaceName};
+use crate::{CompanySignal, Host, LocalCategory, WorkspaceId};
 
 /// A rule's row id. Never reused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -254,7 +254,7 @@ pub enum SuffixAllows {
 #[non_exhaustive]
 pub struct EgressRequest {
     /// The workspace, from the route the connection arrived on.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The normalised destination.
     pub host: Host,
     /// The destination port. Rules ignore it (R-2); pending rows and the audit record it.
@@ -266,7 +266,7 @@ pub struct EgressRequest {
 impl EgressRequest {
     /// A request with no protocol hint.
     #[must_use]
-    pub fn new(workspace: WorkspaceName, host: Host, port: u16) -> Self {
+    pub fn new(workspace: WorkspaceId, host: Host, port: u16) -> Self {
         Self {
             workspace,
             host,
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn requests_carry_an_optional_protocol_hint() {
-        let workspace = WorkspaceName::new("box").unwrap();
+        let workspace = WorkspaceId::new("box").unwrap();
         let host = Host::parse_normalised("example.com").unwrap();
         let plain = EgressRequest::new(workspace, host, 443);
         assert_eq!(plain.protocol, None);
@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn a_policy_without_ip_rules_finds_no_rule_on_lookup() {
         let request = EgressRequest::new(
-            WorkspaceName::new("box").unwrap(),
+            WorkspaceId::new("box").unwrap(),
             Host::parse_normalised("example.com").unwrap(),
             443,
         );

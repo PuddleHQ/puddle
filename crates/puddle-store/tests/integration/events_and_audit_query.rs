@@ -20,14 +20,14 @@ use puddle_test_kit::cpu_time;
 use puddle_types::{
     CollectingSink, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
     ConnectionReason, Decision, EgressRequest, Event, Host, PendingEnd, PendingId, PendingOutcome,
-    SuffixAllows, WorkspaceName,
+    SuffixAllows, WorkspaceId,
 };
 use rusqlite::params;
 
 const T0: u64 = 1_800_000_000_000;
 
-fn sb(id: &str) -> WorkspaceName {
-    WorkspaceName::new(id).unwrap()
+fn sb(id: &str) -> WorkspaceId {
+    WorkspaceId::new(id).unwrap()
 }
 
 fn fixture(limits: Limits) -> (Arc<ManualClock>, Arc<CollectingSink>, Store) {

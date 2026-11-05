@@ -6,7 +6,7 @@ use std::convert::Infallible;
 
 use axum::response::sse;
 use futures_util::{Stream, StreamExt};
-use puddle_types::{Event, EventSink, WorkspaceName};
+use puddle_types::{Event, EventSink, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 use utoipa::ToSchema;
@@ -67,11 +67,11 @@ pub struct Lagged {
 
 /// Whether a subscriber filtering on `filter` gets `event`. Global events (no workspace) go to
 /// every subscriber.
-pub(crate) fn wanted(event: &Event, filter: Option<&WorkspaceName>) -> bool {
+pub(crate) fn wanted(event: &Event, filter: Option<&WorkspaceId>) -> bool {
     wanted_for(event.workspace(), filter)
 }
 
-fn wanted_for(workspace: Option<&WorkspaceName>, filter: Option<&WorkspaceName>) -> bool {
+fn wanted_for(workspace: Option<&WorkspaceId>, filter: Option<&WorkspaceId>) -> bool {
     match (filter, workspace) {
         (None, _) | (_, None) => true,
         (Some(want), Some(got)) => want == got,
@@ -101,7 +101,7 @@ fn lagged(missed: u64) -> sse::Event {
 /// The SSE stream for one subscriber. It ends when the hub is dropped or the server shuts down.
 pub(crate) fn stream(
     rx: broadcast::Receiver<Event>,
-    filter: Option<WorkspaceName>,
+    filter: Option<WorkspaceId>,
     mut shutdown: watch::Receiver<bool>,
 ) -> impl Stream<Item = Result<sse::Event, Infallible>> {
     let events = futures_util::stream::unfold(rx, move |mut rx| {
@@ -135,8 +135,8 @@ mod tests {
 
     use super::*;
 
-    fn name(s: &str) -> WorkspaceName {
-        WorkspaceName::new(s).unwrap()
+    fn name(s: &str) -> WorkspaceId {
+        WorkspaceId::new(s).unwrap()
     }
 
     fn oom(s: &str) -> Event {

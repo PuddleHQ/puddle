@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use puddle_netpolicy::{CompanySignals, Target, classify_with_signals};
 use puddle_settings::resolve;
 use puddle_store::{Actor, PendingRow, PendingState};
-use puddle_types::{Host, LocalCategory, PendingId, WorkspaceName};
+use puddle_types::{Host, LocalCategory, PendingId, WorkspaceId};
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
@@ -25,7 +25,7 @@ use crate::wire::{
 #[serde(deny_unknown_fields)]
 pub(crate) struct PendingQuery {
     /// Only this workspace's requests. All workspaces if left out.
-    workspace: Option<WorkspaceName>,
+    workspace: Option<WorkspaceId>,
 }
 
 /// The local category a destination is in by itself: an IP literal's class, or a name such as
@@ -49,7 +49,7 @@ async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingR
     let blocked: HashMap<PendingId, LocalCategory> = if wanted {
         let _lock = state.settings_lock.lock().await;
         let settings = state.settings.clone();
-        let candidates: Vec<(PendingId, WorkspaceName, LocalCategory)> = rows
+        let candidates: Vec<(PendingId, WorkspaceId, LocalCategory)> = rows
             .iter()
             .filter(|r| r.state == PendingState::Requested)
             .filter_map(|r| Some((r.id, r.workspace.clone(), local_category(&r.host, signals)?)))
@@ -93,7 +93,7 @@ async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingR
     get,
     path = "/api/pending",
     tag = "pending",
-    params(("workspace" = Option<WorkspaceName>, Query, description = "only this workspace's requests")),
+    params(("workspace" = Option<WorkspaceId>, Query, description = "only this workspace's requests")),
     responses(
         (status = OK, description = "open requests", body = PendingList),
         (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody)

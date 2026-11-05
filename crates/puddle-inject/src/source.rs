@@ -8,7 +8,7 @@ use std::sync::Arc;
 use puddle_proxy::BoxFuture;
 use puddle_secrets::{Credential, Fetch, SecretCache, SourceError, SourceSpec};
 use puddle_store::{Store, WorkspaceGit};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 /// The settings could not be read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -34,13 +34,13 @@ pub trait GitSettings: Send + Sync + fmt::Debug {
 #[derive(Debug, Clone)]
 pub struct StoreSettings {
     store: Arc<Store>,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
 }
 
 impl StoreSettings {
     /// The settings `workspace` has in `store`.
     #[must_use]
-    pub fn new(store: Arc<Store>, workspace: WorkspaceName) -> Self {
+    pub fn new(store: Arc<Store>, workspace: WorkspaceId) -> Self {
         Self { store, workspace }
     }
 }

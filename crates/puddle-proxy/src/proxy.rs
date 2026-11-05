@@ -23,7 +23,7 @@ use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOutcome,
     ConnectionReason, Decision, EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog,
     PatternKind, PendingOutcome, Policy, PolicyError, ProtocolHint, RefusedReason, RuleId,
-    SuffixAllows, WorkspaceName,
+    SuffixAllows, WorkspaceId,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -378,7 +378,7 @@ impl Proxy {
     /// The [`StreamHandler`] for one workspace's route. `workspace` comes from the route, never from
     /// the guest. Each handler has its own stream cap, so give each route one handler.
     #[must_use]
-    pub fn handler(self: &Arc<Self>, workspace: WorkspaceName) -> WorkspaceHandler {
+    pub fn handler(self: &Arc<Self>, workspace: WorkspaceId) -> WorkspaceHandler {
         WorkspaceHandler {
             proxy: Arc::clone(self),
             streams: Arc::new(Semaphore::new(self.config.max_streams_per_workspace)),
@@ -520,13 +520,13 @@ pub struct WorkspaceHandler {
     streams: Arc<Semaphore>,
     h2_streams: Arc<Semaphore>,
     pub(crate) lookups: Arc<Semaphore>,
-    pub(crate) workspace: WorkspaceName,
+    pub(crate) workspace: WorkspaceId,
 }
 
 impl WorkspaceHandler {
     /// The workspace this handler serves.
     #[must_use]
-    pub fn workspace(&self) -> &WorkspaceName {
+    pub fn workspace(&self) -> &WorkspaceId {
         &self.workspace
     }
 }

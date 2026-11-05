@@ -3,7 +3,7 @@
 //! whether wildcard allows reach local addresses.
 
 use puddle_settings::Effective;
-use puddle_types::{LocalCategory, WorkspaceName};
+use puddle_types::{LocalCategory, WorkspaceId};
 
 /// One workspace's local-destination settings, resolved (workspace override over global over
 /// default). [`LocalAccess::NONE`] is Puddle's default: every toggle off, wildcards don't reach
@@ -89,20 +89,20 @@ impl LocalAccess {
 /// fixed [`LocalAccess`] applies to every workspace, and so does a closure.
 pub trait LocalAccessSource: Send + Sync {
     /// The settings `workspace` runs with now.
-    fn local_access(&self, workspace: &WorkspaceName) -> LocalAccess;
+    fn local_access(&self, workspace: &WorkspaceId) -> LocalAccess;
 }
 
 impl LocalAccessSource for LocalAccess {
-    fn local_access(&self, _workspace: &WorkspaceName) -> LocalAccess {
+    fn local_access(&self, _workspace: &WorkspaceId) -> LocalAccess {
         *self
     }
 }
 
 impl<F> LocalAccessSource for F
 where
-    F: Fn(&WorkspaceName) -> LocalAccess + Send + Sync,
+    F: Fn(&WorkspaceId) -> LocalAccess + Send + Sync,
 {
-    fn local_access(&self, workspace: &WorkspaceName) -> LocalAccess {
+    fn local_access(&self, workspace: &WorkspaceId) -> LocalAccess {
         self(workspace)
     }
 }
@@ -165,14 +165,14 @@ mod tests {
 
     #[test]
     fn sources_fixed_and_per_workspace() {
-        let workspace = WorkspaceName::new("box").unwrap();
+        let workspace = WorkspaceId::new("box").unwrap();
         let fixed = LocalAccess::NONE.with_toggle(LocalCategory::Loopback, true);
         assert_eq!(fixed.local_access(&workspace), fixed);
-        let per = |s: &WorkspaceName| {
+        let per = |s: &WorkspaceId| {
             LocalAccess::NONE.with_toggle(LocalCategory::Private, s.as_str() == "box")
         };
         assert!(per.local_access(&workspace).is_on(LocalCategory::Private));
-        let other = WorkspaceName::new("other").unwrap();
+        let other = WorkspaceId::new("other").unwrap();
         assert!(!per.local_access(&other).is_on(LocalCategory::Private));
     }
 }

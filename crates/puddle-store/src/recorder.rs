@@ -73,7 +73,7 @@ impl ConnectionLog for ConnectionRecorder {
 mod tests {
     use puddle_types::{
         CollectingSink, ConnectionDecision, ConnectionReason, EgressRequest, Event, Host,
-        WorkspaceName,
+        WorkspaceId,
     };
 
     use super::*;
@@ -81,7 +81,7 @@ mod tests {
 
     fn event() -> ConnectionEvent {
         let request = EgressRequest::new(
-            WorkspaceName::new("box").unwrap(),
+            WorkspaceId::new("box").unwrap(),
             Host::parse_normalised("api.example.com").unwrap(),
             443,
         );

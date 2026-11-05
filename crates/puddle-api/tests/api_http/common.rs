@@ -15,7 +15,7 @@ use puddle_api::{
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
 use puddle_store::{Limits, ManualClock, Store};
-use puddle_types::{EgressRequest, Host, PendingId, SuffixAllows, WorkspaceName};
+use puddle_types::{EgressRequest, Host, PendingId, SuffixAllows, WorkspaceId};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -308,7 +308,7 @@ impl Api {
             .store
             .decide(
                 &EgressRequest::new(
-                    WorkspaceName::new(workspace).unwrap(),
+                    WorkspaceId::new(workspace).unwrap(),
                     Host::parse_normalised(host).unwrap(),
                     443,
                 ),

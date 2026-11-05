@@ -17,7 +17,7 @@ use dns_lookup::{AddrInfoHints, LookupError, LookupErrorKind, SockType};
 
 pub use puddle_netpolicy::AddressVerdict;
 use puddle_netpolicy::{NetPolicy, Target};
-use puddle_types::{BlockReason, CompanySignal, DomainName, Host, WorkspaceName};
+use puddle_types::{BlockReason, CompanySignal, DomainName, Host, WorkspaceId};
 
 /// Decides per destination and per resolved address (R-14). [`NetPolicy`] is the product
 /// implementation; tests use doubles.
@@ -26,7 +26,7 @@ pub trait AddressCheck: Send + Sync {
     /// pending row. The default checks an IP literal with [`Self::check`] and lets names through.
     fn check_target(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
@@ -40,14 +40,14 @@ pub trait AddressCheck: Send + Sync {
     }
 
     /// The verdict for connecting `workspace` to `addr`.
-    fn check(&self, workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict;
+    fn check(&self, workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict;
 
     /// The verdict for connecting `workspace` to `addr`, an address of the name `host`, which
     /// the company-network signals about the name (its DNS suffix, the proxy script) need. The
     /// default ignores the name.
     fn check_named(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         _host: &Host,
         addr: SocketAddr,
     ) -> AddressVerdict {
@@ -64,20 +64,20 @@ pub trait AddressCheck: Send + Sync {
 impl AddressCheck for NetPolicy {
     fn check_target(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
         NetPolicy::check_target(self, workspace, target, port)
     }
 
-    fn check(&self, workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
+    fn check(&self, workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
         self.check_address(workspace, addr)
     }
 
     fn check_named(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         host: &Host,
         addr: SocketAddr,
     ) -> AddressVerdict {
@@ -270,14 +270,14 @@ mod tests {
     struct Fixed(Option<BlockReason>);
 
     impl AddressCheck for Fixed {
-        fn check(&self, _: &WorkspaceName, _: SocketAddr) -> AddressVerdict {
+        fn check(&self, _: &WorkspaceId, _: SocketAddr) -> AddressVerdict {
             self.0.map_or(AddressVerdict::Allow, AddressVerdict::Block)
         }
     }
 
     #[test]
     fn the_default_name_stage_blocks_an_ip_literal_the_address_check_blocks() {
-        let workspace = WorkspaceName::new("box").unwrap();
+        let workspace = WorkspaceId::new("box").unwrap();
         let literal = puddle_netpolicy::normalise_host("203.0.113.9").unwrap();
         let name = puddle_netpolicy::normalise_host("example.com").unwrap();
         let blocking = Fixed(Some(BlockReason::PuddleEndpoint));

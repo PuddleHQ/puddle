@@ -10,7 +10,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_store::{ShellInit, ShellInitText};
-use puddle_types::{WorkspaceId, WorkspaceName};
+use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
@@ -19,7 +19,7 @@ use crate::routes::AppState;
 use crate::wire::{ShellInitRequest, ShellInitSaved, ShellInitView};
 use crate::workspaces::ShellInitCheck;
 
-fn view(workspace: &WorkspaceName, saved: Option<ShellInit>) -> ShellInitView {
+fn view(workspace: &WorkspaceId, saved: Option<ShellInit>) -> ShellInitView {
     ShellInitView {
         workspace: workspace.clone(),
         saved: saved.is_some(),
@@ -28,12 +28,11 @@ fn view(workspace: &WorkspaceName, saved: Option<ShellInit>) -> ShellInitView {
     }
 }
 
-/// The workspace a path names: its id and the name the store keys it by; 404 for none.
-async fn named(state: &AppState, raw: &str) -> Result<(WorkspaceId, WorkspaceName), ApiError> {
+/// The workspace a path names: its id (the key the store uses); 404 for none.
+async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
     let id =
         WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
-    let name = state.workspaces.get(&id).await?.name;
-    Ok((id, name))
+    Ok(state.workspaces.get(&id).await?.id)
 }
 
 /// The shell init saved for a workspace; empty with `saved: false` when it has none.
@@ -51,9 +50,9 @@ pub(crate) async fn get_shell_init(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<ShellInitView>, ApiError> {
-    let (_, name) = named(&state, &id).await?;
-    let shown = name.clone();
-    let saved = blocking(move || Ok(state.store.shell_init(&name)?)).await?;
+    let id = named(&state, &id).await?;
+    let shown = id.clone();
+    let saved = blocking(move || Ok(state.store.shell_init(&id)?)).await?;
     Ok(Json(view(&shown, saved)))
 }
 
@@ -78,7 +77,7 @@ pub(crate) async fn put_shell_init(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<ShellInitRequest>,
 ) -> Result<Json<ShellInitSaved>, ApiError> {
-    let (workspace, name) = named(&state, &id).await?;
+    let workspace = named(&state, &id).await?;
     let text = ShellInitText::new(&body.content)?;
     let (checked, unchecked_reason) = match state
         .workspaces
@@ -89,8 +88,8 @@ pub(crate) async fn put_shell_init(
         ShellInitCheck::NotRun(why) => (false, Some(why)),
         ShellInitCheck::Refused(why) => return Err(ApiError::invalid(why)),
     };
-    let shown = name.clone();
-    let saved = blocking(move || Ok(state.store.set_shell_init(&name, &text)?)).await?;
+    let shown = workspace.clone();
+    let saved = blocking(move || Ok(state.store.set_shell_init(&workspace, &text)?)).await?;
     Ok(Json(ShellInitSaved {
         shell_init: view(&shown, Some(saved)),
         checked,
@@ -113,9 +112,9 @@ pub(crate) async fn delete_shell_init(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let (_, name) = named(&state, &id).await?;
-    let shown = name.to_string();
-    let had = blocking(move || Ok(state.store.clear_shell_init(&name)?)).await?;
+    let id = named(&state, &id).await?;
+    let shown = id.to_string();
+    let had = blocking(move || Ok(state.store.clear_shell_init(&id)?)).await?;
     if had {
         Ok(StatusCode::NO_CONTENT)
     } else {

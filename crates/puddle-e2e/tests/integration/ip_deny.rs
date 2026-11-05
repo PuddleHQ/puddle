@@ -25,7 +25,7 @@ use puddle_proxy::{Proxy, Route};
 use puddle_store::{
     Actor, Effect, Limits, ManualClock, NewRule, Pattern, Resolution, Rule, Scope, Store,
 };
-use puddle_types::{NullSink, WorkspaceName};
+use puddle_types::{NullSink, WorkspaceId};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -34,8 +34,8 @@ const ALLOWED: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const DENIED: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
 const NOW: u64 = 1_800_000_000_000;
 
-fn workspace() -> WorkspaceName {
-    WorkspaceName::new("e2e-r27").unwrap()
+fn workspace() -> WorkspaceId {
+    WorkspaceId::new("e2e-r27").unwrap()
 }
 
 struct Rig {

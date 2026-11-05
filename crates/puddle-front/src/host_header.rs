@@ -5,7 +5,7 @@
 //! `/proxy/<port>/` links go). Anything else is refused, so a page that was tricked into asking for
 //! a Puddle address by another name (DNS rebinding) or by the IP address reaches nothing.
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 /// Why a `Host` is not a workspace's address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -26,7 +26,7 @@ pub enum Refusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     /// The workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The guest port Puddle forwards, or `None` for the workspace's editor.
     pub guest_port: Option<u16>,
 }
@@ -55,7 +55,7 @@ pub fn route_of(host: Option<&str>, port: u16) -> Result<Route, Refusal> {
     if name.contains('.') {
         return Err(Refusal::Foreign);
     }
-    let workspace = WorkspaceName::new(name).map_err(|_| Refusal::NotAWorkspace)?;
+    let workspace = WorkspaceId::new(name).map_err(|_| Refusal::NotAWorkspace)?;
     Ok(Route {
         workspace,
         guest_port,

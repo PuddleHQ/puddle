@@ -14,7 +14,7 @@ use puddle_store::{
     IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoGitRequest, RepoRef, StartBasis,
     Store, StoreError, SwitchChange, SwitchSource, WorkspaceGit,
 };
-use puddle_types::{CollectingSink, Event, WorkspaceName};
+use puddle_types::{CollectingSink, Event, WorkspaceId};
 
 fn fixture() -> (Arc<CollectingSink>, Store) {
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
@@ -25,8 +25,8 @@ fn fixture() -> (Arc<CollectingSink>, Store) {
     (sink, store)
 }
 
-fn ws(name: &str) -> WorkspaceName {
-    WorkspaceName::new(name).unwrap()
+fn ws(name: &str) -> WorkspaceId {
+    WorkspaceId::new(name).unwrap()
 }
 
 fn draft(label: &str, host: &str, owners: &[&str], rest: bool) -> IdentityDraft {

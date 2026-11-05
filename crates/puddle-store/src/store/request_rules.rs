@@ -3,7 +3,7 @@
 //! refuse, so they live apart from the rules on hosts: their own table, their own numbering,
 //! and no precedence to resolve.
 
-use puddle_types::{Event, Methods, PathPattern, WorkspaceName};
+use puddle_types::{Event, Methods, PathPattern, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{Store, append, lock};
@@ -20,7 +20,7 @@ pub struct RequestRule {
     /// Row id, never reused.
     pub id: i64,
     /// The workspace it applies to; `None` for every workspace.
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// The host pattern, `example.com` or `*.example.com`, as the proxy takes it.
     pub host: String,
     /// The methods it names; none for every method.
@@ -58,7 +58,7 @@ impl RequestRule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewRequestRule {
     /// The workspace it applies to; `None` for every workspace.
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// The host pattern.
     pub host: String,
     /// The methods; none for every method.
@@ -91,7 +91,7 @@ fn row_to_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<RequestRule, 
         Ok(RequestRule {
             id,
             workspace: workspace
-                .map(|w| WorkspaceName::new(&w).map_err(|e| corrupt(id, e.to_string())))
+                .map(|w| WorkspaceId::new(&w).map_err(|e| corrupt(id, e.to_string())))
                 .transpose()?,
             host,
             methods: Methods::parse(methods.split(',').filter(|m| !m.is_empty()))
@@ -132,7 +132,7 @@ fn list(
 /// A deleted workspace's rules go with it, each with its own record; the global ones stay.
 pub(super) fn delete_workspace_rows(
     tx: &Transaction<'_>,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     now: u64,
     fx: &mut Vec<Event>,
 ) -> Result<(), StoreError> {
@@ -166,7 +166,7 @@ impl Store {
     /// A database error, or a stored row that no longer reads.
     pub fn request_rules(
         &self,
-        workspace: Option<&WorkspaceName>,
+        workspace: Option<&WorkspaceId>,
     ) -> Result<Vec<RequestRule>, StoreError> {
         let conn = lock(&self.conn);
         match workspace {
@@ -192,7 +192,7 @@ impl Store {
             return Err(StoreError::RequestRuleInvalid("a rule names a host".into()));
         }
         let rule = self.change(|tx, now, fx| {
-            let scope = new.workspace.as_ref().map(WorkspaceName::as_str);
+            let scope = new.workspace.as_ref().map(WorkspaceId::as_str);
             let held: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM request_rules WHERE workspace_id IS ?1",
                 [scope],

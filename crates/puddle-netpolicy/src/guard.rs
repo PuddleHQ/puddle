@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use std::net::IpAddr;
 
-use puddle_types::{BlockReason, CompanySignal, Host, LocalCategory, WorkspaceName};
+use puddle_types::{BlockReason, CompanySignal, Host, LocalCategory, WorkspaceId};
 
 use crate::{
     AddressClass, CompanySignals, HostAddrs, LocalAccess, LocalAccessSource, NoSignals,
@@ -35,10 +35,10 @@ pub enum AddressVerdict {
 /// ```
 /// use std::sync::Arc;
 /// use puddle_netpolicy::{AddressVerdict, LocalAccess, NetPolicy};
-/// use puddle_types::{BlockReason, LocalCategory, WorkspaceName};
+/// use puddle_types::{BlockReason, LocalCategory, WorkspaceId};
 ///
 /// let guard = NetPolicy::new(Arc::new(LocalAccess::NONE.with_toggle(LocalCategory::Private, true)));
-/// let workspace = WorkspaceName::new("box").unwrap();
+/// let workspace = WorkspaceId::new("box").unwrap();
 /// assert_eq!(guard.check_address(&workspace, "8.8.8.8:443".parse().unwrap()), AddressVerdict::Allow);
 /// assert_eq!(
 ///     guard.check_address(&workspace, "10.0.0.1:443".parse().unwrap()),
@@ -126,7 +126,7 @@ impl NetPolicy {
 
     /// The verdict on one address `workspace` would connect to.
     #[must_use]
-    pub fn check_address(&self, workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
+    pub fn check_address(&self, workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
         self.check_address_named(workspace, None, addr)
     }
 
@@ -134,7 +134,7 @@ impl NetPolicy {
     #[must_use]
     pub fn check_address_named(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         name: Option<&Host>,
         addr: SocketAddr,
     ) -> AddressVerdict {
@@ -160,7 +160,7 @@ impl NetPolicy {
     #[must_use]
     pub fn check_target(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
@@ -218,15 +218,15 @@ fn verdict(class: AddressClass, access: LocalAccess) -> AddressVerdict {
 ///
 /// ```
 /// use puddle_netpolicy::block_message;
-/// use puddle_types::{BlockReason, Host, LocalCategory, WorkspaceName};
+/// use puddle_types::{BlockReason, Host, LocalCategory, WorkspaceId};
 ///
-/// let workspace = WorkspaceName::new("box").unwrap();
+/// let workspace = WorkspaceId::new("box").unwrap();
 /// let host = Host::parse_normalised("10.0.0.1").unwrap();
 /// let msg = block_message(&host, &workspace, &[BlockReason::LocalToggle(LocalCategory::Private)]);
 /// assert!(msg.contains("turn on 'private' (local/private network) globally or for workspace box"));
 /// ```
 #[must_use]
-pub fn block_message(host: &Host, workspace: &WorkspaceName, reasons: &[BlockReason]) -> String {
+pub fn block_message(host: &Host, workspace: &WorkspaceId, reasons: &[BlockReason]) -> String {
     let mut toggles: Vec<LocalCategory> = reasons
         .iter()
         .filter_map(|r| match r {
@@ -352,8 +352,8 @@ mod tests {
     use super::*;
     use crate::{EndpointKind, Registration, normalise_host};
 
-    fn workspace() -> WorkspaceName {
-        WorkspaceName::new("box").unwrap()
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::new("box").unwrap()
     }
 
     fn sa(s: &str) -> SocketAddr {
@@ -499,11 +499,11 @@ mod tests {
 
     #[test]
     fn toggles_are_read_per_workspace_per_call() {
-        let per = |s: &WorkspaceName| {
+        let per = |s: &WorkspaceId| {
             LocalAccess::NONE.with_toggle(LocalCategory::Loopback, s.as_str() == "dev")
         };
         let g = NetPolicy::new(Arc::new(per));
-        let dev = WorkspaceName::new("dev").unwrap();
+        let dev = WorkspaceId::new("dev").unwrap();
         assert_eq!(
             g.check_address(&dev, sa("127.0.0.1:3000")),
             AddressVerdict::ExactOnly(LocalCategory::Loopback)

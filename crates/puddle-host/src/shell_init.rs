@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use puddle_compute::{ExecOutput, ExecRequest, FileMount};
 use puddle_store::Store;
-use puddle_types::{GuestFile, GuestPath, SessionUser, WorkspaceId, WorkspaceName};
+use puddle_types::{GuestFile, GuestPath, SessionUser, WorkspaceId};
 
 /// Where a workspace's folder with its shell init is mounted.
 pub(crate) const GUEST_DIR: &str = "/puddle/shell-init";
@@ -107,7 +107,7 @@ impl Copies {
     pub(crate) fn publish(
         &self,
         id: &WorkspaceId,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
     ) -> Result<Published, String> {
         self.write(id, name, true)
     }
@@ -120,7 +120,7 @@ impl Copies {
     pub(crate) fn refresh(
         &self,
         id: &WorkspaceId,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
     ) -> Result<Published, String> {
         self.write(id, name, false)
     }
@@ -128,7 +128,7 @@ impl Copies {
     fn write(
         &self,
         id: &WorkspaceId,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         revive: bool,
     ) -> Result<Published, String> {
         // Held from the read of the text, so a later save is never overwritten by an older one.
@@ -151,7 +151,7 @@ impl Copies {
     ///
     /// # Errors
     /// A message for the user when the database cannot be read.
-    pub(crate) fn saved(&self, name: &WorkspaceName) -> Result<Option<String>, String> {
+    pub(crate) fn saved(&self, name: &WorkspaceId) -> Result<Option<String>, String> {
         self.store
             .shell_init(name)
             .map(|saved| saved.map(|s| s.content.as_str().to_owned()))
@@ -320,8 +320,8 @@ mod tests {
         WorkspaceId::new(text).unwrap()
     }
 
-    fn name(text: &str) -> WorkspaceName {
-        WorkspaceName::new(text).unwrap()
+    fn name(text: &str) -> WorkspaceId {
+        WorkspaceId::new(text).unwrap()
     }
 
     #[test]

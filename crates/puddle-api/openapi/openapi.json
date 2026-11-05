@@ -1543,7 +1543,7 @@
             "description": "only this workspace's events; global events always come through",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/WorkspaceName"
+              "$ref": "#/components/schemas/WorkspaceId"
             }
           }
         ],
@@ -3161,7 +3161,7 @@
             "description": "only this workspace's requests",
             "required": false,
             "schema": {
-              "$ref": "#/components/schemas/WorkspaceName"
+              "$ref": "#/components/schemas/WorkspaceId"
             }
           }
         ],
@@ -5003,7 +5003,7 @@
             "description": "workspace name",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/WorkspaceName"
+              "$ref": "#/components/schemas/WorkspaceId"
             }
           }
         ],
@@ -5093,7 +5093,7 @@
             "description": "workspace name",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/WorkspaceName"
+              "$ref": "#/components/schemas/WorkspaceId"
             }
           }
         ],
@@ -11859,7 +11859,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -11891,7 +11891,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace whose guest killed the process."
               }
             }
@@ -11923,7 +11923,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -11968,7 +11968,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace's workspace."
               }
             }
@@ -12028,7 +12028,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12068,7 +12068,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12148,7 +12148,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12183,7 +12183,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12208,7 +12208,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12228,7 +12228,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12248,7 +12248,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12273,7 +12273,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12293,7 +12293,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12313,7 +12313,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12333,7 +12333,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12372,7 +12372,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12397,7 +12397,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -12462,7 +12462,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace that tried."
               }
             }
@@ -12497,7 +12497,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace that asked."
               }
             }
@@ -12527,7 +12527,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace the login is in."
               }
             }
@@ -13145,7 +13145,7 @@
           "detached_from": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/WorkspaceName"
+              "$ref": "#/components/schemas/WorkspaceId"
             },
             "description": "The workspaces it was taken off."
           },
@@ -13282,7 +13282,7 @@
           "workspaces": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/WorkspaceName"
+              "$ref": "#/components/schemas/WorkspaceId"
             },
             "description": "The workspaces it is on."
           }
@@ -13384,7 +13384,7 @@
             "description": "The names this workspace never decrypts while the switch is on (`example.com`,\n`*.example.com`), sorted."
           },
           "workspace": {
-            "$ref": "#/components/schemas/WorkspaceName",
+            "$ref": "#/components/schemas/WorkspaceId",
             "description": "The workspace."
           }
         }
@@ -13749,7 +13749,7 @@
           "workspace": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace the rule applies to; `null` for every workspace."
               },
               {
@@ -14108,7 +14108,7 @@
             "description": "Where the row is in its life."
           },
           "workspace": {
-            "$ref": "#/components/schemas/WorkspaceName",
+            "$ref": "#/components/schemas/WorkspaceId",
             "description": "The requesting workspace."
           }
         }
@@ -14175,7 +14175,7 @@
             "description": "The host's registrable domain (`example.co.uk` for `api.example.co.uk`; the IP literal\nitself), the key the inbox groups rows by."
           },
           "workspace": {
-            "$ref": "#/components/schemas/WorkspaceName",
+            "$ref": "#/components/schemas/WorkspaceId",
             "description": "The workspace that asked."
           }
         }
@@ -14274,7 +14274,7 @@
           "workspace": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace it is about, or `null` when it is about Puddle."
               },
               {
@@ -14919,7 +14919,7 @@
           "workspace": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace it applies to; `null` for every workspace."
               },
               {
@@ -15298,7 +15298,7 @@
                 ]
               },
               "workspace": {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace."
               }
             }
@@ -15419,7 +15419,7 @@
             "description": "On or off there."
           },
           "workspace": {
-            "$ref": "#/components/schemas/WorkspaceName",
+            "$ref": "#/components/schemas/WorkspaceId",
             "description": "The workspace."
           }
         }
@@ -15441,7 +15441,7 @@
           "workspace": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace whose own switch to set; left out or `null` for every workspace."
               },
               {
@@ -15853,7 +15853,7 @@
             "description": "Whether one is saved. A workspace with none starts all the same."
           },
           "workspace": {
-            "$ref": "#/components/schemas/WorkspaceName",
+            "$ref": "#/components/schemas/WorkspaceId",
             "description": "The workspace."
           }
         }
@@ -16162,7 +16162,7 @@
           "workspace": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/WorkspaceName",
+                "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The one workspace it is allowed for; `null` for every workspace."
               },
               {
@@ -16658,7 +16658,7 @@
             "description": "Its variables."
           },
           "workspace": {
-            "$ref": "#/components/schemas/WorkspaceName",
+            "$ref": "#/components/schemas/WorkspaceId",
             "description": "The workspace."
           }
         }
@@ -16707,10 +16707,18 @@
             "description": "The repository table."
           },
           "workspace": {
-            "$ref": "#/components/schemas/WorkspaceName",
+            "$ref": "#/components/schemas/WorkspaceId",
             "description": "The workspace."
           }
         }
+      },
+      "WorkspaceId": {
+        "type": "string",
+        "description": "A workspace's id: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`) of at most 60 characters.",
+        "example": "my-project",
+        "maxLength": 60,
+        "minLength": 1,
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
       },
       "WorkspaceIdentitiesRequest": {
         "type": "object",
@@ -16767,6 +16775,7 @@
           "identity_deleted",
           "identity_default_set",
           "identities_changed",
+          "identities_reordered",
           "repo_added",
           "repo_switched",
           "repo_removed"
@@ -16870,7 +16879,7 @@
             "description": "Unknown fields in its stored document (kept)."
           },
           "workspace": {
-            "$ref": "#/components/schemas/WorkspaceName",
+            "$ref": "#/components/schemas/WorkspaceId",
             "description": "The workspace."
           }
         }

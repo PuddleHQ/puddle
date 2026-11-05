@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::Value;
 
 /// Storage for the two settings document kinds. Calls may block (files, `SQLite`); the API runs
@@ -31,8 +31,7 @@ pub trait SettingsRepo: Send + Sync {
     /// # Errors
     ///
     /// [`SettingsRepoError`] if the storage fails.
-    fn load_workspace(&self, workspace: &WorkspaceName)
-    -> Result<Option<Value>, SettingsRepoError>;
+    fn load_workspace(&self, workspace: &WorkspaceId) -> Result<Option<Value>, SettingsRepoError>;
 
     /// Replaces one workspace's document.
     ///
@@ -41,7 +40,7 @@ pub trait SettingsRepo: Send + Sync {
     /// [`SettingsRepoError`] if the storage fails.
     fn save_workspace(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         document: Value,
     ) -> Result<(), SettingsRepoError>;
 
@@ -51,7 +50,7 @@ pub trait SettingsRepo: Send + Sync {
     /// # Errors
     ///
     /// [`SettingsRepoError`] if a document exists and cannot be removed.
-    fn delete_workspace(&self, workspace: &WorkspaceName) -> Result<(), SettingsRepoError>;
+    fn delete_workspace(&self, workspace: &WorkspaceId) -> Result<(), SettingsRepoError>;
 
     /// The user's own app icon (a PNG made by `puddle-appicon`), or `None` if none was given.
     ///
@@ -96,7 +95,7 @@ impl SettingsRepoError {
 #[derive(Debug, Default)]
 pub struct MemorySettings {
     global: Mutex<Option<Value>>,
-    workspaces: Mutex<BTreeMap<WorkspaceName, Value>>,
+    workspaces: Mutex<BTreeMap<WorkspaceId, Value>>,
     app_icon: Mutex<Option<Vec<u8>>>,
 }
 
@@ -114,10 +113,7 @@ impl SettingsRepo for MemorySettings {
         Ok(())
     }
 
-    fn load_workspace(
-        &self,
-        workspace: &WorkspaceName,
-    ) -> Result<Option<Value>, SettingsRepoError> {
+    fn load_workspace(&self, workspace: &WorkspaceId) -> Result<Option<Value>, SettingsRepoError> {
         Ok(self
             .workspaces
             .lock()
@@ -128,7 +124,7 @@ impl SettingsRepo for MemorySettings {
 
     fn save_workspace(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         document: Value,
     ) -> Result<(), SettingsRepoError> {
         self.workspaces
@@ -138,7 +134,7 @@ impl SettingsRepo for MemorySettings {
         Ok(())
     }
 
-    fn delete_workspace(&self, workspace: &WorkspaceName) -> Result<(), SettingsRepoError> {
+    fn delete_workspace(&self, workspace: &WorkspaceId) -> Result<(), SettingsRepoError> {
         self.workspaces
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -174,7 +170,7 @@ mod tests {
     #[test]
     fn memory_settings_keep_what_was_saved() {
         let repo = MemorySettings::default();
-        let a = WorkspaceName::new("a").unwrap();
+        let a = WorkspaceId::new("a").unwrap();
         assert_eq!(repo.load_global().unwrap(), None);
         assert_eq!(repo.load_workspace(&a).unwrap(), None);
         repo.save_global(json!({"schema_version": 1})).unwrap();
@@ -187,7 +183,7 @@ mod tests {
             repo.load_workspace(&a).unwrap(),
             Some(json!({"overrides": {}}))
         );
-        let b = WorkspaceName::new("b").unwrap();
+        let b = WorkspaceId::new("b").unwrap();
         repo.save_workspace(&b, json!({"overrides": {"cpus": 2}}))
             .unwrap();
         repo.delete_workspace(&a).unwrap();

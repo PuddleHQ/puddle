@@ -1566,6 +1566,20 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_set_colour_is_no_choice_and_does_not_break_the_list() {
+        let (_, store) = store();
+        let made = store.create_rule_set("Odd", "", None, Actor::Ui).unwrap();
+        for bad in ["not json", r#"{"kind":"conic"}"#] {
+            lock(&store.conn)
+                .execute("UPDATE rule_sets SET fill = ?1", [bad])
+                .unwrap();
+            let listed = store.rule_sets().unwrap();
+            let shown = listed.iter().find(|s| s.id == made.id).unwrap();
+            assert_eq!(shown.fill, made.fill, "{bad}");
+        }
+    }
+
+    #[test]
     fn corrupt_rows_are_reported_not_trusted() {
         let (_, store) = store();
         {

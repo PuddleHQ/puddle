@@ -6943,6 +6943,55 @@ async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_re
     host.shutdown().await;
 }
 
+/// Waits until `has_problem(key)` is `want`; a plan rewrite in a running guest settles in the
+/// background.
+async fn problem_settles(host: &Host<FakeRuntime>, key: &str, want: bool) {
+    eventually(
+        &format!("{key} has problem is {want}"),
+        Duration::from_secs(10),
+        || has_problem(host, key) == want,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plan_rewrite_in_a_running_workspace_raises_and_ends_the_merge_notice() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let key = "merge-left:acme:/etc/ssh/ssh_config";
+    assert!(!has_problem(&host, key));
+
+    // A variable changed while it runs: the hook runs again, finds the file unreadable, and says so.
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: /etc/ssh/ssh_config left as it is: the file is not UTF-8\n".to_owned();
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/A_VAR",
+        json!({"kind": "plain", "value": "1"}),
+    )
+    .await;
+    problem_settles(&host, key, true).await;
+    let problem = problem_of(&host, key);
+    assert!(
+        problem.detail.contains("not UTF-8") && problem.detail.contains("Connection closed"),
+        "{}",
+        problem.detail
+    );
+
+    // The next rewrite finds it repaired: the notice ends without a restart.
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/A_VAR",
+        json!({"kind": "plain", "value": "2"}),
+    )
+    .await;
+    problem_settles(&host, key, false).await;
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_is_noticed_at_a_start_too_but_only_when_author_rules_exist() {
     let rig = Rig::new();

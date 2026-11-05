@@ -20,7 +20,7 @@ unset $(git rev-parse --local-env-vars)
 
 ws=$tmp/ws
 mkdir -p "$ws/scripts" "$ws/ui/scripts" "$tmp/bin" "$tmp/target"
-cp "$here/scripts/check.sh" "$here/scripts/gate-sched.sh" "$ws/scripts/"
+cp "$here/scripts/check.sh" "$here/scripts/gate-sched.sh" "$here/scripts/diff-base.sh" "$ws/scripts/"
 echo '{}' >"$ws/scripts/coverage-baseline.json"
 : >"$ws/scripts/diff-coverage-exclusions.txt"
 # The coverage tests step: logs the cargo it was given (check.sh's first argument), like the real one does.

@@ -37,6 +37,7 @@ puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-store = { workspace = true }
+puddle-test-kit = { workspace = true }
 puddle-vm-tests = { workspace = true }
 rusqlite = { workspace = true }
 sha2 = { workspace = true }

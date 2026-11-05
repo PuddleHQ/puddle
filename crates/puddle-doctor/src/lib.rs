@@ -47,9 +47,9 @@ pub use diagnose::{
     DEFAULT_DISK_FAIL_BELOW, DEFAULT_DISK_WARN_BELOW, Options, PROBE_EXIT_CODE, Probe, diagnose,
 };
 pub use facts::{
-    AccessDenied, BootFacts, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, DiskFacts, GsaFacts,
-    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts,
-    RuntimeState, ServiceState, WritableFolder,
+    AccessDenied, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity, CodeIntegrityFacts,
+    DataPathFacts, DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os,
+    ProcessOutcome, RuntimeFacts, RuntimeState, ServiceState, WritableFolder,
 };
 pub use launch::TAIL_LINES;
 pub use puddle_runtime::RuntimeError;

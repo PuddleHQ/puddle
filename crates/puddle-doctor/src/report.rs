@@ -159,6 +159,8 @@ pub enum Finding {
     DiskSpaceUnreadable,
     /// A folder above Puddle's data is writable by other accounts and not sticky.
     DataPathWritable,
+    /// A folder above Puddle's data is not a folder or belongs to another user.
+    DataPathBlocked,
     /// The folders above Puddle's data couldn't be read.
     DataPathUnreadable,
     /// The runtime's guest kernel has `/dev/mem`, so guest root can map device registers.

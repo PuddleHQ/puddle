@@ -14,9 +14,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use puddle_doctor::{
-    AccessDenied, BootFacts, CheckId, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, DiskFacts,
-    Finding, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe,
-    ProcessOutcome, Report, RuntimeFacts, RuntimeState, Status, WritableFolder, diagnose,
+    AccessDenied, BlockedBy, BlockedFolder, BootFacts, CheckId, CodeIntegrity, CodeIntegrityFacts,
+    DataPathFacts, DiskFacts, Finding, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts,
+    KeptLogs, Options, Os, Probe, ProcessOutcome, Report, RuntimeFacts, RuntimeState, Status,
+    WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -1269,6 +1270,7 @@ fn linux_data_path_clear() {
     let fake = Fake {
         data_path: Some(DataPathFacts::Checked {
             dir: "/home/dev/.local/share/puddle".into(), // flake-ok: a path the fake probe reports, never opened
+            blocked: Vec::new(),
             writable: Vec::new(),
         }),
         ..linux()
@@ -1282,6 +1284,7 @@ fn linux_data_path_group_writable() {
     let fake = Fake {
         data_path: Some(DataPathFacts::Checked {
             dir: "/home/dev/.local/share/puddle".into(), // flake-ok: a path the fake probe reports, never opened
+            blocked: Vec::new(),
             writable: vec![folder("/home/dev/.local", 0o775, true)],
         }),
         ..linux()
@@ -1307,6 +1310,7 @@ fn linux_data_path_several_world_writable_and_not_owned() {
     let fake = Fake {
         data_path: Some(DataPathFacts::Checked {
             dir: "/srv/my data/puddle".into(),
+            blocked: Vec::new(),
             writable: vec![
                 folder("/srv", 0o777, false),
                 folder("/srv/my data", 0o775, true),
@@ -1325,6 +1329,52 @@ fn linux_data_path_several_world_writable_and_not_owned() {
         fix.contains("\n  sudo chmod go-w /srv '/srv/my data'"),
         "{fix}"
     );
+}
+
+#[test]
+fn linux_data_path_not_a_folder() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::Checked {
+            dir: "/home/dev/.local".into(), // flake-ok: a path the fake probe reports, never opened
+            writable: Vec::new(),
+            blocked: vec![BlockedFolder {
+                path: "/home/dev/.local".into(), // flake-ok: a path the fake probe reports, never opened
+                by: BlockedBy::NotAFolder,
+            }],
+        }),
+        ..linux()
+    };
+    let r = check(
+        "linux_data_path_not_a_folder",
+        &fake,
+        CheckId::DataPath,
+        Some(Finding::DataPathBlocked),
+    );
+    assert!(!r.ok);
+}
+
+#[test]
+fn linux_data_path_other_owner_and_writable() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::Checked {
+            dir: "/srv/team/puddle".into(),
+            writable: vec![folder("/srv/team", 0o775, false)],
+            blocked: vec![BlockedFolder {
+                path: "/srv/team".into(),
+                by: BlockedBy::OtherOwner { uid: 1001 },
+            }],
+        }),
+        ..linux()
+    };
+    let r = check(
+        "linux_data_path_other_owner",
+        &fake,
+        CheckId::DataPath,
+        Some(Finding::DataPathBlocked),
+    );
+    let fix = r.check(CheckId::DataPath).unwrap().fix.clone().unwrap();
+    assert!(fix.contains("sudo chown \"$USER\" /srv/team"), "{fix}");
+    assert!(fix.contains("\n  sudo chmod g-w /srv/team"), "{fix}");
 }
 
 #[test]
@@ -1360,6 +1410,7 @@ fn linux_data_path_world_writable_only() {
     let fake = Fake {
         data_path: Some(DataPathFacts::Checked {
             dir: "/data/puddle".into(),
+            blocked: Vec::new(),
             writable: vec![folder("/data", 0o757, true)],
         }),
         ..linux()

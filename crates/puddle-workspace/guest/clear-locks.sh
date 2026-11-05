@@ -94,8 +94,14 @@ commit_exists() {
 }
 
 # Moves the finished file $1 over $2, owned like the git dir $3 (the script runs as root).
+# The new file and the git dir are fsynced one by one: a plain `sync` flushes every filesystem of
+# the machine and can take minutes on a busy one. A `sync` without file arguments is only the
+# fallback for a sync that does not take them.
 put() {
-    chown --reference="$3" -- "$1" && mv -f -- "$1" "$2"
+    chown --reference="$3" -- "$1" || return 1
+    sync -- "$1" 2>/dev/null || sync
+    mv -f -- "$1" "$2" || return 1
+    sync -- "$3" 2>/dev/null || sync
 }
 
 # One problem record for $1 with the reason $2.
@@ -243,7 +249,6 @@ for comm in "$proc"/[0-9]*/comm; do
     esac
 done
 
-repaired=0
 for d in * .[!.]* ..?*; do
     case $d in .puddle | lost+found) continue ;; esac
     [ -d "$d" ] && [ ! -L "$d" ] || continue
@@ -259,9 +264,6 @@ for d in * .[!.]* ..?*; do
     out=$(repair_checkout "$d")
     if [ -n "$out" ]; then
         printf '%s\n' "$out"
-        printf '%s\n' "$out" | grep -q '^R' && repaired=1
     fi
 done
-# A repaired file must reach the disk before anyone works on it.
-[ $repaired = 1 ] && sync
 printf 'D\n'

@@ -123,6 +123,9 @@ private_tmp() {
     trap cleanup EXIT
     export TMPDIR="$work_tmp"
     free_gb="${MUTANTS_FREE_GB:-$(df -Pk "$work_tmp" | awk 'NR == 2 { print int($4 / 1048576) }')}"
+    case $free_gb in
+    '' | *[!0-9]*) echo "mutants: cannot read the free space of $base, keeping $jobs job(s)" >&2 && return 0 ;;
+    esac
     fit=$((free_gb / ${MUTANTS_JOB_GB:-14}))
     [ "$fit" -ge 1 ] || fit=1
     if [ "$fit" -lt "$jobs" ]; then

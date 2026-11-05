@@ -9739,6 +9739,16 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     assert!(detail.contains("left as it is"), "{detail}");
     attach().await;
     assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
+
+    // Another merged file left first does not hide it: the notice looks at every left file.
+    *rig.guest.boot_says.lock().unwrap() = format!(
+        "puddle-boot: /home/agent/.docker/config.json left as it is: the file is not UTF-8\n\
+         puddle-boot: /workspaces/acme/{file} left as it is: expected a value at line 1\n"
+    );
+    attach().await;
+    let (_, detail) = problem_is(&api, "editor-file:acme", true).await.unwrap();
+    assert!(detail.contains(file), "{detail}");
+    assert!(!detail.contains("docker"), "{detail}");
 }
 
 /// A workspace that runs, with nothing else going on in its guest.

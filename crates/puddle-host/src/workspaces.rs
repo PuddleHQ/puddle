@@ -1603,8 +1603,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         {
             state.editor_file.clone_from(&replanned.editor_file);
         }
-        match report.left_files().first() {
-            Some((path, why)) if path.ends_with(".code-workspace") => inner.problems.raise(
+        let left = report.left_files();
+        match left
+            .iter()
+            .find(|(path, _)| path.ends_with(".code-workspace"))
+        {
+            Some((path, why)) => inner.problems.raise(
                 Problem::new(
                     key,
                     format!("Puddle could not update the editor's file in {name}"),

@@ -375,11 +375,12 @@ impl Runtime for MsbRuntime {
                 })?;
             Ok(Capabilities {
                 runtime_version: version,
-                // The fork removes what a failed create leaves (`0ad1ef63`, since -puddle.1); the
-                // contract suite's volume-mismatch case checks it on every VM run.
+                // msb removes what a failed create leaves (upstream
+                // `superradcompany/microsandbox#1929`, since v0.7.12); the contract suite's
+                // volume-mismatch case checks it on every VM run.
                 stale_dir_fixed: true,
-                // The fork's SSH server sends no exit status for a signal-killed command, so
-                // clients see a failure (fork `359f1585`; stock 0.7.7 sent 0).
+                // msb's SSH server sends exit status 1 for a signal-killed command (upstream
+                // `superradcompany/microsandbox#2011`, carried by the fork; stock 0.7.7 sent 0).
                 // `vm_ssh_reports_a_signal_killed_command_as_a_failure` checks it.
                 ssh_reports_signal_exit: true,
             })
@@ -466,7 +467,6 @@ impl Runtime for MsbRuntime {
                     .map(|v| (v, None))
                     .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
-            root_disk::check_before_start(name.as_str(), &self.sandbox_dir(name.as_str()))?;
             match self.sdk(Sandbox::start(name.as_str())).await {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {
@@ -740,6 +740,22 @@ mod tests {
     use super::*;
     use crate::MsbConfig;
 
+    /// A folder for a test's msb home, owner-only whatever the umask: msb refuses a home with an
+    /// ancestor other accounts can write to, and a umask of `0002` leaves a plain temp folder
+    /// group-writable.
+    fn home_tmp() -> tempfile::TempDir {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tempfile::Builder::new()
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir()
+                .unwrap()
+        }
+        #[cfg(not(unix))]
+        tempfile::tempdir().unwrap()
+    }
+
     #[test]
     fn only_the_relay_race_counts_as_a_boot_race() {
         let boot = |message: &str| MicrosandboxError::BootStart {
@@ -815,7 +831,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_gives_the_sdk_the_runtime_pair_and_home_as_arguments() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = home_tmp();
         let base = tmp.path().to_path_buf();
         let config = MsbConfig::new(
             base.join("home"),
@@ -842,7 +858,7 @@ mod tests {
         use puddle_compute::{FileMount, SandboxSpec};
         use puddle_types::GuestPath;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = home_tmp();
         let base = tmp.path().to_path_buf();
         let share = base.join("home").join("guest-share");
         std::fs::create_dir_all(share.join("tree")).unwrap();
@@ -886,7 +902,7 @@ mod tests {
         use puddle_compute::{FileMount, SandboxSpec, VsockRoute};
         use puddle_types::GuestPath;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = home_tmp();
         let base = dunce::canonicalize(tmp.path()).unwrap();
         let home = base.join("data").join("msb");
         let share = base.join("data").join("guest-share");

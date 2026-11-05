@@ -270,6 +270,12 @@ fn an_editor_run_as_root_is_its_own_problem_that_ends_with_the_report_and_with_t
         "The browser editor in box runs as root: the user agent is missing in the guest"
     );
     assert!(root.detail.contains("belong to root"), "{}", root.detail);
+    assert!(
+        root.detail
+            .contains("switch the workspace's session user to root"),
+        "{}",
+        root.detail
+    );
     assert_eq!(root.workspace, Some(box_.clone()));
     // The same text again changes nothing the user sees.
     let _ = sink.take();

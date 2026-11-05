@@ -9523,6 +9523,10 @@ async fn an_editor_server_that_runs_as_root_for_want_of_its_user_is_a_problem_un
         "The browser editor in acme runs as root: its user agent is missing in the guest"
     );
     assert!(detail.contains("belong to root"), "{detail}");
+    assert!(
+        detail.contains("switch the workspace's session user to root"),
+        "{detail}"
+    );
 
     let fixed = agent_says(
         &rig,

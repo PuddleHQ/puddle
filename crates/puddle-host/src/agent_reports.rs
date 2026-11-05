@@ -117,7 +117,9 @@ fn editor_session_user_problem(name: &WorkspaceName, reason: &str) -> Problem {
         "The editor opens and works, but its terminal and the files it writes belong to root \
          instead of the workspace's session user, because the guest has no such user (the boot \
          hook could not add it, or the image removed it). Terminals and desktop VS Code are not \
-         affected. This ends when the workspace starts with the user present, or when it stops."
+         affected. To get the user back, use an image that keeps the user (or switch the workspace's \
+         session user to root in its settings) and start the workspace again; this ends when a start \
+         finds the user, or when the workspace stops."
             .to_owned(),
     )
     .about(name.clone())

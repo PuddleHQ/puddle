@@ -14,9 +14,9 @@ import type { Result } from "./identities.svelte.ts";
 type StoreApi = Pick<ApiClient, "GET" | "PUT" | "DELETE">;
 export type Status = "loading" | "ready" | "failed";
 
-/** The global variables, or those of the workspace with this name. */
+/** The global variables, or those of the workspace with this id. */
 export type EnvScopeKey =
-  { kind: "global" } | { kind: "workspace"; name: string };
+  { kind: "global" } | { kind: "workspace"; id: string };
 
 const DOWN = "Puddle's service isn't answering.";
 
@@ -48,7 +48,7 @@ export class EnvironmentStore {
           ? (await this.#api.GET("/api/env")).data
           : (
               await this.#api.GET("/api/workspaces/{id}/env", {
-                params: { path: { id: scope.name } },
+                params: { path: { id: scope.id } },
               })
             ).data;
       if (ticket !== this.#ticket) return;
@@ -86,7 +86,7 @@ export class EnvironmentStore {
               body,
             })
           : await this.#api.PUT("/api/workspaces/{id}/env/{name}", {
-              params: { path: { id: scope.name, name } },
+              params: { path: { id: scope.id, name } },
               body,
             });
       if (!data) {
@@ -112,7 +112,7 @@ export class EnvironmentStore {
               params: { path: { name } },
             })
           : await this.#api.DELETE("/api/workspaces/{id}/env/{name}", {
-              params: { path: { id: scope.name, name } },
+              params: { path: { id: scope.id, name } },
             });
       if (!response.ok && response.status !== 404) {
         return { ok: false, message: "Puddle couldn't remove the variable." };

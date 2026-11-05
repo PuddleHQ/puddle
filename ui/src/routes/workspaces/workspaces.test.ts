@@ -155,7 +155,7 @@ describe("the workspace list", () => {
       await screen.findByRole("button", { name: "Start docs" }),
     );
     await vi.waitFor(() =>
-      expect(workspaces.byName("docs")?.busy).toBe("starting"),
+      expect(workspaces.byId("w-docs")?.busy).toBe("starting"),
     );
     expect(screen.getByRole("article")).toHaveTextContent("Starting");
   });
@@ -164,7 +164,7 @@ describe("the workspace list", () => {
     api.list = [workspace("a"), workspace("b")];
     inbox.add(
       request(1, {
-        workspace: "a" as never,
+        workspace: "w-a" as never,
         host: "old.example.com",
         first_seen: 1,
       }),
@@ -172,7 +172,7 @@ describe("the workspace list", () => {
     );
     inbox.add(
       request(2, {
-        workspace: "b" as never,
+        workspace: "w-b" as never,
         host: "new.example.com",
         first_seen: 9,
       }),
@@ -180,7 +180,7 @@ describe("the workspace list", () => {
     );
     inbox.add(
       request(3, {
-        workspace: "b" as never,
+        workspace: "w-b" as never,
         host: "newer.example.org",
         first_seen: 5,
       }),
@@ -211,14 +211,14 @@ describe("the workspace list", () => {
     await mount();
     workspaces.handleEvent({
       type: "oom_kill",
-      workspace: "a",
+      workspace: "w-a",
       pid: 3,
       process: "node",
     });
     expect(await screen.findByText(/Out of memory/)).toBeInTheDocument();
     workspaces.handleEvent({
       type: "workspace_progress",
-      workspace: "a",
+      workspace: "w-a",
       step: "failed",
       detail: "boom",
     });
@@ -256,13 +256,13 @@ describe("the workspaces layout", () => {
     await workspaces.refresh();
     source.emit({
       type: "workspace_progress",
-      workspace: "a",
+      workspace: "w-a",
       step: "stopping",
       detail: null,
     });
     source.emit({
       type: "workspace_progress",
-      workspace: "a",
+      workspace: "w-a",
       step: "done",
       detail: null,
     });

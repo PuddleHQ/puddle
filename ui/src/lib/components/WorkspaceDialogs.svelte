@@ -47,7 +47,7 @@
     bind:open={actions.connectOpen}
     workspace={connecting}
     {server}
-    editorProblem={editorProblems.of(connecting.name)}
+    editorProblem={editorProblems.of(connecting.id)}
     onBrowser={actions.openBrowser}
     onDesktop={actions.openDesktop}
     onDirectSsh={(w, on) => actions.requestDirectSsh(w, on, true)}

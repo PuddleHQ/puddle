@@ -14,12 +14,12 @@
 
   const id = $derived(page.params["id"] ?? "");
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
-  const name = $derived(workspace?.name);
+  const wid = $derived(workspace?.id);
   const store = new EnvironmentStore();
   const fid = $props.id();
 
   $effect(() => {
-    if (name) return store.start({ kind: "workspace", name });
+    if (wid) return store.start({ kind: "workspace", id: wid });
   });
 </script>
 
@@ -42,8 +42,8 @@
     </p>
     <EnvironmentTable
       {store}
-      label="Environment of {workspace.name}"
-      workspace={workspace.name}
+      label="Environment of {workspace.display_name}"
+      workspace={workspace.display_name}
       running={!isDown(workspace.status)}
     />
   </section>

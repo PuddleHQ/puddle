@@ -4,6 +4,7 @@
 // host's `401` that no identity could answer ("attach an identity"). None opens a window or
 // changes a list by itself: the sign-in is a link to the page with its
 // button, and the table changes only when the user clicks the notice's action.
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import {
   asCredentialEvent,
@@ -85,7 +86,7 @@ export class CredentialNotices {
     this.#notifier.notify({
       key: noIdentityKey(event),
       tone: "warning",
-      title: `${event.workspace}: ${repoName(event)} answered 401, and no identity covers ${event.owner}.`,
+      title: `${workspaces.labelOf(event.workspace)}: ${repoName(event)} answered 401, and no identity covers ${event.owner}.`,
       detail: `If it is a private repository, attach an identity that covers ${event.owner} on ${event.host} to the workspace; Puddle adds no credential on its own. A public repository answers without one.`,
       link: {
         href: `/workspaces/${encodeURIComponent(event.workspace)}/git`,
@@ -100,7 +101,7 @@ export class CredentialNotices {
     this.#notifier.notify({
       key: deniedKey(event),
       tone: "warning",
-      title: `${event.workspace}: ${refused} ${name} was refused.`,
+      title: `${workspaces.labelOf(event.workspace)}: ${refused} ${name} was refused.`,
       detail: `${failure ? `${failure} ` : ""}It is not on the workspace's ${event.access} list. Allow ${event.access} for it, or turn the list off on the workspace's Git tab.`,
       action: {
         label: `Allow ${event.access} for ${event.repo}`,
@@ -156,7 +157,7 @@ export class CredentialNotices {
       this.#notifier.notify({
         key: deniedKey(event),
         tone: "info",
-        title: `${event.workspace} may now ${event.access} ${name}.`,
+        title: `${workspaces.labelOf(event.workspace)} may now ${event.access} ${name}.`,
         link: {
           href: `/workspaces/${encodeURIComponent(event.workspace)}/git`,
           label: "Git tab",

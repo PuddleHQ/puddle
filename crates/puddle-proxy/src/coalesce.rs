@@ -126,7 +126,10 @@ impl<R: Resolver> Resolver for Coalescing<R> {
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::Poll;
     use std::time::Duration;
 
     use super::*;
@@ -177,6 +180,41 @@ mod tests {
     fn ip(addrs: &[SocketAddr]) -> u8 {
         let text = addrs[0].ip().to_string();
         text.rsplit('.').next().unwrap().parse().unwrap()
+    }
+
+    /// One poll of `fut`, without waiting for it.
+    async fn poll_once<F: Future + Unpin>(fut: &mut F) -> Poll<F::Output> {
+        std::future::poll_fn(|cx| Poll::Ready(Pin::new(&mut *fut).poll(cx))).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_connect_after_the_answer_looks_again_even_while_an_old_waiter_is_still_there() {
+        let r = Coalescing::new(Slow::new(Duration::from_secs(5)));
+        let n = name("a.example");
+        let mut first = Box::pin(r.resolve(&n, 443));
+        let mut second = Box::pin(r.resolve(&n, 443));
+        assert!(poll_once(&mut first).await.is_pending());
+        assert!(poll_once(&mut second).await.is_pending());
+        tokio::time::advance(Duration::from_secs(6)).await;
+        // The first caller ran the lookup; the second has not been polled since and still waits.
+        let Poll::Ready(answer) = poll_once(&mut first).await else {
+            panic!("the lookup is over");
+        };
+        assert_eq!(ip(&answer.unwrap()), 1);
+
+        let mut later = Box::pin(r.resolve(&n, 443));
+        assert!(poll_once(&mut later).await.is_pending(), "a new lookup");
+        tokio::time::advance(Duration::from_secs(6)).await;
+        let Poll::Ready(answer) = poll_once(&mut later).await else {
+            panic!("the new lookup is over");
+        };
+        assert_eq!(ip(&answer.unwrap()), 2);
+        assert_eq!(r.inner.lookups.load(Ordering::SeqCst), 2);
+
+        let Poll::Ready(answer) = poll_once(&mut second).await else {
+            panic!("the old waiter gets the old answer");
+        };
+        assert_eq!(ip(&answer.unwrap()), 1);
     }
 
     #[tokio::test(start_paused = true)]

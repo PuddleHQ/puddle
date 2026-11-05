@@ -28,7 +28,8 @@
     clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
-    reason = "VM test: a failed step fails the test"
+    clippy::print_stderr,
+    reason = "VM test: a failed step fails the test; what the guest said goes to the log"
 )]
 
 mod support;
@@ -39,10 +40,13 @@ use std::time::Duration;
 use puddle_e2e::lab::{WebHost, WebOptions, pip_index};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Resolution, Scope};
 use puddle_test_kit::{eventually, eventually_async};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended, hermetic_options};
-use vm_support::{VmHost, guest, guest_live, start_vm_host, start_vm_host_platform, web_internet};
+use vm_support::{
+    VmHost, WebInternet, guest, guest_as, guest_live, start_vm_host, start_vm_host_platform,
+    web_internet,
+};
 
 /// The fake website's name (it answers plain HTTP and HTTPS).
 const SITE: &str = "site.invalid";
@@ -52,9 +56,20 @@ const INDEX: &str = "index.invalid";
 const PROJECT: &str = "puddle-probe";
 
 /// Creates a workspace on `host` whose sandbox may reach `allowed` and returns its name.
-async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -> WorkspaceName {
+async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -> WorkspaceId {
+    create_workspace_from(vm, api, tag, allowed, json!({"memory_mib": 1024})).await
+}
+
+/// [`create_workspace`] with `extra` fields (an image, a memory size) in the request.
+async fn create_workspace_from(
+    vm: &VmHost,
+    api: &Api,
+    tag: &str,
+    allowed: &[&str],
+    extra: serde_json::Value,
+) -> WorkspaceId {
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
-    let workspace = WorkspaceName::new(&name).unwrap();
+    let workspace = WorkspaceId::new(&name).unwrap();
     for site in allowed {
         vm.host
             .store()
@@ -69,10 +84,11 @@ async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -
     }
     let mut events = api.events().await;
     let reply = api
-        .post(
-            "/api/workspaces",
-            &json!({"name": name, "memory_mib": 1024}).to_string(),
-        )
+        .post("/api/workspaces", &{
+            let mut body = extra;
+            body["name"] = json!(name);
+            body.to_string()
+        })
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     let name: &'static str = Box::leak(name.into_boxed_str());
@@ -108,7 +124,7 @@ fn reached_by_host(web: &WebHost, host: &str) -> usize {
 }
 
 /// The open inbox rows of `workspace`, as `host:port`.
-fn open_rows(vm: &VmHost, workspace: &WorkspaceName) -> Vec<String> {
+fn open_rows(vm: &VmHost, workspace: &WorkspaceId) -> Vec<String> {
     vm.host
         .store()
         .open_pending(Some(workspace))
@@ -121,7 +137,7 @@ fn open_rows(vm: &VmHost, workspace: &WorkspaceName) -> Vec<String> {
 /// Waits for the open row of `workspace` for `wanted` and returns its id.
 async fn wait_for_row(
     vm: &VmHost,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     wanted: &str,
 ) -> puddle_types::PendingId {
     eventually(
@@ -587,6 +603,320 @@ echo \"exit=${PIPESTATUS[0]} ms=$(($(now) - s))\""
         "the index never served the wheel: {:?}",
         net.web.seen()
     );
+
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// The fake sites of the Docker test: one name per phase and bridge, so each approval is its own.
+const DOCKER_SITES: [&str; 4] = [
+    "boot-default.invalid",
+    "boot-user.invalid",
+    "restart-default.invalid",
+    "restart-user.invalid",
+];
+
+/// Shell prelude of every command the Docker test runs as the session user: a millisecond clock
+/// and a Docker config of its own, so no proxy variable from the CLI's config reaches a container.
+/// `dsudo` is `sudo docker` where the image has `sudo`, and plain `docker` (the `docker` group,
+/// which the boot grants the session user) where it has none, as `docker:dind` has not.
+const DOCKER_PRELUDE: &str = r#"now() { echo $(( $(date +%s%N) / 1000000 )); }
+export DOCKER_CONFIG=/tmp/docker-without-proxy
+mkdir -p "$DOCKER_CONFIG"
+dsudo() { if [ -x /usr/bin/sudo ] || [ -x /usr/local/bin/sudo ]; then sudo env DOCKER_CONFIG="$DOCKER_CONFIG" docker "$@"; else docker "$@"; fi; }
+"#;
+
+/// Builds the probe image `FROM scratch`: busybox and the loader it needs, copied from the guest's
+/// own files, and nothing else. No registry is involved.
+const PROBE_IMAGE: &str = r"d=/tmp/probe-image
+mkdir -p $d/rootfs/bin $d/rootfs/lib
+cp /bin/busybox $d/rootfs/bin/busybox
+for l in /lib/ld-musl-*.so.1; do cp -L $l $d/rootfs/lib/; done
+printf 'FROM scratch\nCOPY rootfs/ /\n' > $d/Dockerfile
+dsudo build -q -t probe:local $d";
+
+/// Runs `script` as `agent` (the session user) with [`DOCKER_PRELUDE`] first.
+async fn as_agent(vm: &VmHost, workspace: &WorkspaceId, script: &str) -> (i32, String) {
+    guest_as(
+        &vm.runtime,
+        workspace,
+        "agent",
+        &format!("{DOCKER_PRELUDE}{script}"),
+        Duration::from_secs(180),
+    )
+    .await
+}
+
+/// What the guest says about the agent, dockerd and the firewall tables: the start tick of the
+/// oldest `puddle-agent` and of `dockerd` (the kernel's clock ticks since boot, field 22 of
+/// `/proc/<pid>/stat`), and the `table` lines of `nft -a list ruleset` (with handles).
+async fn firewall_state(vm: &VmHost, workspace: &WorkspaceId) -> String {
+    let (code, out) = guest_as(
+        &vm.runtime,
+        workspace,
+        "root",
+        r#"first() { for s in /proc/[0-9]*/stat; do
+    read -r pid comm _ 2>/dev/null <"$s" && [ "$comm" = "($1)" ] && awk '{print $22}' "$s"
+done | sort -n | head -1; }
+echo "agent_start=$(first puddle-agent)"
+echo "dockerd_start=$(first dockerd)"
+nft -a list ruleset | grep '^table '"#,
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_eq!(code, 0, "{out}");
+    out
+}
+
+/// A container's fetch of `url` on `network`: what proxy variables it sees, then wget's output, the
+/// exit code and the milliseconds it took.
+fn container_fetch(docker: &str, network: &str, url: &str) -> String {
+    format!(
+        "s=$(now); {docker} run --rm --pull=never --network {network} probe:local /bin/busybox \
+         sh -c '/bin/busybox env | /bin/busybox grep -i proxy; /bin/busybox wget -T 10 -q -O - {url}' 2>&1; \
+         echo \"exit=$? ms=$(( $(now) - s ))\""
+    )
+}
+
+/// A container's fetch of `site` that no rule allows yet: it fails at once and makes an inbox row.
+/// Then the row is approved and the same fetch works, with no restart. The audit names the site.
+async fn refused_then_approved(
+    vm: &VmHost,
+    net: &WebInternet,
+    workspace: &WorkspaceId,
+    (docker, network): (&str, &str),
+    site: &str,
+) {
+    let fetch = container_fetch(docker, network, &format!("http://{site}/"));
+    let before = allowed_connections(vm, site, 80);
+    let refused = as_agent(vm, workspace, &fetch).await.1;
+    eprintln!("{network} to {site}, no rule: {refused}");
+    assert!(
+        !refused.to_lowercase().contains("proxy"),
+        "the container had a proxy variable: {refused}"
+    );
+    assert_ne!(field(&refused, "exit="), "0", "{refused}");
+    assert!(
+        field(&refused, "ms=").parse::<u64>().unwrap() < 8000,
+        "{refused}"
+    );
+    let id = wait_for_row(vm, workspace, site).await;
+    vm.host
+        .store()
+        .resolve_pending(id, &Resolution::allow(), Actor::Cli)
+        .unwrap();
+    let approved = as_agent(vm, workspace, &fetch).await.1;
+    eprintln!("{network} to {site}, approved: {approved}");
+    assert_eq!(field(&approved, "exit="), "0", "{approved}");
+    wait_for_connection_record(vm, site, 80, before).await;
+    assert!(
+        reached_by_host(&net.web, site) > 0,
+        "the site did not see the request: {:?}",
+        net.web.seen()
+    );
+}
+
+/// The container checks of one phase, as `agent`: the ruleset holds the capture table and
+/// Docker's tables, a container on the default bridge and one on a user bridge, each with no proxy
+/// variable, reach the fake site named `{phase}-default.invalid` and `{phase}-user.invalid` only
+/// through a rule (refused at once, then approved and retried with no restart), traffic between two
+/// containers on the user bridge is not redirected, and the audit names the host.
+async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceId, phase: &str) {
+    // dockerd answers (the image's entrypoint starts it after the boot), and the image is built
+    // in the guest from files the guest has, `FROM scratch`.
+    eventually_async("dockerd to answer", Duration::from_secs(100), || async {
+        let (code, out) = as_agent(
+            vm,
+            workspace,
+            "id; ls -l /usr/bin/sudo /usr/local/bin/docker /usr/sbin/nft /bin/busybox; dsudo info 2>&1 >/dev/null | tail -3; \
+             dsudo info >/dev/null 2>&1",
+        )
+        .await;
+        (code == 0).then_some(()).ok_or(out)
+    })
+    .await;
+    let (code, built) = as_agent(
+        vm,
+        workspace,
+        &format!("dsudo image inspect probe:local >/dev/null 2>&1 || {{ {PROBE_IMAGE}; }}"),
+    )
+    .await;
+    assert_eq!(code, 0, "{phase}: building the probe image: {built}");
+
+    // Both firewalls are there at once (read as root: the image has no `sudo`).
+    let (code, ruleset) = guest_as(
+        &vm.runtime,
+        workspace,
+        "root",
+        "nft list ruleset",
+        Duration::from_secs(60),
+    )
+    .await;
+    eprintln!("{phase}: ruleset\n{ruleset}");
+    assert_eq!(code, 0, "{phase}: {ruleset}");
+    assert!(ruleset.contains("table inet puddle"), "{phase}: {ruleset}");
+    assert!(
+        ruleset.contains("chain DOCKER") || ruleset.contains("docker-bridges"),
+        "{phase}: Docker's tables are missing: {ruleset}"
+    );
+    let (_, groups) = as_agent(vm, workspace, "id -nG").await;
+    eprintln!("{phase}: agent's groups: {groups}");
+    let docker = "dsudo";
+
+    // A container on the default bridge.
+    refused_then_approved(
+        vm,
+        net,
+        workspace,
+        ("dsudo", "bridge"),
+        &format!("{phase}-default.invalid"),
+    )
+    .await;
+
+    // A user bridge: two containers talk to each other, and one reaches a site through a rule.
+    let (bridge, server) = (format!("net-{phase}"), format!("srv-{phase}"));
+    let (code, said) = as_agent(
+        vm,
+        workspace,
+        &format!(
+            "{docker} network create {bridge} >/dev/null && {docker} run -d --name {server} \
+             --pull=never --network {bridge} probe:local /bin/busybox sh -c 'while true; do \
+             printf \"HTTP/1.0 200 OK\\r\\n\\r\\ninner\\n\" | /bin/busybox nc -l -p 8080; done'"
+        ),
+    )
+    .await;
+    assert_eq!(code, 0, "{phase}: {said}");
+    let talk = container_fetch(docker, &bridge, &format!("http://{server}:8080/"));
+    let talked = eventually_async(
+        "a container to reach its neighbour on the user bridge",
+        Duration::from_secs(30),
+        || async {
+            let out = as_agent(vm, workspace, &talk).await.1;
+            if field(&out, "exit=") == "0" {
+                return Ok(out);
+            }
+            let said = as_agent(
+                vm,
+                workspace,
+                &format!("{docker} ps -a; {docker} logs {server} 2>&1 | tail -5"),
+            )
+            .await
+            .1;
+            Err(format!("{out}\n{said}"))
+        },
+    )
+    .await;
+    eprintln!("{phase}: container to container: {talked}");
+    assert!(talked.contains("inner"), "{talked}");
+    refused_then_approved(
+        vm,
+        net,
+        workspace,
+        (docker, &bridge),
+        &format!("{phase}-user.invalid"),
+    )
+    .await;
+
+    // The neighbour's traffic never reached the proxy: no row and no audit line names it.
+    assert!(
+        !open_rows(vm, workspace).iter().any(|r| r.contains(&server)),
+        "{:?}",
+        open_rows(vm, workspace)
+    );
+    let audit = vm.host.store().audit_lines(0, 100_000).unwrap();
+    assert!(
+        !audit.iter().any(|(_, line)| line.contains(&server)),
+        "the audit names the neighbour container"
+    );
+}
+
+/// Docker's firewall tables and the agent's `inet puddle` table coexist in both orders, with a real
+/// `dockerd` in the `docker:dind` image: dockerd started after the agent (the boot order), and the
+/// agent restarted after dockerd was up. In both, containers on the default bridge and on a user
+/// bridge get to a site only through a rule, and the session user works through `sudo`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_capture_coexists_with_a_real_dockerd_in_both_start_orders() {
+    let net = web_internet(&DOCKER_SITES, WebOptions::default(), hermetic_options()).await;
+    let vm = start_vm_host_platform("dock", net.options.clone(), &net.platform, |_| {}).await;
+    let api = Api::new(vm.host.url(), vm.host.token());
+    let workspace = create_workspace_from(
+        &vm,
+        &api,
+        "dock",
+        &["dl-cdn.alpinelinux.org"],
+        json!({"image": "docker:dind", "memory_mib": 2048}),
+    )
+    .await;
+    // The image ships no `nft`; the test brings one, through the proxy, as any tool would.
+    let (code, installed) = guest_as(
+        &vm.runtime,
+        &workspace,
+        "root",
+        "apk add --no-cache nftables >/tmp/apk.log 2>&1; nft --version || tail -15 /tmp/apk.log",
+        Duration::from_secs(100),
+    )
+    .await;
+    assert!(
+        code == 0 && installed.contains("nftables"),
+        "nftables could not be installed (live third party: dl-cdn.alpinelinux.org; an outage there fails this test): {installed}"
+    );
+
+    // Boot order: the agent first, dockerd after it.
+    docker_phase(&vm, &net, &workspace, "boot").await;
+    let first = firewall_state(&vm, &workspace).await;
+    eprintln!("{first}");
+    let started = |text: &str, key: &str| field(text, key).parse::<u64>().unwrap();
+    let agent = started(&first, "agent_start=");
+    assert!(
+        agent < started(&first, "dockerd_start="),
+        "dockerd did not start after the agent: {first}"
+    );
+
+    // Kill the agent; the supervisor starts it again, with dockerd up.
+    let (code, said) = guest_as(
+        &vm.runtime,
+        &workspace,
+        "root",
+        r#"for s in /proc/[0-9]*/stat; do
+    read -r pid comm _ 2>/dev/null <"$s" && [ "$comm" = "(puddle-agent)" ] && agent="${agent:-} $pid"
+done
+kill -9 ${agent:?no puddle-agent process}"#,
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(code, 0, "{said}");
+    let second = eventually_async(
+        "the agent to be back with its table written again",
+        Duration::from_secs(60),
+        || async {
+            let state = firewall_state(&vm, &workspace).await;
+            let back = field(&state, "agent_start=")
+                .parse::<u64>()
+                .is_ok_and(|t| t > agent)
+                && state.contains("table inet puddle");
+            back.then_some(state)
+        },
+    )
+    .await;
+    eprintln!("{second}");
+    // Docker's own tables were not touched (same handles); the capture table is a new one.
+    let tables = |text: &str, ours: bool| -> Vec<String> {
+        text.lines()
+            .filter(|l| l.starts_with("table ") && l.contains("table inet puddle") == ours)
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(
+        tables(&first, false),
+        tables(&second, false),
+        "the agent changed Docker's tables"
+    );
+    assert_ne!(
+        tables(&first, true),
+        tables(&second, true),
+        "the agent did not write its table again"
+    );
+    docker_phase(&vm, &net, &workspace, "restart").await;
 
     let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");

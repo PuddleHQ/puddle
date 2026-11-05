@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use puddle_types::{Host, PendingId, RuleId, WorkspaceName};
+use puddle_types::{Host, PendingId, RuleId, WorkspaceId};
 
 use crate::rule::{Actor, Effect, Rule};
 
@@ -57,7 +57,7 @@ pub struct PendingRow {
     /// Row id, never reused (R-12).
     pub id: PendingId,
     /// The requesting workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The requested host.
     pub host: Host,
     /// The requested port.

@@ -5,7 +5,7 @@
 use std::future::Future;
 
 use puddle_store::WorkspaceGit;
-use puddle_types::{Event, WorkspaceName};
+use puddle_types::{Event, WorkspaceId};
 use tokio::sync::broadcast::{Receiver, error::RecvError};
 use tokio::task::{JoinHandle, JoinSet};
 
@@ -13,13 +13,13 @@ use tokio::task::{JoinHandle, JoinSet};
 pub(crate) trait Changes: Clone + Send + Sync + 'static {
     /// Recomputes what the workspace decrypts, which is quick and must not wait for anything. The
     /// settings when the workspace runs, else `None`.
-    fn decrypt_changed(&self, workspace: &WorkspaceName) -> Option<WorkspaceGit>;
+    fn decrypt_changed(&self, workspace: &WorkspaceId) -> Option<WorkspaceGit>;
 
     /// Brings the commit authors in the workspace's guest in line with its settings as they are
     /// when this runs, which can take as long as the guest needs to answer. Rewrites of one
     /// workspace start in any order, so each reads the settings itself rather than carry a copy:
     /// an older copy applied last would undo the newer change.
-    fn rewrite_authors(&self, workspace: WorkspaceName) -> impl Future<Output = ()> + Send;
+    fn rewrite_authors(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send;
 
     /// Looks at every running workspace's Git settings again, after events were missed.
     fn all_git_changed(&self) -> impl Future<Output = ()> + Send;
@@ -30,13 +30,13 @@ pub(crate) trait Changes: Clone + Send + Sync + 'static {
 
     /// Brings a running workspace's stand-ins and the hosts they need decrypted up to date with its
     /// environment, which can take as long as the credential store needs to answer.
-    fn environment_changed(&self, workspace: WorkspaceName) -> impl Future<Output = ()> + Send;
+    fn environment_changed(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send;
 
     /// The same for every running workspace: a global variable changed, or events were missed.
     fn all_environments_changed(&self) -> impl Future<Output = ()> + Send;
 
     /// Brings the folder a workspace's guest sees up to date with its saved shell init.
-    fn shell_init_changed(&self, workspace: WorkspaceName) -> impl Future<Output = ()> + Send;
+    fn shell_init_changed(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send;
 
     /// The same for every workspace, after events were missed.
     fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send;
@@ -115,7 +115,7 @@ mod tests {
     }
 
     impl Changes for Fake {
-        fn decrypt_changed(&self, workspace: &WorkspaceName) -> Option<WorkspaceGit> {
+        fn decrypt_changed(&self, workspace: &WorkspaceId) -> Option<WorkspaceGit> {
             self.calls
                 .lock()
                 .unwrap()
@@ -127,7 +127,7 @@ mod tests {
                 .then(WorkspaceGit::unconfigured)
         }
 
-        async fn rewrite_authors(&self, workspace: WorkspaceName) {
+        async fn rewrite_authors(&self, workspace: WorkspaceId) {
             self.calls
                 .lock()
                 .unwrap()
@@ -145,7 +145,7 @@ mod tests {
                 .push("all request rules".to_owned());
         }
 
-        async fn environment_changed(&self, workspace: WorkspaceName) {
+        async fn environment_changed(&self, workspace: WorkspaceId) {
             self.calls.lock().unwrap().push(format!("env {workspace}"));
         }
 
@@ -153,7 +153,7 @@ mod tests {
             self.calls.lock().unwrap().push("all env".to_owned());
         }
 
-        async fn shell_init_changed(&self, workspace: WorkspaceName) {
+        async fn shell_init_changed(&self, workspace: WorkspaceId) {
             self.calls
                 .lock()
                 .unwrap()
@@ -179,7 +179,7 @@ mod tests {
 
     fn changed(name: &str) -> Event {
         Event::WorkspaceGitChanged {
-            workspace: WorkspaceName::new(name).unwrap(),
+            workspace: WorkspaceId::new(name).unwrap(),
         }
     }
 
@@ -216,7 +216,7 @@ mod tests {
         let fake = Fake::default();
         let task = follow(hub.subscribe(), fake.clone());
         hub.emit(Event::WorkspaceEnvChanged {
-            workspace: WorkspaceName::new("alpha").unwrap(),
+            workspace: WorkspaceId::new("alpha").unwrap(),
         });
         hub.emit(Event::GlobalEnvChanged {});
         hub.emit(Event::IdentitiesChanged {});
@@ -236,10 +236,10 @@ mod tests {
         let fake = Fake::default();
         let task = follow(hub.subscribe(), fake.clone());
         hub.emit(Event::WorkspaceShellInitChanged {
-            workspace: WorkspaceName::new("alpha").unwrap(),
+            workspace: WorkspaceId::new("alpha").unwrap(),
         });
         hub.emit(Event::WorkspaceShellInitRestored {
-            workspace: WorkspaceName::new("beta").unwrap(),
+            workspace: WorkspaceId::new("beta").unwrap(),
         });
         assert_eq!(calls_after(&fake, 1).await, ["shell init alpha"]);
         task.abort();

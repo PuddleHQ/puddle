@@ -193,7 +193,7 @@ mod sandbox_windows {
         Hooks, SandboxWindows, Target, WindowSettings, is_sandbox_label, label,
     };
     use puddle_settings::ClipboardRead;
-    use puddle_types::WorkspaceName;
+    use puddle_types::WorkspaceId;
     use tauri::Manager;
 
     use super::*;
@@ -203,7 +203,7 @@ mod sandbox_windows {
         name: &str,
         data: &Path,
     ) -> (WebviewWindow<MockRuntime>, Url) {
-        let workspace = WorkspaceName::new(name).unwrap();
+        let workspace = WorkspaceId::new(name).unwrap();
         let origin = Url::parse(&format!("http://{name}.localhost:4800/")).unwrap();
         let windows = SandboxWindows::new(Hooks {
             open_external: Arc::new(|_| {}),

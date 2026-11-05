@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The warning for a workspace that has Kubernetes tools: the guest kernel cannot route Services.
 
-use puddle_types::{Problem, WorkspaceName};
+use puddle_types::{Problem, WorkspaceId};
 
 /// The key of the problem about Kubernetes tools in `workspace`.
-pub(crate) fn kubernetes_key(workspace: &WorkspaceName) -> String {
+pub(crate) fn kubernetes_key(workspace: &WorkspaceId) -> String {
     format!("kubernetes:{workspace}")
 }
 
 /// The problem for the Kubernetes `tools` the boot hook found in `workspace`; `None` when it found
 /// none.
-pub(crate) fn kubernetes_problem(workspace: &WorkspaceName, tools: &[&str]) -> Option<Problem> {
+pub(crate) fn kubernetes_problem(workspace: &WorkspaceId, tools: &[&str]) -> Option<Problem> {
     if tools.is_empty() {
         return None;
     }
@@ -35,8 +35,8 @@ pub(crate) fn kubernetes_problem(workspace: &WorkspaceName, tools: &[&str]) -> O
 mod tests {
     use super::*;
 
-    fn workspace() -> WorkspaceName {
-        WorkspaceName::new("acme").unwrap()
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::new("acme").unwrap()
     }
 
     #[test]

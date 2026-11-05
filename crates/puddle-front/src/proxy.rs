@@ -14,7 +14,7 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use tokio::sync::watch;
 
 use crate::editor::{Flavour, Guests, Target};
@@ -145,7 +145,7 @@ async fn respond(shared: &Shared, request: Request<Incoming>) -> Response<Body> 
 struct Asked<'a> {
     host: &'a str,
     own_origin: &'a str,
-    workspace: &'a WorkspaceName,
+    workspace: &'a WorkspaceId,
     /// The `Host` is a forwarded port's, not the editor's.
     forwarded: bool,
     front_port: u16,
@@ -191,7 +191,7 @@ fn misdirected(request: &Request<Incoming>, asked: &Asked<'_>) -> Option<Respons
 
 async fn mint(
     shared: &Shared,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     method: &Method,
     headers: &HeaderMap,
 ) -> Response<Body> {
@@ -236,7 +236,7 @@ async fn mint(
     response
 }
 
-fn key_trouble(workspace: &WorkspaceName, why: &str) -> Response<Body> {
+fn key_trouble(workspace: &WorkspaceId, why: &str) -> Response<Body> {
     tracing::warn!(%workspace, error = %why, "the editor's secret key could not be made");
     text(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -267,7 +267,7 @@ fn is_upgrade(headers: &HeaderMap) -> bool {
     wants(&CONNECTION, "upgrade") && wants(&UPGRADE, "websocket")
 }
 
-fn bad_gateway(workspace: &WorkspaceName, guest_port: Option<u16>, why: &str) -> Response<Body> {
+fn bad_gateway(workspace: &WorkspaceId, guest_port: Option<u16>, why: &str) -> Response<Body> {
     let what = guest_port.map_or_else(|| "The editor".to_owned(), |p| format!("Port {p}"));
     text(
         StatusCode::BAD_GATEWAY,
@@ -277,7 +277,7 @@ fn bad_gateway(workspace: &WorkspaceName, guest_port: Option<u16>, why: &str) ->
 
 async fn forward(
     shared: &Shared,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     target: &Target,
     guest_port: Option<u16>,
     mut request: Request<Incoming>,

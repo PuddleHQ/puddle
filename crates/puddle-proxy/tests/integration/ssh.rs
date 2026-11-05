@@ -20,8 +20,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
 use puddle_proxy::{BoxFuture, Proxy, Resolver, Route};
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink,
-    WorkspaceName,
+    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink, WorkspaceId,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -68,7 +67,7 @@ impl Rig {
         }
         let proxy = Arc::new(proxy);
         let root = IpcRoot::new().unwrap();
-        let route = proxy.serve_route(root.listen().unwrap(), WorkspaceName::new("box").unwrap());
+        let route = proxy.serve_route(root.listen().unwrap(), WorkspaceId::new("box").unwrap());
         Self {
             policy,
             resolver,
@@ -550,7 +549,7 @@ async fn a_guest_that_leaves_before_the_200_ends_its_tunnel_quietly() {
             .with_address_check(Arc::new(AnyAddress)),
     );
     let root = IpcRoot::new().unwrap();
-    let route = proxy.serve_route(root.listen().unwrap(), WorkspaceName::new("box").unwrap());
+    let route = proxy.serve_route(root.listen().unwrap(), WorkspaceId::new("box").unwrap());
     let conn = puddle_ipc::connect(route.endpoint().path()).await.unwrap();
     let mut session = Session::new_client(conn, client_config());
     let mut control = session.control();

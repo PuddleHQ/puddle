@@ -36,7 +36,7 @@ use puddle_api::{
 };
 use puddle_compute_msb::MsbRuntime;
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use puddle_vm_tests::{BrowserClient, BrowserCookie, BrowserSession, PageId, PageRequest};
 use serde_json::{Value, json};
 use support::{Api, ended, hermetic_options};
@@ -93,7 +93,7 @@ true
 async fn explorer(
     shell: &ShellStandIn,
     runtime: &MsbRuntime,
-    sandbox: &WorkspaceName,
+    sandbox: &WorkspaceId,
     result: &str,
 ) -> Value {
     let page = shell.page(sandbox.as_str()).await;
@@ -321,7 +321,7 @@ impl Launcher for ShellStandIn {
         })
     }
 
-    fn close_browser<'a>(&'a self, workspace: &'a WorkspaceName) -> BoxFuture<'a, ()> {
+    fn close_browser<'a>(&'a self, workspace: &'a WorkspaceId) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             self.closed.lock().unwrap().push(workspace.to_string());
             self.close_pages(workspace.as_str()).await;
@@ -408,7 +408,7 @@ fn count(line: &str, key: &str) -> usize {
 /// Polls the guest's counts until `done` holds; a limit on a hang only.
 async fn counts_until(
     runtime: &MsbRuntime,
-    sandbox: &WorkspaceName,
+    sandbox: &WorkspaceId,
     what: &str,
     done: impl Fn(&str) -> bool,
 ) -> String {
@@ -426,7 +426,7 @@ async fn counts_until(
 /// Waits until the front counts some window of `workspace` (`open`) or none; a limit on a hang
 /// only. The front counts the editor's connections, and one workbench window holds more than one
 /// (its management and its extension host connections), so "open" is "at least one".
-async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceName, open: bool) {
+async fn windows_become(windows: &puddle_front::Windows, workspace: &WorkspaceId, open: bool) {
     let mut seen = windows.watch(workspace);
     tokio::time::timeout(Duration::from_secs(60), seen.wait_for(|n| (*n > 0) == open))
         .await
@@ -467,7 +467,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     })
     .await;
     let name = format!("{}-wcs", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -763,7 +763,7 @@ const STAND_IN_READY: &str = "!!window.state";
 const STAND_IN_STATE: &str = "window.state";
 
 /// Waits until the guest's editor server says it is `build`; a limit on a hang only.
-async fn serving(runtime: &MsbRuntime, sandbox: &WorkspaceName, build: &str) {
+async fn serving(runtime: &MsbRuntime, sandbox: &WorkspaceId, build: &str) {
     let script = format!(
         "for i in $(seq 1 120); do [ \"$(curl -s --max-time 2 http://127.0.0.1:41337/version)\" = {build} ] && exit 0; sleep 1; done; \
          echo \"not serving {build}:\"; curl -s --max-time 2 http://127.0.0.1:41337/version; tail -n 30 /run/puddle/agent.log; exit 1"
@@ -835,7 +835,7 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
     })
     .await;
     let name = format!("{}-wms", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     // The stand-ins are the only builds: the user's own rule refuses Microsoft's update service and
     // download host, which System managed would allow, so the agent neither installs nor stages a
     // real build beside them (a rule the user made decides before a rule set's allow).

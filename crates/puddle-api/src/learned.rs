@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 use crate::wire::LearnedHost;
 
@@ -17,14 +17,14 @@ use crate::wire::LearnedHost;
 /// workspace that does not run has an empty list.
 pub trait LearnedService: Send + Sync {
     /// The workspace's learned hosts, soonest to expire first.
-    fn list(&self, workspace: &WorkspaceName) -> Vec<LearnedHost>;
+    fn list(&self, workspace: &WorkspaceId) -> Vec<LearnedHost>;
 
     /// Makes `host` (already normalised) decrypted again from the next connection. `false` when
     /// it was not on the list.
-    fn forget(&self, workspace: &WorkspaceName, host: &str) -> bool;
+    fn forget(&self, workspace: &WorkspaceId, host: &str) -> bool;
 
     /// Empties the workspace's list; how many hosts it held.
-    fn clear(&self, workspace: &WorkspaceName) -> usize;
+    fn clear(&self, workspace: &WorkspaceId) -> usize;
 }
 
 /// The service when none is wired in: nothing is ever learned.
@@ -32,15 +32,15 @@ pub trait LearnedService: Send + Sync {
 pub struct NoLearned;
 
 impl LearnedService for NoLearned {
-    fn list(&self, _: &WorkspaceName) -> Vec<LearnedHost> {
+    fn list(&self, _: &WorkspaceId) -> Vec<LearnedHost> {
         Vec::new()
     }
 
-    fn forget(&self, _: &WorkspaceName, _: &str) -> bool {
+    fn forget(&self, _: &WorkspaceId, _: &str) -> bool {
         false
     }
 
-    fn clear(&self, _: &WorkspaceName) -> usize {
+    fn clear(&self, _: &WorkspaceId) -> usize {
         0
     }
 }
@@ -49,7 +49,7 @@ impl LearnedService for NoLearned {
 /// they have left.
 #[derive(Debug, Default)]
 pub struct FakeLearned {
-    state: Mutex<BTreeMap<WorkspaceName, BTreeSet<(u64, String)>>>,
+    state: Mutex<BTreeMap<WorkspaceId, BTreeSet<(u64, String)>>>,
 }
 
 impl FakeLearned {
@@ -60,7 +60,7 @@ impl FakeLearned {
     }
 
     /// Adds `host` to `workspace`'s list with `expires_in_secs` left.
-    pub fn learn(&self, workspace: &WorkspaceName, host: &str, expires_in_secs: u64) {
+    pub fn learn(&self, workspace: &WorkspaceId, host: &str, expires_in_secs: u64) {
         self.state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -71,7 +71,7 @@ impl FakeLearned {
 }
 
 impl LearnedService for FakeLearned {
-    fn list(&self, workspace: &WorkspaceName) -> Vec<LearnedHost> {
+    fn list(&self, workspace: &WorkspaceId) -> Vec<LearnedHost> {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state
             .get(workspace)
@@ -84,7 +84,7 @@ impl LearnedService for FakeLearned {
             .collect()
     }
 
-    fn forget(&self, workspace: &WorkspaceName, host: &str) -> bool {
+    fn forget(&self, workspace: &WorkspaceId, host: &str) -> bool {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(rows) = state.get_mut(workspace) else {
             return false;
@@ -94,7 +94,7 @@ impl LearnedService for FakeLearned {
         rows.len() != before
     }
 
-    fn clear(&self, workspace: &WorkspaceName) -> usize {
+    fn clear(&self, workspace: &WorkspaceId) -> usize {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.remove(workspace).map_or(0, |rows| rows.len())
     }
@@ -104,8 +104,8 @@ impl LearnedService for FakeLearned {
 mod tests {
     use super::*;
 
-    fn ws(name: &str) -> WorkspaceName {
-        WorkspaceName::new(name).unwrap()
+    fn ws(name: &str) -> WorkspaceId {
+        WorkspaceId::new(name).unwrap()
     }
 
     #[test]

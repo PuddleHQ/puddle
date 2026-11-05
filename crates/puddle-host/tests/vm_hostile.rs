@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use puddle_host::Host;
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended};
 use vm_support::{VmHost, guest, guest_within, start_vm_host};
@@ -133,8 +133,8 @@ async fn workspace_that_reaches_127_0_0_1(
     host: &Host<puddle_compute_msb::MsbRuntime>,
     api: &Api,
     name: &str,
-) -> WorkspaceName {
-    let sandbox = WorkspaceName::new(name).unwrap();
+) -> WorkspaceId {
+    let sandbox = WorkspaceId::new(name).unwrap();
     host.store()
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),

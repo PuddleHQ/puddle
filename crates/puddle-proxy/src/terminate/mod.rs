@@ -79,7 +79,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use puddle_ca::WorkspaceCa;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 pub use exchange::{AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY};
 pub use inject::{
@@ -260,13 +260,13 @@ impl Termination {
 /// workspace has no credential bound and everything is spliced.
 pub trait TerminationSource: Send + Sync + std::fmt::Debug {
     /// The termination of `workspace`, if it has one.
-    fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<Termination>>;
+    fn termination(&self, workspace: &WorkspaceId) -> Option<Arc<Termination>>;
 }
 
 /// A [`TerminationSource`] the host program updates as workspaces start, stop and change.
 #[derive(Debug, Default)]
 pub struct Terminations {
-    workspaces: RwLock<HashMap<WorkspaceName, Arc<Termination>>>,
+    workspaces: RwLock<HashMap<WorkspaceId, Arc<Termination>>>,
 }
 
 impl Terminations {
@@ -277,7 +277,7 @@ impl Terminations {
     }
 
     /// Sets (or replaces) `workspace`'s termination. Connections already open keep the old one.
-    pub fn insert(&self, workspace: WorkspaceName, termination: Termination) {
+    pub fn insert(&self, workspace: WorkspaceId, termination: Termination) {
         self.workspaces
             .write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -285,7 +285,7 @@ impl Terminations {
     }
 
     /// Removes `workspace`'s termination (its CA is dropped once its connections end).
-    pub fn remove(&self, workspace: &WorkspaceName) {
+    pub fn remove(&self, workspace: &WorkspaceId) {
         self.workspaces
             .write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -294,7 +294,7 @@ impl Terminations {
 }
 
 impl TerminationSource for Terminations {
-    fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<Termination>> {
+    fn termination(&self, workspace: &WorkspaceId) -> Option<Arc<Termination>> {
         self.workspaces
             .read()
             .unwrap_or_else(PoisonError::into_inner)

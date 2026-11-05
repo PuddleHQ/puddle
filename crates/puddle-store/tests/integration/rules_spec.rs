@@ -21,7 +21,7 @@ use puddle_test_kit::{cpu_time, eventually};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin,
     ConnectionReason, Decision, EgressRequest, Host, HttpRequestLine, PatternKind, PendingId,
-    PendingOutcome, Policy, RuleId, SuffixAllows, WorkspaceName,
+    PendingOutcome, Policy, RuleId, SuffixAllows, WorkspaceId,
 };
 use serde_json::{Value, json};
 
@@ -38,8 +38,8 @@ fn fixture_with(limits: Limits) -> (Arc<ManualClock>, Store) {
     (clock, store)
 }
 
-fn sb(id: &str) -> WorkspaceName {
-    WorkspaceName::new(id).unwrap()
+fn sb(id: &str) -> WorkspaceId {
+    WorkspaceId::new(id).unwrap()
 }
 
 fn req(workspace: &str, host: &str, port: u16) -> EgressRequest {

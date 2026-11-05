@@ -284,7 +284,7 @@ fn proxy_route(root: &IpcRoot, sandbox: &SandboxName) -> Route {
             .with_resolver(Arc::new(resolver))
             .with_address_check(Arc::new(AnyAddress)),
     );
-    proxy.serve_route(root.listen().unwrap(), sandbox.workspace_name().unwrap())
+    proxy.serve_route(root.listen().unwrap(), sandbox.workspace_id().unwrap())
 }
 
 fn proxy_env() -> GuestEnv {

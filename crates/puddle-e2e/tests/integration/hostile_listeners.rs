@@ -27,7 +27,7 @@ use puddle_ports::{MemoryPins, Ports};
 use puddle_proxy::testing::StaticResolver;
 use puddle_proxy::{Proxy, PullProxy};
 use puddle_store::{Limits, ManualClock, Store};
-use puddle_types::{NullSink, WorkspaceName};
+use puddle_types::{NullSink, WorkspaceId};
 use puddle_vm_tests::sockets::{Listening, listening_sockets};
 
 const NOW: u64 = 1_800_000_000_000;
@@ -90,10 +90,10 @@ async fn hostile_hg26_every_listener_the_host_side_opens_is_loopback_and_registe
             )),
     );
     let root = IpcRoot::new().unwrap();
-    let _route = proxy.serve_route(root.listen().unwrap(), WorkspaceName::new("hg26").unwrap());
+    let _route = proxy.serve_route(root.listen().unwrap(), WorkspaceId::new("hg26").unwrap());
 
     // A forward of a workspace's port to this computer: loopback, and registered like the rest.
-    let workspace = WorkspaceName::new("hg26-fwd").unwrap();
+    let workspace = WorkspaceId::new("hg26-fwd").unwrap();
     let ports = Ports::new(
         endpoints.clone(),
         Arc::new(MemoryPins::default()),

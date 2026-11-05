@@ -510,18 +510,26 @@ done
 
 # Temp dir: cargo, nextest, the tests' fixtures, vitest and Playwright write scratch files to $TMPDIR, by default
 # /tmp, which on a host with a RAM-backed tmpfs is small and shared (one gate run filling it fails every other
-# process there). A run therefore points TMPDIR at a fresh directory under the target dir (CHECK_TMPDIR=DIR uses
-# DIR/check-tmp.* instead), removed when the run ends, also on a failure or a signal. A real run of the test, ui
+# process there). A run therefore points TMPDIR at a fresh directory under the target dir, when that is outside the repository (CHECK_TMPDIR=DIR uses
+# DIR/chk.* instead), removed when the run ends, also on a failure or a signal. A real run of the test, ui
 # and ui-e2e gates (cargo, nextest, vitest, Playwright with Chromium and WebKit) added nothing to /tmp or /dev/shm.
 # A tool that hardcodes a path still writes there, and a socket path under a deep target dir can pass the 107 bytes
-# of sun_path (the one test that nests two roots uses a short base).
+# of sun_path (the one test that nests two roots uses a short base; mbx binds a socket in TMPDIR, so the directory
+# name stays short: <target dir>/chk.XXXXXX/mbx-session-XXXXXX/cache-agent.sock must fit in 107 bytes).
 check_tmp=
 check_tmp_cleanup() { [ -z "$check_tmp" ] || rm -rf "$check_tmp"; }
 private_tmp() {
     base="${CHECK_TMPDIR:-${CARGO_TARGET_DIR:-target}}"
     case $base in /*) ;; *) base="$PWD/$base" ;; esac
+    # Not inside the repository: tests that build a scratch repository or crate under TMPDIR would find this one
+    # above it (the default target dir `target` is inside, so a plain run keeps the system temp dir).
+    case $base in "$PWD" | "$PWD"/*)
+        echo "check: the target dir is inside the repository, TMPDIR stays ${TMPDIR:-/tmp} (set CARGO_TARGET_DIR outside it, or CHECK_TMPDIR)" >&2
+        return 0
+        ;;
+    esac
     mkdir -p "$base"
-    check_tmp=$(mktemp -d "$base/check-tmp.XXXXXX")
+    check_tmp=$(mktemp -d "$base/chk.XXXXXX")
     trap check_tmp_cleanup EXIT
     trap 'check_tmp_cleanup; exit 130' INT
     trap 'check_tmp_cleanup; exit 143' TERM HUP

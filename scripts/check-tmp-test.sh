@@ -8,6 +8,8 @@
 # Not seen here: which real tools ignore TMPDIR (see the temp dir note in scripts/check.sh).
 set -eu
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
+# The caller (check.sh, CI, a host run) sets these; each case sets its own.
+unset CARGO_TARGET_DIR CHECK_TMPDIR
 here=$(cd "$(dirname "$0")" && pwd)
 fail() {
     echo "check-tmp-test: $*" >&2
@@ -42,7 +44,7 @@ check_clean() { # check_clean <label> <target dir>
     [ -z "$(ls -A "$sys")" ] || fail "$1: the system temp dir must stay empty, holds $(ls "$sys")"
     used=$(sed -n 1p "$root/seen")
     [ "$(sed -n 2p "$root/seen")" = 1073741824 ] || fail "$1: the stand-in did not write its 1 GB file"
-    case $used in "$2"/check-tmp.*) ;; *) fail "$1: TMPDIR must be a check-tmp dir under $2, was $used" ;; esac
+    case $used in "$2"/chk.*) ;; *) fail "$1: TMPDIR must be a chk dir under $2, was $used" ;; esac
     [ ! -e "$used" ] || fail "$1: the private TMPDIR (and its 1 GB file) must be gone after the run"
     [ -z "$(ls -A "$2")" ] || fail "$1: $2 must be left empty, holds $(ls "$2")"
 }
@@ -55,9 +57,11 @@ run hang CARGO_TARGET_DIR="$root/t3" && fail "a terminated run must not pass"
 check_clean "SIGTERM" "$root/t3"
 run pass CARGO_TARGET_DIR="$root/t4" CHECK_TMPDIR="$root/elsewhere" || fail "CHECK_TMPDIR run must pass"
 check_clean "CHECK_TMPDIR" "$root/elsewhere"
-# A relative target dir (the default `target`) resolves against the repository.
+# A target dir inside the repository (the default `target`) keeps the system temp dir: scratch repositories that
+# tests build under TMPDIR would find this repository above them.
 run pass || fail "a run with the default target dir must pass"
-check_clean "default target" "$root/repo/target"
+[ "$(sed -n 1p "$root/seen")" = "$sys" ] || fail "an in-repository target dir must leave TMPDIR alone, was $(sed -n 1p "$root/seen")"
+rm -f "$sys/big.bin"
 # --list runs no gate and makes no dir.
 (cd "$root/repo" && TMPDIR="$sys" scripts/check.sh --list fast >/dev/null)
 [ -z "$(ls -A "$sys")" ] || fail "--list must not touch the system temp dir"

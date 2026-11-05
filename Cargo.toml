@@ -2,8 +2,6 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-# Scratch crates that tests build under target/ (scripts/check.sh puts TMPDIR there) are not members.
-exclude = ["target"]
 
 [workspace.package]
 version = "0.0.0"

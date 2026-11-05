@@ -949,6 +949,8 @@ pub enum WorkspaceOpKind {
     RepoSwitched,
     /// A repository removed from a workspace's list.
     RepoRemoved,
+    /// A zero-filled or corrupt git file (`HEAD`, the index) of a checkout rebuilt at boot.
+    GitRepaired,
 }
 
 impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
@@ -968,6 +970,7 @@ impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
             K::RepoAdded => Self::RepoAdded,
             K::RepoSwitched => Self::RepoSwitched,
             K::RepoRemoved => Self::RepoRemoved,
+            K::GitRepaired => Self::GitRepaired,
         }
     }
 }

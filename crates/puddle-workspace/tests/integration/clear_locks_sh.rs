@@ -269,6 +269,385 @@ async fn an_empty_volume_and_a_second_run_are_fine() {
     }
 }
 
+/// A volume with one repository, `api`: two commits on `main`, a branch `feature` with a third,
+/// `feature` checked out last (so `logs/HEAD` ends in a branch switch), a staged-then-committed
+/// history and an unstaged edit plus an untracked file in the working tree.
+fn repair_fixture() -> Fixture {
+    let tmp = tempfile::tempdir().unwrap();
+    let vol = tmp.path().join("vol");
+    let proc_dir = tmp.path().join("proc");
+    std::fs::create_dir_all(&vol).unwrap();
+    std::fs::create_dir_all(proc_dir.join("1")).unwrap();
+    std::fs::write(proc_dir.join("1/comm"), "init\n").unwrap();
+    let api = vol.join("api");
+    std::fs::create_dir(&api).unwrap();
+    git_ok(&api, &["init", "-q", "-b", "main"]);
+    std::fs::write(api.join("a.txt"), "a\n").unwrap();
+    git_ok(&api, &["add", "."]);
+    git_ok(&api, &["commit", "-qm", "first"]);
+    git_ok(&api, &["checkout", "-qb", "feature"]);
+    std::fs::write(api.join("b.txt"), "b\n").unwrap();
+    git_ok(&api, &["add", "."]);
+    git_ok(&api, &["commit", "-qm", "second"]);
+    git_ok(&api, &["checkout", "-q", "main"]);
+    git_ok(&api, &["checkout", "-q", "feature"]);
+    std::fs::write(api.join("a.txt"), "edited, not staged\n").unwrap();
+    std::fs::write(api.join("new.txt"), "untracked\n").unwrap();
+    Fixture {
+        _tmp: tmp,
+        vol,
+        proc_dir,
+    }
+}
+
+/// Overwrites `path` with `len` NUL bytes, as a power cut leaves a renamed file.
+fn zero_fill(path: &Path, len: usize) {
+    std::fs::write(path, vec![0_u8; len]).unwrap();
+}
+
+fn git_text(dir: &Path, args: &[&str]) -> String {
+    let out = git(dir, args);
+    assert!(out.status.success(), "git {args:?}");
+    String::from_utf8_lossy(&out.stdout)
+        .trim_end_matches('\n')
+        .to_owned()
+}
+
+#[tokio::test]
+async fn a_zero_filled_head_is_rewritten_from_the_reflog() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let tip = git_text(&api, &["rev-parse", "HEAD"]);
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let red = git(&api, &["status"]);
+        assert!(!red.status.success(), "{shell}: git still works");
+        assert!(
+            String::from_utf8_lossy(&red.stderr).contains("not a git repository"),
+            "{shell}: {}",
+            String::from_utf8_lossy(&red.stderr)
+        );
+        let report = run(shell, &fx).await;
+        assert_eq!(
+            report.repaired,
+            ["api/.git/HEAD: HEAD was zero-filled, rewritten: branch feature"],
+            "{shell}"
+        );
+        assert!(
+            report.damaged.is_empty() && report.errors.is_empty(),
+            "{shell}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(api.join(".git/HEAD")).unwrap(),
+            "ref: refs/heads/feature\n"
+        );
+        assert_eq!(git_text(&api, &["rev-parse", "HEAD"]), tip, "{shell}");
+        git_ok(&api, &["fsck", "--full"]);
+        // The working tree is as the user left it.
+        assert_eq!(
+            std::fs::read_to_string(api.join("a.txt")).unwrap(),
+            "edited, not staged\n"
+        );
+        assert!(api.join("new.txt").exists(), "{shell}");
+    }
+}
+
+#[tokio::test]
+async fn an_empty_head_is_rewritten_too() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        std::fs::write(api.join(".git/HEAD"), "").unwrap();
+        let report = run(shell, &fx).await;
+        assert_eq!(report.repaired.len(), 1, "{shell}: {report:?}");
+        git_ok(&api, &["fsck", "--full"]);
+        assert_eq!(git_text(&api, &["branch", "--show-current"]), "feature");
+    }
+}
+
+#[tokio::test]
+async fn a_zero_filled_head_of_a_detached_checkout_is_rewritten_detached() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let tip = git_text(&api, &["rev-parse", "main"]);
+        git_ok(&api, &["checkout", "-q", &tip]);
+        zero_fill(&api.join(".git/HEAD"), 41);
+        let report = run(shell, &fx).await;
+        assert_eq!(
+            report.repaired,
+            [format!(
+                "api/.git/HEAD: HEAD was zero-filled, rewritten: detached at {tip}"
+            )],
+            "{shell}"
+        );
+        assert_eq!(git_text(&api, &["rev-parse", "HEAD"]), tip, "{shell}");
+        assert_eq!(git_text(&api, &["branch", "--show-current"]), "");
+        git_ok(&api, &["fsck", "--full"]);
+    }
+}
+
+#[tokio::test]
+async fn a_zero_filled_index_is_rebuilt_without_touching_the_working_tree() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        zero_fill(&api.join(".git/index"), 1234);
+        let red = git(&api, &["status"]);
+        assert!(!red.status.success(), "{shell}: git still works");
+        let report = run(shell, &fx).await;
+        assert_eq!(
+            report.repaired,
+            ["api/.git/index: index was damaged, rebuilt from HEAD (staged changes are not kept)"],
+            "{shell}"
+        );
+        assert_eq!(
+            git_text(&api, &["status", "--porcelain"]),
+            " M a.txt\n?? new.txt",
+            "{shell}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(api.join("a.txt")).unwrap(),
+            "edited, not staged\n"
+        );
+        git_ok(&api, &["fsck", "--full"]);
+        // Nothing was in the zero-filled file worth keeping.
+        assert!(!api.join(".git/index.puddle-corrupt").exists(), "{shell}");
+    }
+}
+
+#[tokio::test]
+async fn a_corrupt_index_is_rebuilt_and_the_damaged_file_is_kept() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let index = api.join(".git/index");
+        let mut bytes = std::fs::read(&index).unwrap();
+        // The second half is lost, as when a power cut keeps a file's size and not its blocks.
+        let mid = bytes.len() / 2;
+        bytes[mid..].fill(0);
+        std::fs::write(&index, &bytes).unwrap();
+        assert!(!git(&api, &["status"]).status.success(), "{shell}");
+        let report = run(shell, &fx).await;
+        assert_eq!(report.repaired.len(), 1, "{shell}: {report:?}");
+        git_ok(&api, &["status"]);
+        git_ok(&api, &["fsck", "--full"]);
+        assert_eq!(
+            std::fs::read(api.join(".git/index.puddle-corrupt")).unwrap(),
+            bytes,
+            "{shell}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_index_with_an_extension_a_newer_git_wrote_is_left_alone() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let index = api.join(".git/index");
+        let mut bytes = std::fs::read(&index).unwrap();
+        bytes.truncate(bytes.len() - 20);
+        bytes.extend_from_slice(b"abcd");
+        bytes.extend_from_slice(&[0; 4]);
+        bytes.extend_from_slice(&[0; 20]);
+        std::fs::write(&index, &bytes).unwrap();
+        assert!(
+            !git(&api, &["status"]).status.success(),
+            "{shell}: git reads it"
+        );
+        let report = run(shell, &fx).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert!(
+            report.damaged[0].contains("extension"),
+            "{shell}: {:?}",
+            report.damaged
+        );
+        assert_eq!(std::fs::read(&index).unwrap(), bytes, "{shell}");
+    }
+}
+
+#[tokio::test]
+async fn head_and_index_are_both_repaired_in_one_run_and_a_second_run_does_nothing() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        zero_fill(&api.join(".git/HEAD"), 24);
+        zero_fill(&api.join(".git/index"), 500);
+        let report = run(shell, &fx).await;
+        assert_eq!(report.repaired.len(), 2, "{shell}: {report:?}");
+        git_ok(&api, &["fsck", "--full"]);
+        git_ok(&api, &["commit", "--allow-empty", "-qm", "after the cut"]);
+        let again = run(shell, &fx).await;
+        assert!(
+            again.repaired.is_empty() && again.damaged.is_empty(),
+            "{shell}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_healthy_repository_is_not_touched() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let head = std::fs::read(api.join(".git/HEAD")).unwrap();
+        let index = std::fs::read(api.join(".git/index")).unwrap();
+        let report = run(shell, &fx).await;
+        assert!(
+            report.repaired.is_empty() && report.damaged.is_empty(),
+            "{shell}"
+        );
+        assert_eq!(std::fs::read(api.join(".git/HEAD")).unwrap(), head);
+        assert_eq!(std::fs::read(api.join(".git/index")).unwrap(), index);
+    }
+}
+
+#[tokio::test]
+async fn a_head_whose_last_logged_commit_is_missing_is_left_alone_and_reported() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let log = api.join(".git/logs/HEAD");
+        let text = std::fs::read_to_string(&log).unwrap();
+        let line = text.lines().last().unwrap();
+        let tip = line.split(' ').nth(1).unwrap();
+        let hostile = text.replace(tip, &"1".repeat(40));
+        std::fs::write(&log, hostile).unwrap();
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let report = run(shell, &fx).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert_eq!(report.damaged.len(), 1, "{shell}: {report:?}");
+        assert!(
+            report.damaged[0].starts_with("api/.git/HEAD: HEAD is damaged and the last commit"),
+            "{shell}: {:?}",
+            report.damaged
+        );
+        assert_eq!(
+            std::fs::read(api.join(".git/HEAD")).unwrap(),
+            vec![0_u8; 24]
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_head_is_left_alone_when_the_branch_moved_or_the_log_is_unreadable() {
+    for shell in shells() {
+        // The branch the log says was checked out points somewhere else now.
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let main = git_text(&api, &["rev-parse", "main"]);
+        std::fs::write(api.join(".git/refs/heads/feature"), format!("{main}\n")).unwrap();
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let report = run(shell, &fx).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert!(report.damaged[0].contains("no longer points"), "{shell}");
+        // A log with garbage, and a missing log.
+        for log in [Some(&b"\0\0\0\0"[..]), None] {
+            let fx = repair_fixture();
+            let api = fx.vol.join("api");
+            match log {
+                Some(bytes) => std::fs::write(api.join(".git/logs/HEAD"), bytes).unwrap(),
+                None => std::fs::remove_file(api.join(".git/logs/HEAD")).unwrap(),
+            }
+            zero_fill(&api.join(".git/HEAD"), 24);
+            let report = run(shell, &fx).await;
+            assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+            assert_eq!(report.damaged.len(), 1, "{shell}: {report:?}");
+            assert_eq!(
+                std::fs::read(api.join(".git/HEAD")).unwrap(),
+                vec![0_u8; 24]
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_index_is_left_alone_when_a_rebuild_would_lose_state() {
+    for shell in shells() {
+        for state in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "rebase-merge"] {
+            let fx = repair_fixture();
+            let api = fx.vol.join("api");
+            let path = api.join(".git").join(state);
+            if state == "rebase-merge" {
+                std::fs::create_dir(&path).unwrap();
+            } else {
+                std::fs::write(&path, "0000000000000000000000000000000000000001\n").unwrap();
+            }
+            zero_fill(&api.join(".git/index"), 300);
+            let report = run(shell, &fx).await;
+            assert!(report.repaired.is_empty(), "{shell} {state}: {report:?}");
+            assert_eq!(report.damaged.len(), 1, "{shell} {state}");
+            assert!(
+                report.damaged[0].contains(state),
+                "{shell}: {:?}",
+                report.damaged
+            );
+            assert_eq!(
+                std::fs::read(api.join(".git/index")).unwrap(),
+                vec![0_u8; 300]
+            );
+        }
+        // A repository with no commit: nothing to rebuild from.
+        let fx = repair_fixture();
+        let fresh = fx.vol.join("fresh");
+        std::fs::create_dir(&fresh).unwrap();
+        git_ok(&fresh, &["init", "-q", "-b", "main"]);
+        zero_fill(&fresh.join(".git/index"), 300);
+        let report = run(shell, &fx).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert!(
+            report.damaged[0].contains("no commit"),
+            "{shell}: {:?}",
+            report.damaged
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_git_folder_that_is_not_a_repository_is_not_reported() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let plain = fx.vol.join("plain/.git");
+        std::fs::create_dir_all(&plain).unwrap();
+        zero_fill(&plain.join("HEAD"), 10);
+        zero_fill(&plain.join("index"), 10);
+        let report = run(shell, &fx).await;
+        assert!(
+            report.repaired.is_empty() && report.damaged.is_empty(),
+            "{shell}: {report:?}"
+        );
+        assert_eq!(std::fs::read(plain.join("HEAD")).unwrap(), vec![0_u8; 10]);
+    }
+}
+
+#[tokio::test]
+async fn every_checkout_of_the_volume_is_repaired() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let web = fx.vol.join("web");
+        std::fs::create_dir(&web).unwrap();
+        git_ok(&web, &["init", "-q", "-b", "trunk"]);
+        std::fs::write(web.join("w.txt"), "w\n").unwrap();
+        git_ok(&web, &["add", "."]);
+        git_ok(&web, &["commit", "-qm", "w"]);
+        git_ok(&web, &["checkout", "-qb", "side"]);
+        for repo in ["api", "web"] {
+            zero_fill(&fx.vol.join(repo).join(".git/index"), 100);
+        }
+        zero_fill(&web.join(".git/HEAD"), 20);
+        let report = run(shell, &fx).await;
+        let mut repaired = report.repaired.clone();
+        repaired.sort();
+        assert_eq!(repaired.len(), 3, "{shell}: {report:?}");
+        for repo in ["api", "web"] {
+            git_ok(&fx.vol.join(repo), &["status"]);
+            git_ok(&fx.vol.join(repo), &["fsck", "--full"]);
+        }
+        assert_eq!(git_text(&web, &["branch", "--show-current"]), "side");
+    }
+}
+
 /// The fixtures must not touch the repository a git hook points `GIT_DIR` at: `git init --bare`
 /// there turns that repository bare.
 #[test]

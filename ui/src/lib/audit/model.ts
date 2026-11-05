@@ -340,6 +340,10 @@ const WORKSPACE_OPS: Record<
     done: "Repository removed",
     failed: "Removing a repository failed",
   },
+  git_repaired: {
+    done: "Git repaired after a crash",
+    failed: "Repairing git after a crash failed",
+  },
 };
 
 /** What was done and how it ended, then the plain sentence the record carries and who asked. */

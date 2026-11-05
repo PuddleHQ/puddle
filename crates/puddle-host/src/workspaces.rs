@@ -1918,6 +1918,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         locks: Result<puddle_workspace::LockReport, puddle_workspace::WorkspaceError>,
     ) {
         let key = problem_key("git-locks", name);
+        if let Ok(report) = &locks {
+            self.report_git_repairs(name, report);
+        }
         let why = match locks {
             Ok(report) if report.errors.is_empty() => {
                 tracing::debug!(workspace = %name, ?report, "after boot");
@@ -1939,6 +1942,50 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             )
             .about(name.clone()),
         );
+    }
+
+    /// Audits each git file the boot rebuilt, and tells the user what was repaired and what was
+    /// found damaged and left alone; a boot that finds neither withdraws the notice.
+    fn report_git_repairs(&self, name: &WorkspaceName, report: &puddle_workspace::LockReport) {
+        for repair in &report.repaired {
+            self.inner.store.note_workspace_op(&NewWorkspaceOp {
+                op: WorkspaceOpKind::GitRepaired,
+                workspace: Some(name.clone()),
+                outcome: WorkspaceOpOutcome::Succeeded,
+                actor: Actor::System,
+                detail: Some(repair.clone()),
+            });
+        }
+        let key = problem_key("git-repair", name);
+        if report.repaired.is_empty() && report.damaged.is_empty() {
+            self.inner.problems.clear(&key);
+            return;
+        }
+        let mut parts = Vec::new();
+        if !report.repaired.is_empty() {
+            parts.push(format!(
+                "The last shutdown left git files unreadable. Puddle repaired them: {}. Your files \
+                 are unchanged; anything you had staged with git add and not committed is no longer \
+                 staged, so run git status and add it again.",
+                report.repaired.join("; ")
+            ));
+        }
+        if !report.damaged.is_empty() {
+            parts.push(format!(
+                "Puddle found damage it could not repair safely and left it as it is: {}. Git will \
+                 not work in that repository until it is fixed by hand.",
+                report.damaged.join("; ")
+            ));
+        }
+        let detail = parts.join(" ");
+        let title = if report.damaged.is_empty() {
+            format!("Puddle repaired git files in {name} after the last shutdown")
+        } else {
+            format!("Puddle found damaged git files in {name} that it could not repair")
+        };
+        self.inner
+            .problems
+            .raise(Problem::new(key, title, detail).about(name.clone()));
     }
 
     /// After a boot: Puddle's directory and stale locks on the volume, the notice and check for the

@@ -158,7 +158,7 @@ fn tools_cache() -> std::path::PathBuf {
             std::env::var_os("HOME")
                 .map(|h| std::path::Path::new(&h).join(".cache/puddle-vm-tools"))
         })
-        .expect("PUDDLE_VM_TOOLS_CACHE or HOME");
+        .unwrap();
     let mut hasher = DefaultHasher::new();
     (
         TOOLS_IMAGE,

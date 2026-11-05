@@ -33,6 +33,18 @@ pub struct SandboxInfo {
     /// Whether Puddle created it (msb: the sandbox carries Puddle's owner label). Shutdown and
     /// reconcile only ever touch sandboxes with this set and a valid [`SandboxName`].
     pub puddle_owned: bool,
+    /// How full its root disk is, when the runtime can tell.
+    pub root_disk: Option<RootDiskUse>,
+}
+
+/// The root disk of a sandbox (home directory, tool caches, installed packages): its capacity and
+/// the part of its image that holds data on the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RootDiskUse {
+    /// The most the root disk can hold.
+    pub size: DiskSize,
+    /// What the image takes on the host now, never more than `size`.
+    pub used: DiskSize,
 }
 
 impl SandboxInfo {
@@ -394,12 +406,14 @@ mod tests {
             name: "box".into(),
             status: WorkspaceStatus::Running,
             puddle_owned: true,
+            root_disk: None,
         };
         assert_eq!(ours.sandbox_name().unwrap().as_str(), "box");
         let foreign = SandboxInfo {
             name: "Foreign_Box".into(),
             status: WorkspaceStatus::Stopped,
             puddle_owned: false,
+            root_disk: None,
         };
         assert!(foreign.sandbox_name().is_none());
         let vol = VolumeInfo {

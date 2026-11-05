@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_agent_proto::editor::{EditorServer, ServerKind};
+use puddle_agent_proto::editor::{EditorServer, NEEDS_GLIBC, ServerKind};
 use puddle_agent_proto::forward::OpenError;
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{
@@ -459,6 +459,16 @@ fn no_link_message(workspace: &WorkspaceName, why: NoLink) -> String {
     }
 }
 
+/// What the user is told when the guest gave no editor password. An image the editor cannot run
+/// in never gets one, so that case says why instead of "yet".
+fn password_failure(err: &puddle_front::Unreachable) -> String {
+    if err.0 == NEEDS_GLIBC {
+        format!("{err}; use desktop VS Code over direct SSH or a glibc image")
+    } else {
+        format!("the editor has no password to sign in with yet: {err}")
+    }
+}
+
 impl EditorLogin for GuestLogin {
     fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
         Box::pin(async move {
@@ -473,11 +483,10 @@ impl EditorLogin for GuestLogin {
                         .map_err(|why| LaunchError::new(no_link_message(&self.workspace, why)))?;
                     Arc::new(link)
                 };
-            editor.password().await.map_err(|err| {
-                LaunchError::new(format!(
-                    "the editor has no password to sign in with yet: {err}"
-                ))
-            })
+            editor
+                .password()
+                .await
+                .map_err(|err| LaunchError::new(password_failure(&err)))
         })
     }
 }
@@ -3630,5 +3639,19 @@ mod no_link_words {
         let late = no_link_message(&acme, NoLink::NotConnected);
         assert!(late.starts_with("acme is running"), "{late}");
         assert!(late.contains("open the editor again in a moment"), "{late}");
+    }
+
+    #[test]
+    fn an_image_the_editor_cannot_run_in_is_named_not_waited_for() {
+        let musl = puddle_front::Unreachable(NEEDS_GLIBC.to_owned());
+        let said = password_failure(&musl);
+        assert!(said.starts_with(NEEDS_GLIBC), "{said}");
+        assert!(said.contains("desktop VS Code over direct SSH"), "{said}");
+        assert!(!said.contains("yet"), "{said}");
+        let early = password_failure(&puddle_front::Unreachable("not started".to_owned()));
+        assert_eq!(
+            early,
+            "the editor has no password to sign in with yet: not started"
+        );
     }
 }

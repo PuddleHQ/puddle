@@ -316,7 +316,7 @@ async fn a_head_answer_gets_its_headers_scrubbed_and_keeps_its_length() {
         Some(format!("k={stand_in}").as_str())
     );
     assert_eq!(response.header("content-length"), Some("1234"));
-    assert!(response.body.is_empty());
+    assert_eq!(response.body, b"");
     client.close().await;
     assert_eq!(
         rig.events(1).await[0].scrubbed_stand_ins,

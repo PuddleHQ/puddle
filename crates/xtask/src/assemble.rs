@@ -5,7 +5,7 @@
 //! ```text
 //! Windows                                   Linux
 //! <out>/msb.exe        fork release asset   <out>/msb                   built from the fork tag
-//! <out>/libkrunfw.dll  upstream asset       <out>/libkrunfw.so.5        upstream asset
+//! <out>/libkrunfw.dll  fork release asset    <out>/libkrunfw.so.5        upstream asset
 //!                                           <out>/libkrunfw.so.<ver>    copy of it, the name msb
 //!                                                                       looks for (<ver> is pinned)
 //! <out>/runtime.json   version, tags, SHA-256 of msb and the firmware
@@ -257,19 +257,27 @@ fn build(
             found: found.unwrap_or_else(|| "none".into()),
         });
     }
-    let (fw, libkrunfw_sha256) = fetch_verified(
-        source,
-        Origin::Upstream,
-        match os {
-            HostOs::Windows => LIBKRUNFW_ASSET,
-            HostOs::Linux | HostOs::MacOs => LIBKRUNFW_LINUX_ASSET,
-        },
-        &downloads.join("upstream"),
-        &format!(
-            "{} {} {CHECKSUMS_ASSET}",
-            facts.upstream_repo, facts.upstream_tag
-        ),
-    )?;
+    // Windows: the fork release's dll, the one `ci/fetch-msb.sh` pins and the VM tests run, so the
+    // installer ships the tested firmware. Linux still takes upstream's.
+    let (fw, libkrunfw_sha256) = match os {
+        HostOs::Windows => fetch_verified(
+            source,
+            Origin::Fork,
+            LIBKRUNFW_ASSET,
+            &downloads.join("firmware"),
+            &format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
+        )?,
+        HostOs::Linux | HostOs::MacOs => fetch_verified(
+            source,
+            Origin::Upstream,
+            LIBKRUNFW_LINUX_ASSET,
+            &downloads.join("upstream"),
+            &format!(
+                "{} {} {CHECKSUMS_ASSET}",
+                facts.upstream_repo, facts.upstream_tag
+            ),
+        )?,
+    };
     let msb_inventory = source.msb_inventory(os)?;
     msb_inventory.check()?;
     puddle.check()?;

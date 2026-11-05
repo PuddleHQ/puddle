@@ -268,6 +268,9 @@ struct Inner<R: Runtime + Clone> {
     events: Arc<dyn EventSink>,
     clock: Arc<dyn Clock>,
     settings: Arc<dyn puddle_api::SettingsRepo>,
+    /// The settings routes' lock, shared so a delete's removal of a settings file never falls
+    /// between a settings change's read and its write.
+    settings_lock: Arc<tokio::sync::Mutex<()>>,
     store: Arc<Store>,
     launcher: Arc<dyn Launcher>,
     ssh: Arc<SshSetup>,
@@ -551,6 +554,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 events: parts.events,
                 clock: parts.clock,
                 settings: parts.settings,
+                settings_lock: Arc::default(),
                 store: parts.store,
                 launcher: parts.launcher,
                 ssh: parts.ssh,
@@ -2880,12 +2884,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
-    /// Deletes the workspace's settings document, so one made later under the same name starts
-    /// from the defaults (direct SSH off). A failure is a notice (the file stays and the name
-    /// would inherit it).
-    fn forget_settings_file(&self, name: &WorkspaceId) {
+    /// Deletes the workspace's settings document. A failure is a notice (the file stays). A new
+    /// workspace has a new id, so it never inherits a stuck file.
+    /// Under the settings routes' lock, so a settings change that read the file before this
+    /// removal cannot write it back after.
+    async fn forget_settings_file(&self, name: &WorkspaceId) {
         let inner = &self.inner;
         let key = problem_key("settings", name);
+        let _lock = inner.settings_lock.lock().await;
         match inner.settings.delete_workspace(name) {
             Ok(()) => inner.problems.clear(&key),
             Err(e) => inner.problems.raise(Problem::new(
@@ -2983,7 +2989,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
-        self.forget_settings_file(&record.id);
+        self.forget_settings_file(&record.id).await;
         self.forget_browser_state(&record.id).await;
         Ok(())
     }
@@ -3657,6 +3663,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn settings_changed(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move { self.apply_direct_ssh().await })
+    }
+
+    fn settings_lock(&self) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        Some(self.inner.settings_lock.clone())
     }
 }
 

@@ -16,7 +16,7 @@ use puddle_logins::{LoginNotices, Logins, Marker, Problem, Profile, builtin};
 use puddle_proxy::StandIns;
 use puddle_secrets::SecretStore;
 use puddle_settings::resolve;
-use puddle_types::{Event, EventSink, LoginProblemKind, WorkspaceName};
+use puddle_types::{Event, EventSink, LoginProblemKind, WorkspaceId};
 
 use crate::settings_read;
 
@@ -26,7 +26,7 @@ struct EventNotices {
 }
 
 impl LoginNotices for EventNotices {
-    fn problem(&self, workspace: &WorkspaceName, profile: &Profile, problem: Problem) {
+    fn problem(&self, workspace: &WorkspaceId, profile: &Profile, problem: Problem) {
         self.events.emit(Event::LoginProblem {
             workspace: workspace.clone(),
             service: profile.name.to_owned(),
@@ -78,7 +78,7 @@ impl LoginKeeper {
     /// The captured logins of `workspace` for this start, swapping from `registry`. With
     /// `enabled` false nothing is captured and nothing is decrypted for logins.
     /// The marker of `workspace`: none when the keeper was given no folder.
-    fn marker(&self, workspace: &WorkspaceName) -> Marker {
+    fn marker(&self, workspace: &WorkspaceId) -> Marker {
         self.markers
             .as_deref()
             .map_or_else(Marker::none, |dir| Marker::for_workspace(dir, workspace))
@@ -86,7 +86,7 @@ impl LoginKeeper {
 
     pub(crate) fn logins(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         enabled: bool,
         registry: Arc<StandIns>,
     ) -> Logins {
@@ -105,7 +105,7 @@ impl LoginKeeper {
 
     /// Deletes every token kept for a deleted `workspace`. The workspace is gone either way: a
     /// token that stays behind is unreachable (nothing names it any more) and is only logged.
-    pub(crate) async fn delete_workspace(&self, workspace: &WorkspaceName) {
+    pub(crate) async fn delete_workspace(&self, workspace: &WorkspaceId) {
         let (store, name) = (Arc::clone(&self.store), workspace.clone());
         let failed =
             tokio::task::spawn_blocking(move || Logins::delete_workspace(&store, &name, builtin()))
@@ -123,7 +123,7 @@ impl LoginKeeper {
 /// logged.
 pub(crate) fn capture_enabled(
     settings: &dyn puddle_api::SettingsRepo,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
 ) -> bool {
     let read = || -> Result<bool, String> {
         let global = settings_read::global(settings)?;
@@ -155,8 +155,8 @@ mod tests {
         }
     }
 
-    fn workspace(name: &str) -> WorkspaceName {
-        WorkspaceName::new(name).unwrap()
+    fn workspace(name: &str) -> WorkspaceId {
+        WorkspaceId::new(name).unwrap()
     }
 
     #[test]

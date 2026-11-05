@@ -13,7 +13,7 @@ use http::header::{CONTENT_TYPE, HOST, SET_COOKIE};
 use http::{Method, Request};
 use http_body_util::{BodyExt, Full};
 use hyper_util::rt::TokioIo;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use tauri::webview::cookie::Cookie;
 use tokio::net::TcpStream;
 
@@ -111,7 +111,7 @@ pub enum SignInError {
 /// [`SignInError`] when the front or the editor fails, or the editor sets no session.
 pub async fn sign_in(
     front: SocketAddr,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     password: &str,
 ) -> Result<SessionCookie, SignInError> {
     tokio::time::timeout(TIMEOUT, post_login(front, workspace, password))
@@ -121,7 +121,7 @@ pub async fn sign_in(
 
 async fn post_login(
     front: SocketAddr,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     password: &str,
 ) -> Result<SessionCookie, SignInError> {
     let stream = TcpStream::connect(front).await?;
@@ -218,8 +218,8 @@ mod tests {
         (addr, seen)
     }
 
-    fn workspace() -> WorkspaceName {
-        WorkspaceName::new("demo").unwrap()
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::new("demo").unwrap()
     }
 
     #[tokio::test]

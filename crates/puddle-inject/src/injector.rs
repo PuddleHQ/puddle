@@ -30,7 +30,7 @@ use puddle_proxy::{
 };
 use puddle_secrets::{SourceError, SourceSpec};
 use puddle_store::{CredentialBinding, CredentialChoice, Identity, WorkspaceGit};
-use puddle_types::{Event, EventSink, GitAccess, WorkspaceName};
+use puddle_types::{Event, EventSink, GitAccess, WorkspaceId};
 use tokio::time::Instant;
 
 use crate::git_path::{Access, Classified, GitPath, classify};
@@ -58,7 +58,7 @@ const NO_IDENTITY_GRACE: Duration = Duration::from_secs(3);
 
 /// The injector of one workspace.
 pub struct GitInjector {
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     settings: Arc<dyn GitSettings>,
     credentials: Arc<dyn CredentialSource>,
     events: Arc<dyn EventSink>,
@@ -80,7 +80,7 @@ impl GitInjector {
     /// from `credentials`, and raising notices on `events`.
     #[must_use]
     pub fn new(
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         settings: Arc<dyn GitSettings>,
         credentials: Arc<dyn CredentialSource>,
         events: Arc<dyn EventSink>,

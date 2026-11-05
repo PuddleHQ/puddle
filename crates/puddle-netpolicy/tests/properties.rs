@@ -9,7 +9,7 @@ use puddle_netpolicy::{
     AddressClass, AddressVerdict, LocalAccess, LocalCategory, NameError, NetPolicy, classify_ip,
     normalise_host,
 };
-use puddle_types::{Host, WorkspaceName};
+use puddle_types::{Host, WorkspaceId};
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2000))]
@@ -76,7 +76,7 @@ proptest! {
     /// a local address is at most exact-only.
     #[test]
     fn only_public_addresses_pass_without_toggles(ip in any::<IpAddr>(), port in any::<u16>()) {
-        let workspace = WorkspaceName::new("box").unwrap();
+        let workspace = WorkspaceId::new("box").unwrap();
         let addr = SocketAddr::new(ip, port);
         let off = NetPolicy::new(Arc::new(LocalAccess::NONE));
         let class = classify_ip(ip);

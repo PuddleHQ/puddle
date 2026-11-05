@@ -27,7 +27,7 @@ use puddle_proxy::{
 };
 use puddle_secrets::{Fetch, ReadLog, SecretCache, SecretStore, SourceSpec, Sources};
 use puddle_store::{Store, WorkspaceGit};
-use puddle_types::{Event, EventSink, GuestEnv, RuleId, WorkspaceName};
+use puddle_types::{Event, EventSink, GuestEnv, RuleId, WorkspaceId};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
@@ -59,12 +59,12 @@ impl std::fmt::Debug for InjectorInputs {
 /// Builds the injector that decides, for each request on a host a workspace decrypts, which
 /// credential is added. Called once for each start of a workspace's sandbox, with that workspace.
 pub type InjectorFactory =
-    Arc<dyn Fn(&InjectorInputs, &WorkspaceName) -> Arc<dyn Injector> + Send + Sync>;
+    Arc<dyn Fn(&InjectorInputs, &WorkspaceId) -> Arc<dyn Injector> + Send + Sync>;
 
 /// The injector a workspace gets when the host was given no factory: Puddle's own, for Git hosts.
 /// It reads the workspace's identities and lists from the store for each request, and the secret
 /// of an identity from the cache at the moment it is needed.
-fn git_injector(inputs: &InjectorInputs, workspace: &WorkspaceName) -> Arc<dyn Injector> {
+fn git_injector(inputs: &InjectorInputs, workspace: &WorkspaceId) -> Arc<dyn Injector> {
     let settings = StoreSettings::new(Arc::clone(&inputs.store), workspace.clone());
     let credentials: Arc<dyn CredentialSource> = inputs.secrets.clone();
     Arc::new(GitInjector::new(
@@ -138,7 +138,7 @@ pub(crate) struct Injection {
     vault: Arc<dyn SecretStore>,
     /// Makes each start's captured logins over the same credential store.
     login_keeper: LoginKeeper,
-    running: Mutex<BTreeMap<WorkspaceName, Running>>,
+    running: Mutex<BTreeMap<WorkspaceId, Running>>,
     /// Held while a workspace's settings are read and what it decrypts is changed to match, so
     /// the last change to run is the last one to read: a slow reader never puts back an old set.
     syncing: Mutex<()>,
@@ -146,7 +146,7 @@ pub(crate) struct Injection {
     /// take a while) and applied or registered, so a start and a change to the environment never
     /// cross: whichever comes second reads what the first left. Per workspace, so a credential
     /// store that is slow for one workspace's secrets holds up no other workspace.
-    environment: Mutex<BTreeMap<WorkspaceName, Arc<tokio::sync::Mutex<()>>>>,
+    environment: Mutex<BTreeMap<WorkspaceId, Arc<tokio::sync::Mutex<()>>>>,
     vault_timeout: Duration,
 }
 
@@ -184,7 +184,7 @@ impl Injection {
     }
 
     /// `workspace`'s environment lock.
-    fn environment_lock(&self, workspace: &WorkspaceName) -> Arc<tokio::sync::Mutex<()>> {
+    fn environment_lock(&self, workspace: &WorkspaceId) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self
             .environment
             .lock()
@@ -194,7 +194,7 @@ impl Injection {
 
     /// Reads `workspace`'s environment off the async threads, giving up when the credential store
     /// does not answer in time.
-    async fn environment_of(&self, workspace: &WorkspaceName) -> Result<Resolved, String> {
+    async fn environment_of(&self, workspace: &WorkspaceId) -> Result<Resolved, String> {
         let (store, vault, name) = (
             Arc::clone(&self.inputs.store),
             Arc::clone(&self.vault),
@@ -211,12 +211,12 @@ impl Injection {
         }
     }
 
-    fn running(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceName, Running>> {
+    fn running(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceId, Running>> {
         self.running.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The workspace's Git settings, from the database.
-    pub(crate) fn git(&self, workspace: &WorkspaceName) -> Result<WorkspaceGit, String> {
+    pub(crate) fn git(&self, workspace: &WorkspaceId) -> Result<WorkspaceGit, String> {
         self.inputs
             .store
             .workspace_git(workspace)
@@ -232,7 +232,7 @@ impl Injection {
     /// is missing from the credential store, say), or the CA cannot be made.
     pub(crate) async fn begin(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         capture: bool,
     ) -> Result<Began, String> {
         // Held until the workspace is registered: a change to its environment in the meantime
@@ -252,7 +252,7 @@ impl Injection {
 
     fn register(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         resolved: Resolved,
         stand_ins: Arc<StandIns>,
         logins: Logins,
@@ -317,7 +317,7 @@ impl Injection {
     ///
     /// Returns the guest's variables as they are now (plain ones, a secret as its stand-in) when
     /// the change applied, so the caller can bring the running guest's login-shell file in line.
-    pub(crate) async fn environment_changed(&self, workspace: &WorkspaceName) -> Option<GuestEnv> {
+    pub(crate) async fn environment_changed(&self, workspace: &WorkspaceId) -> Option<GuestEnv> {
         let lock = self.environment_lock(workspace);
         let _environment = lock.lock().await;
         if !self.running().contains_key(workspace) {
@@ -340,7 +340,7 @@ impl Injection {
     }
 
     /// Tells the user, and the log, that a change to `workspace`'s environment did not apply.
-    fn failed(&self, workspace: &WorkspaceName, reason: String) {
+    fn failed(&self, workspace: &WorkspaceId, reason: String) {
         tracing::warn!(workspace = %workspace, %reason, "a change to the workspace's environment is not applied");
         self.inputs.events.emit(Event::WorkspaceEnvFailed {
             workspace: workspace.clone(),
@@ -351,11 +351,7 @@ impl Injection {
     /// Makes the registry of the running `workspace` hold `resolved`'s entries, then makes what it
     /// decrypts follow the registry. Not an error when the workspace stopped meanwhile: its next
     /// start reads its secrets itself.
-    fn apply_environment(
-        &self,
-        workspace: &WorkspaceName,
-        resolved: Resolved,
-    ) -> Result<(), String> {
+    fn apply_environment(&self, workspace: &WorkspaceId, resolved: Resolved) -> Result<(), String> {
         let registry = self
             .running()
             .get(workspace)
@@ -371,7 +367,7 @@ impl Injection {
     /// Reads the running `workspace`'s settings again and changes what it decrypts to match, with
     /// the CA it has. `Ok(None)` when it has no CA (it is not running, so the next start reads the
     /// settings itself); the settings otherwise.
-    pub(crate) fn resync(&self, workspace: &WorkspaceName) -> Result<Option<WorkspaceGit>, String> {
+    pub(crate) fn resync(&self, workspace: &WorkspaceId) -> Result<Option<WorkspaceGit>, String> {
         let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
         let git = self.git(workspace)?;
         // Held until the registry is changed: an `end` in between would otherwise leave a CA
@@ -393,7 +389,7 @@ impl Injection {
     }
 
     /// An empty learned list for `workspace` that tells the user about each host it learns.
-    fn learned_list(&self, workspace: &WorkspaceName) -> PassThrough {
+    fn learned_list(&self, workspace: &WorkspaceId) -> PassThrough {
         let events = Arc::clone(&self.inputs.events);
         let workspace = workspace.clone();
         PassThrough::new().observed(move |host| {
@@ -409,7 +405,7 @@ impl Injection {
     /// out and logged; the settings API refuses such names, so this only meets old rows.
     fn interception(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         learned: &Arc<PassThrough>,
     ) -> Result<Interception, String> {
         let store = &self.inputs.store;
@@ -440,7 +436,7 @@ impl Injection {
 
     /// The rules on method and path that apply to `workspace`, global and its own. A row the
     /// proxy cannot take (a host that is no longer valid) is left out and logged.
-    fn request_rules(&self, workspace: &WorkspaceName) -> Result<RequestRules, String> {
+    fn request_rules(&self, workspace: &WorkspaceId) -> Result<RequestRules, String> {
         let rows = self
             .inputs
             .store
@@ -460,7 +456,7 @@ impl Injection {
 
     /// Drops `workspace`'s CA and what it decrypts. Connections already open keep what they have;
     /// the key is gone with the last of them.
-    pub(crate) fn end(&self, workspace: &WorkspaceName) {
+    pub(crate) fn end(&self, workspace: &WorkspaceId) {
         let mut running = self.running();
         self.terminations.remove(workspace);
         running.remove(workspace);
@@ -473,7 +469,7 @@ impl Injection {
     /// so a notice about a login kept earlier ends the same way.
     pub(crate) async fn forget_login(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         service: &str,
     ) -> Result<bool, puddle_logins::ForgetError> {
         let running = self.running().get(workspace).map(|r| r.logins.clone());
@@ -486,7 +482,7 @@ impl Injection {
 
     /// The logins kept for `workspace`, for the user to look at. A workspace that is not running
     /// gets a throwaway [`Logins`] over the same store and marker, as [`Self::forget_login`] does.
-    pub(crate) async fn kept_logins(&self, workspace: &WorkspaceName) -> puddle_logins::KeptList {
+    pub(crate) async fn kept_logins(&self, workspace: &WorkspaceId) -> puddle_logins::KeptList {
         let running = self.running().get(workspace).map(|r| r.logins.clone());
         let logins = running.unwrap_or_else(|| {
             self.login_keeper
@@ -496,7 +492,7 @@ impl Injection {
     }
 
     /// What `workspace` decrypts and the CA that certifies it, while it runs.
-    pub(crate) fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<Termination>> {
+    pub(crate) fn termination(&self, workspace: &WorkspaceId) -> Option<Arc<Termination>> {
         self.terminations.termination(workspace)
     }
 
@@ -504,7 +500,7 @@ impl Injection {
     /// its own secrets' values in the credential store. The workspace is gone either way, so a
     /// failure is logged and shown ([`Event::WorkspaceEnvFailed`]) instead of stopping anything: a
     /// value that stays behind is unreachable (nothing names it any more) but is still the user's.
-    pub(crate) async fn forget(&self, workspace: &WorkspaceName) {
+    pub(crate) async fn forget(&self, workspace: &WorkspaceId) {
         let (store, vault, name) = (
             Arc::clone(&self.inputs.store),
             Arc::clone(&self.vault),
@@ -539,7 +535,7 @@ impl Injection {
     }
 
     /// The workspaces that have a CA now.
-    pub(crate) fn running_workspaces(&self) -> Vec<WorkspaceName> {
+    pub(crate) fn running_workspaces(&self) -> Vec<WorkspaceId> {
         self.running().keys().cloned().collect()
     }
 }
@@ -622,8 +618,8 @@ mod tests {
         Arc::new(Store::open_in_memory(clock, Limits::default()).unwrap())
     }
 
-    fn workspace(name: &str) -> WorkspaceName {
-        WorkspaceName::new(name).unwrap()
+    fn workspace(name: &str) -> WorkspaceId {
+        WorkspaceId::new(name).unwrap()
     }
 
     fn inputs(store: &Arc<Store>) -> InjectorInputs {
@@ -676,13 +672,7 @@ mod tests {
     const REAL: &str = "real-value-CANARY-4711";
 
     /// A secret for `hosts` in the workspace's own scope, its value in `vault`.
-    fn add_secret(
-        store: &Store,
-        vault: &MemoryStore,
-        ws: &WorkspaceName,
-        var: &str,
-        hosts: &[&str],
-    ) {
+    fn add_secret(store: &Store, vault: &MemoryStore, ws: &WorkspaceId, var: &str, hosts: &[&str]) {
         let id = StoredId::new(format!("env-{var}")).unwrap();
         vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
         let hosts = hosts.iter().map(|h| SecretHost::new(h).unwrap()).collect();
@@ -695,11 +685,11 @@ mod tests {
             .unwrap();
     }
 
-    fn stand_ins(terminations: &Terminations, ws: &WorkspaceName) -> Vec<String> {
+    fn stand_ins(terminations: &Terminations, ws: &WorkspaceId) -> Vec<String> {
         terminations.termination(ws).unwrap().stand_ins().ids()
     }
 
-    fn attach(store: &Store, ws: &WorkspaceName, label: &str, host: &str) {
+    fn attach(store: &Store, ws: &WorkspaceId, label: &str, host: &str) {
         let host = HostName::new(host).unwrap();
         let credential = CredentialBinding::new(
             &host,
@@ -720,7 +710,7 @@ mod tests {
         store.attach_identity(ws, identity.id, None).unwrap();
     }
 
-    fn decrypts(terminations: &Terminations, ws: &WorkspaceName, host: &str) -> bool {
+    fn decrypts(terminations: &Terminations, ws: &WorkspaceId, host: &str) -> bool {
         terminations
             .termination(ws)
             .is_some_and(|t| t.set().contains(&Host::parse_normalised(host).unwrap()))
@@ -777,7 +767,7 @@ mod tests {
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
         let host = |h: &str| Host::parse_normalised(h).unwrap();
-        let add = |workspace: Option<&WorkspaceName>, host: &str, path: &str| {
+        let add = |workspace: Option<&WorkspaceId>, host: &str, path: &str| {
             store
                 .add_request_rule(&puddle_store::NewRequestRule {
                     workspace: workspace.cloned(),
@@ -1046,10 +1036,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_long_workspace_name_still_gives_a_valid_ca_name() {
+    async fn the_longest_workspace_id_still_gives_a_valid_ca_name() {
         let store = store();
         let (injection, _) = injection(&store);
-        let ws = workspace(&"a".repeat(63));
+        let ws = workspace(&"a".repeat(WorkspaceId::MAX_LEN));
         assert!(injection.begin(&ws, false).await.is_ok());
     }
 
@@ -1147,7 +1137,7 @@ mod tests {
             assert!(decrypts(&terminations, ws, "g.example.org"), "{ws}");
         }
         // Another workspace's own stand-in differs: each holds its own.
-        let held = |ws: &WorkspaceName| {
+        let held = |ws: &WorkspaceId| {
             store
                 .env_for_start(ws, &mut |_| Err("already made".into()))
                 .unwrap()
@@ -1337,7 +1327,7 @@ mod tests {
 
     /// Two stand-ins of which one contains the other: the proxy cannot tell which to swap, so it
     /// refuses to hold both. Puddle makes none like that; a hand-edited database can.
-    fn overlapping_stand_ins(store: &Store, ws: &WorkspaceName) {
+    fn overlapping_stand_ins(store: &Store, ws: &WorkspaceId) {
         store
             .env_for_start(ws, &mut |name| {
                 let first = "puddle-secret-A-0123456789abcdef0123456789abcdef";
@@ -1691,7 +1681,7 @@ mod tests {
     // Captured logins
 
     /// What the proxy does with a Claude Code token answer, through the termination the host made.
-    async fn claude_answer(terminations: &Terminations, ws: &WorkspaceName) -> Option<Vec<u8>> {
+    async fn claude_answer(terminations: &Terminations, ws: &WorkspaceId) -> Option<Vec<u8>> {
         let termination = terminations.termination(ws).unwrap();
         let mut exchange = termination
             .exchanges()
@@ -1722,7 +1712,7 @@ mod tests {
             .map(|bytes| bytes.to_vec())
     }
 
-    fn login_ids(terminations: &Terminations, ws: &WorkspaceName) -> Vec<String> {
+    fn login_ids(terminations: &Terminations, ws: &WorkspaceId) -> Vec<String> {
         stand_ins(terminations, ws)
             .into_iter()
             .filter(|id| id.starts_with("stand-in:login:"))
@@ -1753,7 +1743,7 @@ mod tests {
         assert!(decrypts(&terminations, &on, "platform.claude.com"));
         assert!(decrypts(&terminations, &on, "gitlab.com"));
         // Capture off reads nothing: the token endpoint is an ordinary request.
-        let exchanges = |ws: &WorkspaceName| {
+        let exchanges = |ws: &WorkspaceId| {
             terminations
                 .termination(ws)
                 .unwrap()

@@ -28,7 +28,7 @@ use puddle_proxy::{
     Injection, Injector, Interception, Proxy, ProxyConfig, RequestView, Resolver, Route,
     SecretValue, StandIns, Termination, TerminationSet, Terminations,
 };
-use puddle_types::{ConnectionEvent, DomainName, Host, NullSink, WorkspaceName};
+use puddle_types::{ConnectionEvent, DomainName, Host, NullSink, WorkspaceId};
 use puddle_upstream::TlsClient;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -602,8 +602,8 @@ pub(crate) fn host(h: &str) -> Host {
     Host::parse_normalised(h).unwrap()
 }
 
-pub(crate) fn workspace(name: &str) -> WorkspaceName {
-    WorkspaceName::new(name).unwrap()
+pub(crate) fn workspace(name: &str) -> WorkspaceId {
+    WorkspaceId::new(name).unwrap()
 }
 
 /// A workspace's CA.

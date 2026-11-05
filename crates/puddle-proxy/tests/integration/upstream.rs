@@ -25,7 +25,7 @@ use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, PullProxy, Route, Upstream};
 use puddle_types::fixture;
-use puddle_types::{ConnectionEvent, ConnectionOutcome, Host, NullSink, WorkspaceName};
+use puddle_types::{ConnectionEvent, ConnectionOutcome, Host, NullSink, WorkspaceId};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Discovery, FakeOs, FakeProxy,
     Hop, NoAuth, ProxyAddr, ProxyAuth, ProxyConfig,
@@ -103,7 +103,7 @@ impl Rig {
             .with_upstream(upstream);
         let root = IpcRoot::new().unwrap();
         let route =
-            Arc::new(proxy).serve_route(root.listen().unwrap(), WorkspaceName::new("box").unwrap());
+            Arc::new(proxy).serve_route(root.listen().unwrap(), WorkspaceId::new("box").unwrap());
         Self {
             policy,
             log,

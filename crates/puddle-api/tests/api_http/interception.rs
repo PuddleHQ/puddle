@@ -138,8 +138,8 @@ async fn the_global_names_are_shown_in_every_workspace() {
     assert_eq!(refused.status, 422);
 }
 
-fn shop() -> puddle_types::WorkspaceName {
-    puddle_types::WorkspaceName::new("shop").unwrap()
+fn shop() -> puddle_types::WorkspaceId {
+    puddle_types::WorkspaceId::new("shop").unwrap()
 }
 
 #[tokio::test]

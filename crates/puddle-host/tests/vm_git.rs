@@ -28,7 +28,7 @@ use puddle_secrets::{HostName, Secret, SecretStore, SourceSpec, StoredId, TokenS
 use puddle_store::{
     Actor, Author, Coverage, CredentialBinding, Effect, IdentityDraft, NewRule, Pattern, Scope,
 };
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended};
 use vm_support::{
@@ -106,7 +106,7 @@ fn identity(label: &str, credentials: Vec<CredentialBinding>) -> IdentityDraft {
     }
 }
 
-fn allow(vm: &VmHost, sandbox: &WorkspaceName, hosts: &[&str]) {
+fn allow(vm: &VmHost, sandbox: &WorkspaceId, hosts: &[&str]) {
     for host in hosts {
         vm.host
             .store()
@@ -187,7 +187,7 @@ fn seed(host: &GitHost) {
 /// The guest holds no token. Every place a secret could rest: the environment and command line
 /// of every process, every file on the disk (binary files too). The script holds the tokens in
 /// halves, so the search never finds itself.
-async fn assert_guest_holds_no_token(vm: &VmHost, sandbox: &WorkspaceName) {
+async fn assert_guest_holds_no_token(vm: &VmHost, sandbox: &WorkspaceId) {
     let patterns = format!(
         "w={work}; p={personal}; \
          printf '%s\\n' \"$w\" \"$p\" \
@@ -241,7 +241,7 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
     let net = internet(&[(NAME, &fake)]);
     let vm = start_vm_host_platform("gitk", net.options, &net.platform, |_| {}).await;
     let name = format!("{}-gitk", vm.settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     allow(&vm, &sandbox, &[NAME]);
     // Work covers the `acme` organisation; Personal covers the rest of the host. The tokens are
     // in the host's secret store and the sources are read at the moment of use.
@@ -432,7 +432,7 @@ async fn vm_git_clone_and_push_with_no_proxy_setting_carry_the_injected_credenti
     let net = internet(&[(NAME, &fake)]);
     let vm = start_vm_host_platform("gitn", net.options, &net.platform, |_| {}).await;
     let name = format!("{}-gitn", vm.settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     allow(&vm, &sandbox, &[NAME]);
     vm.host
         .store()
@@ -517,8 +517,8 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
     let prefix = vm.settings.prefix.as_str().to_owned();
     let (a_name, b_name) = (format!("{prefix}-gita"), format!("{prefix}-gitb"));
     let (a, b) = (
-        WorkspaceName::new(&a_name).unwrap(),
-        WorkspaceName::new(&b_name).unwrap(),
+        WorkspaceId::new(&a_name).unwrap(),
+        WorkspaceId::new(&b_name).unwrap(),
     );
     allow(&vm, &a, &[NAME, "plain.invalid"]);
     allow(&vm, &b, &[NAME, "plain.invalid"]);
@@ -547,7 +547,7 @@ async fn vm_git_the_ca_holds_no_key_and_two_workspaces_share_neither_ca_nor_cred
     assert!(out.contains(root) && !out.contains(&ca_a), "{out}");
 
     // Two CAs.
-    let fingerprint = |ws: &WorkspaceName| {
+    let fingerprint = |ws: &WorkspaceId| {
         let (runtime, ws) = (vm.runtime.clone(), ws.clone());
         async move {
             guest(
@@ -694,7 +694,7 @@ async fn vm_git_a_guest_clock_at_2010_or_2040_does_not_change_the_upstream_check
     let net = internet(&[(NAME, &valid), ("old.invalid", &old), ("new.invalid", &new)]);
     let vm = start_vm_host_platform("gitclock", net.options, &net.platform, |_| {}).await;
     let name = format!("{}-gitclock", vm.settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     allow(&vm, &sandbox, &[NAME, "old.invalid", "new.invalid"]);
     // One identity names all three hosts, so all three are decrypted and the proxy checks each
     // upstream certificate itself.

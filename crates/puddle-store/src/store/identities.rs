@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 
 use puddle_secrets::StoredId;
-use puddle_types::{Event, WorkspaceName};
+use puddle_types::{Event, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{Store, lock, sql_ts};
@@ -93,7 +93,7 @@ fn one(conn: &Connection, id: IdentityId) -> Result<Identity, StoreError> {
     identity_of(raw)
 }
 
-fn attached_ids(conn: &Connection, ws: &WorkspaceName) -> Result<Vec<IdentityId>, StoreError> {
+fn attached_ids(conn: &Connection, ws: &WorkspaceId) -> Result<Vec<IdentityId>, StoreError> {
     let mut stmt = conn.prepare(
         "SELECT identity_id FROM workspace_identities WHERE workspace_id = ?1 ORDER BY position",
     )?;
@@ -103,14 +103,14 @@ fn attached_ids(conn: &Connection, ws: &WorkspaceName) -> Result<Vec<IdentityId>
     Ok(ids)
 }
 
-fn attached(conn: &Connection, ws: &WorkspaceName) -> Result<Vec<Identity>, StoreError> {
+fn attached(conn: &Connection, ws: &WorkspaceId) -> Result<Vec<Identity>, StoreError> {
     attached_ids(conn, ws)?
         .into_iter()
         .map(|id| one(conn, id))
         .collect()
 }
 
-fn workspaces_using(conn: &Connection, id: IdentityId) -> Result<Vec<WorkspaceName>, StoreError> {
+fn workspaces_using(conn: &Connection, id: IdentityId) -> Result<Vec<WorkspaceId>, StoreError> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT workspace_id FROM workspace_identities WHERE identity_id = ?1 ORDER BY 1",
     )?;
@@ -119,13 +119,13 @@ fn workspaces_using(conn: &Connection, id: IdentityId) -> Result<Vec<WorkspaceNa
         .collect::<Result<Vec<_>, _>>()?;
     Ok(names
         .into_iter()
-        .filter_map(|n| WorkspaceName::new(&n).ok())
+        .filter_map(|n| WorkspaceId::new(&n).ok())
         .collect())
 }
 
 fn write_list(
     tx: &Transaction<'_>,
-    ws: &WorkspaceName,
+    ws: &WorkspaceId,
     ids: &[IdentityId],
 ) -> Result<(), StoreError> {
     tx.execute(
@@ -225,7 +225,7 @@ fn defaults_of(conn: &Connection) -> Result<GitDefaults, StoreError> {
         .unwrap_or_default())
 }
 
-fn changed_for(fx: &mut Vec<Event>, workspaces: Vec<WorkspaceName>) {
+fn changed_for(fx: &mut Vec<Event>, workspaces: Vec<WorkspaceId>) {
     fx.push(Event::IdentitiesChanged {});
     fx.extend(
         workspaces
@@ -239,7 +239,7 @@ fn start_in(
     tx: &Transaction<'_>,
     now: u64,
     fx: &mut Vec<Event>,
-    ws: &WorkspaceName,
+    ws: &WorkspaceId,
     request: &RepoGitRequest,
 ) -> Result<GitStart, StoreError> {
     let everyone = all(tx)?;
@@ -338,7 +338,7 @@ impl Store {
     ///
     /// # Errors
     /// A database error.
-    pub fn identity_workspaces(&self, id: IdentityId) -> Result<Vec<WorkspaceName>, StoreError> {
+    pub fn identity_workspaces(&self, id: IdentityId) -> Result<Vec<WorkspaceId>, StoreError> {
         workspaces_using(&lock(&self.conn), id)
     }
 
@@ -420,7 +420,7 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError::UnknownIdentity`], or a database error.
-    pub fn delete_identity(&self, id: IdentityId) -> Result<Vec<WorkspaceName>, StoreError> {
+    pub fn delete_identity(&self, id: IdentityId) -> Result<Vec<WorkspaceId>, StoreError> {
         let left = self.change(|tx, _now, fx| {
             let gone = one(tx, id)?;
             let workspaces = workspaces_using(tx, id)?;
@@ -498,7 +498,7 @@ impl Store {
     ///
     /// # Errors
     /// A database error, or a stored row that doesn't parse.
-    pub fn workspace_git(&self, ws: &WorkspaceName) -> Result<WorkspaceGit, StoreError> {
+    pub fn workspace_git(&self, ws: &WorkspaceId) -> Result<WorkspaceGit, StoreError> {
         let conn = lock(&self.conn);
         let (own_push, own_pull) = conn
             .query_row(
@@ -564,7 +564,7 @@ impl Store {
     /// database error.
     pub fn check_repository_git(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         requests: &[RepoGitRequest],
     ) -> Result<(), StoreError> {
         let conn = lock(&self.conn);
@@ -595,7 +595,7 @@ impl Store {
     /// cover what another on the list covers, or a database error. Nothing changes on an error.
     pub fn start_repository_git(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         request: &RepoGitRequest,
     ) -> Result<GitStart, StoreError> {
         self.change(|tx, now, fx| start_in(tx, now, fx, ws, request))
@@ -610,7 +610,7 @@ impl Store {
     /// As [`Store::start_repository_git`]; nothing of the list is set up on an error.
     pub fn start_repositories_git(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         requests: &[RepoGitRequest],
     ) -> Result<Vec<GitStart>, StoreError> {
         self.change(|tx, now, fx| {
@@ -666,7 +666,7 @@ impl Store {
     /// database error. Nothing changes on an error.
     pub fn set_workspace_identities(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         ids: &[IdentityId],
     ) -> Result<WorkspaceGit, StoreError> {
         self.change(|tx, _now, fx| {
@@ -696,7 +696,7 @@ impl Store {
     /// already there.
     pub fn attach_identity(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         id: IdentityId,
         position: Option<usize>,
     ) -> Result<WorkspaceGit, StoreError> {
@@ -722,7 +722,7 @@ impl Store {
     /// [`StoreError::UnknownIdentity`] when it is not on the workspace, or a database error.
     pub fn detach_identity(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         id: IdentityId,
     ) -> Result<WorkspaceGit, StoreError> {
         let mut ids = attached_ids(&lock(&self.conn), ws)?;
@@ -741,7 +741,7 @@ impl Store {
     /// A database error.
     pub fn set_git_switches(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         only_push_listed: Option<bool>,
         only_pull_listed: Option<bool>,
     ) -> Result<WorkspaceGit, StoreError> {
@@ -759,7 +759,7 @@ impl Store {
     /// A database error.
     pub fn change_git_switches(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         push: SwitchChange,
         pull: SwitchChange,
     ) -> Result<WorkspaceGit, StoreError> {
@@ -793,7 +793,7 @@ impl Store {
     /// [`StoreError::RepoListed`] when it is already there, or a database error.
     pub fn add_repo(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         repo: &RepoRef,
         pull: bool,
         push: bool,
@@ -822,7 +822,7 @@ impl Store {
         self.repo_entry(ws, id)
     }
 
-    fn repo_entry(&self, ws: &WorkspaceName, id: i64) -> Result<RepoEntry, StoreError> {
+    fn repo_entry(&self, ws: &WorkspaceId, id: i64) -> Result<RepoEntry, StoreError> {
         self.workspace_git(ws)?
             .repos
             .into_iter()
@@ -836,7 +836,7 @@ impl Store {
     /// [`StoreError::UnknownRepo`], or a database error.
     pub fn set_repo_toggles(
         &self,
-        ws: &WorkspaceName,
+        ws: &WorkspaceId,
         id: i64,
         pull: bool,
         push: bool,
@@ -859,7 +859,7 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError::UnknownRepo`], or a database error.
-    pub fn remove_repo(&self, ws: &WorkspaceName, id: i64) -> Result<(), StoreError> {
+    pub fn remove_repo(&self, ws: &WorkspaceId, id: i64) -> Result<(), StoreError> {
         self.change(|tx, _now, fx| {
             let n = tx.execute(
                 "DELETE FROM workspace_repos WHERE id = ?1 AND workspace_id = ?2",
@@ -879,7 +879,7 @@ impl Store {
 /// Drops what a deleted workspace held in the Git tables.
 pub(super) fn delete_workspace_rows(
     tx: &Transaction<'_>,
-    ws: &WorkspaceName,
+    ws: &WorkspaceId,
 ) -> Result<bool, StoreError> {
     let mut any = 0;
     for table in ["workspace_identities", "workspace_git", "workspace_repos"] {
@@ -948,7 +948,7 @@ mod tests {
     #[test]
     fn a_hand_edited_repository_row_is_reported_as_corrupt() {
         let store = store();
-        let ws = WorkspaceName::new("shop").unwrap();
+        let ws = WorkspaceId::new("shop").unwrap();
         lock(&store.conn)
             .execute(
                 "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, created_at)
@@ -969,7 +969,7 @@ mod tests {
     fn an_identity_listed_twice_is_refused() {
         let store = store();
         let id = made(&store);
-        let ws = WorkspaceName::new("shop").unwrap();
+        let ws = WorkspaceId::new("shop").unwrap();
         assert!(matches!(
             store.set_workspace_identities(&ws, &[id, id]),
             Err(StoreError::IdentityInvalid(_))
@@ -1001,7 +1001,7 @@ mod tests {
         let store = store();
         let id = made(&store);
         assert_eq!(store.identity_workspaces(id).unwrap(), []);
-        let ws = WorkspaceName::new("shop").unwrap();
+        let ws = WorkspaceId::new("shop").unwrap();
         store.attach_identity(&ws, id, None).unwrap();
         assert_eq!(store.identity_workspaces(id).unwrap(), [ws]);
     }
@@ -1010,7 +1010,7 @@ mod tests {
     fn attachments_that_cannot_be_read_are_a_database_error() {
         let store = store();
         let id = made(&store);
-        let ws = WorkspaceName::new("shop").unwrap();
+        let ws = WorkspaceId::new("shop").unwrap();
         store.break_database("DROP TABLE workspace_identities");
         let expected = "database error: no such table: workspace_identities";
         assert_eq!(
@@ -1073,7 +1073,7 @@ mod tests {
     fn detaching_an_identity_that_is_not_attached_is_refused() {
         let store = store();
         let id = made(&store);
-        let ws = WorkspaceName::new("shop").unwrap();
+        let ws = WorkspaceId::new("shop").unwrap();
         let err = store.detach_identity(&ws, id).unwrap_err();
         assert_eq!(err.to_string(), format!("no identity {id}"));
     }

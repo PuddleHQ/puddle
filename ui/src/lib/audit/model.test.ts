@@ -593,6 +593,7 @@ describe("a record as a row", () => {
       "identity_deleted",
       "identity_default_set",
       "identities_changed",
+      "identities_reordered",
       "repo_added",
       "repo_switched",
       "repo_removed",

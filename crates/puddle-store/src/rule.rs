@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Rules: who they apply to, what they match, what they do, until when (`docs/spec/rules.md` §1).
 
-use puddle_types::{RuleId, WorkspaceName};
+use puddle_types::{RuleId, WorkspaceId};
 
 use crate::pattern::Pattern;
 
@@ -12,7 +12,7 @@ pub enum Scope {
     /// Every workspace.
     Global,
     /// One workspace.
-    Workspace(WorkspaceName),
+    Workspace(WorkspaceId),
     /// An entry of a rule set the user made, by the set's id: it applies wherever the set is
     /// switched on, and ranks below the user's own rules (R-39).
     Set(i64),
@@ -32,7 +32,7 @@ impl Scope {
 
     /// The workspace, for a workspace rule.
     #[must_use]
-    pub fn workspace(&self) -> Option<&WorkspaceName> {
+    pub fn workspace(&self) -> Option<&WorkspaceId> {
         match self {
             Self::Global | Self::Set(_) => None,
             Self::Workspace(id) => Some(id),

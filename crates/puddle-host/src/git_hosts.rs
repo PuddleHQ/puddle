@@ -8,7 +8,7 @@
 use puddle_boot::{GitAuthorRule, GitIdentity, MAX_GIT_AUTHOR_GLOBS, MAX_GIT_AUTHOR_RULES};
 use puddle_proxy::TerminationSet;
 use puddle_store::{Identity, WorkspaceGit};
-use puddle_types::{Problem, Problems, WorkspaceName};
+use puddle_types::{Problem, Problems, WorkspaceId};
 
 /// Azure DevOps's own host; its organisations also answer on `{org}.visualstudio.com`.
 const AZURE_DEVOPS: &str = "dev.azure.com";
@@ -229,7 +229,7 @@ impl GitProblem {
         Self::AuthorSync,
     ];
 
-    fn key(self, workspace: &WorkspaceName) -> String {
+    fn key(self, workspace: &WorkspaceId) -> String {
         let kind = match self {
             Self::Credentials => "git-credentials",
             Self::LeftOut => "git-left-out",
@@ -244,7 +244,7 @@ impl GitProblem {
     pub(crate) fn settle(
         self,
         problems: &Problems,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         problem: Option<(String, String)>,
     ) {
         match problem {
@@ -255,7 +255,7 @@ impl GitProblem {
     }
 
     /// Ends every Git problem of `workspace`: it is not running, so none of them stands.
-    pub(crate) fn clear_all(problems: &Problems, workspace: &WorkspaceName) {
+    pub(crate) fn clear_all(problems: &Problems, workspace: &WorkspaceId) {
         for kind in Self::ALL {
             problems.clear(&kind.key(workspace));
         }
@@ -264,7 +264,7 @@ impl GitProblem {
 
 /// The problem for credentials Puddle never uses (see [`never_decrypted`]).
 pub(crate) fn credentials_problem(
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     hosts: &[String],
 ) -> Option<(String, String)> {
     if hosts.is_empty() {
@@ -283,7 +283,7 @@ pub(crate) fn credentials_problem(
 
 /// The problem for authors or rules left out of `authors`.
 pub(crate) fn left_out_problem(
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     authors: &Authors,
 ) -> Option<(String, String)> {
     if authors.left_out.is_empty() {
@@ -301,7 +301,7 @@ pub(crate) fn left_out_problem(
 /// The problem for a guest whose git (`version`, from the boot hook) ignores the author rules in
 /// `authors`: none when there are no rules to ignore, no git, or one that reads them.
 pub(crate) fn old_git_problem(
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     version: Option<(u32, u32)>,
     authors: &Authors,
 ) -> Option<(String, String)> {
@@ -329,7 +329,7 @@ mod tests {
     use puddle_store::{
         Author, Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Owner, Store,
     };
-    use puddle_types::WorkspaceName;
+    use puddle_types::WorkspaceId;
 
     use super::*;
 
@@ -364,7 +364,7 @@ mod tests {
     fn git(identities: Vec<(&str, Vec<CredentialBinding>)>) -> WorkspaceGit {
         let store =
             Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let ws = WorkspaceName::new("alpha").unwrap();
+        let ws = WorkspaceId::new("alpha").unwrap();
         for (name, credentials) in identities {
             let identity = store
                 .create_identity(IdentityDraft {
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn what_was_left_out_is_one_problem_that_names_each_cause_and_none_when_nothing_was() {
-        let ws = WorkspaceName::new("alpha").unwrap();
+        let ws = WorkspaceId::new("alpha").unwrap();
         assert_eq!(left_out_problem(&ws, &Authors::default()), None);
         let mut bad = git(vec![("Bad", vec![credential("github.com", &["a"], false)])]);
         bad.identities[0].author.name = "two\nlines".to_owned();

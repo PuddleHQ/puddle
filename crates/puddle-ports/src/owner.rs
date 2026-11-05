@@ -4,7 +4,7 @@
 use std::fmt;
 
 use puddle_netpolicy::EndpointKind;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 /// Whoever holds a port of this computer's loopback.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,14 +13,14 @@ pub enum PortOwner {
     /// A forward of a workspace that runs now.
     Forward {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// Its port that the forward leads to.
         guest_port: u16,
     },
     /// A forward pinned to a workspace that does not run now: it takes the port when it starts.
     Pinned {
         /// The workspace.
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         /// Its port that the pin leads to.
         guest_port: u16,
     },
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn every_owner_reads_as_a_phrase_that_fits_after_in_use_by() {
-        let ws = WorkspaceName::new("shop").unwrap();
+        let ws = WorkspaceId::new("shop").unwrap();
         assert_eq!(
             PortOwner::Forward {
                 workspace: ws.clone(),

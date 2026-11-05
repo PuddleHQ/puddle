@@ -833,10 +833,23 @@ async fn vm_capture_coexists_with_a_real_dockerd_in_both_start_orders() {
         &vm,
         &api,
         "dock",
-        &[],
+        &["dl-cdn.alpinelinux.org"],
         json!({"image": "docker:dind", "memory_mib": 2048}),
     )
     .await;
+    // The image ships no `nft`; the test brings one, through the proxy, as any tool would.
+    let (code, installed) = guest_as(
+        &vm.runtime,
+        &workspace,
+        "root",
+        "apk add --no-cache nftables >/tmp/apk.log 2>&1; nft --version || tail -15 /tmp/apk.log",
+        Duration::from_secs(100),
+    )
+    .await;
+    assert!(
+        code == 0 && installed.contains("nftables"),
+        "nftables could not be installed (live third party: dl-cdn.alpinelinux.org; an outage there fails this test): {installed}"
+    );
 
     // Boot order: the agent first, dockerd after it.
     docker_phase(&vm, &net, &workspace, "boot").await;

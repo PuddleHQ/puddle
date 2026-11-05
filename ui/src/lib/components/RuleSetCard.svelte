@@ -8,6 +8,7 @@
     type RuleSet,
     type RuleSetEntry,
   } from "#lib/rules/sets.ts";
+  import SetChip from "./SetChip.svelte";
   import "#lib/theme/controls.css";
 
   // One rule set: what it is, its switch for every workspace and the workspaces that switch it
@@ -68,7 +69,9 @@
 
 <article class="set" aria-labelledby="{id}-name" data-set-id={set.id}>
   <header>
-    <h3 id="{id}-name">{set.name}</h3>
+    <h3 id="{id}-name">
+      <SetChip name={set.name} fill={set.fill} variant="chip" />
+    </h3>
     <span class="chip">{mine ? "Yours" : "Built in"}</span>
     {#if does !== null}
       <span class="chip {does === 'Allows' ? 'allow' : 'deny'}">{does}</span>
@@ -196,7 +199,7 @@
         >Add entry</button
       >
       <button type="button" class="btn" onclick={() => onRename(set)}
-        >Rename</button
+        >Edit</button
       >
       <button type="button" class="btn deny" onclick={() => onDelete(set)}
         >Delete set</button

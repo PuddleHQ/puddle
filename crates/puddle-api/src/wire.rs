@@ -710,6 +710,9 @@ pub struct AuditRuleSet {
     pub created_at: u64,
     /// `cli`, `ui` or `api`.
     pub created_by: String,
+    /// The colour the user chose; `null` when the set had the default of its number.
+    #[schema(required = true)]
+    pub fill: Option<puddle_types::Fill>,
 }
 
 impl From<store::RuleSetWire> for AuditRuleSet {
@@ -720,6 +723,7 @@ impl From<store::RuleSetWire> for AuditRuleSet {
             description,
             created_at,
             created_by,
+            fill,
         } = set;
         Self {
             id,
@@ -727,6 +731,7 @@ impl From<store::RuleSetWire> for AuditRuleSet {
             description,
             created_at,
             created_by,
+            fill,
         }
     }
 }
@@ -2063,6 +2068,15 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true)]
     pub notify_oom: Option<bool>,
+    /// Notify when a workspace's root disk or volume reaches `disk_warning_percent` (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub notify_disk_full: Option<bool>,
+    /// How full a workspace's root disk or volume gets, in percent, before Puddle warns on the
+    /// workspace and, with `notify_disk_full`, notifies; 50 to 100 (default 95).
+    #[serde(default)]
+    #[schema(required = true, minimum = 50, maximum = 100)]
+    pub disk_warning_percent: Option<u8>,
     /// Notify when a workspace stops or crashes without being asked to (default on).
     #[serde(default)]
     #[schema(required = true)]
@@ -2099,6 +2113,10 @@ impl From<&settings::UiPrefs> for UiPrefs {
             notify_only_unfocused: u.notify_only_unfocused,
             badge: u.badge,
             notify_oom: u.notify_oom,
+            notify_disk_full: u.notify_disk_full,
+            disk_warning_percent: u
+                .disk_warning_percent
+                .map(settings::DiskWarningPercent::get),
             notify_unexpected_stop: u.notify_unexpected_stop,
             confirm_global_rules: u.confirm_global_rules,
             inbox_shortcuts: u.inbox_shortcuts,
@@ -2135,6 +2153,8 @@ impl UiPrefs {
             notify_only_unfocused,
             badge,
             notify_oom,
+            notify_disk_full,
+            disk_warning_percent,
             notify_unexpected_stop,
             confirm_global_rules,
             inbox_shortcuts,
@@ -2155,6 +2175,11 @@ impl UiPrefs {
         prefs.notify_only_unfocused = notify_only_unfocused;
         prefs.badge = badge;
         prefs.notify_oom = notify_oom;
+        prefs.notify_disk_full = notify_disk_full;
+        prefs.disk_warning_percent = disk_warning_percent
+            .map(settings::DiskWarningPercent::new)
+            .transpose()
+            .map_err(|err| ApiError::invalid(err.to_string()))?;
         prefs.notify_unexpected_stop = notify_unexpected_stop;
         prefs.confirm_global_rules = confirm_global_rules;
         prefs.inbox_shortcuts = inbox_shortcuts;
@@ -2740,6 +2765,8 @@ mod tests {
                 notify_only_unfocused: Some(false),
                 badge: Some(false),
                 notify_oom: Some(false),
+                notify_disk_full: Some(false),
+                disk_warning_percent: Some(90),
                 notify_unexpected_stop: Some(false),
                 confirm_global_rules: Some(false),
                 inbox_shortcuts: Some(true),
@@ -2765,6 +2792,8 @@ mod tests {
         assert!(!g.ui.notify_only_unfocused());
         assert!(!g.ui.badge());
         assert!(!g.ui.notify_oom());
+        assert!(!g.ui.notify_disk_full());
+        assert_eq!(g.ui.disk_warning_percent().get(), 90);
         assert!(!g.ui.notify_unexpected_stop());
         assert!(!g.ui.confirm_global_rules());
         assert!(g.ui.inbox_shortcuts());
@@ -3110,7 +3139,8 @@ mod tests {
     #[test]
     fn rule_set_records_serialise_as_stored() {
         let set = serde_json::json!({
-            "id": 3, "name": "Work", "description": "", "created_at": 1, "created_by": "ui"
+            "id": 3, "name": "Work", "description": "", "created_at": 1, "created_by": "ui",
+            "fill": {"kind": "solid", "color": "#0a6a85"}
         });
         let rule = serde_json::json!({
             "id": 9, "scope": "set", "workspace_id": null, "set_id": 3, "pattern_kind": "exact",
@@ -3142,6 +3172,15 @@ mod tests {
                 stored
             );
         }
+        // A set recorded before sets had a colour reads, and the wire says `null` for it.
+        let old = serde_json::json!({"type": "rule_set_created", "ts": 1, "actor": "ui",
+            "rule_set": {"id": 3, "name": "Work", "description": "", "created_at": 1,
+                         "created_by": "ui"}});
+        let record: store::AuditRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(
+            serde_json::to_value(AuditRecord::from(record)).unwrap()["rule_set"]["fill"],
+            Value::Null
+        );
         // A reason a later Puddle added is left out rather than failing the page.
         let newer = serde_json::json!({"type": "system_managed_changed", "ts": 1,
             "workspace_id": null, "added": ["zed"], "removed": []});

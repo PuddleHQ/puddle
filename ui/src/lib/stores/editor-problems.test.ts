@@ -49,6 +49,26 @@ describe("the editor update problem", () => {
   });
 });
 
+describe("the editor session-user problem", () => {
+  it("names the run-as-root problem of one workspace apart from its other problems", async () => {
+    listed = [
+      issue("web", "bad checksum"),
+      {
+        key: "editor-session-user:web",
+        workspace: "web",
+        title: "The browser editor in web runs as root: its user is missing",
+        detail: "d",
+      },
+    ];
+    const store = make();
+    await store.load();
+    expect(store.sessionUserOf("web")?.title).toMatch(/runs as root/);
+    expect(store.updateOf("web")).toBeNull();
+    expect(store.of("web")?.title).toMatch(/installed in web/);
+    expect(store.sessionUserOf("docs")).toBeNull();
+  });
+});
+
 describe("the editor install problem", () => {
   it("names the problem of one workspace and none for another", async () => {
     listed = [issue("web", "bad checksum")];

@@ -44,6 +44,7 @@ use puddle_agent_proto::{AgentMessage, EditorProblemKind};
 use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, mpsc, watch};
 
+use crate::account::Account;
 use crate::microsoft::{self, Downloader, Fetch};
 
 /// Where the server's user data lives, below [`EditorServer::data`].
@@ -408,12 +409,14 @@ struct Launch {
     build: Option<(String, bool)>,
 }
 
-/// The server's command: `launch`, the password in its environment when it takes one, and none
-/// of the variables in `inherited` that [`withheld`] names.
+/// The server's command: `launch`, the password in its environment when it takes one, none of
+/// the variables in `inherited` that [`withheld`] names, and run as `account` with its login
+/// variables when there is one (else as the agent's own user, root).
 fn command(
     launch: &Launch,
     password: &str,
     inherited: impl IntoIterator<Item = String>,
+    account: Option<&Account>,
 ) -> Command {
     let mut command = Command::new(&launch.program);
     command
@@ -426,7 +429,42 @@ fn command(
     for name in inherited.into_iter().filter(|n| withheld(n)) {
         command.env_remove(name);
     }
+    if let Some(account) = account {
+        command.envs(account.env());
+        #[cfg(target_os = "linux")]
+        account.run_as(&mut command);
+    }
     command
+}
+
+/// The account the server runs as: `None` for root, the agent's own user. A session user the
+/// guest does not list (the boot hook could not add it) leaves the server running as root, so
+/// the editor still opens, and says why.
+fn account(server: &EditorServer) -> Option<Account> {
+    if server.user.is_root() {
+        return None;
+    }
+    match Account::read(server.user.name()) {
+        Ok(account) => Some(account),
+        Err(err) => {
+            tracing::error!(user = %server.user, error = %err, "the editor server runs as root: its user is missing");
+            None
+        }
+    }
+}
+
+/// Gives `account` the folders the agent made for the server and the password file (Microsoft's
+/// server reads its token from it), so the server can write its data and read its token.
+fn give_to(account: &Account, config: &EditorConfig) -> io::Result<()> {
+    let data = Path::new(&config.server.data);
+    let own_data = match config.server.kind {
+        ServerKind::CodeServer => USER_DATA,
+        ServerKind::Microsoft { .. } => microsoft::SERVER_DATA,
+    };
+    for path in [data, &data.join(own_data), &data.join(EXTENSIONS)] {
+        account.own(path)?;
+    }
+    account.own(&config.password_file)
 }
 
 /// What the agent starts for `config`: code-server from the mounted release, or Microsoft's
@@ -816,8 +854,12 @@ async fn start_once(
     }
     wait_until_free(config.server.port, port_taken).await;
     let password = boot_password(config)?;
+    let account = account(&config.server);
+    if let Some(account) = &account {
+        give_to(account, config)?;
+    }
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
-    let mut child = command(launch, &password, inherited).spawn()?;
+    let mut child = command(launch, &password, inherited, account.as_ref()).spawn()?;
     tracing::info!(
         port = config.server.port,
         grace_secs = config.server.grace_secs,
@@ -1112,7 +1154,7 @@ mod tests {
             password_env: true,
             build: None,
         };
-        let cmd = command(&launch, &password, inherited);
+        let cmd = command(&launch, &password, inherited, None);
         let envs: std::collections::BTreeMap<String, Option<String>> = cmd
             .as_std()
             .get_envs()
@@ -1136,6 +1178,84 @@ mod tests {
                 .join("bin/code-server")
                 .as_os_str()
         );
+    }
+
+    #[test]
+    fn a_server_run_as_the_session_user_gets_its_login_variables() {
+        let launch = Launch {
+            program: PathBuf::from("/puddle/code-server/bin/code-server"),
+            args: Vec::new(),
+            password_env: true,
+            build: None,
+        };
+        let agent = Account::find(
+            "agent",
+            "agent:x:1001:1001::/home/agent:/bin/bash\n",
+            "docker:x:998:agent\n",
+        )
+        .unwrap();
+        let password = puddle_types::fixture::password("editor");
+        let cmd = command(&launch, &password, ["HOME".to_owned()], Some(&agent));
+        let envs: std::collections::BTreeMap<String, Option<String>> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        for (name, value) in [
+            ("HOME", "/home/agent"),
+            ("USER", "agent"),
+            ("LOGNAME", "agent"),
+            ("SHELL", "/bin/bash"),
+        ] {
+            assert_eq!(envs.get(name), Some(&Some(value.to_owned())), "{name}");
+        }
+        assert_eq!(envs.get("PASSWORD"), Some(&Some(password)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_session_user_is_given_the_server_s_folders_and_the_password_file() {
+        use std::os::unix::fs::MetadataExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let me = std::fs::metadata(dir.path()).unwrap();
+        let account = Account {
+            name: "me".to_owned(),
+            uid: me.uid(),
+            gid: me.gid(),
+            groups: vec![me.gid()],
+            home: "/home/me".to_owned(),
+            shell: "/bin/sh".to_owned(),
+        };
+        let data = dir.path().join("code-server");
+        let microsoft = EditorServer::microsoft(data.to_str().unwrap(), "/f", 300, false, false);
+        let config = |server: EditorServer| EditorConfig {
+            server,
+            password_file: dir.path().join("editor-password"),
+            boot_id: dir.path().join("boot_id"),
+        };
+        let code_server = config(EditorServer::new(data.to_str().unwrap(), "/f", 300));
+        // Each path must exist: a missing one is an error, so none is skipped.
+        prepare(&code_server.server).unwrap();
+        assert_eq!(
+            give_to(&account, &code_server).unwrap_err().kind(),
+            io::ErrorKind::NotFound,
+            "the password file is not written yet"
+        );
+        write_password(&code_server.password_file, &new_password().unwrap()).unwrap();
+        give_to(&account, &code_server).unwrap();
+        let microsoft = config(microsoft);
+        assert_eq!(
+            give_to(&account, &microsoft).unwrap_err().kind(),
+            io::ErrorKind::NotFound,
+            "Microsoft's data folder is not made yet"
+        );
+        microsoft::prepare(&microsoft.server).unwrap();
+        give_to(&account, &microsoft).unwrap();
     }
 
     #[test]

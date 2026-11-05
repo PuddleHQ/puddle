@@ -766,7 +766,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Renames a rule set of yours or changes its description. */
+        /** Renames a rule set of yours or changes its description or colour. */
         put: operations["update_rule_set"];
         post?: never;
         /** Deletes a rule set of yours with its entries and switches. */
@@ -1398,6 +1398,27 @@ export interface paths {
          *     with the workspace busy `cloning`.
          */
         post: operations["clone_again"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/reset-root-disk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Removes the stopped workspace's sandbox and with it the root disk, so the next start makes a
+         *     fresh one: what was installed or cached outside the volume is lost, the volume is untouched.
+         *     Nothing runs by itself: this is the user's choice. Answers 202.
+         */
+        post: operations["reset_root_disk"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2125,6 +2146,7 @@ export interface components {
             created_by: string;
             /** @description Description. */
             description: string;
+            fill: components["schemas"]["Fill"] | null;
             /**
              * Format: int64
              * @description The set's number; its id is `user:<id>`.
@@ -2450,6 +2472,11 @@ export interface components {
          * @enum {string}
          */
         DevCertificate: "not_checked" | "reusing_existing" | "trusted" | "needs_trust" | "trust_declined" | "trust_failed" | "unsupported";
+        /**
+         * @description Which of a workspace's two disks an event or figure is about.
+         * @enum {string}
+         */
+        DiskKind: "root" | "volume";
         /** @description One line of the system check. */
         DoctorCheck: {
             /** @description Raw evidence: an OS error, the runtime's last output lines; `null` when there is none. */
@@ -2634,6 +2661,18 @@ export interface components {
             /** @enum {string} */
             type: "oom_kill";
             /** @description The workspace whose guest killed the process. */
+            workspace: components["schemas"]["WorkspaceName"];
+        } | {
+            /** @description Which disk. */
+            disk: components["schemas"]["DiskKind"];
+            /**
+             * Format: int32
+             * @description How full it is, in whole percent (rounded down), 0 to 100.
+             */
+            percent: number;
+            /** @enum {string} */
+            type: "disk_nearly_full";
+            /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceName"];
         } | {
             /**
@@ -2844,6 +2883,13 @@ export interface components {
         } | {
             /** @enum {string} */
             type: "problems_changed";
+        };
+        /** @description What a rule set is painted with: one solid colour today. A gradient would be another `kind`. */
+        Fill: {
+            /** @description The colour. */
+            color: components["schemas"]["Rgb"];
+            /** @enum {string} */
+            kind: "solid";
         };
         /** @description A bounded list of lines from the unsaved-work check. */
         FindingList: {
@@ -3355,6 +3401,7 @@ export interface components {
         NewRuleSetRequest: {
             /** @description At most 500 characters. */
             description?: string;
+            fill?: components["schemas"]["Fill"] | null;
             /** @description 1 to 64 characters, not used by another set. */
             name: string;
         };
@@ -3903,6 +3950,11 @@ export interface components {
             value: number;
         };
         /**
+         * @description A colour as `#rrggbb`.
+         * @example #0a6a85
+         */
+        Rgb: string;
+        /**
          * @description A certificate kind.
          * @enum {string}
          */
@@ -4094,10 +4146,11 @@ export interface components {
             /** @description The set as it is now. */
             set: components["schemas"]["RuleSetView"];
         };
-        /** @description A rule set's new name and description. */
+        /** @description A rule set's new name, description and colour. */
         RuleSetUpdateRequest: {
             /** @description At most 500 characters. */
             description?: string;
+            fill?: components["schemas"]["Fill"] | null;
             /** @description 1 to 64 characters, not used by another set. */
             name: string;
         };
@@ -4119,6 +4172,11 @@ export interface components {
             description: string;
             /** @description Its entries. */
             entries: components["schemas"]["RuleSetEntry"][];
+            /**
+             * @description The colour it is shown in: a built-in set's own, or the one you chose (a set you made
+             *     without choosing has a default of its number).
+             */
+            fill: components["schemas"]["Fill"];
             /** @description The switch for every workspace; `null` follows `default_on`. */
             global: boolean | null;
             /** @description `builtin:<slug>` or `user:<id>`. */
@@ -4410,12 +4468,20 @@ export interface components {
             /** @description The `custom` palette's text, `#rrggbb`; `null` keeps Pond's. */
             custom_text: string | null;
             density: components["schemas"]["DensityChoice"] | null;
+            /**
+             * Format: int32
+             * @description How full a workspace's root disk or volume gets, in percent, before Puddle warns on the
+             *     workspace and, with `notify_disk_full`, notifies; 50 to 100 (default 95).
+             */
+            disk_warning_percent: number | null;
             /** @description The inbox's single-key shortcuts A, D, J and K (default off). */
             inbox_shortcuts: boolean | null;
             /** @description Minimizing hides the window to the tray instead of the taskbar (default off). */
             minimize_to_tray: boolean | null;
             /** @description A system notification for a new request (default on). */
             notifications: boolean | null;
+            /** @description Notify when a workspace's root disk or volume reaches `disk_warning_percent` (default on). */
+            notify_disk_full: boolean | null;
             /** @description Notify only while Puddle's window is not focused (default on). */
             notify_only_unfocused: boolean | null;
             /** @description Notify when a workspace is killed for running out of memory (default on). */
@@ -4465,6 +4531,11 @@ export interface components {
              */
             disk_used_mib: number | null;
             /**
+             * @description Which disks are at or over the warning threshold (`ui.disk_warning_percent` in the global
+             *     settings): `root`, `volume`, both or neither.
+             */
+            disk_warnings: components["schemas"]["DiskKind"][];
+            /**
              * @description What the user calls the workspace: the name until they rename it (`PATCH
              *     /api/workspaces/{id}`). Show this one; `name` and `id` never change.
              */
@@ -4494,6 +4565,18 @@ export interface components {
             name: components["schemas"]["WorkspaceName"];
             /** @description The repositories Puddle manages for it, in the order they were added (0 to 100). */
             repositories: components["schemas"]["WorkspaceRepository"][];
+            /**
+             * Format: int64
+             * @description The root disk's size in MiB: the most the home directory, tool caches and installed
+             *     packages can take. `null` when not known.
+             */
+            root_disk_size_mib: number | null;
+            /**
+             * Format: int64
+             * @description What the root disk holds in MiB; `null` when not known. A root disk that is nearly full
+             *     can be reset (`POST /api/workspaces/{id}/reset-root-disk`).
+             */
+            root_disk_used_mib: number | null;
             /**
              * @description The guest user its sessions, browser editor and clones run as: `agent` (with passwordless
              *     `sudo`) for a workspace made since non-root sessions came in, `root` for one made before or
@@ -4573,7 +4656,7 @@ export interface components {
          *     `workspace_progress` events.
          * @enum {string}
          */
-        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "cloning" | "deleting";
+        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "resetting_root_disk" | "cloning" | "deleting";
         /** @description What a workspace's Ports tab lists. */
         WorkspacePorts: {
             /** @description The ports, by number: the ones that listen, the ones forwarded, the ones pinned. */
@@ -4620,7 +4703,7 @@ export interface components {
          * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
          * @enum {string}
          */
-        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "stopping" | "removing" | "done" | "failed";
+        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "stopping" | "removing" | "done" | "failed";
         /** @description Changes a workspace's two switches; a switch left out stays as it is. */
         WorkspaceSwitchesRequest: {
             /** @description "Only pull from listed repos": the workspace's own value. */
@@ -11389,6 +11472,83 @@ export interface operations {
                 };
             };
             /** @description the workspace is not running or is busy, or the directory is there */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    reset_root_disk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description reset accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description busy, or not stopped */
             409: {
                 headers: {
                     [name: string]: unknown;

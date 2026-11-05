@@ -58,8 +58,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub use self::exec::{ExecContext, ExecHandler, FsError};
 use self::exec::{Files, builtin};
 use crate::{
-    Capabilities, ComputeError, DiskSize, ExecOutput, ExecRequest, ImageConfig, MountKind, Runtime,
-    Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo, VolumeSpec,
+    Capabilities, ComputeError, DiskSize, ExecOutput, ExecRequest, ImageConfig, MountKind,
+    RootDiskUse, Runtime, Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo, VolumeSpec,
 };
 
 /// The identification line the fake SSH server sends.
@@ -208,6 +208,9 @@ struct SandboxRecord {
     status: WorkspaceStatus,
     boot: u64,
     files: Files,
+    /// What the root disk "holds on the host", as a test sets it; `None` is a runtime that
+    /// cannot say.
+    root_disk: Option<RootDiskUse>,
 }
 
 impl SandboxRecord {
@@ -442,6 +445,26 @@ impl FakeRuntime {
             .unwrap_or_default()
     }
 
+    /// The owned disks `name` was made with. Empty when there is no such sandbox.
+    #[must_use]
+    pub fn owned_disks(&self, name: &SandboxName) -> Vec<crate::OwnedDisk> {
+        self.lock()
+            .sandboxes
+            .get(name.as_str())
+            .map(|r| r.spec.owned_disks.clone())
+            .unwrap_or_default()
+    }
+
+    /// The named volumes `name` was made with. Empty when there is no such sandbox.
+    #[must_use]
+    pub fn volume_mounts(&self, name: &SandboxName) -> Vec<crate::VolumeMount> {
+        self.lock()
+            .sandboxes
+            .get(name.as_str())
+            .map(|r| r.spec.volumes.clone())
+            .unwrap_or_default()
+    }
+
     /// Simulates the VM dying: a running sandbox becomes `Crashed`. Returns whether it was
     /// running.
     #[must_use = "false means the sandbox wasn't running"]
@@ -503,6 +526,14 @@ impl FakeRuntime {
     pub fn set_volume_used(&self, name: &VolumeName, used: DiskSize) {
         if let Some(volume) = self.lock().volumes.get_mut(name.as_str()) {
             volume.used = Some(used);
+        }
+    }
+
+    /// Sets how full the root disk of sandbox `name` "is" from now on; the runtime reports it in
+    /// [`SandboxInfo::root_disk`]. A sandbox that does not exist is left alone.
+    pub fn set_root_disk_use(&self, name: &SandboxName, size: DiskSize, used: DiskSize) {
+        if let Some(record) = self.lock().sandboxes.get_mut(name.as_str()) {
+            record.root_disk = Some(RootDiskUse { size, used });
         }
     }
 
@@ -615,6 +646,7 @@ impl Runtime for FakeRuntime {
                     status: WorkspaceStatus::Stopped,
                     boot: 0,
                     files: Files::new(),
+                    root_disk: None,
                 },
             );
             return Err(e);
@@ -637,6 +669,7 @@ impl Runtime for FakeRuntime {
             status: WorkspaceStatus::Created,
             boot: 0,
             files: Files::new(),
+            root_disk: None,
         };
         record.boot(boot);
         state.sandboxes.insert(name.to_string(), record);
@@ -736,11 +769,13 @@ impl Runtime for FakeRuntime {
                 name: name.clone(),
                 status: r.status,
                 puddle_owned: true,
+                root_disk: r.root_disk,
             })
             .chain(state.foreign.iter().map(|(name, status)| SandboxInfo {
                 name: name.clone(),
                 status: *status,
                 puddle_owned: false,
+                root_disk: None,
             }))
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));

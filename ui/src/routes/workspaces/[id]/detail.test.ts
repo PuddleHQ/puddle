@@ -483,6 +483,123 @@ describe("the overview", () => {
     );
   });
 
+  it("shows the root disk and the volume in words, and says which one is nearly full", async () => {
+    api.list = [
+      workspace("demo", {
+        status: "stopped",
+        root_disk_size_mib: 4096,
+        root_disk_used_mib: 3900,
+        disk_warnings: ["root"],
+      }),
+    ];
+    await load();
+    render(Overview);
+    expect(
+      await screen.findByText("3.8 GiB of 4 GiB used (nearly full)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("2 GiB of 32 GiB used")).toBeInTheDocument();
+    const banner = screen.getByTestId("disk-warning-root");
+    expect(banner).toHaveAttribute("role", "alert");
+    expect(banner).toHaveTextContent("Root disk nearly full: 95 % used.");
+    expect(banner).toHaveTextContent("the volume and your work are untouched");
+    expect(screen.queryByTestId("disk-warning-volume")).toBeNull();
+  });
+
+  it("resets the root disk of a stopped workspace after a confirm that says what is lost", async () => {
+    api.list = [
+      workspace("demo", {
+        status: "stopped",
+        root_disk_size_mib: 4096,
+        root_disk_used_mib: 4000,
+        disk_warnings: ["root"],
+      }),
+    ];
+    await load();
+    render(Overview);
+    const banner = await screen.findByTestId("disk-warning-root");
+    await fireEvent.click(
+      within(banner).getByRole("button", { name: "Reset root disk…" }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Reset the root disk of demo?");
+    expect(dialog).toHaveTextContent(
+      "packages reinstall and caches rebuild on the next start",
+    );
+    expect(dialog).toHaveTextContent(
+      "The volume, with your repositories and files, is untouched.",
+    );
+    expect(api.calls).not.toContain(
+      "POST /api/workspaces/{id}/reset-root-disk",
+    );
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Reset root disk" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.calls).toContain("POST /api/workspaces/{id}/reset-root-disk"),
+    );
+  });
+
+  it("offers the reset next to Reclaim space even when no disk is nearly full", async () => {
+    api.list = [workspace("demo", { status: "stopped" })];
+    await load();
+    render(Overview);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Reset root disk…" }),
+    );
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "Reset the root disk of demo?",
+    );
+  });
+
+  it("does not offer the reset to a running workspace and asks to stop it first", async () => {
+    api.list = [
+      workspace("demo", {
+        status: "running",
+        root_disk_size_mib: 4096,
+        root_disk_used_mib: 4000,
+        disk_warnings: ["root"],
+      }),
+    ];
+    await load();
+    render(Overview);
+    const banner = await screen.findByTestId("disk-warning-root");
+    expect(
+      within(banner).getByRole("button", { name: "Reset root disk…" }),
+    ).toBeDisabled();
+    expect(
+      within(banner).getByText("Stop the workspace first."),
+    ).toBeInTheDocument();
+  });
+
+  it("warns about a full volume without offering a reset", async () => {
+    api.list = [
+      workspace("demo", {
+        status: "stopped",
+        disk_used_mib: 32_000,
+        disk_warnings: ["volume"],
+      }),
+    ];
+    await load();
+    render(Overview);
+    const banner = await screen.findByTestId("disk-warning-volume");
+    expect(banner).toHaveTextContent("Volume nearly full: 97 % used.");
+    expect(banner).toHaveTextContent("cannot grow");
+    expect(within(banner).queryByRole("button")).toBeNull();
+    expect(
+      screen.getByText("31.3 GiB of 32 GiB used (nearly full)"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no root disk when the host cannot say", async () => {
+    api.list = [
+      workspace("demo", { root_disk_size_mib: null, root_disk_used_mib: null }),
+    ];
+    await load();
+    render(Overview);
+    await screen.findByText("Status");
+    expect(screen.queryByText("Root disk")).toBeNull();
+  });
+
   it("shows the identifier only once the workspace has another name", async () => {
     await load();
     const view = render(Overview);
@@ -564,6 +681,36 @@ describe("the overview", () => {
     await screen.findByText("Status");
     expect(screen.queryByText(/could not be installed/)).toBeNull();
     expect(screen.queryByText(/could not update/)).toBeNull();
+    expect(screen.queryByText(/runs as root/)).toBeNull();
+  });
+
+  it("says on the workspace's page that its browser editor runs as root for want of the session user", async () => {
+    api.problems = [
+      {
+        key: "editor-session-user:demo",
+        workspace: "demo",
+        title:
+          "The browser editor in demo runs as root: its user agent is missing in the guest",
+        detail: "The editor opens and works, but the files belong to root.",
+      },
+      {
+        key: "editor-session-user:other",
+        workspace: "other",
+        title: "The browser editor in other runs as root: no",
+        detail: "x",
+      },
+    ];
+    await load();
+    render(Overview);
+    expect(
+      await screen.findByText(
+        /in demo runs as root: its user agent is missing in the guest/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/The editor opens and works, but the files belong/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/in other runs as root/)).toBeNull();
   });
 
   it("says on the workspace's page that its browser editor could not update, and that the editor keeps working", async () => {

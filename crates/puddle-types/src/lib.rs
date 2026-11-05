@@ -25,6 +25,7 @@ mod connection;
 mod cpus;
 mod error;
 mod event;
+mod fill;
 #[cfg(any(test, feature = "testing"))]
 pub mod fixture;
 mod guest;
@@ -46,9 +47,10 @@ pub use connection::{
 pub use cpus::CpuCount;
 pub use error::ValidationError;
 pub use event::{
-    CollectingSink, Event, EventSink, GitAccess, LoginProblemKind, NullSink, PendingEnd,
+    CollectingSink, DiskKind, Event, EventSink, GitAccess, LoginProblemKind, NullSink, PendingEnd,
     PendingSummary, WorkspaceStatus, WorkspaceStep,
 };
+pub use fill::{Fill, Rgb, SET_PALETTE};
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
 pub use local::LocalCategory;

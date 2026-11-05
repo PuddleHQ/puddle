@@ -72,6 +72,7 @@ microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag =
 object = { version = "0.40", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
+arbitrary = "1.5"
 sha2 = "0.11"
 # The OS credential store (Credential Manager, Keychain, Secret Service over D-Bus in pure Rust),
 # used only for tokens the user pastes into Puddle.

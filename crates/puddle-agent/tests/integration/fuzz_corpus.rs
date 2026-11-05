@@ -9,11 +9,16 @@
 
 use std::path::Path;
 
+use arbitrary::{Arbitrary, Unstructured};
+
 use puddle_agent::capture::wire::{self, QueryName, Reject};
 
 // The same checks the cargo-fuzz target runs.
 #[path = "../../../../fuzz/checks/dns_message.rs"]
-mod fuzzing;
+mod dns_message;
+#[path = "../../../../fuzz/checks/dns_message_grammar.rs"]
+mod dns_message_grammar;
+use dns_message_grammar::Message;
 
 fn corpus() -> Vec<(String, Vec<u8>)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/dns_message");
@@ -33,7 +38,7 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
 #[test]
 fn every_dns_message_in_the_corpus_keeps_the_answer_invariants() {
     for (_, bytes) in corpus() {
-        fuzzing::dns_message(&bytes);
+        dns_message::dns_message(&bytes);
     }
 }
 
@@ -68,4 +73,44 @@ fn the_corpus_holds_messages_the_stub_answers_drops_and_refuses_by_name() {
             "{refused}"
         );
     }
+}
+
+fn grammar_corpus() -> Vec<(String, Option<Message>)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/dns_message_grammar");
+    let mut inputs: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let bytes = std::fs::read(&path).unwrap();
+            let message = Message::arbitrary(&mut Unstructured::new(&bytes));
+            assert!(message.is_ok(), "{name} does not decode");
+            (name, message.ok())
+        })
+        .collect();
+    assert!(!inputs.is_empty(), "{} has no inputs", dir.display());
+    inputs.sort_by(|a, b| a.0.cmp(&b.0));
+    inputs
+}
+
+#[test]
+fn every_grammar_message_in_the_corpus_keeps_the_grammar_invariants() {
+    for message in grammar_corpus().iter().filter_map(|(_, m)| m.as_ref()) {
+        dns_message_grammar::dns_message_grammar(message);
+    }
+}
+
+#[test]
+fn the_grammar_corpus_reaches_every_shape_of_message_the_grammar_makes() {
+    let mut shapes: Vec<&str> = grammar_corpus()
+        .iter()
+        .filter_map(|(_, m)| m.as_ref().map(Message::shape))
+        .collect();
+    shapes.sort_unstable();
+    shapes.dedup();
+    assert_eq!(
+        shapes,
+        ["answer", "drop", "query", "unchecked"],
+        "the corpus lacks a shape of message"
+    );
 }

@@ -18,7 +18,7 @@ use puddle_agent::config::Target;
 use puddle_agent::{Agent, Config};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticResolver};
-use puddle_proxy::{Proxy, Route, Upstream};
+use puddle_proxy::{AddressCheck, Proxy, Route, Upstream};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
 use puddle_types::{NullSink, WorkspaceId};
 use puddle_upstream::{
@@ -64,13 +64,24 @@ pub(crate) async fn rig_with(
     auth: Arc<dyn ProxyAuth>,
     resolver: StaticResolver,
 ) -> Rig {
+    rig_checked(discovery, auth, resolver, Arc::new(AnyAddress)).await
+}
+
+/// Like [`rig_with`], with the real address check of the product (`check`) in place of the
+/// double that lets every address through, so a refusal by category can be seen.
+pub(crate) async fn rig_checked(
+    discovery: Arc<Discovery>,
+    auth: Arc<dyn ProxyAuth>,
+    resolver: StaticResolver,
+    check: Arc<dyn AddressCheck>,
+) -> Rig {
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
     let chain = Chain::new(discovery, auth);
     let proxy = Arc::new(
         Proxy::new(store.clone(), Arc::new(NullSink))
             .with_connection_log(store.clone())
             .with_resolver(Arc::new(resolver))
-            .with_address_check(Arc::new(AnyAddress))
+            .with_address_check(check)
             .with_upstream(Upstream::new(chain)),
     );
     let root = IpcRoot::new().unwrap();
@@ -89,6 +100,23 @@ pub(crate) async fn rig_with(
         _route: route,
         _root: root,
     }
+}
+
+/// The proxy over `hops` with the product's address check at `access` (the toggles one workspace
+/// runs with), resolving the names of `resolver` itself.
+pub(crate) async fn rig_guarded(
+    hops: Vec<Hop>,
+    resolver: StaticResolver,
+    access: puddle_netpolicy::LocalAccess,
+) -> Rig {
+    let os = FakeOs::new(ProxyConfig {
+        pac_url: Some("http://pac.corp/proxy.pac".into()),
+        ..ProxyConfig::default()
+    });
+    os.set_pac(move |_| Ok(hops.clone()));
+    let discovery = Discovery::new(os, DiscoveryConfig::default());
+    let check = Arc::new(puddle_netpolicy::NetPolicy::new(Arc::new(access)));
+    rig_checked(discovery, basic("lab", "lab"), resolver, check).await
 }
 
 pub(crate) fn allow(store: &Store, host: &str) {

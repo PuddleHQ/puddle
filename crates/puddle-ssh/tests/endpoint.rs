@@ -28,6 +28,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 const WAIT: Duration = Duration::from_secs(30);
+const REPORT_WAIT: Duration = Duration::from_secs(3);
 
 /// A fake `boot.sh` whose exit code the test sets.
 fn install_hook(rt: &FakeRuntime, stderr: &'static str) -> Arc<AtomicI32> {
@@ -573,8 +574,9 @@ async fn a_failed_session_is_reported_to_the_target_with_its_cause() {
         .unwrap()
         .unwrap()
         .unwrap();
-    // The report follows the session's end; wait for it rather than race the close.
-    eventually("the failure was never reported", WAIT, || {
+    // The report follows the session's end; wait for it rather than race the close. A short bound:
+    // it takes microseconds, and a mutant that drops the report must fail the test, not stall it.
+    eventually("the failure was never reported", REPORT_WAIT, || {
         !target.reports.lock().unwrap().is_empty()
     })
     .await;
@@ -586,6 +588,69 @@ async fn a_failed_session_is_reported_to_the_target_with_its_cause() {
             "an SSH session ended with an error: runtime lost the VM; connect again, and restart the workspace if it keeps happening"
         ]
     );
+}
+
+/// Serves like msb's server: reads until the client leaves, and calls a stream that ends without
+/// an SSH disconnect an error ("early eof").
+struct EarlyEof {
+    reports: std::sync::Mutex<Vec<String>>,
+    served: AtomicBool,
+    ended: AtomicBool,
+}
+
+impl SshTarget for EarlyEof {
+    type Error = std::io::Error;
+
+    fn label(&self) -> String {
+        "early-eof".into()
+    }
+
+    fn admit(&self) -> impl Future<Output = Result<(), String>> {
+        std::future::ready(Ok(()))
+    }
+
+    fn failed(&self, reason: &str) {
+        self.reports.lock().unwrap().push(reason.to_owned());
+    }
+
+    async fn serve<S: SshStream>(&self, mut stream: S) -> Result<(), std::io::Error> {
+        stream.write_all(b"SSH-2.0-early-eof\r\n").await?;
+        self.served.store(true, Ordering::SeqCst);
+        let mut rest = Vec::new();
+        stream.read_to_end(&mut rest).await?;
+        // Set in the last poll of the session: the code after `serve` runs in the same poll.
+        self.ended.store(true, Ordering::SeqCst);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "SSH session failed: early eof",
+        ))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_client_that_leaves_without_a_disconnect_is_no_failure_of_the_endpoint() {
+    let root = IpcRoot::new().unwrap();
+    let target = Arc::new(EarlyEof {
+        reports: std::sync::Mutex::default(),
+        served: AtomicBool::new(false),
+        ended: AtomicBool::new(false),
+    });
+    let endpoint = SshEndpoint::start(root.listen().unwrap(), target.clone()).unwrap();
+    let mut client = bridge_to(endpoint.endpoint().path());
+    assert_eq!(read_line(&mut client.stdout).await, "SSH-2.0-early-eof\r\n");
+    eventually("the session never started", WAIT, || {
+        target.served.load(Ordering::SeqCst)
+    })
+    .await;
+    // ssh dying at a host key prompt: the connection closes, nothing was said first.
+    client.bridge.abort();
+    eventually("the session never ended", WAIT, || {
+        target.ended.load(Ordering::SeqCst)
+    })
+    .await;
+    endpoint.close().await;
+    let reports = target.reports.lock().unwrap();
+    assert!(reports.is_empty(), "{reports:?}");
 }
 
 /// Refuses, but only once the test lets it decide.

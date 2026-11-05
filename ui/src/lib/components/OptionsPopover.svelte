@@ -12,6 +12,7 @@
     type RuleSetChoice,
     type Target,
   } from "#lib/decision/model.ts";
+  import SetChip from "./SetChip.svelte";
   import "#lib/theme/controls.css";
 
   // The "more choices": every workspace, subdomains, duration. One instance serves the whole
@@ -133,7 +134,7 @@
               value="set:{set.id}"
               bind:group={who}
             />
-            Into rule set <b>{set.name}</b>
+            Into rule set <b><SetChip name={set.name} fill={set.fill} /></b>
             {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
               >{/if}
           </label>

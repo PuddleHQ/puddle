@@ -21,6 +21,22 @@ function mount(set: RuleSet) {
   return props;
 }
 
+describe("a set's colour", () => {
+  it("is a chip on the heading, with the name written out", () => {
+    mount(mine(4, { name: "Work", fill: { kind: "solid", color: "#c04f7a" } }));
+    const heading = screen.getByRole("heading", { name: "Work" });
+    expect(heading.firstElementChild).toHaveStyle("--set-fill: #c04f7a");
+    expect(heading).toHaveTextContent("Work");
+  });
+
+  it("is the built-in set's own", () => {
+    mount(builtIn("github", { name: "GitHub" }));
+    expect(
+      screen.getByRole("heading", { name: "GitHub" }).firstElementChild,
+    ).toHaveStyle("--set-fill: #2f80c9");
+  });
+});
+
 describe("a built-in set", () => {
   it("says what it is, that it ships off, and has no actions of yours", () => {
     mount(builtIn("github", { name: "GitHub", changed_at: 0 }));
@@ -36,7 +52,7 @@ describe("a built-in set", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("1 entry")).toBeInTheDocument();
     expect(screen.getByText("main host")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Rename" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
   });
 
@@ -109,7 +125,7 @@ describe("a set you made", () => {
       screen.getByRole("switch", { name: "On for every workspace" }),
     ).toBeChecked();
     await fireEvent.click(screen.getByRole("button", { name: "Add entry" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     await fireEvent.click(screen.getByRole("button", { name: "Delete set" }));
     await fireEvent.click(
       screen.getByRole("button", { name: "Delete *.azure.com from Client X" }),

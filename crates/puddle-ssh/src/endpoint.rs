@@ -2,13 +2,17 @@
 //! [`SshEndpoint`]: serves SSH to every client of a sandbox's owner-only endpoint.
 
 use std::future::Future;
+use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use puddle_boot::{BootHook, GatedError, GatedSandbox};
 use puddle_compute::{Sandbox, SshStream};
 use puddle_ipc::{Connection, Endpoint, IpcError, Listener};
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, ReadBuf};
 use tokio::sync::oneshot;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{info, warn};
@@ -243,8 +247,15 @@ async fn session<T: SshTarget>(target: Arc<T>, mut conn: Connection, id: u64) {
         return;
     }
     info!(sandbox = %label, session = id, "ssh session started");
+    let (conn, client_closed) = ClientWatch::new(conn);
     match target.serve(conn).await {
         Ok(()) => info!(sandbox = %label, session = id, "ssh session ended"),
+        // A client that stops at a host key prompt or after a refused login, or that is killed,
+        // closes the stream without an SSH disconnect, and the server calls that an error. The
+        // endpoint is fine and a restart would change nothing: no notice to the user.
+        Err(e) if client_closed.load(Ordering::Acquire) => {
+            info!(sandbox = %label, session = id, error = %e, "ssh client closed without a disconnect");
+        }
         Err(e) => {
             warn!(sandbox = %label, session = id, error = %e, "ssh session ended with an error");
             target.failed(&format!(
@@ -254,9 +265,142 @@ async fn session<T: SshTarget>(target: Arc<T>, mut conn: Connection, id: u64) {
     }
 }
 
+/// A client's stream that notes when the client closed its side: a read that ends the stream.
+struct ClientWatch<S> {
+    inner: S,
+    closed: Arc<AtomicBool>,
+}
+
+impl<S> ClientWatch<S> {
+    fn new(inner: S) -> (Self, Arc<AtomicBool>) {
+        let closed = Arc::new(AtomicBool::new(false));
+        let watch = Self {
+            inner,
+            closed: Arc::clone(&closed),
+        };
+        (watch, closed)
+    }
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for ClientWatch<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let before = buf.filled().len();
+        let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
+        // Ready with nothing added to a buffer that had room is the end of the stream.
+        if matches!(polled, Poll::Ready(Ok(())))
+            && buf.filled().len() == before
+            && buf.remaining() > 0
+        {
+            self.closed.store(true, Ordering::Release);
+        }
+        polled
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for ClientWatch<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt as _, duplex};
+
+    #[tokio::test]
+    async fn the_watch_passes_bytes_through_and_notes_only_the_clients_end_of_stream() {
+        let (client, server) = duplex(64);
+        let (mut watched, closed) = ClientWatch::new(server);
+        let (mut client_read, mut client_write) = tokio::io::split(client);
+
+        client_write.write_all(b"ping").await.unwrap();
+        let mut got = [0_u8; 4];
+        watched.read_exact(&mut got).await.unwrap();
+        assert_eq!(&got, b"ping");
+        assert!(!closed.load(Ordering::Acquire), "data is not an end");
+
+        watched.write_all(b"pong").await.unwrap();
+        watched.flush().await.unwrap();
+        let mut back = [0_u8; 4];
+        client_read.read_exact(&mut back).await.unwrap();
+        assert_eq!(&back, b"pong");
+
+        // Our own shutdown is not the client leaving.
+        watched.shutdown().await.unwrap();
+        assert!(!closed.load(Ordering::Acquire));
+        // A zero-length read into a full buffer is no end either.
+        assert_eq!(watched.read(&mut []).await.unwrap(), 0);
+        assert!(!closed.load(Ordering::Acquire));
+
+        client_write.shutdown().await.unwrap();
+        assert_eq!(watched.read(&mut got).await.unwrap(), 0);
+        assert!(closed.load(Ordering::Acquire));
+    }
+
+    /// Counts the flushes and shutdowns that reach it.
+    #[derive(Default)]
+    struct Recording {
+        flushes: usize,
+        shutdowns: usize,
+    }
+
+    impl AsyncRead for Recording {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl AsyncWrite for Recording {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.flushes += 1;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.shutdowns += 1;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_watch_forwards_flush_and_shutdown_to_the_stream() {
+        let (mut watched, _closed) = ClientWatch::new(Recording::default());
+        watched.write_all(b"x").await.unwrap();
+        assert_eq!(watched.read(&mut [0_u8; 1]).await.unwrap(), 0);
+        watched.flush().await.unwrap();
+        assert_eq!((watched.inner.flushes, watched.inner.shutdowns), (1, 0));
+        watched.shutdown().await.unwrap();
+        assert_eq!((watched.inner.flushes, watched.inner.shutdowns), (1, 1));
+    }
 
     #[test]
     fn accept_failures_are_reported_once_per_run_and_a_stop_always() {
@@ -291,7 +435,7 @@ mod tests {
     fn starting_outside_a_runtime_is_refused() {
         struct Never;
         impl SshTarget for Never {
-            type Error = std::io::Error;
+            type Error = io::Error;
             fn label(&self) -> String {
                 "never".into()
             }
@@ -320,7 +464,7 @@ mod tests {
         Never.recovered();
         rt.block_on(async {
             assert!(Never.admit().await.is_err());
-            Never.serve(tokio::io::duplex(1).0).await.unwrap();
+            Never.serve(duplex(1).0).await.unwrap();
         });
     }
 }

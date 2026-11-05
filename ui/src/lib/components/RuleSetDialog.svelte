@@ -1,27 +1,37 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import type { Fill } from "#lib/rules/fill.ts";
   import { setNameError } from "#lib/rules/sets.ts";
+  import FillPicker from "./FillPicker.svelte";
   import FormDialog from "./FormDialog.svelte";
 
-  // Makes a rule set or renames one. `onSubmit` returns the server's refusal as text, or `null`
+  // Makes a rule set or edits one: its name, description and colour. `onSubmit` returns the server's refusal as text, or `null`
   // when it went through (the dialog then closes).
   let {
     open = $bindable(false),
     mode,
     initialName = "",
     initialDescription = "",
+    initialFill = null,
     onSubmit,
   }: {
     open?: boolean;
     mode: "create" | "rename";
     initialName?: string;
     initialDescription?: string;
-    onSubmit: (name: string, description: string) => Promise<string | null>;
+    /** The set's colour when editing; `null` for a new set, which Puddle then colours. */
+    initialFill?: Fill | null;
+    onSubmit: (
+      name: string,
+      description: string,
+      fill: Fill | null,
+    ) => Promise<string | null>;
   } = $props();
 
   const id = $props.id();
   let name = $state("");
   let description = $state("");
+  let fill = $state<Fill | null>(null);
   let problem = $state<string | null>(null);
   let busy = $state(false);
 
@@ -29,6 +39,7 @@
     if (open) {
       name = initialName;
       description = initialDescription;
+      fill = initialFill;
       problem = null;
     }
   });
@@ -39,7 +50,7 @@
     if (problem) return;
     busy = true;
     try {
-      problem = await onSubmit(name.trim(), description.trim());
+      problem = await onSubmit(name.trim(), description.trim(), fill);
       if (problem === null) open = false;
     } finally {
       busy = false;
@@ -49,10 +60,10 @@
 
 <FormDialog
   bind:open
-  title={mode === "create" ? "New rule set" : "Rename rule set"}
+  title={mode === "create" ? "New rule set" : "Edit rule set"}
   description={mode === "create"
     ? "A set starts empty and on for every workspace. Add entries to it here, or approve requests into it from the Inbox."
-    : "The name shows on the Rules screen and in the Inbox."}
+    : "The name and colour show on the Rules screen and in the Inbox."}
 >
   <form onsubmit={submit} novalidate>
     <div class="field">
@@ -80,6 +91,7 @@
         bind:value={description}
       />
     </div>
+    <FillPicker bind:value={fill} {name} />
     <div class="actions">
       <button type="button" class="btn" onclick={() => (open = false)}
         >Cancel</button

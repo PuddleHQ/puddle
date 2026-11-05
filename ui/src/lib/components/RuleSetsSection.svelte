@@ -2,6 +2,7 @@
 <script lang="ts">
   import LoadNotice from "./LoadNotice.svelte";
   import Plus from "@lucide/svelte/icons/plus";
+  import type { Fill } from "#lib/rules/fill.ts";
   import {
     SETS_INTRO,
     type RuleSet,
@@ -85,16 +86,20 @@
     if (set) void doSwitch(set, null, true);
   }
 
-  async function submitDialog(name: string, description: string) {
+  async function submitDialog(
+    name: string,
+    description: string,
+    fill: Fill | null,
+  ) {
     const result =
       dialogMode === "create"
-        ? await store.create(name, description)
-        : await store.rename(renaming?.id ?? "", name, description);
+        ? await store.create(name, description, fill)
+        : await store.rename(renaming?.id ?? "", name, description, fill);
     if (!result.ok) return result.message;
     toasts.push(
       dialogMode === "create"
         ? `Made rule set ${result.value.name}.`
-        : `Renamed to ${result.value.name}.`,
+        : `Saved rule set ${result.value.name}.`,
     );
     return null;
   }
@@ -159,6 +164,7 @@
   mode={dialogMode}
   initialName={renaming?.name ?? ""}
   initialDescription={renaming?.description ?? ""}
+  initialFill={dialogMode === "rename" ? (renaming?.fill ?? null) : null}
   onSubmit={submitDialog}
 />
 <ConfirmDialog

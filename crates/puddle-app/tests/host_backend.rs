@@ -248,6 +248,20 @@ fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_hos
     start(&options, &Machine::default()).unwrap();
 }
 
+#[test]
+fn the_backend_names_no_workspace_the_host_does_not_have_and_none_once_the_host_has_stopped() {
+    let dir = puddle_test_kit::private_tempdir();
+    let options = options_in(dir.path());
+    let backend = start(&options, &Machine::default()).unwrap();
+    let label = backend.label();
+    let demo = puddle_types::WorkspaceId::new("demo").unwrap();
+
+    assert_eq!(tauri::async_runtime::block_on(label(demo.clone())), None);
+
+    tauri::async_runtime::block_on(backend.shutdown()).unwrap();
+    assert_eq!(tauri::async_runtime::block_on(label(demo)), None);
+}
+
 /// The host's start-up and quit run on the program's main thread (the setup hook and the exit
 /// hook), whose stack `build.rs` links at 8 MiB on Windows. Here they run on a thread with half of
 /// that, so the program keeps at least twice what the work needs. A debug build on Windows needs

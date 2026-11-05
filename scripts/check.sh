@@ -91,6 +91,12 @@ lower_ok() {
     export COVERAGE_BASELINE_LOWER_OK
 }
 
+# Removes what a coverage report would read from an earlier run in the shared instrumented directory: the test
+# executables (the libraries stay built) and the profile files. `cargo llvm-cov nextest --no-report` cleans neither.
+coverage_scrub() {
+    find "$1/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
+    find "$1/llvm-cov-target" -maxdepth 1 -name '*.profraw' -type f -delete 2>/dev/null || true
+}
 # Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
 # extra arguments. Needs a base; without one it fails.
 diff_coverage() {
@@ -172,7 +178,7 @@ run_gate() {
         scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
-            ci/scope-test.sh && ci/apt-setup-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
+            ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
             ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/vm-tests-report-test.sh
         ;;
     git-env)
@@ -400,29 +406,38 @@ run_gate() {
             exit 0
         fi
         packages=
+        filter=
         for c in $crates; do
             [ -z "$skip_app" ] || [ "$c" != puddle-app ] || continue
-            packages="$packages -p $c"
+            packages="$packages $c"
+            filter="${filter:+$filter | }package($c)"
         done
         if [ -z "$packages" ]; then
             echo "diff-coverage-fast: only puddle-app changed and it is skipped here; CI measures it"
             exit 0
         fi
-        # Its own target directory, and the old test binaries removed from it first: a report reads every
-        # executable in the directory, so a binary left by an earlier run of other crates, built from older
-        # sources, would put the old line numbers into this report. Cargo links the missing ones again; every
-        # library stays built for the next run. The full coverage gate's directory (and its lcov.info) is never touched.
-        target=${CARGO_TARGET_DIR:-target}/diff-coverage-fast
+        # The same instrumented target directory as the `coverage` gate (`<target>/llvm-cov-target`), so the third-party
+        # crates it builds are built once, not once per gate (15 GB of a host lane when each kept its own copy). A
+        # report reads every profile file and every test executable in the directory, so one left by an earlier run
+        # (other crates, older sources) would bring its old line numbers or another run's counts; `coverage_scrub`
+        # removes both before this run and again when it ends, so neither gate reports what the other left. Every
+        # library stays built. The lcov file is this gate's own, never the `coverage` gate's `lcov.info`.
+        target=${CARGO_TARGET_DIR:-target}
+        lcov=$target/diff-coverage-fast.lcov
         echo "diff-coverage-fast: tests with coverage for:$packages"
-        find "$target/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
-        # shellcheck disable=SC2086 # $packages is a list of `-p <crate>` pairs
-        CARGO_TARGET_DIR=$target scripts/coverage-run.sh "$plain_cargo" $packages --all-features --locked \
-            --profile "${NEXTEST_PROFILE:-default}"
-        CARGO_TARGET_DIR=$target "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
+        coverage_scrub "$target"
+        trap 'coverage_scrub "$target"' EXIT
+        # The build selects the whole workspace like the `coverage` gate (a `-p` selection resolves other features
+        # for some third-party crates, so their units would hash differently and be built twice); the filterset
+        # picks the tests that run.
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
+        scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
+            --profile "${NEXTEST_PROFILE:-default}" -E "$filter"
+        "$plain_cargo" llvm-cov report --lcov --output-path "$lcov"
         # The exclusion notes ("matched nothing in this diff") list every entry of the file that this change does
         # not touch: hundreds of lines, so only their count is printed.
         rc=0
-        report=$(diff_coverage "diff-coverage-fast (rust)" "$target/lcov.info" .rs 2>&1) || rc=$?
+        report=$(diff_coverage "diff-coverage-fast (rust)" "$lcov" .rs 2>&1) || rc=$?
         printf '%s\n' "$report" | grep -v 'matched nothing in this diff' || true
         echo "diff-coverage-fast: $(printf '%s\n' "$report" | grep -c 'matched nothing in this diff' || true) exclusion note(s) for untouched code left out"
         if [ "$rc" != 0 ]; then

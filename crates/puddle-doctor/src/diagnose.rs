@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 use puddle_runtime::RuntimeError;
 
 use crate::facts::{
-    BootFacts, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, DiskFacts, GsaFacts,
-    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts,
-    RuntimeState, WritableFolder,
+    BlockedBy, BlockedFolder, BootFacts, CodeIntegrity, CodeIntegrityFacts, DataPathFacts,
+    DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
+    RuntimeFacts, RuntimeState, WritableFolder,
 };
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -474,52 +474,115 @@ fn data_path(facts: &DataPathFacts) -> Check {
         .finding(Finding::DataPathUnreadable)
         .fix("Puddle may still work; this only means the doctor cannot rule out the folder permissions msb refuses.")
         .detail(detail.clone()),
-        DataPathFacts::Checked { dir, writable } if writable.is_empty() => Check::new(
+        DataPathFacts::Checked {
+            dir,
+            writable,
+            blocked,
+        } if writable.is_empty() && blocked.is_empty() => Check::new(
             id,
             Status::Ok,
-            format!("no folder above {} lets other accounts write", dir.display()),
+            format!(
+                "every folder above {} is a folder only you or root own, and other accounts can't change it",
+                dir.display()
+            ),
         ),
-        DataPathFacts::Checked { writable, .. } => {
-            let names = writable
-                .iter()
-                .map(|f| f.path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let any_world = writable.iter().any(WritableFolder::world_writable);
-            let how = if !any_world {
-                "writable by the group"
-            } else if writable.iter().any(WritableFolder::group_writable) {
-                "writable by the group or everyone"
-            } else {
-                "writable by everyone"
-            };
-            let flags = if any_world { "go-w" } else { "g-w" };
-            let sudo = if writable.iter().all(|f| f.owned) { "" } else { "sudo " };
-            let words: Vec<String> = writable.iter().map(|f| shell_word(&f.path)).collect();
-            let detail: Vec<String> = writable
-                .iter()
-                .map(|f| format!("{} mode {:04o}", f.path.display(), f.mode & 0o7777))
-                .collect();
-            Check::new(
-                id,
-                Status::Fail,
+        DataPathFacts::Checked {
+            writable, blocked, ..
+        } => data_path_refused(writable, blocked),
+    }
+}
+
+/// The failure for folders above Puddle's data that msb refuses: `blocked` (not a folder, or
+/// another user's) and `writable` (other accounts can rename entries in it).
+fn data_path_refused(writable: &[WritableFolder], blocked: &[BlockedFolder]) -> Check {
+    let mut problems = Vec::new();
+    let mut fixes = Vec::new();
+    let mut detail = Vec::new();
+    for b in blocked {
+        let path = b.path.display();
+        let (problem, fix) = match b.by {
+            BlockedBy::NotAFolder => (
+                format!("{path} is not a folder"),
                 format!(
-                    "{names} {} {how} and not sticky, so msb will not open Puddle's data below {}",
-                    if writable.len() == 1 { "is" } else { "are" },
-                    if writable.len() == 1 { "it" } else { "them" },
+                    "{path} is a file or another kind of entry, but Puddle's data has to live below a folder. \
+Rename or remove it (for example `mv {0} {0}.old`), or point XDG_DATA_HOME at a folder you own.",
+                    shell_word(&b.path)
                 ),
-            )
-            .finding(Finding::DataPathWritable)
-            .fix(format!(
-                "msb opens its catalog only below folders where other accounts cannot rename entries, so \
+            ),
+            BlockedBy::OtherOwner { uid } => (
+                format!("{path} belongs to another user (id {uid})"),
+                format!(
+                    "msb trusts only folders you or root own. If {path} is yours, run `sudo chown \"$USER\" {}`; \
+otherwise point XDG_DATA_HOME at a folder you own.",
+                    shell_word(&b.path)
+                ),
+            ),
+        };
+        problems.push(problem);
+        fixes.push(fix);
+        detail.push(match b.by {
+            BlockedBy::NotAFolder => format!("{path} not a folder"),
+            BlockedBy::OtherOwner { uid } => format!("{path} owner id {uid}"),
+        });
+    }
+    if !writable.is_empty() {
+        let names = writable
+            .iter()
+            .map(|f| f.path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let any_world = writable.iter().any(WritableFolder::world_writable);
+        let how = if !any_world {
+            "writable by the group"
+        } else if writable.iter().any(WritableFolder::group_writable) {
+            "writable by the group or everyone"
+        } else {
+            "writable by everyone"
+        };
+        let flags = if any_world { "go-w" } else { "g-w" };
+        let sudo = if writable.iter().all(|f| f.owned) {
+            ""
+        } else {
+            "sudo "
+        };
+        let words: Vec<String> = writable.iter().map(|f| shell_word(&f.path)).collect();
+        problems.push(format!(
+            "{names} {} {how} and not sticky",
+            if writable.len() == 1 { "is" } else { "are" },
+        ));
+        fixes.push(format!(
+            "msb opens its catalog only below folders where other accounts cannot rename entries, so \
 every sandbox start fails until the write permission is gone. A user created with a private group and umask \
 0002 (the Ubuntu default) often leaves ~/.local at 0775. Run:
   {sudo}chmod {flags} {}",
-                words.join(" ")
-            ))
-            .detail(detail.join("\n"))
-        }
+            words.join(" ")
+        ));
+        detail.extend(
+            writable
+                .iter()
+                .map(|f| format!("{} mode {:04o}", f.path.display(), f.mode & 0o7777)),
+        );
     }
+    let below = if writable.len() + blocked.len() == 1 {
+        "it"
+    } else {
+        "them"
+    };
+    Check::new(
+        CheckId::DataPath,
+        Status::Fail,
+        format!(
+            "{}, so msb will not open Puddle's data below {below}",
+            problems.join("; ")
+        ),
+    )
+    .finding(if blocked.is_empty() {
+        Finding::DataPathWritable
+    } else {
+        Finding::DataPathBlocked
+    })
+    .fix(fixes.join("\n"))
+    .detail(detail.join("\n"))
 }
 
 // ---- runtime ----

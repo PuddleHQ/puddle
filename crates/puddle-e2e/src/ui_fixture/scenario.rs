@@ -208,6 +208,12 @@ pub struct WorkspaceSeed {
     /// What the disk holds, in MiB.
     #[serde(default)]
     pub disk_used_mib: Option<u64>,
+    /// The root disk's capacity in MiB; its use is not known when left out.
+    #[serde(default)]
+    pub root_disk_size_mib: Option<u64>,
+    /// What the root disk takes on the host, in MiB.
+    #[serde(default)]
+    pub root_disk_used_mib: Option<u64>,
     /// What deleting it would lose; nothing when left out.
     #[serde(default)]
     pub unsaved: UnsavedSeed,

@@ -71,17 +71,20 @@ for d in * .[!.]* ..?*; do
         fi
         repo=$d
         list U status --porcelain=v1 --untracked-files=normal
-        # A shallow clone's history is grafted, so a tag that `fetch --tags` brought in points
-        # at upstream commits no remote-tracking branch reaches: tags can't be judged there.
+        # A shallow clone's history is grafted, so a tag that `fetch --tags` brought in points at
+        # upstream commits no remote-tracking branch reaches. There a tag counts only when its
+        # commit descends from a remote-tracking commit (work made on top of the clone); a
+        # fetched upstream tag is never a descendant of the clone's own remote refs.
         shallow=$(g rev-parse --git-path shallow 2>/dev/null)
         case $shallow in /*) ;; *) shallow=$repo/$shallow ;; esac
-        tags=--tags
-        if [ -s "$shallow" ]; then tags=; fi
-        # shellcheck disable=SC2086 # $tags is one flag or nothing
-        if g rev-parse -q --verify HEAD >/dev/null 2>&1; then
-            list C log --format='%h %s' HEAD --branches $tags --not --remotes
+        head=
+        if g rev-parse -q --verify HEAD >/dev/null 2>&1; then head=HEAD; fi
+        # shellcheck disable=SC2086 # $head is one revision or nothing
+        if [ -s "$shallow" ]; then
+            list C log --format='%h %s' $head --branches --not --remotes
+            list C log --format='%h %s' --tags --ancestry-path --not --remotes --branches $head
         else
-            list C log --format='%h %s' --branches $tags --not --remotes
+            list C log --format='%h %s' $head --branches --tags --not --remotes
         fi
         list S stash list
     else

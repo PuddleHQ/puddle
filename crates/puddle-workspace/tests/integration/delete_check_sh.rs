@@ -198,6 +198,52 @@ async fn a_shallow_clone_with_fetched_tags_lists_only_its_own_commit() {
 }
 
 #[tokio::test]
+async fn a_shallow_clone_lists_a_commit_only_a_local_tag_holds() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let upstream = tmp.path().join("upstream");
+        std::fs::create_dir_all(&upstream).unwrap();
+        git(&upstream, &["init", "-q", "-b", "main"]);
+        for (file, tag) in [("one", "v1"), ("two", "v2"), ("three", "v3")] {
+            std::fs::write(upstream.join(file), "x\n").unwrap();
+            git(&upstream, &["add", "."]);
+            git(&upstream, &["commit", "-qm", &format!("upstream {file}")]);
+            git(&upstream, &["tag", tag]);
+        }
+        let vol = tmp.path().join("vol");
+        std::fs::create_dir_all(&vol).unwrap();
+        let url = format!("file://{}", upstream.display());
+        git(&vol, &["clone", "-q", "--depth", "1", &url, "solo"]);
+        let repo = vol.join("solo");
+        git(&repo, &["fetch", "-q", "--tags"]);
+        std::fs::write(repo.join("mine"), "m\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "local only"]);
+        git(&repo, &["checkout", "-q", "--detach"]);
+        std::fs::write(repo.join("tagged"), "t\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "only on a tag"]);
+        git(&repo, &["tag", "keep-me"]);
+        git(&repo, &["checkout", "-q", "main"]);
+        let report = check(shell, &vol).await;
+        let solo = &report.findings.repos[0];
+        let mut subjects: Vec<&str> = solo
+            .unpushed
+            .items
+            .iter()
+            .map(|c| c.split_once(' ').unwrap().1)
+            .collect();
+        subjects.sort_unstable();
+        assert_eq!(
+            subjects,
+            ["local only", "only on a tag"],
+            "{shell}: {:?}",
+            solo.unpushed
+        );
+    }
+}
+
+#[tokio::test]
 async fn long_lists_are_capped_and_counted() {
     for shell in shells() {
         let tmp = tempfile::tempdir().unwrap();

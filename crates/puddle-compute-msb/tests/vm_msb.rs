@@ -505,15 +505,20 @@ async fn vm_bootstrap_root_lives_in_the_sandbox_folder_and_goes_with_it() {
     let n = s.name.clone();
     let folder = settings.home().join("sandboxes").join(n.as_str());
     let holder = folder.join(".bootstrap-rootfs");
-    let sb = rt.create(s).await.expect("create");
-
-    let running_in_folder = bootstrap_roots_in(&holder);
     #[expect(
         clippy::disallowed_methods,
         reason = "looks at the folder msb's runner uses for its temp files, not one of ours"
     )]
     let temp = std::env::temp_dir();
-    let running_in_temp = bootstrap_roots_in(&temp);
+    // Roots older runs left in the temp folder do not count: only the ones this sandbox adds.
+    let temp_before = bootstrap_roots_in(&temp);
+    let sb = rt.create(s).await.expect("create");
+
+    let running_in_folder = bootstrap_roots_in(&holder);
+    let added_in_temp: Vec<PathBuf> = bootstrap_roots_in(&temp)
+        .into_iter()
+        .filter(|dir| !temp_before.contains(dir))
+        .collect();
     let guest_ok = sh(&sb, "echo up").await.status.success();
     sb.stop().await.unwrap();
     eventually(
@@ -537,8 +542,8 @@ async fn vm_bootstrap_root_lives_in_the_sandbox_folder_and_goes_with_it() {
         "one bootstrap root below {holder:?} while the sandbox runs"
     );
     assert!(
-        running_in_temp.is_empty(),
-        "bootstrap roots left in the temp folder: {running_in_temp:?}"
+        added_in_temp.is_empty(),
+        "the sandbox put bootstrap roots in the temp folder: {added_in_temp:?}"
     );
     assert!(folder_kept_by_stop, "a stop keeps the sandbox folder");
     assert!(

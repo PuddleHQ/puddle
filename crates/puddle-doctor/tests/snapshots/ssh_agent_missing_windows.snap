@@ -1,0 +1,78 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on (the hypervisor uses it)
+ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot             a test VM booted and ran a program in 1.1 s
+ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+warn  SSH agent             no agent answers on \\.\pipe\openssh-ssh-agent: SSH to servers other than Git hosts gets no key from Puddle; start your agent or name its pipe in the settings
+      note: SSH to servers other than Git hosts gets no key from Puddle. Start your agent (the
+            OpenSSH Authentication Agent service, 1Password or Bitwarden) or name its pipe in
+            the settings (`ui.ssh_agent_pipe`; for Pageant its OpenSSH pipe). Git hosts need no
+            agent: Puddle ends their SSH sessions itself, so Git over SSH is not affected.
+      from: The system cannot find the file specified. (os error 2)
+ok    Global Secure Access  client not installed
+
+No problems found; 1 warning to know about. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": true,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "ok",
+      "summary": "a test VM booted and ran a program in 1.1 s"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+    },
+    {
+      "id": "ssh_agent",
+      "status": "warn",
+      "summary": "no agent answers on \\\\.\\pipe\\openssh-ssh-agent: SSH to servers other than Git hosts gets no key from Puddle; start your agent or name its pipe in the settings",
+      "finding": "ssh_agent_missing",
+      "fix": "SSH to servers other than Git hosts gets no key from Puddle. Start your agent (the OpenSSH Authentication Agent service, 1Password or Bitwarden) or name its pipe in the settings (`ui.ssh_agent_pipe`; for Pageant its OpenSSH pipe). Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is not affected.",
+      "detail": "The system cannot find the file specified. (os error 2)"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

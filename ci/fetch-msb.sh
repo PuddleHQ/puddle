@@ -101,6 +101,7 @@ fetch_firmware() {
     if has_pin "$tag" libkrunfw-linux-tag; then
         fetch "$firmware_repo" "$(pinned "$tag" libkrunfw-linux-tag)" "libkrunfw-linux-$arch.so" "$3"
     else
+        echo "fetch-msb: $tag pins no libkrunfw fork release: upstream's firmware, whose guest kernel has /dev/mem" >&2
         fetch "$1" "$2" "libkrunfw-linux-$arch.so" "$3"
     fi
 }

@@ -10871,7 +10871,7 @@ async fn a_disk_that_cannot_be_read_makes_no_entry() {
 
 /// An event already in the socket when the deadline has passed is read, not reported as a timeout.
 #[tokio::test]
-async fn until_sees_an_event_already_queued_past_the_deadline() {
+async fn event_reader_sees_an_event_queued_past_the_deadline() {
     use tokio::io::AsyncWriteExt;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let stream = tokio::net::TcpStream::connect(listener.local_addr().unwrap())

@@ -1955,7 +1955,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Audits each git file the boot rebuilt, and tells the user what was repaired and what was
     /// found damaged and left alone; a boot that finds neither withdraws the notice.
-    fn report_git_repairs(&self, name: &WorkspaceName, report: &puddle_workspace::LockReport) {
+    fn report_git_repairs(&self, name: &WorkspaceId, report: &puddle_workspace::LockReport) {
         for repair in &report.repaired {
             self.inner.store.note_workspace_op(&NewWorkspaceOp {
                 op: WorkspaceOpKind::GitRepaired,

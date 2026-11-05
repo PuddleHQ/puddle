@@ -311,7 +311,10 @@ mod unix {
     #[tokio::test]
     async fn the_mode_holds_under_a_permissive_umask_and_parent() {
         // A world-writable parent (like /tmp without the sticky bit) doesn't widen anything.
-        let base = tempfile::tempdir().unwrap();
+        // Two nested roots and the socket name use about 80 of the 107 bytes of sun_path, so the base must be
+        // short: a $TMPDIR under a deep target dir (scripts/check.sh) would be refused as too long. The files
+        // here are a few empty inodes, so /tmp is fine.
+        let base = tempfile::tempdir_in("/tmp").unwrap();
         let parent = IpcRoot::new_in(base.path()).unwrap();
         std::fs::set_permissions(parent.dir(), std::fs::Permissions::from_mode(0o777)).unwrap();
         let root = IpcRoot::new_in(parent.dir()).unwrap();

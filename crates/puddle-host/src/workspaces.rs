@@ -47,8 +47,9 @@ use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, WorkspaceSetti
 use puddle_ssh::SshEndpoint;
 use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
-    CheckoutDir, CpuCount, Event, EventSink, GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib,
-    Problem, Problems, SessionUser, WorkspaceId, WorkspaceName, WorkspaceStatus, WorkspaceStep,
+    CheckoutDir, CpuCount, DiskKind, Event, EventSink, GuestEnv, GuestFile, GuestPath, ImageRef,
+    MemoryMib, Problem, Problems, SessionUser, WorkspaceId, WorkspaceName, WorkspaceStatus,
+    WorkspaceStep,
 };
 
 use crate::ssh_config::{SshSetup, ssh_host};
@@ -293,6 +294,8 @@ struct Inner<R: Runtime + Clone> {
     env_missed_while_booting: Mutex<BTreeSet<WorkspaceName>>,
     /// The last listing of each workspace's checkouts; see [`repositories::CachedListing`].
     listings: Mutex<BTreeMap<WorkspaceId, repositories::CachedListing>>,
+    /// The disks the host has already warned about, until they drop below the threshold again.
+    disk_warned: Mutex<BTreeSet<(WorkspaceName, DiskKind)>>,
 }
 
 /// Why [`HostWorkspaces::end_extension_hosts`] did not reach the guest.
@@ -563,6 +566,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 shell_init_changed_inside: Mutex::new(BTreeSet::new()),
                 env_missed_while_booting: Mutex::new(BTreeSet::new()),
                 listings: Mutex::new(BTreeMap::new()),
+                disk_warned: Mutex::new(BTreeSet::new()),
             }),
         };
         if interrupted && let Err(e) = service.persist(&service.state()) {
@@ -807,19 +811,68 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         });
     }
 
-    /// Reads what every workspace's volume takes on the host into the records, so the list and
-    /// the single-workspace answer both carry it. A runtime that cannot say leaves the earlier
-    /// value; the card shows the size alone until it can.
-    async fn refresh_disk_use(&self) {
-        let volumes = match self.inner.runtime.list_volumes().await {
-            Ok(volumes) => volumes,
-            Err(e) => {
-                tracing::debug!(error = %e, "the volumes' use of the disk is unknown");
-                return;
+    /// Reads what every workspace's volume and root disk take on the host into the records, so
+    /// the list and the single-workspace answer both carry it, then warns about disks that
+    /// reached the threshold. A runtime that cannot say leaves the earlier value; the card shows
+    /// the size alone until it can.
+    pub(crate) async fn refresh_disk_use(&self) {
+        match self.inner.runtime.list_volumes().await {
+            Ok(volumes) => {
+                for slot in self.state().slots.values_mut() {
+                    slot.record.disk_used_mib = disk_used(&volumes, &slot.record.id);
+                }
             }
-        };
-        for slot in self.state().slots.values_mut() {
-            slot.record.disk_used_mib = disk_used(&volumes, &slot.record.id);
+            Err(e) => tracing::debug!(error = %e, "the volumes' use of the disk is unknown"),
+        }
+        match self.inner.runtime.list().await {
+            Ok(sandboxes) => {
+                for slot in self.state().slots.values_mut() {
+                    let root = sandboxes
+                        .iter()
+                        .find(|s| s.name == slot.record.name.sandbox_name().as_str())
+                        .and_then(|s| s.root_disk);
+                    slot.record.root_disk_size_mib = root.map(|r| u64::from(r.size.as_mib()));
+                    slot.record.root_disk_used_mib = root.map(|r| u64::from(r.used.as_mib()));
+                }
+            }
+            Err(e) => tracing::debug!(error = %e, "the root disks' use of the disk is unknown"),
+        }
+        self.warn_about_full_disks();
+    }
+
+    /// Says once, per disk, that it reached the warning threshold, and again only after it was
+    /// below it. A threshold that cannot be read is Puddle's default.
+    fn warn_about_full_disks(&self) {
+        let threshold = crate::settings_read::global(self.inner.settings.as_ref())
+            .map(|g| g.ui.disk_warning_percent())
+            .unwrap_or_default();
+        let records: Vec<WorkspaceRecord> = self
+            .state()
+            .slots
+            .values()
+            .map(|s| s.record.clone())
+            .collect();
+        let mut warned = self
+            .inner
+            .disk_warned
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for record in records {
+            let over = record.disk_warnings(threshold);
+            for disk in [DiskKind::Root, DiskKind::Volume] {
+                let key = (record.name.clone(), disk);
+                if !over.contains(&disk) {
+                    warned.remove(&key);
+                } else if warned.insert(key)
+                    && let Some(percent) = record.disk_percent(disk)
+                {
+                    self.inner.events.emit(Event::DiskNearlyFull {
+                        workspace: record.name.clone(),
+                        disk,
+                        percent,
+                    });
+                }
+            }
         }
     }
 
@@ -860,8 +913,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 status_changed = true;
                 self.inner.reports.resume(&name);
             }
-            (Err(_), Operation::Reclaiming | Operation::Deleting)
-            | (Ok(()), Operation::Reclaiming)
+            (
+                Err(_),
+                Operation::Reclaiming | Operation::ResettingRootDisk | Operation::Deleting,
+            )
+            | (Ok(()), Operation::Reclaiming | Operation::ResettingRootDisk)
             | (_, Operation::Cloning) => {}
             (Ok(()), Operation::Creating | Operation::Starting) => {
                 slot.record.status = WorkspaceStatus::Running;
@@ -2531,6 +2587,31 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .ok_or_else(|| format!("{name} is not running"))
     }
 
+    /// Removes the workspace's sandbox, if it has one: the root disk goes with it, the volume
+    /// stays, and the next start makes both again from the image.
+    async fn reset_root_disk_work(&self, name: &WorkspaceName) -> Result<(), String> {
+        let sandbox = name.sandbox_name();
+        let exists = self
+            .inner
+            .runtime
+            .list()
+            .await
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|s| s.name == sandbox.as_str());
+        if exists {
+            self.inner
+                .runtime
+                .remove(&sandbox)
+                .await
+                .map_err(|e| e.to_string())?;
+            self.inner.workspaces.sandbox_removed(&sandbox);
+        }
+        // A route left from an earlier boot belongs to a sandbox that no longer exists.
+        self.quiesce(name, true).await;
+        Ok(())
+    }
+
     async fn start_work(&self, record: WorkspaceRecord) -> Result<(), String> {
         let inner = &self.inner;
         let name = &record.name;
@@ -3072,6 +3153,37 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     .await
                     .map(|_| ())
                     .map_err(|e| e.to_string())
+            })
+            .await;
+            Ok(record)
+        })
+    }
+
+    fn reset_root_disk<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let record = self.accept(
+                id,
+                Operation::ResettingRootDisk,
+                |r| {
+                    if r.status.is_down() {
+                        Ok(())
+                    } else {
+                        Err(WorkspaceError::Conflict(format!(
+                            "{} is {}; stop it before resetting its root disk",
+                            r.name, r.status
+                        )))
+                    }
+                },
+                |_| {},
+            )?;
+            let this = self.clone();
+            let work = record.clone();
+            self.run(&record, Operation::ResettingRootDisk, async move {
+                this.progress(&work.name, WorkspaceStep::ResettingRootDisk, None);
+                this.reset_root_disk_work(&work.name).await
             })
             .await;
             Ok(record)

@@ -552,6 +552,26 @@ test.describe("connecting", () => {
       key: "editor-update:web-shop",
     });
     await expect(main.getByRole("alert")).toHaveCount(0);
+
+    // A server that runs as root for want of the session user is its own line too.
+    await backend.control.step({
+      do: "problem",
+      key: "editor-session-user:web-shop",
+      workspace: "web-shop",
+      title:
+        "The browser editor in web-shop runs as root: its user agent is missing in the guest <img src=x onerror=alert(1)>",
+      detail: "The editor opens and works, but its files belong to root.",
+    });
+    await expect(main.getByRole("alert")).toContainText(
+      "runs as root: its user agent is missing",
+    );
+    await expect(main.locator("img")).toHaveCount(0);
+    await expectNoAxeViolations(page, "workspace page with a root problem");
+    await backend.control.step({
+      do: "clear_problem",
+      key: "editor-session-user:web-shop",
+    });
+    await expect(main.getByRole("alert")).toHaveCount(0);
   });
 
   test("opening in the browser needs no direct SSH and says the window is opening", async ({
@@ -1631,5 +1651,42 @@ test.describe("a workspace whose volume is gone", () => {
     await confirm.getByRole("button", { name: "Delete workspace" }).click();
     await expect(page).toHaveURL(/\/workspaces$/);
     await expect(card(page, "lost-disk")).toHaveCount(0);
+  });
+});
+
+test.describe("a workspace whose disk is nearly full", () => {
+  test("warns on the page and the card for the root disk and the volume, and resets only the root disk", async ({
+    page,
+    backend,
+  }) => {
+    await backend.control.reset("disks-full");
+    await openList(page, backend);
+    await expect(card(page, "full-root")).toContainText(/\d+ % full/);
+    await expect(card(page, "full-volume")).toContainText(/\d+ % full/);
+    await expect(card(page, "roomy")).not.toContainText(/\d+ % full/);
+
+    await openDetail(page, backend, "roomy");
+    await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);
+    await expect(page.getByTestId("disk-warning-volume")).toHaveCount(0);
+
+    await openDetail(page, backend, "full-volume");
+    const volume = page.getByTestId("disk-warning-volume");
+    await expect(volume).toContainText("Volume nearly full");
+    await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);
+    await expect(
+      volume.getByRole("button", { name: /Reset root disk/ }),
+    ).toHaveCount(0);
+
+    await openDetail(page, backend, "full-root");
+    const root = page.getByTestId("disk-warning-root");
+    await expect(root).toContainText("Root disk nearly full");
+    await expect(root).toContainText("volume and your work are untouched");
+    await expectNoAxeViolations(page, "disk warning");
+    await root.getByRole("button", { name: /Reset root disk/ }).click();
+    const confirm = page.getByRole("alertdialog");
+    await expect(confirm).toContainText("The volume, with your repositories");
+    await expectNoAxeViolations(page, "reset dialog");
+    await confirm.getByRole("button", { name: "Reset root disk" }).click();
+    await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);
   });
 });

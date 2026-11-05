@@ -351,6 +351,8 @@ struct Background {
     _sign_in_notices: AbortOnDrop,
     // Asks Microsoft's editor server to switch to a staged build when no window is on it.
     _editor_updates: AbortOnDrop,
+    // Reads the disks' use now and then and warns when one reaches the threshold.
+    _disk_watch: AbortOnDrop,
 }
 
 /// Aborts its task when dropped, so a forwarder never outlives the host.
@@ -615,6 +617,7 @@ impl<R: Runtime + Clone> Host<R> {
             service.clone(),
             editor_windows.clone(),
         ));
+        let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
         steps.push(Step::WorkspacesReady);
 
         let services = Services::new(
@@ -669,6 +672,7 @@ impl<R: Runtime + Clone> Host<R> {
                 _git_changes: git_changes,
                 _sign_in_notices: sign_in_notices,
                 _editor_updates: editor_updates,
+                _disk_watch: disk_watch,
             })),
             steps: Mutex::new(steps),
             reconcile: report,

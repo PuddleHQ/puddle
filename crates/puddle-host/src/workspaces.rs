@@ -68,7 +68,7 @@ use crate::git_hosts::{
 };
 use crate::injection::Injection;
 use crate::kubernetes::{kubernetes_key, kubernetes_problem};
-use crate::merge_notice::{merge_notice_prefix, merge_notices};
+use crate::merge_notice::{merge_notice_prefix, settle_merge_notices};
 
 #[path = "repositories.rs"]
 mod repositories;
@@ -1296,13 +1296,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// After a boot: each file of the user's that Puddle merges settings into and could not parse
-    /// is a notice on the workspace, once per start. The file is left as it is, and the start
-    /// goes on. A stop ends the notices, so a start that finds the file repaired has none.
+    /// After the hook ran (a boot or a rewrite of the plan in the running guest): each file of the
+    /// user's that Puddle merges settings into and could not parse is a notice on the workspace.
+    /// The file is left as it is, and the run goes on. A file the hook no longer leaves ends its
+    /// notice, so a repair is noticed at the next run and a stop ends them all.
     fn settle_merge_notices(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
-        for problem in merge_notices(name, &report.left_files()) {
-            self.inner.problems.raise(problem);
-        }
+        settle_merge_notices(&self.inner.problems, name, &report.left_files());
     }
 
     /// After the hook ran with `wanted` authors: a guest whose git is too old for the author rules
@@ -1658,6 +1657,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .map_err(|failure| failure.to_string())?;
         self.announce_loader_replaced(name, &report);
+        self.settle_merge_notices(name, &report);
         Ok(report)
     }
 
@@ -2805,6 +2805,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
+    /// Deletes the workspace's settings document, so one made later under the same name starts
+    /// from the defaults (direct SSH off). A failure is a notice (the file stays and the name
+    /// would inherit it).
+    fn forget_settings_file(&self, name: &WorkspaceName) {
+        let inner = &self.inner;
+        let key = problem_key("settings", name);
+        match inner.settings.delete_workspace(name) {
+            Ok(()) => inner.problems.clear(&key),
+            Err(e) => inner.problems.raise(Problem::new(
+                key,
+                format!("{name}'s settings were not deleted"),
+                format!(
+                    "{e}. A workspace made later with the name {name} would inherit them, direct \
+                     SSH included; delete the file by hand."
+                ),
+            )),
+        }
+    }
+
     /// Deletes what the browser editor kept under `name`: the front's half of Microsoft's secret
     /// key and the windows' browser data. Returns what could not be deleted, one reason each.
     async fn clear_browser_state(&self, name: &WorkspaceName) -> Vec<String> {
@@ -2891,6 +2910,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.name)));
+        self.forget_settings_file(&record.name);
         self.forget_browser_state(&record.name).await;
         Ok(())
     }

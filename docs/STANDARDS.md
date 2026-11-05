@@ -344,6 +344,9 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   returns `None` without printing, a flag set in a job that does not run the test). A new skip still
   needs the review to ask whether CI runs the test.
 - Test names say the behaviour: `denied_request_is_held_until_approved`, not `test_pending_2`.
+- Temp files go through `$TMPDIR`, never a hardcoded `/tmp`: `scripts/check.sh` points it, when the target dir is outside the repository, at a directory under
+  the target dir for the run and removes it afterwards (`CHECK_TMPDIR=DIR` picks another base), so a gate run
+  can't fill a small shared `/tmp`. Big fixtures belong in `tempfile` or `mktemp`, which read `$TMPDIR`.
 
 ## 9. Coverage
 

@@ -278,7 +278,7 @@ async fn layers_that_would_queue_behind_each_other_on_one_connection_still_pull(
         .with_resolver(Arc::new(lab::LabResolver(addr)));
     let proxy_url = proxy.proxy_url().expose().to_owned();
     let _route = proxy.serve().unwrap();
-    let home = tempfile::tempdir().unwrap();
+    let home = puddle_test_kit::private_tempdir();
     // Pulling needs no msb binary: the paths only go into msb's config.json.
     let msb = MsbConfig::new(
         home.path().join("msb-home"),

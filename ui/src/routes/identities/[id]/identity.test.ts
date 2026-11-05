@@ -440,7 +440,7 @@ describe("one identity", () => {
     await fireEvent.click(
       await screen.findByRole("button", { name: "Create workspace" }),
     );
-    await waitFor(() => expect(goto).toHaveBeenCalledWith("/workspaces/web"));
+    await waitFor(() => expect(goto).toHaveBeenCalledWith("/workspaces/w-web"));
     expect(create).toHaveBeenCalledWith({
       name: "web",
       repositories: [{ url: "https://github.com/acme/web", identity_id: 1 }],

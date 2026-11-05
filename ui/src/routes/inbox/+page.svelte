@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { onMount } from "svelte";
   import Undo2 from "@lucide/svelte/icons/undo-2";
@@ -268,7 +269,7 @@
             <span class="mono">{decidedPattern(d)}</span>
             for {d.workspace === null
               ? "every workspace"
-              : `workspace ${d.workspace}`},
+              : `workspace ${workspaces.labelOf(d.workspace)}`},
             {d.expiresAt === null
               ? "permanently"
               : `until ${relativeTime(d.expiresAt, now)}`}

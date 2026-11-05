@@ -36,7 +36,11 @@
       (a, b) => b.request.first_seen - a.request.first_seen,
     )[0]?.request;
     return newest
-      ? { workspace: newest.workspace, host: newest.host, port: newest.port }
+      ? {
+          workspace: workspaces.labelOf(newest.workspace),
+          host: newest.host,
+          port: newest.port,
+        }
       : undefined;
   });
 </script>
@@ -86,9 +90,9 @@
         <WorkspaceCard
           {workspace}
           {now}
-          waiting={waitingBy[workspace.name] ?? 0}
-          progress={workspaces.progress[workspace.name]}
-          oom={workspaces.oom[workspace.name]}
+          waiting={waitingBy[workspace.id] ?? 0}
+          progress={workspaces.progress[workspace.id]}
+          oom={workspaces.oom[workspace.id]}
           onStart={actions.start}
           onStop={actions.stop}
           onConnect={actions.connect}

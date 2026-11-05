@@ -70,6 +70,7 @@ fn fixture() -> Fixture {
             server,
             password_file: password_file.clone(),
             boot_id: dir.path().join("boot_id"),
+            root: dir.path().join("root"),
         }),
         ..Config::default()
     };

@@ -28,12 +28,12 @@ export function forwardText(entry: PortEntry): string {
 export const hasForward = (entry: PortEntry): boolean =>
   entry.forwarded || entry.pinned;
 
-/** Whether `event` is one that changes what the Ports tab of `name` lists. */
-export function isPortsEvent(event: unknown, name: string): boolean {
+/** Whether `event` is one that changes what the Ports tab of workspace `id` lists. */
+export function isPortsEvent(event: unknown, id: string): boolean {
   if (typeof event !== "object" || event === null) return false;
   const { type, workspace } = event as { type?: unknown; workspace?: unknown };
   return (
-    workspace === name &&
+    workspace === id &&
     (type === "workspace_ports_changed" ||
       type === "workspace_port_forward_failed")
   );

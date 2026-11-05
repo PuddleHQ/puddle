@@ -15,7 +15,7 @@
   let { workspace }: { workspace: Workspace } = $props();
 
   const id = $props.id();
-  const name = $derived(workspace.name);
+  const wid = $derived(workspace.id);
   const stored = $derived(workspace.start_folder ?? "");
   let text = $state(untrack(() => workspace.start_folder ?? ""));
   let touched = $state(false);
@@ -38,7 +38,7 @@
     try {
       const { data } = await api.GET("/api/problems");
       if (!data) return;
-      if (startFolderProblemOf(data.problems, name)) exists = false;
+      if (startFolderProblemOf(data.problems, wid)) exists = false;
       else if (exists === false) exists = null;
     } catch {
       // The line below just stays as it was.
@@ -51,7 +51,7 @@
   $effect(() => {
     void status;
     void stored;
-    if (name) void readProblem();
+    if (wid) void readProblem();
   });
 
   // A problem the host raises or ends while the page is open.
@@ -106,7 +106,7 @@
   }
 
   const where = $derived(
-    stored === "" ? "the workspace root" : `/workspaces/${name}/${stored}`,
+    stored === "" ? "the workspace root" : `/workspaces/${wid}/${stored}`,
   );
 </script>
 

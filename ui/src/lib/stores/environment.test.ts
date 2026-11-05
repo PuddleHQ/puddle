@@ -7,13 +7,13 @@ import { EnvironmentStore } from "./environment.svelte.ts";
 let api: FakeEnvApi;
 let source: FakeSource;
 const make = () => new EnvironmentStore(api as never, source);
-const web = { kind: "workspace", name: "web" } as const;
+const web = { kind: "workspace", id: "w-web" } as const;
 
 beforeEach(() => {
   api = new FakeEnvApi();
   source = new FakeSource();
   api.global = [variable("EDITOR", { scope: "global", value: "vim" })];
-  api.own["web"] = [variable("MODE", { value: "dev" })];
+  api.own["w-web"] = [variable("MODE", { value: "dev" })];
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -64,7 +64,7 @@ describe("reading", () => {
       return real(path, init);
     }) as never);
     const slow = store.load(web);
-    api.own["web"] = [variable("MODE", { value: "prod" })];
+    api.own["w-web"] = [variable("MODE", { value: "prod" })];
     await store.load(web, true);
     release?.();
     await slow;
@@ -75,20 +75,20 @@ describe("reading", () => {
     const store = make();
     const stop = store.start(web);
     await vi.waitFor(() => expect(store.status).toBe("ready"));
-    api.own["web"] = [variable("MODE", { value: "prod" })];
+    api.own["w-web"] = [variable("MODE", { value: "prod" })];
     source.emit({ type: "workspace_env_changed", workspace: "docs" });
     await Promise.resolve();
     expect(store.variables[0]?.value).toBe("dev");
-    source.emit({ type: "workspace_env_changed", workspace: "web" });
+    source.emit({ type: "workspace_env_changed", workspace: "w-web" });
     await vi.waitFor(() => expect(store.variables[0]?.value).toBe("prod"));
     api.global = [];
     source.emit({ type: "global_env_changed" });
     await vi.waitFor(() => expect(store.variables).toHaveLength(1));
-    api.own["web"] = [];
+    api.own["w-web"] = [];
     source.resync();
     await vi.waitFor(() => expect(store.variables).toHaveLength(0));
     stop();
-    api.own["web"] = [variable("LATE")];
+    api.own["w-web"] = [variable("LATE")];
     source.resync();
     await Promise.resolve();
     expect(store.variables).toHaveLength(0);
@@ -168,7 +168,7 @@ describe("changing", () => {
       ok: false,
       message: "Puddle couldn't remove the variable.",
     });
-    api.own["web"] = [secret("S", ["a.com"])];
+    api.own["w-web"] = [secret("S", ["a.com"])];
     await store.load(web);
     const real = api.DELETE;
     vi.spyOn(api, "DELETE").mockImplementation((async () => ({

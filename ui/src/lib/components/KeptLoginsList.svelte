@@ -14,13 +14,13 @@
   // after a notice was dismissed; the list holds names and times, never a token.
   let {
     store,
-    workspaceName,
+    workspaceId,
     workspaceLabel,
     reload,
   }: {
     store: KeptLogins;
-    /** The name the notices are keyed by. */
-    workspaceName: string;
+    /** The id the notices are keyed by. */
+    workspaceId: string;
     /** What the confirmation calls the workspace. */
     workspaceLabel: string;
     reload: () => void;
@@ -50,7 +50,7 @@
       failure = result.message;
       return;
     }
-    endKeptLoginNotices(notices, workspaceName, login.name);
+    endKeptLoginNotices(notices, workspaceId, login.name);
     done = `Forgot the ${login.name} login.`;
     askOpen = false;
   }

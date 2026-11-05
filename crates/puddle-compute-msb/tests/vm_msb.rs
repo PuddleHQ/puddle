@@ -220,10 +220,10 @@ async fn vm_mount_sources_outside_the_share_are_refused() {
     );
 }
 
-/// The fork's SSH server (SDK, in Puddle's process) reports a signal-killed command as a failure:
-/// it sends no exit status, so OpenSSH exits 255 and the SDK client reads `-1`; a normal exit
-/// code still arrives as is (msb fork `359f1585`). The reason
-/// [`puddle_compute::Capabilities::ssh_reports_signal_exit`] is `true` on the fork.
+/// msb's SSH server (SDK, in Puddle's process) reports a signal-killed command as a failure: the
+/// guest agent gives no signal number, so the server sends exit status 1, and a normal exit code
+/// still arrives as is (upstream `superradcompany/microsandbox#2011`, carried by the fork). The
+/// reason [`puddle_compute::Capabilities::ssh_reports_signal_exit`] is `true` on the fork.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {
     let settings = support::settings();
@@ -246,10 +246,7 @@ async fn vm_ssh_reports_a_signal_killed_command_as_a_failure() {
     sb.stop().await.unwrap();
     cleanup(&rt, &[&n]).await;
     let (killed, seven) = statuses.expect("SSH exec through the SDK client");
-    assert_eq!(
-        killed, -1,
-        "a signal-killed command must not report a status"
-    );
+    assert_eq!(killed, 1, "a signal-killed command must report a failure");
     assert_eq!(seven, 7, "a normal exit code is reported as is");
 }
 

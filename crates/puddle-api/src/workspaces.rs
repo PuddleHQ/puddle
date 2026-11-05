@@ -1273,6 +1273,20 @@ pub struct BrowserTarget {
     pub settings: puddle_settings::Effective,
     /// How the window signs in to the editor server; `None` when no server is known to run.
     pub login: Option<EditorSignIn>,
+    /// What the window opens in the running server, the same place a desktop editor opens; `None`
+    /// when the workspace has no running guest to name one, and the window opens the server's own
+    /// start page.
+    pub open: Option<OpenTarget>,
+}
+
+/// A place in a running workspace an editor opens: a checkout, the volume root, or the multi-root
+/// file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenTarget {
+    /// The absolute path in the guest.
+    pub path: String,
+    /// Whether `path` is a `.code-workspace` file rather than a folder.
+    pub is_workspace_file: bool,
 }
 
 /// How a window signs in to a workspace's editor server. Either way the window carries the
@@ -1599,6 +1613,7 @@ mod tests {
                 None::<&puddle_settings::WorkspaceSettings>,
             ),
             login: Some(EditorSignIn::Form(Arc::new(SecretLogin(secret.clone())))),
+            open: None,
         };
         let login = target.login.as_ref().unwrap().reader();
         assert_eq!(

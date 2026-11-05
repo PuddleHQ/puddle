@@ -9,7 +9,7 @@ import {
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const url = vi.hoisted(() => ({ id: "web" }));
+const url = vi.hoisted(() => ({ id: "w-web" }));
 vi.mock("$app/state", () => ({
   page: {
     get params() {
@@ -33,14 +33,14 @@ import Page from "./+page.svelte";
 const { api, workspace } = h;
 
 beforeEach(() => {
-  url.id = "web";
+  url.id = "w-web";
   workspaces.list = [
     workspace("web", { status: "running" }),
     workspace("docs", { status: "stopped" }),
   ];
   api.global = [variable("EDITOR", { scope: "global", value: "vim" })];
   api.own = {
-    web: [
+    "w-web": [
       variable("MODE", { value: "dev" }),
       secret("TOKEN", ["api.example.com"]),
     ],
@@ -101,7 +101,7 @@ describe("the table", () => {
   });
 
   it("says both kinds are read at the start of a stopped workspace", async () => {
-    url.id = "docs";
+    url.id = "w-docs";
     render(Page);
     expect(
       await screen.findByText(/Both kinds are read when the workspace starts/),
@@ -111,7 +111,7 @@ describe("the table", () => {
   });
 
   it("marks a global variable the workspace's own hides", async () => {
-    api.own["web"] = [variable("EDITOR", { value: "nano" })];
+    api.own["w-web"] = [variable("EDITOR", { value: "nano" })];
     render(Page);
     await table();
     const hidden = screen
@@ -131,7 +131,7 @@ describe("the table", () => {
     render(Page);
     expect(screen.getByText(/Loading environment/)).toBeTruthy();
     cleanup();
-    url.id = "docs";
+    url.id = "w-docs";
     api.global = [];
     render(Page);
     expect(await screen.findByText(/no global ones reach it/)).toBeTruthy();
@@ -523,7 +523,7 @@ describe("changing a row", () => {
     });
     await fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(api.own["web"]?.map((v) => v.name)).toContain("EDITOR");
+    expect(api.own["w-web"]?.map((v) => v.name)).toContain("EDITOR");
   });
 
   it("removes a plain variable at once", async () => {
@@ -533,7 +533,7 @@ describe("changing a row", () => {
       within(row).getByRole("button", { name: "Remove MODE" }),
     );
     await waitFor(() =>
-      expect(api.own["web"]?.map((v) => v.name)).toEqual(["TOKEN"]),
+      expect(api.own["w-web"]?.map((v) => v.name)).toEqual(["TOKEN"]),
     );
     await waitFor(() =>
       expect(toasts.items.at(-1)?.message).toBe("Removed MODE."),
@@ -562,7 +562,7 @@ describe("changing a row", () => {
       within(dialog).getByRole("button", { name: "Remove secret" }),
     );
     await waitFor(() =>
-      expect(api.own["web"]?.map((v) => v.name)).toEqual(["MODE"]),
+      expect(api.own["w-web"]?.map((v) => v.name)).toEqual(["MODE"]),
     );
   });
 

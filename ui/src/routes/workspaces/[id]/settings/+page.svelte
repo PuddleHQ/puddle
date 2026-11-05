@@ -46,9 +46,9 @@
   let captureHint = $state(false);
 
   // Reload only for another workspace, not on every status change of this one.
-  const name = $derived(workspace?.name);
+  const wid = $derived(workspace?.id);
   $effect(() => {
-    if (name) void settings.load(name);
+    if (wid) void settings.load(wid);
   });
 
   // The kept logins come from Puddle's own record, so the list is cheap to read again when the
@@ -65,8 +65,8 @@
   let lastDirectSsh: boolean | undefined;
   $effect(() => {
     const now = directSsh;
-    if (lastDirectSsh !== undefined && now !== lastDirectSsh && name) {
-      void settings.load(name, true);
+    if (lastDirectSsh !== undefined && now !== lastDirectSsh && wid) {
+      void settings.load(wid, true);
     }
     lastDirectSsh = now;
   });
@@ -352,7 +352,7 @@
       </div>
       <KeptLoginsList
         store={kept}
-        workspaceName={workspace.name}
+        workspaceId={workspace.id}
         workspaceLabel={workspace.display_name}
         reload={() => void kept.load(workspace.id)}
       />

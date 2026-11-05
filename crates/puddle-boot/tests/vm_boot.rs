@@ -284,6 +284,79 @@ async fn vm_boot_hook_docker_dind() {
     Box::pin(check_image(FakeRuntime::DIND, "dind")).await;
 }
 
+/// How many stop/start rounds [`vm_docker_dind_answers_after_every_restart`] makes.
+const DIND_ROUNDS: u32 = 25;
+
+/// What one `docker:dind` boot came to: the daemon answers (`Ok`), or its entrypoint exited and
+/// what the guest said (`Err`). A daemon that does neither within the wait fails the test there.
+async fn dockerd_answers<S: Sandbox>(sb: &GatedSandbox<S>) -> Result<(), String> {
+    eventually_async(
+        "dockerd to answer or its entrypoint to exit",
+        Duration::from_secs(60),
+        || async {
+            let (code, version) =
+                sh(sb, "docker version --format '{{.Server.Version}}' 2>&1").await;
+            if code == 0 && !version.is_empty() {
+                return Ok(Ok(()));
+            }
+            // The entrypoint (dockerd) has exited this boot: it will not come up.
+            let (ended, said) = sh(sb, "cat /run/puddle/entrypoint.exit").await;
+            if ended != 0 {
+                return Err(format!("docker version: {version}"));
+            }
+            let (_, log) = sh(sb, "tail -n 5 /run/puddle/entrypoint.log").await;
+            Ok(Err(format!(
+                "docker version: {version}; entrypoint.exit: {said}; entrypoint.log tail:\n{log}"
+            )))
+        },
+    )
+    .await
+}
+
+/// A stop gives dockerd its SIGTERM and the time to shut down, so its state survives any number
+/// of restarts. dockerd runs detached from the command that started it (the image's entrypoint);
+/// when a stop kills it instead, its network store is left half-written and a later boot's dockerd
+/// quits with "conflicts with network ... (docker0)", on every boot after that.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_docker_dind_answers_after_every_restart() {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let image = ImageRef::new(FakeRuntime::DIND).unwrap();
+    let config = rt.pull_image(&image).await.unwrap();
+    let plan = BootPlan::builder(&config).build().unwrap();
+    let dir = assets_dir(rt, "dindr");
+    let assets = write_assets(&dir).unwrap();
+    let name = sandbox_name(&settings, "dindr");
+    let spec = with_boot_mounts(
+        SandboxSpec::new(name.clone(), image),
+        assets,
+        Some(&agent_binary(&dir)),
+    );
+    let gate = Gate::new();
+    let hook = BootHook::new();
+    let mut sb = hook.create(rt, spec, &plan, &gate).await.unwrap();
+    let mut without = Vec::new();
+    for round in 0..=DIND_ROUNDS {
+        if let Err(said) = dockerd_answers(&sb).await {
+            eprintln!("boot {round}: no dockerd: {said}");
+            without.push(round);
+        }
+        if round == DIND_ROUNDS {
+            break;
+        }
+        sb.stop().await.unwrap();
+        sb = hook.start(rt, &name, &plan, &gate).await.unwrap();
+    }
+    sb.stop().await.unwrap();
+    rt.remove(&name).await.unwrap();
+    eprintln!(
+        "{} of {} boots without dockerd",
+        without.len(),
+        DIND_ROUNDS + 1
+    );
+    assert_eq!(without, Vec::<u32>::new(), "boots without dockerd");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_image_without_sh_gives_a_clear_error() {
     let (rt, settings) = runtime().await;

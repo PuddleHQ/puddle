@@ -35,8 +35,12 @@
   let cancelExport = false;
 
   const workspaces = $derived(
-    filter.workspace !== "" && !store.workspaces.includes(filter.workspace)
-      ? [...store.workspaces, filter.workspace].sort()
+    filter.workspace !== "" &&
+      !store.workspaces.some((w) => w.id === filter.workspace)
+      ? [
+          ...store.workspaces,
+          { id: filter.workspace, label: filter.workspace },
+        ].sort((a, b) => a.label.localeCompare(b.label))
       : store.workspaces,
   );
   const filtered = $derived(isFiltered(filter));
@@ -181,7 +185,7 @@
     <label for="f-workspace">Workspace</label>
     <select id="f-workspace" bind:value={filter.workspace} onchange={apply}>
       <option value="">All workspaces</option>
-      {#each workspaces as name (name)}<option value={name}>{name}</option
+      {#each workspaces as w (w.id)}<option value={w.id}>{w.label}</option
         >{/each}
     </select>
   </div>

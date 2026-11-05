@@ -26,8 +26,8 @@ beforeEach(() => {
 
 describe("the checkout listing", () => {
   it("reads the listing and keeps it", async () => {
-    api.checkouts["dev"] = listing([checkout("api")]);
-    await store.load("dev");
+    api.checkouts["w-dev"] = listing([checkout("api")]);
+    await store.load("w-dev");
     expect(store.status).toBe("ready");
     expect(store.listing?.checkouts.map((c) => c.directory)).toEqual(["api"]);
   });
@@ -37,19 +37,19 @@ describe("the checkout listing", () => {
       status: 404,
       message: "no such workspace",
     });
-    await store.load("dev");
+    await store.load("w-dev");
     expect(store.status).toBe("failed");
     expect(store.error).toBe("No such workspace.");
     api.down = true;
-    await store.load("dev");
+    await store.load("w-dev");
     expect(store.error).toBe("Puddle's service isn't answering.");
   });
 
   it("keeps the last listing when a later read fails", async () => {
-    api.checkouts["dev"] = listing([checkout("api")]);
-    await store.load("dev");
+    api.checkouts["w-dev"] = listing([checkout("api")]);
+    await store.load("w-dev");
     api.down = true;
-    await store.load("dev", true);
+    await store.load("w-dev", true);
     expect(store.status).toBe("ready");
     expect(store.listing?.checkouts).toHaveLength(1);
     expect(store.error).toBe("Puddle's service isn't answering.");
@@ -58,31 +58,31 @@ describe("the checkout listing", () => {
       status: 409,
       message: "busy",
     });
-    await store.load("dev", true);
+    await store.load("w-dev", true);
     expect(store.status).toBe("ready");
     expect(store.error).toBe("Busy.");
   });
 
   it("forgets the listing of another workspace", async () => {
     api.list.push(workspace("other", { status: "running" }));
-    api.checkouts["dev"] = listing([checkout("api")]);
-    await store.load("dev");
-    api.checkouts["other"] = listing([]);
-    await store.load("other");
+    api.checkouts["w-dev"] = listing([checkout("api")]);
+    await store.load("w-dev");
+    api.checkouts["w-other"] = listing([]);
+    await store.load("w-other");
     expect(store.listing?.checkouts).toEqual([]);
   });
 
   it("never lets a slow answer overwrite a newer one", async () => {
-    api.checkouts["dev"] = listing([checkout("old")]);
-    const first = store.load("dev");
-    api.checkouts["dev"] = listing([checkout("new")]);
-    await store.load("dev", true);
+    api.checkouts["w-dev"] = listing([checkout("old")]);
+    const first = store.load("w-dev");
+    api.checkouts["w-dev"] = listing([checkout("new")]);
+    await store.load("w-dev", true);
     await first;
     expect(store.listing?.checkouts[0]?.directory).toBe("new");
   });
 
   it("never lets a slow failure replace a newer answer", async () => {
-    api.checkouts["dev"] = listing([checkout("new")]);
+    api.checkouts["w-dev"] = listing([checkout("new")]);
     const read = api.GET;
     let fail!: () => void;
     const gate = new Promise<void>(
@@ -93,8 +93,8 @@ describe("the checkout listing", () => {
       await gate;
       return read(...args);
     }) as never;
-    const first = store.load("dev");
-    await store.load("dev", true);
+    const first = store.load("w-dev");
+    await store.load("w-dev", true);
     fail();
     await first;
     expect(store.status).toBe("ready");
@@ -103,24 +103,24 @@ describe("the checkout listing", () => {
   });
 
   it("is read again when the workspace's list, state or operations change", async () => {
-    const stop = store.start("dev");
+    const stop = store.start("w-dev");
     await vi.waitFor(() => expect(store.status).toBe("ready"));
     const reads = () =>
       api.calls.filter((c) => c === "GET /api/workspaces/{id}/checkouts")
         .length;
     const before = reads();
-    source.emit({ type: "workspace_repositories_changed", workspace: "dev" });
+    source.emit({ type: "workspace_repositories_changed", workspace: "w-dev" });
     await vi.waitFor(() => expect(reads()).toBe(before + 1));
     source.resync();
     await vi.waitFor(() => expect(reads()).toBe(before + 2));
     stop();
-    source.emit({ type: "workspace_repositories_changed", workspace: "dev" });
+    source.emit({ type: "workspace_repositories_changed", workspace: "w-dev" });
     expect(reads()).toBe(before + 2);
   });
 
   it("knows which events can change it", () => {
     const event = (e: Record<string, unknown>) =>
-      touchesCheckouts({ workspace: "dev", ...e }, "dev");
+      touchesCheckouts({ workspace: "w-dev", ...e }, "w-dev");
     expect(event({ type: "workspace_repositories_changed" })).toBe(true);
     expect(event({ type: "status_changed", status: "running" })).toBe(true);
     expect(event({ type: "workspace_progress", step: "done" })).toBe(true);
@@ -128,16 +128,19 @@ describe("the checkout listing", () => {
     expect(event({ type: "workspace_progress", step: "cloning" })).toBe(false);
     expect(event({ type: "oom_kill" })).toBe(false);
     expect(
-      touchesCheckouts({ type: "status_changed", workspace: "other" }, "dev"),
+      touchesCheckouts(
+        { type: "status_changed", workspace: "w-other" },
+        "w-dev",
+      ),
     ).toBe(false);
-    expect(touchesCheckouts("text", "dev")).toBe(false);
-    expect(touchesCheckouts(null, "dev")).toBe(false);
+    expect(touchesCheckouts("text", "w-dev")).toBe(false);
+    expect(touchesCheckouts(null, "w-dev")).toBe(false);
   });
 });
 
 describe("changing the list", () => {
   beforeEach(async () => {
-    await store.load("dev");
+    await store.load("w-dev");
   });
 
   it("adds a clone and reads the workspace and the listing again", async () => {

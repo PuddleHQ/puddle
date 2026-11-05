@@ -26,14 +26,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_agent_proto::editor::{EditorServer, ServerKind};
+use puddle_agent_proto::editor::{EditorServer, NEEDS_GLIBC, ServerKind};
 use puddle_agent_proto::forward::OpenError;
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{
     AttachMode, Attached, BrowserTarget, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName,
     EditorLogin, EditorSignIn, GitSetup, KeptLogin, KeptLogins, LaunchError, Launcher, Listing,
-    LocalSource, NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck, StartFolder,
-    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    LocalSource, NewWorkspace, OpenTarget, Operation, RepoFindings, Repository, ShellInitCheck,
+    StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -68,7 +68,7 @@ use crate::git_hosts::{
 };
 use crate::injection::Injection;
 use crate::kubernetes::{kubernetes_key, kubernetes_problem};
-use crate::merge_notice::{merge_notice_prefix, merge_notices};
+use crate::merge_notice::{merge_notice_prefix, settle_merge_notices};
 
 #[path = "repositories.rs"]
 mod repositories;
@@ -459,6 +459,16 @@ fn no_link_message(workspace: &WorkspaceName, why: NoLink) -> String {
     }
 }
 
+/// What the user is told when the guest gave no editor password. An image the editor cannot run
+/// in never gets one, so that case says why instead of "yet".
+fn password_failure(err: &puddle_front::Unreachable) -> String {
+    if err.0 == NEEDS_GLIBC {
+        format!("{err}; use desktop VS Code over direct SSH or a glibc image")
+    } else {
+        format!("the editor has no password to sign in with yet: {err}")
+    }
+}
+
 impl EditorLogin for GuestLogin {
     fn password(&self) -> BoxFuture<'_, Result<String, LaunchError>> {
         Box::pin(async move {
@@ -473,11 +483,10 @@ impl EditorLogin for GuestLogin {
                         .map_err(|why| LaunchError::new(no_link_message(&self.workspace, why)))?;
                     Arc::new(link)
                 };
-            editor.password().await.map_err(|err| {
-                LaunchError::new(format!(
-                    "the editor has no password to sign in with yet: {err}"
-                ))
-            })
+            editor
+                .password()
+                .await
+                .map_err(|err| LaunchError::new(password_failure(&err)))
         })
     }
 }
@@ -1296,13 +1305,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// After a boot: each file of the user's that Puddle merges settings into and could not parse
-    /// is a notice on the workspace, once per start. The file is left as it is, and the start
-    /// goes on. A stop ends the notices, so a start that finds the file repaired has none.
+    /// After the hook ran (a boot or a rewrite of the plan in the running guest): each file of the
+    /// user's that Puddle merges settings into and could not parse is a notice on the workspace.
+    /// The file is left as it is, and the run goes on. A file the hook no longer leaves ends its
+    /// notice, so a repair is noticed at the next run and a stop ends them all.
     fn settle_merge_notices(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
-        for problem in merge_notices(name, &report.left_files()) {
-            self.inner.problems.raise(problem);
-        }
+        settle_merge_notices(&self.inner.problems, name, &report.left_files());
     }
 
     /// After the hook ran with `wanted` authors: a guest whose git is too old for the author rules
@@ -1604,8 +1612,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         {
             state.editor_file.clone_from(&replanned.editor_file);
         }
-        match report.left_files().first() {
-            Some((path, why)) if path.ends_with(".code-workspace") => inner.problems.raise(
+        let left = report.left_files();
+        match left
+            .iter()
+            .find(|(path, _)| path.ends_with(".code-workspace"))
+        {
+            Some((path, why)) => inner.problems.raise(
                 Problem::new(
                     key,
                     format!("Puddle could not update the editor's file in {name}"),
@@ -1658,6 +1670,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .map_err(|failure| failure.to_string())?;
         self.announce_loader_replaced(name, &report);
+        self.settle_merge_notices(name, &report);
         Ok(report)
     }
 
@@ -2055,14 +2068,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let guest = entry.and_then(|e| e.guest.as_ref());
         let user = guest.map_or(SessionUser::Root, |g| g.session_user);
-        let (path, is_workspace_file) = match guest {
-            Some(guest) => match &guest.editor_file {
-                Some(file) => (file.path().clone(), true),
-                None => (
-                    crate::editor_file::start_path(&guest.root, record.start_folder.as_ref()),
-                    false,
-                ),
-            },
+        let open = match guest {
+            Some(guest) => Self::open_target(record, guest),
             None => return Err(format!("{name} is not running; start it first")),
         };
         let key = problem_key("ssh", name);
@@ -2076,9 +2083,26 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.clear(&key);
         Ok(DesktopTarget {
             ssh_host: ssh_host(name),
-            path: path.as_str().to_owned(),
-            is_workspace_file,
+            path: open.path,
+            is_workspace_file: open.is_workspace_file,
         })
+    }
+
+    /// What an editor opens in the running `guest`: the multi-root file when the editor opens one,
+    /// else the start folder or the volume root. The desktop and the browser attach share it.
+    fn open_target(record: &WorkspaceRecord, guest: &GuestState) -> OpenTarget {
+        match &guest.editor_file {
+            Some(file) => OpenTarget {
+                path: file.path().as_str().to_owned(),
+                is_workspace_file: true,
+            },
+            None => OpenTarget {
+                path: crate::editor_file::start_path(&guest.root, record.start_folder.as_ref())
+                    .as_str()
+                    .to_owned(),
+                is_workspace_file: false,
+            },
+        }
     }
 
     /// Which server the browser editor runs at this start: Microsoft's only when the user chose
@@ -2141,6 +2165,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 ));
             }
         };
+        // Read under the live lock, released before the launcher is asked.
+        let open = {
+            let live = self.inner.live.lock().await;
+            live.get(name)
+                .and_then(|e| e.guest.as_ref())
+                .map(|guest| Self::open_target(record, guest))
+        };
         let target = BrowserTarget {
             origin: puddle_front::origin_of(self.inner.front_addr.port(), name),
             front: self.inner.front_addr,
@@ -2159,6 +2190,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     EditorSignIn::Form(login)
                 }
             }),
+            open,
         };
         match self.inner.launcher.open_browser(record, &target).await {
             Ok(()) => Attached::opened(),
@@ -2748,7 +2780,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 problem_key("start-refused", name),
                 format!("{name} was not started"),
                 format!(
-                    "Puddle refused to start it, and nothing was attached: {cause}. {}",
+                    "The runtime refused to start it, and nothing was attached: {cause}. {}",
                     cause.way_out()
                 ),
             )
@@ -2803,6 +2835,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.quiesce(name, false).await;
         self.inner.reports.end(name);
         Ok(())
+    }
+
+    /// Deletes the workspace's settings document, so one made later under the same name starts
+    /// from the defaults (direct SSH off). A failure is a notice (the file stays and the name
+    /// would inherit it).
+    fn forget_settings_file(&self, name: &WorkspaceName) {
+        let inner = &self.inner;
+        let key = problem_key("settings", name);
+        match inner.settings.delete_workspace(name) {
+            Ok(()) => inner.problems.clear(&key),
+            Err(e) => inner.problems.raise(Problem::new(
+                key,
+                format!("{name}'s settings were not deleted"),
+                format!(
+                    "{e}. A workspace made later with the name {name} would inherit them, direct \
+                     SSH included; delete the file by hand."
+                ),
+            )),
+        }
     }
 
     /// Deletes what the browser editor kept under `name`: the front's half of Microsoft's secret
@@ -2891,6 +2942,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.name)));
+        self.forget_settings_file(&record.name);
         self.forget_browser_state(&record.name).await;
         Ok(())
     }
@@ -3630,5 +3682,19 @@ mod no_link_words {
         let late = no_link_message(&acme, NoLink::NotConnected);
         assert!(late.starts_with("acme is running"), "{late}");
         assert!(late.contains("open the editor again in a moment"), "{late}");
+    }
+
+    #[test]
+    fn an_image_the_editor_cannot_run_in_is_named_not_waited_for() {
+        let musl = puddle_front::Unreachable(NEEDS_GLIBC.to_owned());
+        let said = password_failure(&musl);
+        assert!(said.starts_with(NEEDS_GLIBC), "{said}");
+        assert!(said.contains("desktop VS Code over direct SSH"), "{said}");
+        assert!(!said.contains("yet"), "{said}");
+        let early = password_failure(&puddle_front::Unreachable("not started".to_owned()));
+        assert_eq!(
+            early,
+            "the editor has no password to sign in with yet: not started"
+        );
     }
 }

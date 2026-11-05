@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::FutureExt as _;
-use puddle_agent_proto::editor::{EditorServer, ServerKind};
+use puddle_agent_proto::editor::{EditorServer, NEEDS_GLIBC, ServerKind};
 use puddle_agent_proto::{AgentMessage, EditorProblemKind};
 use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, mpsc, watch};
@@ -257,6 +257,8 @@ pub struct EditorConfig {
     /// The kernel's id of this boot ([`BOOT_ID_FILE`]). A password is kept only in the boot it was
     /// made in: the guest's `/run` is on its disk, so a file there outlives a stop and start.
     pub boot_id: PathBuf,
+    /// The guest's root folder, where its loaders are looked for ([`unsupported_image`]).
+    pub root: PathBuf,
 }
 
 /// Where the kernel keeps the id of the running boot.
@@ -708,8 +710,42 @@ async fn update_loop(control: Arc<Control>, fetch: Arc<impl Fetch>) {
     }
 }
 
+/// The loader directories of a guest, relative to its root.
+const LOADER_DIRS: [&str; 4] = ["lib", "lib64", "usr/lib", "usr/lib64"];
+
+/// Whether the guest under `root` has musl's loader and no glibc loader: neither editor server
+/// starts there, because the node they bundle is linked against glibc. Alpine with `gcompat` has
+/// a glibc loader name and counts as glibc.
+#[must_use]
+pub fn musl_without_glibc(root: &Path) -> bool {
+    let (mut musl, mut glibc) = (false, false);
+    for dir in LOADER_DIRS {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            musl |= name.starts_with("ld-musl-");
+            glibc |= name.starts_with("ld-linux-");
+        }
+    }
+    musl && !glibc
+}
+
+/// What the host is told of an image the editor cannot run in, `None` for any other.
+#[must_use]
+pub fn unsupported_image(root: &Path) -> Option<&'static str> {
+    musl_without_glibc(root).then_some(NEEDS_GLIBC)
+}
+
 async fn serve_forever(config: &EditorConfig, fetch: &impl Fetch, control: &Arc<Control>) {
     let server = &config.server;
+    if let Some(reason) = unsupported_image(&config.root) {
+        tracing::warn!(reason, "no editor server can run in this image");
+        control.install_failed(reason);
+        return;
+    }
     if server.kind == ServerKind::CodeServer {
         let program = Path::new(&server.dir).join("bin/code-server");
         if !program.is_file() {
@@ -1092,6 +1128,58 @@ mod tests {
         assert!(has_a_peer(&real).await);
     }
 
+    fn guest_with(files: &[&str]) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        for file in files {
+            let path = root.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn a_guest_with_musl_and_no_glibc_loader_cannot_run_the_editor() {
+        let alpine = guest_with(&["lib/ld-musl-x86_64.so.1", "usr/lib/libc.musl-x86_64.so.1"]);
+        assert!(musl_without_glibc(alpine.path()));
+        assert_eq!(unsupported_image(alpine.path()), Some(NEEDS_GLIBC));
+    }
+
+    #[test]
+    fn glibc_images_and_musl_with_a_glibc_loader_name_are_left_alone() {
+        let debian = guest_with(&[
+            "lib64/ld-linux-x86-64.so.2",
+            "lib/x86_64-linux-gnu/libc.so.6",
+        ]);
+        assert_eq!(unsupported_image(debian.path()), None);
+        let gcompat = guest_with(&["lib/ld-musl-x86_64.so.1", "lib/ld-linux-x86-64.so.2"]);
+        assert_eq!(unsupported_image(gcompat.path()), None);
+        let bare = guest_with(&["etc/hostname"]);
+        assert_eq!(unsupported_image(bare.path()), None);
+        assert_eq!(unsupported_image(&bare.path().join("missing")), None);
+    }
+
+    #[tokio::test]
+    async fn on_a_musl_image_the_install_problem_says_why_and_no_server_starts() {
+        let root = guest_with(&["lib/ld-musl-aarch64.so.1"]);
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = EditorConfig {
+            server: EditorServer::new("/nonexistent/release", "/nonexistent/work", 120),
+            password_file: dir.path().join("run/editor-password"),
+            boot_id: dir.path().join("boot_id"),
+            root: root.path().to_path_buf(),
+        };
+        let control = Control::new(&config.server);
+        let mut problem = control.install_problem();
+        run_controlled(config.clone(), Offline, Arc::clone(&control)).await;
+        problem.changed().await.unwrap();
+        assert_eq!(problem.borrow().as_deref(), Some(NEEDS_GLIBC));
+        assert!(!config.password_file.exists(), "a server was started");
+        // The same agent on a glibc image reports nothing of the kind.
+        config.root = dir.path().to_path_buf();
+        assert_eq!(unsupported_image(&config.root), None);
+    }
+
     #[test]
     fn passwords_are_long_hex_and_different_every_time() {
         let a = new_password().unwrap();
@@ -1135,6 +1223,7 @@ mod tests {
             server: server(),
             password_file: dir.path().join("run/editor-password"),
             boot_id: dir.path().join("boot_id"),
+            root: dir.path().join("root"),
         };
         std::fs::write(&config.boot_id, "boot-one\n").unwrap();
         let first = boot_password(&config).unwrap();
@@ -1281,6 +1370,7 @@ mod tests {
             server,
             password_file: dir.path().join("editor-password"),
             boot_id: dir.path().join("boot_id"),
+            root: dir.path().join("root"),
         };
         let code_server = config(EditorServer::new(data.to_str().unwrap(), "/f", 300));
         // Each path must exist: a missing one is an error, so none is skipped.
@@ -1387,6 +1477,7 @@ mod tests {
             server,
             password_file: dir.join("password"),
             boot_id: dir.join("boot_id"),
+            root: dir.join("root"),
         };
         let service = Arc::new(WrongHash {
             downloads: std::sync::atomic::AtomicUsize::new(0),

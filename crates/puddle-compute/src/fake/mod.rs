@@ -442,6 +442,26 @@ impl FakeRuntime {
             .unwrap_or_default()
     }
 
+    /// The owned disks `name` was made with. Empty when there is no such sandbox.
+    #[must_use]
+    pub fn owned_disks(&self, name: &SandboxName) -> Vec<crate::OwnedDisk> {
+        self.lock()
+            .sandboxes
+            .get(name.as_str())
+            .map(|r| r.spec.owned_disks.clone())
+            .unwrap_or_default()
+    }
+
+    /// The named volumes `name` was made with. Empty when there is no such sandbox.
+    #[must_use]
+    pub fn volume_mounts(&self, name: &SandboxName) -> Vec<crate::VolumeMount> {
+        self.lock()
+            .sandboxes
+            .get(name.as_str())
+            .map(|r| r.spec.volumes.clone())
+            .unwrap_or_default()
+    }
+
     /// Simulates the VM dying: a running sandbox becomes `Crashed`. Returns whether it was
     /// running.
     #[must_use = "false means the sandbox wasn't running"]

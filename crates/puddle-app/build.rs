@@ -25,7 +25,8 @@ const COMMON_CONTROLS_V6: &str = "/MANIFESTDEPENDENCY:type='win32' name='Microso
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|env| env == "msvc") {
         println!("cargo::rustc-link-arg-bins=/STACK:{WINDOWS_MAIN_STACK_BYTES}");
-        // Integration tests only: cargo has no such key for the library's own unit tests.
+        // Integration tests only: cargo has no such key for the library's own unit tests, which
+        // stay free of the plugin instead (`shell::with_plugins`).
         println!("cargo::rustc-link-arg-tests={COMMON_CONTROLS_V6}");
         println!("cargo::rustc-link-arg-tests=/MANIFEST:EMBED");
     }

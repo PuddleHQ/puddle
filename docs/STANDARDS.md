@@ -656,6 +656,10 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
   `ci.yml`, `ci/advisories-issue.sh rust`) opens or rewrites one issue titled "Dependency advisories: cargo deny check
   advisories fails" with the advisory IDs, crates and a link to the run, closes it on the first clean run, and fails visibly.
   `pre-push` skips `advisories`; `scripts/check.sh advisories` runs it by hand.
+  The gate runs through `ci/deny-fresh.sh`, which runs `cargo deny fetch all` first: cargo-deny judges against the advisory
+  database and registry index on disk, so an old copy lets a crate yanked since pass locally and fail in the nightly. The script
+  prints the database's age when it is over a day (or missing), and a fetch that fails (offline) warns and judges on the old copy.
+  Self-test: `ci/deny-fresh-test.sh`, with a stand-in cargo-deny and the fixture `ci/fixtures/yanked.lock`.
 - **npm advisories follow the same rule.** Gate `ui-audit` (`npm audit`, section 13) runs in its own job,
   `advisories (npm)`, on the same events as `advisories`: pull requests to `main`, pushes, nightly and by hand, never on a
   pull request to `develop` or a merge queue run. The nightly keeps a second issue, "Dependency advisories: npm audit fails"

@@ -36,7 +36,9 @@ has "$tmp/sum" 'top level of' "low snap goes deep"
 
 echo 80 >"$tmp/free"
 : >"$tmp/sum"
-sleep 300 &
+# The victim's argv carries this run's pid, so the pattern below matches it and nothing else on the machine: another
+# run of this test, or any `sleep 300` (a pre-commit hook of another checkout), is not a target.
+sleep "300.$$" &
 victim=$!
 "$script" guard roomy >"$tmp/out" 2>&1 &
 g=$!
@@ -48,8 +50,9 @@ has "$tmp/rt/disk-watch-roomy.log" 'free=80GB' "guard samples"
 has "$tmp/sum" 'disk guard roomy: free 80 GB now, lowest 80 GB' "guard end line"
 lacks "$tmp/out" '::error' "guard with room"
 
-# The pattern names the victim by its argv; the guard itself must survive it.
-DISK_WATCH_KILL='sleep 3[0]0$' "$script" guard full >"$tmp/out" 2>&1 &
+# The pattern names the victim by its argv; the guard itself must survive it (the pattern reaches it by env, not
+# argv). `[.]` is a literal dot, and the pid ties the pattern to this run's victim.
+DISK_WATCH_KILL="sleep 300[.]$$\$" "$script" guard full >"$tmp/out" 2>&1 &
 g=$!
 sleep 0.5
 echo 2 >"$tmp/free"

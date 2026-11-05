@@ -99,13 +99,13 @@ pub(crate) async fn create_rule_set(
     let set = blocking(move || {
         Ok(state
             .store
-            .create_rule_set(&body.name, &body.description, Actor::Api)?)
+            .create_rule_set(&body.name, &body.description, body.fill, Actor::Api)?)
     })
     .await?;
     Ok((StatusCode::CREATED, Json(RuleSetView::from_store(set))))
 }
 
-/// Renames a rule set of yours or changes its description.
+/// Renames a rule set of yours or changes its description or colour.
 #[utoipa::path(
     put,
     path = "/api/rule-sets/{id}",
@@ -127,7 +127,7 @@ pub(crate) async fn update_rule_set(
     let set = blocking(move || {
         Ok(state
             .store
-            .update_rule_set(id, &body.name, &body.description, Actor::Api)?)
+            .update_rule_set(id, &body.name, &body.description, body.fill, Actor::Api)?)
     })
     .await?;
     Ok(Json(RuleSetView::from_store(set)))

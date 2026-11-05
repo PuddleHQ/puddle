@@ -8,7 +8,7 @@
 
   const id = $derived(page.params["id"] ?? "");
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
-  const name = $derived(workspace?.name);
+  const wid = $derived(workspace?.id);
   const store = new ShellInitStore();
   const fid = $props.id();
 
@@ -19,7 +19,7 @@
   let busy = $state(false);
 
   $effect(() => {
-    if (name) return store.start(name);
+    if (wid) return store.start(wid);
   });
 
   const view = $derived(store.view);
@@ -111,7 +111,7 @@
 
     <form onsubmit={save} novalidate>
       <div class="field">
-        <label for="{fid}-text">Script for {workspace.name}</label>
+        <label for="{fid}-text">Script for {workspace.display_name}</label>
         <textarea
           id="{fid}-text"
           class="mono"

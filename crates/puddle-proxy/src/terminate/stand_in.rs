@@ -40,7 +40,7 @@ use base64::alphabet;
 use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
 use memchr::memmem::Finder;
-use puddle_types::Host;
+use puddle_types::{Host, QueryName};
 use zeroize::Zeroizing;
 
 use super::inject::{InjectedHeader, Injection, SecretValue};
@@ -66,9 +66,6 @@ const LENIENT_BASE64: GeneralPurpose = GeneralPurpose::new(
     GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
 );
 
-/// The longest query parameter name a [`Placement::Query`] may have.
-const MAX_QUERY_NAME: usize = 64;
-
 /// Where in a request a stand-in is swapped for its real value. Anywhere else it goes out
 /// unchanged and is reported, also toward its own hosts.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -78,28 +75,10 @@ pub enum Placement {
     #[default]
     Header,
     /// The value of the one query parameter with this name, when the whole value is the
-    /// stand-in. Built with [`Placement::query`].
-    Query(String),
+    /// stand-in.
+    Query(QueryName),
     /// Anywhere in the path (not the query): a path segment, or part of one (`/bot<stand-in>/`).
     Path,
-}
-
-impl Placement {
-    /// The query parameter `name`: 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`.
-    ///
-    /// # Errors
-    /// [`StandInError::QueryName`] for any other name.
-    pub fn query(name: &str) -> Result<Self, StandInError> {
-        let ok = (1..=MAX_QUERY_NAME).contains(&name.len())
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_graphic() && !matches!(b, b'&' | b'=' | b'#' | b'%' | b'+'));
-        if ok {
-            Ok(Self::Query(name.to_owned()))
-        } else {
-            Err(StandInError::QueryName(name.to_owned()))
-        }
-    }
 }
 
 /// Where a stand-in came from.
@@ -152,9 +131,6 @@ pub enum StandInError {
     /// The operating system has no randomness to give.
     #[error("the operating system has no randomness to give")]
     Random,
-    /// A query parameter name is 1 to 64 visible characters, none of `&`, `=`, `#`, `%`, `+`.
-    #[error("{0:?} is not a query parameter name a stand-in can be swapped in")]
-    QueryName(String),
     /// An entry handed to [`StandIns::replace_origin`] is of another origin than the one being
     /// replaced.
     #[error("an entry is not of the origin being replaced")]

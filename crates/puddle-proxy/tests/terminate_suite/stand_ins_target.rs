@@ -51,7 +51,11 @@ fn placed(name: &str, real: &str, placement: Placement) -> (String, StandIn) {
 /// `OWM_KEY` in `appid` and `BOT_TOKEN` in the path, both for `bound.test`.
 fn secrets() -> Secrets {
     let registry = Arc::new(StandIns::new());
-    let (key, entry) = placed("OWM_KEY", REAL_KEY, Placement::query("appid").unwrap());
+    let (key, entry) = placed(
+        "OWM_KEY",
+        REAL_KEY,
+        Placement::Query(puddle_types::QueryName::new("appid").unwrap()),
+    );
     registry.insert(entry).unwrap();
     let (bot, entry) = placed("BOT_TOKEN", REAL_BOT, Placement::Path);
     registry.insert(entry).unwrap();

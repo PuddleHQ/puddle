@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import { describe, rawJson, type AuditEntry } from "#lib/audit/model.ts";
@@ -173,7 +174,7 @@
           </td>
           <td class="mono" title={row.workspace ?? undefined}>
             {#if row.workspace === null}<span class="muted">Puddle</span
-              >{:else}{row.workspace}{/if}
+              >{:else}{workspaces.labelOf(row.workspace)}{/if}
           </td>
           <td>{row.type}</td>
           <td class="mono" title={row.destination ?? undefined}

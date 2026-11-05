@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import DecisionControl from "./DecisionControl.svelte";
   import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
   import type { Choice } from "#lib/decision/model.ts";
@@ -48,7 +49,7 @@
       >{:else}<span class="port">:{request.port}</span>{/if}
   </p>
   <p class="facts">
-    Workspace <b class="mono">{request.workspace}</b> · {request.attempts}
+    Workspace <b class="mono">{workspaces.labelOf(request.workspace)}</b> · {request.attempts}
     {request.attempts === 1 ? "attempt" : "attempts"} · First seen
     <time
       datetime={new Date(request.first_seen).toISOString()}

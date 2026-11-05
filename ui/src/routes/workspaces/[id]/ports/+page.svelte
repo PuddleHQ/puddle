@@ -14,7 +14,7 @@
 
   const id = $derived(page.params["id"] ?? "");
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
-  const name = $derived(workspace?.name);
+  const wid = $derived(workspace?.id);
   const store = new WorkspacePortsStore();
   const fid = $props.id();
 
@@ -28,7 +28,7 @@
   let busy = $state(false);
 
   $effect(() => {
-    if (name) return store.start(name);
+    if (wid) return store.start(wid);
   });
 
   async function forward(
@@ -121,7 +121,7 @@
       </p>
     {:else}
       <div class="wrap">
-        <table aria-label="Ports of {workspace.name}">
+        <table aria-label="Ports of {workspace.display_name}">
           <thead>
             <tr>
               <th scope="col">Port</th>

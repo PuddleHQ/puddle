@@ -36,12 +36,15 @@ impl Space for DriveOf {
 #[derive(Debug)]
 pub(crate) struct Watch {
     said: DiskSpaceLevel,
+    /// The last read failed, and that was already logged.
+    unreadable: bool,
 }
 
 impl Default for Watch {
     fn default() -> Self {
         Self {
             said: DiskSpaceLevel::Ok,
+            unreadable: false,
         }
     }
 }
@@ -50,6 +53,7 @@ impl Watch {
     /// The event for a read that found `level` with `free_bytes` free, or `None` when the level
     /// is the one already said.
     pub(crate) fn observe(&mut self, level: DiskSpaceLevel, free_bytes: u64) -> Option<Event> {
+        self.unreadable = false;
         if level == self.said {
             return None;
         }
@@ -61,8 +65,17 @@ impl Watch {
     }
 }
 
+impl Watch {
+    /// Notes a failed read; true for the first one of a run of failures, so the log gets one
+    /// line per episode and not one per minute.
+    fn note_unreadable(&mut self) -> bool {
+        !std::mem::replace(&mut self.unreadable, true)
+    }
+}
+
 /// One read: measures the drive, classifies it by the lines the settings hold now and says what
-/// changed. A drive the OS will not measure says nothing (the system check shows why).
+/// changed. A drive the OS will not measure says nothing to the app (the system check shows why)
+/// and logs one warning per episode, until a read works again.
 pub(crate) async fn read_once<S: Space>(
     space: &Arc<S>,
     settings: &dyn SettingsRepo,
@@ -73,7 +86,9 @@ pub(crate) async fn read_once<S: Space>(
     let free = match tokio::task::spawn_blocking(move || reading.free_bytes()).await {
         Ok(Ok(free)) => free,
         failed => {
-            tracing::debug!(?failed, "the free space could not be read");
+            if watch.note_unreadable() {
+                tracing::warn!(?failed, "the free space could not be read");
+            }
             return;
         }
     };
@@ -253,11 +268,74 @@ mod tests {
     async fn a_drive_that_cannot_be_read_says_nothing_and_keeps_what_was_said() {
         let mut rig = Rig::new(100 * GB);
         rig.read(10 * GB).await;
-        assert_eq!(rig.read(u64::MAX).await, []);
+        // Under a capture: a read that fails outside one would cache the log call site as off
+        // for the capture test running beside it.
+        let mut said = vec![];
+        logged(async { said = rig.read(u64::MAX).await }).await;
+        assert_eq!(said, []);
         assert_eq!(
             rig.read(10 * GB).await,
             [],
             "still low: not announced twice"
+        );
+    }
+
+    /// The log lines written while `run` polled on this thread.
+    async fn logged<F: Future<Output = ()>>(run: F) -> String {
+        use std::sync::Mutex;
+        #[derive(Clone, Default)]
+        struct Capture(Arc<Mutex<Vec<u8>>>);
+        impl io::Write for Capture {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let capture = Capture::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        // Another test may already have run the call site with no subscriber and cached "off".
+        tracing::callsite::rebuild_interest_cache();
+        run.await;
+        io::Write::flush(&mut capture.clone()).unwrap();
+        let bytes = capture.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_drive_logs_one_warning_per_episode_and_a_good_read_ends_the_episode() {
+        let mut rig = Rig::new(100 * GB);
+        let first = logged(async {
+            rig.read(u64::MAX).await;
+        })
+        .await;
+        assert_eq!(first.matches("WARN").count(), 1, "{first}");
+        assert!(first.contains("could not be read"), "{first}");
+        let again = logged(async {
+            rig.read(u64::MAX).await;
+        })
+        .await;
+        assert_eq!(again, "", "same episode: quiet");
+        let good = logged(async {
+            rig.read(100 * GB).await;
+        })
+        .await;
+        assert_eq!(good, "");
+        let next = logged(async {
+            rig.read(u64::MAX).await;
+        })
+        .await;
+        assert_eq!(
+            next.matches("WARN").count(),
+            1,
+            "a new episode warns again: {next}"
         );
     }
 

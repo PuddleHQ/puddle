@@ -442,6 +442,7 @@ impl Config {
                     server,
                     password_file,
                     boot_id: PathBuf::from(crate::editor::BOOT_ID_FILE),
+                    root: PathBuf::from("/"),
                 }
             });
         config.capture = capture_on.then_some(capture);

@@ -80,7 +80,7 @@ pub(crate) fn token_basic(token: &str) -> String {
 
 /// How the fake host judges a request: a repository whose name has `private` in it needs an
 /// `Authorization` that is a token of this host (or the workspace's own `Bearer mine`); every
-/// other path is public. `broken` makes it refuse every credential (a revoked token).
+/// other path is public, except one with `moved` in it, which answers `302` to another host. `broken` makes it refuse every credential (a revoked token).
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Host {
     pub(crate) revoked: bool,
@@ -102,6 +102,9 @@ impl Host {
         if path.contains("private") && !self.accepts(authorization) {
             return Answer::Unauthorized;
         }
+        if path.contains("moved") {
+            return Answer::Moved;
+        }
         let service = target
             .split_once("service=")
             .map(|(_, rest)| rest.split('&').next().unwrap_or_default().to_owned());
@@ -119,9 +122,17 @@ impl Host {
 }
 
 pub(crate) enum Answer {
-    Ok { content_type: String, body: String },
+    Ok {
+        content_type: String,
+        body: String,
+    },
     Unauthorized,
+    /// A redirect to another host.
+    Moved,
 }
+
+/// Where [`Answer::Moved`] sends the guest.
+pub(crate) const MOVED_TO: &str = "https://elsewhere.test/stolen.git/info/refs";
 
 impl Answer {
     fn reply(self) -> Reply {
@@ -130,6 +141,7 @@ impl Answer {
                 "HTTP/1.1 200 OK\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\n\r\n{body}",
                 body.len()
             )),
+            Self::Moved => Reply::status(302, &format!("location: {MOVED_TO}\r\n"), ""),
             Self::Unauthorized => Reply::status(
                 401,
                 "www-authenticate: Basic realm=\"fake git host\"\r\n",
@@ -217,6 +229,11 @@ impl H2GitRig {
                     .status(200)
                     .header("content-type", content_type)
                     .body(crate::terminate_support::h2_rig::full(body))
+                    .unwrap(),
+                Answer::Moved => http::Response::builder()
+                    .status(302)
+                    .header("location", MOVED_TO)
+                    .body(crate::terminate_support::h2_rig::full(""))
                     .unwrap(),
                 Answer::Unauthorized => http::Response::builder()
                     .status(401)

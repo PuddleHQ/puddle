@@ -139,6 +139,26 @@ fn has_a_peer(conn: &TcpStream) -> bool {
     matches!((conn.local_addr(), conn.peer_addr()), (Ok(local), Ok(peer)) if local != peer)
 }
 
+/// A temporary folder only the current account may enter, whatever the umask. msb refuses a home
+/// (its catalog) with an ancestor that other accounts can write to, and under a umask of `0002` a
+/// plain temporary folder is group-writable: a test that opens an msb home makes it in here.
+///
+/// # Panics
+/// When the folder cannot be made.
+#[must_use]
+pub fn private_tempdir() -> tempfile::TempDir {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("make a private temporary folder for a test")
+    }
+    #[cfg(not(unix))]
+    tempfile::tempdir().expect("make a private temporary folder for a test")
+}
+
 /// A temporary folder with a unique name that is removed when the value drops.
 #[derive(Debug)]
 pub struct TestDir(tempfile::TempDir);
@@ -265,6 +285,15 @@ mod tests {
         );
         // While that socket holds the address, a connect from outside finds nobody either.
         assert!(!accepts(addr));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_private_tempdir_is_owner_only_whatever_the_umask() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = private_tempdir();
+        let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o700, "{}", dir.path().display());
     }
 
     #[test]

@@ -247,7 +247,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: crates/puddle-api/openapi/package-lock.json
-      - name: System packages (WebKitGTK, the tray library and Xvfb for the desktop shell, Squid for the upstream-chaining e2e)
+      - name: System packages (WebKitGTK, the tray library and Xvfb for the desktop shell, Squid for the upstream-chaining e2e, busybox for the guest scripts' shell)
         timeout-minutes: 10
         run: |
           # The image's default mirror hands some runners a backend that serves 40 to 250 kB/s (a 62 MB
@@ -257,7 +257,7 @@ jobs:
           ci/apt-retry.sh sudo apt-get update
           # libayatana-appindicator3-1: the tray icon library, opened at run time (the build does not
           # need its dev package); xvfb: the virtual display the tray test runs on.
-          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-1 xvfb squid
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-1 xvfb squid busybox-static
           # The package starts its own daemon; the test runs its own Squid on a free port.
           sudo systemctl stop squid || true
           test -x /usr/sbin/squid
@@ -395,13 +395,14 @@ jobs:
           PUDDLE_SQUID_BIN: /usr/sbin/squid
           # A test whose prerequisite is missing fails here instead of skipping (scripts/check-silent-skips.sh).
           # Each flag names what this job provides: Squid, mitmproxy and Node 24 above, `ssh`, `git` and `python3`
-          # from the runner image, AF_VSOCK from its kernel, and a non-root user.
+          # from the runner image, busybox above, AF_VSOCK from its kernel, and a non-root user.
           PUDDLE_REQUIRE_SQUID: "1"
           PUDDLE_REQUIRE_MITMPROXY: "1"
           PUDDLE_REQUIRE_NODE: "1"
           PUDDLE_REQUIRE_SSH_CLIENTS: "1"
           PUDDLE_REQUIRE_TOOLS: "1"
           PUDDLE_REQUIRE_VSOCK: "1"
+          PUDDLE_REQUIRE_BUSYBOX: "1"
           PUDDLE_REQUIRE_NON_ROOT: "1"
         run: |
           # The guard logs free space during the build and tests and, under 5 GB, stops cargo and the tests with the

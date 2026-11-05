@@ -11,7 +11,7 @@ use std::time::Duration;
 use microsandbox::Sandbox as SdkSandbox;
 use puddle_compute::{DiskSize, FileMount, OwnedDisk, Runtime, Sandbox, VolumeMount, VsockRoute};
 use puddle_ipc::IpcRoot;
-use puddle_test_kit::eventually;
+use puddle_test_kit::{eventually, eventually_async};
 use puddle_types::{MemoryMib, SandboxName, VolumeName};
 use puddle_vm_tests::VmEnv;
 use support::{cleanup, collect_lines, path, sh, spec, vsock_sweep};
@@ -309,7 +309,9 @@ async fn vm_a_stop_the_guest_answers_is_not_by_force() {
 /// A stop gives every process of the guest its SIGTERM and time to finish before the VM goes down,
 /// also a daemon that has left the command that started it (an image's entrypoint such as dockerd,
 /// which loses its network state when it is killed instead). The daemon here writes a file when
-/// it gets the SIGTERM; the file is there at the next boot.
+/// it gets the SIGTERM; the file is there at the next boot. The test stops the sandbox only once
+/// the daemon says its handler is installed: a SIGTERM before that kills the shell with no marker,
+/// which is the daemon starting late, not a stop that skipped it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_a_stop_lets_a_detached_daemon_shut_down_cleanly() {
     let settings = support::settings();
@@ -318,8 +320,17 @@ async fn vm_a_stop_lets_a_detached_daemon_shut_down_cleanly() {
     let n = s.name.clone();
     let sb = rt.create(s).await.expect("create");
     let daemon = "setsid sh -c 'trap \"echo clean >/root/daemon-stop; sync; exit 0\" TERM; \
-                  while :; do sleep 1; done' </dev/null >/dev/null 2>&1 &";
+                  echo up >/root/daemon-ready; while :; do sleep 1; done' </dev/null >/dev/null 2>&1 &";
     assert!(sh(&sb, daemon).await.status.success());
+    eventually_async(
+        "the daemon has installed its SIGTERM handler",
+        Duration::from_secs(60),
+        || async {
+            let out = sh(&sb, "cat /root/daemon-ready").await;
+            (out.stdout_text().trim() == "up").then_some(())
+        },
+    )
+    .await;
     let stopped = sb.stop().await;
     let forced = sb.stopped_by_force();
     let again = rt.start(&n).await.expect("start again");

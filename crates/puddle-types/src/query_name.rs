@@ -2,7 +2,6 @@
 //! The name of a URL query parameter a secret's stand-in is swapped in.
 
 use std::fmt;
-use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -62,20 +61,6 @@ impl QueryName {
 impl fmt::Display for QueryName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-impl AsRef<str> for QueryName {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl FromStr for QueryName {
-    type Err = ValidationError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::new(s)
     }
 }
 

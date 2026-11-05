@@ -288,4 +288,51 @@ mod tests {
         );
         assert_eq!(&tarball.body[..2], &[0x1f, 0x8b]);
     }
+
+    #[test]
+    fn every_feed_serves_its_package_and_nothing_else_to_a_request_with_the_token() {
+        let feeds = feeds();
+        let basic = format!("Basic {}", STANDARD.encode("user:real-token"));
+        let body = |host: &str, path: &str| {
+            let auth = if host == "npm.test" {
+                "Bearer real-token"
+            } else {
+                &basic
+            };
+            let reply = ask(&feeds, host, path, Some(auth));
+            (reply.status, reply.body)
+        };
+        let (status, npm) = body("npm.test", "/probe-private");
+        assert_eq!(status, 200);
+        assert!(
+            String::from_utf8(npm)
+                .unwrap()
+                .contains("https://npm.test/probe-private/-/")
+        );
+        let (status, nuget) = body("nuget.test", "/v3/index.json");
+        assert_eq!(status, 200);
+        assert!(
+            String::from_utf8(nuget)
+                .unwrap()
+                .contains("https://nuget.test/v3/flat/")
+        );
+        assert_eq!(
+            body("nuget.test", "/v3/flat/probe.private/index.json").0,
+            200
+        );
+        let (status, nupkg) = body(
+            "nuget.test",
+            "/v3/flat/probe.private/1.0.0/probe.private.1.0.0.nupkg",
+        );
+        assert_eq!((status, &nupkg[..2]), (200, &b"PK"[..]));
+        assert_eq!(body("nuget.test", "/v3/flat/other/index.json").0, 404);
+        let wheel_path = format!("/files/{}", wheel_name(PIP_PROJECT));
+        assert_eq!(body("pip.test", "/simple/probe-private/").0, 200);
+        assert_eq!(body("pip.test", &wheel_path).0, 200);
+        assert_eq!(body("pip.test", "/simple/other/").0, 404);
+        let base = "/m2/com/example/probe-private/1.0/probe-private-1.0";
+        assert_eq!(body("mvn.test", &format!("{base}.pom")).0, 200);
+        assert_eq!(body("mvn.test", &format!("{base}.jar")).0, 200);
+        assert_eq!(body("mvn.test", &format!("{base}.jar.sha1")).0, 404);
+    }
 }

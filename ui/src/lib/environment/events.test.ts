@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { asEnvFailed, isEnvChanged } from "./events.ts";
 
-const workspace = { kind: "workspace", name: "web" } as const;
+const workspace = { kind: "workspace", id: "w-web" } as const;
 const global = { kind: "global" } as const;
 
 describe("isEnvChanged", () => {
@@ -12,9 +12,11 @@ describe("isEnvChanged", () => {
   });
 
   it("lets a workspace change reach that workspace only", () => {
-    const own = { type: "workspace_env_changed", workspace: "web" };
+    const own = { type: "workspace_env_changed", workspace: "w-web" };
     expect(isEnvChanged(own, workspace)).toBe(true);
-    expect(isEnvChanged({ ...own, workspace: "docs" }, workspace)).toBe(false);
+    expect(isEnvChanged({ ...own, workspace: "w-docs" }, workspace)).toBe(
+      false,
+    );
     expect(isEnvChanged(own, global)).toBe(false);
   });
 

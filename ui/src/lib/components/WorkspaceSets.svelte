@@ -11,6 +11,7 @@
     type RuleSetsStore,
   } from "#lib/stores/rule-sets.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import LoadNotice from "./LoadNotice.svelte";
   import SetChip from "./SetChip.svelte";
   import SystemManagedList from "./SystemManagedList.svelte";
@@ -25,6 +26,7 @@
 
   const id = $props.id();
   const hosts = $derived(systemFor(store.system, workspace));
+  const label = $derived(workspaces.labelOf(workspace));
 
   async function set(ruleSet: RuleSet, enabled: boolean | null) {
     const result = await store.switchSet(ruleSet.id, workspace, enabled);
@@ -37,7 +39,7 @@
         ? `; it decided ${result.value} waiting ${result.value === 1 ? "request" : "requests"}`
         : "";
     toasts.push(
-      `${ruleSet.name}: ${enabled === null ? "follows every workspace" : enabled ? "on" : "off"} in ${workspace}${closed}.`,
+      `${ruleSet.name}: ${enabled === null ? "follows every workspace" : enabled ? "on" : "off"} in ${label}${closed}.`,
     );
   }
 </script>
@@ -66,20 +68,20 @@
             <button
               type="button"
               class="btn"
-              aria-label="On here: {ruleSet.name} in {workspace}"
+              aria-label="On here: {ruleSet.name} in {label}"
               onclick={() => void set(ruleSet, true)}>On here</button
             >
             <button
               type="button"
               class="btn"
-              aria-label="Off here: {ruleSet.name} in {workspace}"
+              aria-label="Off here: {ruleSet.name} in {label}"
               onclick={() => void set(ruleSet, false)}>Off here</button
             >
             {#if overrides(ruleSet, workspace)}
               <button
                 type="button"
                 class="btn"
-                aria-label="Make {ruleSet.name} in {workspace} follow every workspace"
+                aria-label="Make {ruleSet.name} in {label} follow every workspace"
                 onclick={() => void set(ruleSet, null)}
                 >Follow every workspace</button
               >

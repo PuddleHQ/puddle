@@ -4,6 +4,7 @@ import { FakeSettings } from "#lib/testing/fake-settings.ts";
 import {
   bodyFrom,
   CODE_SERVER_NOTE,
+  LOCAL_EXPLAIN,
   MICROSOFT_NOTE,
   microsoftChosenToast,
   MS_POPUP,
@@ -71,6 +72,15 @@ describe("the toast after accepting Microsoft's server", () => {
       );
       expect(text).toContain("go back to code-server in Settings");
     }
+  });
+});
+
+describe("the host-loopback toggle help", () => {
+  it("says turning it on exposes the host's local services and other workspaces' forwarded ports", () => {
+    expect(LOCAL_EXPLAIN.loopback).toMatch(/127\.0\.0\.1/);
+    expect(LOCAL_EXPLAIN.loopback).toContain(
+      "ports other workspaces forwarded to this computer",
+    );
   });
 });
 

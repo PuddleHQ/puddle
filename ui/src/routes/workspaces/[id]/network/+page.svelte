@@ -38,7 +38,7 @@
 
   const rows = $derived(
     pending.rows
-      .filter((r) => r.request.workspace === workspace?.name)
+      .filter((r) => r.request.workspace === workspace?.id)
       .sort(
         (a, b) =>
           b.request.first_seen - a.request.first_seen ||
@@ -50,7 +50,7 @@
       rulesStore.rules.filter((r) => {
         if (!isOwn(r)) return false;
         const owner = workspaceOf(r);
-        return owner === null || owner === workspace?.name;
+        return owner === null || owner === workspace?.id;
       }),
       NO_FILTER,
       DEFAULT_SORT,
@@ -145,9 +145,9 @@
     {/if}
   </section>
 
-  <RequestRulesSection workspace={workspace.name} {now} />
+  <RequestRulesSection workspace={workspace.id} {now} />
 
-  <WorkspaceSets workspace={workspace.name} />
+  <WorkspaceSets workspace={workspace.id} />
 
   <DecisionFlow bind:this={flow} heading={() => heading} />
 {/if}

@@ -22,7 +22,7 @@
 
   const id = $derived(page.params["id"] ?? "");
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
-  const name = $derived(workspace?.name);
+  const wid = $derived(workspace?.id);
   const store = new WorkspaceGitStore();
   const fid = $props.id();
 
@@ -38,7 +38,7 @@
 
   onMount(() => identities.start());
   $effect(() => {
-    if (name) return store.start(name);
+    if (wid) return store.start(wid);
   });
 
   const git = $derived(store.git);
@@ -197,7 +197,10 @@
         public repositories only.
       </p>
     {:else}
-      <ol class="ids" aria-label="Identities of {workspace.name}, in order">
+      <ol
+        class="ids"
+        aria-label="Identities of {workspace.display_name}, in order"
+      >
         {#each git.identities as identity, index (identity.id)}
           <li data-identity-id={identity.id}>
             <div class="what">
@@ -234,7 +237,7 @@
               <button
                 type="button"
                 class="btn"
-                aria-label="Remove {identity.label} from {workspace.name}"
+                aria-label="Remove {identity.label} from {workspace.display_name}"
                 onclick={() => detach(identity)}>Remove</button
               >
             </div>
@@ -357,7 +360,7 @@
       </p>
     {:else}
       <div class="wrap">
-        <table aria-label="Repositories of {workspace.name}">
+        <table aria-label="Repositories of {workspace.display_name}">
           <thead>
             <tr>
               <th scope="col">Repository</th>

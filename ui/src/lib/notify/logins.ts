@@ -5,6 +5,7 @@
 // works, it is just not protected), the next two mean the login in the workspace does not work
 // (the tool will ask for a new sign-in, or its stand-in is refused), and an unnamed problem says
 // only that.
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import { sentence } from "#lib/rules/model.ts";
@@ -64,18 +65,18 @@ const keptLogin = (kind: Kind) =>
   kind === "unreadable" || kind === "capture_off";
 
 function titleFor(e: LoginProblem): string {
-  const login = `${e.service} login in ${e.workspace}`;
+  const login = `${e.service} login in ${workspaces.labelOf(e.workspace)}`;
   if (keptLogin(e.kind)) return `${login} can't be used.`;
   if (e.kind === "unknown") return `${login} has a problem.`;
   return `${login} is not protected.`;
 }
 
 /** The confirmation before a kept login is forgotten, from the notice and from the settings list. */
-export function forgetConfirm(workspace: string, service: string) {
+export function forgetConfirm(label: string, service: string) {
   return {
-    title: `Forget the ${service} login in ${workspace}?`,
-    summary: `Puddle deletes the ${service} sign-in it saved for ${workspace} from this computer's credential store.`,
-    detail: `${service} inside ${workspace} stops working with its current login and asks you to sign in again. Other workspaces and other services are not touched.`,
+    title: `Forget the ${service} login in ${label}?`,
+    summary: `Puddle deletes the ${service} sign-in it saved for ${label} from this computer's credential store.`,
+    detail: `${service} inside ${label} stops working with its current login and asks you to sign in again. Other workspaces and other services are not touched.`,
     confirmLabel: "Forget login",
   };
 }
@@ -133,7 +134,7 @@ export class LoginNotices {
   #forget(e: LoginProblem): NoticeAction {
     return {
       label: `Forget ${e.service} login`,
-      confirm: forgetConfirm(e.workspace, e.service),
+      confirm: forgetConfirm(workspaces.labelOf(e.workspace), e.service),
       run: async () => {
         await forgetKeptLogin(this.#api, e.workspace, e.service);
         this.#notifier.resolve(loginKey(e));

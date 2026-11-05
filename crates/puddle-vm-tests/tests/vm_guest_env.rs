@@ -6,7 +6,7 @@
 //! (127.0.0.1:3128): it logs every request line and answers with a fixed response (or 502 to a
 //! CONNECT). Every probe targets a name under `.invalid`, which never resolves, so a tool that
 //! ignores the config fails instead of reaching the fixture another way. The VM keeps msb's
-//! default network only for installing the tools first, from the real mirrors (see `SETUP_STEPS`).
+//! default network only for installing the tools first, once, from the real mirrors, into a host cache (see `SETUP_STEPS`).
 //!
 //! The config goes in the way the boot hook would apply it: the files written as root with their
 //! modes, the env given to each exec. Until the boot hook runs in VMs, the files are
@@ -33,8 +33,13 @@ use puddle_types::{ApplyKind, GuestFile, MergeSpec};
 use puddle_vm_tests::{HarnessError, VmEnv, create_from_registry, within};
 
 /// Node 24 (`NODE_USE_ENV_PROXY`), Debian 13 (Maven 3.9 for `MAVEN_ARGS`, `OpenJDK` 21).
-const TOOLS_IMAGE: &str = "node:24-trixie-slim";
+/// Pinned by digest (the cache holds the packages this image's base needs, so the image must not move
+/// under it); the registry's `Docker-Content-Digest` for the tag gives the next one.
+const TOOLS_IMAGE: &str =
+    "node:24-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17e6108a36988cf374899cd057eb3812d";
 const GRADLE_VERSION: &str = "8.14.3";
+/// The SHA-256 services.gradle.org publishes for `gradle-8.14.3-bin.zip` (`<url>.sha256`).
+const GRADLE_SHA256: &str = "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531";
 const PNPM: &str = "pnpm@10.12.1";
 const YARN_BERRY: &str = "yarn@4.9.2";
 
@@ -48,63 +53,92 @@ const STEP_BUDGET: Duration = Duration::from_secs(60);
 /// Probes expected to fail today, by name (see the module docs).
 const KNOWN_GAPS: &[&str] = &[];
 
+/// The packages the tools need (installed from Debian once, then from the cache).
+const APT_PACKAGES: &str = "ca-certificates curl wget git openssh-client sudo unzip python3-pip \
+                            openjdk-21-jdk-headless maven";
+
 /// The tool install, one named step at a time so the log shows which step is slow or hangs.
 ///
-/// Each step is `(name, third-party host it needs, script)`. These downloads stay live on purpose: the
-/// test needs the real JDK, Maven, Gradle, pnpm and Yarn that the proxy config is written for, and
-/// a mirror serving stand-ins would test nothing. The host is in the failure message, so a red
-/// run reads as that host being down. Nothing after the setup reaches the internet (every probe
-/// targets a `.invalid` name).
+/// Each step is `(name, third-party host it needs on a cold cache, script)`. The tools are the real
+/// JDK, Maven, Gradle, pnpm and Yarn that the proxy config is written for (a mirror serving
+/// stand-ins would test nothing), but they are downloaded once: a step that finds its files in
+/// `/vmcache` (the host's [`tools_cache`], keyed by [`TOOLS_IMAGE`]'s digest and the versions here)
+/// installs from there and uses no network, so a run on a warm cache depends on no third-party
+/// host. A cold cache is filled by the same step, which then names the host in the failure message.
+/// Nothing after the setup reaches the internet (every probe targets a `.invalid` name).
 const SETUP_STEPS: &[(&str, &str, &str)] = &[
-    ("apt update", "deb.debian.org", "apt-get update -qq"),
     (
         // Names and routes the install needs, so a stall can be told from a dead network. The
-        // lookup is timed on its own.
+        // lookup is timed on its own. Skipped on a warm cache: nothing downloads then.
         "name lookup",
-        "deb.debian.org",
-        "t=$(date +%s%N); getent ahosts deb.debian.org | head -4; \
+        "deb.debian.org (cold cache only)",
+        "[ -f /vmcache/apt/ok ] && { echo 'warm cache: no download'; exit 0; }; \
+         t=$(date +%s%N); getent ahosts deb.debian.org | head -4; \
          echo \"lookup ms=$((($(date +%s%N) - t) / 1000000))\"",
     ),
     (
         // Node ends the process itself: after the response it would otherwise wait for the idle
         // keep-alive connection to close, which took about 8 s of every probe.
         "network probe",
-        "deb.debian.org",
-        "node -e \"const t = Date.now(); \\
+        "deb.debian.org (cold cache only)",
+        "[ -f /vmcache/apt/ok ] && { echo 'warm cache: no download'; exit 0; }; \
+         node -e \"const t = Date.now(); \\
          fetch('http://deb.debian.org/debian/dists/trixie/InRelease', {signal: AbortSignal.timeout(20000)}) \\
          .then((r) => { console.log('debian http=' + r.status + ' ms=' + (Date.now() - t)); process.exit(0); }) \\
          .catch((e) => { console.log('debian failed ms=' + (Date.now() - t) + ' ' + e); process.exit(1); })\"",
     ),
     (
-        // Output kept (no -qq): a stall shows the last package unpacked. A plain install: dpkg
-        // syncs for every package, so this step is also the guest's fsync cost on a fresh image.
+        // Cold: update, download the packages (docker-clean deletes archives after an install, so
+        // `--download-only` first), keep the lists and archives in the cache, then install. Warm:
+        // put them back and install with `--no-download`, which fails instead of reaching a mirror.
+        // Output kept (no -qq): a stall shows the last package unpacked.
         "apt install (JDK 21, maven, tools)",
-        "deb.debian.org",
-        "apt-get install -y -o Dpkg::Use-Pty=0 --no-install-recommends ca-certificates \
-         curl wget git openssh-client sudo unzip python3-pip openjdk-21-jdk-headless maven",
+        "deb.debian.org (cold cache only)",
+        "C=/vmcache/apt; \
+         opts='-y -o Dpkg::Use-Pty=0 --no-install-recommends'; \
+         if [ -f $C/ok ]; then \
+           mkdir -p /var/lib/apt/lists /var/cache/apt/archives && \
+           cp -a $C/lists/. /var/lib/apt/lists/ && cp -a $C/archives/. /var/cache/apt/archives/ && \
+           apt-get install $opts --no-download -o Acquire::Check-Valid-Until=false $APT_PACKAGES; \
+         else \
+           apt-get update -qq && apt-get install $opts --download-only $APT_PACKAGES && \
+           rm -rf $C.tmp && mkdir -p $C.tmp/lists $C.tmp/archives && \
+           cp -a /var/lib/apt/lists/. $C.tmp/lists/ && rm -f $C.tmp/lists/lock && \
+           cp /var/cache/apt/archives/*.deb $C.tmp/archives/ && touch $C.tmp/ok && \
+           rm -rf $C && mv $C.tmp $C && \
+           apt-get install $opts $APT_PACKAGES; \
+         fi",
     ),
     (
-        "gradle download",
-        "services.gradle.org",
-        "curl -fsSL -w 'http=%{http_code} bytes=%{size_download} speed=%{speed_download}B/s \
-         connect=%{time_connect}s tls=%{time_appconnect}s first-byte=%{time_starttransfer}s \
-         total=%{time_total}s\n' -o /tmp/gradle.zip \
-         \"https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip\"",
+        // Verified against the pinned hash whether it comes from the cache or the download; the
+        // download retries over a window sized for a CDN outage (a 504 from services.gradle.org
+        // lasted longer than three tries 5 s apart).
+        "gradle (cache, else download from services.gradle.org)",
+        "services.gradle.org (cold cache only)",
+        "Z=/vmcache/gradle-$GRADLE_VERSION-bin.zip; \
+         if ! { [ -f $Z ] && echo \"$GRADLE_SHA256  $Z\" | sha256sum -c -; }; then \
+           n=1; pause=5; \
+           until curl -fsSL -w 'http=%{http_code} bytes=%{size_download} total=%{time_total}s\\n' -o $Z.part \
+             \"https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip\"; do \
+             [ $n -lt 6 ] || { echo 'gradle download failed 6 times'; exit 1; }; \
+             sleep $pause; pause=$((pause * 2)); n=$((n + 1)); \
+           done; \
+           echo \"$GRADLE_SHA256  $Z.part\" | sha256sum -c - && mv $Z.part $Z; \
+         fi; \
+         unzip -oq $Z -d /opt && ln -sf \"/opt/gradle-$GRADLE_VERSION/bin/gradle\" /usr/local/bin/gradle",
     ),
     (
-        "gradle unpack",
-        "none (local step)",
-        "unzip -oq /tmp/gradle.zip -d /opt && ln -sf \"/opt/gradle-$GRADLE_VERSION/bin/gradle\" /usr/local/bin/gradle",
-    ),
-    (
-        "corepack pnpm",
-        "registry.npmjs.org",
-        "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0; corepack enable pnpm && corepack install -g \"$PNPM\"",
-    ),
-    (
-        "corepack yarn berry",
-        "repo.yarnpkg.com",
-        "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0; mkdir -p /tmp/warm && cd /tmp/warm && corepack \"$YARN_BERRY\" --version",
+        // The corepack home holds both tools; on a cold cache it is copied out once both are there.
+        "corepack pnpm and yarn berry",
+        "registry.npmjs.org, repo.yarnpkg.com (cold cache only)",
+        "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0; H=\"$HOME/.cache/node/corepack\"; C=/vmcache/corepack; \
+         if [ -f $C/ok ]; then mkdir -p \"$H\" && cp -a $C/home/. \"$H\"/; fi; \
+         corepack enable pnpm && corepack install -g \"$PNPM\" && \
+         mkdir -p /tmp/warm && cd /tmp/warm && corepack \"$YARN_BERRY\" --version && \
+         if [ ! -f $C/ok ]; then \
+           rm -rf $C.tmp && mkdir -p $C.tmp/home && cp -a \"$H\"/. $C.tmp/home/ && touch $C.tmp/ok && \
+           rm -rf $C && mv $C.tmp $C; \
+         fi",
     ),
     (
         "tool versions",
@@ -112,6 +146,33 @@ const SETUP_STEPS: &[(&str, &str, &str)] = &[
         "mvn -v | head -1; gradle --version -q | grep Gradle; node -v; pnpm -v; yarn -v; java -version 2>&1 | head -1",
     ),
 ];
+
+/// The host folder mounted at `/vmcache`: `PUDDLE_VM_TOOLS_CACHE` (CI restores it between runs) or
+/// `~/.cache/puddle-vm-tools`, then one folder for everything the setup downloads, named by a hash of
+/// what it holds (image, versions, install steps) so a change starts a cold one instead of mixing.
+fn tools_cache() -> std::path::PathBuf {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let root = std::env::var_os("PUDDLE_VM_TOOLS_CACHE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| std::path::Path::new(&h).join(".cache/puddle-vm-tools"))
+        })
+        .expect("PUDDLE_VM_TOOLS_CACHE or HOME");
+    let mut hasher = DefaultHasher::new();
+    (
+        TOOLS_IMAGE,
+        APT_PACKAGES,
+        GRADLE_SHA256,
+        PNPM,
+        YARN_BERRY,
+        SETUP_STEPS,
+    )
+        .hash(&mut hasher);
+    let dir = root.join(format!("guestenv-{:016x}", hasher.finish()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
 
 /// The guest side of the route: logs `<request line> host=<Host>` per request.
 const FIXTURE: &str = r"
@@ -614,6 +675,8 @@ async fn setup_step(sb: &Sandbox, name: &str, host: &str, script: &str) {
         sb.shell_with(wrapped, |e| {
             e.user("root")
                 .env("GRADLE_VERSION", GRADLE_VERSION)
+                .env("GRADLE_SHA256", GRADLE_SHA256)
+                .env("APT_PACKAGES", APT_PACKAGES)
                 .env("PNPM", PNPM)
                 .env("YARN_BERRY", YARN_BERRY)
                 .timeout(SETUP_STEP_BUDGET)
@@ -656,10 +719,13 @@ struct Outcome {
 
 async fn tools_reach_the_fixture(env: &VmEnv) -> Result<Vec<Outcome>, HarnessError> {
     let config = guest_proxy_config(&ProxySettings::default(), &[]).unwrap();
+    let cache = tools_cache();
+    eprintln!("tools cache: {}", cache.display());
     let builder = env
         .sandbox("guestenv", TOOLS_IMAGE)?
         .cpus(2)
-        .memory(3072u32);
+        .memory(3072u32)
+        .volume("/vmcache", |m| m.bind(&cache));
     env.scope(Box::pin(async {
         let started = Instant::now();
         let sb = create_from_registry(TOOLS_IMAGE, CREATE_BUDGET, builder.create()).await?;

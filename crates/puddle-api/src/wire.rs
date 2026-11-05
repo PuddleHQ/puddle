@@ -710,6 +710,9 @@ pub struct AuditRuleSet {
     pub created_at: u64,
     /// `cli`, `ui` or `api`.
     pub created_by: String,
+    /// The colour the user chose; `null` when the set had the default of its number.
+    #[schema(required = true)]
+    pub fill: Option<puddle_types::Fill>,
 }
 
 impl From<store::RuleSetWire> for AuditRuleSet {
@@ -720,6 +723,7 @@ impl From<store::RuleSetWire> for AuditRuleSet {
             description,
             created_at,
             created_by,
+            fill,
         } = set;
         Self {
             id,
@@ -727,6 +731,7 @@ impl From<store::RuleSetWire> for AuditRuleSet {
             description,
             created_at,
             created_by,
+            fill,
         }
     }
 }
@@ -3134,7 +3139,8 @@ mod tests {
     #[test]
     fn rule_set_records_serialise_as_stored() {
         let set = serde_json::json!({
-            "id": 3, "name": "Work", "description": "", "created_at": 1, "created_by": "ui"
+            "id": 3, "name": "Work", "description": "", "created_at": 1, "created_by": "ui",
+            "fill": {"kind": "solid", "color": "#0a6a85"}
         });
         let rule = serde_json::json!({
             "id": 9, "scope": "set", "workspace_id": null, "set_id": 3, "pattern_kind": "exact",
@@ -3166,6 +3172,15 @@ mod tests {
                 stored
             );
         }
+        // A set recorded before sets had a colour reads, and the wire says `null` for it.
+        let old = serde_json::json!({"type": "rule_set_created", "ts": 1, "actor": "ui",
+            "rule_set": {"id": 3, "name": "Work", "description": "", "created_at": 1,
+                         "created_by": "ui"}});
+        let record: store::AuditRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(
+            serde_json::to_value(AuditRecord::from(record)).unwrap()["rule_set"]["fill"],
+            Value::Null
+        );
         // A reason a later Puddle added is left out rather than failing the page.
         let newer = serde_json::json!({"type": "system_managed_changed", "ts": 1,
             "workspace_id": null, "added": ["zed"], "removed": []});

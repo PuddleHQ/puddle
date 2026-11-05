@@ -13,6 +13,7 @@ const auth = (backend: Backend) => ({
 interface RuleSetView {
   id: string;
   name: string;
+  fill: { kind: string; color: string };
   global: boolean | null;
   overrides: { workspace: string; enabled: boolean }[];
   entries: { pattern: string; effect: string }[];
@@ -124,4 +125,48 @@ test("a set of your own: make it, then approve a request into it from the inbox"
       effect: "allow",
     }),
   ]);
+});
+
+test("every set has a colour, and the one you pick is kept", async ({
+  page,
+  request,
+  backend,
+}) => {
+  await openRules(page, backend);
+  // A built-in set arrives with its own colour and its name written out beside it.
+  const github = page.getByRole("article", { name: "GitHub" });
+  await expect(github.getByRole("heading", { name: "GitHub" })).toBeVisible();
+  const before = await sets(request, backend);
+  expect(before.every((s) => s.fill.kind === "solid")).toBe(true);
+
+  await page.getByRole("button", { name: "New rule set" }).click();
+  const dialog = page.getByRole("dialog", { name: "New rule set" });
+  await dialog.getByLabel("Name").fill("Painted");
+  await dialog.getByRole("button", { name: "#c04f7a" }).click();
+  await expect(dialog.getByText(/#c04f7a, text contrast/)).toBeVisible();
+  await expectNoAxeViolations(page, "new set with a colour");
+  await dialog.getByRole("button", { name: "Make rule set" }).click();
+  const card = page.getByRole("article", { name: "Painted" });
+  await expect(card).toBeVisible();
+  const stored = (await sets(request, backend)).find(
+    (s) => s.name === "Painted",
+  );
+  expect(stored?.fill).toEqual({ kind: "solid", color: "#c04f7a" });
+  await expectNoAxeViolations(page, "rules with coloured sets");
+
+  // Editing starts from the colour the set has, and a new pick replaces it.
+  await card.getByRole("button", { name: "Edit" }).click();
+  const edit = page.getByRole("dialog", { name: "Edit rule set" });
+  await expect(edit.getByRole("button", { name: "#c04f7a" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await edit.getByRole("button", { name: "#2aa1a8" }).click();
+  await edit.getByRole("button", { name: "Save" }).click();
+  await expect
+    .poll(
+      async () =>
+        (await sets(request, backend)).find((s) => s.name === "Painted")?.fill,
+    )
+    .toEqual({ kind: "solid", color: "#2aa1a8" });
 });

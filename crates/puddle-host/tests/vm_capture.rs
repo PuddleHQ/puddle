@@ -792,7 +792,17 @@ async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceName,
         Duration::from_secs(30),
         || async {
             let out = as_agent(vm, workspace, &talk).await.1;
-            (field(&out, "exit=") == "0").then_some(out)
+            if field(&out, "exit=") == "0" {
+                return Ok(out);
+            }
+            let said = as_agent(
+                vm,
+                workspace,
+                &format!("{docker} ps -a; {docker} logs {server} 2>&1 | tail -5"),
+            )
+            .await
+            .1;
+            Err(format!("{out}\n{said}"))
         },
     )
     .await;

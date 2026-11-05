@@ -11,6 +11,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+arbitrary = { workspace = true, optional = true }
 futures-util = { workspace = true }
 puddle-types = { workspace = true }
 serde = { workspace = true }
@@ -25,7 +26,7 @@ tracing = { workspace = true }
 testing = []
 # `fuzzing`: entry points for the cargo-fuzz targets in `fuzz/` and their checked-in corpus (never in
 # product code; the xtask release-feature check refuses it in a shipped build).
-fuzzing = []
+fuzzing = ["dep:arbitrary"]
 
 [dev-dependencies]
 puddle-agent-proto = { path = ".", features = ["fuzzing"] }

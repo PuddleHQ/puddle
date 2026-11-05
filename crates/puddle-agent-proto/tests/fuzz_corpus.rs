@@ -9,11 +9,17 @@
 
 use std::path::Path;
 
-use puddle_agent_proto::fuzzing;
+use puddle_agent_proto::fuzzing::{self, LineGrammar};
 use puddle_agent_proto::resolve::{RecordType, ResolveAnswer, ResolveQuery};
 
 fn corpus() -> Vec<(String, Vec<u8>)> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/resolve_line");
+    corpus_of("resolve_line")
+}
+
+fn corpus_of(target: &str) -> Vec<(String, Vec<u8>)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fuzz/corpus")
+        .join(target);
     let mut inputs: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|entry| {
@@ -67,4 +73,26 @@ fn the_corpus_holds_lines_the_host_takes_and_lines_it_refuses_by_name() {
         ResolveAnswer::Unknown
     );
     assert!(ResolveAnswer::from_line(bytes("answer-ttl-negative")).is_err());
+}
+
+#[test]
+fn every_grammar_line_in_the_corpus_keeps_the_grammar_invariants() {
+    for (name, input) in corpus_of("resolve_line_grammar") {
+        let line = LineGrammar::from_input(&input);
+        assert!(line.is_some(), "{name} does not decode");
+        if let Some(line) = line {
+            fuzzing::resolve_line_grammar(&line);
+        }
+    }
+}
+
+#[test]
+fn the_grammar_corpus_reaches_every_shape_of_line_the_grammar_makes() {
+    let mut shapes: Vec<&str> = corpus_of("resolve_line_grammar")
+        .iter()
+        .filter_map(|(_, input)| LineGrammar::from_input(input).map(|l| l.shape()))
+        .collect();
+    shapes.sort_unstable();
+    shapes.dedup();
+    assert_eq!(shapes, ["answer", "not a query", "not an answer", "query"]);
 }

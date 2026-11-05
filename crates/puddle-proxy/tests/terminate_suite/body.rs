@@ -294,6 +294,26 @@ async fn over_http2_a_refusal_on_the_body_and_an_oversized_body_send_nothing_ups
     assert_eq!(event.reason, ConnectionReason::Refused("peek_refused"));
 }
 
+#[tokio::test]
+async fn over_http2_a_body_of_exactly_the_limit_is_read_whole() {
+    let (server, rig, peek) = h2().await;
+    let mut guest = rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let exact = "y".repeat(LIMIT);
+    let got = client
+        .request(
+            "POST",
+            "bound.test",
+            "/peek",
+            &[],
+            full(Bytes::from(exact.clone())),
+        )
+        .await;
+    assert_eq!((got.status, got.text()), (200, exact.clone()));
+    assert_eq!(bodies(&peek), [Some(exact.into_bytes())]);
+    assert_eq!(server.recorded().len(), 1);
+}
+
 fn quick() -> ProxyConfig {
     ProxyConfig::default().with_terminate_timeouts(
         Duration::from_secs(10),

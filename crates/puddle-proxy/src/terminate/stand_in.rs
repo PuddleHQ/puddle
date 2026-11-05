@@ -982,6 +982,8 @@ mod tests {
             "Basic".to_owned(),
             "Basic ".to_owned(),
             "Basicx dXNlcjpwdw==".to_owned(),
+            // The scheme must be followed by a space: credentials glued to it are not a Basic value.
+            format!("Basic{}", STANDARD.encode(format!("u:{GH}"))),
             "Basic not base64 at all!".to_owned(),
             "Basic dXNlcjpwdw==".to_owned(),
             format!("Basic {}", STANDARD.encode([0xff_u8, 0xfe, 0x00])),
@@ -1031,6 +1033,7 @@ mod tests {
     fn nothing_registered_nothing_changes() {
         let registry = StandIns::new();
         assert!(registry.is_empty());
+        assert!(!self::registry().is_empty());
         let (headers, report) = swap(&registry, &[("authorization", GH)], "github.com");
         assert_eq!(headers["authorization"], GH);
         assert_eq!(report.swapped, Vec::<String>::new());

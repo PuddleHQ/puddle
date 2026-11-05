@@ -14,6 +14,7 @@
 //! | [`Host`], [`DomainName`] | a normalised egress destination (the proxy normalises, everyone else validates) |
 //! | [`EgressRequest`], [`Decision`], [`Policy`] | what the proxy asks the rules engine and what it gets back |
 //! | [`ConnectionEvent`], [`ConnectionLog`] | one connection as the proxy reports it for the audit, and where it goes (the store) |
+//! | [`QueryName`] | the name of a query parameter a secret is swapped in |
 //! | [`LocalCategory`] | the local-destination categories (spec R-14): one toggle each, classified by `puddle-netpolicy` |
 //! | [`ValidationError`] | the one error every checked constructor returns |
 //!
@@ -37,6 +38,7 @@ mod name;
 pub mod panic_hook;
 mod policy;
 mod problems;
+mod query_name;
 mod request_match;
 mod session_user;
 
@@ -69,6 +71,7 @@ pub use policy::{
     PolicyError, ProtocolHint, RuleId, RuleSetId, SuffixAllows,
 };
 pub use problems::{Problem, Problems};
+pub use query_name::{MAX_QUERY_NAME_LEN, QueryName};
 pub use request_match::{
     CanonicalPath, MAX_METHODS, MAX_PATH_PATTERN, MAX_PATH_SEGMENTS, MethodError, Methods,
     PathPattern, PathPatternError, percent_decoded, target_path,

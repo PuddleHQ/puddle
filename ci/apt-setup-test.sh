@@ -55,6 +55,9 @@ APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_PROBE_URL="file://$tmp/full" "$her
 
 # apt-retry.sh: a command that finishes, one that stalls then works, one that always fails
 export APT_ETC="$tmp/apt" APT_HOSTS="$tmp/hosts" APT_RETRY_NO_REPAIR=1 APT_FIRST_TRY_S=2 APT_RETRY_S=5
+# The stall cases hold no lock; the real dpkg locks would make apt-retry scan /proc for holders (slow on a busy
+# host, which broke the 15 s bound below) and stop a real apt-get that happens to run there.
+export APT_LOCKS="$tmp/no-such-lock"
 # The passing command gets a generous bound: with the 2 s of the stall cases below, a busy host that is
 # slow to start even `true` would count as a stall and the run would be retried.
 APT_FIRST_TRY_S=60 "$here/apt-retry.sh" true >"$tmp/out" 2>&1 || fail "retry: a passing command failed"
@@ -65,13 +68,15 @@ printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n' >"$tmp/apt/apt-mi
 cat >"$tmp/stall.sh" <<S
 #!/usr/bin/env bash
 if [ "\$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ]; then exit 0; fi
-sleep 30
+sleep 120
 S
 chmod +x "$tmp/stall.sh"
 start=$SECONDS
 "$here/apt-retry.sh" "$tmp/stall.sh" >"$tmp/out" 2>&1 || fail "retry: a stall was not recovered"
 grep -q "status 124" "$tmp/out" || fail "retry: the warning does not name the timeout (status 124)"
-[ $((SECONDS - start)) -lt 15 ] || fail "retry: the stalled try was not cut off"
+# A cut-off try ends after the 2 s bound; an uncut one would run the stub's 120 s. The bound sits far from both so a
+# host at load 90, where each spawn takes seconds, does not fail the check.
+[ $((SECONDS - start)) -lt 60 ] || fail "retry: the stalled try was not cut off"
 [ "$(sed -n 1p "$tmp/apt/apt-mirrors.txt")" = "$canonical" ] || fail "retry: Canonical is not first after a stall"
 
 # A command that fails both times: its own status comes back, with an error that names it

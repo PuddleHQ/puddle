@@ -73,8 +73,11 @@ fn ok_script() -> Script {
 /// Neither a real value nor a stand-in is in the record or any log line.
 fn assert_nothing_leaked(event: &ConnectionEvent, secrets: &Secrets) {
     let audit = format!("{event:?}");
-    for text in [REAL_KEY, REAL_BOT, &secrets.key, &secrets.bot] {
-        assert!(!audit.contains(text), "{text} in the record: {audit}");
+    // The failure message names the value, never prints it.
+    let values = [REAL_KEY, REAL_BOT, &secrets.key, &secrets.bot];
+    let names = ["real key", "real bot token", "key stand-in", "bot stand-in"];
+    for (name, text) in names.into_iter().zip(values) {
+        assert!(!audit.contains(text), "the {name} is in the record");
     }
     let logs = captured_logs();
     assert!(

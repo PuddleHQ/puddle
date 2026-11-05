@@ -30,7 +30,7 @@ use puddle_agent_proto::resolve::{
     MAX_RECORDS, Record, RecordType, ResolveAnswer, ResolveQuery, StandInReason,
 };
 use puddle_netpolicy::normalise_host;
-use puddle_types::{BlockReason, DomainName, EgressRequest, Host, SuffixAllows, WorkspaceName};
+use puddle_types::{BlockReason, DomainName, EgressRequest, Host, SuffixAllows, WorkspaceId};
 use std::net::SocketAddr;
 
 use crate::destination::AddressVerdict;
@@ -208,7 +208,7 @@ enum Allowed {
 }
 
 /// Whether a rule allows `host` for `workspace`. Asks without recording anything.
-async fn allowed(proxy: &Proxy, workspace: &WorkspaceName, host: &Host) -> Allowed {
+async fn allowed(proxy: &Proxy, workspace: &WorkspaceId, host: &Host) -> Allowed {
     let request = EgressRequest::new(workspace.clone(), host.clone(), 0);
     match proxy.look_up_rule(request, SuffixAllows::Count).await {
         Ok(Some(decision)) if decision.is_allow() => Allowed::Yes,
@@ -224,7 +224,7 @@ async fn allowed(proxy: &Proxy, workspace: &WorkspaceName, host: &Host) -> Allow
 /// The answer to an address query for an allowed name: resolve it here, once.
 async fn address_answer(
     proxy: &Proxy,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     name: &DomainName,
 ) -> ResolveAnswer {
     let lookup = tokio::time::timeout(
@@ -267,7 +267,7 @@ async fn address_answer(
 
 /// `Blocked` when every address of the name is refused by the address guard (the connect says why),
 /// else `Resolves`.
-fn why_for(proxy: &Proxy, workspace: &WorkspaceName, addrs: &[SocketAddr]) -> StandInReason {
+fn why_for(proxy: &Proxy, workspace: &WorkspaceId, addrs: &[SocketAddr]) -> StandInReason {
     let all_blocked = addrs.iter().all(|addr| {
         matches!(
             proxy.addresses().check(workspace, *addr),

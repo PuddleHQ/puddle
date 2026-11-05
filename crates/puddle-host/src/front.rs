@@ -9,19 +9,19 @@ use puddle_agent_proto::editor::{EditorServer, ServerKind};
 use puddle_front::{FileHalves, Flavour, Front, Guests, ServerHalves, Target};
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_ports::Ports;
-use puddle_types::{Problem, Problems, WorkspaceName};
+use puddle_types::{Problem, Problems, WorkspaceId};
 
 use crate::{HostError, HostPaths};
 
 /// The server each running workspace was started with. The front serves what runs, not what the
 /// settings say now: a consent withdrawn mid-run changes the next start, not the running server.
 #[derive(Default)]
-pub(crate) struct Flavours(Mutex<BTreeMap<WorkspaceName, Flavour>>);
+pub(crate) struct Flavours(Mutex<BTreeMap<WorkspaceId, Flavour>>);
 
 impl Flavours {
     /// `name`'s guest runs with `editor`. `None` means the host bundles no code-server, so the
     /// guest runs none: the front still reaches the agent and says the editor is not there.
-    pub(crate) fn running(&self, name: &WorkspaceName, editor: Option<&EditorServer>) {
+    pub(crate) fn running(&self, name: &WorkspaceId, editor: Option<&EditorServer>) {
         let flavour = match editor.map(|e| e.kind) {
             Some(ServerKind::Microsoft { .. }) => Flavour::Microsoft,
             Some(ServerKind::CodeServer) | None => Flavour::CodeServer,
@@ -30,12 +30,12 @@ impl Flavours {
     }
 
     /// `name`'s guest does not run any more.
-    pub(crate) fn stopped(&self, name: &WorkspaceName) {
+    pub(crate) fn stopped(&self, name: &WorkspaceId) {
         self.map().remove(name);
     }
 
     /// The workspaces that run Microsoft's server.
-    pub(crate) fn on_microsoft(&self) -> Vec<WorkspaceName> {
+    pub(crate) fn on_microsoft(&self) -> Vec<WorkspaceId> {
         self.map()
             .iter()
             .filter(|(_, flavour)| **flavour == Flavour::Microsoft)
@@ -43,11 +43,11 @@ impl Flavours {
             .collect()
     }
 
-    pub(crate) fn of(&self, name: &WorkspaceName) -> Option<Flavour> {
+    pub(crate) fn of(&self, name: &WorkspaceId) -> Option<Flavour> {
         self.map().get(name).copied()
     }
 
-    fn map(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceName, Flavour>> {
+    fn map(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceId, Flavour>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -61,7 +61,7 @@ struct HostGuests {
 }
 
 impl Guests for HostGuests {
-    fn target(&self, workspace: &WorkspaceName) -> Option<Target> {
+    fn target(&self, workspace: &WorkspaceId) -> Option<Target> {
         let flavour = self.flavours.of(workspace)?;
         let link = self.ports.guest_link(workspace)?;
         Some(Target {
@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn only_the_workspaces_started_on_microsoft_s_server_are_listed_and_a_stop_removes_one() {
         let flavours = Flavours::default();
-        let name = |s: &str| WorkspaceName::new(s).unwrap();
+        let name = |s: &str| WorkspaceId::new(s).unwrap();
         let microsoft = EditorServer::microsoft("/data", "/mnt", 300, false, true);
         flavours.running(&name("ms"), Some(&microsoft));
         flavours.running(&name("cs"), Some(&EditorServer::new("/data", "/mnt", 300)));

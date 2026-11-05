@@ -28,7 +28,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, StaticRecords, StaticResolver};
 use puddle_proxy::{Proxy, ProxyConfig, Route, Upstream};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
-use puddle_types::{NullSink, WorkspaceName};
+use puddle_types::{NullSink, WorkspaceId};
 use puddle_upstream::{Chain, Config as UpstreamConfig, Discovery, FakeOs, Hop, NoAuth, ProxyAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
@@ -41,8 +41,8 @@ const TYPE_TXT: u16 = 16;
 const TYPE_AAAA: u16 = 28;
 const TYPE_SRV: u16 = 33;
 
-fn workspace() -> WorkspaceName {
-    WorkspaceName::new("dns").unwrap()
+fn workspace() -> WorkspaceId {
+    WorkspaceId::new("dns").unwrap()
 }
 
 /// Counts what the host's resolvers were asked.

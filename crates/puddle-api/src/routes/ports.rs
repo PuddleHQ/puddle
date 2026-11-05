@@ -8,7 +8,7 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
 use crate::error::ApiError;
@@ -35,7 +35,7 @@ pub(crate) async fn list_ports(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspacePorts>, ApiError> {
-    let name: WorkspaceName = workspace(&state, &id).await?;
+    let name: WorkspaceId = workspace(&state, &id).await?;
     Ok(Json(state.ports.list(&name).await?))
 }
 

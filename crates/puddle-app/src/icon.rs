@@ -164,20 +164,20 @@ mod tests {
         }
         fn load_workspace(
             &self,
-            _: &puddle_types::WorkspaceName,
+            _: &puddle_types::WorkspaceId,
         ) -> Result<Option<serde_json::Value>, puddle_api::SettingsRepoError> {
             Ok(None)
         }
         fn save_workspace(
             &self,
-            _: &puddle_types::WorkspaceName,
+            _: &puddle_types::WorkspaceId,
             _: serde_json::Value,
         ) -> Result<(), puddle_api::SettingsRepoError> {
             Ok(())
         }
         fn delete_workspace(
             &self,
-            _: &puddle_types::WorkspaceName,
+            _: &puddle_types::WorkspaceId,
         ) -> Result<(), puddle_api::SettingsRepoError> {
             Ok(())
         }
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn an_image_that_cannot_be_read_shows_the_duck() {
         // The rest of the stand-in answers as an empty store.
-        let name = puddle_types::WorkspaceName::new("box").unwrap();
+        let name = puddle_types::WorkspaceId::new("box").unwrap();
         assert_eq!(Broken.load_global().unwrap(), None);
         Broken.save_global(serde_json::json!({})).unwrap();
         assert_eq!(Broken.load_workspace(&name).unwrap(), None);

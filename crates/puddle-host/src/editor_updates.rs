@@ -11,7 +11,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use puddle_front::Windows;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 use crate::workspaces::SwitchEditorBuildError;
 
@@ -22,13 +22,13 @@ pub(crate) const ASK_PERIOD: Duration = Duration::from_mins(5);
 /// What the asking needs from the workspaces.
 pub(crate) trait Builds: Send + Sync + 'static {
     /// The running workspaces whose editor server is Microsoft's.
-    fn on_microsoft_server(&self) -> Vec<WorkspaceName>;
+    fn on_microsoft_server(&self) -> Vec<WorkspaceId>;
 
     /// Asks `workspace`'s agent to switch to the staged build; `connected_windows` is the front's
     /// count. Whether it switched.
     fn switch(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         connected_windows: usize,
     ) -> impl Future<Output = Result<bool, SwitchEditorBuildError>> + Send;
 }
@@ -80,20 +80,20 @@ mod tests {
 
     /// Records each ask; `workspaces` are the Microsoft-server ones.
     struct Recorded {
-        workspaces: Vec<WorkspaceName>,
-        asked: Mutex<Vec<(WorkspaceName, usize)>>,
+        workspaces: Vec<WorkspaceId>,
+        asked: Mutex<Vec<(WorkspaceId, usize)>>,
         agent_fails: bool,
         switches: bool,
     }
 
     impl Builds for Arc<Recorded> {
-        fn on_microsoft_server(&self) -> Vec<WorkspaceName> {
+        fn on_microsoft_server(&self) -> Vec<WorkspaceId> {
             self.workspaces.clone()
         }
 
         fn switch(
             &self,
-            workspace: &WorkspaceName,
+            workspace: &WorkspaceId,
             connected_windows: usize,
         ) -> impl Future<Output = Result<bool, SwitchEditorBuildError>> + Send {
             self.asked
@@ -111,8 +111,8 @@ mod tests {
         }
     }
 
-    fn name(s: &str) -> WorkspaceName {
-        WorkspaceName::new(s).unwrap()
+    fn name(s: &str) -> WorkspaceId {
+        WorkspaceId::new(s).unwrap()
     }
 
     fn recorded(names: &[&str]) -> Arc<Recorded> {

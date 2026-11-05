@@ -25,7 +25,7 @@ use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
 use puddle_test_kit::eventually;
-use puddle_types::{NullSink, WorkspaceName};
+use puddle_types::{NullSink, WorkspaceId};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -34,8 +34,8 @@ use tokio::sync::mpsc;
 const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const CANARY: &str = "CANARY-node-9c1e";
 
-fn workspace() -> WorkspaceName {
-    WorkspaceName::new("node").unwrap()
+fn workspace() -> WorkspaceId {
+    WorkspaceId::new("node").unwrap()
 }
 
 struct Rig {

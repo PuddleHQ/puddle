@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Decrypting every host on the wire: a workspace's switch and the names that are never decrypted.
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct InterceptionView {
     /// The workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// Whether Puddle decrypts every host on port 443, not only the hosts with a credential,
     /// secret or login capture. Off unless turned on.
     pub decrypt_all: bool,

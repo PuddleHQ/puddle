@@ -11,7 +11,7 @@ use puddle_proxy::{
 };
 use puddle_secrets::SecretStore;
 use puddle_store::{SecretPlace, StartValue, Store};
-use puddle_types::{GuestEnv, WorkspaceName};
+use puddle_types::{GuestEnv, WorkspaceId};
 
 /// What a workspace's environment comes to at one moment.
 pub(crate) struct Resolved {
@@ -41,7 +41,7 @@ impl std::fmt::Debug for Resolved {
 pub(crate) fn resolve(
     store: &Store,
     vault: &dyn SecretStore,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
 ) -> Result<Resolved, String> {
     let vars = store
         .env_for_start(workspace, &mut |name| {
@@ -129,8 +129,8 @@ mod tests {
         Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap()
     }
 
-    fn ws(name: &str) -> WorkspaceName {
-        WorkspaceName::new(name).unwrap()
+    fn ws(name: &str) -> WorkspaceId {
+        WorkspaceId::new(name).unwrap()
     }
 
     fn name(text: &str) -> EnvName {

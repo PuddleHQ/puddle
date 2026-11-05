@@ -6,7 +6,7 @@ use std::time::Duration;
 use axum::extract::State;
 use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde::Deserialize;
 
 use crate::extract::Query;
@@ -20,7 +20,7 @@ const KEEP_ALIVE: Duration = Duration::from_secs(15);
 #[serde(deny_unknown_fields)]
 pub(crate) struct EventsQuery {
     /// Only this workspace's events (global events always come through). All events if left out.
-    workspace: Option<WorkspaceName>,
+    workspace: Option<WorkspaceId>,
 }
 
 /// Server-sent events: each `data:` line is one `Event` as JSON (the `Event` schema; switch on
@@ -31,7 +31,7 @@ pub(crate) struct EventsQuery {
     get,
     path = "/api/events",
     tag = "events",
-    params(("workspace" = Option<WorkspaceName>, Query, description = "only this workspace's events; global events always come through")),
+    params(("workspace" = Option<WorkspaceId>, Query, description = "only this workspace's events; global events always come through")),
     responses(
         (status = OK, description = "the event stream", content_type = "text/event-stream", body = String),
         (status = BAD_REQUEST, description = "invalid workspace name", body = crate::ApiErrorBody)

@@ -53,7 +53,7 @@ pub struct FileSettings {
 struct Cache {
     global: Option<Value>,
     global_read: bool,
-    workspaces: BTreeMap<WorkspaceName, Option<Value>>,
+    workspaces: BTreeMap<WorkspaceId, Option<Value>>,
     app_icon: Option<Vec<u8>>,
     app_icon_read: bool,
 }
@@ -76,14 +76,14 @@ impl FileSettings {
         self.dir.join("app-icon.png")
     }
 
-    fn workspace_path(&self, workspace: &WorkspaceName) -> PathBuf {
+    fn workspace_path(&self, workspace: &WorkspaceId) -> PathBuf {
         self.dir
             .join("workspaces")
             .join(format!("{workspace}.json"))
     }
 
     /// Where workspace documents were kept before they were called workspaces.
-    fn legacy_path(&self, workspace: &WorkspaceName) -> PathBuf {
+    fn legacy_path(&self, workspace: &WorkspaceId) -> PathBuf {
         self.dir.join("sandboxes").join(format!("{workspace}.json"))
     }
 
@@ -112,10 +112,7 @@ impl SettingsRepo for FileSettings {
         Ok(())
     }
 
-    fn load_workspace(
-        &self,
-        workspace: &WorkspaceName,
-    ) -> Result<Option<Value>, SettingsRepoError> {
+    fn load_workspace(&self, workspace: &WorkspaceId) -> Result<Option<Value>, SettingsRepoError> {
         let mut cache = self.cache();
         if let Some(cached) = cache.workspaces.get(workspace) {
             return Ok(cached.clone());
@@ -131,7 +128,7 @@ impl SettingsRepo for FileSettings {
 
     fn save_workspace(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         document: Value,
     ) -> Result<(), SettingsRepoError> {
         let mut cache = self.cache();
@@ -143,7 +140,7 @@ impl SettingsRepo for FileSettings {
         Ok(())
     }
 
-    fn delete_workspace(&self, workspace: &WorkspaceName) -> Result<(), SettingsRepoError> {
+    fn delete_workspace(&self, workspace: &WorkspaceId) -> Result<(), SettingsRepoError> {
         let mut cache = self.cache();
         // Both places, whatever the first one does: a copy left under the old name would be read
         // again.
@@ -508,7 +505,7 @@ mod tests {
     fn settings_round_trip_and_a_missing_file_is_none() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FileSettings::new(dir.path().join("settings"));
-        let a = WorkspaceName::new("a").unwrap();
+        let a = WorkspaceId::new("a").unwrap();
         assert_eq!(repo.load_global().unwrap(), None);
         assert_eq!(repo.load_workspace(&a).unwrap(), None);
         repo.save_global(json!({"schema_version": 1})).unwrap();
@@ -532,7 +529,7 @@ mod tests {
     #[test]
     fn deleting_a_workspace_document_removes_both_copies_and_a_missing_one_is_fine() {
         let dir = tempfile::tempdir().unwrap();
-        let a = WorkspaceName::new("a").unwrap();
+        let a = WorkspaceId::new("a").unwrap();
         let repo = FileSettings::new(dir.path());
         // Nothing stored: not an error.
         repo.delete_workspace(&a).unwrap();
@@ -554,7 +551,7 @@ mod tests {
     #[test]
     fn a_workspace_document_that_cannot_be_removed_is_an_error_and_the_other_copy_still_goes() {
         let dir = tempfile::tempdir().unwrap();
-        let a = WorkspaceName::new("a").unwrap();
+        let a = WorkspaceId::new("a").unwrap();
         let repo = FileSettings::new(dir.path());
         // A non-empty folder where the file belongs: removing it fails on every OS.
         let blocked = dir.path().join("workspaces").join("a.json");
@@ -571,7 +568,7 @@ mod tests {
     #[test]
     fn a_failed_delete_does_not_leave_the_cache_claiming_the_old_document() {
         let dir = tempfile::tempdir().unwrap();
-        let a = WorkspaceName::new("a").unwrap();
+        let a = WorkspaceId::new("a").unwrap();
         let repo = FileSettings::new(dir.path());
         repo.save_workspace(&a, json!({"overrides": {}})).unwrap();
         let blocked = dir.path().join("sandboxes").join("a.json");
@@ -588,7 +585,7 @@ mod tests {
         let old = dir.path().join("sandboxes");
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("a.json"), br#"{"overrides":{"cpus":2}}"#).unwrap();
-        let a = WorkspaceName::new("a").unwrap();
+        let a = WorkspaceId::new("a").unwrap();
         let repo = FileSettings::new(dir.path());
         assert_eq!(
             repo.load_workspace(&a).unwrap(),

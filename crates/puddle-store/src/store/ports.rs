@@ -3,7 +3,7 @@
 //! this computer each time the workspace starts. What is forwarded right now, and which ports a
 //! workspace listens on, is not stored: the host learns it from the guest.
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use rusqlite::{Connection, Transaction, params};
 
 use super::{Store, lock};
@@ -29,7 +29,7 @@ fn port(value: i64, column: &str) -> Result<u16, StoreError> {
 /// A deleted workspace's pins go with it.
 pub(super) fn delete_workspace_rows(
     tx: &Transaction<'_>,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
 ) -> Result<(), StoreError> {
     tx.execute(
         "DELETE FROM pinned_ports WHERE workspace_id = ?1",
@@ -38,7 +38,7 @@ pub(super) fn delete_workspace_rows(
     Ok(())
 }
 
-fn list(conn: &Connection, workspace: &WorkspaceName) -> Result<Vec<PinnedPort>, StoreError> {
+fn list(conn: &Connection, workspace: &WorkspaceId) -> Result<Vec<PinnedPort>, StoreError> {
     let mut stmt = conn.prepare(
         "SELECT guest_port, host_port FROM pinned_ports WHERE workspace_id = ?1 ORDER BY guest_port",
     )?;
@@ -63,7 +63,7 @@ impl Store {
     /// # Errors
     ///
     /// A database error, or a stored row that is not a port.
-    pub fn pinned_ports(&self, workspace: &WorkspaceName) -> Result<Vec<PinnedPort>, StoreError> {
+    pub fn pinned_ports(&self, workspace: &WorkspaceId) -> Result<Vec<PinnedPort>, StoreError> {
         list(&lock(&self.conn), workspace)
     }
 
@@ -72,7 +72,7 @@ impl Store {
     /// # Errors
     ///
     /// A database error, or a stored row that is not a workspace name or a port.
-    pub fn all_pinned_ports(&self) -> Result<Vec<(WorkspaceName, PinnedPort)>, StoreError> {
+    pub fn all_pinned_ports(&self) -> Result<Vec<(WorkspaceId, PinnedPort)>, StoreError> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(
             "SELECT workspace_id, guest_port, host_port FROM pinned_ports ORDER BY workspace_id, guest_port",
@@ -88,7 +88,7 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?;
         rows.into_iter()
             .map(|(workspace, guest, host)| {
-                let name = WorkspaceName::new(&workspace).map_err(|e| StoreError::Corrupt {
+                let name = WorkspaceId::new(&workspace).map_err(|e| StoreError::Corrupt {
                     table: "pinned_ports",
                     id: guest,
                     reason: e.to_string(),
@@ -110,7 +110,7 @@ impl Store {
     /// # Errors
     ///
     /// A database error (including a port the table's checks refuse). Nothing changes then.
-    pub fn pin_port(&self, workspace: &WorkspaceName, pin: PinnedPort) -> Result<(), StoreError> {
+    pub fn pin_port(&self, workspace: &WorkspaceId, pin: PinnedPort) -> Result<(), StoreError> {
         lock(&self.conn).execute(
             "INSERT INTO pinned_ports (workspace_id, guest_port, host_port) VALUES (?1, ?2, ?3)
              ON CONFLICT (workspace_id, guest_port) DO UPDATE SET host_port = excluded.host_port",
@@ -124,11 +124,7 @@ impl Store {
     /// # Errors
     ///
     /// A database error.
-    pub fn unpin_port(
-        &self,
-        workspace: &WorkspaceName,
-        guest_port: u16,
-    ) -> Result<bool, StoreError> {
+    pub fn unpin_port(&self, workspace: &WorkspaceId, guest_port: u16) -> Result<bool, StoreError> {
         let removed = lock(&self.conn).execute(
             "DELETE FROM pinned_ports WHERE workspace_id = ?1 AND guest_port = ?2",
             params![workspace.as_str(), guest_port],
@@ -149,8 +145,8 @@ mod tests {
         Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap()
     }
 
-    fn ws(text: &str) -> WorkspaceName {
-        WorkspaceName::new(text).unwrap()
+    fn ws(text: &str) -> WorkspaceId {
+        WorkspaceId::new(text).unwrap()
     }
 
     fn pin(guest_port: u16, host_port: u16) -> PinnedPort {

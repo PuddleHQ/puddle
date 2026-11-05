@@ -3,7 +3,7 @@
 
 use puddle_api::{ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services};
 use puddle_store::{Limits, ManualClock, Store};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -23,8 +23,8 @@ async fn workspace(api: &Api, name: &str) {
     api.workspaces.idle().await;
 }
 
-fn shop() -> WorkspaceName {
-    WorkspaceName::new("shop").unwrap()
+fn shop() -> WorkspaceId {
+    WorkspaceId::new("shop").unwrap()
 }
 
 #[tokio::test]

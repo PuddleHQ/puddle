@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use puddle_agent_proto::host::serve_session;
 use puddle_ipc::{Endpoint, IpcError, Listener};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use tokio::sync::oneshot;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::Instrument;
@@ -25,7 +25,7 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 #[derive(Debug)]
 pub struct Route {
     endpoint: Endpoint,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     task: JoinHandle<()>,
     /// Asks the accept loop to close its listener and end; dropping it does the same.
     stop: Option<oneshot::Sender<()>>,
@@ -40,7 +40,7 @@ impl Route {
 
     /// The workspace this route serves.
     #[must_use]
-    pub fn workspace(&self) -> &WorkspaceName {
+    pub fn workspace(&self) -> &WorkspaceId {
         &self.workspace
     }
 
@@ -70,7 +70,7 @@ impl Proxy {
     /// Serves `listener` (the route of `workspace`) until the returned [`Route`] is dropped or shut
     /// down. Must be called inside a tokio runtime.
     #[must_use]
-    pub fn serve_route(self: &Arc<Self>, listener: Listener, workspace: WorkspaceName) -> Route {
+    pub fn serve_route(self: &Arc<Self>, listener: Listener, workspace: WorkspaceId) -> Route {
         let endpoint = listener.endpoint().clone();
         let handler = Arc::new(self.handler(workspace.clone()));
         let span = tracing::info_span!("route", workspace = %workspace);

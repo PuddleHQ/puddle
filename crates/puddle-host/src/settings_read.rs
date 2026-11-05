@@ -6,7 +6,7 @@
 
 use puddle_api::SettingsRepo;
 use puddle_settings::{GlobalSettings, WorkspaceSettings};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 
 /// The global settings; the defaults when none were ever saved.
@@ -23,7 +23,7 @@ pub(crate) fn global(repo: &dyn SettingsRepo) -> Result<GlobalSettings, String> 
 /// One workspace's own settings; empty when it has none.
 pub(crate) fn workspace(
     repo: &dyn SettingsRepo,
-    name: &WorkspaceName,
+    name: &WorkspaceId,
 ) -> Result<WorkspaceSettings, String> {
     let doc = repo
         .load_workspace(name)
@@ -53,15 +53,15 @@ mod tests {
         fn save_global(&self, _: Value) -> Result<(), SettingsRepoError> {
             Ok(())
         }
-        fn load_workspace(&self, _: &WorkspaceName) -> Result<Option<Value>, SettingsRepoError> {
+        fn load_workspace(&self, _: &WorkspaceId) -> Result<Option<Value>, SettingsRepoError> {
             Err(SettingsRepoError::new(
                 "/data/workspaces/a.json is not valid JSON",
             ))
         }
-        fn save_workspace(&self, _: &WorkspaceName, _: Value) -> Result<(), SettingsRepoError> {
+        fn save_workspace(&self, _: &WorkspaceId, _: Value) -> Result<(), SettingsRepoError> {
             Ok(())
         }
-        fn delete_workspace(&self, _: &WorkspaceName) -> Result<(), SettingsRepoError> {
+        fn delete_workspace(&self, _: &WorkspaceId) -> Result<(), SettingsRepoError> {
             Ok(())
         }
         fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
@@ -75,8 +75,8 @@ mod tests {
         }
     }
 
-    fn a() -> WorkspaceName {
-        WorkspaceName::new("a").unwrap()
+    fn a() -> WorkspaceId {
+        WorkspaceId::new("a").unwrap()
     }
 
     #[test]

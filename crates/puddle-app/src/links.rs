@@ -15,7 +15,7 @@
 
 use std::fmt::Display;
 
-use puddle_types::{Problem, Problems, WorkspaceName};
+use puddle_types::{Problem, Problems, WorkspaceId};
 use url::Url;
 
 /// The key of the problem about a link that went nowhere.
@@ -55,7 +55,7 @@ pub fn refused(url: &Url) -> Problem {
 /// The problem for an editor window ("New Window") that could not be built. It names the
 /// workspace and the reason, not the address: the link was the editor's own and fine.
 #[must_use]
-pub fn window_failed(workspace: &WorkspaceName, reason: &str) -> Problem {
+pub fn window_failed(workspace: &WorkspaceId, reason: &str) -> Problem {
     Problem::new(
         format!("{WINDOW_KEY}:{workspace}"),
         format!("Puddle could not open another editor window for {workspace}"),
@@ -65,12 +65,12 @@ pub fn window_failed(workspace: &WorkspaceName, reason: &str) -> Problem {
 }
 
 /// Withdraws the notice about `workspace`'s failed window, once one opened.
-pub fn window_opened(problems: &Problems, workspace: &WorkspaceName) {
+pub fn window_opened(problems: &Problems, workspace: &WorkspaceId) {
     problems.clear(&format!("{WINDOW_KEY}:{workspace}"));
 }
 
 /// Raises the notice for a window that could not be built.
-pub fn report_window_failed(problems: &Problems, workspace: &WorkspaceName, reason: &str) {
+pub fn report_window_failed(problems: &Problems, workspace: &WorkspaceId, reason: &str) {
     let problem = window_failed(workspace, reason);
     problems.clear(&problem.key);
     problems.raise(problem);
@@ -149,8 +149,8 @@ mod tests {
         assert_eq!(where_to(&url("data:text/plain,hi")), "data:");
     }
 
-    fn workspace(name: &str) -> WorkspaceName {
-        WorkspaceName::new(name).unwrap()
+    fn workspace(name: &str) -> WorkspaceId {
+        WorkspaceId::new(name).unwrap()
     }
 
     #[test]

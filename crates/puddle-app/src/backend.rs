@@ -19,7 +19,7 @@ use puddle_host::{
     RuntimeFactory, prepare,
 };
 use puddle_store::Store;
-use puddle_types::{Problems, WorkspaceName};
+use puddle_types::{Problems, WorkspaceId};
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -144,7 +144,7 @@ type Stop = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = HostShutdown> + Send
 /// Asks a workspace's guest to end its editor's extension hosts (the editor window closed). The
 /// error says why it did not reach the guest, for a log: a stopped workspace has none to end.
 pub type EndExtensionHosts =
-    Arc<dyn Fn(WorkspaceName) -> BoxFuture<'static, Result<(), String>> + Send + Sync>;
+    Arc<dyn Fn(WorkspaceId) -> BoxFuture<'static, Result<(), String>> + Send + Sync>;
 
 /// A running in-process backend.
 pub struct Backend {
@@ -366,7 +366,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn the_fixture_runs_no_workspaces_so_it_has_no_extension_hosts_to_end() {
         let backend = start_fixture(0).await;
-        let demo = WorkspaceName::new("demo").unwrap();
+        let demo = WorkspaceId::new("demo").unwrap();
         let reason = (backend.extension_hosts())(demo).await.unwrap_err();
         assert_eq!(reason, "this backend runs no workspaces");
         backend.shutdown().await;

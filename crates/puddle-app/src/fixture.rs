@@ -10,7 +10,7 @@ use puddle_api::{
 };
 use puddle_host::{HostShutdown, Step};
 use puddle_store::{Limits, Store, SystemClock};
-use puddle_types::{EgressRequest, Host, Problems, SuffixAllows, WorkspaceName};
+use puddle_types::{EgressRequest, Host, Problems, SuffixAllows, WorkspaceId};
 
 use crate::backend::{Backend, BackendError};
 
@@ -23,7 +23,7 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
         Store::open_in_memory(clock.clone(), Limits::default())
             .map_err(|e| fixture("store", &e))?,
     );
-    let workspace = WorkspaceName::new("demo").map_err(|e| fixture("workspace name", &e))?;
+    let workspace = WorkspaceId::new("demo").map_err(|e| fixture("workspace name", &e))?;
     let host = Host::parse_normalised("registry.example.org").map_err(|e| fixture("host", &e))?;
     store
         .decide(

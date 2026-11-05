@@ -19,7 +19,7 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use puddle_types::{SessionUser, WorkspaceName};
+use puddle_types::{SessionUser, WorkspaceId};
 
 use crate::ssh_login::{LoginKey, SSH_DIR};
 
@@ -47,7 +47,7 @@ pub struct SshSettings {
 
 /// The name of a workspace's entry in the ssh config: what `ssh` and Remote-SSH connect to.
 #[must_use]
-pub fn ssh_host(workspace: &WorkspaceName) -> String {
+pub fn ssh_host(workspace: &WorkspaceId) -> String {
     format!("puddle-{workspace}")
 }
 
@@ -58,7 +58,7 @@ pub(crate) struct SshSetup {
     login: Result<LoginKey, String>,
     bridge: Option<PathBuf>,
     user_config: Option<PathBuf>,
-    entries: Mutex<BTreeMap<WorkspaceName, Entry>>,
+    entries: Mutex<BTreeMap<WorkspaceId, Entry>>,
 }
 
 impl SshSetup {
@@ -94,7 +94,7 @@ impl SshSetup {
         self.dir.join(CONFIG_FILE)
     }
 
-    fn known_hosts(&self, workspace: &WorkspaceName) -> PathBuf {
+    fn known_hosts(&self, workspace: &WorkspaceId) -> PathBuf {
         self.dir.join(KNOWN_HOSTS_DIR).join(workspace.as_str())
     }
 
@@ -107,7 +107,7 @@ impl SshSetup {
     /// Why the entry could not be written, for the user.
     pub(crate) fn publish(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         endpoint: &Path,
         user: SessionUser,
     ) -> Result<(), String> {
@@ -166,7 +166,7 @@ impl SshSetup {
     /// Why the file could not be rewritten: the entry is then still in it, naming an endpoint that
     /// is about to close, and the caller says so. The entry is out of the live set either way, so
     /// the next write of the file (any workspace's) drops it.
-    pub(crate) fn withdraw(&self, workspace: &WorkspaceName) -> Result<(), String> {
+    pub(crate) fn withdraw(&self, workspace: &WorkspaceId) -> Result<(), String> {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         if entries.remove(workspace).is_none() {
             return Ok(());
@@ -184,7 +184,7 @@ impl SshSetup {
 
     /// The endpoint `workspace`'s entry names now.
     #[cfg(all(test, unix))]
-    pub(crate) fn endpoint(&self, workspace: &WorkspaceName) -> Option<PathBuf> {
+    pub(crate) fn endpoint(&self, workspace: &WorkspaceId) -> Option<PathBuf> {
         self.entries
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -192,7 +192,7 @@ impl SshSetup {
             .map(|e| e.endpoint.clone())
     }
 
-    fn write_config(&self, entries: &BTreeMap<WorkspaceName, Entry>) -> Result<(), String> {
+    fn write_config(&self, entries: &BTreeMap<WorkspaceId, Entry>) -> Result<(), String> {
         let (Ok(login), Some(bridge)) = (&self.login, &self.bridge) else {
             return puddle_fs::private::write_atomic(&self.config_path(), HEADER.as_bytes())
                 .map_err(|e| e.to_string());
@@ -232,10 +232,7 @@ struct Context<'a> {
 }
 
 /// The whole of Puddle's ssh config for `entries`.
-fn render(
-    entries: &BTreeMap<WorkspaceName, Entry>,
-    context: &Context<'_>,
-) -> Result<String, String> {
+fn render(entries: &BTreeMap<WorkspaceId, Entry>, context: &Context<'_>) -> Result<String, String> {
     let mut text = HEADER.to_owned();
     for (workspace, Entry { endpoint, user }) in entries {
         let host = ssh_host(workspace);
@@ -429,8 +426,8 @@ fn replace_keeping_permissions(
 mod tests {
     use super::*;
 
-    fn name(n: &str) -> WorkspaceName {
-        WorkspaceName::new(n).unwrap()
+    fn name(n: &str) -> WorkspaceId {
+        WorkspaceId::new(n).unwrap()
     }
 
     fn entry(endpoint: &str) -> Entry {

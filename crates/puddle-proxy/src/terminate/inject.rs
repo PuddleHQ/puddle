@@ -11,7 +11,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use ::http::{HeaderName, HeaderValue};
-use puddle_types::{Host, WorkspaceName};
+use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroize as _;
 
 use crate::destination::BoxFuture;
@@ -325,7 +325,7 @@ impl InjectDecision {
 #[derive(Debug, Clone, Copy)]
 pub struct InjectContext<'a> {
     /// The workspace, from the route.
-    pub workspace: &'a WorkspaceName,
+    pub workspace: &'a WorkspaceId,
     /// The host the guest `CONNECT`ed to, which the certificate, the `Host` header and the
     /// upstream connection are all pinned to.
     pub host: &'a Host,

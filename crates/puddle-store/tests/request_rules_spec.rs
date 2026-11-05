@@ -14,14 +14,14 @@ use puddle_store::{
 };
 use puddle_types::{
     CollectingSink, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason,
-    EgressRequest, Event, Host, HttpRequestLine, Methods, PathPattern, RuleId, WorkspaceName,
+    EgressRequest, Event, Host, HttpRequestLine, Methods, PathPattern, RuleId, WorkspaceId,
 };
 use serde_json::{Value, json};
 
 const T0: u64 = 1_800_000_000_000;
 
-fn sb(id: &str) -> WorkspaceName {
-    WorkspaceName::new(id).unwrap()
+fn sb(id: &str) -> WorkspaceId {
+    WorkspaceId::new(id).unwrap()
 }
 
 fn fixture() -> (Arc<CollectingSink>, Store) {

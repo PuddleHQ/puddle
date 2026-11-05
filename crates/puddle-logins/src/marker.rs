@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 use crate::vault::workspace_hash;
 
@@ -43,7 +43,7 @@ impl Marker {
     /// The marker of `workspace` in the folder `dir`: one file named by a hash of the workspace's
     /// name, so no name can reach outside the folder.
     #[must_use]
-    pub fn for_workspace(dir: &Path, workspace: &WorkspaceName) -> Self {
+    pub fn for_workspace(dir: &Path, workspace: &WorkspaceId) -> Self {
         Self::in_file(dir.join(format!("{}.kept", workspace_hash(workspace.as_str()))))
     }
 

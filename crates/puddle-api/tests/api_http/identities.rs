@@ -1141,6 +1141,49 @@ async fn identity_changes_are_in_the_activity_log_and_a_refused_one_is_not() {
 }
 
 #[tokio::test]
+async fn a_reorder_of_the_identities_is_in_the_activity_log_and_a_refused_one_is_not() {
+    let api = start().await;
+    let work = make(&api, "Work", &["acme"], false).await;
+    let personal = make(&api, "Personal", &[], true).await;
+    let bad = api
+        .send(
+            "PUT",
+            "/api/identities/order",
+            Some(&json!({"ids": [personal]})),
+        )
+        .await;
+    assert_eq!(bad.status, 422);
+    let before = ops(&api).await;
+    assert!(
+        before.iter().all(|(op, ..)| op != "identities_reordered"),
+        "a refused reorder writes nothing: {before:?}"
+    );
+
+    let reply = api
+        .send(
+            "PUT",
+            "/api/identities/order",
+            Some(&json!({"ids": [personal, work]})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let reordered: Vec<_> = ops(&api)
+        .await
+        .into_iter()
+        .filter(|(op, ..)| op == "identities_reordered")
+        .collect();
+    assert_eq!(
+        reordered,
+        [(
+            "identities_reordered".to_owned(),
+            Value::Null,
+            json!("Personal, Work")
+        )]
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_workspaces_identity_and_repository_changes_are_in_the_activity_log() {
     let api = start().await;
     workspace(&api, "shop").await;

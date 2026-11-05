@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 
 use puddle_store::Clock;
-use puddle_types::{EgressRequest, Host, WorkspaceName};
+use puddle_types::{EgressRequest, Host, WorkspaceId};
 
 use crate::common::{START_MS, start};
 
@@ -82,7 +82,7 @@ async fn a_pending_request_is_listed_approved_and_then_allowed() {
         .store
         .decide(
             &EgressRequest::new(
-                WorkspaceName::new("box").unwrap(),
+                WorkspaceId::new("box").unwrap(),
                 Host::parse_normalised("api.example.com").unwrap(),
                 443,
             ),
@@ -423,7 +423,7 @@ async fn audit_records_are_typed_including_the_upstream_hop() {
     use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason};
     let api = start().await;
     let request = EgressRequest::new(
-        WorkspaceName::new("box").unwrap(),
+        WorkspaceId::new("box").unwrap(),
         Host::parse_normalised("example.com").unwrap(),
         443,
     );
@@ -457,7 +457,7 @@ async fn puddles_own_connections_have_an_origin_and_the_origin_filter_finds_them
     pull.bytes_down = 1024;
     api.store.record(&pull);
     api.store.record(&ConnectionEvent::new(
-        &EgressRequest::new(WorkspaceName::new("box").unwrap(), host(), 443),
+        &EgressRequest::new(WorkspaceId::new("box").unwrap(), host(), 443),
         ConnectionDecision::Allow,
         ConnectionReason::Rule,
     ));

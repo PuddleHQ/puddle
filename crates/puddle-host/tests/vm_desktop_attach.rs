@@ -96,7 +96,7 @@ mod attach {
     use std::time::Duration;
 
     use puddle_host::{HostOptions, VsCodeLauncher};
-    use puddle_types::WorkspaceName;
+    use puddle_types::WorkspaceId;
     use serde_json::json;
 
     use crate::support::{Api, ended, hermetic_options};
@@ -243,7 +243,7 @@ mod attach {
         })
         .await;
         let name = format!("{}-dattach", settings.prefix.as_str());
-        let workspace = WorkspaceName::new(&name).unwrap();
+        let workspace = WorkspaceId::new(&name).unwrap();
         let sandbox = workspace.clone();
         let api = Api::new(host.url(), host.token());
         let mut events = api.events().await;

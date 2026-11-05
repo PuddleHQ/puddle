@@ -35,7 +35,7 @@ use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
 use puddle_store::{ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
 use puddle_types::{
-    ConnectionLog, Event, EventSink, Problem, Problems, WorkspaceName, WorkspaceStatus,
+    ConnectionLog, Event, EventSink, Problem, Problems, WorkspaceId, WorkspaceStatus,
 };
 use puddle_upstream::{AuthList, BasicAuth, Chain, Discovery, TlsClient, Watching, system_auth};
 use puddle_workspace::Workspaces;
@@ -421,7 +421,7 @@ impl<R: Runtime + Clone> std::fmt::Debug for Host<R> {
 /// change applies to the next one. Settings that cannot be read leave every local destination
 /// blocked (the guard fails closed) and are logged with the reason; the API shows the same damage
 /// on the workspace.
-fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceName) -> LocalAccess {
+fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceId) -> LocalAccess {
     match local_access_checked(settings, workspace) {
         Ok(access) => access,
         Err(reason) => {
@@ -433,7 +433,7 @@ fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceName) -> Local
 
 fn local_access_checked(
     settings: &dyn SettingsRepo,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
 ) -> Result<LocalAccess, String> {
     let global = crate::settings_read::global(settings)?;
     let own = crate::settings_read::workspace(settings, workspace)?;
@@ -1069,7 +1069,7 @@ impl Egress {
         let chain = Chain::new(discovery.clone(), Arc::new(auth));
         let upstream = Upstream::new(chain.clone());
         let access_settings = settings.clone();
-        let guard = NetPolicy::new(Arc::new(move |workspace: &WorkspaceName| {
+        let guard = NetPolicy::new(Arc::new(move |workspace: &WorkspaceId| {
             local_access(access_settings.as_ref(), workspace)
         }))
         .with_endpoints(endpoints.clone());
@@ -1140,12 +1140,12 @@ async fn inventory_of<R: Runtime>(
     let workspaces = known_ids(stored);
     let mut inventory = Inventory::default();
     for stored in stored.iter().filter(|s| !s.creating) {
-        if existing.contains(stored.name.as_str()) {
+        if existing.contains(stored.id.as_str()) {
             inventory
                 .attached
-                .insert(stored.id.clone(), stored.name.sandbox_name());
+                .insert(stored.id.clone(), stored.id.sandbox_name());
         }
-        inventory.sandboxes.insert(stored.name.sandbox_name());
+        inventory.sandboxes.insert(stored.id.sandbox_name());
     }
     inventory.workspaces = workspaces;
     inventory.interrupted = stored
@@ -1177,7 +1177,7 @@ async fn reconcile_with<R: Runtime>(
 ) -> Result<
     (
         puddle_lifecycle::ReconcileReport,
-        BTreeMap<WorkspaceName, WorkspaceStatus>,
+        BTreeMap<WorkspaceId, WorkspaceStatus>,
     ),
     HostError,
 > {
@@ -1203,17 +1203,17 @@ async fn reconcile_with<R: Runtime>(
     for failure in &report.failures {
         tracing::warn!(item = %failure.item, action = failure.action, error = %failure.error, "reconcile did not finish this");
     }
-    let mut status: BTreeMap<WorkspaceName, WorkspaceStatus> = report
+    let mut status: BTreeMap<WorkspaceId, WorkspaceStatus> = report
         .crashed
         .iter()
-        .filter_map(|name| Some((name.workspace_name()?, WorkspaceStatus::Crashed)))
+        .filter_map(|name| Some((name.workspace_id()?, WorkspaceStatus::Crashed)))
         .collect();
     // A workspace whose volume is gone shows that right away, not as stopped until a start
     // fails. It wins over `crashed`: the start would be refused anyway.
     for stored in stored {
         if report.missing_volumes.contains(&stored.id) {
-            tracing::warn!(workspace = %stored.name, "a workspace's volume is gone; it shows as volume_missing");
-            status.insert(stored.name.clone(), WorkspaceStatus::VolumeMissing);
+            tracing::warn!(workspace = %stored.id, "a workspace's volume is gone; it shows as volume_missing");
+            status.insert(stored.id.clone(), WorkspaceStatus::VolumeMissing);
         }
     }
     Ok((report, status))
@@ -1223,7 +1223,7 @@ async fn reconcile_with<R: Runtime>(
 /// things and what happened to them. None when it found nothing to say.
 fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem> {
     let mut problems = Vec::new();
-    let unknown: Vec<puddle_types::WorkspaceId> = report
+    let unknown: Vec<WorkspaceId> = report
         .unknown_volumes
         .iter()
         .filter_map(puddle_types::VolumeName::workspace_id)
@@ -1278,8 +1278,8 @@ mod tests {
 
     use super::*;
 
-    fn name() -> WorkspaceName {
-        WorkspaceName::new("acme").unwrap()
+    fn name() -> WorkspaceId {
+        WorkspaceId::new("acme").unwrap()
     }
 
     #[test]

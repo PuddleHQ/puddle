@@ -26,7 +26,7 @@ use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
 use puddle_proxy::{Proxy, Route};
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionReason, GuestPath, Host, NullSink, WorkspaceName,
+    BlockReason, ConnectionDecision, ConnectionReason, GuestPath, Host, NullSink, WorkspaceId,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -90,7 +90,7 @@ impl Rig {
                 .with_address_check(Arc::new(AnyAddress)),
         );
         let root = IpcRoot::new().unwrap();
-        let route = proxy.serve_route(root.listen().unwrap(), WorkspaceName::new("box").unwrap());
+        let route = proxy.serve_route(root.listen().unwrap(), WorkspaceId::new("box").unwrap());
         let agent = Agent::start(Config {
             listen: SocketAddr::new(LOCAL, 0),
             target: Target::Unix(route.endpoint().path().to_path_buf()),

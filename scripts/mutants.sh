@@ -35,6 +35,14 @@
 # config.toml, copied with reflinks where the file system has them; elsewhere a plain copy, a minute for a few GB, small beside a sweep), then `cargo fetch --locked` downloads
 # whatever is still missing, once, before the first mutant. MUTANTS_SHARED_CARGO_HOME=1 keeps the caller's
 # CARGO_HOME instead. The toolchains stay where they are (RUSTUP_HOME is pinned to the caller's).
+#
+# Temp dir: cargo-mutants copies the tree once per job (and each copy builds its own target dir), by default into
+# the system temp dir; on a host where /tmp is a RAM-backed tmpfs a run filled it (7 and 13 GB copies at once) and
+# every other process that wrote there failed. `diff` and `sweep` therefore set TMPDIR to a fresh directory under
+# the target dir (MUTANTS_TMPDIR=DIR uses DIR/mutants-tmp.* instead), removed when the run ends, which also holds
+# the private cargo home. The jobs are capped so the copies fit: MUTANTS_JOBS (default 2) is lowered to the free
+# space of that directory divided by MUTANTS_JOB_GB (default 14, at least 1 job); MUTANTS_FREE_GB overrides the
+# measured free space (the self-test uses it).
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -102,13 +110,33 @@ report() {
     done
 }
 
-# Points CARGO_HOME at a private, seeded copy of the shared one (see the header). Removed when the script exits.
+# Removes what the run made; the private cargo home sits inside the private TMPDIR.
+cleanup() { rm -rf "${work_tmp:-}"; }
+
+# Points TMPDIR at a fresh directory under the target dir (see the header) and lowers $jobs to what fits there.
+private_tmp() {
+    [ -z "${work_tmp:-}" ] || return 0
+    base="${MUTANTS_TMPDIR:-$target}"
+    case $base in /*) ;; *) base="$PWD/$base" ;; esac
+    mkdir -p "$base"
+    work_tmp=$(mktemp -d "$base/mutants-tmp.XXXXXX")
+    trap cleanup EXIT
+    export TMPDIR="$work_tmp"
+    free_gb="${MUTANTS_FREE_GB:-$(df -Pk "$work_tmp" | awk 'NR == 2 { print int($4 / 1048576) }')}"
+    fit=$((free_gb / ${MUTANTS_JOB_GB:-14}))
+    [ "$fit" -ge 1 ] || fit=1
+    if [ "$fit" -lt "$jobs" ]; then
+        echo "mutants: ${free_gb} GB free in $base: running $fit job(s) instead of $jobs" >&2
+        jobs=$fit
+    fi
+}
+
+# Points CARGO_HOME at a private, seeded copy of the shared one (see the header). Removed with the private TMPDIR.
 private_cargo_home() {
     [ "${MUTANTS_SHARED_CARGO_HOME:-0}" != 1 ] || return 0
     [ -z "${home:-}" ] || return 0
     [ -n "${RUSTUP_HOME:-}" ] || ! [ -n "${HOME:-}" ] || export RUSTUP_HOME="$HOME/.rustup"
     home=$(mktemp -d "${TMPDIR:-/tmp}/mutants-cargo-home.XXXXXX")
-    trap 'rm -rf "$home"' EXIT
     for item in registry git config.toml; do
         [ -e "$shared_home/$item" ] || continue
         cp -a --reflink=auto "$shared_home/$item" "$home/$item" 2>/dev/null || cp -a "$shared_home/$item" "$home/$item"
@@ -152,6 +180,7 @@ diff)
         echo "mutants: no change in the listed crates ($(crates | tr '\n' ' ')), nothing to mutate"
         exit 0
     fi
+    private_tmp
     private_cargo_home
     # shellcheck disable=SC2086 # -p flags are words by design
     "$cargo" mutants $args --in-diff "$patch" -j "$jobs" --output "$out/diff" || status=$?
@@ -201,6 +230,7 @@ sweep)
         file_args=
         for x in $files; do file_args="$file_args -f crates/$c/$x"; done
         mkdir -p "$dir"
+        private_tmp
         private_cargo_home
         rc=0
         # shellcheck disable=SC2086 # shard_args and file_args are words by design

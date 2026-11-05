@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Fake private package feeds for [`WebHost`](super::WebHost): one feed each for npm, NuGet, pip
+//! Fake private package feeds for [`WebHost`](super::WebHost): one feed each for npm, `NuGet`, pip
 //! and Maven that answer `401` to a request without the one token it knows and serve a tiny
 //! package to a request that carries it, so a test can have the real tools install from a feed
 //! that needs a credential. The token is accepted as a bearer token (npm) or as the password of
@@ -18,7 +18,7 @@ use super::{Responder, Seen, WebAnswer};
 
 /// The package every feed serves.
 pub const NPM_PACKAGE: &str = "probe-private";
-/// The NuGet package id every feed serves.
+/// The `NuGet` package id every feed serves.
 pub const NUGET_PACKAGE: &str = "Probe.Private";
 /// The Python project the pip feed serves.
 pub const PIP_PROJECT: &str = "probe-private";
@@ -38,20 +38,20 @@ fn presented(seen: &Seen) -> Option<String> {
         .map(|(_, password)| password.to_owned())
 }
 
-fn answer(content_type: &'static str, body: Vec<u8>) -> Option<WebAnswer> {
-    Some(WebAnswer {
+fn answer(content_type: &'static str, body: Vec<u8>) -> WebAnswer {
+    WebAnswer {
         status: 200,
         content_type,
         body,
-    })
+    }
 }
 
-fn status(status: u16) -> Option<WebAnswer> {
-    Some(WebAnswer {
+fn status(status: u16) -> WebAnswer {
+    WebAnswer {
         status,
         content_type: "text/plain",
         body: format!("{status}\n").into_bytes(),
-    })
+    }
 }
 
 /// A ustar archive of `files`, gzip-compressed (an npm tarball).
@@ -70,7 +70,7 @@ fn tgz(files: &[(&str, &[u8])]) -> Vec<u8> {
     gz.finish().unwrap()
 }
 
-fn npm_answer(host: &str, path: &str) -> Option<WebAnswer> {
+fn npm_answer(host: &str, path: &str) -> WebAnswer {
     let tarball = format!("/{NPM_PACKAGE}/-/{NPM_PACKAGE}-1.0.0.tgz");
     if path == format!("/{NPM_PACKAGE}") {
         let doc = serde_json::json!({
@@ -101,7 +101,7 @@ fn npm_answer(host: &str, path: &str) -> Option<WebAnswer> {
     }
 }
 
-fn nuget_answer(host: &str, path: &str) -> Option<WebAnswer> {
+fn nuget_answer(host: &str, path: &str) -> WebAnswer {
     let id = NUGET_PACKAGE.to_lowercase();
     let flat = format!("/v3/flat/{id}");
     if path == "/v3/index.json" {
@@ -133,7 +133,7 @@ fn nuget_answer(host: &str, path: &str) -> Option<WebAnswer> {
     }
 }
 
-fn pip_answer(path: &str) -> Option<WebAnswer> {
+fn pip_answer(path: &str) -> WebAnswer {
     let name = wheel_name(PIP_PROJECT);
     if path == format!("/simple/{PIP_PROJECT}/") {
         answer(
@@ -150,7 +150,7 @@ fn pip_answer(path: &str) -> Option<WebAnswer> {
     }
 }
 
-fn maven_answer(path: &str) -> Option<WebAnswer> {
+fn maven_answer(path: &str) -> WebAnswer {
     let base = "/m2/com/example/probe-private/1.0/probe-private-1.0";
     if path == format!("{base}.pom") {
         answer(
@@ -172,7 +172,7 @@ fn maven_answer(path: &str) -> Option<WebAnswer> {
     }
 }
 
-/// The answers of four private feeds on their own hosts: npm on `npm`, NuGet on `nuget`, pip on
+/// The answers of four private feeds on their own hosts: npm on `npm`, `NuGet` on `nuget`, pip on
 /// `pip` and Maven on `maven`. A request to one of them without `token` gets `401` (with a basic
 /// challenge); with it, the one package of the feed (`NPM_PACKAGE`, `NUGET_PACKAGE`,
 /// `PIP_PROJECT`, `MAVEN_COORDINATES`) or `404`. A request to any other host is left alone.
@@ -193,15 +193,15 @@ pub fn private_feeds(
             return None;
         }
         if presented(seen).as_deref() != Some(token) {
-            return status(401);
+            return Some(status(401));
         }
         let path = seen.target.split('?').next().unwrap_or_default();
-        match host.as_str() {
+        Some(match host.as_str() {
             h if h == npm => npm_answer(h, path),
             h if h == nuget => nuget_answer(h, path),
             h if h == pip => pip_answer(path),
             _ => maven_answer(path),
-        }
+        })
     })
 }
 

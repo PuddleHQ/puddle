@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Private package feeds on a real microVM (K on Linux KVM): the real `npm`, `pip`, `dotnet`
-//! (NuGet) and `mvn` install a package from a feed that answers `401` to a request without its
+//! (`NuGet`) and `mvn` install a package from a feed that answers `401` to a request without its
 //! token, with the token held in the guest only as a secret's stand-in.
 //!
 //! The fake feeds ([`puddle_e2e::lab::private_feeds`]) are behind a company proxy and the host
@@ -12,6 +12,7 @@
 //! test is named `vm_radar_*`: the per-pull-request jobs skip it.
 #![expect(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::print_stderr,
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
@@ -172,7 +173,7 @@ fn stand_in_of(host: &Host<MsbRuntime>, workspace: &WorkspaceId, var: &str) -> S
             StartValue::Secret { stand_in, .. } => Some(stand_in),
             StartValue::Plain(_) => None,
         })
-        .unwrap_or_else(|| panic!("no secret {var}"))
+        .expect("the secret is among the start values")
 }
 
 async fn run(vm: &VmHost, workspace: &WorkspaceId, script: &str, minutes: u64) -> String {
@@ -218,8 +219,10 @@ fn reach(web: &puddle_e2e::lab::WebHost, host: &str, from: usize) -> Reach {
                 use base64::Engine as _;
                 base64::engine::general_purpose::STANDARD.decode(b).ok()
             })
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .unwrap_or_else(|| auth.clone());
+            .map_or_else(
+                || auth.clone(),
+                |b| String::from_utf8_lossy(&b).into_owned(),
+            );
         r.ok += usize::from(seen.status == 200);
         r.refused += usize::from(seen.status == 401);
         r.real += usize::from(decoded.contains(REAL));

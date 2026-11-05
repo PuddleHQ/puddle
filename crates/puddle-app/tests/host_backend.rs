@@ -248,19 +248,21 @@ fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_hos
     start(&options, &Machine::default()).unwrap();
 }
 
-/// Windows gives a program's main thread 1 MiB of stack by default; `build.rs` links the program
-/// with 8 MiB because the host's start-up, unoptimised, outgrows 1 MiB (the setup hook and the exit
-/// hook run on that thread). This test only shows the work fits a 1 MiB thread where frames are
-/// small; the program's real stack is checked by the Windows smoke test.
+/// The host's start-up and quit run on the program's main thread (the setup hook and the exit
+/// hook), whose stack `build.rs` links at 8 MiB on Windows. Here they run on a thread with half of
+/// that, so the program keeps at least twice what the work needs. A debug build on Windows needs
+/// about 1.04 MB (the API router's schema builders hold the largest frames), so Windows'
+/// default 1 MiB does not fit; the Windows smoke test checks the program's real main thread.
 #[test]
-fn the_host_starts_and_stops_from_a_thread_with_the_windows_main_thread_stack() {
+fn the_host_starts_and_stops_on_half_the_programs_main_thread_stack() {
+    let main_stack: usize = env!("PUDDLE_MAIN_STACK_BYTES").parse().unwrap();
     let dir = puddle_test_kit::private_tempdir();
     let options = options_in(dir.path());
     let app = app();
     let handle = app.handle().clone();
     let source = Source::prepare(&options, &Machine::default());
     let stopped = std::thread::Builder::new()
-        .stack_size(1024 * 1024)
+        .stack_size(main_stack / 2)
         .spawn(move || {
             shell::start(&handle, &options, source).unwrap();
             shell::stop(&handle)

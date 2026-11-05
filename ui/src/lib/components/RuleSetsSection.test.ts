@@ -133,17 +133,91 @@ describe("making, renaming and deleting", () => {
     expect(
       screen.getByRole("article", { name: "Client X" }),
     ).toBeInTheDocument();
-    // Rename: the dialog starts from the current name.
+    // Edit: the dialog starts from the current name.
     await fireEvent.click(
-      within(card("Client X")).getByRole("button", { name: "Rename" }),
+      within(card("Client X")).getByRole("button", { name: "Edit" }),
     );
-    dialog = await screen.findByRole("dialog", { name: "Rename rule set" });
+    dialog = await screen.findByRole("dialog", { name: "Edit rule set" });
     expect(within(dialog).getByLabelText("Name")).toHaveValue("Client X");
     await fireEvent.input(within(dialog).getByLabelText("Name"), {
       target: { value: "Client Y" },
     });
     await fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(lastToast()).toBe("Renamed to Client Y."));
+    await waitFor(() => expect(lastToast()).toBe("Saved rule set Client Y."));
+  });
+
+  it("sends no colour for a new set that was left to Puddle", async () => {
+    mount();
+    await fireEvent.click(screen.getByRole("button", { name: "New rule set" }));
+    const dialog = await screen.findByRole("dialog", { name: "New rule set" });
+    expect(within(dialog).getByText(/Puddle picks a colour/)).toBeVisible();
+    await fireEvent.input(within(dialog).getByLabelText("Name"), {
+      target: { value: "Plain" },
+    });
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Make rule set" }),
+    );
+    await waitFor(() => expect(lastToast()).toBe("Made rule set Plain."));
+    expect(api.bodies.at(-1)).toEqual({ name: "Plain", description: "" });
+  });
+
+  it("picks a colour from a swatch or the colour control, previews it and saves it", async () => {
+    mount();
+    await fireEvent.click(screen.getByRole("button", { name: "New rule set" }));
+    const dialog = await screen.findByRole("dialog", { name: "New rule set" });
+    await fireEvent.input(within(dialog).getByLabelText("Name"), {
+      target: { value: "Client X" },
+    });
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "#c04f7a" }),
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "#c04f7a" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(within(dialog).getByText(/#c04f7a, text contrast/)).toBeVisible();
+    // The colour control overrides the swatch, and an upper-case value is stored in lower case.
+    await fireEvent.input(within(dialog).getByLabelText("Other"), {
+      target: { value: "#0A6A85" },
+    });
+    expect(
+      within(dialog).getByRole("button", { name: "#c04f7a" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Make rule set" }),
+    );
+    await waitFor(() => expect(lastToast()).toBe("Made rule set Client X."));
+    expect(api.bodies.at(-1)).toEqual({
+      name: "Client X",
+      description: "",
+      fill: { kind: "solid", color: "#0a6a85" },
+    });
+    expect(
+      screen.getByRole("heading", { name: "Client X" }).firstElementChild,
+    ).toHaveStyle("--set-fill: #0a6a85");
+  });
+
+  it("starts the editor from the set's colour and saves a new one", async () => {
+    api.sets = [
+      mine(4, { name: "Work", fill: { kind: "solid", color: "#2ea06e" } }),
+    ];
+    await store.refresh();
+    mount();
+    await fireEvent.click(
+      within(card("Work")).getByRole("button", { name: "Edit" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Edit rule set" });
+    expect(
+      within(dialog).getByRole("button", { name: "#2ea06e" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "#7a5bc7" }),
+    );
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(lastToast()).toBe("Saved rule set Work."));
+    expect(api.bodies.at(-1)).toMatchObject({
+      fill: { kind: "solid", color: "#7a5bc7" },
+    });
+    expect(store.sets[0]?.fill.color).toBe("#7a5bc7");
   });
 
   it("closes the new rule set dialog on Cancel without making anything", async () => {

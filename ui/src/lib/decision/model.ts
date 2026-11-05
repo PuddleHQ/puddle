@@ -4,6 +4,7 @@
 // here, so another control (four buttons, a pie menu) can be built on it. The one rule it
 // enforces: a decision for every workspace is never built without `confirmed`.
 import type { components } from "#lib/api/schema.d.ts";
+import type { Fill } from "#lib/rules/fill.ts";
 
 export type Effect = components["schemas"]["Effect"];
 export type Scope = components["schemas"]["ScopeChoice"];
@@ -35,6 +36,8 @@ export interface RuleSetChoice {
   /** The number of `user:<id>`. */
   id: number;
   name: string;
+  /** The set's colour, shown beside its name. */
+  fill?: Fill;
   /** On for every workspace that doesn't switch it off: the rule then reaches beyond this one. */
   everywhere: boolean;
 }

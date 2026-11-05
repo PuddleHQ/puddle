@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // A stand-in for the API's rule set endpoints, for unit and component tests, in the shape
 // openapi-fetch returns them. Not shipped (tests import it).
+import type { Fill } from "#lib/rules/fill.ts";
 import type { RuleSet, SystemHost } from "#lib/rules/sets.ts";
 
 export function builtIn(slug: string, over: Partial<RuleSet> = {}): RuleSet {
@@ -9,6 +10,7 @@ export function builtIn(slug: string, over: Partial<RuleSet> = {}): RuleSet {
     kind: "built_in",
     name: slug,
     description: `The ${slug} hosts.`,
+    fill: { kind: "solid", color: "#2f80c9" },
     default_on: false,
     global: null,
     overrides: [],
@@ -34,6 +36,7 @@ export function mine(id: number, over: Partial<RuleSet> = {}): RuleSet {
     kind: "user",
     name: `Set ${id}`,
     description: "",
+    fill: { kind: "solid", color: "#2ea06e" },
     default_on: true,
     global: null,
     overrides: [],
@@ -105,6 +108,7 @@ export class FakeRuleSets {
     const made = mine(this.#id++, {
       name: String(init.body?.["name"]),
       description: String(init.body?.["description"] ?? ""),
+      ...(init.body?.["fill"] ? { fill: init.body["fill"] as Fill } : {}),
     });
     this.sets = [...this.sets, made];
     return this.reply(201, made);
@@ -141,6 +145,7 @@ export class FakeRuleSets {
       ...found,
       name: String(init.body?.["name"]),
       description: String(init.body?.["description"] ?? ""),
+      ...(init.body?.["fill"] ? { fill: init.body["fill"] as Fill } : {}),
     };
     this.sets = this.sets.map((s) => (s.id === found.id ? next : s));
     return this.reply(200, next);

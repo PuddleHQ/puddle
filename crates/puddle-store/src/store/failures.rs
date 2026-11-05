@@ -254,7 +254,9 @@ fn a_decision_is_logged_with_its_effect() {
 #[test]
 fn a_rule_in_a_set_that_is_off_leaves_the_open_requests_it_matches_open() {
     let store = store();
-    let created = store.create_rule_set("Blocks", "", Actor::Ui).unwrap();
+    let created = store
+        .create_rule_set("Blocks", "", None, Actor::Ui)
+        .unwrap();
     let set: i64 = created.id.to_string()[5..].parse().unwrap();
     store
         .switch_rule_set(RuleSetId::User(set), None, Some(false), Actor::Ui)

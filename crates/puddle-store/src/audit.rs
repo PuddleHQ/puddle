@@ -368,6 +368,10 @@ pub struct RuleSetWire {
     pub created_at: u64,
     /// `cli`, `ui` or `api`.
     pub created_by: String,
+    /// The colour the user chose; `None` when the set has the default of its number (and in
+    /// records written before sets had a colour).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<puddle_types::Fill>,
 }
 
 /// What a `workspace_op` record is about.

@@ -2,7 +2,7 @@
 //! Rule sets and System managed on the wire (rules spec §7).
 
 use puddle_store as store;
-use puddle_types::{RuleSetId, WorkspaceId};
+use puddle_types::{Fill, RuleSetId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -128,6 +128,9 @@ pub struct RuleSetView {
     pub name: String,
     /// What it is for.
     pub description: String,
+    /// The colour it is shown in: a built-in set's own, or the one you chose (a set you made
+    /// without choosing has a default of its number).
+    pub fill: Fill,
     /// Whether it is on where nobody switched it: built-in sets ship off, your sets start on.
     pub default_on: bool,
     /// The switch for every workspace; `null` follows `default_on`.
@@ -151,6 +154,7 @@ impl RuleSetView {
             id,
             name,
             description,
+            fill,
             default_on,
             global,
             overrides,
@@ -166,6 +170,7 @@ impl RuleSetView {
             id: id.to_string(),
             name,
             description,
+            fill,
             default_on,
             global,
             overrides: overrides
@@ -222,9 +227,12 @@ pub struct NewRuleSetRequest {
     /// At most 500 characters.
     #[serde(default)]
     pub description: String,
+    /// The colour; left out for the default of the set's number.
+    #[serde(default)]
+    pub fill: Option<Fill>,
 }
 
-/// A rule set's new name and description.
+/// A rule set's new name, description and colour.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuleSetUpdateRequest {
@@ -233,6 +241,9 @@ pub struct RuleSetUpdateRequest {
     /// At most 500 characters.
     #[serde(default)]
     pub description: String,
+    /// The new colour; left out keeps the one the set has.
+    #[serde(default)]
+    pub fill: Option<Fill>,
 }
 
 /// Switch a set on or off, for every workspace or for one.

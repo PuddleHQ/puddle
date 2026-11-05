@@ -766,7 +766,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Renames a rule set of yours or changes its description. */
+        /** Renames a rule set of yours or changes its description or colour. */
         put: operations["update_rule_set"];
         post?: never;
         /** Deletes a rule set of yours with its entries and switches. */
@@ -2125,6 +2125,7 @@ export interface components {
             created_by: string;
             /** @description Description. */
             description: string;
+            fill: components["schemas"]["Fill"] | null;
             /**
              * Format: int64
              * @description The set's number; its id is `user:<id>`.
@@ -2845,6 +2846,13 @@ export interface components {
             /** @enum {string} */
             type: "problems_changed";
         };
+        /** @description What a rule set is painted with: one solid colour today. A gradient would be another `kind`. */
+        Fill: {
+            /** @description The colour. */
+            color: components["schemas"]["Rgb"];
+            /** @enum {string} */
+            kind: "solid";
+        };
         /** @description A bounded list of lines from the unsaved-work check. */
         FindingList: {
             /** @description The first items. */
@@ -3355,6 +3363,7 @@ export interface components {
         NewRuleSetRequest: {
             /** @description At most 500 characters. */
             description?: string;
+            fill?: components["schemas"]["Fill"] | null;
             /** @description 1 to 64 characters, not used by another set. */
             name: string;
         };
@@ -3903,6 +3912,11 @@ export interface components {
             value: number;
         };
         /**
+         * @description A colour as `#rrggbb`.
+         * @example #0a6a85
+         */
+        Rgb: string;
+        /**
          * @description A certificate kind.
          * @enum {string}
          */
@@ -4094,10 +4108,11 @@ export interface components {
             /** @description The set as it is now. */
             set: components["schemas"]["RuleSetView"];
         };
-        /** @description A rule set's new name and description. */
+        /** @description A rule set's new name, description and colour. */
         RuleSetUpdateRequest: {
             /** @description At most 500 characters. */
             description?: string;
+            fill?: components["schemas"]["Fill"] | null;
             /** @description 1 to 64 characters, not used by another set. */
             name: string;
         };
@@ -4119,6 +4134,11 @@ export interface components {
             description: string;
             /** @description Its entries. */
             entries: components["schemas"]["RuleSetEntry"][];
+            /**
+             * @description The colour it is shown in: a built-in set's own, or the one you chose (a set you made
+             *     without choosing has a default of its number).
+             */
+            fill: components["schemas"]["Fill"];
             /** @description The switch for every workspace; `null` follows `default_on`. */
             global: boolean | null;
             /** @description `builtin:<slug>` or `user:<id>`. */

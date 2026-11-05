@@ -7,6 +7,7 @@ import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import { isRulesChanged } from "#lib/rules/events.ts";
 import { sentence } from "#lib/rules/model.ts";
+import type { Fill } from "#lib/rules/fill.ts";
 import type { RuleSet, SystemHost } from "#lib/rules/sets.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
@@ -73,11 +74,16 @@ export class RuleSetsStore {
       : [...this.sets, set];
   }
 
-  /** Makes an empty set of your own, on everywhere. */
-  async create(name: string, description: string): Promise<Result<RuleSet>> {
+  /** Makes an empty set of your own, on everywhere; `fill` `null` leaves its colour to Puddle. */
+  async create(
+    name: string,
+    description: string,
+    fill: Fill | null = null,
+  ): Promise<Result<RuleSet>> {
     try {
       const { data, error } = await this.#api.POST("/api/rule-sets", {
-        body: { name, description },
+        body:
+          fill === null ? { name, description } : { name, description, fill },
       });
       if (!data) {
         return {
@@ -92,16 +98,18 @@ export class RuleSetsStore {
     }
   }
 
-  /** Renames one of your sets or changes its description. */
+  /** Renames one of your sets or changes its description or colour (`null` keeps the colour). */
   async rename(
     id: string,
     name: string,
     description: string,
+    fill: Fill | null = null,
   ): Promise<Result<RuleSet>> {
     try {
       const { data, error } = await this.#api.PUT("/api/rule-sets/{id}", {
         params: { path: { id } },
-        body: { name, description },
+        body:
+          fill === null ? { name, description } : { name, description, fill },
       });
       if (!data) {
         return {

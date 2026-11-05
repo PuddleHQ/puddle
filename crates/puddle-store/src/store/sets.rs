@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use puddle_types::{Event, PendingId, RuleId, RuleSetId, SuffixAllows, WorkspaceId};
+use puddle_types::{Event, Fill, PendingId, RuleId, RuleSetId, SuffixAllows, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
@@ -32,6 +32,9 @@ pub struct RuleSetInfo {
     pub name: String,
     /// What it is for.
     pub description: String,
+    /// The colour it is shown in: the built-in set's own, or what the user chose for theirs
+    /// (the default of the set's number when they chose none).
+    pub fill: Fill,
     /// Whether it is on where nobody switched it.
     pub default_on: bool,
     /// The switch for every workspace, if set.
@@ -264,7 +267,7 @@ pub(super) fn note_built_in_changes(conn: &mut Connection, now: u64) -> Result<(
 /// Fails unless the user made a set with this id.
 pub(super) fn require_user_set(conn: &Connection, id: i64) -> Result<RuleSetWire, StoreError> {
     conn.query_row(
-        "SELECT id, name, description, created_at, created_by FROM rule_sets WHERE id = ?1",
+        "SELECT id, name, description, created_at, created_by, fill FROM rule_sets WHERE id = ?1",
         [id],
         |row| {
             Ok((
@@ -273,20 +276,35 @@ pub(super) fn require_user_set(conn: &Connection, id: i64) -> Result<RuleSetWire
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         },
     )
     .optional()?
     .ok_or_else(|| StoreError::UnknownRuleSet(RuleSetId::User(id).to_string()))
-    .and_then(|(id, name, description, created_at, created_by)| {
+    .and_then(|(id, name, description, created_at, created_by, fill)| {
         Ok(RuleSetWire {
             id,
             name,
             description,
             created_at: stored_ts("rule_sets", id, created_at)?,
             created_by,
+            fill: stored_fill(id, fill.as_deref()),
         })
     })
+}
+
+/// The fill a row holds. A value this Puddle can't read (hand-edited, say) is a missing choice,
+/// not an error: a colour must never keep the Rules screen from loading.
+fn stored_fill(id: i64, text: Option<&str>) -> Option<Fill> {
+    let text = text?;
+    match serde_json::from_str(text) {
+        Ok(fill) => Some(fill),
+        Err(error) => {
+            tracing::warn!(set = id, %error, "unreadable rule set colour; using the default");
+            None
+        }
+    }
 }
 
 /// Fails unless the set the user made is on for `workspace`: approving into a set that is off
@@ -407,6 +425,7 @@ impl Store {
                 id,
                 name: set.name.to_owned(),
                 description: set.description.to_owned(),
+                fill: set.fill,
                 default_on: set.default_on,
                 global: index.switches().global(id),
                 overrides: index.switches().overrides(id),
@@ -455,7 +474,8 @@ impl Store {
         }
     }
 
-    /// Makes an empty rule set, on by default (R-38).
+    /// Makes an empty rule set, on by default (R-38). Without a `fill` the set gets the default
+    /// colour of its number.
     ///
     /// # Errors
     /// [`StoreError::RuleSetName`], [`StoreError::SystemActor`], or a database error.
@@ -463,6 +483,7 @@ impl Store {
         &self,
         name: &str,
         description: &str,
+        fill: Option<Fill>,
         actor: Actor,
     ) -> Result<RuleSetInfo, StoreError> {
         if actor == Actor::System {
@@ -471,9 +492,15 @@ impl Store {
         let id = self.change(|tx, now, fx| {
             let (name, description) = checked_names(tx, name, description, None)?;
             tx.execute(
-                "INSERT INTO rule_sets (name, description, created_at, created_by)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![name, description, sql_ts(now), actor.as_str()],
+                "INSERT INTO rule_sets (name, description, created_at, created_by, fill)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    name,
+                    description,
+                    sql_ts(now),
+                    actor.as_str(),
+                    fill.map(Fill::to_json)
+                ],
             )?;
             let id = tx.last_insert_rowid();
             let record = AuditRecord::RuleSetCreated {
@@ -489,7 +516,8 @@ impl Store {
         self.rule_set(RuleSetId::User(id))
     }
 
-    /// Renames a rule set the user made, or changes its description.
+    /// Renames a rule set the user made, or changes its description or colour (`None` keeps the
+    /// colour it has).
     ///
     /// # Errors
     /// [`StoreError::UnknownRuleSet`], [`StoreError::RuleSetName`],
@@ -499,6 +527,7 @@ impl Store {
         id: i64,
         name: &str,
         description: &str,
+        fill: Option<Fill>,
         actor: Actor,
     ) -> Result<RuleSetInfo, StoreError> {
         if actor == Actor::System {
@@ -508,8 +537,9 @@ impl Store {
             let before = require_user_set(tx, id)?;
             let (name, description) = checked_names(tx, name, description, Some(id))?;
             tx.execute(
-                "UPDATE rule_sets SET name = ?2, description = ?3 WHERE id = ?1",
-                params![id, name, description],
+                "UPDATE rule_sets SET name = ?2, description = ?3, fill = coalesce(?4, fill)
+                 WHERE id = ?1",
+                params![id, name, description, fill.map(Fill::to_json)],
             )?;
             let record = AuditRecord::RuleSetUpdated {
                 ts: now,
@@ -722,6 +752,7 @@ fn user_set_info(conn: &Connection, index: &RuleIndex, id: i64) -> Result<RuleSe
         id: set,
         name: wire.name,
         description: wire.description,
+        fill: wire.fill.unwrap_or_else(|| Fill::default_for_user_set(id)),
         default_on: default_on(set),
         global: index.switches().global(set),
         overrides: index.switches().overrides(set),

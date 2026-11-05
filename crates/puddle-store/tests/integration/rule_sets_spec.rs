@@ -15,8 +15,8 @@ use puddle_store::{
     Scope, ScopeChoice, Store, StoreError, SystemPlan, SystemReason, parse_rule_set,
 };
 use puddle_types::{
-    ConnectionDecision, ConnectionEvent, ConnectionLog, Decision, EgressRequest, Host, PatternKind,
-    PendingId, PendingOutcome, RuleId, RuleSetId, SuffixAllows, WorkspaceId,
+    ConnectionDecision, ConnectionEvent, ConnectionLog, Decision, EgressRequest, Fill, Host,
+    PatternKind, PendingId, PendingOutcome, Rgb, RuleId, RuleSetId, SuffixAllows, WorkspaceId,
 };
 use serde_json::Value;
 
@@ -70,7 +70,7 @@ fn audit_of(store: &Store, kind: &str) -> Vec<Value> {
 }
 
 fn user_set(store: &Store, name: &str) -> i64 {
-    match store.create_rule_set(name, "", Actor::Ui).unwrap().id {
+    match store.create_rule_set(name, "", None, Actor::Ui).unwrap().id {
         RuleSetId::User(id) => id,
         other => panic!("{other:?}"),
     }
@@ -108,7 +108,7 @@ fn r36_built_in_sets_are_listed_read_only_and_ship_off() {
     ));
     // A built-in set has no rule rows to delete or rename.
     assert!(matches!(
-        store.update_rule_set(1, "x", "", Actor::Ui),
+        store.update_rule_set(1, "x", "", None, Actor::Ui),
         Err(StoreError::UnknownRuleSet(_))
     ));
 }
@@ -300,24 +300,24 @@ fn r38_set_names_are_checked_renamed_and_deleting_a_set_deletes_its_entries() {
         ("bad\nname", "no control characters"),
     ] {
         assert!(
-            matches!(store.create_rule_set(name, "", Actor::Ui), Err(StoreError::RuleSetName(w)) if w == why),
+            matches!(store.create_rule_set(name, "", None, Actor::Ui), Err(StoreError::RuleSetName(w)) if w == why),
             "{name:?}"
         );
     }
     assert!(matches!(
-        store.create_rule_set(&"x".repeat(65), "", Actor::Ui),
+        store.create_rule_set(&"x".repeat(65), "", None, Actor::Ui),
         Err(StoreError::RuleSetName(_))
     ));
     assert!(matches!(
-        store.create_rule_set("ok", &"d".repeat(501), Actor::Ui),
+        store.create_rule_set("ok", &"d".repeat(501), None, Actor::Ui),
         Err(StoreError::RuleSetName(_))
     ));
     assert!(matches!(
-        store.create_rule_set("sys", "", Actor::System),
+        store.create_rule_set("sys", "", None, Actor::System),
         Err(StoreError::SystemActor)
     ));
     let renamed = store
-        .update_rule_set(one, "Client X", "hosts for client X", Actor::Api)
+        .update_rule_set(one, "Client X", "hosts for client X", None, Actor::Api)
         .unwrap();
     assert_eq!(
         (renamed.name.as_str(), renamed.description.as_str()),
@@ -325,7 +325,7 @@ fn r38_set_names_are_checked_renamed_and_deleting_a_set_deletes_its_entries() {
     );
     // Renaming to its own name in another case is fine.
     store
-        .update_rule_set(one, "client x", "", Actor::Api)
+        .update_rule_set(one, "client x", "", None, Actor::Api)
         .unwrap();
     let r = store
         .add_rule(&new_rule(Scope::Set(one), "x.example", Effect::Deny))
@@ -666,7 +666,7 @@ fn r38_the_list_has_your_sets_after_the_built_in_ones_and_only_users_change_them
         [RuleSetId::User(a), RuleSetId::User(b)]
     );
     assert!(matches!(
-        store.update_rule_set(a, "x", "", Actor::System),
+        store.update_rule_set(a, "x", "", None, Actor::System),
         Err(StoreError::SystemActor)
     ));
     assert!(matches!(
@@ -743,12 +743,76 @@ fn r37_a_workspace_override_beats_the_global_switch_which_beats_the_default() {
 fn r38_a_name_of_64_characters_and_a_description_of_500_are_the_longest_allowed() {
     let (_, store) = fixture();
     let longest = store
-        .create_rule_set(&"x".repeat(64), &"d".repeat(500), Actor::Ui)
+        .create_rule_set(&"x".repeat(64), &"d".repeat(500), None, Actor::Ui)
         .unwrap();
     assert_eq!(longest.name.chars().count(), 64);
     assert_eq!(longest.description.chars().count(), 500);
     // Counted in characters, not bytes.
     store
-        .create_rule_set(&"é".repeat(64), &"é".repeat(500), Actor::Ui)
+        .create_rule_set(&"é".repeat(64), &"é".repeat(500), None, Actor::Ui)
         .unwrap();
+}
+
+#[test]
+fn a_set_without_a_chosen_colour_gets_the_default_of_its_number() {
+    let (_, store) = fixture();
+    let one = store.create_rule_set("One", "", None, Actor::Ui).unwrap();
+    let two = store.create_rule_set("Two", "", None, Actor::Ui).unwrap();
+    assert_eq!(one.fill, Fill::default_for_user_set(1));
+    assert_eq!(two.fill, Fill::default_for_user_set(2));
+    assert_ne!(one.fill, two.fill);
+    // The default is not stored: the audit record has no colour.
+    assert!(
+        audit_of(&store, "rule_set_created")[0]["rule_set"]
+            .get("fill")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_chosen_colour_is_kept_changed_and_audited() {
+    let (_, store) = fixture();
+    let teal = Fill::solid(Rgb::new(0x0a, 0x6a, 0x85));
+    let rose = Fill::solid(Rgb::new(0xc0, 0x4f, 0x7a));
+    let made = store
+        .create_rule_set("Client", "", Some(teal), Actor::Ui)
+        .unwrap();
+    assert_eq!(made.fill, teal);
+    let RuleSetId::User(id) = made.id else {
+        panic!("{:?}", made.id)
+    };
+    // A rename that names no colour keeps the one it has.
+    let renamed = store
+        .update_rule_set(id, "Client X", "", None, Actor::Ui)
+        .unwrap();
+    assert_eq!(renamed.fill, teal);
+    let recoloured = store
+        .update_rule_set(id, "Client X", "", Some(rose), Actor::Ui)
+        .unwrap();
+    assert_eq!(recoloured.fill, rose);
+    // It survives a read of the list and shows in the audit before and after.
+    let listed = store.rule_sets().unwrap();
+    assert_eq!(listed.iter().find(|s| s.id == made.id).unwrap().fill, rose);
+    let updated = audit_of(&store, "rule_set_updated");
+    assert_eq!(
+        updated[1]["before"]["fill"],
+        serde_json::json!({"kind": "solid", "color": "#0a6a85"})
+    );
+    assert_eq!(
+        updated[1]["rule_set"]["fill"],
+        serde_json::json!({"kind": "solid", "color": "#c04f7a"})
+    );
+}
+
+#[test]
+fn every_built_in_set_shows_its_catalogue_colour() {
+    let (_, store) = fixture();
+    let listed = store.rule_sets().unwrap();
+    for built in BUILT_IN_SETS {
+        let shown = listed
+            .iter()
+            .find(|s| s.id == RuleSetId::BuiltIn(built.slug))
+            .unwrap();
+        assert_eq!(shown.fill, built.fill, "{}", built.slug);
+    }
 }

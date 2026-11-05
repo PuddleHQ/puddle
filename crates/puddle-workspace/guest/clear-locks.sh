@@ -24,7 +24,7 @@
 #    `git read-tree HEAD`, which writes the index only, never the working tree. It is left alone
 #    and reported when `HEAD` has no commit, a merge, rebase, cherry-pick or revert is in progress,
 #    or a sparse checkout is on (the index held state a rebuild cannot restore). A damaged index
-#    that still held data is kept as `index.puddle-corrupt`. An index with an extension this git
+#    that still held data is kept as `index.puddle-corrupt-<time>`. An index with an extension this git
 #    does not know is a newer git's valid index: reported, not rebuilt.
 # What was staged and not committed cannot be read back from an unreadable index: it is gone, the
 # files themselves are not.
@@ -66,6 +66,20 @@ ref_value() {
     fi
 }
 
+# True when $1 looks like a full object id.
+is_sha() {
+    case $1 in
+        *[!0-9a-f]* | '') return 1 ;;
+    esac
+    case ${#1} in 40 | 64) return 0 ;; *) return 1 ;; esac
+}
+
+# True when some branch of git dir $1 points at commit $2.
+branch_at() {
+    grep -rqs -- "^$2" "$1/refs/heads" && return 0
+    [ -f "$1/packed-refs" ] && grep -q -- "^$2 refs/heads/" "$1/packed-refs"
+}
+
 # True when commit $2 exists in the object store of git dir $1. HEAD is zero-filled, so git
 # cannot open the repository itself: a scratch git dir borrows the object store instead.
 commit_exists() {
@@ -99,9 +113,8 @@ repair_head() {
     last=
     [ -f "$log" ] && last=$(tail -n 1 "$log")
     sha=$(printf %s "$last" | cut -d ' ' -f 2)
-    case $sha in *[!0-9a-f]*) sha= ;; esac
     case $sha in *[!0]*) ;; *) sha= ;; esac
-    case ${#sha} in 40 | 64) ;; *) sha= ;; esac
+    is_sha "$sha" || sha=
     if [ -z "$sha" ]; then
         problem "$shown" "HEAD is damaged and logs/HEAD has no readable last entry"
         return 0
@@ -110,15 +123,24 @@ repair_head() {
         problem "$shown" "HEAD is damaged and the last commit in logs/HEAD ($sha) is not in the repository"
         return 0
     fi
-    branch=$(grep -a 'checkout: moving from .* to ' "$log" | tail -n 1 | cut -f 2- | sed 's/^checkout: moving from .* to //')
+    branch=$(grep -a "$(printf '\t')checkout: moving from .* to " "$log" | tail -n 1 | cut -f 2- | sed 's/^checkout: moving from .* to //')
     if [ -z "$branch" ] || ! git check-ref-format "refs/heads/$branch" 2>/dev/null; then
         problem "$shown" "HEAD is damaged and logs/HEAD does not say which branch was checked out"
         return 0
     fi
     tip=$(ref_value "$gd" "refs/heads/$branch")
-    if [ -z "$tip" ]; then
+    if [ -z "$tip" ] && [ ! -e "$gd/refs/heads/$branch" ]; then
+        # No such branch: a detached checkout, unless a branch sits on the commit (a renamed branch
+        # writes no checkout entry), which a guess cannot settle.
+        if branch_at "$gd" "$sha"; then
+            problem "$shown" "HEAD is damaged and logs/HEAD cannot tell a detached checkout from a renamed branch at $sha"
+            return 0
+        fi
         content=$sha
         what="detached at $sha"
+    elif ! is_sha "$tip"; then
+        problem "$shown" "HEAD is damaged and branch $(clean "$branch") is unreadable too"
+        return 0
     elif [ "$tip" = "$sha" ]; then
         content="ref: refs/heads/$branch"
         what="branch $branch"
@@ -126,6 +148,7 @@ repair_head() {
         problem "$shown" "HEAD is damaged and branch $(clean "$branch") no longer points at the last commit in logs/HEAD"
         return 0
     fi
+    rm -f -- "$gd/HEAD.puddle-new"
     if ! printf '%s\n' "$content" >"$gd/HEAD.puddle-new"; then
         fail "$shown" "cannot write HEAD"
         return 0
@@ -174,12 +197,14 @@ repair_index() {
         return 0
     fi
     new=$gd/index.puddle-new
+    rm -f -- "$new"
     if ! GIT_INDEX_FILE=$new git read-tree HEAD >/dev/null 2>&1; then
         problem "$shown" "the index is damaged and git read-tree HEAD failed"
         return 0
     fi
     if [ $held = yes ]; then
-        cp -p -- "$idx" "$gd/index.puddle-corrupt" || {
+        kept=$gd/index.puddle-corrupt-$(date +%s)
+        cp -p -- "$idx" "$kept" || {
             fail "$shown" "cannot keep the damaged index"
             return 0
         }

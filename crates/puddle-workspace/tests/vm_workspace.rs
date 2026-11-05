@@ -1085,11 +1085,14 @@ async fn vm_zero_filled_head_and_index_are_repaired_at_boot() {
         &format!(
             "git init -q -b main {repo} && cd {repo} && echo 0 > f && git add f && git commit -qm c0 \
              && git checkout -qb feature && echo 1 > g && git add g && git commit -qm c1 \
-             && echo edit > f && head -c 24 /dev/zero > .git/HEAD && head -c 500 /dev/zero > .git/index && sync"
+             && echo edit > f && head -c 24 /dev/zero > .git/HEAD && head -c 500 /dev/zero > .git/index \\
+             && chown -R 1000:1000 {repo} && sync"
         ),
     )
     .await;
-    let broken = sh(sb.ungated(), &format!("git -C {repo} status")).await;
+    // The repository belongs to another user than the root the boot step runs as.
+    let safe = "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*';";
+    let broken = sh(sb.ungated(), &format!("{safe} git -C {repo} status")).await;
     assert!(
         !broken.status.success() && broken.stderr_text().contains("not a git repository"),
         "git still works: {}",
@@ -1104,18 +1107,35 @@ async fn vm_zero_filled_head_and_index_are_repaired_at_boot() {
     eprintln!("repaired: {report:?}");
     assert_eq!(report.repaired.len(), 2, "{report:?}");
     assert!(report.damaged.is_empty(), "{report:?}");
-    sh_ok(sb.ungated(), &format!("cd {repo} && git fsck --full")).await;
+    sh_ok(
+        sb.ungated(),
+        &format!("{safe} cd {repo} && git fsck --full"),
+    )
+    .await;
     assert_eq!(
         sh_ok(
             sb.ungated(),
-            &format!("git -C {repo} branch --show-current")
+            &format!("{safe} git -C {repo} branch --show-current")
         )
         .await,
         "feature"
     );
     assert_eq!(
-        sh_ok(sb.ungated(), &format!("git -C {repo} status --porcelain")).await,
+        sh_ok(
+            sb.ungated(),
+            &format!("{safe} git -C {repo} status --porcelain")
+        )
+        .await,
         " M f"
+    );
+    assert_eq!(
+        sh_ok(
+            sb.ungated(),
+            &format!("stat -c %u {repo}/.git/HEAD {repo}/.git/index")
+        )
+        .await,
+        "1000\n1000",
+        "the repaired files keep the repository's owner"
     );
     w.stop(sb.ungated()).await.unwrap();
     drop(sb);

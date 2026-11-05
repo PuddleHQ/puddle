@@ -370,7 +370,8 @@ async fn a_zero_filled_head_of_a_detached_checkout_is_rewritten_detached() {
     for shell in shells() {
         let fx = repair_fixture();
         let api = fx.vol.join("api");
-        let tip = git_text(&api, &["rev-parse", "main"]);
+        git_ok(&api, &["commit", "--allow-empty", "-qm", "third"]);
+        let tip = git_text(&api, &["rev-parse", "feature~1"]);
         git_ok(&api, &["checkout", "-q", &tip]);
         zero_fill(&api.join(".git/HEAD"), 41);
         let report = run(shell, &fx).await;
@@ -412,7 +413,14 @@ async fn a_zero_filled_index_is_rebuilt_without_touching_the_working_tree() {
         );
         git_ok(&api, &["fsck", "--full"]);
         // Nothing was in the zero-filled file worth keeping.
-        assert!(!api.join(".git/index.puddle-corrupt").exists(), "{shell}");
+        assert!(
+            std::fs::read_dir(api.join(".git")).unwrap().all(|e| !e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("index.puddle-corrupt")),
+            "{shell}"
+        );
     }
 }
 
@@ -432,8 +440,14 @@ async fn a_corrupt_index_is_rebuilt_and_the_damaged_file_is_kept() {
         assert_eq!(report.repaired.len(), 1, "{shell}: {report:?}");
         git_ok(&api, &["status"]);
         git_ok(&api, &["fsck", "--full"]);
+        let kept: Vec<_> = std::fs::read_dir(api.join(".git"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("index.puddle-corrupt"))
+            .collect();
+        assert_eq!(kept.len(), 1, "{shell}: {kept:?}");
         assert_eq!(
-            std::fs::read(api.join(".git/index.puddle-corrupt")).unwrap(),
+            std::fs::read(api.join(".git").join(&kept[0])).unwrap(),
             bytes,
             "{shell}"
         );
@@ -559,6 +573,52 @@ async fn a_head_is_left_alone_when_the_branch_moved_or_the_log_is_unreadable() {
                 vec![0_u8; 24]
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn a_head_is_left_alone_when_its_branch_is_unreadable_or_may_have_been_renamed() {
+    for shell in shells() {
+        // The branch file is zero-filled as well: the commit alone cannot say it was a branch.
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        zero_fill(&api.join(".git/refs/heads/feature"), 41);
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let report = run(shell, &fx).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert!(
+            report.damaged[0].contains("unreadable"),
+            "{shell}: {:?}",
+            report.damaged
+        );
+        // The checked-out branch was renamed after the last checkout entry.
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        git_ok(&api, &["branch", "-m", "renamed"]);
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let report = run(shell, &fx).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert!(
+            report.damaged[0].contains("renamed branch"),
+            "{shell}: {:?}",
+            report.damaged
+        );
+        // A commit message that looks like a checkout entry is not one.
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        git_ok(
+            &api,
+            &[
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "checkout: moving from a to b",
+            ],
+        );
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let report = run(shell, &fx).await;
+        assert_eq!(report.repaired.len(), 1, "{shell}: {report:?}");
+        assert_eq!(git_text(&api, &["branch", "--show-current"]), "feature");
     }
 }
 

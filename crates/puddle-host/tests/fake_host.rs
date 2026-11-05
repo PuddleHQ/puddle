@@ -9057,6 +9057,31 @@ async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at
     assert_ne!(renewed, cert);
 }
 
+/// A declined system confirmation is asked again at a start (the spec's choice), never at an
+/// attach: closing an editor window and opening one again must not raise it a second time.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_a_start_asks_for_the_development_certificate_never_an_attach() {
+    let rig = Rig::new();
+    rig.dev_cert.give();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(rig.dev_cert.asked(), 1, "the start asked once");
+    allow_direct_ssh(&api, "acme", true).await;
+    for mode in ["browser", "desktop", "browser"] {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/attach",
+                &json!({"mode": mode}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.json()["opened"], true, "{mode}: {}", reply.body);
+    }
+    assert_eq!(rig.dev_cert.asked(), 1, "three attaches asked nothing more");
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_a_development_certificate_writes_nothing_for_it_into_the_guest() {
     let rig = Rig::new();

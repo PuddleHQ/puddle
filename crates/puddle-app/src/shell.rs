@@ -9,6 +9,10 @@ use puddle_lifecycle::LifecycleError;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
+use tracing_subscriber::Layer;
+use tracing_subscriber::filter::{LevelFilter, Targets};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use url::Url;
 
 use crate::autostart::{self, LoginEntry};
@@ -481,6 +485,38 @@ fn bring_forward_unless_sign_in(args: &[String], bring_forward: impl FnOnce()) {
     }
 }
 
+/// The environment variable that sets the log filter, the standard one: `debug`, or
+/// `warn,puddle_host=trace` for one crate.
+const LOG_VAR: &str = "RUST_LOG";
+
+/// The filter `RUST_LOG` asks for, `info` when it is unset. A value that does not parse gives
+/// `info` and comes back as the second item, so `run` can say so once logging is on.
+fn log_targets(value: Option<&str>) -> (Targets, Option<String>) {
+    let info = || Targets::new().with_default(LevelFilter::INFO);
+    match value {
+        None => (info(), None),
+        Some(text) => text
+            .parse()
+            .map_or_else(|_| (info(), Some(text.to_owned())), |t| (t, None)),
+    }
+}
+
+/// Starts logging to stderr as `RUST_LOG` (`value`) asks. The first subscriber wins; a second call
+/// in one process (tests) keeps the first.
+fn init_logging(value: Option<&str>) {
+    let (targets, bad_filter) = log_targets(value);
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(targets),
+        )
+        .try_init();
+    if let Some(value) = bad_filter {
+        tracing::warn!("{LOG_VAR}={value:?} is not a log filter; logging at info");
+    }
+}
+
 /// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
 /// say ([`desktop`]).
 ///
@@ -488,10 +524,7 @@ fn bring_forward_unless_sign_in(args: &[String], bring_forward: impl FnOnce()) {
 ///
 /// [`ShellError`] if the app can't start.
 pub fn run(options: &Options) -> Result<(), ShellError> {
-    // The first subscriber wins; a second `run` in one process (tests) keeps the first.
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .try_init();
+    init_logging(std::env::var(LOG_VAR).ok().as_deref());
     // Every panic after this writes a crash file into the data folder (nothing is sent).
     if let Some(folder) = data_folder(options) {
         crash::install(folder.join(crash::FOLDER));
@@ -531,6 +564,37 @@ pub(crate) mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use tracing::Level;
+
+    #[test]
+    fn rust_log_sets_the_level_and_per_crate_overrides() {
+        let (unset, bad) = log_targets(None);
+        assert!(bad.is_none());
+        assert!(unset.would_enable("puddle_app", &Level::INFO));
+        assert!(!unset.would_enable("puddle_app", &Level::DEBUG));
+
+        let (debug, _) = log_targets(Some("debug"));
+        assert!(debug.would_enable("puddle_app", &Level::DEBUG));
+        assert!(!debug.would_enable("puddle_app", &Level::TRACE));
+
+        let (mixed, _) = log_targets(Some("warn,puddle_host=trace"));
+        assert!(mixed.would_enable("puddle_host", &Level::TRACE));
+        assert!(!mixed.would_enable("puddle_app", &Level::INFO));
+    }
+
+    #[test]
+    fn logging_starts_for_a_good_value_and_for_a_bad_one() {
+        init_logging(None);
+        init_logging(Some("puddle=loud"));
+    }
+
+    #[test]
+    fn a_rust_log_that_does_not_parse_gives_info_and_comes_back() {
+        let (targets, bad) = log_targets(Some("puddle=loud"));
+        assert_eq!(bad.as_deref(), Some("puddle=loud"));
+        assert!(targets.would_enable("puddle_app", &Level::INFO));
+        assert!(!targets.would_enable("puddle_app", &Level::DEBUG));
+    }
 
     #[test]
     fn a_clean_quit_logs_no_warning() {

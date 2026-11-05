@@ -10549,6 +10549,29 @@ async fn a_restore_makes_a_working_list_entry_with_the_disk_untouched_and_ends_i
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_restore_whose_list_cannot_be_saved_leaves_no_entry_and_the_disk_unclaimed() {
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    let host = rig.start().await;
+    let api = api(&host);
+    make_unwritable(&list_path(&rig));
+
+    let reply = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("was not restored"), "{}", reply.body);
+    assert!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(orphan_ids(&api).await, ["lost"]);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_restore_asks_for_an_address_when_the_disk_has_none_and_the_last_one_ends_the_notice() {
     let rig = Rig::new();
     add_unclaimed_volume(&rig, "bare").await;

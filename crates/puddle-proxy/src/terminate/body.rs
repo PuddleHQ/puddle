@@ -301,6 +301,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_large_body_is_handed_on_in_pieces_of_64_kib() {
+        let input = vec![7u8; 200 * 1024];
+        let mut r = BufReader::with_capacity(256 * 1024, &input[..]);
+        let mut decoder = BodyReader::new(Body::Length(input.len() as u64));
+        let mut sizes = Vec::new();
+        while let Some(piece) = decoder.next(&mut r).await.unwrap() {
+            sizes.push(piece.len());
+        }
+        assert_eq!(sizes, [64 * 1024, 64 * 1024, 64 * 1024, 8 * 1024]);
+    }
+
+    /// Trailers of exactly 64 KiB (the blank line counted) are accepted, one byte more is not.
+    #[tokio::test]
+    async fn trailers_are_accepted_up_to_64_kib_and_no_further() {
+        let trailers = |extra: usize| {
+            let mut input = b"0\r\n".to_vec();
+            for _ in 0..511 {
+                input.extend_from_slice(b"x-a: ");
+                input.extend(std::iter::repeat_n(b'a', 121));
+                input.extend_from_slice(b"\r\n");
+            }
+            input.extend_from_slice(b"x-a: ");
+            input.extend(std::iter::repeat_n(b'a', 119 + extra));
+            input.extend_from_slice(b"\r\n\r\n");
+            input
+        };
+        assert!(decode(&trailers(0), Body::Chunked).await.is_ok());
+        assert!(decode(&trailers(1), Body::Chunked).await.is_err());
+    }
+
+    #[tokio::test]
     async fn endless_trailers_are_cut_off() {
         let mut input = b"0\r\n".to_vec();
         for _ in 0..10_000 {

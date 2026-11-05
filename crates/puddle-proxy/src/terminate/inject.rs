@@ -454,3 +454,25 @@ impl Injector for NoInjection {
         Box::pin(std::future::ready(InjectDecision::PassThrough))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn value_is_true_only_for_the_exact_value() {
+        let header = InjectedHeader::new("x-api-key", SecretValue::new("sk-real")).unwrap();
+        assert!(header.value_is("sk-real"));
+        assert!(!header.value_is("sk-real "));
+        assert!(!header.value_is("sk-other"));
+        assert!(!header.value_is(""));
+    }
+
+    #[test]
+    fn a_secret_value_prints_as_redacted() {
+        let value = SecretValue::new("sk-real");
+        assert_eq!(format!("{value:?}"), "<redacted>");
+        let header = InjectedHeader::new("x-api-key", value).unwrap();
+        assert!(!format!("{header:?}").contains("sk-real"));
+    }
+}

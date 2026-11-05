@@ -131,6 +131,9 @@ exclude_re = [
     # `tests/windows_store.rs` fails it where the snapshot is not empty.
     'platform/mod\.rs:(18|28):5: replace read -> Result<StoreSnapshot, StoreError> with Ok\(Default::default\(\)\)',
     'store\.rs:\d+:5: replace read_host_stores -> Result<StoreSnapshot, StoreError> with Ok\(Default::default\(\)\)',
+    # `SecretValue::drop` only zeroizes the string just before it is freed; no safe code can read the
+    # buffer after the drop, so a test cannot tell the zeroed buffer from the untouched one.
+    'replace <impl Drop for SecretValue>::drop with \(\)',
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

@@ -461,7 +461,7 @@ fn command(
 }
 
 /// The account the server runs as, looked up with `read`: `None` for root, the agent's own user.
-/// A session user the guest does not list (the boot hook could not add it) leaves the server
+/// A session user the guest does not list (the boot hook adds it, so it was removed or cannot be read afterwards) leaves the server
 /// running as root, so the editor still opens; the agent's log and the host (through `control`)
 /// say why.
 fn account(

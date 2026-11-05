@@ -149,7 +149,7 @@ fn get(url: &url::Url, token: &str, path: &str) -> (u16, String) {
 
 #[test]
 fn the_window_opens_on_the_hosts_api_with_its_token_and_the_system_check_answers() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = puddle_test_kit::private_tempdir();
     let options = options_in(dir.path());
     let machine = Machine::default();
     let backend = start(&options, &machine).unwrap();
@@ -180,7 +180,7 @@ fn the_window_opens_on_the_hosts_api_with_its_token_and_the_system_check_answers
 
 #[test]
 fn a_started_shell_has_the_windows_the_launcher_opens_into() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = puddle_test_kit::private_tempdir();
     let options = options_in(dir.path());
     let app = app();
     assert!(app.try_state::<SandboxWindows>().is_none());
@@ -200,7 +200,7 @@ fn a_started_shell_has_the_windows_the_launcher_opens_into() {
 
 #[test]
 fn quitting_stops_the_host_in_order_and_frees_its_data_folder() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = puddle_test_kit::private_tempdir();
     let options = options_in(dir.path());
     let app = app();
     shell::open(
@@ -229,7 +229,7 @@ fn quitting_stops_the_host_in_order_and_frees_its_data_folder() {
 
 #[test]
 fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_host_runs() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = puddle_test_kit::private_tempdir();
     let options = options_in(dir.path());
     let backend = start(&options, &Machine::default()).unwrap();
     let ends = backend.extension_hosts();
@@ -256,7 +256,7 @@ fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_hos
 #[test]
 fn the_host_starts_and_stops_on_half_the_programs_main_thread_stack() {
     let main_stack: usize = env!("PUDDLE_MAIN_STACK_BYTES").parse().unwrap();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = puddle_test_kit::private_tempdir();
     let options = options_in(dir.path());
     let app = app();
     let handle = app.handle().clone();
@@ -275,7 +275,7 @@ fn the_host_starts_and_stops_on_half_the_programs_main_thread_stack() {
 
 #[test]
 fn a_second_shell_on_the_same_data_folder_says_why_and_opens_no_window() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = puddle_test_kit::private_tempdir();
     let options = options_in(dir.path());
     let first = start(&options, &Machine::default()).unwrap();
 

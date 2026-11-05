@@ -104,8 +104,7 @@ impl Settings {
     pub fn claim_scratch_home(&self, tag: &str, owner: &str) -> Result<PathBuf, HarnessError> {
         use std::io::Write as _;
 
-        std::fs::create_dir_all(&self.root)
-            .map_err(|e| HarnessError::io("create", &self.root, e))?;
+        self.create_root()?;
         let home = self.scratch_home(tag);
         let mut note = home.clone().into_os_string();
         note.push(".owner");
@@ -142,6 +141,14 @@ impl Settings {
         self.root.join(format!("{}-kept", self.prefix.as_str()))
     }
 
+    /// Creates the root owner-only. msb refuses a home with an ancestor other accounts can write
+    /// to, unless an owner-only folder sits between them, and a umask of `0002` would otherwise
+    /// leave a new root group-writable. An existing root is left as it is.
+    fn create_root(&self) -> Result<(), HarnessError> {
+        puddle_fs::private::create_dir(&self.root)
+            .map_err(|e| HarnessError::io("create", &self.root, e))
+    }
+
     /// Finds the runtime pair, creates the private home and writes its `config.json`.
     ///
     /// # Errors
@@ -149,6 +156,7 @@ impl Settings {
     /// Whatever [`RuntimePair::find_in`] reports, or [`HarnessError::Io`].
     pub fn prepare(&self) -> Result<RuntimePair, HarnessError> {
         let pair = RuntimePair::find_in(&self.runtime_dir)?;
+        self.create_root()?;
         let home = self.home();
         std::fs::create_dir_all(&home).map_err(|e| HarnessError::io("create", &home, e))?;
         let config = config_path(&home);
@@ -503,13 +511,18 @@ pub(crate) mod tests {
     pub(crate) struct TempDir(tempfile::TempDir);
 
     impl TempDir {
+        /// Owner-only whatever the umask, because msb refuses a home under a folder other
+        /// accounts can write to.
         pub(crate) fn new(tag: &str) -> Self {
-            Self(
-                tempfile::Builder::new()
-                    .prefix(&format!("puddle-vm-tests-{tag}-"))
-                    .tempdir()
-                    .unwrap(),
-            )
+            let prefix = format!("puddle-vm-tests-{tag}-");
+            let mut builder = tempfile::Builder::new();
+            builder.prefix(&prefix);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                builder.permissions(std::fs::Permissions::from_mode(0o700));
+            }
+            Self(builder.tempdir().unwrap())
         }
 
         pub(crate) fn path(&self) -> &Path {
@@ -608,6 +621,19 @@ pub(crate) mod tests {
             (ROOT_VAR, root.to_str().unwrap()),
         ]))
         .unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_root_is_owner_only_so_msb_accepts_the_homes_under_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new("root-mode");
+        let root = dir.path().join("root");
+        settings_in(&root)
+            .claim_scratch_home("hm", "mode_test")
+            .unwrap();
+        let mode = std::fs::metadata(&root).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o700, "{}", root.display());
     }
 
     #[test]

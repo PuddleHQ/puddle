@@ -1,0 +1,29 @@
+{
+  "name": "disks-full",
+  "workspaces": [
+    {
+      "name": "full-root",
+      "repositories": [{ "url": "https://github.com/acme/full-root.git" }],
+      "status": "stopped",
+      "disk_used_mib": 1024,
+      "root_disk_size_mib": 10240,
+      "root_disk_used_mib": 9900
+    },
+    {
+      "name": "full-volume",
+      "repositories": [{ "url": "https://github.com/acme/full-volume.git" }],
+      "status": "stopped",
+      "disk_used_mib": 32000,
+      "root_disk_size_mib": 10240,
+      "root_disk_used_mib": 2048
+    },
+    {
+      "name": "roomy",
+      "repositories": [{ "url": "https://github.com/acme/roomy.git" }],
+      "status": "stopped",
+      "disk_used_mib": 1024,
+      "root_disk_size_mib": 10240,
+      "root_disk_used_mib": 2048
+    }
+  ]
+}

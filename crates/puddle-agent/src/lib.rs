@@ -34,6 +34,7 @@
 //! Unsafe code exists only in the Linux `vsock` module, which says why; elsewhere it is forbidden.
 #![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
 
+pub mod account;
 pub mod bridge;
 pub mod capture;
 pub mod cli;

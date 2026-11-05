@@ -20,7 +20,7 @@ use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, Works
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
 use crate::volume::{Mounter, holders, info, mounted_volumes, mounter};
-use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, spec};
+use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, root_disk, spec};
 
 struct Inner {
     config: MsbConfig,
@@ -551,6 +551,7 @@ impl Runtime for MsbRuntime {
                 .map(|h| SandboxInfo {
                     name: h.name().to_owned(),
                     status: status(h.status_snapshot()),
+                    root_disk: root_disk::usage(&self.sandbox_dir(h.name())),
                     // A record whose stored config can't be read is not claimed as Puddle's.
                     puddle_owned: h.config().is_ok_and(|c| {
                         c.spec.labels.get(OWNER_LABEL).map(String::as_str)

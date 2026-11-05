@@ -141,6 +141,23 @@ describe("events", () => {
     expect(store.oom["a-shop"]).toEqual({ process: "node", pid: 9, at: 777 });
   });
 
+  it("reads the list again when a disk reaches the warning threshold", async () => {
+    api.list = api.list.map((w) =>
+      w.name === "a-shop"
+        ? { ...w, disk_used_mib: 31_000, disk_warnings: ["volume" as const] }
+        : w,
+    );
+    store.handleEvent({
+      type: "disk_nearly_full",
+      workspace: "a-shop",
+      disk: "volume",
+      percent: 94,
+    });
+    await vi.waitFor(() =>
+      expect(store.byName("a-shop")?.disk_warnings).toEqual(["volume"]),
+    );
+  });
+
   it("ignores events about nothing it shows", () => {
     store.handleEvent({ type: "rules_changed" });
     store.handleEvent("nonsense");
@@ -305,6 +322,7 @@ describe("actions", () => {
     ["startWorkspace", "starting", "starting"],
     ["stopWorkspace", "draining", "stopping"],
     ["reclaim", "stopped", "reclaiming"],
+    ["resetRootDisk", "stopped", "resetting_root_disk"],
   ] as const)(
     "%s marks the workspace busy at once",
     async (method, state, busy) => {

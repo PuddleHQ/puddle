@@ -1,0 +1,186 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! How full a sandbox's root disk is, read from msb's root-disk journal.
+//!
+//! msb keeps `root-disk.json` in the sandbox's own folder, out of the guest's reach (the copy in
+//! `runtime/` is only a guard the guest cannot use), so the files it names are the host's to read.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use puddle_compute::{DiskSize, RootDiskUse};
+use serde::Deserialize;
+
+/// The journal's file name in the sandbox's folder (msb's name for it).
+const JOURNAL: &str = "root-disk.json";
+
+/// The part of msb's journal that names the disk files; its other fields are not needed here.
+#[derive(Deserialize)]
+struct Journal {
+    /// The disk files, oldest first, the last one the writable head.
+    layers: Vec<Layer>,
+}
+
+#[derive(Deserialize)]
+struct Layer {
+    path: PathBuf,
+}
+
+/// How full the root disk of the sandbox whose folder is `sandbox_dir` is: its capacity and what the files that make up the disk take on the host.
+/// `None` when there is no disk to look at (not made yet, or a layout this does not know).
+pub(crate) fn usage(sandbox_dir: &Path) -> Option<RootDiskUse> {
+    let files = disk_files(sandbox_dir)?;
+    let size = capacity(files.last()?)?;
+    let mut used: u64 = 0;
+    for file in &files {
+        used = used.saturating_add(puddle_fs::allocated_bytes(file).ok()?);
+    }
+    let size = to_mib(size);
+    // A qcow2 head can take more than the base's length; the disk is then as full as it can be.
+    let used = to_mib(used.div_ceil(MIB) * MIB).min(size);
+    Some(RootDiskUse {
+        size: DiskSize::mib(size),
+        used: DiskSize::mib(used),
+    })
+}
+
+const MIB: u64 = 1024 * 1024;
+
+/// qcow2 files start with this magic, then the version and the backing-file fields; the virtual
+/// size is the big-endian `u64` at byte 24.
+const QCOW2_MAGIC: [u8; 4] = *b"QFI\xfb";
+
+/// What the disk file `head` can hold: a qcow2 file's virtual size, else (a raw disk) its length.
+fn capacity(head: &Path) -> Option<u64> {
+    use std::io::Read as _;
+    let mut file = fs::File::open(head).ok()?;
+    let length = file.metadata().ok()?.len();
+    let mut header = [0_u8; 32];
+    if file.read_exact(&mut header).is_ok() && header[..4] == QCOW2_MAGIC {
+        let size: [u8; 8] = header[24..32].try_into().ok()?;
+        return Some(u64::from_be_bytes(size));
+    }
+    Some(length)
+}
+
+fn to_mib(bytes: u64) -> u32 {
+    u32::try_from(bytes / MIB).unwrap_or(u32::MAX)
+}
+
+/// The files of the root disk, oldest first: the journal's layers when msb keeps one, else the
+/// plain `upper.ext4` of a managed root disk.
+fn disk_files(sandbox_dir: &Path) -> Option<Vec<PathBuf>> {
+    let journal = sandbox_dir.join(JOURNAL);
+    if journal.exists() {
+        let bytes = fs::read(&journal).ok()?;
+        let parsed: Journal = serde_json::from_slice(&bytes).ok()?;
+        let files: Vec<PathBuf> = parsed.layers.into_iter().map(|l| l.path).collect();
+        return (!files.is_empty()).then_some(files);
+    }
+    let upper = sandbox_dir.join("upper.ext4");
+    upper.is_file().then(|| vec![upper])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sandboxes folder with two sandboxes, `mine` (its `runtime/` folder made) and `other`
+    /// (with a root disk).
+    struct Home {
+        _dir: tempfile::TempDir,
+        sandboxes: PathBuf,
+    }
+
+    impl Home {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let sandboxes = dir.path().join("sandboxes");
+            fs::create_dir_all(sandboxes.join("mine").join("runtime")).unwrap();
+            fs::create_dir_all(sandboxes.join("other")).unwrap();
+            fs::write(sandboxes.join("mine").join("upper.ext4"), b"mine").unwrap();
+            fs::write(sandboxes.join("other").join("upper.ext4"), b"other").unwrap();
+            Home {
+                _dir: dir,
+                sandboxes,
+            }
+        }
+
+        fn mine(&self) -> PathBuf {
+            self.sandboxes.join("mine")
+        }
+
+        /// Writes `mine`'s journal as msb does, with `layers`.
+        fn journal(&self, layers: &[&Path]) {
+            let layers: Vec<_> = layers
+                .iter()
+                .enumerate()
+                .map(|(i, path)| {
+                    serde_json::json!({
+                        "layer_id": format!("layer-{i:032x}"),
+                        "path": path,
+                        "format": if i == 0 { "raw" } else { "qcow2" },
+                        "integrity_root": null,
+                    })
+                })
+                .collect();
+            let journal = serde_json::json!({
+                "schema": "microsandbox.runtime-root-disk/1",
+                "volume_id": "vol-00000000000000000000000000000000",
+                "device_id": "vdb",
+                "layout": "managed-upper",
+                "published_generation": 0,
+                "layers": layers,
+            });
+            self.write_journal(&serde_json::to_vec(&journal).unwrap());
+        }
+
+        fn write_journal(&self, bytes: &[u8]) {
+            fs::write(self.mine().join(JOURNAL), bytes).unwrap();
+        }
+    }
+
+    /// A sparse file of `length` bytes with `data` bytes written at its start.
+    fn sparse(path: &Path, length: u64, data: usize) {
+        use std::io::Write as _;
+        let mut file = fs::File::create(path).unwrap();
+        file.write_all(&vec![7_u8; data]).unwrap();
+        file.set_len(length).unwrap();
+    }
+
+    #[test]
+    fn a_raw_root_disk_is_as_full_as_its_image_is_allocated() {
+        let home = Home::new();
+        let upper = home.mine().join("upper.ext4");
+        sparse(&upper, 64 * MIB, 3 * 1024 * 1024);
+        let got = usage(&home.mine()).unwrap();
+        assert_eq!(got.size, DiskSize::mib(64));
+        assert!(got.used >= DiskSize::mib(3), "{got:?}");
+        // NTFS allocates a file extended with `set_len` in full unless it is marked sparse, so
+        // only file systems that make holes can show the file under its length.
+        #[cfg(unix)]
+        assert!(got.used < DiskSize::mib(64), "{got:?}");
+    }
+
+    #[test]
+    fn a_qcow2_head_gives_the_virtual_size_and_every_layer_counts() {
+        let home = Home::new();
+        let base = home.mine().join("runtime").join("base.raw");
+        sparse(&base, 8 * MIB, 2 * 1024 * 1024);
+        let head = home.mine().join("head.qcow2");
+        let mut header = vec![0_u8; 32];
+        header[..4].copy_from_slice(&QCOW2_MAGIC);
+        header[24..32].copy_from_slice(&(16 * MIB).to_be_bytes());
+        fs::write(&head, &header).unwrap();
+        home.journal(&[&base, &head]);
+        let got = usage(&home.mine()).unwrap();
+        assert_eq!(got.size, DiskSize::mib(16));
+        assert!(got.used >= DiskSize::mib(2), "{got:?}");
+    }
+
+    #[test]
+    fn no_disk_gives_no_figure() {
+        let home = Home::new();
+        fs::remove_file(home.mine().join("upper.ext4")).unwrap();
+        assert_eq!(usage(&home.mine()), None);
+    }
+}

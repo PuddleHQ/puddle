@@ -35,6 +35,7 @@ mod config;
 pub mod error;
 mod image;
 mod logs;
+mod root_disk;
 mod runtime;
 mod sandbox;
 pub mod spec;

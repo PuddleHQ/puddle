@@ -943,6 +943,8 @@ pub enum WorkspaceOpKind {
     IdentityDefaultSet,
     /// A workspace's identity list changed.
     IdentitiesChanged,
+    /// The order of the identities changed.
+    IdentitiesReordered,
     /// A repository added to a workspace's list.
     RepoAdded,
     /// A repository's pull or push switch changed.
@@ -965,6 +967,7 @@ impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
             K::IdentityDeleted => Self::IdentityDeleted,
             K::IdentityDefaultSet => Self::IdentityDefaultSet,
             K::IdentitiesChanged => Self::IdentitiesChanged,
+            K::IdentitiesReordered => Self::IdentitiesReordered,
             K::RepoAdded => Self::RepoAdded,
             K::RepoSwitched => Self::RepoSwitched,
             K::RepoRemoved => Self::RepoRemoved,

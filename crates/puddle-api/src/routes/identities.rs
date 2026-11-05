@@ -307,9 +307,19 @@ pub(crate) async fn reorder_identities(
 ) -> Result<Json<IdentityList>, ApiError> {
     let ids: Vec<_> = body.ids.into_iter().map(IdentityId).collect();
     let list = blocking(move || {
-        let identities = state
-            .store
-            .reorder_identities(&ids)?
+        let ordered = state.store.reorder_identities(&ids)?;
+        let order = ordered
+            .iter()
+            .map(|identity| identity.label.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        record_op(
+            &state.store,
+            WorkspaceOpKind::IdentitiesReordered,
+            None,
+            Some(order),
+        );
+        let identities = ordered
             .into_iter()
             .map(|identity| view(&state, identity))
             .collect::<Result<_, _>>()?;

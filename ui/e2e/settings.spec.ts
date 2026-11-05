@@ -596,3 +596,47 @@ test.describe("Microsoft's VS Code server", () => {
     expect(r.status()).toBe(422);
   });
 });
+
+test("the disk space lines start at 20 and 5 GB, are checked before saving and survive a reload", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await openSettings(page, backend);
+  const warn = page.getByLabel("Warn when free space is under (GB)");
+  const fail = page.getByLabel("Fail when free space is under (GB)");
+  const notice = page.getByLabel(
+    "The drive that holds Puddle's data runs low on space",
+  );
+  await expect(warn).toHaveValue("20");
+  await expect(fail).toHaveValue("5");
+  await expect(notice).toBeChecked();
+
+  // A failure line above the warning line cannot be saved.
+  await fail.fill("30");
+  await fail.blur();
+  await expect(
+    page.getByText(
+      "The failure line (30 GB) cannot be above the warning line (20 GB).",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+  await warn.fill("0");
+  await warn.blur();
+  await expect(page.getByText("Use between 1 and 10000 GB.")).toBeVisible();
+
+  await warn.fill("60");
+  await warn.blur();
+  await fail.fill("12");
+  await fail.blur();
+  await notice.uncheck();
+  await pressSave(page);
+  const ui = (await stored(request, backend)).ui;
+  expect(ui.disk_warn_free_gb).toBe(60);
+  expect(ui.disk_fail_free_gb).toBe(12);
+  expect(ui.notify_low_disk_space).toBe(false);
+  await page.reload();
+  await expect(warn).toHaveValue("60");
+  await expect(fail).toHaveValue("12");
+  await expect(notice).not.toBeChecked();
+});

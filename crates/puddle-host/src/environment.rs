@@ -6,9 +6,11 @@
 //! real value is read from the operating system's credential store into the proxy's registry and
 //! nowhere else: this module never puts it in the guest's environment, a file or a log line.
 
-use puddle_proxy::{SecretValue, StandIn, StandInOrigin, TerminationSet, secret_stand_in};
+use puddle_proxy::{
+    Placement, SecretValue, StandIn, StandInOrigin, TerminationSet, secret_stand_in,
+};
 use puddle_secrets::SecretStore;
-use puddle_store::{StartValue, Store};
+use puddle_store::{SecretPlace, StartValue, Store};
 use puddle_types::{GuestEnv, WorkspaceName};
 
 /// What a workspace's environment comes to at one moment.
@@ -55,6 +57,7 @@ pub(crate) fn resolve(
             StartValue::Secret {
                 id,
                 hosts,
+                place,
                 stand_in,
             } => {
                 let real = match vault.get(&id) {
@@ -81,6 +84,7 @@ pub(crate) fn resolve(
                     SecretValue::new(real.expose()),
                     set,
                 )
+                .and_then(|entry| placement(place).map(|at| entry.placed(at)))
                 .map_err(|e| format!("the secret {name} cannot be used: {e}"))?;
                 entries.push(entry);
                 stand_in
@@ -91,6 +95,17 @@ pub(crate) fn resolve(
             .map_err(|e| format!("the variable {name} cannot be set: {e}"))?;
     }
     Ok(Resolved { guest, entries })
+}
+
+/// The proxy's placement for a place the store kept. The store checks a query name by the
+/// same rules (a test below keeps them equal); the proxy checks it again, so a name that got into
+/// the database some other way stops the secret instead of reaching the proxy unchecked.
+fn placement(place: SecretPlace) -> Result<Placement, puddle_proxy::StandInError> {
+    match place {
+        SecretPlace::Header => Ok(Placement::Header),
+        SecretPlace::Path => Ok(Placement::Path),
+        SecretPlace::Query(name) => Placement::query(&name),
+    }
 }
 
 #[cfg(test)]
@@ -171,6 +186,81 @@ mod tests {
         // The same stand-in at the next start.
         let again = resolve(&store, &vault, &ws("shop")).unwrap();
         assert_eq!(again.guest.get("NPM_TOKEN"), Some(stand_in.as_str()));
+    }
+
+    #[test]
+    fn a_query_name_the_proxy_refuses_stops_the_secret() {
+        assert!(placement(SecretPlace::Query("a&b".to_owned())).is_err());
+        assert_eq!(
+            placement(SecretPlace::Query("appid".to_owned())),
+            Ok(Placement::query("appid").unwrap())
+        );
+    }
+
+    #[test]
+    fn each_secret_reaches_the_proxy_with_the_place_it_is_swapped_in() {
+        let store = store();
+        let vault = MemoryStore::new();
+        let shop = EnvScope::Workspace(ws("shop"));
+        let places = [
+            ("A_HEADER", SecretPlace::Header, Placement::Header),
+            ("B_PATH", SecretPlace::Path, Placement::Path),
+            (
+                "C_QUERY",
+                SecretPlace::query("appid").unwrap(),
+                Placement::query("appid").unwrap(),
+            ),
+        ];
+        for (n, place, _) in &places {
+            let id = StoredId::new(format!("env-{n}")).unwrap();
+            vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
+            let hosts = vec![SecretHost::new("api.example.com").unwrap()];
+            let draft = EnvDraft::secret_in(id, hosts, place.clone()).unwrap();
+            store.set_env(&shop, &name(n), draft).unwrap();
+        }
+        let resolved = resolve(&store, &vault, &ws("shop")).unwrap();
+        let got: Vec<(String, Placement)> = resolved
+            .entries
+            .iter()
+            .map(|e| (e.id(), e.placement().clone()))
+            .collect();
+        let want: Vec<(String, Placement)> = places
+            .into_iter()
+            .map(|(n, _, placement)| (format!("stand-in:secret:{n}"), placement))
+            .collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn the_query_names_the_store_accepts_are_the_ones_the_proxy_accepts() {
+        let long = "n".repeat(65);
+        let cases = [
+            "appid",
+            "access_token",
+            "key",
+            "sig",
+            "a[b]",
+            "x.y-z~",
+            "",
+            "a&b",
+            "a=b",
+            "a#",
+            "a%41",
+            "a+b",
+            "a b",
+            "\u{e9}",
+            "tab\tx",
+            long.as_str(),
+        ];
+        for case in cases {
+            assert_eq!(
+                SecretPlace::query(case).is_ok(),
+                Placement::query(case).is_ok(),
+                "{case:?}"
+            );
+        }
+        assert!(SecretPlace::query(&"n".repeat(64)).is_ok());
+        assert!(Placement::query(&"n".repeat(64)).is_ok());
     }
 
     #[test]

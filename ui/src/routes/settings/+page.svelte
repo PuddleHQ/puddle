@@ -30,6 +30,12 @@
   } from "#lib/settings/draft.ts";
   import type { AppIconChoice } from "#lib/settings/app-icon.ts";
   import {
+    DEFAULT_FAIL_FREE_GB,
+    DEFAULT_WARN_FREE_GB,
+    linesProblem,
+    parseFreeGb,
+  } from "#lib/settings/disk-space.ts";
+  import {
     CLOSE_OPTIONS,
     LOCAL_EXPLAIN,
     memorySizes,
@@ -76,6 +82,7 @@
     ["s-notify", "Notifications"],
     ["s-inbox", "Inbox"],
     ["s-ws", "Workspaces"],
+    ["s-disk", "Disk space"],
     ["s-net", "Network"],
     ["s-vsc", "Browser VS Code"],
     ["s-git", "Git and credentials"],
@@ -95,6 +102,9 @@
   let problem = $state<string | null>(null);
   let graceError = $state<string | null>(null);
   let diskError = $state<string | null>(null);
+  /** What is wrong with a free-space line as typed; the lines as a pair are checked by `linesError`. */
+  let warnError = $state<string | null>(null);
+  let failError = $state<string | null>(null);
   let trustOpen = $state(false);
   let popupOpen = $state(false);
   let popupBusy = $state(false);
@@ -176,6 +186,8 @@
   function discard() {
     draft = EMPTY_DRAFT;
     graceError = null;
+    warnError = null;
+    failError = null;
     diskError = null;
     saved = null;
     problem = null;
@@ -184,7 +196,7 @@
 
   async function saveAll() {
     const view = store.view;
-    if (!view || !dirty || graceError || diskError || saving) return;
+    if (!view || !dirty || graceError || diskIssue || saving) return;
     saving = true;
     saved = null;
     problem = null;
@@ -233,6 +245,7 @@
     | "notify_oom"
     | "notify_disk_full"
     | "notify_unexpected_stop"
+    | "notify_low_disk_space"
     | "confirm_global_rules"
     | "inbox_shortcuts"
     | "start_at_login";
@@ -328,6 +341,29 @@
     } else {
       problem = result.message;
     }
+  }
+
+  /** The free-space lines as the screen shows them: the unsaved edit, else what is stored, else the default. */
+  const warnLine = $derived(uiValue("disk_warn_free_gb", DEFAULT_WARN_FREE_GB));
+  const failLine = $derived(uiValue("disk_fail_free_gb", DEFAULT_FAIL_FREE_GB));
+  const linesError = $derived(linesProblem(warnLine, failLine));
+  /** Save waits while a line is not a usable number or the two lines contradict each other. */
+  const diskBlocked = $derived(
+    warnError !== null || failError !== null || linesError !== null,
+  );
+  const diskIssue = $derived(diskError !== null || diskBlocked);
+
+  function editFreeLine(
+    input: HTMLInputElement,
+    key: "disk_warn_free_gb" | "disk_fail_free_gb",
+    fallback: number,
+  ) {
+    const parsed = parseFreeGb(input.value);
+    const message = parsed.ok ? null : parsed.message;
+    if (key === "disk_warn_free_gb") warnError = message;
+    else failError = message;
+    if (!parsed.ok || !store.view) return;
+    editUi(key, parsed.gb, store.view.ui[key] ?? fallback);
   }
 
   function editGrace(input: HTMLInputElement, stored: number) {
@@ -568,6 +604,13 @@
           "It stopped or crashed without you asking.",
           true,
         )}
+        {@render uiToggle(
+          "notify_low_disk_space",
+          "set-low-disk",
+          "The drive that holds Puddle's data runs low on space",
+          "When the free space falls under the warning or the failure line (see Disk space), once for each line it crosses.",
+          true,
+        )}
         <div class="setting">
           <div class="grow">
             <label for="set-close">Closing the window</label>
@@ -717,6 +760,72 @@
               )}
           />
         </div>
+      </section>
+
+      <section class="card" id="s-disk" aria-labelledby="h-disk">
+        <h2 id="h-disk">Disk space</h2>
+        <p class="desc">
+          Workspace volumes and root disks, package caches and builds all grow
+          on the drive that holds Puddle's data. When it fills up, a build or a
+          tool in a workspace stops with an error that does not name the cause.
+          <code>puddle doctor</code> and the app check the free space against these
+          two lines (GB of 1024 x 1024 x 1024 bytes).
+        </p>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-disk-warn">Warn when free space is under (GB)</label
+            >
+            <p class="desc" id="set-disk-warn-desc">
+              Default {DEFAULT_WARN_FREE_GB}. Puddle works; the check shows a
+              warning and the app says so once.
+              {#if warnError}<span class="error" role="alert">{warnError}</span
+                >{/if}
+            </p>
+          </div>
+          <input
+            id="set-disk-warn"
+            type="text"
+            inputmode="numeric"
+            class="narrow"
+            aria-describedby="set-disk-warn-desc"
+            aria-invalid={warnError ? "true" : undefined}
+            value={String(warnLine)}
+            onchange={(e) =>
+              editFreeLine(
+                e.currentTarget,
+                "disk_warn_free_gb",
+                DEFAULT_WARN_FREE_GB,
+              )}
+          />
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-disk-fail">Fail when free space is under (GB)</label
+            >
+            <p class="desc" id="set-disk-fail-desc">
+              Default {DEFAULT_FAIL_FREE_GB}. The check fails and the app says
+              so once. Never above the warning line.
+              {#if failError}<span class="error" role="alert">{failError}</span
+                >{/if}
+            </p>
+          </div>
+          <input
+            id="set-disk-fail"
+            type="text"
+            inputmode="numeric"
+            class="narrow"
+            aria-describedby="set-disk-fail-desc"
+            aria-invalid={failError ? "true" : undefined}
+            value={String(failLine)}
+            onchange={(e) =>
+              editFreeLine(
+                e.currentTarget,
+                "disk_fail_free_gb",
+                DEFAULT_FAIL_FREE_GB,
+              )}
+          />
+        </div>
+        {#if linesError}<p class="error" role="alert">{linesError}</p>{/if}
       </section>
 
       <section class="card" id="s-net" aria-labelledby="h-net">
@@ -1013,6 +1122,8 @@
             <p class="error" role="alert">{problem}</p>
           {:else if graceError && dirty}
             <p class="error">Fix the reconnection grace to save.</p>
+          {:else if diskBlocked && dirty}
+            <p class="error">Fix the disk space lines to save.</p>
           {:else if diskError && dirty}
             <p class="error">Fix the disk warning percentage to save.</p>
           {:else if saved}
@@ -1037,10 +1148,7 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!dirty ||
-            saving ||
-            graceError !== null ||
-            diskError !== null}
+          disabled={!dirty || saving || graceError !== null || diskIssue}
           onclick={() => void saveAll()}>Save</button
         >
       </div>

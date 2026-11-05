@@ -626,3 +626,30 @@ async fn the_host_policy_still_applies_and_a_denied_bound_host_is_not_terminated
         None::<Upstream>,
     );
 }
+
+#[tokio::test]
+async fn an_answer_to_an_upload_that_is_not_finished_ends_the_connection() {
+    // The server refuses the upload on its head, before the guest has sent the rest of the body:
+    // the guest gets the answer, and then the connection closes, because what the guest still
+    // sends is the end of that body and not a request.
+    let pki = Pki::new();
+    let server = FakeServer::tls_answering_before_the_body(
+        pki.server_config("bound.test", Flaw::None),
+        Arc::new(|_| Reply::status(413, "", "too big")),
+    )
+    .await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client
+        .send(
+            b"POST /upload HTTP/1.1\r\nHost: bound.test\r\nContent-Length: 1000\r\n\r\n0123456789",
+        )
+        .await;
+    let answer = client.response("POST").await;
+    assert_eq!(answer.status, 413);
+    assert_eq!(answer.text(), "too big");
+    assert!(client.closed().await, "the connection stayed open");
+}

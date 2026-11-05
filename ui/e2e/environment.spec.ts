@@ -149,6 +149,32 @@ test.describe("environment", () => {
     await expect(table(page)).not.toContainText("NPM_TOKEN");
   });
 
+  test("puts a secret in a query parameter, says so in its row and keeps it after a reload", async ({
+    page,
+    backend,
+  }) => {
+    await open(page, backend, "environment", "Environment");
+    await page.getByRole("button", { name: "Edit NPM_TOKEN" }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit NPM_TOKEN" });
+    await expect(dialog.getByRole("note")).toContainText(
+      "AWS access keys with SigV4",
+    );
+    await dialog.getByRole("radio", { name: "In a query parameter" }).check();
+    await dialog.getByLabel("Parameter name").fill("access_token");
+    await dialog.getByRole("button", { name: "Save" }).click();
+    const row = table(page).getByRole("row", { name: /NPM_TOKEN/ });
+    await expect(row).toContainText("in the query parameter access_token");
+    await page.reload();
+    await expect(row).toContainText("in the query parameter access_token");
+    await page.getByRole("button", { name: "Edit NPM_TOKEN" }).click();
+    await expect(
+      dialog.getByRole("radio", { name: "In a query parameter" }),
+    ).toBeChecked();
+    await expect(dialog.getByLabel("Parameter name")).toHaveValue(
+      "access_token",
+    );
+  });
+
   test("overrides a global variable for this workspace only", async ({
     page,
     backend,

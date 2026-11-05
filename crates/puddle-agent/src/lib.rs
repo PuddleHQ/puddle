@@ -142,6 +142,7 @@ impl Agent {
             tasks.spawn(editor::forward_editor_problems(
                 control.install_problem(),
                 control.update_problem(),
+                control.session_user_problem(),
                 tx.clone(),
             ));
             tasks.spawn(editor::run(editor, control));

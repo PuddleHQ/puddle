@@ -120,6 +120,9 @@ pub struct Control {
     /// Why a newer build could not be taken, `None` when nothing is wrong; set again in the same
     /// way. The server runs on the build it has meanwhile.
     update_problem: watch::Sender<Option<String>>,
+    /// Why the server runs as root though a session user was named, `None` when it runs as the
+    /// user it should; set again at each start that lacks the user.
+    session_user_problem: watch::Sender<Option<String>>,
 }
 
 impl Control {
@@ -140,6 +143,7 @@ impl Control {
             times,
             install_problem: watch::channel(None).0,
             update_problem: watch::channel(None).0,
+            session_user_problem: watch::channel(None).0,
             updates: matches!(
                 server.kind,
                 ServerKind::Microsoft {
@@ -181,6 +185,25 @@ impl Control {
     #[must_use]
     pub fn update_problem(&self) -> watch::Receiver<Option<String>> {
         self.update_problem.subscribe()
+    }
+
+    /// Follows why the server runs as root though a session user was named, like
+    /// [`Control::install_problem`].
+    #[must_use]
+    pub fn session_user_problem(&self) -> watch::Receiver<Option<String>> {
+        self.session_user_problem.subscribe()
+    }
+
+    /// A start found no session user in the guest: say why, every time.
+    fn session_user_missing(&self, reason: &str) {
+        self.session_user_problem
+            .send_replace(Some(reason.to_owned()));
+    }
+
+    /// A start found the session user, or none was named: ends what
+    /// [`Control::session_user_missing`] said, once.
+    fn session_user_found(&self) {
+        end(&self.session_user_problem);
     }
 
     /// A download was refused, or failed on the network again and again: say why, every time.
@@ -437,17 +460,30 @@ fn command(
     command
 }
 
-/// The account the server runs as: `None` for root, the agent's own user. A session user the
-/// guest does not list (the boot hook could not add it) leaves the server running as root, so
-/// the editor still opens, and says why.
-fn account(server: &EditorServer) -> Option<Account> {
+/// The account the server runs as, looked up with `read`: `None` for root, the agent's own user.
+/// A session user the guest does not list (the boot hook adds it, so it was removed or cannot be read afterwards) leaves the server
+/// running as root, so the editor still opens; the agent's log and the host (through `control`)
+/// say why.
+fn account(
+    server: &EditorServer,
+    control: &Control,
+    read: impl FnOnce(&str) -> io::Result<Account>,
+) -> Option<Account> {
     if server.user.is_root() {
+        control.session_user_found();
         return None;
     }
-    match Account::read(server.user.name()) {
-        Ok(account) => Some(account),
+    match read(server.user.name()) {
+        Ok(account) => {
+            control.session_user_found();
+            Some(account)
+        }
         Err(err) => {
             tracing::error!(user = %server.user, error = %err, "the editor server runs as root: its user is missing");
+            control.session_user_missing(&format!(
+                "the session user {} is missing in the guest ({err}), so the editor server runs as root",
+                server.user
+            ));
             None
         }
     }
@@ -580,12 +616,13 @@ fn end(problem: &watch::Sender<Option<String>>) {
     problem.send_if_modified(|problem| problem.take().is_some());
 }
 
-/// Sends every change of the problems (a [`Control::install_problem`] and a
-/// [`Control::update_problem`]) to the host as an [`AgentMessage::EditorStatus`]. Returns when
+/// Sends every change of the problems (a [`Control::install_problem`], a
+/// [`Control::update_problem`] and a [`Control::session_user_problem`]) to the host as an [`AgentMessage::EditorStatus`]. Returns when
 /// `out` closes.
 pub async fn forward_editor_problems(
     mut install: watch::Receiver<Option<String>>,
     mut update: watch::Receiver<Option<String>>,
+    mut session_user: watch::Receiver<Option<String>>,
     out: mpsc::Sender<AgentMessage>,
 ) {
     loop {
@@ -602,6 +639,13 @@ pub async fn forward_editor_problems(
                 AgentMessage::editor_status(
                     EditorProblemKind::Update,
                     update.borrow_and_update().as_deref(),
+                )
+            }
+            changed = session_user.changed() => {
+                if changed.is_err() { return; }
+                AgentMessage::editor_status(
+                    EditorProblemKind::SessionUser,
+                    session_user.borrow_and_update().as_deref(),
                 )
             }
         };
@@ -854,7 +898,7 @@ async fn start_once(
     }
     wait_until_free(config.server.port, port_taken).await;
     let password = boot_password(config)?;
-    let account = account(&config.server);
+    let account = account(&config.server, control, Account::read);
     if let Some(account) = &account {
         give_to(account, config)?;
     }
@@ -1373,6 +1417,7 @@ mod tests {
         tokio::spawn(forward_editor_problems(
             control.install_problem(),
             control.update_problem(),
+            control.session_user_problem(),
             out,
         ));
         let running = tokio::spawn(run_controlled(config, service, Arc::clone(&control)));
@@ -1395,6 +1440,7 @@ mod tests {
         tokio::spawn(forward_editor_problems(
             control.install_problem(),
             control.update_problem(),
+            control.session_user_problem(),
             out,
         ));
         control.install_worked();
@@ -1422,6 +1468,86 @@ mod tests {
         );
         control.install_worked();
         puddle_test_kit::no_event_for("a second end", Duration::from_secs(1), &mut host).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_server_that_runs_as_root_for_want_of_its_user_is_told_each_start_and_ends_when_it_is_found()
+     {
+        let agent = Account::find("agent", "agent:x:1001:1001::/home/agent:/bin/sh\n", "").unwrap();
+        let named = EditorServer::new("/d", "/f", 300).with_user(puddle_types::SessionUser::Agent);
+        let control = Control::new(&named);
+        let (out, mut host) = mpsc::channel(8);
+        tokio::spawn(forward_editor_problems(
+            control.install_problem(),
+            control.update_problem(),
+            control.session_user_problem(),
+            out,
+        ));
+        // Root by choice, and a user that is there, say nothing.
+        assert_eq!(
+            account(
+                &EditorServer::new("/d", "/f", 300),
+                &control,
+                |_| unreachable!()
+            ),
+            None
+        );
+        assert_eq!(
+            account(&named, &control, |name| {
+                assert_eq!(name, "agent");
+                Ok(agent.clone())
+            }),
+            Some(agent.clone())
+        );
+        puddle_test_kit::no_event_for("a user that is there", Duration::from_secs(1), &mut host)
+            .await;
+        // A user the guest lacks: the server runs as root, and the host hears why at each start.
+        let lacking = |_: &str| Err(io::Error::new(io::ErrorKind::NotFound, "no entry"));
+        let wanted = AgentMessage::editor_status(
+            EditorProblemKind::SessionUser,
+            Some(
+                "the session user agent is missing in the guest (no entry), so the editor server runs as root",
+            ),
+        );
+        assert_eq!(account(&named, &control, lacking), None);
+        assert_eq!(host.recv().await, Some(wanted.clone()));
+        assert_eq!(account(&named, &control, lacking), None);
+        assert_eq!(host.recv().await, Some(wanted));
+        // A start that finds the user ends it, once.
+        assert_eq!(
+            account(&named, &control, |_| Ok(agent.clone())),
+            Some(agent.clone())
+        );
+        assert_eq!(
+            host.recv().await,
+            Some(AgentMessage::editor_status(
+                EditorProblemKind::SessionUser,
+                None
+            ))
+        );
+        assert_eq!(
+            account(&named, &control, |_| Ok(agent.clone())),
+            Some(agent)
+        );
+        puddle_test_kit::no_event_for("a second end", Duration::from_secs(1), &mut host).await;
+        // Root by choice after a lacking start ends it too.
+        assert_eq!(account(&named, &control, lacking), None);
+        assert!(host.recv().await.is_some());
+        assert_eq!(
+            account(
+                &EditorServer::new("/d", "/f", 300),
+                &control,
+                |_| unreachable!()
+            ),
+            None
+        );
+        assert_eq!(
+            host.recv().await,
+            Some(AgentMessage::editor_status(
+                EditorProblemKind::SessionUser,
+                None
+            ))
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1497,6 +1623,7 @@ mod tests {
         tokio::spawn(forward_editor_problems(
             control.install_problem(),
             control.update_problem(),
+            control.session_user_problem(),
             out,
         ));
         let looking = tokio::spawn(update_loop(control, Arc::new(Arc::clone(&service))));
@@ -1521,6 +1648,7 @@ mod tests {
         tokio::spawn(forward_editor_problems(
             control.install_problem(),
             control.update_problem(),
+            control.session_user_problem(),
             out,
         ));
         let looking = tokio::spawn(update_loop(control, Arc::new(Offline)));
@@ -1555,6 +1683,7 @@ mod tests {
         tokio::spawn(forward_editor_problems(
             control.install_problem(),
             control.update_problem(),
+            control.session_user_problem(),
             out,
         ));
         let running = tokio::spawn(run_controlled(config, Offline, Arc::clone(&control)));
@@ -1598,6 +1727,7 @@ mod tests {
         tokio::spawn(forward_editor_problems(
             control.install_problem(),
             control.update_problem(),
+            control.session_user_problem(),
             out,
         ));
         // A build that is not the one on trial is left alone and nothing is said.

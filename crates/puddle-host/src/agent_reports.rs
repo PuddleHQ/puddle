@@ -116,8 +116,9 @@ fn editor_session_user_problem(name: &WorkspaceName, reason: &str) -> Problem {
         format!("The browser editor in {name} runs as root: {reason}"),
         "The editor opens and works, but its terminal and the files it writes belong to root \
          instead of the workspace's session user, because the guest has no such user (the boot \
-         hook could not add it, or the image removed it). Terminals and desktop VS Code are not \
-         affected. To get the user back, use an image that keeps the user (or switch the workspace's \
+         hook adds it and stops the start when it cannot, so it was removed or cannot be read \
+         afterwards). Only the browser editor is affected: terminals opened from Puddle and \
+         desktop VS Code are not. To get the user back, use an image that keeps the user (or switch the workspace's \
          session user to root in its settings) and start the workspace again; this ends when a start \
          finds the user, or when the workspace stops."
             .to_owned(),

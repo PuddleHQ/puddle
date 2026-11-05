@@ -36,6 +36,13 @@ describe("where a problem sends you", () => {
     expect(problemLink(problem("sweeper", null))).toBeUndefined();
   });
 
+  it("sends the unclaimed-disks problem to the workspace list, where a disk is restored", () => {
+    expect(problemLink(problem("orphan-volumes", null))).toEqual({
+      href: "/workspaces",
+      label: "Restore a workspace",
+    });
+  });
+
   it("does not take another workspace's start folder for this one's", () => {
     const list = [problem(startFolderKey("other"), "other")];
     expect(startFolderProblemOf(list, "dev")).toBeUndefined();

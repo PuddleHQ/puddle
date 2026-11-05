@@ -9,6 +9,7 @@ FAIL  Bundled runtime       bundled runtime is missing: C:\Users\dev\AppData\Loc
             with Puddle and must sit next to Puddle's program file.
 skip  Runtime starts        not checked: the bundled runtime isn't usable
 skip  Test boot             not checked: the runtime doesn't start
+ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Global Secure Access  client not installed
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
@@ -52,6 +53,11 @@ ok    Global Secure Access  client not installed
       "id": "test_boot",
       "status": "skipped",
       "summary": "not checked: the runtime doesn't start"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
     },
     {
       "id": "global_secure_access",

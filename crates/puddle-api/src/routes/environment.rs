@@ -22,7 +22,7 @@ use crate::error::{ApiError, ErrorCode, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::identities::workspace;
-use crate::wire::{EnvList, EnvSetRequest, EnvVariable, WorkspaceEnv};
+use crate::wire::{EnvList, EnvSetRequest, EnvVariable, SecretPlace, WorkspaceEnv};
 
 fn unavailable() -> ApiError {
     ApiError::new(
@@ -90,12 +90,17 @@ async fn set(
             drop_replaced(&vault, change.replaced.as_ref(), None);
             Ok(EnvVariable::from_store(change.entry, false))
         }
-        EnvSetRequest::Secret { value, hosts } => {
+        EnvSetRequest::Secret {
+            value,
+            hosts,
+            place,
+        } => {
             let hosts = SecretHost::list(&hosts)?;
-            let kept = match store.env_entry(&scope, &name)?.map(|e| e.value) {
-                Some(EnvValue::Secret(secret)) => Some(secret.id),
-                _ => None,
+            let (kept, stored) = match store.env_entry(&scope, &name)?.map(|e| e.value) {
+                Some(EnvValue::Secret(secret)) => (Some(secret.id), Some(secret.place)),
+                _ => (None, None),
             };
+            let place = SecretPlace::into_store(place, stored)?;
             let (id, fresh) = match &kept {
                 Some(id) => (id.clone(), false),
                 None => (new_stored_id()?, true),
@@ -113,7 +118,8 @@ async fn set(
                 }
                 None => {}
             }
-            let change = match store.set_env(&scope, &name, EnvDraft::secret(id.clone(), hosts)?) {
+            let draft = EnvDraft::secret_in(id.clone(), hosts, place)?;
+            let change = match store.set_env(&scope, &name, draft) {
                 Ok(change) => change,
                 Err(err) => {
                     if fresh {

@@ -88,7 +88,18 @@ fn assert_firmware_names(dir: &Path) {
 
 fn run(dir: PathBuf, expected: RuntimeVersion, options: &Options) -> Report {
     // A failed test boot's msb logs land beside the other kept sandbox logs (the CI artifact).
+    // The data folder sits beside the runtime folder, under the test's tempdir, so the Linux
+    // data-folder check runs on a real folder instead of reporting that none was given.
+    let data = dir.parent().unwrap().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    // A host with umask 002 makes the tempdir group-writable, which the check rightly flags.
+    #[cfg(unix)]
+    for folder in [&data, data.parent().unwrap()] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let probe = SystemProbe::new(dir, expected, DevOverride::none())
+        .with_data_dir(data)
         .with_keep_boot_logs(settings().kept_logs());
     let report = diagnose(&probe, options, "vm-test");
     eprintln!("{}", report.to_text());
@@ -115,6 +126,9 @@ fn vm_doctor_is_all_green_with_a_test_boot_under_30_s() {
         CheckId::TestBoot,
     ] {
         assert_eq!(status(&report, id), Status::Ok, "{id:?}");
+    }
+    if cfg!(target_os = "linux") {
+        assert_eq!(status(&report, CheckId::DataPath), Status::Ok);
     }
     assert!(
         report

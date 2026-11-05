@@ -776,7 +776,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Some(busy) = slot.record.busy {
             return Err(WorkspaceError::Conflict(format!(
                 "{} is busy ({busy}); wait for it to finish",
-                slot.record.id
+                slot.record.name
             )));
         }
         check(&slot.record)?;
@@ -3085,12 +3085,12 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         Some(seen) if seen == fresh.fingerprint => Ok(report),
                         Some(_) => Err(WorkspaceError::Conflict(format!(
                             "{} has changed since it was checked; check it again",
-                            record.id
+                            record.name
                         ))),
                         None if fresh.is_clean() => Ok(report),
                         None => Err(WorkspaceError::Conflict(format!(
                             "{} has work that is not saved on a remote; review it and confirm",
-                            record.id
+                            record.name
                         ))),
                     }
                 }
@@ -3111,7 +3111,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     Ok(()) => Ok(report),
                     Err(e) => Err(WorkspaceError::Unavailable(format!(
                         "{} was not deleted: {e}; {SAVE_HINT}",
-                        record.id
+                        record.name
                     ))),
                 }
             });
@@ -3277,7 +3277,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             if record.busy.is_some() || record.status != WorkspaceStatus::Running {
                 return Err(WorkspaceError::Conflict(format!(
                     "{} is not running; start it first",
-                    record.id
+                    record.name
                 )));
             }
             self.refresh_editor_file(&record).await;
@@ -3346,7 +3346,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let Some(gated) = running else {
                 return Ok(ShellInitCheck::NotRun(format!(
                     "{} is not running; Puddle checks the script when it starts",
-                    record.id
+                    record.name
                 )));
             };
             match self.run_shell_init_check(&record.id, &gated, script).await {

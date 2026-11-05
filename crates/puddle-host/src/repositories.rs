@@ -135,13 +135,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Some(busy) = record.busy {
             return Err(WorkspaceError::Conflict(format!(
                 "{} is busy ({busy}); wait for it to finish",
-                record.id
+                record.name
             )));
         }
         if record.status != WorkspaceStatus::Running {
             return Err(WorkspaceError::Conflict(format!(
                 "{} is {}; start it to {to}",
-                record.id, record.status
+                record.name, record.status
             )));
         }
         Ok(())

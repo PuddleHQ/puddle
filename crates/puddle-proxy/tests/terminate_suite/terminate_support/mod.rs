@@ -1196,24 +1196,64 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogWriter {
     }
 }
 
-/// Starts capturing every log line of this test binary at TRACE level (once).
+/// What `PUDDLE_LOG=trace` logs in this test binary: the production filter, so Puddle's crates at
+/// trace and every dependency at info.
+static SCOPED_LOGS: std::sync::OnceLock<Arc<Mutex<Vec<u8>>>> = std::sync::OnceLock::new();
+
+/// A subscriber that writes what `PUDDLE_LOG=trace` would log into `sink`.
+pub(crate) fn scoped_trace_subscriber(
+    sink: &Arc<Mutex<Vec<u8>>>,
+) -> impl tracing::Subscriber + Send + Sync + 'static {
+    use tracing_subscriber::Layer as _;
+    use tracing_subscriber::layer::SubscriberExt as _;
+    tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(LogWriter(Arc::clone(sink)))
+            .with_filter(puddle_log::ScopedFilter::parse("trace").unwrap()),
+    )
+}
+
+/// Starts capturing the log lines of this test binary (once), twice over: every line of every
+/// crate at TRACE ([`captured_logs`], the strictest search for a leak), and what
+/// `PUDDLE_LOG=trace` prints ([`captured_scoped_logs`]).
 pub(crate) fn capture_logs() {
+    use tracing_subscriber::Layer as _;
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
     let logs = LOGS.get_or_init(|| Arc::new(Mutex::new(Vec::new())));
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_ansi(false)
-        .with_writer(LogWriter(Arc::clone(logs)))
+    let scoped = SCOPED_LOGS.get_or_init(|| Arc::new(Mutex::new(Vec::new())));
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(LogWriter(Arc::clone(logs)))
+                .with_filter(tracing_subscriber::filter::LevelFilter::TRACE),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(LogWriter(Arc::clone(scoped)))
+                .with_filter(puddle_log::ScopedFilter::parse("trace").unwrap()),
+        )
         .try_init();
 }
 
-/// Everything logged so far.
+fn text_of(logs: Option<&Arc<Mutex<Vec<u8>>>>) -> String {
+    logs.map(|logs| {
+        String::from_utf8_lossy(&logs.lock().unwrap_or_else(PoisonError::into_inner)).into_owned()
+    })
+    .unwrap_or_default()
+}
+
+/// Everything logged so far, every crate at TRACE.
 pub(crate) fn captured_logs() -> String {
-    LOGS.get()
-        .map(|logs| {
-            String::from_utf8_lossy(&logs.lock().unwrap_or_else(PoisonError::into_inner))
-                .into_owned()
-        })
-        .unwrap_or_default()
+    text_of(LOGS.get())
+}
+
+/// Everything `PUDDLE_LOG=trace` would have printed so far.
+pub(crate) fn captured_scoped_logs() -> String {
+    text_of(SCOPED_LOGS.get())
 }
 
 // ---------------------------------------------------------------------------------------------

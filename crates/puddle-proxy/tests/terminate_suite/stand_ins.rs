@@ -261,9 +261,68 @@ async fn another_workspaces_stand_in_is_just_a_string() {
     assert_eq!(seen[1].header("x-api-key"), Some("their-real-value-77aa"));
     assert!(!seen.iter().any(|r| r.header("x-api-key") == Some(REAL_KEY)));
     let events = rig.events(1).await;
+    // Not swapped, and told apart from a stand-in of this workspace: the first workspace's value
+    // is stale from the second one's side.
+    assert_eq!(
+        events[0].unswapped_stand_ins,
+        ["stale-stand-in:secret:API_KEY"]
+    );
     assert!(
-        events[0].unswapped_stand_ins.is_empty(),
-        "an unknown stand-in is not one of this workspace's"
+        events[0].injected,
+        "the second workspace's own stand-in was swapped"
+    );
+}
+
+#[tokio::test]
+async fn hostile_hg40_a_stale_stand_in_is_flagged_and_the_flag_reveals_no_real_credential() {
+    let pki = Pki::new();
+    let server = upstream(&pki, "bound.test", ok_handler()).await;
+    let (stand_ins, _) = registry();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(pass_through())
+        .stand_ins(&stand_ins)
+        .build();
+    // A secret the user removed: its stand-in was made, then the entry went.
+    let (removed, _gone) = entry("OLD_KEY", "real-of-the-removed-one-31", &["bound.test"]);
+    // A GitHub-shaped stand-in of a forgotten login: no checksum, so it is not a real token.
+    let forgotten = format!("gho_{}", "a".repeat(36));
+    let mut guest = rig.guest();
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    let basic = STANDARD.encode(format!("x-access-token:{forgotten}"));
+    client
+        .send(
+            format!(
+                "GET /x HTTP/1.1\r\nHost: bound.test\r\nX-Api-Key: {removed}\r\nAuthorization: Basic {basic}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await;
+    let response = client.response("GET").await;
+    assert_eq!(response.status, 200);
+    client.close().await;
+
+    // Nothing was swapped: the server got the guest's own text back.
+    let seen = &server.recorded()[0];
+    assert_eq!(seen.header("x-api-key"), Some(removed.as_str()));
+
+    let event = &rig.events(1).await[0];
+    assert!(!event.injected, "a stale stand-in adds no credential");
+    assert_eq!(
+        event.unswapped_stand_ins,
+        ["stale-stand-in:secret:OLD_KEY", "stale-stand-in:github"]
+    );
+    // The flag carries the guest's own name and a kind, never a value Puddle holds.
+    let everything = format!("{event:?}{response:?}{}", captured_logs());
+    for real in [REAL_KEY, "real-of-the-removed-one-31", REAL_TOKEN] {
+        assert!(
+            !everything.contains(real),
+            "{real} is in the record, answer or logs"
+        );
+    }
+    assert!(
+        !everything.contains(&forgotten),
+        "the flag never repeats the token"
     );
     assert!(!captured_logs().contains("went out unchanged"));
 }

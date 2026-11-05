@@ -20,7 +20,8 @@
 //!   terminated host goes out unchanged and is reported for the audit. Plain HTTP and spliced
 //!   connections never reach this code, so a stand-in there is unchanged too.
 //! - **Whose**: only the stand-ins in this workspace's registry are known. Another workspace's
-//!   stand-in is just a string here and is left alone.
+//!   stand-in (or one of a secret that was removed) is left alone, but a value that has a stand-in's
+//!   shape is flagged for the audit as stale ([`stale`]).
 //! - **When**: after the upstream's certificate is verified, so a server that is not accepted
 //!   never sees a real value, and each request on its own, so a stand-in added while a
 //!   connection is open applies from its next request.
@@ -42,6 +43,7 @@ use zeroize::Zeroizing;
 
 use super::inject::{InjectedHeader, Injection, SecretValue};
 use super::set::TerminationSet;
+use super::stale;
 use super::token_body::TokenBody;
 
 /// The shortest stand-in accepted. A short one would match inside ordinary header text and swap
@@ -244,7 +246,8 @@ pub(crate) struct Swapped {
     /// The ids of the stand-ins that were replaced (each once).
     pub(crate) swapped: Vec<String>,
     /// The ids of the stand-ins that went out unchanged (each once): seen toward a host they are
-    /// not for, or in the request target.
+    /// not for, or in the request target. Also the ids of stale stand-ins (`stale-stand-in:...`,
+    /// see [`stale`]): shaped like one but not in the registry.
     pub(crate) unswapped: Vec<String>,
 }
 
@@ -409,14 +412,18 @@ impl StandIns {
         let mut report = Swapped::default();
         let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
         let entries: &[Arc<StandIn>] = &guard;
-        if entries.is_empty() {
-            return report;
-        }
         let skip: Vec<&HeaderName> = injected
             .map(|i| i.headers().iter().map(InjectedHeader::name).collect())
             .unwrap_or_default();
         for (name, value) in headers.iter_mut() {
             if skip.contains(&name) {
+                continue;
+            }
+            // Before the swap, so a real value put in by it is never read.
+            for id in stale_in_value(value.as_bytes(), entries) {
+                Swapped::note(&mut report.unswapped, id);
+            }
+            if entries.is_empty() {
                 continue;
             }
             if let Some(mut new) = swap_value(value.as_bytes(), entries, host, &mut report) {
@@ -431,14 +438,17 @@ impl StandIns {
 impl StandIns {
     /// Finds the stand-ins in the request `target` (path and query), read as sent and with its
     /// percent-escapes decoded. Nothing is swapped there: the stand-in goes out unchanged, so it
-    /// is reported whatever host the request is for. Only the registry's own stand-ins are found.
+    /// is reported whatever host the request is for. The registry's own stand-ins are named, and a value
+    /// shaped like a stand-in it does not hold is flagged as stale.
     pub(crate) fn scan_target(&self, target: &str) -> Swapped {
         let mut report = Swapped::default();
         let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
-        if guard.is_empty() {
-            return report;
-        }
         let decoded = percent_decoded(target.as_bytes());
+        for text in std::iter::once(target.as_bytes()).chain(decoded.as_deref()) {
+            for id in stale::find(text, &|token| holds(&guard, token)) {
+                Swapped::note(&mut report.unswapped, id);
+            }
+        }
         for entry in guard.iter() {
             let found = entry.finder.find(target.as_bytes()).is_some()
                 || decoded
@@ -483,6 +493,30 @@ impl StandIns {
         }
         (report, changed)
     }
+}
+
+/// Whether the registry holds a stand-in inside `token`.
+fn holds(entries: &[Arc<StandIn>], token: &[u8]) -> bool {
+    entries
+        .iter()
+        .any(|entry| entry.finder.find(token).is_some())
+}
+
+/// The ids of the stale stand-ins in one header value, read as sent and, for `Basic`, decoded.
+fn stale_in_value(value: &[u8], entries: &[Arc<StandIn>]) -> Vec<String> {
+    let registered = |token: &[u8]| holds(entries, token);
+    let mut ids = stale::find(value, &registered);
+    if let Some(decoded) = basic_credentials(value)
+        .and_then(|token| LENIENT_BASE64.decode(token).ok())
+        .map(Zeroizing::new)
+    {
+        for id in stale::find(&decoded, &registered) {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    ids
 }
 
 /// `input` with its `%XX` escapes decoded, or `None` when it has none.
@@ -845,7 +879,16 @@ mod tests {
         ] {
             let (headers, report) = swap(&registry, &[("authorization", &value)], "github.com");
             assert_eq!(headers["authorization"], value.as_str(), "{value}");
-            assert_eq!(report, Swapped::default(), "{value}");
+            // Only the whole value of the right shape is flagged as stale: the near misses
+            // that are not a stand-in's shape are plain text.
+            assert_eq!(report.swapped, Vec::<String>::new(), "{value}");
+            assert!(
+                report
+                    .unswapped
+                    .iter()
+                    .all(|id| id.starts_with("stale-stand-in:secret:")),
+                "{value}"
+            );
         }
         // Text around a whole one is kept as it is.
         let (headers, _) = swap(
@@ -872,13 +915,14 @@ mod tests {
     }
 
     #[test]
-    fn a_stand_in_this_workspace_does_not_know_is_left_alone_and_not_reported() {
+    fn a_stand_in_this_workspace_does_not_know_is_left_alone_and_flagged_as_stale() {
         // Another workspace's stand-in for the same secret name.
         let theirs = "puddle-secret-GH_TOKEN-0123456789abcdef0123456789abcdef";
         let registry = registry();
         let (headers, report) = swap(&registry, &[("authorization", theirs)], "github.com");
         assert_eq!(headers["authorization"], theirs);
-        assert_eq!(report, Swapped::default());
+        assert_eq!(report.swapped, Vec::<String>::new());
+        assert_eq!(report.unswapped, ["stale-stand-in:secret:GH_TOKEN"]);
     }
 
     #[test]
@@ -992,7 +1036,14 @@ mod tests {
         assert!(!self::registry().is_empty());
         let (headers, report) = swap(&registry, &[("authorization", GH)], "github.com");
         assert_eq!(headers["authorization"], GH);
-        assert_eq!(report, Swapped::default());
+        assert_eq!(report.swapped, Vec::<String>::new());
+        assert_eq!(
+            report.unswapped,
+            ["stale-stand-in:secret:GH_TOKEN"],
+            "a removed secret's stand-in is flagged even when nothing is registered"
+        );
+        let (_, plain) = swap(&registry, &[("authorization", "Bearer abc")], "github.com");
+        assert_eq!(plain, Swapped::default());
     }
 
     #[test]
@@ -1103,7 +1154,12 @@ mod tests {
         assert_eq!(registry.len(), 1);
         let (headers, report) = swap(&registry, &[("x", API)], "api.example.com");
         assert_eq!(headers["x"], API);
-        assert_eq!(report, Swapped::default(), "a removed stand-in is unknown");
+        assert_eq!(report.swapped, Vec::<String>::new());
+        assert_eq!(
+            report.unswapped,
+            ["stale-stand-in:secret:API_KEY"],
+            "a removed stand-in is flagged as stale"
+        );
 
         assert_eq!(
             registry.set_real(GH, SecretValue::new("ghp_refreshed")),
@@ -1351,7 +1407,7 @@ mod tests {
     }
 
     #[test]
-    fn a_target_is_scanned_as_sent_and_percent_decoded_and_only_known_stand_ins_are_named() {
+    fn a_target_is_scanned_as_sent_and_percent_decoded_and_known_stand_ins_are_named() {
         let registry = registry();
         let escaped = GH.replacen('-', "%2D", 1);
         let report = registry.scan_target(&format!("/a/{API}?t={escaped}&u=puddle-secret-ZZZ-00"));
@@ -1365,8 +1421,12 @@ mod tests {
             Vec::<String>::new()
         );
         assert_eq!(
-            StandIns::new().scan_target(&format!("/{GH}")),
-            Swapped::default()
+            StandIns::new().scan_target(&format!("/{GH}")).unswapped,
+            ["stale-stand-in:secret:GH_TOKEN"]
+        );
+        assert_eq!(
+            StandIns::new().scan_target("/plain").unswapped,
+            Vec::<String>::new()
         );
     }
 

@@ -174,7 +174,8 @@ readable as JSONL (one record per line).
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
   `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
-  went out unchanged: to a host outside their hosts, or in the path or query),
+  went out unchanged: to a host outside their hosts, or in the path or query; also `stale-stand-in:secret:<name>` and
+  `stale-stand-in:github` for a value shaped like a stand-in that the workspace does not hold),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
   `rule_created`, `rule_updated`, `rule_deleted`,
@@ -419,13 +420,26 @@ the API. *Added 2026-10-08.*
   "wildcards reach local addresses" off, it needs an own exact allow of the name or the address,
   and goes pending for the exact name otherwise. A set's deny of an IP literal excludes that
   address like an own one (R-27).
-- **R-43 Rule set records.** `rule_set_created`, `rule_set_updated` (rename), `rule_set_deleted`
+- **R-43 Rule set records.** `rule_set_created`, `rule_set_updated` (rename, description or colour), `rule_set_deleted`
   (each with the set and the actor), `rule_set_switched` (`set_id`, `workspace_id` or `null` for
   every workspace, `enabled` true, false or `null`, actor), `rule_set_changed` (R-36) and
   `system_managed_changed` (R-41). A connection decided by a set's entry has `reason: rule`, the
   entry's `rule_id` (`null` for built-in and System managed entries) and `rule_set`; a pending
   row closed by one records the set in `rule_set`. A refusal by a set's deny carries
   `x-puddle-rule-set` next to `x-puddle-rule`.
+
+- **R-57 Every rule set has a colour.** A set is shown with a *fill*, a tagged value
+  (`{"kind": "solid", "color": "#rrggbb"}`) that is one solid colour today, so a gradient can be
+  added later as another kind without a migration and a stored `solid` fill keeps reading. A
+  built-in set's fill is part of its catalogue entry and fixed. A set the user made stores its
+  own (a nullable column: a set with none, including every set made before colours, has the default
+  of its number, taken round and round from a fixed palette). The API sends the fill on every set; on
+  create it is optional, and on update leaving it out keeps the colour. Only a solid `#rrggbb` is
+  accepted (either case, stored in lower case); anything else is a `422`. `rule_set_created`,
+  `rule_set_updated` and `rule_set_deleted` carry the fill the user chose, and leave it out when
+  there was none. A colour never decides anything: it is shown beside the set's name, never in
+  its place, the ink on a filled chip is chosen for at least 4.5:1 contrast, and the edge of a
+  dot or chip is the theme's border colour, so it shows in the light and the dark theme.
 
 ## 8. Rules on method and path
 

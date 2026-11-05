@@ -96,6 +96,10 @@ pub struct LocalToggles {
     /// Other special-purpose ranges (multicast, broadcast, documentation, reserved, ...).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub special: Option<bool>,
+    /// The company network (PAC-direct and DNS-suffix names, private-access and VPN ranges).
+    /// Off by default; on only makes those destinations approvable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub company_network: Option<bool>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -125,6 +129,7 @@ impl LocalToggles {
             LocalCategory::LinkLocal => self.link_local,
             LocalCategory::Metadata => self.metadata,
             LocalCategory::Special => self.special,
+            LocalCategory::CompanyNetwork => self.company_network,
             // A category this version has no field for is unset, so it resolves to Puddle's
             // default (off). `every_category_has_its_field` fails until a field is added.
             _ => None,

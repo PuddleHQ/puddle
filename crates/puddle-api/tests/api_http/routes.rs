@@ -6,7 +6,9 @@ use serde_json::{Value, json};
 use puddle_store::Clock;
 use puddle_types::{EgressRequest, Host, WorkspaceName};
 
-use crate::common::{START_MS, start};
+use std::sync::Arc;
+
+use crate::common::{START_MS, start, start_with_company_signals};
 
 #[tokio::test]
 async fn health_names_the_versions() {
@@ -551,6 +553,53 @@ async fn local_destinations_name_the_toggle_that_blocks_their_approval() {
         )
         .await;
     assert_eq!(denied.json()["request"]["blocked_by"], json!(null));
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off() {
+    let signals = puddle_netpolicy::StaticSignals::new().with_private_access_client();
+    let api = start_with_company_signals(Arc::new(signals)).await;
+    let company = api.request("box", "100.64.3.7");
+    let private = api.request("box", "10.0.0.5");
+    let one = |id: i64| {
+        let path = format!("/api/pending/{id}");
+        let api = &api;
+        async move { api.get(&path).await.json()["blocked_by"].clone() }
+    };
+    assert_eq!(one(company).await, "company_network");
+    // The category comes from the host's signals alone: other private addresses stay private.
+    assert_eq!(one(private).await, "private");
+    // The private toggle does not free it.
+    let put = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"workspace_defaults": {"local_toggles": {"private": true}}})),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(one(company).await, "company_network");
+    assert_eq!(one(private).await, json!(null));
+    // Its own toggle does, for one workspace.
+    let put = api
+        .send(
+            "PUT",
+            "/api/settings/workspaces/box",
+            Some(&json!({"overrides": {"local_toggles": {"company_network": true}}})),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(one(company).await, json!(null));
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn without_host_signals_a_cgnat_address_is_plain_private() {
+    let api = start().await;
+    let id = api.request("box", "100.64.3.7");
+    let one = api.get(&format!("/api/pending/{id}")).await.json();
+    assert_eq!(one["blocked_by"], "private");
     api.running.shutdown().await;
 }
 

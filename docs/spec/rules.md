@@ -113,6 +113,15 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   workspace, before it leaves; the workspace's agent reports where each refused datagram was going
   and the proxy records it as `blocked` with reason `udp_unsupported` (never pending, never
   approvable; one record per destination at most every ten seconds).
+  The **company network** is a sixth category with its own toggle (global, per workspace, off by
+  default), for private addresses the host's own signals tie to the company: a name the proxy
+  script sends direct or that sits under one of the machine's DNS suffixes, `100.64.0.0/10`
+  while a private-access client is installed, an RFC 1918 range routed through a VPN. An
+  address that fits both this and local/private network counts as company network; an address
+  on the physical LAN's own subnet, loopback, link-local, metadata and special-use addresses
+  never do. A signal the host cannot read counts as "no". The toggle allows nothing by itself:
+  the rules above apply unchanged. With it off the request is blocked before the rules, with
+  `x-puddle-blocked: company_network`, reason `company_network_off` and no pending row.
   *Changed 2026-10-06: the exact-IP case was added, following the principle that a local destination
   needs an exact name or IP entry; before, only an exact name rule or an approval counted.*
 - **R-27 An exact IP deny wins for a resolved address** (the proxy applies this to every address an
@@ -172,8 +181,8 @@ readable as JSONL (one record per line).
   `workspace_deleted`.
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
-  `toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
-  `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
+  `toggle:<category>`, `company_network_off`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
+  `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `category` and `signal` (`company_network` and the signal that put the destination there: `pac_direct`, `dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` otherwise and in older records), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
   went out unchanged: to a host outside their hosts, or in the path or query; also `stale-stand-in:secret:<name>` and
   `stale-stand-in:github` for a value shaped like a stand-in that the workspace does not hold),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry

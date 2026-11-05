@@ -1057,6 +1057,16 @@ pub enum AuditRecord {
         #[serde(default)]
         #[schema(required = true)]
         refused_reason: Option<String>,
+        /// `company_network` when the destination is in the company-network category, allowed or
+        /// refused; `null` otherwise and in records written before it existed.
+        #[serde(default)]
+        #[schema(required = true)]
+        category: Option<String>,
+        /// The signal that put the destination in the company network: `pac_direct`,
+        /// `dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`.
+        #[serde(default)]
+        #[schema(required = true)]
+        signal: Option<String>,
         /// The pending request.
         #[schema(required = true)]
         pending_id: Option<i64>,
@@ -1288,6 +1298,8 @@ impl From<store::ConnectionRecord> for AuditRecord {
             rule_set,
             refused_address,
             refused_reason,
+            category,
+            signal,
             pending_id,
             binding_id,
             injected,
@@ -1315,6 +1327,8 @@ impl From<store::ConnectionRecord> for AuditRecord {
             rule_set,
             refused_address,
             refused_reason,
+            category,
+            signal,
             pending_id,
             binding_id,
             injected,
@@ -1762,6 +1776,10 @@ pub struct LocalToggles {
     #[serde(default)]
     #[schema(required = true)]
     pub special: Option<bool>,
+    /// The company network. Off by default; on only makes those destinations approvable.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub company_network: Option<bool>,
 }
 
 impl From<&settings::LocalToggles> for LocalToggles {
@@ -1772,6 +1790,7 @@ impl From<&settings::LocalToggles> for LocalToggles {
             link_local: t.link_local,
             metadata: t.metadata,
             special: t.special,
+            company_network: t.company_network,
         }
     }
 }
@@ -1784,12 +1803,14 @@ impl LocalToggles {
             link_local,
             metadata,
             special,
+            company_network,
         } = self;
         toggles.loopback = loopback;
         toggles.private = private;
         toggles.link_local = link_local;
         toggles.metadata = metadata;
         toggles.special = special;
+        toggles.company_network = company_network;
     }
 }
 
@@ -2299,6 +2320,8 @@ pub struct EffectiveToggles {
     pub metadata: ResolvedBool,
     /// Other special-purpose ranges.
     pub special: ResolvedBool,
+    /// The company network.
+    pub company_network: ResolvedBool,
 }
 
 /// The values a workspace gets: its override, else the global value, else Puddle's default.
@@ -2343,6 +2366,7 @@ impl From<settings::Effective> for EffectiveSettings {
             link_local,
             metadata,
             special,
+            company_network,
         } = local_toggles;
         Self {
             memory: ResolvedNumber {
@@ -2359,6 +2383,7 @@ impl From<settings::Effective> for EffectiveSettings {
                 link_local: rb(link_local),
                 metadata: rb(metadata),
                 special: rb(special),
+                company_network: rb(company_network),
             },
             wildcards_reach_local: rb(wildcards_reach_local),
             reconnection_grace: ResolvedNumber {
@@ -2664,7 +2689,7 @@ mod tests {
                 "cpus": 2,
                 "local_toggles": {
                     "loopback": true, "private": false, "link_local": true,
-                    "metadata": false, "special": true
+                    "metadata": false, "special": true, "company_network": true
                 },
                 "wildcards_reach_local": true,
                 "reconnection_grace": 60,
@@ -3285,6 +3310,22 @@ mod tests {
         assert_eq!(wire["refused_reason"], "ip_rule");
     }
 
+    /// A record written before the company-network fields existed reads them as `null`.
+    #[test]
+    fn a_record_without_a_category_reads_as_none() {
+        let stored = serde_json::json!({
+            "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
+            "port": 443, "decision": "deny", "reason": "company_network_off", "rule_id": null,
+            "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
+            "method": null, "path": null, "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
+        });
+        let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
+        let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
+        assert_eq!(wire["category"], Value::Null);
+        assert_eq!(wire["signal"], Value::Null);
+        assert_eq!(wire["reason"], "company_network_off");
+    }
+
     /// The typed record serialises to the very JSON the store wrote, so the API adds no layer
     /// that could drop or rename a field, including `upstream` and records older than it.
     #[test]
@@ -3293,7 +3334,7 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
-            "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
+            "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "category": "company_network", "signal": "dns_suffix", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
             "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
         });

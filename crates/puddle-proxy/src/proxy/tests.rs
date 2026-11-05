@@ -1578,3 +1578,100 @@ async fn forwarding_one_request_counts_pipelined_bytes_held_in_both_buffers() {
     server.await.unwrap();
     assert_eq!(dropped, pipelined.len());
 }
+
+mod company_network {
+    use puddle_netpolicy::StaticSignals;
+    use puddle_types::CompanySignal;
+
+    use super::*;
+
+    /// A guard whose host sees a private-access client (so `100.64.0.0/10` is the company
+    /// network) and `corp.example` as its DNS suffix.
+    fn guard(access: LocalAccess) -> Arc<NetPolicy> {
+        let signals = StaticSignals::new()
+            .with_private_access_client()
+            .with_dns_suffix("corp.example");
+        Arc::new(NetPolicy::new(Arc::new(access)).with_company_signals(Arc::new(signals)))
+    }
+
+    fn nexus() -> StaticResolver {
+        StaticResolver::new()
+            .with("nexus.corp.example", &[ip("100.64.3.7")])
+            .with("intranet.corp.example", &[ip("10.1.2.3")])
+    }
+
+    #[tokio::test]
+    async fn with_the_toggle_off_it_is_refused_before_any_connection_and_audited() {
+        let policy = Arc::new(StaticPolicy::new());
+        policy.allow(&host("nexus.corp.example"));
+        let p = proxy(policy.clone(), nexus()).with_address_check(guard(LocalAccess::NONE));
+        let (admitted, event) = super::super::admit(&p, &request("nexus.corp.example")).await;
+        let refusal = admitted.unwrap_err();
+        assert_eq!(refusal.status, "403 Forbidden");
+        assert_eq!(header(&refusal, "x-puddle-decision"), Some("blocked"));
+        assert_eq!(
+            header(&refusal, "x-puddle-blocked"),
+            Some("company_network")
+        );
+        assert_eq!(header(&refusal, "x-puddle-pending"), None);
+        assert_eq!(
+            refusal.message,
+            "nexus.corp.example (100.64.3.7) is on your company network (reached through your company's DNS suffix). Turn on 'Company network' for this workspace to be able to allow it"
+        );
+        assert_eq!(policy.pending().len(), 0);
+        assert_eq!(event.decision, ConnectionDecision::Blocked);
+        assert_eq!(event.reason.to_string(), "company_network_off");
+        assert_eq!(event.company_network, Some(CompanySignal::DnsSuffix));
+        assert_eq!(
+            event.refused_address.map(|(a, why)| (a, why.code())),
+            Some((ip("100.64.3.7"), "company_network_off"))
+        );
+    }
+
+    #[tokio::test]
+    async fn with_the_toggle_on_it_still_needs_an_exact_allow() {
+        let on = LocalAccess::NONE.with_toggle(LocalCategory::CompanyNetwork, true);
+        // An exact allow connects, and the record says the destination is on the company network.
+        let policy = Arc::new(StaticPolicy::new());
+        policy.allow(&host("intranet.corp.example"));
+        let p = proxy(policy, nexus()).with_address_check(guard(on));
+        let (admitted, event) = super::super::admit(&p, &request("intranet.corp.example")).await;
+        assert!(admitted.is_ok());
+        assert_eq!(event.decision, ConnectionDecision::Allow);
+        assert_eq!(event.company_network, Some(CompanySignal::DnsSuffix));
+        // A suffix allow does not reach it: the request waits for an allow of the exact name.
+        let policy = Arc::new(StaticPolicy::new());
+        policy.allow_as_suffix(&host("corp.example"));
+        let p = proxy(policy.clone(), nexus()).with_address_check(guard(on));
+        let (admitted, event) = super::super::admit(&p, &request("intranet.corp.example")).await;
+        assert_eq!(admitted.unwrap_err().status, "403 Forbidden");
+        assert_eq!(event.decision, ConnectionDecision::Pending);
+        assert_eq!(policy.pending().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_public_answer_is_not_company_network_and_leaves_no_trace() {
+        let policy = Arc::new(StaticPolicy::new());
+        policy.allow(&host("www.corp.example"));
+        let resolver = StaticResolver::new().with("www.corp.example", &[ip("93.184.215.14")]);
+        let p = proxy(policy, resolver).with_address_check(guard(LocalAccess::NONE));
+        let (admitted, event) = super::super::admit(&p, &request("www.corp.example")).await;
+        assert!(admitted.is_ok());
+        assert_eq!(event.company_network, None);
+    }
+
+    #[tokio::test]
+    async fn an_ip_literal_in_the_category_is_refused_before_the_rules() {
+        let policy = Arc::new(StaticPolicy::new());
+        let p = proxy(policy.clone(), StaticResolver::new())
+            .with_address_check(guard(LocalAccess::NONE));
+        let (admitted, event) = super::super::admit(&p, &request("100.64.3.7")).await;
+        let refusal = admitted.unwrap_err();
+        assert_eq!(
+            header(&refusal, "x-puddle-blocked"),
+            Some("company_network")
+        );
+        assert_eq!(policy.pending().len(), 0);
+        assert_eq!(event.reason.to_string(), "company_network_off");
+    }
+}

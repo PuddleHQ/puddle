@@ -12,7 +12,8 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlockReason, Decision, EgressRequest, Host, PendingId, RuleId, RuleSetId, WorkspaceName,
+    BlockReason, CompanySignal, Decision, EgressRequest, Host, PendingId, RuleId, RuleSetId,
+    WorkspaceName,
 };
 
 /// How the proxy handled a connection (R-24).
@@ -291,6 +292,9 @@ pub struct ConnectionEvent {
     /// refused, and why (its code is `ip_rule`, `toggle:private`, `local_address`, ...).
     /// Visibility only: the connection still goes to the allowed addresses of the answer alone.
     pub refused_address: Option<(IpAddr, RefusedReason)>,
+    /// The signal that put the destination in the company-network category: `Some` only when an
+    /// address of the answer was in it, whether that address was refused or allowed.
+    pub company_network: Option<CompanySignal>,
     /// The hop of the company-proxy route that carried the connection (`DIRECT` or
     /// `PROXY host:port`), once connected; `None` when no upstream route is configured.
     /// Never carries credentials.
@@ -346,6 +350,7 @@ impl ConnectionEvent {
             port: request.port,
             resolved_ip: None,
             refused_address: None,
+            company_network: None,
             upstream: None,
             decision,
             outcome: None,
@@ -379,6 +384,7 @@ impl ConnectionEvent {
             port,
             resolved_ip: None,
             refused_address: None,
+            company_network: None,
             upstream: None,
             decision,
             outcome: None,
@@ -491,6 +497,7 @@ impl<T: ConnectionLog + ?Sized> ConnectionLog for std::sync::Arc<T> {
 mod tests {
     #[test]
     fn a_refused_reason_has_the_code_the_audit_records() {
+        use crate::CompanySignal;
         use crate::policy::BlockReason;
         let guard = |r: BlockReason| RefusedReason::from(r).code();
         assert_eq!(RefusedReason::IpRule.code(), "ip_rule");
@@ -505,8 +512,17 @@ mod tests {
         for category in LocalCategory::ALL {
             let code = guard(BlockReason::LocalToggle(category));
             assert_eq!(code, category.audit_reason());
-            assert!(code.starts_with("toggle:"), "{code}");
+            // The company network keeps its own audit code (`company_network_off`).
+            if category == LocalCategory::CompanyNetwork {
+                assert_eq!(code, "company_network_off");
+            } else {
+                assert!(code.starts_with("toggle:"), "{code}");
+            }
         }
+        assert_eq!(
+            guard(BlockReason::CompanyNetwork(CompanySignal::PacDirect)),
+            "company_network_off"
+        );
     }
 
     #[test]

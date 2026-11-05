@@ -433,6 +433,8 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         request_rule: None,
         refused_address: None,
         refused_reason: None,
+        category: None,
+        signal: None,
         pending_id: None,
         binding_id: None,
         injected: false,

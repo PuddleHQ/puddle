@@ -5,11 +5,13 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use puddle_types::{BlockReason, Host, LocalCategory, WorkspaceName};
+use std::net::IpAddr;
+
+use puddle_types::{BlockReason, CompanySignal, Host, LocalCategory, WorkspaceName};
 
 use crate::{
-    AddressClass, HostAddrs, LocalAccess, LocalAccessSource, OwnAddresses, PuddleEndpoints, Target,
-    classify_ip,
+    AddressClass, CompanySignals, HostAddrs, LocalAccess, LocalAccessSource, NoSignals,
+    OwnAddresses, PuddleEndpoints, Target, classify_with_signals,
 };
 
 /// What the proxy may do with one resolved address.
@@ -52,6 +54,7 @@ pub struct NetPolicy {
     access: Arc<dyn LocalAccessSource>,
     endpoints: PuddleEndpoints,
     host: Arc<dyn HostAddrs>,
+    company: Arc<dyn CompanySignals>,
 }
 
 impl fmt::Debug for NetPolicy {
@@ -71,7 +74,16 @@ impl NetPolicy {
             access,
             endpoints: PuddleEndpoints::new(),
             host: Arc::new(OwnAddresses),
+            company: Arc::new(NoSignals),
         }
+    }
+
+    /// Reads the company-network signals from `signals`. Without it the category is empty: no
+    /// address is ever in it.
+    #[must_use]
+    pub fn with_company_signals(mut self, signals: Arc<dyn CompanySignals>) -> Self {
+        self.company = signals;
+        self
     }
 
     /// Uses `endpoints` as the registry of Puddle's own listeners.
@@ -98,16 +110,48 @@ impl NetPolicy {
     /// then the address's class.
     #[must_use]
     pub fn classify(&self, addr: SocketAddr) -> AddressClass {
-        match self.endpoints.find(addr, self.host.as_ref()) {
-            Some(kind) => AddressClass::PuddleEndpoint(kind),
-            None => classify_ip(addr.ip()),
+        self.classify_named(None, addr)
+    }
+
+    /// Like [`Self::classify`], for an address reached by `name`: a private address the host's
+    /// signals (including those about the name) put in the company network is
+    /// [`AddressClass::Company`].
+    #[must_use]
+    pub fn classify_named(&self, name: Option<&Host>, addr: SocketAddr) -> AddressClass {
+        if let Some(kind) = self.endpoints.find(addr, self.host.as_ref()) {
+            return AddressClass::PuddleEndpoint(kind);
         }
+        classify_with_signals(addr.ip(), name, self.company.as_ref())
     }
 
     /// The verdict on one address `workspace` would connect to.
     #[must_use]
     pub fn check_address(&self, workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
-        verdict(self.classify(addr), self.access.local_access(workspace))
+        self.check_address_named(workspace, None, addr)
+    }
+
+    /// The verdict on one address `workspace` would connect to by `name`.
+    #[must_use]
+    pub fn check_address_named(
+        &self,
+        workspace: &WorkspaceName,
+        name: Option<&Host>,
+        addr: SocketAddr,
+    ) -> AddressVerdict {
+        verdict(
+            self.classify_named(name, addr),
+            self.access.local_access(workspace),
+        )
+    }
+
+    /// The company-network signal that puts `addr` (reached by `name`) in that category, for the
+    /// audit; `None` when it is not in it.
+    #[must_use]
+    pub fn company_signal(&self, name: Option<&Host>, addr: SocketAddr) -> Option<CompanySignal> {
+        match self.classify_named(name, addr) {
+            AddressClass::Company(signal) => Some(signal),
+            _ => None,
+        }
     }
 
     /// The name stage, before the rules are asked: a destination that is blocked by its literal
@@ -156,6 +200,15 @@ fn verdict(class: AddressClass, access: LocalAccess) -> AddressVerdict {
         }
         AddressClass::Local { .. } if access.wildcards_reach_local() => AddressVerdict::Allow,
         AddressClass::Local { category, .. } => AddressVerdict::ExactOnly(category),
+        AddressClass::Company(signal) if !access.is_on(LocalCategory::CompanyNetwork) => {
+            AddressVerdict::Block(if access.is_unreadable() {
+                BlockReason::SettingsUnreadable
+            } else {
+                BlockReason::CompanyNetwork(signal)
+            })
+        }
+        AddressClass::Company(_) if access.wildcards_reach_local() => AddressVerdict::Allow,
+        AddressClass::Company(_) => AddressVerdict::ExactOnly(LocalCategory::CompanyNetwork),
         // Puddle's own endpoints, and any class this version doesn't know: blocked.
         _ => AddressVerdict::Block(BlockReason::PuddleEndpoint),
     }
@@ -189,6 +242,12 @@ pub fn block_message(host: &Host, workspace: &WorkspaceName, reasons: &[BlockRea
         );
     }
     if toggles.is_empty() {
+        if let Some(signal) = reasons.iter().find_map(|r| match r {
+            BlockReason::CompanyNetwork(signal) => Some(*signal),
+            _ => None,
+        }) {
+            return company_network_message(host, None, Some(signal));
+        }
         return match reasons.first() {
             Some(BlockReason::PuddleEndpoint) => format!(
                 "{host} is one of Puddle's own endpoints; workspaces never reach them, and no rule or toggle changes this"
@@ -212,6 +271,40 @@ pub fn block_message(host: &Host, workspace: &WorkspaceName, reasons: &[BlockRea
         .join(" or ");
     format!(
         "{host} is {what}, and that toggle is off. To allow it, turn on {switch} globally or for workspace {workspace}; it then still needs an allow rule or an approval. Approving it alone does not change this"
+    )
+}
+
+/// The refusal text for a destination in the company network whose toggle is off: what was
+/// found (the host, the address it resolved to when it is not the host itself, the signal when
+/// known) and the switch. It never says that the switch allows the destination: it only makes it
+/// possible to allow it.
+///
+/// ```
+/// use puddle_netpolicy::company_network_message;
+/// use puddle_types::{CompanySignal, Host};
+///
+/// let host = Host::parse_normalised("nexus.corp.example").unwrap();
+/// let msg = company_network_message(&host, Some("100.64.3.7".parse().unwrap()), Some(CompanySignal::PrivateAccessCgnat));
+/// assert_eq!(
+///     msg,
+///     "nexus.corp.example (100.64.3.7) is on your company network (reached through a private-access client). Turn on 'Company network' for this workspace to be able to allow it"
+/// );
+/// ```
+#[must_use]
+pub fn company_network_message(
+    host: &Host,
+    ip: Option<IpAddr>,
+    signal: Option<CompanySignal>,
+) -> String {
+    let address = match (host, ip) {
+        (Host::Name(_), Some(ip)) => format!(" ({ip})"),
+        _ => String::new(),
+    };
+    let found = signal.map_or_else(String::new, |s| {
+        format!(" (reached through {})", s.describe())
+    });
+    format!(
+        "{host}{address} is on your company network{found}. Turn on 'Company network' for this workspace to be able to allow it"
     )
 }
 
@@ -556,5 +649,187 @@ mod tests {
             AddressClass::PuddleEndpoint(EndpointKind::Api)
         );
         assert_eq!(g.endpoints().list().len(), 1);
+    }
+    // The company-network category (the host's signals decide; the toggle decides what follows).
+
+    use crate::StaticSignals;
+
+    fn company_guard(access: LocalAccess) -> NetPolicy {
+        let signals = StaticSignals::new()
+            .with_dns_suffix("corp.example")
+            .with_private_access_client()
+            .with_vpn_route("10.8.0.0".parse().unwrap(), 16)
+            .with_lan_subnet("192.168.1.0".parse().unwrap(), 24);
+        NetPolicy::new(Arc::new(access))
+            .with_host_addrs(Arc::new(Lan))
+            .with_company_signals(Arc::new(signals))
+    }
+
+    fn named(s: &str) -> Host {
+        Host::parse_normalised(s).unwrap()
+    }
+
+    #[test]
+    fn company_toggle_is_off_by_default_and_blocks_with_the_signal() {
+        let g = company_guard(all_on_but_company());
+        let w = workspace();
+        let host = named("nexus.corp.example");
+        assert_eq!(
+            g.check_address_named(&w, Some(&host), sa("10.1.2.3:443")),
+            AddressVerdict::Block(BlockReason::CompanyNetwork(CompanySignal::DnsSuffix))
+        );
+        assert_eq!(
+            g.check_address_named(&w, None, sa("100.64.3.7:443")),
+            AddressVerdict::Block(BlockReason::CompanyNetwork(
+                CompanySignal::PrivateAccessCgnat
+            ))
+        );
+        assert_eq!(
+            g.check_address_named(&w, None, sa("10.8.1.1:443")),
+            AddressVerdict::Block(BlockReason::CompanyNetwork(CompanySignal::VpnRoute))
+        );
+    }
+
+    fn all_on_but_company() -> LocalAccess {
+        all_on().with_toggle(LocalCategory::CompanyNetwork, false)
+    }
+
+    #[test]
+    fn company_toggle_on_permits_exact_allows_only_and_never_the_private_toggle() {
+        let w = workspace();
+        // Company on, private off: the company address is reachable, a plain private one is not.
+        let on = LocalAccess::NONE.with_toggle(LocalCategory::CompanyNetwork, true);
+        let g = company_guard(on);
+        assert_eq!(
+            g.check_address(&w, sa("100.64.3.7:443")),
+            AddressVerdict::ExactOnly(LocalCategory::CompanyNetwork)
+        );
+        assert_eq!(
+            g.check_address(&w, sa("172.16.0.9:443")),
+            AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Private))
+        );
+        // Wildcards reach it only when that setting is on.
+        let g = company_guard(on.with_wildcards_reach_local(true));
+        assert_eq!(
+            g.check_address(&w, sa("100.64.3.7:443")),
+            AddressVerdict::Allow
+        );
+        // Company off, private on: the company address still needs the company toggle.
+        let g = company_guard(LocalAccess::NONE.with_toggle(LocalCategory::Private, true));
+        assert!(matches!(
+            g.check_address(&w, sa("100.64.3.7:443")),
+            AddressVerdict::Block(BlockReason::CompanyNetwork(_))
+        ));
+    }
+
+    #[test]
+    fn what_the_company_toggle_never_reaches() {
+        let g = company_guard(LocalAccess::NONE.with_toggle(LocalCategory::CompanyNetwork, true));
+        let w = workspace();
+        let host = named("nexus.corp.example");
+        for (addr, category) in [
+            ("127.0.0.1:80", LocalCategory::Loopback),
+            ("169.254.1.1:80", LocalCategory::LinkLocal),
+            ("169.254.169.254:80", LocalCategory::Metadata),
+            ("224.0.0.1:80", LocalCategory::Special),
+        ] {
+            assert_eq!(
+                g.check_address_named(&w, Some(&host), sa(addr)),
+                AddressVerdict::Block(BlockReason::LocalToggle(category)),
+                "{addr}"
+            );
+        }
+        // A public address stays public whatever its name says.
+        assert_eq!(
+            g.check_address_named(&w, Some(&host), sa("8.8.8.8:443")),
+            AddressVerdict::Allow
+        );
+        // The physical LAN's own subnet stays local/private even under a company suffix.
+        assert_eq!(
+            g.check_address_named(&w, Some(&host), sa("192.168.1.40:443")),
+            AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Private))
+        );
+        // Puddle's own listener.
+        let (g2, _api) = guard(LocalAccess::NONE);
+        assert_eq!(
+            g2.check_address(&w, sa("127.0.0.1:7070")),
+            AddressVerdict::Block(BlockReason::PuddleEndpoint)
+        );
+    }
+
+    #[test]
+    fn without_signals_the_category_is_empty() {
+        let (g, _api) = guard(LocalAccess::NONE);
+        let host = named("nexus.corp.example");
+        assert_eq!(
+            g.check_address_named(&workspace(), Some(&host), sa("100.64.3.7:443")),
+            AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Private))
+        );
+        assert_eq!(g.company_signal(Some(&host), sa("10.1.2.3:443")), None);
+    }
+
+    #[test]
+    fn unreadable_settings_say_so_for_a_company_address_too() {
+        let g = company_guard(LocalAccess::UNREADABLE);
+        assert_eq!(
+            g.check_address(&workspace(), sa("100.64.3.7:443")),
+            AddressVerdict::Block(BlockReason::SettingsUnreadable)
+        );
+    }
+
+    #[test]
+    fn a_literal_company_address_is_blocked_before_the_rules() {
+        let g = company_guard(LocalAccess::NONE);
+        let literal = normalise_host("100.64.3.7").unwrap();
+        assert_eq!(
+            g.check_target(&workspace(), &literal, 443),
+            Some(BlockReason::CompanyNetwork(
+                CompanySignal::PrivateAccessCgnat
+            ))
+        );
+        // A name is only known by its address, after the rules.
+        let name = normalise_host("nexus.corp.example").unwrap();
+        assert_eq!(g.check_target(&workspace(), &name, 443), None);
+    }
+
+    #[test]
+    fn the_audit_signal_is_reported_for_allowed_and_refused_addresses() {
+        let on = company_guard(LocalAccess::NONE.with_toggle(LocalCategory::CompanyNetwork, true));
+        let host = named("nexus.corp.example");
+        assert_eq!(
+            on.company_signal(Some(&host), sa("10.1.2.3:443")),
+            Some(CompanySignal::DnsSuffix)
+        );
+        assert_eq!(on.company_signal(Some(&host), sa("8.8.8.8:443")), None);
+    }
+
+    #[test]
+    fn the_company_refusal_names_the_switch_and_does_not_promise_access() {
+        let host = named("nexus.corp.example");
+        let ip: IpAddr = "100.64.3.7".parse().unwrap();
+        assert_eq!(
+            company_network_message(&host, Some(ip), Some(CompanySignal::VpnRoute)),
+            "nexus.corp.example (100.64.3.7) is on your company network (reached through your VPN). Turn on 'Company network' for this workspace to be able to allow it"
+        );
+        // No signal, no address: the brackets are left out.
+        assert_eq!(
+            company_network_message(&host, None, None),
+            "nexus.corp.example is on your company network. Turn on 'Company network' for this workspace to be able to allow it"
+        );
+        // An IP literal is not repeated in brackets.
+        let literal = named("100.64.3.7");
+        assert!(
+            company_network_message(&literal, Some(ip), None)
+                .starts_with("100.64.3.7 is on your company network.")
+        );
+        // block_message gives the same text for the block reason.
+        assert_eq!(
+            block_message(
+                &host,
+                &workspace(),
+                &[BlockReason::CompanyNetwork(CompanySignal::DnsSuffix)]
+            ),
+            company_network_message(&host, None, Some(CompanySignal::DnsSuffix))
+        );
     }
 }

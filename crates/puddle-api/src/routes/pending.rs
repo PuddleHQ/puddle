@@ -5,7 +5,7 @@ use axum::Json;
 use axum::extract::State;
 use std::collections::HashMap;
 
-use puddle_netpolicy::{Target, classify_ip};
+use puddle_netpolicy::{CompanySignals, Target, classify_with_signals};
 use puddle_settings::resolve;
 use puddle_store::{Actor, PendingRow, PendingState};
 use puddle_types::{Host, LocalCategory, PendingId, WorkspaceName};
@@ -31,9 +31,9 @@ pub(crate) struct PendingQuery {
 /// The local category a destination is in by itself: an IP literal's class, or a name such as
 /// `localhost` or the metadata names. Other names are classified by what they resolve to, which
 /// Puddle only knows when the connection is made.
-fn local_category(host: &Host) -> Option<LocalCategory> {
+fn local_category(host: &Host, signals: &dyn CompanySignals) -> Option<LocalCategory> {
     match host {
-        Host::Ip(ip) => classify_ip(*ip).category(),
+        Host::Ip(ip) => classify_with_signals(*ip, None, signals).category(),
         Host::Name(_) => Target::from_host(host.clone()).named_category(),
     }
 }
@@ -42,16 +42,17 @@ fn local_category(host: &Host) -> Option<LocalCategory> {
 /// its approval. Settings are read only if some open row is to a local destination; a workspace
 /// whose settings can't be read counts as unblocked (the decision itself never depends on this).
 async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingRequest>, ApiError> {
+    let signals = state.company_signals.as_ref();
     let wanted = rows
         .iter()
-        .any(|r| r.state == PendingState::Requested && local_category(&r.host).is_some());
+        .any(|r| r.state == PendingState::Requested && local_category(&r.host, signals).is_some());
     let blocked: HashMap<PendingId, LocalCategory> = if wanted {
         let _lock = state.settings_lock.lock().await;
         let settings = state.settings.clone();
         let candidates: Vec<(PendingId, WorkspaceName, LocalCategory)> = rows
             .iter()
             .filter(|r| r.state == PendingState::Requested)
-            .filter_map(|r| Some((r.id, r.workspace.clone(), local_category(&r.host)?)))
+            .filter_map(|r| Some((r.id, r.workspace.clone(), local_category(&r.host, signals)?)))
             .collect();
         blocking(move || {
             let repo = settings.as_ref();

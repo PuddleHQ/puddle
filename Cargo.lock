@@ -6614,6 +6614,7 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "keyring",
+ "keyring-core",
  "puddle-test-kit",
  "serde",
  "serde_json",

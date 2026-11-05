@@ -101,6 +101,21 @@ impl<S: SecretStore> SecretStore for IndexedStore<S> {
         Ok(())
     }
 
+    fn keep_local(&self, id: &StoredId) -> Result<(), StoreError> {
+        self.inner.keep_local(id)
+    }
+
+    fn keep_all_local(&self) -> Result<usize, StoreError> {
+        let mut failed = 0;
+        let index = Self::index_id()?;
+        for id in self.listed()?.iter().chain(std::iter::once(&index)) {
+            if self.inner.keep_local(id).is_err() {
+                failed += 1;
+            }
+        }
+        Ok(failed)
+    }
+
     fn sweep_orphans(&self, keep: &dyn Fn(&StoredId) -> bool) -> Result<Sweep, StoreError> {
         let written = self.written.lock().unwrap_or_else(PoisonError::into_inner);
         let mut left = Vec::new();
@@ -373,5 +388,14 @@ mod tests {
         assert_eq!(later.sweep_orphans(&|_| true).unwrap(), Sweep::default());
         // A removal does need the index written, and says so when it cannot.
         assert_eq!(later.sweep_orphans(&|_| false), Err(StoreError));
+    }
+
+    #[test]
+    fn keeping_all_local_reaches_every_listed_id_and_the_index() {
+        let store = IndexedStore::new(MemoryStore::new());
+        store.set(&id("tok-a"), &secret("a")).unwrap();
+        store.set(&id("tok-b"), &secret("b")).unwrap();
+        assert_eq!(store.keep_all_local(), Ok(0));
+        assert_eq!(store.inner.kept_local(), ["tok-a", "tok-b", "puddle-index"]);
     }
 }

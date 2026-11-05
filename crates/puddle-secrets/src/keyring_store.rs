@@ -32,12 +32,27 @@ impl KeyringStore {
         }
     }
 
-    fn entry(&self, id: &StoredId) -> Result<keyring::Entry, StoreError> {
-        keyring::Entry::new(
-            self.service.as_deref().unwrap_or(SERVICE),
-            &format!("credential:{id}"),
-        )
-        .map_err(|_| StoreError)
+    fn entry(&self, id: &StoredId) -> Result<keyring_core::Entry, StoreError> {
+        let service = self.service.as_deref().unwrap_or(SERVICE);
+        let user = format!("credential:{id}");
+        #[cfg(windows)]
+        {
+            // Credential Manager's default, "enterprise", lets Windows copy the entry to the
+            // user's other computers when the account has a roaming profile.
+            let modifiers = std::collections::HashMap::from([("persistence", "local")]);
+            // The wrapper's constructor sets the default store up and takes no modifiers.
+            keyring::Entry::store_status()
+                .as_ref()
+                .map_err(|_| StoreError)?;
+            keyring_core::Entry::new_with_modifiers(service, &user, &modifiers)
+                .map_err(|_| StoreError)
+        }
+        #[cfg(not(windows))]
+        {
+            keyring::Entry::new(service, &user)
+                .map(|entry| entry.inner)
+                .map_err(|_| StoreError)
+        }
     }
 }
 
@@ -61,6 +76,26 @@ impl SecretStore for KeyringStore {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(_) => Err(StoreError),
         }
+    }
+
+    /// Windows only: an entry an earlier version wrote as "enterprise" is written again as
+    /// "local machine". Other platforms have no such setting.
+    fn keep_local(&self, id: &StoredId) -> Result<(), StoreError> {
+        #[cfg(windows)]
+        {
+            let entry = self.entry(id)?;
+            match entry.get_attributes() {
+                Ok(attributes) if attributes.get("persistence").is_some_and(|p| p == "Local") => {}
+                Ok(_) => {
+                    let value = entry.get_password().map_err(|_| StoreError)?;
+                    entry.set_password(&value).map_err(|_| StoreError)?;
+                }
+                Err(keyring::Error::NoEntry) => {}
+                Err(_) => return Err(StoreError),
+            }
+        }
+        let _ = id;
+        Ok(())
     }
 }
 

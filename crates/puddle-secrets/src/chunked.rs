@@ -166,6 +166,20 @@ impl<S: SecretStore> SecretStore for ChunkedStore<S> {
         Ok(())
     }
 
+    fn keep_local(&self, id: &StoredId) -> Result<(), StoreError> {
+        self.inner.keep_local(id)?;
+        if let Some(head) = self.head(id)? {
+            for index in 0..head.pieces {
+                self.inner.keep_local(&head.piece(id, index)?)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn keep_all_local(&self) -> Result<usize, StoreError> {
+        self.inner.keep_all_local()
+    }
+
     fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
         let before = self.head(id)?;
         self.inner.delete(id)?;
@@ -409,5 +423,18 @@ mod tests {
         assert!(store.get(&id("a")).is_err());
         assert!(store.set(&id("a"), &Secret::new("v".into())).is_err());
         assert!(store.delete(&id("a")).is_err());
+    }
+
+    #[test]
+    fn keeping_an_entry_local_reaches_its_head_and_every_piece() {
+        let store = ChunkedStore::new(MemoryStore::new());
+        let long = "x".repeat(CHUNK_UNITS * 2 + 1);
+        let long_id = StoredId::new("long").unwrap();
+        store.set(&long_id, &Secret::new(long)).unwrap();
+        store.keep_local(&long_id).unwrap();
+        let kept = store.inner.kept_local();
+        assert_eq!(kept.len(), 4);
+        assert_eq!(kept[0], "long");
+        assert!(kept[1..].iter().all(|piece| piece.starts_with("long-")));
     }
 }

@@ -1653,3 +1653,40 @@ test.describe("a workspace whose volume is gone", () => {
     await expect(card(page, "lost-disk")).toHaveCount(0);
   });
 });
+
+test.describe("a workspace whose disk is nearly full", () => {
+  test("warns on the page and the card for the root disk and the volume, and resets only the root disk", async ({
+    page,
+    backend,
+  }) => {
+    await backend.control.reset("disks-full");
+    await openList(page, backend);
+    await expect(card(page, "full-root")).toContainText(/\d+ % full/);
+    await expect(card(page, "full-volume")).toContainText(/\d+ % full/);
+    await expect(card(page, "roomy")).not.toContainText(/\d+ % full/);
+
+    await openDetail(page, backend, "roomy");
+    await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);
+    await expect(page.getByTestId("disk-warning-volume")).toHaveCount(0);
+
+    await openDetail(page, backend, "full-volume");
+    const volume = page.getByTestId("disk-warning-volume");
+    await expect(volume).toContainText("Volume nearly full");
+    await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);
+    await expect(
+      volume.getByRole("button", { name: /Reset root disk/ }),
+    ).toHaveCount(0);
+
+    await openDetail(page, backend, "full-root");
+    const root = page.getByTestId("disk-warning-root");
+    await expect(root).toContainText("Root disk nearly full");
+    await expect(root).toContainText("volume and your work are untouched");
+    await expectNoAxeViolations(page, "disk warning");
+    await root.getByRole("button", { name: /Reset root disk/ }).click();
+    const confirm = page.getByRole("alertdialog");
+    await expect(confirm).toContainText("The volume, with your repositories");
+    await expectNoAxeViolations(page, "reset dialog");
+    await confirm.getByRole("button", { name: "Reset root disk" }).click();
+    await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);
+  });
+});

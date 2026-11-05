@@ -13,6 +13,7 @@
 //! | Runtime starts | `msb --version` with a time limit | `AppLocker`, App Control / Smart App Control, antivirus, EDR, missing DLL, timeout |
 //! | Test boot | `msb run` of a 132-byte probe program in a tiny root file system ([`boot`]) | can't boot a VM, timeout; says where a failed boot's logs were kept, or why not |
 //! | Disk space | free bytes on the drive that holds Puddle's data folder ([`puddle_fs::free_bytes`]) | under 20 GB warns, under 5 GB fails (both lines are settings) |
+//! | Data folder path (Linux) | the mode of every folder from `/` down to Puddle's data folder, by msb's own rule | a group- or world-writable folder that is not sticky: names it and the `chmod g-w` that fixes it |
 //! | Global Secure Access | its client's services | installed: explains the VM limitation; service manager unreadable: an info line with the OS error |
 //!
 //! [`diagnose`] runs the checks against a [`Probe`]: [`SystemProbe`] for the real machine, a fake
@@ -45,9 +46,9 @@ pub use diagnose::{
     DEFAULT_DISK_FAIL_BELOW, DEFAULT_DISK_WARN_BELOW, Options, PROBE_EXIT_CODE, Probe, diagnose,
 };
 pub use facts::{
-    AccessDenied, BootFacts, CodeIntegrity, CodeIntegrityFacts, DiskFacts, GsaFacts, HypervisorApi,
-    HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
-    ServiceState,
+    AccessDenied, BootFacts, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, DiskFacts, GsaFacts,
+    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts,
+    RuntimeState, ServiceState, WritableFolder,
 };
 pub use launch::TAIL_LINES;
 pub use puddle_runtime::RuntimeError;

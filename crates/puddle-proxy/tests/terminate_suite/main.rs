@@ -19,6 +19,7 @@ mod h2_edges;
 mod h2_hostile;
 mod h2_limits;
 mod hostile;
+mod log_canary;
 mod logins;
 mod perf;
 mod plain_http_window;

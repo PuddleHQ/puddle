@@ -39,6 +39,7 @@ use super::inject::{
 use super::leg::{self, BoxError, Connected, H1Pool, H2Conn, Lease, UpBody};
 use super::request::{self, UpstreamVersion, bad, misdirected};
 use super::request_rules::{self, Refused};
+use super::session::short;
 use super::session::{Context, Outcome};
 use super::streams::{
     Activity, Clock, Registry, SWEEP_INTERVAL, Step, StreamGuard, Sweeper, ended,
@@ -1111,12 +1112,6 @@ fn record_injection(shared: &Shared, injection: Option<&Injection>) {
     }
 }
 
-fn short(err: &hyper::Error) -> String {
-    use std::error::Error as _;
-    err.source()
-        .map_or_else(|| err.to_string(), ToString::to_string)
-}
-
 /// Headers of a response that describe the upstream connection, not the message.
 fn is_connection_specific(name: &HeaderName) -> bool {
     matches!(
@@ -1735,6 +1730,10 @@ mod tests {
         };
         tokio::task::yield_now().await;
         assert!(!sent.is_done());
+        assert!(
+            !waiter.is_finished(),
+            "a waiter returned before the send finished"
+        );
         sent.finish();
         waiter.await.unwrap();
         sent.wait().await;

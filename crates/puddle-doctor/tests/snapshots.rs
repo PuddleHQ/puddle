@@ -14,9 +14,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use puddle_doctor::{
-    AccessDenied, BootFacts, CheckId, CodeIntegrity, CodeIntegrityFacts, DiskFacts, Finding,
-    GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe,
-    ProcessOutcome, Report, RuntimeFacts, RuntimeState, Status, diagnose,
+    AccessDenied, BootFacts, CheckId, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, DiskFacts,
+    Finding, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe,
+    ProcessOutcome, Report, RuntimeFacts, RuntimeState, Status, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -40,6 +40,7 @@ struct Fake {
     job: Option<JobFacts>,
     gsa: Option<GsaFacts>,
     disk: DiskFacts,
+    data_path: Option<DataPathFacts>,
     launches: Cell<u32>,
     boots: Cell<u32>,
 }
@@ -100,6 +101,7 @@ fn windows() -> Fake {
         job: None,
         gsa: Some(GsaFacts::NotInstalled),
         disk: disk_with_gb(120),
+        data_path: None,
         launches: Cell::new(0),
         boots: Cell::new(0),
     }
@@ -163,6 +165,9 @@ impl Probe for Fake {
     }
     fn disk_space(&self) -> DiskFacts {
         self.disk.clone()
+    }
+    fn data_path(&self) -> Option<DataPathFacts> {
+        self.data_path.clone()
     }
 }
 
@@ -1234,4 +1239,123 @@ fn without_a_data_folder_the_disk_check_is_skipped() {
     let r = disk_check("disk_no_folder", DiskFacts::NoFolder, None);
     assert!(r.ok);
     assert_eq!(r.check(CheckId::DiskSpace).unwrap().status, Status::Skipped);
+}
+
+fn folder(path: &str, mode: u32, owned: bool) -> WritableFolder {
+    WritableFolder {
+        path: PathBuf::from(path),
+        mode,
+        owned,
+    }
+}
+
+#[test]
+fn linux_data_path_clear() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::Checked {
+            dir: "/home/dev/.local/share/puddle".into(), // flake-ok: a path the fake probe reports, never opened
+            writable: Vec::new(),
+        }),
+        ..linux()
+    };
+    let r = check("linux_data_path_clear", &fake, CheckId::DataPath, None);
+    assert!(r.ok);
+}
+
+#[test]
+fn linux_data_path_group_writable() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::Checked {
+            dir: "/home/dev/.local/share/puddle".into(), // flake-ok: a path the fake probe reports, never opened
+            writable: vec![folder("/home/dev/.local", 0o775, true)],
+        }),
+        ..linux()
+    };
+    let r = check(
+        "linux_data_path_group_writable",
+        &fake,
+        CheckId::DataPath,
+        Some(Finding::DataPathWritable),
+    );
+    assert!(!r.ok);
+    let c = r.check(CheckId::DataPath).unwrap();
+    assert!(
+        c.fix
+            .as_deref()
+            .unwrap()
+            .contains("\n  chmod g-w /home/dev/.local")
+    );
+}
+
+#[test]
+fn linux_data_path_several_world_writable_and_not_owned() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::Checked {
+            dir: "/srv/my data/puddle".into(),
+            writable: vec![
+                folder("/srv", 0o777, false),
+                folder("/srv/my data", 0o775, true),
+            ],
+        }),
+        ..linux()
+    };
+    let r = check(
+        "linux_data_path_several",
+        &fake,
+        CheckId::DataPath,
+        Some(Finding::DataPathWritable),
+    );
+    let fix = r.check(CheckId::DataPath).unwrap().fix.clone().unwrap();
+    assert!(
+        fix.contains("\n  sudo chmod go-w /srv '/srv/my data'"),
+        "{fix}"
+    );
+}
+
+#[test]
+fn linux_data_path_unreadable() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::Unreadable {
+            dir: "/home/dev/.local/share/puddle".into(), // flake-ok: a path the fake probe reports, never opened
+            detail: "Permission denied (os error 13)".into(),
+        }),
+        ..linux()
+    };
+    let r = check(
+        "linux_data_path_unreadable",
+        &fake,
+        CheckId::DataPath,
+        Some(Finding::DataPathUnreadable),
+    );
+    assert!(r.ok);
+}
+
+#[test]
+fn linux_data_path_no_folder() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::NoFolder),
+        ..linux()
+    };
+    let r = check("linux_data_path_no_folder", &fake, CheckId::DataPath, None);
+    assert_eq!(r.check(CheckId::DataPath).unwrap().status, Status::Skipped);
+}
+
+#[test]
+fn linux_data_path_world_writable_only() {
+    let fake = Fake {
+        data_path: Some(DataPathFacts::Checked {
+            dir: "/data/puddle".into(),
+            writable: vec![folder("/data", 0o757, true)],
+        }),
+        ..linux()
+    };
+    let r = check(
+        "linux_data_path_world_writable",
+        &fake,
+        CheckId::DataPath,
+        Some(Finding::DataPathWritable),
+    );
+    let c = r.check(CheckId::DataPath).unwrap();
+    assert!(c.summary.contains("writable by everyone"), "{}", c.summary);
+    assert!(c.fix.as_deref().unwrap().contains("\n  chmod go-w /data"));
 }

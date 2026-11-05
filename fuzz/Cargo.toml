@@ -14,6 +14,7 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
+arbitrary = "1.5"
 libfuzzer-sys = "0.4"
 puddle-agent = { path = "../crates/puddle-agent" }
 puddle-agent-proto = { path = "../crates/puddle-agent-proto", features = ["fuzzing"] }
@@ -59,6 +60,20 @@ bench = false
 [[bin]]
 name = "dns_message"
 path = "fuzz_targets/dns_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_message_grammar"
+path = "fuzz_targets/dns_message_grammar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resolve_line_grammar"
+path = "fuzz_targets/resolve_line_grammar.rs"
 test = false
 doc = false
 bench = false

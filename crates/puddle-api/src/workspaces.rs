@@ -17,8 +17,8 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use puddle_store::{IdentityId, RepoRef};
 use puddle_types::{
-    CheckoutDir, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId, WorkspaceName,
-    WorkspaceStatus,
+    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
+    WorkspaceName, WorkspaceStatus,
 };
 use sha2::{Digest, Sha256};
 
@@ -35,6 +35,8 @@ pub enum Operation {
     Stopping,
     /// Giving freed disk space back to the host.
     Reclaiming,
+    /// Removing the sandbox so the next start makes a fresh root disk.
+    ResettingRootDisk,
     /// Cloning one repository into a running workspace.
     Cloning,
     /// Checking for unsaved work and removing the workspace.
@@ -48,6 +50,7 @@ impl fmt::Display for Operation {
             Self::Starting => "starting",
             Self::Stopping => "stopping",
             Self::Reclaiming => "reclaiming",
+            Self::ResettingRootDisk => "resetting_root_disk",
             Self::Cloning => "cloning",
             Self::Deleting => "deleting",
         })
@@ -85,6 +88,11 @@ pub struct WorkspaceRecord {
     pub disk_size_mib: u64,
     /// What the volume holds now in MiB, when known.
     pub disk_used_mib: Option<u64>,
+    /// The root disk's size in MiB, when the runtime can tell. The root disk holds the home
+    /// directory, tool caches and installed packages, and goes with the sandbox.
+    pub root_disk_size_mib: Option<u64>,
+    /// What the root disk holds now in MiB, when known.
+    pub root_disk_used_mib: Option<u64>,
 }
 
 impl WorkspaceRecord {
@@ -105,7 +113,42 @@ impl WorkspaceRecord {
             created_at: 0,
             disk_size_mib: DEFAULT_DISK_MIB,
             disk_used_mib: None,
+            root_disk_size_mib: None,
+            root_disk_used_mib: None,
         }
+    }
+}
+
+impl WorkspaceRecord {
+    /// How much of the `disk` is used, in whole percent rounded down and at most 100; `None`
+    /// when the use or the size is not known, or the size is zero.
+    #[must_use]
+    pub fn disk_percent(&self, disk: DiskKind) -> Option<u8> {
+        let (used, size) = match disk {
+            DiskKind::Root => (self.root_disk_used_mib?, self.root_disk_size_mib?),
+            DiskKind::Volume => (self.disk_used_mib?, self.disk_size_mib),
+        };
+        if size == 0 {
+            return None;
+        }
+        let percent = (u128::from(used) * 100 / u128::from(size)).min(100);
+        u8::try_from(percent).ok()
+    }
+
+    /// The disks at or over `threshold`, the root disk first. A disk whose use is not known is
+    /// not counted.
+    #[must_use]
+    pub fn disk_warnings(&self, threshold: puddle_settings::DiskWarningPercent) -> Vec<DiskKind> {
+        [DiskKind::Root, DiskKind::Volume]
+            .into_iter()
+            .filter(|disk| {
+                let (used, size) = match disk {
+                    DiskKind::Root => (self.root_disk_used_mib, self.root_disk_size_mib),
+                    DiskKind::Volume => (self.disk_used_mib, Some(self.disk_size_mib)),
+                };
+                matches!((used, size), (Some(used), Some(size)) if threshold.reached(used, size))
+            })
+            .collect()
     }
 }
 
@@ -216,6 +259,9 @@ pub const DEFAULT_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian";
 /// The volume size a new workspace gets (32 GiB, sparse on the host apart from the 64 MiB journal
 /// written when the volume is made).
 pub const DEFAULT_DISK_MIB: u64 = 32 * 1024;
+
+/// The root disk size the fake workspaces show: msb's default writable layer.
+pub const DEFAULT_ROOT_DISK_MIB: u64 = 4 * 1024;
 
 /// A checked HTTPS repository URL: no credentials, no whitespace, a host.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -963,6 +1009,13 @@ pub trait WorkspaceService: Send + Sync {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
+    /// Removes the stopped workspace's sandbox, and with it the root disk (home directory, tool
+    /// caches, installed packages); the next start makes a fresh one. The volume is untouched.
+    fn reset_root_disk<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
+
     /// Looks for what deleting the workspace would lose. Works on a running or a stopped
     /// workspace.
     fn delete_check<'a>(
@@ -1320,6 +1373,12 @@ impl WorkspaceService for NoWorkspaces {
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
+    fn reset_root_disk<'a>(
+        &'a self,
+        _: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        unavailable()
+    }
     fn delete_check<'a>(
         &'a self,
         _: &'a WorkspaceId,
@@ -1422,6 +1481,68 @@ mod tests {
         ) -> BoxFuture<'a, Result<(), LaunchError>> {
             Box::pin(async { Ok(()) })
         }
+    }
+
+    fn sized(root: Option<(u64, u64)>, volume: Option<u64>) -> WorkspaceRecord {
+        let mut record = WorkspaceRecord::new(
+            WorkspaceId::new("demo").unwrap(),
+            WorkspaceName::new("demo").unwrap(),
+            vec![],
+        );
+        record.root_disk_used_mib = root.map(|(used, _)| used);
+        record.root_disk_size_mib = root.map(|(_, size)| size);
+        record.disk_size_mib = 1000;
+        record.disk_used_mib = volume;
+        record
+    }
+
+    #[test]
+    fn a_root_disk_reset_names_itself_on_the_wire() {
+        assert_eq!(
+            Operation::ResettingRootDisk.to_string(),
+            "resetting_root_disk"
+        );
+    }
+
+    #[test]
+    fn disk_percent_rounds_down_caps_at_full_and_needs_both_figures() {
+        let t = |root, volume| {
+            let r = sized(root, volume);
+            (
+                r.disk_percent(DiskKind::Root),
+                r.disk_percent(DiskKind::Volume),
+            )
+        };
+        assert_eq!(t(Some((949, 1000)), Some(999)), (Some(94), Some(99)));
+        assert_eq!(t(Some((5000, 1000)), Some(0)), (Some(100), Some(0)));
+        assert_eq!(t(None, None), (None, None));
+        let mut zero = sized(Some((1, 0)), None);
+        assert_eq!(zero.disk_percent(DiskKind::Root), None);
+        zero.root_disk_size_mib = Some(1000);
+        zero.root_disk_used_mib = None;
+        assert_eq!(zero.disk_percent(DiskKind::Root), None);
+    }
+
+    #[test]
+    fn a_disk_warns_exactly_at_the_threshold_and_an_unknown_one_never() {
+        use puddle_settings::DiskWarningPercent;
+        let at = |n| DiskWarningPercent::new(n).unwrap();
+        let both = sized(Some((950, 1000)), Some(950));
+        assert_eq!(
+            both.disk_warnings(at(95)),
+            [DiskKind::Root, DiskKind::Volume]
+        );
+        assert_eq!(both.disk_warnings(at(96)), []);
+        let root_only = sized(Some((950, 1000)), Some(100));
+        assert_eq!(root_only.disk_warnings(at(95)), [DiskKind::Root]);
+        let volume_only = sized(Some((100, 1000)), Some(960));
+        assert_eq!(volume_only.disk_warnings(at(95)), [DiskKind::Volume]);
+        assert_eq!(sized(None, None).disk_warnings(at(50)), []);
+        // 100 % warns only on a full disk.
+        assert_eq!(
+            sized(Some((999, 1000)), Some(1000)).disk_warnings(at(100)),
+            [DiskKind::Volume]
+        );
     }
 
     #[test]
@@ -1589,6 +1710,7 @@ mod tests {
             svc.start(&id).await.map(|_| ()),
             svc.stop(&id).await.map(|_| ()),
             svc.reclaim(&id).await.map(|_| ()),
+            svc.reset_root_disk(&id).await.map(|_| ()),
             svc.delete_check(&id).await.map(|_| ()),
             svc.delete(&id, None).await.map(|_| ()),
             svc.rename(&id, None).await.map(|_| ()),
@@ -1725,6 +1847,7 @@ mod tests {
             Operation::Starting,
             Operation::Stopping,
             Operation::Reclaiming,
+            Operation::ResettingRootDisk,
         ] {
             a.busy = Some(busy);
             assert!(check(&a, name("Web").as_ref()).is_ok(), "{busy}");

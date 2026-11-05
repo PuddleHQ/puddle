@@ -13,7 +13,7 @@ use puddle_boot::{
 use puddle_ca::{CaCertificate, TrustBundle};
 use puddle_certs::devcert::GuestDevCert;
 use puddle_certs::{CorporateRoots, GuestTrust};
-use puddle_compute::{FileMount, ImageConfig, SandboxSpec, VsockRoute};
+use puddle_compute::{DiskSize, FileMount, ImageConfig, OwnedDisk, SandboxSpec, VsockRoute};
 use puddle_guest_env::{ProxySettings, guest_proxy_config};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
@@ -42,6 +42,26 @@ const MICROSOFT_DATA_DIR: &str = "vscode-server";
 
 /// Folder below the guest-share root with one folder per workspace for its shell init.
 const SHELL_INIT_DIR: &str = "shell-init";
+
+/// Where Docker keeps its data in the guest.
+const DOCKER_DATA_DIR: &str = "/var/lib/docker";
+
+/// How big Docker's own disk is. The file behind it is sparse, so the host only spends what the
+/// guest writes; the ceiling is what Docker can fill before it reports a full disk.
+const DOCKER_DISK_SIZE: DiskSize = DiskSize::gib(20);
+
+/// The disk Docker's data lives on: one per sandbox, deleted with it.
+fn docker_disk() -> OwnedDisk {
+    #[expect(
+        clippy::expect_used,
+        reason = "invariant: DOCKER_DATA_DIR is a fixed absolute path"
+    )]
+    let guest = GuestPath::new(DOCKER_DATA_DIR).expect("the Docker data folder is a guest path");
+    OwnedDisk {
+        guest,
+        size: DOCKER_DISK_SIZE,
+    }
+}
 
 /// The pieces shared by every sandbox of this host.
 pub(crate) struct BootKit {
@@ -222,7 +242,9 @@ impl BootKit {
         Ok((plan, env))
     }
 
-    /// The spec of a new sandbox: image, memory, environment, the route and Puddle's mounts.
+    /// The spec of a new sandbox: image, memory, environment, the route, Puddle's mounts and the
+    /// disk of its own that Docker's data lives on, so the layers never sit on the guest's overlay
+    /// root nor on the workspace volume.
     pub(crate) fn spec(
         &self,
         name: &WorkspaceId,
@@ -234,7 +256,8 @@ impl BootKit {
         let spec = SandboxSpec::new(name.sandbox_name(), image)
             .with_memory(memory)
             .with_env(env)
-            .with_route(VsockRoute::new(AGENT_ROUTE_PORT, route.endpoint().path()));
+            .with_route(VsockRoute::new(AGENT_ROUTE_PORT, route.endpoint().path()))
+            .with_owned_disk(docker_disk());
         let spec = with_boot_mounts(spec, self.assets.clone(), Some(&self.agent));
         match &self.code_server {
             Some(release) => with_code_server_mount(spec, release),
@@ -392,6 +415,13 @@ mod tests {
         )
         .unwrap();
         release
+    }
+
+    #[test]
+    fn dockers_disk_is_20_gib_at_var_lib_docker() {
+        let disk = docker_disk();
+        assert_eq!(disk.guest.as_str(), "/var/lib/docker");
+        assert_eq!(disk.size, DiskSize::gib(20));
     }
 
     #[test]

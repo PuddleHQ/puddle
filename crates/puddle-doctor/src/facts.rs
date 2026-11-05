@@ -235,6 +235,54 @@ pub enum KeptLogs {
     },
 }
 
+/// A folder above Puddle's data that other accounts can add entries to or rename entries in, and
+/// that is not sticky: msb refuses to keep its catalog below one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WritableFolder {
+    /// The folder, symlinks resolved.
+    pub path: PathBuf,
+    /// Its permission bits (`0o775`).
+    pub mode: u32,
+    /// Whether the current user owns it; if not, changing the mode needs `sudo`.
+    pub owned: bool,
+}
+
+impl WritableFolder {
+    /// Whether the group may write here.
+    #[must_use]
+    pub fn group_writable(&self) -> bool {
+        self.mode & 0o020 != 0
+    }
+
+    /// Whether everyone may write here.
+    #[must_use]
+    pub fn world_writable(&self) -> bool {
+        self.mode & 0o002 != 0
+    }
+}
+
+/// The folders from `/` down to Puddle's data folder, read the way msb reads them before it opens
+/// its catalog (Linux only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataPathFacts {
+    /// The folders were read; `writable` lists those msb would refuse, top first.
+    Checked {
+        /// The data folder (or its nearest existing parent).
+        dir: PathBuf,
+        /// The offending folders; empty when msb has no objection.
+        writable: Vec<WritableFolder>,
+    },
+    /// A folder on the way could not be read.
+    Unreadable {
+        /// The data folder.
+        dir: PathBuf,
+        /// The OS error.
+        detail: String,
+    },
+    /// Where Puddle keeps its data could not be worked out, so there is nothing to read.
+    NoFolder,
+}
+
 /// The Windows job object this process runs in, when there is one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobFacts {

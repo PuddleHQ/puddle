@@ -996,9 +996,8 @@ where
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,
             Ok(_) => {
-                if !body_complete && has_body {
-                    self.upstream = None;
-                }
+                // The upload may be cut short: this upstream connection is never used again.
+                self.upstream = None;
                 Flow::Close
             }
             Err(err) => {
@@ -1101,7 +1100,7 @@ where
             } => break None,
         }
     };
-    if has_body && !matches!(pumped, Some(Ok(()))) {
+    if !matches!(pumped, Some(Ok(()))) {
         // The response came before the body was in, or the body failed: cut the upload off so
         // the upstream sees a failed request, before the sender goes away.
         abort.abort();

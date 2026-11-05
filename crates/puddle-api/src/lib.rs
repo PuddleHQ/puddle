@@ -96,10 +96,11 @@ pub use ui::EmbeddedUi;
 pub use ui::{UiAssets, UiFile};
 pub use workspaces::{
     AttachMode, Attached, BrowserTarget, CONNECTION_TOKEN_COOKIE, DEFAULT_DISK_MIB, DEFAULT_IMAGE,
-    DeleteCheck, DesktopTarget, DisplayName, EditorLogin, EditorSignIn, GitSetup, KeptLogin,
-    KeptLogins, LaunchError, Launcher, Listing, LocalSource, MAX_REPO_URL_LEN, MAX_REPOSITORIES,
-    NewRepository, NewWorkspace, NoGitSetup, NoWorkspaces, Operation, RepoFindings, RepoUrl,
-    Repository, RepositoryDraft, ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError,
-    WorkspaceRecord, WorkspaceService, check_rename, check_repositories, check_repositories_with,
-    check_session_user_change, check_start_folder_change, label_taken,
+    DEFAULT_ROOT_DISK_MIB, DeleteCheck, DesktopTarget, DisplayName, EditorLogin, EditorSignIn,
+    GitSetup, KeptLogin, KeptLogins, LaunchError, Launcher, Listing, LocalSource, MAX_REPO_URL_LEN,
+    MAX_REPOSITORIES, NewRepository, NewWorkspace, NoGitSetup, NoWorkspaces, Operation,
+    RepoFindings, RepoUrl, Repository, RepositoryDraft, ShellInitCheck, StartFolder,
+    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService, check_rename,
+    check_repositories, check_repositories_with, check_session_user_change,
+    check_start_folder_change, label_taken,
 };

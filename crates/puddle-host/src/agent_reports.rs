@@ -37,6 +37,11 @@ fn editor_update_key(name: &WorkspaceId) -> String {
     format!("editor-update:{name}")
 }
 
+/// The key of the problem about the browser editor's session user in `name`.
+fn editor_session_user_key(name: &WorkspaceId) -> String {
+    format!("editor-session-user:{name}")
+}
+
 /// The key of the problem about capture rules the guest tore down in `name`.
 fn capture_tamper_key(name: &WorkspaceId) -> String {
     format!("capture-tamper:{name}")
@@ -98,6 +103,23 @@ fn editor_update_problem(name: &WorkspaceId, reason: &str) -> Problem {
         "The editor keeps working on the build it has, so nothing you do in it is affected. \
          Puddle looks for a newer build again later (after a refused one it waits longer each \
          time, up to an hour); this ends when a look works, or when the workspace stops."
+            .to_owned(),
+    )
+    .about(name.clone())
+}
+
+/// The problem for an editor server that runs as root because the session user is missing in the
+/// guest; `reason` is the agent's cleaned text.
+fn editor_session_user_problem(name: &WorkspaceId, reason: &str) -> Problem {
+    Problem::new(
+        editor_session_user_key(name),
+        format!("The browser editor in {name} runs as root: {reason}"),
+        "The editor opens and works, but its terminal and the files it writes belong to root \
+         instead of the workspace's session user, because the guest has no such user (the boot \
+         hook could not add it, or the image removed it). Terminals and desktop VS Code are not \
+         affected. To get the user back, use an image that keeps the user (or switch the workspace's \
+         session user to root in its settings) and start the workspace again; this ends when a start \
+         finds the user, or when the workspace stops."
             .to_owned(),
     )
     .about(name.clone())
@@ -182,6 +204,8 @@ struct Run {
     install: ReasonSlot,
     /// The editor's update problem.
     update: ReasonSlot,
+    /// The editor's session-user problem.
+    session_user: ReasonSlot,
     /// The tamper problem was raised in this run.
     tampered: bool,
     /// The capture-unavailable problem.
@@ -233,6 +257,7 @@ impl Run {
             dns: BTreeSet::new(),
             install: ReasonSlot::default(),
             update: ReasonSlot::default(),
+            session_user: ReasonSlot::default(),
             tampered: false,
             unavailable: ReasonSlot::default(),
         }
@@ -266,6 +291,7 @@ impl ReportDesk {
         self.problems.clear(&stub_dns_key(name));
         self.problems.clear(&editor_install_key(name));
         self.problems.clear(&editor_update_key(name));
+        self.problems.clear(&editor_session_user_key(name));
         self.problems.clear(&capture_tamper_key(name));
         self.problems.clear(&capture_unavailable_key(name));
     }
@@ -293,6 +319,7 @@ impl ReportDesk {
         self.problems.clear(&stub_dns_key(name));
         self.problems.clear(&editor_install_key(name));
         self.problems.clear(&editor_update_key(name));
+        self.problems.clear(&editor_session_user_key(name));
         self.problems.clear(&capture_tamper_key(name));
         self.problems.clear(&capture_unavailable_key(name));
     }
@@ -336,6 +363,7 @@ impl AgentReports for ReportDesk {
                     let slot = match kind {
                         EditorProblemKind::Install => &mut run.install,
                         EditorProblemKind::Update => &mut run.update,
+                        EditorProblemKind::SessionUser => &mut run.session_user,
                         _ => return,
                     };
                     match slot.report(problem) {
@@ -351,7 +379,12 @@ impl AgentReports for ReportDesk {
                         Slot::Raised(reason) if kind == EditorProblemKind::Install => {
                             Some(editor_install_problem(workspace, &reason))
                         }
-                        Slot::Raised(reason) => Some(editor_update_problem(workspace, &reason)),
+                        Slot::Raised(reason) if kind == EditorProblemKind::Update => {
+                            Some(editor_update_problem(workspace, &reason))
+                        }
+                        Slot::Raised(reason) => {
+                            Some(editor_session_user_problem(workspace, &reason))
+                        }
                     }
                 }
                 AgentReport::CaptureTampered { .. } => {
@@ -384,7 +417,10 @@ impl AgentReports for ReportDesk {
             Some(EditorProblemKind::Install) => {
                 self.problems.clear(&editor_install_key(workspace));
             }
-            Some(_) => self.problems.clear(&editor_update_key(workspace)),
+            Some(EditorProblemKind::Update) => {
+                self.problems.clear(&editor_update_key(workspace));
+            }
+            Some(_) => self.problems.clear(&editor_session_user_key(workspace)),
             None => {}
         }
         if let Some(problem) = raise {

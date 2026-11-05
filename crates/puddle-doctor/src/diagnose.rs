@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 use puddle_runtime::RuntimeError;
 
 use crate::facts::{
-    BootFacts, CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts,
-    JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
+    BootFacts, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, GsaFacts, HypervisorApi,
+    HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
+    WritableFolder,
 };
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -37,6 +38,8 @@ pub trait Probe {
     fn job(&self) -> Option<JobFacts>;
     /// The Global Secure Access client; `None` when not on Windows.
     fn global_secure_access(&self) -> Option<GsaFacts>;
+    /// The folders above Puddle's data folder; `None` where msb has no such rule (not Linux).
+    fn data_path(&self) -> Option<DataPathFacts>;
 }
 
 /// What to run and how long it may take.
@@ -109,6 +112,10 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
             test_boot(os, &rt.msb, &rt.dir, &facts, job.as_ref())
         }
     });
+
+    if let Some(path) = probe.data_path() {
+        checks.push(data_path(&path));
+    }
 
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
@@ -351,6 +358,82 @@ plain terminal outside a CI runner or IDE.",
             )
             .detail(detail.clone()),
         ),
+    }
+}
+
+// ---- data folder path ----
+
+/// `path` as one shell word: bare when it is plain, in single quotes otherwise.
+fn shell_word(path: &Path) -> String {
+    let text = path.display().to_string();
+    let plain = |c: char| c.is_ascii_alphanumeric() || "/._-+@:,=".contains(c);
+    if !text.is_empty() && text.chars().all(plain) {
+        text
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
+}
+
+fn data_path(facts: &DataPathFacts) -> Check {
+    let id = CheckId::DataPath;
+    match facts {
+        DataPathFacts::NoFolder => skipped(id, "Puddle's data folder could not be found"),
+        DataPathFacts::Unreadable { dir, detail } => Check::new(
+            id,
+            Status::Info,
+            format!(
+                "could not be read; whether other accounts can write above {} is unknown",
+                dir.display()
+            ),
+        )
+        .finding(Finding::DataPathUnreadable)
+        .fix("Puddle may still work; this only means the doctor cannot rule out the folder permissions msb refuses.")
+        .detail(detail.clone()),
+        DataPathFacts::Checked { dir, writable } if writable.is_empty() => Check::new(
+            id,
+            Status::Ok,
+            format!("no folder above {} lets other accounts write", dir.display()),
+        ),
+        DataPathFacts::Checked { writable, .. } => {
+            let names = writable
+                .iter()
+                .map(|f| f.path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let any_world = writable.iter().any(WritableFolder::world_writable);
+            let how = if !any_world {
+                "writable by the group"
+            } else if writable.iter().any(WritableFolder::group_writable) {
+                "writable by the group or everyone"
+            } else {
+                "writable by everyone"
+            };
+            let flags = if any_world { "go-w" } else { "g-w" };
+            let sudo = if writable.iter().all(|f| f.owned) { "" } else { "sudo " };
+            let words: Vec<String> = writable.iter().map(|f| shell_word(&f.path)).collect();
+            let detail: Vec<String> = writable
+                .iter()
+                .map(|f| format!("{} mode {:04o}", f.path.display(), f.mode & 0o7777))
+                .collect();
+            Check::new(
+                id,
+                Status::Fail,
+                format!(
+                    "{names} {} {how} and not sticky, so msb will not open Puddle's data below {}",
+                    if writable.len() == 1 { "is" } else { "are" },
+                    if writable.len() == 1 { "it" } else { "them" },
+                ),
+            )
+            .finding(Finding::DataPathWritable)
+            .fix(format!(
+                "msb opens its catalog only below folders where other accounts cannot rename entries, so \
+every sandbox start fails until the write permission is gone. A user created with a private group and umask \
+0002 (the Ubuntu default) often leaves ~/.local at 0775. Run:
+  {sudo}chmod {flags} {}",
+                words.join(" ")
+            ))
+            .detail(detail.join("\n"))
+        }
     }
 }
 

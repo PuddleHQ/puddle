@@ -23,12 +23,12 @@ use terminate_support::{
     FakeServer, Flaw, Handler, Pki, Recorded, Reply, Rig, RigBuilder, TestInjector, captured_logs,
 };
 
-const TOKEN_HOST: &str = "platform.claude.com";
+pub(crate) const TOKEN_HOST: &str = "platform.claude.com";
 const API_HOST: &str = "api.anthropic.com";
 
-const ACCESS_1: &str =
+pub(crate) const ACCESS_1: &str =
     "sk-ant-oat01-CANARY-access-one-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const REFRESH_1: &str =
+pub(crate) const REFRESH_1: &str =
     "sk-ant-ort01-CANARY-refresh-one-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const ACCESS_2: &str =
     "sk-ant-oat01-CANARY-access-two-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -105,8 +105,8 @@ fn claude_token_server() -> Handler {
     })
 }
 
-struct Login {
-    rig: Rig,
+pub(crate) struct Login {
+    pub(crate) rig: Rig,
     logins: Logins,
     registry: Arc<StandIns>,
     store: Arc<MemoryStore>,
@@ -141,7 +141,7 @@ fn logins_on(
     (logins, notices)
 }
 
-async fn claude_login(pki: &Pki, enabled: bool, store: Arc<MemoryStore>) -> Login {
+pub(crate) async fn claude_login(pki: &Pki, enabled: bool, store: Arc<MemoryStore>) -> Login {
     let token = server(pki, TOKEN_HOST, claude_token_server()).await;
     let api = server(pki, API_HOST, Arc::new(|_| Reply::ok("hello"))).await;
     let registry = Arc::new(StandIns::new());
@@ -167,7 +167,7 @@ async fn claude_login(pki: &Pki, enabled: bool, store: Arc<MemoryStore>) -> Logi
     }
 }
 
-fn request(method: &str, host: &str, path: &str, extra: &str, body: &str) -> Vec<u8> {
+pub(crate) fn request(method: &str, host: &str, path: &str, extra: &str, body: &str) -> Vec<u8> {
     format!(
         "{method} {path} HTTP/1.1\r\nHost: {host}\r\n{extra}Content-Length: {}\r\n\r\n{body}",
         body.len()
@@ -175,7 +175,7 @@ fn request(method: &str, host: &str, path: &str, extra: &str, body: &str) -> Vec
     .into_bytes()
 }
 
-fn authorization_code() -> String {
+pub(crate) fn authorization_code() -> String {
     json!({"grant_type": "authorization_code", "code": "fakecode", "code_verifier": "v", "state": "s"})
         .to_string()
 }
@@ -185,7 +185,7 @@ fn refresh_with(token: &str) -> String {
 }
 
 /// A request that should carry a token to the API host, and the `Authorization` it arrived with.
-async fn api_call(login: &Login, bearer: &str) -> Option<String> {
+pub(crate) async fn api_call(login: &Login, bearer: &str) -> Option<String> {
     let mut guest = login.rig.guest();
     let mut client = guest.tls(&format!("{API_HOST}:443"), None).await.unwrap();
     client

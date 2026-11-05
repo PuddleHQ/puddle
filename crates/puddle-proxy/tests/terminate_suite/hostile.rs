@@ -1055,6 +1055,27 @@ async fn hostile_hg29_responses_with_broken_framing_are_a_502() {
     }
 }
 
+#[tokio::test]
+async fn a_response_that_is_not_http_is_a_502_that_says_what_the_upstream_got_wrong() {
+    let pki = Pki::new();
+    let server = upstream(
+        &pki,
+        Arc::new(|_| Reply::raw("not http at all\r\n\r\n").closing()),
+    )
+    .await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    let got = client.get("bound.test", "/garbage").await;
+    assert_eq!(got.status, 502);
+    assert_eq!(
+        got.text(),
+        "puddle: the request to bound.test failed: invalid HTTP version parsed\n"
+    );
+}
+
 // No secret in any log ----------------------------------------------------------------------------------
 
 #[tokio::test]

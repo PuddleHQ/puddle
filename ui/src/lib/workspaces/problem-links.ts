@@ -48,6 +48,18 @@ export function editorUpdateProblemOf(
   return problems.find((p) => p.key === editorUpdateKey(workspace));
 }
 
+/** The key of the problem that says `workspace`'s browser editor server runs as root. */
+export const editorSessionUserKey = (workspace: string): string =>
+  `editor-session-user:${workspace}`;
+
+/** The problem about `workspace`'s editor running as root, if the host lists one. */
+export function editorSessionUserProblemOf(
+  problems: readonly Problem[],
+  workspace: string,
+): Problem | undefined {
+  return problems.find((p) => p.key === editorSessionUserKey(workspace));
+}
+
 /** The page place for a problem about a workspace; `undefined` for one about nothing. */
 export function problemLink(problem: Problem): ProblemLink | undefined {
   const workspace = problem.workspace;

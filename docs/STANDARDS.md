@@ -44,6 +44,7 @@ different crates and rarely collides.
 | `crates/puddle-fs` | lib | Per-OS file-system seams: `data_dir()` (the `dirs` crate: `%LOCALAPPDATA%\puddle`, `$XDG_DATA_HOME/puddle`, `~/Library/Application Support/puddle`) and `private` (owner-only files and folders: `0600`/`0700` on Unix; on Windows a protected ACL with one entry for the current user, set at creation). Its `unsafe` (Win32 security calls) is in one module, `win`, which `puddle-ipc` shares for its pipe descriptor. Own crate because both the API and the runtime layout need it and neither may depend on the other |
 | `crates/puddle-test-kit` | lib (dev) | Shared test helpers, a dev-dependency only (`scripts/quality-gate.py` fails a product crate that lists it under `[dependencies]` or `[build-dependencies]`): `eventually` (a named wait, bounded below nextest's slow-timeout), `next_event_within`, `next_event_matching`, `no_event_for` and `no_event_matching` (channel reads), `bound_port` (a listener that stays bound), `TestDir` (a unique temporary folder), `cpu_time` (runs a synchronous call and returns the calling thread's CPU time, the clock for a bar on how much work a call does; `CLOCK_THREAD_CPUTIME_ID` / `GetThreadTimes` through the `cpu-time` crate) |
 | `crates/puddle-fd-limit` | lib | The open-file limit: `raise_open_file_limit` lifts the soft `RLIMIT_NOFILE` to the hard limit once at start (the guest agent also tries to lift the hard limit, as root in the guest) and `OpenFileLimit::log` says what the process got, warning when it is below what a busy workspace needs. Safe `rustix` calls on Unix; nothing to do on Windows, which has no per-process descriptor cap. Used by `puddle-agent` and `puddle-host` |
+| `crates/puddle-log` | lib | The log filter of Puddle's programs (`puddle serve`, the desktop app, the guest agent): the level `PUDDLE_LOG` asks for applies to Puddle's own crates, every other crate stays at `info` unless named (`PUDDLE_LOG=trace,hyper=debug`), so a trace log never carries a dependency's internals |
 | `crates/puddle-ipc` | lib | Per-workspace host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir. Its only `unsafe` is creating a pipe with a security descriptor (`windows/security.rs`); the descriptor helpers come from `puddle-fs` |
 | `crates/puddle-ports` | lib | A workspace's ports: what listens in the guest, forwards from the guest to the host's loopback (listeners registered as Puddle's own), pinned forwards kept through a `Pins` store, who holds a port |
 | `crates/puddle-front` | lib | The browser editor's front: one loopback listener (registered as Puddle's own) that routes `<workspace>.localhost` to the editor server in the guest through the agent's `editor` stream, with Microsoft's secret-key cookie, frame headers and a count of connected windows |
@@ -267,6 +268,10 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - Levels: `error` = Puddle can't do what the user asked; `warn` = degraded or retried; `info` =
   lifecycle and decisions (one line per approve/deny); `debug` = per-request detail; `trace` =
   bytes and protocol frames (never on by default).
+- `PUDDLE_LOG` (`puddle serve`, the desktop app; `PUDDLE_AGENT_LOG` for the guest agent) sets the
+  level of Puddle's crates; dependencies stay at `info` unless named (`trace,hyper=debug`), because a
+  dependency's trace output is not under the rule below. Build a filter only through `puddle-log`.
+  The desktop app also reads `RUST_LOG` when `PUDDLE_LOG` is not set.
 - **Never log** header values, credentials, tokens, cookies, request bodies, or full URLs with
   query strings. Hostnames and ports are fine. Tests assert this (§8, redaction).
 - The **audit log** (store) is a product feature with its own schema and tests, not a
@@ -656,6 +661,10 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
   `ci.yml`, `ci/advisories-issue.sh rust`) opens or rewrites one issue titled "Dependency advisories: cargo deny check
   advisories fails" with the advisory IDs, crates and a link to the run, closes it on the first clean run, and fails visibly.
   `pre-push` skips `advisories`; `scripts/check.sh advisories` runs it by hand.
+  The gate runs through `ci/deny-fresh.sh`, which runs `cargo deny fetch all` first: cargo-deny judges against the advisory
+  database and registry index on disk, so an old copy lets a crate yanked since pass locally and fail in the nightly. The script
+  prints the database's age when it is over a day (or missing), and a fetch that fails (offline) warns and judges on the old copy.
+  Self-test: `ci/deny-fresh-test.sh`, with a stand-in cargo-deny and the fixture `ci/fixtures/yanked.lock`.
 - **npm advisories follow the same rule.** Gate `ui-audit` (`npm audit`, section 13) runs in its own job,
   `advisories (npm)`, on the same events as `advisories`: pull requests to `main`, pushes, nightly and by hand, never on a
   pull request to `develop` or a merge queue run. The nightly keeps a second issue, "Dependency advisories: npm audit fails"

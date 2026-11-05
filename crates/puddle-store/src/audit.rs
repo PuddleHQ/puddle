@@ -1762,11 +1762,22 @@ mod tests {
         }
     }
 
+    type Row = (i64, String, Option<String>, Option<String>, Option<String>);
+
     #[test]
-    fn migration_backfills_host_and_outcome_as_the_code_derives_them() {
+    fn migration_backfills_host_outcome_and_search_text_as_the_code_derives_them() {
         let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         crate::schema::migrate_up_to(&mut conn, 1).unwrap();
         let mut records = every_record();
+        // Upper-case text in every searched field, and empty or missing ones.
+        let mut shouting = ConnectionRecord::from_event(9, &event());
+        shouting.host = Some("API.Example.COM".into());
+        shouting.method = Some("PoSt".into());
+        shouting.path = Some("/V1/Ítems".into());
+        records.push(AuditRecord::Connection(shouting.clone()));
+        shouting.path = Some(String::new());
+        shouting.host = None;
+        records.push(AuditRecord::Connection(shouting));
         let mut allowed = pending_wire();
         allowed.state = "allowed".into();
         let mut denied = pending_wire();

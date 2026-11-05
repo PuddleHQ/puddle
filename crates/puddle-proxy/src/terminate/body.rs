@@ -201,10 +201,9 @@ impl ChannelBody {
         } else {
             Body::Length(len)
         });
-        if len > 0 {
-            // The channel holds four pieces and this is the first.
-            let _ = tx.try_send(bytes);
-        }
+        // The channel holds four pieces and this is the first; for an empty body the receiver is
+        // already gone and the send fails, which is fine.
+        let _ = tx.try_send(bytes);
         (body, tx, abort)
     }
 }
@@ -335,6 +334,31 @@ mod tests {
     async fn a_chunk_may_end_in_a_bare_line_feed() {
         let input = b"3\nabc\n2\r\nde\n0\n\n";
         assert_eq!(decode(input, Body::Chunked).await.unwrap(), b"abcde");
+    }
+
+    #[tokio::test]
+    async fn a_channel_body_reports_the_end_of_the_stream_only_when_it_is_over() {
+        let (empty, _tx, _abort) = ChannelBody::new(Body::None);
+        assert!(empty.is_end_stream());
+
+        let (mut open, tx, _abort) = ChannelBody::new(Body::Length(2));
+        assert!(!open.is_end_stream());
+        tx.send(Bytes::from_static(b"hi")).await.unwrap();
+        drop(tx);
+        let frame = std::future::poll_fn(|cx| Pin::new(&mut open).poll_frame(cx)).await;
+        assert!(frame.unwrap().unwrap().is_data());
+        assert!(!open.is_end_stream(), "the end has not been polled yet");
+        assert!(
+            std::future::poll_fn(|cx| Pin::new(&mut open).poll_frame(cx))
+                .await
+                .is_none()
+        );
+        assert!(open.is_end_stream());
+
+        let (done, _tx, _abort) = ChannelBody::prefetched(Bytes::new());
+        assert!(done.is_end_stream());
+        let (pending, _tx, _abort) = ChannelBody::prefetched(Bytes::from_static(b"x"));
+        assert!(!pending.is_end_stream());
     }
 
     #[tokio::test]

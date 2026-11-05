@@ -196,8 +196,7 @@
 
   async function saveAll() {
     const view = store.view;
-    if (!view || !dirty || graceError || diskError || diskBlocked || saving)
-      return;
+    if (!view || !dirty || graceError || diskIssue || saving) return;
     saving = true;
     saved = null;
     problem = null;
@@ -352,6 +351,7 @@
   const diskBlocked = $derived(
     warnError !== null || failError !== null || linesError !== null,
   );
+  const diskIssue = $derived(diskError !== null || diskBlocked);
 
   function editFreeLine(
     input: HTMLInputElement,
@@ -1148,11 +1148,7 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!dirty ||
-            saving ||
-            graceError !== null ||
-            diskError !== null ||
-            diskBlocked}
+          disabled={!dirty || saving || graceError !== null || diskIssue}
           onclick={() => void saveAll()}>Save</button
         >
       </div>

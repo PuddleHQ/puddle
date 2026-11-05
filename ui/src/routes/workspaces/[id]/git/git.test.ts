@@ -9,7 +9,7 @@ import {
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const url = vi.hoisted(() => ({ id: "web-shop" }));
+const url = vi.hoisted(() => ({ id: "w-web-shop" }));
 vi.mock("$app/state", () => ({
   page: {
     get params() {
@@ -46,7 +46,7 @@ import Page from "./+page.svelte";
 const { api, workspace } = h;
 
 beforeEach(() => {
-  url.id = "web-shop";
+  url.id = "w-web-shop";
   workspaces.list = [
     workspace("web-shop"),
     workspace("docs", {
@@ -75,7 +75,7 @@ beforeEach(() => {
     }),
   ];
   api.git = {
-    "web-shop": {
+    "w-web-shop": {
       ids: [1],
       repos: [
         repoRow(7, { repo: "web-shop" }),
@@ -84,7 +84,7 @@ beforeEach(() => {
       push: null,
       pull: null,
     },
-    docs: { ids: [], repos: [], push: false, pull: true },
+    "w-docs": { ids: [], repos: [], push: false, pull: true },
   };
   api.calls = [];
   api.bodies = [];
@@ -159,7 +159,7 @@ describe("identities on a workspace", () => {
   });
 
   it("moves, removes and keeps focus on a button that still works", async () => {
-    api.git["web-shop"]!.ids = [1, 2];
+    api.git["w-web-shop"]!.ids = [1, 2];
     await mount();
     const work = () => idList().getAllByRole("listitem")[0]!;
     expect(
@@ -206,7 +206,7 @@ describe("identities on a workspace", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "No such identity.",
     );
-    api.git["web-shop"]!.ids = [1, 2];
+    api.git["w-web-shop"]!.ids = [1, 2];
     await fireEvent.click(screen.getByRole("button", { name: "Add identity" }));
     api.refuse = { status: 422, message: "an identity is listed twice" };
     await fireEvent.click(
@@ -215,7 +215,7 @@ describe("identities on a workspace", () => {
   });
 
   it("warns when no identity covers the workspace's own repository", async () => {
-    url.id = "docs";
+    url.id = "w-docs";
     render(Page);
     expect(
       await screen.findByText(/No identity here covers dev.azure.com\/contoso/),
@@ -239,8 +239,8 @@ describe("identities on a workspace", () => {
         ],
       }),
     ];
-    api.git["many"] = { ids: [1], repos: [], push: true, pull: false };
-    url.id = "many";
+    api.git["w-many"] = { ids: [1], repos: [], push: true, pull: false };
+    url.id = "w-many";
     render(Page);
     const lines = await screen.findAllByText(/No identity here covers/);
     expect(lines.map((l) => l.textContent?.replace(/\s+/g, " "))).toEqual([
@@ -259,8 +259,8 @@ describe("identities on a workspace", () => {
         repositories: [{ url: "https://github.com/a/b/c", directory: "c" }],
       }),
     ];
-    api.git["odd"] = { ids: [], repos: [], push: true, pull: false };
-    url.id = "odd";
+    api.git["w-odd"] = { ids: [], repos: [], push: true, pull: false };
+    url.id = "w-odd";
     render(Page);
     expect(
       await screen.findByText(/couldn't read the address of c/),
@@ -269,7 +269,7 @@ describe("identities on a workspace", () => {
       screen.getByText(/not a repository address Puddle can read/),
     ).toBeInTheDocument();
     // Adding something makes the line go away: it only describes an empty start.
-    api.git["odd"]!.repos = [repoRow(1)];
+    api.git["w-odd"]!.repos = [repoRow(1)];
     cleanup();
     render(Page);
     await screen.findByRole("table");
@@ -286,7 +286,7 @@ describe("identities on a workspace", () => {
     ).toHaveAttribute("href", "/identities");
     cleanup();
     api.identities = [identity(1)];
-    api.git["web-shop"]!.ids = [1];
+    api.git["w-web-shop"]!.ids = [1];
     identities.identities = [];
     await mount();
     await waitFor(() =>
@@ -328,7 +328,7 @@ describe("the repository table", () => {
     });
     await fireEvent.click(pull);
     await waitFor(() =>
-      expect(api.git["web-shop"]!.repos[1]!.pull).toBe(false),
+      expect(api.git["w-web-shop"]!.repos[1]!.pull).toBe(false),
     );
     api.refuse = { status: 404, message: "no such repository" };
     const push = table().getByRole("checkbox", {
@@ -346,7 +346,7 @@ describe("the repository table", () => {
     await fireEvent.click(
       screen.getByRole("switch", { name: "Only pull from listed repos" }),
     );
-    await waitFor(() => expect(api.git["web-shop"]!.pull).toBe(true));
+    await waitFor(() => expect(api.git["w-web-shop"]!.pull).toBe(true));
     expect(
       await screen.findByText(
         /A fetch is allowed only from a repository whose Pull box is ticked/,
@@ -355,7 +355,7 @@ describe("the repository table", () => {
     await fireEvent.click(
       screen.getByRole("switch", { name: "Only push to listed repos" }),
     );
-    await waitFor(() => expect(api.git["web-shop"]!.push).toBe(false));
+    await waitFor(() => expect(api.git["w-web-shop"]!.push).toBe(false));
     expect(
       await screen.findByText(/Off: a push may go to any repository/),
     ).toBeInTheDocument();
@@ -391,10 +391,10 @@ describe("the repository table", () => {
     api.refuse = { status: 500, message: "no" };
     await fireEvent.click(again);
     expect(await screen.findByRole("alert")).toHaveTextContent("No.");
-    expect(api.git["web-shop"]!.pull).toBe(true);
+    expect(api.git["w-web-shop"]!.pull).toBe(true);
 
     await fireEvent.click(again);
-    await waitFor(() => expect(api.git["web-shop"]!.pull).toBeNull());
+    await waitFor(() => expect(api.git["w-web-shop"]!.pull).toBeNull());
     expect(api.bodies.at(-1)).toEqual({ use_default_pull: true });
     expect(
       screen.getByRole("switch", { name: "Only pull from listed repos" }),
@@ -411,7 +411,7 @@ describe("the repository table", () => {
         name: "Use the default again for Only push to listed repos",
       }),
     );
-    await waitFor(() => expect(api.git["web-shop"]!.push).toBeNull());
+    await waitFor(() => expect(api.git["w-web-shop"]!.push).toBeNull());
     expect(api.bodies.at(-1)).toEqual({ use_default_push: true });
   });
 
@@ -445,7 +445,7 @@ describe("the repository table", () => {
   });
 
   it("says what an empty table means", async () => {
-    api.git["web-shop"]!.repos = [];
+    api.git["w-web-shop"]!.repos = [];
     render(Page);
     expect(
       await screen.findByText(
@@ -453,7 +453,7 @@ describe("the repository table", () => {
       ),
     ).toBeInTheDocument();
     cleanup();
-    api.git["web-shop"]!.push = false;
+    api.git["w-web-shop"]!.push = false;
     render(Page);
     await waitFor(() =>
       expect(screen.getByText("No repository is listed.")).toBeInTheDocument(),

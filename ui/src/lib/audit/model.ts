@@ -26,7 +26,7 @@ export const RANGES: readonly { key: RangeKey; label: string; ms: number }[] = [
 export const DEFAULT_RANGE: RangeKey = "24h";
 
 export interface Filter {
-  /** A workspace's name; empty for all. */
+  /** A workspace's id; empty for all. */
   workspace: string;
   type: AuditType | "";
   outcome: AuditOutcome | "";

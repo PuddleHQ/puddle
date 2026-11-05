@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { onMount, tick } from "svelte";
@@ -218,9 +219,11 @@
       <p class="muted">None yet.</p>
     {:else}
       <ul class="plain">
-        {#each identity.workspaces as name (name)}
+        {#each identity.workspaces as wid (wid)}
           <li>
-            <a href="/workspaces/{encodeURIComponent(name)}/git">{name}</a>
+            <a href="/workspaces/{encodeURIComponent(wid)}/git"
+              >{workspaces.labelOf(wid)}</a
+            >
           </li>
         {/each}
       </ul>

@@ -5,14 +5,15 @@
 //! catalog under it. The walk stops caring once it passes a folder only its owner can enter
 //! (mode `0o700`, owned by this user): nobody else can reach what is below it.
 //!
-//! msb also refuses an ancestor that is not a folder or that another user (not root) owns; those
-//! are not reported here, only the permission case users hit by accident.
+//! msb also refuses, at every level and even below that owner-only folder, an ancestor that is not
+//! a folder or that a user other than this one and root owns; both are reported too. The macOS
+//! build of msb adds an ACL check that this Linux-only probe does not make.
 
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use crate::facts::{DataPathFacts, WritableFolder};
+use crate::facts::{BlockedBy, BlockedFolder, DataPathFacts, WritableFolder};
 
 /// Group or world write.
 const WRITE_BY_OTHERS: u32 = 0o022;
@@ -26,8 +27,12 @@ pub(crate) fn data_path(dir: Option<&Path>) -> DataPathFacts {
         return DataPathFacts::NoFolder;
     };
     let euid = rustix::process::geteuid().as_raw();
-    match writable_ancestors(Path::new("/"), dir, euid) {
-        Ok((dir, writable)) => DataPathFacts::Checked { dir, writable },
+    match walk_ancestors(Path::new("/"), dir, euid) {
+        Ok(walk) => DataPathFacts::Checked {
+            dir: walk.dir,
+            writable: walk.writable,
+            blocked: walk.blocked,
+        },
         Err(e) => DataPathFacts::Unreadable {
             dir: dir.to_path_buf(),
             detail: e.to_string(),
@@ -35,14 +40,16 @@ pub(crate) fn data_path(dir: Option<&Path>) -> DataPathFacts {
     }
 }
 
+/// What the walk found.
+struct Walk {
+    dir: PathBuf,
+    writable: Vec<WritableFolder>,
+    blocked: Vec<BlockedFolder>,
+}
+
 /// The folders msb would refuse among those from `top` down to `dir` (or its nearest existing
-/// parent, which Puddle creates below), as seen by the user `euid`. Returns the folder that was
-/// walked and the offenders, top first.
-fn writable_ancestors(
-    top: &Path,
-    dir: &Path,
-    euid: u32,
-) -> io::Result<(PathBuf, Vec<WritableFolder>)> {
+/// parent, which Puddle creates below), as seen by the user `euid`, top first.
+fn walk_ancestors(top: &Path, dir: &Path, euid: u32) -> io::Result<Walk> {
     let absolute = std::path::absolute(dir)?;
     let existing = absolute
         .ancestors()
@@ -56,9 +63,21 @@ fn writable_ancestors(
     chain.reverse();
     let mut private_boundary = false;
     let mut found = Vec::new();
+    let mut blocked = Vec::new();
     for folder in chain {
         let meta = std::fs::symlink_metadata(folder)?;
         let mode = meta.mode();
+        if !meta.is_dir() {
+            blocked.push(BlockedFolder {
+                path: folder.to_path_buf(),
+                by: BlockedBy::NotAFolder,
+            });
+        } else if meta.uid() != euid && meta.uid() != 0 {
+            blocked.push(BlockedFolder {
+                path: folder.to_path_buf(),
+                by: BlockedBy::OtherOwner { uid: meta.uid() },
+            });
+        }
         if !private_boundary && mode & WRITE_BY_OTHERS != 0 && mode & STICKY == 0 {
             found.push(WritableFolder {
                 path: folder.to_path_buf(),
@@ -70,7 +89,11 @@ fn writable_ancestors(
             private_boundary = meta.uid() == euid && mode & ANY_BY_OTHERS == 0;
         }
     }
-    Ok((resolved, found))
+    Ok(Walk {
+        dir: resolved,
+        writable: found,
+        blocked,
+    })
 }
 
 #[cfg(test)]
@@ -111,9 +134,11 @@ mod tests {
 
     fn check(root: &Path, data: &Path, uid: u32) -> Vec<WritableFolder> {
         // `top` is the tree's root, so the real folders above it (the temp folder) do not count.
-        writable_ancestors(&std::fs::canonicalize(root).unwrap(), data, uid)
-            .unwrap()
-            .1
+        walk(root, data, uid).writable
+    }
+
+    fn walk(root: &Path, data: &Path, uid: u32) -> Walk {
+        walk_ancestors(&std::fs::canonicalize(root).unwrap(), data, uid).unwrap()
     }
 
     #[test]
@@ -186,10 +211,9 @@ mod tests {
     fn a_data_folder_that_does_not_exist_yet_is_judged_by_its_nearest_parent() {
         let (root, _data, uid) = tree(0o755, 0o775, 0o755);
         let later = root.path().join("a/b/not/yet");
-        let (walked, found) =
-            writable_ancestors(&std::fs::canonicalize(root.path()).unwrap(), &later, uid).unwrap();
-        assert!(walked.ends_with("a/b"), "{}", walked.display());
-        assert_eq!(names(root.path(), &found), ["a"]);
+        let walked = walk(root.path(), &later, uid);
+        assert!(walked.dir.ends_with("a/b"), "{}", walked.dir.display());
+        assert_eq!(names(root.path(), &walked.writable), ["a"]);
     }
 
     #[test]
@@ -199,6 +223,60 @@ mod tests {
         std::os::unix::fs::symlink(&data, &link).unwrap();
         let found = check(root.path(), &link, uid);
         assert_eq!(names(root.path(), &found), ["a"]);
+    }
+
+    fn blocked_names(root: &Path, w: &Walk) -> Vec<(String, BlockedBy)> {
+        let top = std::fs::canonicalize(root).unwrap();
+        w.blocked
+            .iter()
+            .map(|b| {
+                (
+                    b.path.strip_prefix(&top).unwrap().display().to_string(),
+                    b.by,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_file_where_a_folder_should_be_blocks_msb_and_is_named() {
+        let (root, _data, uid) = tree(0o755, 0o755, 0o755);
+        std::fs::write(root.path().join("a/file"), b"x").unwrap();
+        mode(&root.path().join("a/file"), 0o644); // the umask must not make it group-writable
+        let w = walk(root.path(), &root.path().join("a/file/data"), uid);
+        assert_eq!(
+            blocked_names(root.path(), &w),
+            [("a/file".to_string(), BlockedBy::NotAFolder)]
+        );
+        assert_eq!(w.writable, []);
+    }
+
+    #[test]
+    fn a_folder_owned_by_another_user_blocks_msb_even_below_a_private_folder() {
+        // Seen as another user, everything the tree owns belongs to someone else, and the
+        // owner-only top folder does not stop the check the way it stops the mode check.
+        let (root, data, uid) = tree(0o700, 0o755, 0o755);
+        let other = uid.wrapping_add(1);
+        let w = walk(root.path(), &data, other);
+        let by = BlockedBy::OtherOwner { uid };
+        assert_eq!(
+            blocked_names(root.path(), &w),
+            [
+                (String::new(), by),
+                ("a".to_string(), by),
+                ("a/b".to_string(), by),
+                ("a/b/data".to_string(), by)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_folder_owned_by_this_user_or_by_root_is_not_blocked() {
+        let (root, data, uid) = tree(0o755, 0o755, 0o755);
+        assert_eq!(walk(root.path(), &data, uid).blocked, []);
+        // Root-owned folders pass for any user: `/` and `/usr` are the real ones.
+        let w = walk_ancestors(Path::new("/"), Path::new("/usr"), uid.wrapping_add(1)).unwrap();
+        assert_eq!(w.blocked, []);
     }
 
     #[test]

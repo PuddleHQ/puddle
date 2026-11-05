@@ -2,8 +2,12 @@
 //! SDK errors to [`ComputeError`].
 
 use microsandbox::MicrosandboxError;
-use puddle_compute::ComputeError;
+use puddle_compute::{ComputeError, StartRefusal};
 use puddle_types::WorkspaceStatus;
+
+/// How msb begins the error of a start it refuses because it cannot prove the sandbox's stored
+/// disk state came from the host (an upgrade found an unrecorded or changed journal).
+const NEEDS_RECOVERY: &str = "migration/recovery required";
 
 /// Maps an SDK error from operation `op` on `target` (a sandbox name, or the image or volume the
 /// call was about) to a [`ComputeError`]. Matches on the SDK's variants; anything without a
@@ -39,6 +43,13 @@ pub fn map(op: &'static str, target: &str, error: MicrosandboxError) -> ComputeE
             }
         }
         MicrosandboxError::InvalidConfig(reason) => ComputeError::InvalidSpec { reason },
+        MicrosandboxError::Runtime(message) if message.starts_with(NEEDS_RECOVERY) => {
+            tracing::warn!(sandbox = target, op, %message, "msb kept the sandbox for recovery");
+            ComputeError::StartRefused {
+                sandbox: target.to_owned(),
+                cause: StartRefusal::RootDiskNeedsRecovery,
+            }
+        }
         other => runtime(op, &other),
     }
 }
@@ -130,6 +141,28 @@ mod tests {
             matches!(&e, ComputeError::ImagePull { image, reason }
                 if image == "x.invalid/none:0" && reason.contains("image not found")),
             "{e:?}"
+        );
+    }
+
+    #[test]
+    fn a_disk_msb_cannot_vouch_for_refuses_the_start_without_its_words() {
+        // msb's wording at v0.7.12 (`checkpoint/layout.rs`, `recovery`).
+        let e = map(
+            "start",
+            "box",
+            MicrosandboxError::Runtime(
+                "migration/recovery required: unrecorded protected storage at root-disk.json; \
+                 preserve this sandbox and use a verified backup or recover its disk chain \
+                 before retrying"
+                    .into(),
+            ),
+        );
+        assert_eq!(
+            e,
+            ComputeError::StartRefused {
+                sandbox: "box".into(),
+                cause: StartRefusal::RootDiskNeedsRecovery
+            }
         );
     }
 

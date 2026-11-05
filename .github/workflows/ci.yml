@@ -406,7 +406,7 @@ jobs:
         run: |
           # The guard logs free space during the build and tests and, under 5 GB, stops cargo and the tests with the
           # sizes in the job summary, so a filling runner ends the job readable.
-          DISK_WATCH_KILL='cargo|rustc|llvm-cov|nextest' ci/disk-watch.sh guard coverage &
+          ci/disk-watch.sh guard coverage &
           guard=$!
           trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
           scripts/check.sh coverage

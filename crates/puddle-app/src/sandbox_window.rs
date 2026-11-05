@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use puddle_api::OpenTarget;
 use puddle_settings::{ClipboardRead, Effective};
 use puddle_types::WorkspaceName;
 use tauri::webview::{
@@ -445,6 +446,22 @@ impl SandboxWindows {
         manager: &M,
         target: &Target,
     ) -> tauri::Result<WebviewWindow<R>> {
+        self.open_at(manager, target, None)
+    }
+
+    /// [`Self::open`] on the place the editor should show (`open`), which only [`start_url`]
+    /// turns into an address; `None` is the server's own start page. A window that is already
+    /// open keeps what it shows.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub fn open_at<R: Runtime, M: Manager<R>>(
+        &self,
+        manager: &M,
+        target: &Target,
+        open: Option<&OpenTarget>,
+    ) -> tauri::Result<WebviewWindow<R>> {
         let label = label(&target.workspace);
         if let Some(existing) = manager.get_webview_window(&label) {
             // Both can fail when the window is being closed; there is nothing to do about that.
@@ -455,10 +472,11 @@ impl SandboxWindows {
         std::fs::create_dir_all(&target.data_folder)?;
         let target = Arc::new(target.clone());
         // With a cookie to set, the window starts blank and goes to the editor once it has it.
+        let editor = open.map_or_else(|| target.origin.clone(), |o| start_url(&target.origin, o));
         let start = if target.cookie.is_some() {
             blank(&target.origin)
         } else {
-            target.origin.clone()
+            editor.clone()
         };
         let app = manager.app_handle();
         let window = self.build(app, &target, &label, WebviewUrl::External(start), None)?;
@@ -467,7 +485,7 @@ impl SandboxWindows {
                 // The editor's own login page shows instead; the user can sign in there.
                 tracing::warn!(%err, "the editor's session could not be set; its login page shows");
             }
-            window.navigate(target.origin.clone())?;
+            window.navigate(editor)?;
         }
         Ok(window)
     }
@@ -711,6 +729,24 @@ fn forward_data_folder(editor_folder: &Path) -> PathBuf {
 /// port in front of `<workspace>.localhost`.
 fn is_forward(target: &Target) -> bool {
     target.origin.host_str() != Some(&format!("{}.localhost", target.workspace))
+}
+
+/// The address a window opens a place on: the editor's own page with the place in its query,
+/// `/?workspace=<file>` for the multi-root file and `/?folder=<path>` for a folder, the form both
+/// servers read. Nothing else is built: the path is always `/`, the query has this one key, and
+/// the path in the value is encoded, so it can't add a key, a path or a fragment.
+#[must_use]
+pub fn start_url(origin: &Url, open: &OpenTarget) -> Url {
+    let mut url = origin.clone();
+    url.set_path("/");
+    url.set_fragment(None);
+    let key = if open.is_workspace_file {
+        "workspace"
+    } else {
+        "folder"
+    };
+    url.query_pairs_mut().clear().append_pair(key, &open.path);
+    url
 }
 
 /// The blank page a window starts on before it has anything to show. `fallback` is only there
@@ -1190,6 +1226,44 @@ mod tests {
             },
             cookie,
             debug_port: None,
+        }
+    }
+
+    #[test]
+    fn the_start_address_is_the_editor_s_root_with_the_place_as_its_only_query() {
+        let origin = Url::parse("http://demo.localhost:4800/").unwrap();
+        let file = OpenTarget {
+            path: "/workspaces/w/.puddle/editor/w.code-workspace".into(),
+            is_workspace_file: true,
+        };
+        let folder = OpenTarget {
+            path: "/workspaces/w/api".into(),
+            is_workspace_file: false,
+        };
+        assert_eq!(
+            start_url(&origin, &file).as_str(),
+            "http://demo.localhost:4800/?workspace=%2Fworkspaces%2Fw%2F.puddle%2Feditor%2Fw.code-workspace"
+        );
+        assert_eq!(
+            start_url(&origin, &folder).as_str(),
+            "http://demo.localhost:4800/?folder=%2Fworkspaces%2Fw%2Fapi"
+        );
+        // A path made to smuggle in a second key, a path or a fragment stays one encoded value.
+        let hostile = OpenTarget {
+            path: "/x&folder=/etc#frag?y=/../../a b".into(),
+            is_workspace_file: false,
+        };
+        let url = start_url(&origin, &hostile);
+        assert_eq!(url.path(), "/");
+        assert_eq!(url.fragment(), None);
+        let pairs: Vec<_> = url.query_pairs().collect();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "folder");
+        assert_eq!(pairs[0].1, "/x&folder=/etc#frag?y=/../../a b");
+        // The window's own policy keeps it where it is, and the origin is the one policy.
+        let policy = OriginPolicy::new(&origin, None);
+        for open in [&file, &folder, &hostile] {
+            assert_eq!(policy.classify(&start_url(&origin, open)), Navigation::Stay);
         }
     }
 

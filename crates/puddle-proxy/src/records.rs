@@ -254,6 +254,19 @@ mod tests {
         assert_eq!(records.len(), MAX_RECORDS);
     }
 
+    #[test]
+    fn txt_is_kept_up_to_the_byte_cap_and_left_out_past_it() {
+        use hickory_resolver::proto::rr::rdata::TXT;
+        let txt = |len: usize| (RData::TXT(TXT::new(vec!["t".repeat(len)])), 60);
+        let answers = [txt(8 * 1024), txt(1)];
+        let (records, _) = collect("example.net", answers.iter().map(|(d, t)| (d, *t)));
+        assert_eq!(
+            records.len(),
+            1,
+            "a string of exactly the cap is kept, the next byte is not"
+        );
+    }
+
     #[tokio::test]
     async fn an_address_type_is_no_data_for_the_record_resolver() {
         let err = SystemRecords

@@ -109,6 +109,10 @@ jobs:
           free=$(df -Pk / | awk 'NR == 2 { print int($4 / 1048576) }')
           [ "$free" -ge 60 ] || echo "::warning title=runner started low on disk::${free} GB free at start (a normal runner has 86 GB)"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Runners of the pool sometimes start with a 72 GB root disk (14 GB free) instead of 145 GB; this removes
+      # the preinstalled toolchains no job uses when under 60 GB is free (ci/free-disk.sh) and prints what it freed.
+      - name: free disk space on a runner that starts low
+        run: ci/free-disk.sh
       - name: anything new since the last green run?
         id: changed
         shell: bash
@@ -207,6 +211,10 @@ jobs:
           free=$(df -Pk / | awk 'NR == 2 { print int($4 / 1048576) }')
           [ "$free" -ge 60 ] || echo "::warning title=runner started low on disk::${free} GB free at start (a normal runner has 86 GB)"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Runners of the pool sometimes start with a 72 GB root disk (14 GB free) instead of 145 GB; this removes
+      # the preinstalled toolchains no job uses when under 60 GB is free (ci/free-disk.sh) and prints what it freed.
+      - name: free disk space on a runner that starts low
+        run: ci/free-disk.sh
       - name: disk after checkout (evidence, never a gate)
         timeout-minutes: 3
         continue-on-error: true

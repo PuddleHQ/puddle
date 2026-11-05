@@ -4664,6 +4664,48 @@ async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes
     host.shutdown().await;
 }
 
+/// A settings change in flight holds the settings lock from its read to its write. A delete that
+/// finishes in between would let the write bring the file back for the next workspace of the
+/// name, so the delete waits for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_file_back() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    let file = rig
+        .dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces")
+        .join("acme.json");
+    let lock = puddle_api::WorkspaceService::settings_lock(host.workspaces()).expect("shared");
+    let in_flight = lock.lock().await;
+    // Straight to the service: the HTTP route reads settings under the same lock.
+    let id = WorkspaceId::new("acme").unwrap();
+    puddle_api::WorkspaceService::delete(host.workspaces(), &id, None)
+        .await
+        .unwrap();
+    // Everything but the settings file goes; that waits on the change in flight.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        file.is_file(),
+        "the delete took the file while a change was in flight"
+    );
+    drop(in_flight);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(
+        !file.exists(),
+        "the delete removes the file once the change is done"
+    );
+    host.shutdown().await;
+}
+
 /// A session the runtime cannot serve ends the client's `ssh` with nothing to read, so the user
 /// is told through the event stream.
 #[tokio::test(flavor = "multi_thread")]

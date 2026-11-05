@@ -46,6 +46,7 @@
 mod browser;
 mod env;
 mod error;
+mod host_memory;
 mod prefix;
 mod runtime;
 pub mod sockets;
@@ -56,6 +57,7 @@ pub use browser::{
 };
 pub use env::{Settings, VmEnv, create_from_registry, registry_of, test_owner, within};
 pub use error::HarnessError;
+pub use host_memory::resident_bytes;
 pub use prefix::RunPrefix;
 pub use runtime::{AMBIENT_MSB_VARS, RuntimePair, refuse_ambient_msb_vars};
 

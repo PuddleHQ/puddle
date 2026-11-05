@@ -1163,6 +1163,7 @@ impl WorkspaceService for FakeWorkspaces {
                             None::<&puddle_settings::WorkspaceSettings>,
                         ),
                         login: None,
+                        open: None,
                     };
                     // The answer the host gives: the launcher opens a window or says why not.
                     Ok(
@@ -1619,6 +1620,7 @@ mod tests {
                 None::<&puddle_settings::WorkspaceSettings>,
             ),
             login: None,
+            open: None,
         };
         launcher.fail_next("no window");
         assert_eq!(

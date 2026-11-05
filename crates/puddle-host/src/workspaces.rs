@@ -32,8 +32,8 @@ use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{
     AttachMode, Attached, BrowserTarget, DEFAULT_IMAGE, DeleteCheck, DesktopTarget, DisplayName,
     EditorLogin, EditorSignIn, GitSetup, KeptLogin, KeptLogins, LaunchError, Launcher, Listing,
-    LocalSource, NewWorkspace, Operation, RepoFindings, Repository, ShellInitCheck, StartFolder,
-    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    LocalSource, NewWorkspace, OpenTarget, Operation, RepoFindings, Repository, ShellInitCheck,
+    StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
@@ -2055,14 +2055,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let guest = entry.and_then(|e| e.guest.as_ref());
         let user = guest.map_or(SessionUser::Root, |g| g.session_user);
-        let (path, is_workspace_file) = match guest {
-            Some(guest) => match &guest.editor_file {
-                Some(file) => (file.path().clone(), true),
-                None => (
-                    crate::editor_file::start_path(&guest.root, record.start_folder.as_ref()),
-                    false,
-                ),
-            },
+        let open = match guest {
+            Some(guest) => Self::open_target(record, guest),
             None => return Err(format!("{name} is not running; start it first")),
         };
         let key = problem_key("ssh", name);
@@ -2076,9 +2070,26 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.clear(&key);
         Ok(DesktopTarget {
             ssh_host: ssh_host(name),
-            path: path.as_str().to_owned(),
-            is_workspace_file,
+            path: open.path,
+            is_workspace_file: open.is_workspace_file,
         })
+    }
+
+    /// What an editor opens in the running `guest`: the multi-root file when the editor opens one,
+    /// else the start folder or the volume root. The desktop and the browser attach share it.
+    fn open_target(record: &WorkspaceRecord, guest: &GuestState) -> OpenTarget {
+        match &guest.editor_file {
+            Some(file) => OpenTarget {
+                path: file.path().as_str().to_owned(),
+                is_workspace_file: true,
+            },
+            None => OpenTarget {
+                path: crate::editor_file::start_path(&guest.root, record.start_folder.as_ref())
+                    .as_str()
+                    .to_owned(),
+                is_workspace_file: false,
+            },
+        }
     }
 
     /// Which server the browser editor runs at this start: Microsoft's only when the user chose
@@ -2141,6 +2152,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 ));
             }
         };
+        // Read under the live lock, released before the launcher is asked.
+        let open = {
+            let live = self.inner.live.lock().await;
+            live.get(name)
+                .and_then(|e| e.guest.as_ref())
+                .map(|guest| Self::open_target(record, guest))
+        };
         let target = BrowserTarget {
             origin: puddle_front::origin_of(self.inner.front_addr.port(), name),
             front: self.inner.front_addr,
@@ -2159,6 +2177,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     EditorSignIn::Form(login)
                 }
             }),
+            open,
         };
         match self.inner.launcher.open_browser(record, &target).await {
             Ok(()) => Attached::opened(),
@@ -2748,7 +2767,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 problem_key("start-refused", name),
                 format!("{name} was not started"),
                 format!(
-                    "Puddle refused to start it, and nothing was attached: {cause}. {}",
+                    "The runtime refused to start it, and nothing was attached: {cause}. {}",
                     cause.way_out()
                 ),
             )
@@ -2803,6 +2822,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.quiesce(name, false).await;
         self.inner.reports.end(name);
         Ok(())
+    }
+
+    /// Deletes the workspace's settings document, so one made later under the same name starts
+    /// from the defaults (direct SSH off). A failure is a notice (the file stays and the name
+    /// would inherit it).
+    fn forget_settings_file(&self, name: &WorkspaceName) {
+        let inner = &self.inner;
+        let key = problem_key("settings", name);
+        match inner.settings.delete_workspace(name) {
+            Ok(()) => inner.problems.clear(&key),
+            Err(e) => inner.problems.raise(Problem::new(
+                key,
+                format!("{name}'s settings were not deleted"),
+                format!(
+                    "{e}. A workspace made later with the name {name} would inherit them, direct \
+                     SSH included; delete the file by hand."
+                ),
+            )),
+        }
     }
 
     /// Deletes what the browser editor kept under `name`: the front's half of Microsoft's secret
@@ -2891,6 +2929,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.name)));
+        self.forget_settings_file(&record.name);
         self.forget_browser_state(&record.name).await;
         Ok(())
     }

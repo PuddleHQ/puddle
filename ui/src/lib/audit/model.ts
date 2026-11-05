@@ -440,16 +440,39 @@ function connectionDetail(
   return parts.join(" · ");
 }
 
-/** A stand-in id is `stand-in:<secret|login>:<name>`; a name carries no colon. */
+/**
+ * A stand-in id is `stand-in:<secret|login>:<name>`; a name carries no colon. A stale one,
+ * shaped like a stand-in that this workspace does not hold, is `stale-stand-in:secret:<name>` or
+ * `stale-stand-in:github`.
+ */
 function standInLabel(id: string): string {
   const [prefix, kind, name] = id.split(":");
   if (prefix !== "stand-in" || name === undefined) return id;
   return kind === "login" ? `login ${name}` : name;
 }
 
+function staleLabel(id: string): string {
+  const [, , name] = id.split(":");
+  return name === undefined ? "a GitHub login" : name;
+}
+
 function unswappedNote(ids: readonly string[]): string {
-  const names = ids.map(standInLabel).join(", ");
-  return `stand-in for ${names} went out unchanged (check the secret's hosts, and that the tool sends it in a header, not in the URL)`;
+  const stale = ids.filter((id) => id.startsWith("stale-stand-in:"));
+  const unswapped = ids.filter((id) => !id.startsWith("stale-stand-in:"));
+  const notes: string[] = [];
+  if (unswapped.length > 0) {
+    const names = unswapped.map(standInLabel).join(", ");
+    notes.push(
+      `stand-in for ${names} went out unchanged (check the secret's hosts, and that the tool sends it in a header, not in the URL)`,
+    );
+  }
+  if (stale.length > 0) {
+    const names = stale.map(staleLabel).join(", ");
+    notes.push(
+      `${names} looks like a stand-in this workspace no longer holds, so it went out unchanged (the secret was removed or the login forgotten: set it again or sign in again, and restart the tool that keeps the old value)`,
+    );
+  }
+  return notes.join(" · ");
 }
 
 function unreachedNote(

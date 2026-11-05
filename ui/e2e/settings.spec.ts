@@ -314,6 +314,25 @@ test("the Save bar stays on screen, its buttons are big enough, and the screen h
   await expectNoAxeViolations(page);
 });
 
+test("the disk warning threshold starts at 95, is saved with the other settings and refuses a value outside 50 to 100", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await openSettings(page, backend);
+  const field = page.getByLabel("Warn when a disk is this full (%)");
+  await expect(field).toHaveValue("95");
+  await field.fill("120");
+  await field.blur();
+  await expect(page.getByRole("alert").filter({ hasText: /50/ })).toBeVisible();
+  await field.fill("80");
+  await field.blur();
+  await pressSave(page);
+  expect((await stored(request, backend)).ui.disk_warning_percent).toBe(80);
+  await page.reload();
+  await expect(field).toHaveValue("80");
+});
+
 test("the notification and inbox switches start at Puddle's defaults, are saved together and survive a reload", async ({
   page,
   backend,
@@ -324,6 +343,7 @@ test("the notification and inbox switches start at Puddle's defaults, are saved 
     notify_only_unfocused: "Only when Puddle is not the window in front",
     badge: "Show the number of waiting requests",
     notify_oom: "A workspace runs out of memory",
+    notify_disk_full: "A workspace's disk is nearly full",
     notify_unexpected_stop: "A workspace stops on its own",
     confirm_global_rules: "Confirm before a rule affects every workspace",
   } as const;

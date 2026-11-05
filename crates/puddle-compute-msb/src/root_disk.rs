@@ -26,7 +26,8 @@ struct Layer {
 }
 
 /// How full the root disk of the sandbox whose folder is `sandbox_dir` is: its capacity and what the files that make up the disk take on the host.
-/// `None` when there is no disk to look at (not made yet, or a layout this does not know).
+/// `None` when there is no disk to look at (not made yet, a layout this does not know, or a
+/// sandbox of the older layout, whose journal msb has not yet moved out of `runtime/`).
 pub(crate) fn usage(sandbox_dir: &Path) -> Option<RootDiskUse> {
     let files = disk_files(sandbox_dir)?;
     let size = capacity(files.last()?)?;

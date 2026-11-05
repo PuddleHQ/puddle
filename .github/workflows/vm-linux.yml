@@ -200,6 +200,10 @@ jobs:
       fail-fast: false
       matrix:
         partition: [1, 2, 3, 4]
+    env:
+      # The hosted runner has passwordless sudo; the doctor test that hands a folder to another uid
+      # fails without it instead of skipping.
+      PUDDLE_REQUIRE_CHOWN: "1"
     steps:
       # A runner that starts nearly full ends in "No space left on device" in its own log, with the job log lost;
       # this line shows the free space and the image of the runner a failed job had. A normal runner starts with

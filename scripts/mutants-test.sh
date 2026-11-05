@@ -205,6 +205,7 @@ wait "$p2" || rc=1
 # Temp dir: cargo-mutants runs with TMPDIR under the target dir (never the system temp dir), removed when the run
 # ends, and the jobs are capped to what the free space holds.
 unset MUTANTS_SHARED_CARGO_HOME
+export CARGO_TARGET_DIR="$tmp/target"
 cat >fake-cargo-tmp <<'F'
 #!/bin/sh
 case $1 in

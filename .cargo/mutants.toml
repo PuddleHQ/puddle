@@ -30,6 +30,12 @@ exclude_globs = [
 
 # Equivalent mutants, each with its reason:
 exclude_re = [
+    # `send_and_pump` cuts the upload off when the response came before the body was in. Without the
+    # cut-off the sender is dropped with the function, so the body still ends in error for a declared
+    # length and, for a chunked body, hyper's connection task would have to write the closing chunk
+    # before the connection is dropped a moment later: no test can fix that order, so the two
+    # outcomes cannot be told apart. (A failed pump has already cut the upload off in the loop.)
+    'session\.rs:\d+:8: delete ! in send_and_pump',
     # `SPLIT_FIRST | ESCAPED_DOTS` combines two flags that share no bit, so `^` gives the same value.
     'replace \| with \^ in Read::all_for',
     # `c != ' '` offers `STRICT_DOTS` for nearly any text. The flag only changes a reading when the
@@ -110,6 +116,11 @@ exclude_re = [
     'puddle-fs/src/allocated\.rs:44:33: replace != with == in allocated_bytes',
     'puddle-fs/src/allocated\.rs:48:25: replace << with >> in allocated_bytes',
     'puddle-fs/src/allocated\.rs:48:32: replace \| with [&^] in allocated_bytes',
+    # Not measured: the Windows `free_bytes_of` is `#[cfg(windows)]`, so a Linux run never compiles it and
+    # every change to it passes; the Windows test job runs its test. The Unix one (line 30) has the same
+    # name and is measured and caught, so each entry holds the position of one mutant of the Windows body.
+    'puddle-fs/src/free\.rs:40:5: replace free_bytes_of ',
+    'puddle-fs/src/free\.rs:55:11: replace == with != in free_bytes_of',
     # `high << 4 | low` style join again: in `tlv` the length bytes are folded with `(acc << 8) | byte`,
     # and `acc << 8` has its low eight bits clear, so `|` and `^` give the same length for every input.
     'der\.rs:\d+:\d+: replace \| with \^ in tlv',

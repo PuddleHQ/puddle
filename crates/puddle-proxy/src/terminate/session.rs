@@ -12,6 +12,7 @@ use hyper::client::conn::http1::SendRequest;
 use puddle_types::{ConnectionOutcome, Host, HttpRequestLine, WorkspaceName};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use zeroize::Zeroizing;
 
 use super::body::{Abort, BodyReader, ChannelBody, pump};
 use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
@@ -562,10 +563,7 @@ where
                 return self.refuse(&refusal).await;
             }
         };
-        if self.outcome.http.is_none() {
-            self.outcome.http = Some(HttpRequestLine::new(parsed.method.as_str(), &parsed.target));
-        }
-        tracing::debug!(host = %self.cx.target.host, method = %parsed.method, path = %puddle_types::request_path(&parsed.target), "terminated request");
+        self.note_request(&parsed);
         if let Some(flow) = self.refuse_by_rule(&parsed, &head).await {
             return flow;
         }
@@ -586,7 +584,7 @@ where
             Ok(headers) => headers,
             Err(refusal) => return self.refuse(&refusal).await,
         };
-        let headers = self.add_credentials(headers, &parsed.target, injection.as_ref());
+        let (headers, target) = self.add_credentials(headers, &parsed.target, injection.as_ref());
         let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
         let (headers, prefetched, mut exchange) = match self
             .begin_exchange(&parsed, &view, headers, prefetched)
@@ -597,12 +595,28 @@ where
         };
         self.exchange(
             &parsed,
+            target
+                .as_ref()
+                .map_or(parsed.target.as_str(), |target| target.as_str()),
             headers,
             unauthorized.as_ref(),
             prefetched,
             exchange.as_mut(),
         )
         .await
+    }
+
+    /// Notes the connection's first request line for the audit, with its stand-ins as labels.
+    fn note_request(&mut self, parsed: &Parsed) {
+        let shown = self
+            .cx
+            .termination
+            .stand_ins()
+            .redact_target(&parsed.target);
+        if self.outcome.http.is_none() {
+            self.outcome.http = Some(HttpRequestLine::new(parsed.method.as_str(), &shown));
+        }
+        tracing::debug!(host = %self.cx.target.host, method = %parsed.method, path = %puddle_types::request_path(&shown), "terminated request");
     }
 
     /// Refuses the request when a rule on method and path names it, before anything is sent
@@ -614,7 +628,14 @@ where
         tracing::info!(%host, %rule, "request refused by a rule on method and path");
         self.outcome.refused_by_rule.get_or_insert_with(|| Refused {
             rule,
-            line: HttpRequestLine::new(&parsed.method, &parsed.target),
+            line: HttpRequestLine::new(
+                &parsed.method,
+                &self
+                    .cx
+                    .termination
+                    .stand_ins()
+                    .redact_target(&parsed.target),
+            ),
         });
         let refusal = request_rules::refusal(rule, &parsed.method, host);
         Some(self.refuse(&refusal).await)
@@ -719,14 +740,14 @@ where
     }
 
     /// Notes the injected credential for the audit, then swaps the workspace's stand-ins in
-    /// `headers` for their real values (the injected headers are left alone) and reports the ones
-    /// found in the request `target`.
+    /// `headers` (the injected headers are left alone) and in the request `target` for their real
+    /// values. The target to send when one was swapped in it.
     fn add_credentials(
         &mut self,
         mut headers: ::http::HeaderMap,
         target: &str,
         injection: Option<&Injection>,
-    ) -> ::http::HeaderMap {
+    ) -> (::http::HeaderMap, Option<Zeroizing<String>>) {
         if let Some(injection) = injection {
             self.outcome.injected = true;
             self.outcome
@@ -740,9 +761,9 @@ where
             .stand_ins()
             .swap(&mut headers, host, injection);
         self.outcome.record_stand_ins(host, &swapped);
-        let in_target = self.cx.termination.stand_ins().scan_target(target);
+        let (target, in_target) = self.cx.termination.stand_ins().swap_target(target, host);
         self.outcome.record_stand_ins(host, &in_target);
-        headers
+        (headers, target)
     }
 
     /// Makes sure a verified upstream connection exists.
@@ -823,10 +844,14 @@ where
     /// Writes `response` to the guest while the guest's read side is polled (see [`keep_reading`]).
     async fn write_response(
         &mut self,
-        response: ::http::Response<AnswerBody>,
+        mut response: ::http::Response<AnswerBody>,
         parsed: &Parsed,
         config: &ProxyConfig,
     ) -> io::Result<response::Written> {
+        self.cx
+            .termination
+            .stand_ins()
+            .hide_in_answer(response.headers_mut(), &self.cx.target.host);
         tokio::select! {
             written = response::write(
                 &mut self.writer,
@@ -936,6 +961,7 @@ where
     async fn exchange(
         &mut self,
         parsed: &Parsed,
+        target: &str,
         headers: ::http::HeaderMap,
         unauthorized: Option<&Unauthorized>,
         prefetched: Option<Bytes>,
@@ -951,7 +977,7 @@ where
             None => (parsed.body, ChannelBody::new(parsed.body)),
         };
         let has_body = !matches!(framing, http::Body::None | http::Body::Length(0));
-        let Some(request) = upstream_request(parsed, headers, channel) else {
+        let Some(request) = upstream_request(parsed, target, headers, channel) else {
             return self
                 .refuse(&Refusal::new("400 Bad Request", "malformed request"))
                 .await;
@@ -996,9 +1022,8 @@ where
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,
             Ok(_) => {
-                if !body_complete && has_body {
-                    self.upstream = None;
-                }
+                // The upload may be cut short: this upstream connection is never used again.
+                self.upstream = None;
                 Flow::Close
             }
             Err(err) => {
@@ -1014,6 +1039,7 @@ where
 /// and the guest's body as it is decoded. A WebSocket handshake keeps its `Upgrade` headers.
 fn upstream_request(
     parsed: &Parsed,
+    target: &str,
     mut headers: ::http::HeaderMap,
     body: ChannelBody,
 ) -> Option<::http::Request<UpBody>> {
@@ -1030,7 +1056,7 @@ fn upstream_request(
     let body: UpBody = body.map_err(|err| Box::new(err) as BoxError).boxed_unsync();
     let mut builder = ::http::Request::builder()
         .method(parsed.method.as_str())
-        .uri(parsed.target.as_str())
+        .uri(target)
         .version(::http::Version::HTTP_11);
     if let Some(map) = builder.headers_mut() {
         *map = headers;
@@ -1101,7 +1127,7 @@ where
             } => break None,
         }
     };
-    if has_body && !matches!(pumped, Some(Ok(()))) {
+    if !matches!(pumped, Some(Ok(()))) {
         // The response came before the body was in, or the body failed: cut the upload off so
         // the upstream sees a failed request, before the sender goes away.
         abort.abort();

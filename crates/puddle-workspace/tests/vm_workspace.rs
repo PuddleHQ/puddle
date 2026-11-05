@@ -750,6 +750,62 @@ async fn vm_trim_returns_deleted_root_disk_space_to_the_host_image() {
     rt.remove(&name).await.unwrap();
 }
 
+/// A volume no sandbox holds (its sandbox removed, as when the workspace list lost its entry)
+/// still gives up its checkouts: a maintenance sandbox reads the repository the guest made, with
+/// its remote and branch, and leaves the volume as it found it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_restore_reads_checkouts_of_an_unheld_volume() {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let (id, name) = names(&settings, "orphan");
+    let w = workspaces();
+    let layout = Layout::new(&id).unwrap();
+    let repo = layout.checkout(&repo_dir()).unwrap();
+
+    let sb = w
+        .create(rt, &id, base_spec(&name), Some(DiskSize::gib(2)))
+        .await
+        .unwrap();
+    sh_ok(
+        &sb,
+        &format!(
+            "set -e; git init -q -b main '{repo}'; cd '{repo}'; \
+             git config user.email vm@example.org; git config user.name 'VM Test'; \
+             echo hi > note.txt; git add note.txt; git commit -q -m first; \
+             git remote add origin https://example.test/team/lab.git"
+        ),
+    )
+    .await;
+    w.stop(&sb).await.unwrap();
+    drop(sb);
+    rt.remove(&name).await.unwrap();
+    w.sandbox_removed(&name);
+
+    let list = w.list_checkouts_of_unheld_volume(rt, &id).await.unwrap();
+    assert_eq!(list.checkouts.len(), 1, "{list:?}");
+    let found = &list.checkouts[0];
+    assert_eq!(found.dir, "repo");
+    assert_eq!(
+        found.remote_url.as_deref(),
+        Some("https://example.test/team/lab.git")
+    );
+    assert_eq!(found.branch.as_deref(), Some("main"));
+    assert!(!found.dirty, "{found:?}");
+    assert!(
+        rt.list()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| !puddle_workspace::is_maintenance_name(&s.name)),
+        "the maintenance sandbox is gone"
+    );
+
+    // The volume is untouched: a second read gives the same answer.
+    let again = w.list_checkouts_of_unheld_volume(rt, &id).await.unwrap();
+    assert_eq!(again, list);
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+}
+
 /// The root-disk figures msb's listing gives for `name`.
 async fn root_disk_of(rt: &MsbRuntime, name: &SandboxName) -> puddle_compute::RootDiskUse {
     rt.list()

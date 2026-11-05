@@ -12,6 +12,7 @@ FAIL  Test boot           msb exited with 1 without booting the test VM
       from: error: no hypervisor
             msb's logs of this boot were not kept: no folder to keep them in under
             /home/dev/kept: Permission denied
+ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -50,6 +51,11 @@ FAIL  Test boot           msb exited with 1 without booting the test VM
       "finding": "boot_failed",
       "fix": "msb starts but can't boot a VM. If endpoint security runs on this PC, check its log for msb: it must be allowed to start virtual machines through the hypervisor. Otherwise restart the PC and run puddle doctor again, and include the lines below when you report it.",
       "detail": "error: no hypervisor\nmsb's logs of this boot were not kept: no folder to keep them in under /home/dev/kept: Permission denied"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
     }
   ],
   "elapsed_ms": 1234

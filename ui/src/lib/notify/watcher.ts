@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Turns the shell's event stream into notices: out-of-memory kills, a workspace that stopped
-// or crashed without being asked to, and a network that got worse.
+// or crashed without being asked to, a network that got worse, and a drive that runs low on room.
 //
 // "Without being asked": a stop is expected when the stream said the workspace was stopping,
 // draining or being removed since it last ran. A stop with none of those, or a crash, is not.
@@ -14,9 +14,11 @@ import {
   type NetworkHealth,
 } from "#lib/network/model.ts";
 import { asWorkspaceEvent } from "#lib/workspaces/events.ts";
+import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { identities } from "#lib/stores/identities.svelte.ts";
 import type { LiveSource } from "#lib/stores/live.svelte.ts";
 import { CredentialNotices, type IdentityLookup } from "./credentials.ts";
+import { DiskSpaceNotices } from "./disk-space.ts";
 import { LearnedNotices } from "#lib/interception/learned.ts";
 import { EnvironmentNotices } from "./environment.ts";
 import { LoginNotices } from "./logins.ts";
@@ -38,6 +40,8 @@ export interface WatcherDeps {
   api?: Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
   /** What the sign-in notice asks of the identities; the app's own by default. */
   identities?: IdentityLookup;
+  /** Whether the free-space notice is wanted (Settings, Notifications); the stored choice by default. */
+  lowDiskSpaceNotice?: () => boolean;
 }
 
 export class NoticeWatcher {
@@ -49,6 +53,7 @@ export class NoticeWatcher {
   readonly #environment: EnvironmentNotices;
   readonly #learned: LearnedNotices;
   readonly #problems: ProblemNotices;
+  readonly #diskSpace: DiskSpaceNotices;
   readonly #status = new Map<string, Status>();
   readonly #expected = new Set<string>();
   /** The summary the network notice last said, so an unchanged problem is not announced again. */
@@ -67,6 +72,11 @@ export class NoticeWatcher {
     this.#environment = new EnvironmentNotices(this.#notifier);
     this.#learned = new LearnedNotices(this.#notifier, this.#api);
     this.#problems = new ProblemNotices(this.#notifier, this.#api);
+    this.#diskSpace = new DiskSpaceNotices(
+      this.#notifier,
+      deps.lowDiskSpaceNotice ??
+        (() => globalSettings.view?.ui.notify_low_disk_space ?? true),
+    );
   }
 
   /** Reads the statuses the events will be compared with; never throws. */
@@ -91,7 +101,8 @@ export class NoticeWatcher {
       this.#logins.handle(raw) ||
       this.#environment.handle(raw) ||
       this.#learned.handle(raw) ||
-      this.#problems.handle(raw)
+      this.#problems.handle(raw) ||
+      this.#diskSpace.handle(raw)
     ) {
       return;
     }

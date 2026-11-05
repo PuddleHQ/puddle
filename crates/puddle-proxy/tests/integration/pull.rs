@@ -119,6 +119,28 @@ async fn the_right_token_tunnels_both_ways() {
     assert_eq!(server.accepted.load(Ordering::SeqCst), 1);
 }
 
+/// The pull proxy carries registry traffic only, so it never looks for SSH: a first upload that
+/// starts like an SSH identification line is passed on like any other bytes.
+#[tokio::test]
+async fn a_pull_tunnel_passes_on_bytes_that_look_like_an_ssh_banner() {
+    let endpoints = PuddleEndpoints::new();
+    let server = echo().await;
+    let (route, good) = pull_proxy(&endpoints, Some(LOCAL));
+    let target = format!("registry.test:{}", server.addr.port());
+    let (head, mut s) = send(
+        route.local_addr(),
+        &connect(&target, Some(&format!("Basic {good}"))),
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 200 "), "{head}");
+    let banner = b"SSH-2.0-OpenSSH_10.0\r\n";
+    s.write_all(banner).await.unwrap();
+    s.shutdown().await.unwrap();
+    let mut back = Vec::new();
+    s.read_to_end(&mut back).await.unwrap();
+    assert_eq!(back, banner);
+}
+
 #[tokio::test]
 async fn plain_http_is_forwarded_without_the_proxy_credentials() {
     let endpoints = PuddleEndpoints::new();

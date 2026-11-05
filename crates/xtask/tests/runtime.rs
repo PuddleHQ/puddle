@@ -82,26 +82,26 @@ fn fixture(dir: &Path, embedded: &str) -> PathBuf {
     let msb = src.join("fork").join(MSB_ASSET);
     std::fs::write(&msb, fake_msb(embedded)).unwrap();
     let msb_linux = src.join("fork").join(MSB_LINUX_ASSET);
+    let fw = src.join("fork").join(LIBKRUNFW_ASSET);
+    std::fs::write(&fw, b"firmware bytes").unwrap();
     std::fs::write(&msb_linux, fake_msb_in(BinaryFormat::Elf, embedded)).unwrap();
     std::fs::write(
         src.join("fork").join(CHECKSUMS_ASSET),
         format!(
-            "{}  {MSB_ASSET}\n{}  {MSB_LINUX_ASSET}\n",
+            "{}  {MSB_ASSET}\n{}  {MSB_LINUX_ASSET}\n{}  {LIBKRUNFW_ASSET}\n",
             sha256_file(&msb).unwrap(),
-            sha256_file(&msb_linux).unwrap()
+            sha256_file(&msb_linux).unwrap(),
+            sha256_file(&fw).unwrap()
         ),
     )
     .unwrap();
-    let fw = src.join("upstream").join(LIBKRUNFW_ASSET);
-    std::fs::write(&fw, b"firmware bytes").unwrap();
     let fw_linux = src.join("upstream").join(LIBKRUNFW_LINUX_ASSET);
     std::fs::write(&fw_linux, b"linux firmware bytes").unwrap();
     std::fs::write(
         src.join("upstream").join(CHECKSUMS_ASSET),
         format!(
-            "{}  agentd-x86_64\n{}  {LIBKRUNFW_ASSET}\n{}  {LIBKRUNFW_LINUX_ASSET}\n",
+            "{}  agentd-x86_64\n{}  {LIBKRUNFW_LINUX_ASSET}\n",
             "0".repeat(64),
-            sha256_file(&fw).unwrap(),
             sha256_file(&fw_linux).unwrap()
         ),
     )
@@ -295,7 +295,7 @@ fn a_corrupted_msb_is_refused() {
 fn a_corrupted_firmware_is_refused() {
     let dir = TempDir::new("corruptfw");
     let src = fixture(&dir.0, VERSION);
-    std::fs::write(src.join("upstream").join(LIBKRUNFW_ASSET), b"tampered").unwrap();
+    std::fs::write(src.join("fork").join(LIBKRUNFW_ASSET), b"tampered").unwrap();
     assert_fails_cleanly(
         &dir,
         &src,
@@ -684,4 +684,46 @@ fn a_pinned_fork_release_the_facts_do_not_describe_is_refused() {
     let err = run_linux(&src, &out).unwrap_err().to_string();
     assert!(err.contains("v5.6.1-puddle.1"), "{err}");
     assert!(!out.exists());
+}
+
+#[test]
+fn the_windows_firmware_is_the_fork_releases_dll_and_the_notice_says_so() {
+    let dir = TempDir::new("winfw");
+    let src = fixture(&dir.0, VERSION);
+    // A different dll under upstream's release must never be the one shipped.
+    std::fs::write(src.join("upstream").join(LIBKRUNFW_ASSET), b"upstream dll").unwrap();
+    let out = dir.0.join("out");
+    run(&src, &out).unwrap();
+    assert_eq!(
+        std::fs::read(out.join(WIN.libkrunfw)).unwrap(),
+        b"firmware bytes"
+    );
+    let notice = read(&out.join("licenses/NOTICE.txt"));
+    assert!(notice.contains(&format!("the release v{VERSION} of PuddleHQ/microsandbox")));
+    assert!(!notice.contains("unchanged. The"));
+}
+
+/// `cargo xtask runtime` and the CI fetch must ship and run the same dll: both take it from the
+/// fork release named in the pin list, and the list pins it for the version the build expects.
+#[test]
+fn the_windows_dll_xtask_ships_is_the_one_the_ci_fetch_pins() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let script = read(&root.join("ci/fetch-msb.sh"));
+    let fetches_from_fork = script.lines().any(|l| {
+        l.trim_start().starts_with("fetch \"$fork_repo\" \"$tag\"")
+            && l.contains(&LIBKRUNFW_ASSET.replace("x86_64", "$arch"))
+    });
+    assert!(
+        fetches_from_fork,
+        "ci/fetch-msb.sh no longer fetches {LIBKRUNFW_ASSET} from the fork release"
+    );
+    let tag = format!("v{}", puddle_runtime::BUILT_FOR);
+    let pins = read(&root.join("ci/msb-runtime.sha256"));
+    assert!(
+        pins.lines().any(|l| {
+            let f: Vec<_> = l.split_whitespace().collect();
+            f.len() == 3 && f[0] == tag && f[1] == LIBKRUNFW_ASSET
+        }),
+        "ci/msb-runtime.sha256 pins no {LIBKRUNFW_ASSET} for {tag}"
+    );
 }

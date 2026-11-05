@@ -2,7 +2,7 @@
 //! Rule sets and System managed on the wire (rules spec §7).
 
 use puddle_store as store;
-use puddle_types::{Fill, RuleSetId, WorkspaceName};
+use puddle_types::{Fill, RuleSetId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -63,7 +63,7 @@ pub struct SystemManagedHost {
     pub reason_text: String,
     /// The one workspace it is allowed for; `null` for every workspace.
     #[schema(required = true)]
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
 }
 
 impl SystemManagedHost {
@@ -92,7 +92,7 @@ pub enum RuleSetKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RuleSetOverride {
     /// The workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// On or off there.
     pub enabled: bool,
 }
@@ -252,7 +252,7 @@ pub struct RuleSetUpdateRequest {
 pub struct RuleSetSwitchRequest {
     /// The workspace whose own switch to set; left out or `null` for every workspace.
     #[serde(default)]
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// On or off; `null` removes the switch, so the next level decides (the global switch, then
     /// the set's default).
     #[schema(required = true)]

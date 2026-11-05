@@ -36,7 +36,6 @@ use puddle_test_kit::{eventually, next_event_matching, no_event_matching};
 use puddle_types::fixture;
 use puddle_types::{
     DiskSpaceLevel, Event, EventSink, GuestEnv, GuestPath, ImageRef, SandboxName, WorkspaceId,
-    WorkspaceName,
 };
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH, PREPARE_SH};
@@ -598,14 +597,14 @@ impl Launcher for RecordingLauncher {
 
     fn close_browser<'a>(
         &'a self,
-        workspace: &'a WorkspaceName,
+        workspace: &'a WorkspaceId,
     ) -> futures_util::future::BoxFuture<'a, ()> {
         Box::pin(async move { self.closed.lock().unwrap().push(workspace.to_string()) })
     }
 
     fn forget_browser<'a>(
         &'a self,
-        workspace: &'a WorkspaceName,
+        workspace: &'a WorkspaceId,
     ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
             self.forgotten.lock().unwrap().push(workspace.to_string());
@@ -1016,7 +1015,7 @@ async fn ending_the_extension_hosts_of_a_workspace_that_has_no_agent_says_it_is_
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    let name = WorkspaceName::new("hosts").unwrap();
+    let name = WorkspaceId::new("hosts").unwrap();
     let not_running = |result: Result<_, puddle_host::EndExtensionHostsError>| {
         assert!(
             matches!(result, Err(puddle_host::EndExtensionHostsError::NotRunning)),
@@ -1040,7 +1039,7 @@ async fn switching_an_editor_build_needs_no_connected_window_and_a_running_agent
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    let name = WorkspaceName::new("builds").unwrap();
+    let name = WorkspaceId::new("builds").unwrap();
     // A window on the server: refused before anything is asked of the guest, even for a
     // workspace that does not exist.
     let refused = host.workspaces().switch_editor_build(&name, 2).await;
@@ -1077,7 +1076,7 @@ async fn a_round_of_build_switches_asks_only_microsoft_workspaces_without_a_wind
     assert_eq!(workspaces.switch_idle_editor_builds(&windows).await, 0);
     create(&api, &mut events, "ms").await;
     assert_eq!(workspaces.switch_idle_editor_builds(&windows).await, 1);
-    let window = windows.open(&WorkspaceName::new("ms").unwrap());
+    let window = windows.open(&WorkspaceId::new("ms").unwrap());
     assert_eq!(workspaces.switch_idle_editor_builds(&windows).await, 0);
     drop(window);
     api.post("/api/workspaces/ms/stop", "").await;
@@ -1328,7 +1327,7 @@ fn git_settings_at_each_clone(
     workspace: &str,
 ) -> Arc<Mutex<Vec<String>>> {
     let store = host.store().clone();
-    let workspace = WorkspaceName::new(workspace).unwrap();
+    let workspace = WorkspaceId::new(workspace).unwrap();
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();
     let look = seen.clone();
     *rig.guest.at_clone.lock().unwrap() = Some(Box::new(move |url: &str| {
@@ -2496,7 +2495,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
     // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
     editor.dir = "/nonexistent/release".into();
     editor.port = port;
-    let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();
+    let sandbox = WorkspaceId::new(name).unwrap().sandbox_name();
     let route = rig.runtime.routes(&sandbox).first().unwrap().host.clone();
     let agent = puddle_agent::Agent::start(puddle_agent::Config {
         listen: std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 0),
@@ -2646,7 +2645,7 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
         "the workspace's own setting reaches the window"
     );
     // No window has connected to the editor, so the front counts none.
-    let acme = WorkspaceName::new("acme").unwrap();
+    let acme = WorkspaceId::new("acme").unwrap();
     assert_eq!(host.editor_windows().connected(&acme), 0);
     // code-server asks for a password: the window reads it when it signs in, from the guest's file.
     // The agent may say hello after the window asked: the sign-in waits for it.
@@ -3301,7 +3300,7 @@ async fn a_new_workspace_gets_the_memory_the_settings_name() {
 /// The CPUs the fake guest of `name` has online, as the fake's `/sys/devices/system/cpu/online`.
 async fn online_cpus(rig: &Rig, name: &str) -> String {
     use puddle_compute::Sandbox as _;
-    let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();
+    let sandbox = WorkspaceId::new(name).unwrap().sandbox_name();
     let out = rig
         .runtime
         .get(&sandbox)
@@ -3398,7 +3397,7 @@ async fn a_create_that_needs_the_default_memory_is_refused_while_the_settings_ar
     assert!(
         !host
             .workspaces()
-            .direct_ssh_allowed(&WorkspaceName::new("acme").unwrap())
+            .direct_ssh_allowed(&WorkspaceId::new("acme").unwrap())
     );
     assert!(file.is_file(), "the damaged file is left for the user");
     host.shutdown().await;
@@ -4596,7 +4595,7 @@ async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
     let mut events = api.events().await;
     allow_direct_ssh(&api, "acme", true).await;
     create(&api, &mut events, "acme").await;
-    let name = WorkspaceName::new("acme").unwrap();
+    let name = WorkspaceId::new("acme").unwrap();
     let endpoint: PathBuf = host.workspaces().ssh_endpoint(&name).await.unwrap();
     assert_ne!(endpoint.as_os_str(), "");
     api.post("/api/workspaces/acme/stop", "").await;
@@ -4613,7 +4612,7 @@ async fn a_new_workspace_does_not_inherit_the_settings_of_a_deleted_one_of_the_s
     let mut events = api.events().await;
     allow_direct_ssh(&api, "acme", true).await;
     create(&api, &mut events, "acme").await;
-    let name = WorkspaceName::new("acme").unwrap();
+    let name = WorkspaceId::new("acme").unwrap();
     assert!(host.workspaces().direct_ssh_allowed(&name));
     let file = rig
         .dir
@@ -4665,6 +4664,48 @@ async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes
     host.shutdown().await;
 }
 
+/// A settings change in flight holds the settings lock from its read to its write. A delete that
+/// finishes in between would let the write bring the file back for the next workspace of the
+/// name, so the delete waits for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_file_back() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    allow_direct_ssh(&api, "acme", true).await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    let file = rig
+        .dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces")
+        .join("acme.json");
+    let lock = puddle_api::WorkspaceService::settings_lock(host.workspaces()).expect("shared");
+    let in_flight = lock.lock().await;
+    // Straight to the service: the HTTP route reads settings under the same lock.
+    let id = WorkspaceId::new("acme").unwrap();
+    puddle_api::WorkspaceService::delete(host.workspaces(), &id, None)
+        .await
+        .unwrap();
+    // Everything but the settings file goes; that waits on the change in flight.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        file.is_file(),
+        "the delete took the file while a change was in flight"
+    );
+    drop(in_flight);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(
+        !file.exists(),
+        "the delete removes the file once the change is done"
+    );
+    host.shutdown().await;
+}
+
 /// A session the runtime cannot serve ends the client's `ssh` with nothing to read, so the user
 /// is told through the event stream.
 #[tokio::test(flavor = "multi_thread")]
@@ -4675,7 +4716,7 @@ async fn an_ssh_session_the_runtime_cannot_serve_reaches_the_user_as_an_event() 
     let mut events = api.events().await;
     allow_direct_ssh(&api, "acme", true).await;
     create(&api, &mut events, "acme").await;
-    let name = WorkspaceName::new("acme").unwrap();
+    let name = WorkspaceId::new("acme").unwrap();
     let endpoint: PathBuf = host.workspaces().ssh_endpoint(&name).await.unwrap();
     rig.runtime.inject(
         Op::ServeSsh,
@@ -4718,7 +4759,7 @@ async fn with_direct_ssh_off_there_is_no_ssh_endpoint_and_the_gate_says_no() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let name = WorkspaceName::new("acme").unwrap();
+    let name = WorkspaceId::new("acme").unwrap();
     assert_eq!(
         api.get("/api/workspaces/acme").await.json()["status"],
         "running"
@@ -4776,7 +4817,7 @@ async fn turning_direct_ssh_on_and_off_opens_and_closes_the_endpoint_at_once() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let name = WorkspaceName::new("acme").unwrap();
+    let name = WorkspaceId::new("acme").unwrap();
 
     allow_direct_ssh(&api, "acme", true).await;
     assert!(host.workspaces().direct_ssh_allowed(&name));
@@ -4929,7 +4970,7 @@ async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     create(&api, &mut events, "acme").await;
-    let name = WorkspaceName::new("acme").unwrap();
+    let name = WorkspaceId::new("acme").unwrap();
     assert!(host.workspaces().ssh_endpoint(&name).await.is_some());
     // Its own switch wins over the default.
     allow_direct_ssh(&api, "acme", false).await;
@@ -4975,7 +5016,7 @@ async fn the_runtime_gets_the_login_key_and_the_ssh_entry_follows_the_endpoint()
 
     let api = api(&host);
     let mut events = api.events().await;
-    let name = WorkspaceName::new("acme").unwrap();
+    let name = WorkspaceId::new("acme").unwrap();
     // Off: no entry, and the user's own file is not touched.
     create(&api, &mut events, "acme").await;
     assert!(ssh_hosts(&rig).is_empty());
@@ -5272,7 +5313,7 @@ async fn an_endpoint_that_cannot_open_is_reported_and_ends_when_it_can() {
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    let name = WorkspaceName::new("acme").unwrap();
+    let name = WorkspaceId::new("acme").unwrap();
     allow_direct_ssh(&api, "acme", true).await;
     create(&api, &mut events, "acme").await;
     let endpoint = host.workspaces().ssh_endpoint(&name).await.unwrap();
@@ -5679,8 +5720,8 @@ async fn attach(api: &Api, workspace: &str, identity: i64) {
     assert_eq!(reply.status, 200, "{}", reply.body);
 }
 
-fn name(workspace: &str) -> WorkspaceName {
-    WorkspaceName::new(workspace).unwrap()
+fn name(workspace: &str) -> WorkspaceId {
+    WorkspaceId::new(workspace).unwrap()
 }
 
 fn decrypts(host: &Host<FakeRuntime>, workspace: &str, site: &str) -> bool {
@@ -6357,7 +6398,7 @@ async fn each_start_gets_an_injector_built_for_its_workspace_from_the_hosts_stor
     let mut options = hermetic_options();
     let record = built.clone();
     options.injector = Some(Arc::new(
-        move |inputs: &puddle_host::InjectorInputs, workspace: &WorkspaceName| {
+        move |inputs: &puddle_host::InjectorInputs, workspace: &WorkspaceId| {
             record
                 .lock()
                 .unwrap()
@@ -6382,7 +6423,7 @@ async fn each_start_gets_an_injector_built_for_its_workspace_from_the_hosts_stor
         );
     }
     let made = built.lock().unwrap().clone();
-    let workspaces: Vec<&WorkspaceName> = made.iter().map(|(w, _)| w).collect();
+    let workspaces: Vec<&WorkspaceId> = made.iter().map(|(w, _)| w).collect();
     assert_eq!(workspaces, [&name("acme"), &name("beta")]);
     assert!(
         made.iter()
@@ -6684,7 +6725,7 @@ async fn an_image_the_boot_plan_cannot_take_fails_the_start_and_leaves_nothing_b
 }
 
 /// Attaches a new identity to `workspace`, as a user clicking would.
-fn attach_a_new_identity(store: &puddle_store::Store, workspace: &WorkspaceName) {
+fn attach_a_new_identity(store: &puddle_store::Store, workspace: &WorkspaceId) {
     let host = puddle_secrets::HostName::new("github.com").unwrap();
     let credential = puddle_store::CredentialBinding::new(
         &host,
@@ -8849,7 +8890,7 @@ async fn a_root_disk_at_the_threshold_is_flagged_and_announced_once_until_it_dro
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let sandbox = WorkspaceName::new("acme").unwrap().sandbox_name();
+    let sandbox = WorkspaceId::new("acme").unwrap().sandbox_name();
     let list = || async { api.get("/api/workspaces").await.json()["workspaces"][0].clone() };
 
     // Below the default 95 %: the figures show, nothing is flagged.
@@ -8915,7 +8956,7 @@ async fn a_runtime_that_cannot_list_leaves_the_last_root_disk_figures() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let sandbox = WorkspaceName::new("acme").unwrap().sandbox_name();
+    let sandbox = WorkspaceId::new("acme").unwrap().sandbox_name();
     rig.runtime.set_root_disk_use(
         &sandbox,
         puddle_compute::DiskSize::mib(4096),
@@ -8974,7 +9015,7 @@ async fn resetting_the_root_disk_needs_a_stopped_workspace_and_keeps_the_volume(
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let sandbox = WorkspaceName::new("acme").unwrap().sandbox_name();
+    let sandbox = WorkspaceId::new("acme").unwrap().sandbox_name();
     let volume = WorkspaceId::new("acme").unwrap().volume_name();
 
     let running = api.post("/api/workspaces/acme/reset-root-disk", "").await;
@@ -9048,7 +9089,7 @@ async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_d
         problem.detail
     );
     assert_eq!(
-        problem.workspace.as_ref().map(WorkspaceName::as_str),
+        problem.workspace.as_ref().map(WorkspaceId::as_str),
         Some("acme")
     );
 
@@ -9876,7 +9917,7 @@ async fn agent_says(
     use futures_util::StreamExt as _;
     use puddle_agent_proto::tokio_yamux::Session;
     use tokio::io::AsyncWriteExt as _;
-    let sandbox = WorkspaceName::new(name).unwrap().sandbox_name();
+    let sandbox = WorkspaceId::new(name).unwrap().sandbox_name();
     let routes = rig.runtime.routes(&sandbox);
     let route = routes.first().unwrap();
     let conn = puddle_ipc::connect(&route.host).await.unwrap();
@@ -9936,7 +9977,7 @@ async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_gues
         host.problems()
             .list()
             .iter()
-            .all(|p| p.workspace.as_ref().map(WorkspaceName::as_str) == Some("acme")),
+            .all(|p| p.workspace.as_ref().map(WorkspaceId::as_str) == Some("acme")),
         "{:?}",
         host.problems().list()
     );
@@ -10302,7 +10343,7 @@ async fn a_pinned_forward_follows_the_workspace_through_stop_start_and_delete() 
     assert!(tokio::net::TcpStream::connect(addr).await.is_err());
     assert_eq!(
         host.store()
-            .pinned_ports(&WorkspaceName::new("acme").unwrap())
+            .pinned_ports(&WorkspaceId::new("acme").unwrap())
             .unwrap(),
         []
     );
@@ -10312,7 +10353,7 @@ async fn a_pinned_forward_follows_the_workspace_through_stop_start_and_delete() 
     // Deleting the workspace removes its pins with it.
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
-    let name = WorkspaceName::new("acme").unwrap();
+    let name = WorkspaceId::new("acme").unwrap();
     assert_eq!(host.store().pinned_ports(&name).unwrap().len(), 1);
     let delete = api
         .delete(
@@ -10699,6 +10740,29 @@ async fn a_restore_makes_a_working_list_entry_with_the_disk_untouched_and_ends_i
     assert_eq!(listed["workspaces"][0]["name"], "lost", "{listed}");
     assert_eq!(orphan_ids(&api2).await, ["other"]);
     again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_whose_list_cannot_be_saved_leaves_no_entry_and_the_disk_unclaimed() {
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    let host = rig.start().await;
+    let api = api(&host);
+    make_unwritable(&list_path(&rig));
+
+    let reply = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert!(reply.body.contains("was not restored"), "{}", reply.body);
+    assert!(
+        api.get("/api/workspaces").await.json()["workspaces"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(orphan_ids(&api).await, ["lost"]);
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

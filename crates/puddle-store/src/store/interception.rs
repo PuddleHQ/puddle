@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The "decrypt every host" switch of each workspace and the names that are never decrypted.
 
-use puddle_types::{Event, WorkspaceName};
+use puddle_types::{Event, WorkspaceId};
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::{Store, lock};
@@ -43,7 +43,7 @@ impl Default for LearnedLimits {
 }
 
 /// Tells the running workspace to read what it decrypts again.
-fn changed(fx: &mut Vec<Event>, workspace: &WorkspaceName) {
+fn changed(fx: &mut Vec<Event>, workspace: &WorkspaceId) {
     // The event that makes the host recompute what a running workspace decrypts.
     fx.push(Event::WorkspaceGitChanged {
         workspace: workspace.clone(),
@@ -57,7 +57,7 @@ impl Store {
     /// A database error.
     pub fn workspace_interception(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
     ) -> Result<WorkspaceInterception, StoreError> {
         let conn = lock(&self.conn);
         let decrypt_all = conn
@@ -152,7 +152,7 @@ impl Store {
                 )?;
                 let names = stmt.query_map([], |r| r.get::<_, String>(0))?;
                 for name in names.flatten() {
-                    if let Ok(workspace) = WorkspaceName::new(&name) {
+                    if let Ok(workspace) = WorkspaceId::new(&name) {
                         changed(fx, &workspace);
                     }
                 }
@@ -165,7 +165,7 @@ impl Store {
     ///
     /// # Errors
     /// A database error; nothing changes then.
-    pub fn set_decrypt_all(&self, workspace: &WorkspaceName, on: bool) -> Result<(), StoreError> {
+    pub fn set_decrypt_all(&self, workspace: &WorkspaceId, on: bool) -> Result<(), StoreError> {
         let before = self.workspace_interception(workspace)?.decrypt_all;
         self.change(|tx, _now, fx| {
             tx.execute(
@@ -187,7 +187,7 @@ impl Store {
     /// A database error; nothing changes then.
     pub fn set_never_decrypt(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         patterns: &[String],
     ) -> Result<(), StoreError> {
         let before = self.workspace_interception(workspace)?.never_decrypt;
@@ -230,7 +230,7 @@ impl Store {
                 .prepare("SELECT workspace_id FROM workspace_interception WHERE decrypt_all = 1")?;
             let names = stmt.query_map([], |r| r.get::<_, String>(0))?;
             for name in names.flatten() {
-                if let Ok(workspace) = WorkspaceName::new(&name) {
+                if let Ok(workspace) = WorkspaceId::new(&name) {
                     changed(fx, &workspace);
                 }
             }
@@ -242,7 +242,7 @@ impl Store {
 /// Removes what a deleted workspace held. The workspace's own change event covers it.
 pub(super) fn delete_workspace_rows(
     tx: &Transaction<'_>,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
 ) -> Result<(), StoreError> {
     tx.execute(
         "DELETE FROM workspace_interception WHERE workspace_id = ?1",
@@ -274,8 +274,8 @@ mod tests {
         }
     }
 
-    fn ws(text: &str) -> WorkspaceName {
-        WorkspaceName::new(text).unwrap()
+    fn ws(text: &str) -> WorkspaceId {
+        WorkspaceId::new(text).unwrap()
     }
 
     fn strings(items: &[&str]) -> Vec<String> {

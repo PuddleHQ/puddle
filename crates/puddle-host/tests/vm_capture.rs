@@ -40,7 +40,7 @@ use std::time::Duration;
 use puddle_e2e::lab::{WebHost, WebOptions, pip_index};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Resolution, Scope};
 use puddle_test_kit::{eventually, eventually_async};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended, hermetic_options};
 use vm_support::{
@@ -56,7 +56,7 @@ const INDEX: &str = "index.invalid";
 const PROJECT: &str = "puddle-probe";
 
 /// Creates a workspace on `host` whose sandbox may reach `allowed` and returns its name.
-async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -> WorkspaceName {
+async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -> WorkspaceId {
     create_workspace_from(vm, api, tag, allowed, json!({"memory_mib": 1024})).await
 }
 
@@ -67,9 +67,9 @@ async fn create_workspace_from(
     tag: &str,
     allowed: &[&str],
     extra: serde_json::Value,
-) -> WorkspaceName {
+) -> WorkspaceId {
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
-    let workspace = WorkspaceName::new(&name).unwrap();
+    let workspace = WorkspaceId::new(&name).unwrap();
     for site in allowed {
         vm.host
             .store()
@@ -124,7 +124,7 @@ fn reached_by_host(web: &WebHost, host: &str) -> usize {
 }
 
 /// The open inbox rows of `workspace`, as `host:port`.
-fn open_rows(vm: &VmHost, workspace: &WorkspaceName) -> Vec<String> {
+fn open_rows(vm: &VmHost, workspace: &WorkspaceId) -> Vec<String> {
     vm.host
         .store()
         .open_pending(Some(workspace))
@@ -137,7 +137,7 @@ fn open_rows(vm: &VmHost, workspace: &WorkspaceName) -> Vec<String> {
 /// Waits for the open row of `workspace` for `wanted` and returns its id.
 async fn wait_for_row(
     vm: &VmHost,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     wanted: &str,
 ) -> puddle_types::PendingId {
     eventually(
@@ -636,7 +636,7 @@ printf 'FROM scratch\nCOPY rootfs/ /\n' > $d/Dockerfile
 dsudo build -q -t probe:local $d";
 
 /// Runs `script` as `agent` (the session user) with [`DOCKER_PRELUDE`] first.
-async fn as_agent(vm: &VmHost, workspace: &WorkspaceName, script: &str) -> (i32, String) {
+async fn as_agent(vm: &VmHost, workspace: &WorkspaceId, script: &str) -> (i32, String) {
     guest_as(
         &vm.runtime,
         workspace,
@@ -650,7 +650,7 @@ async fn as_agent(vm: &VmHost, workspace: &WorkspaceName, script: &str) -> (i32,
 /// What the guest says about the agent, dockerd and the firewall tables: the start tick of the
 /// oldest `puddle-agent` and of `dockerd` (the kernel's clock ticks since boot, field 22 of
 /// `/proc/<pid>/stat`), and the `table` lines of `nft -a list ruleset` (with handles).
-async fn firewall_state(vm: &VmHost, workspace: &WorkspaceName) -> String {
+async fn firewall_state(vm: &VmHost, workspace: &WorkspaceId) -> String {
     let (code, out) = guest_as(
         &vm.runtime,
         workspace,
@@ -683,7 +683,7 @@ fn container_fetch(docker: &str, network: &str, url: &str) -> String {
 async fn refused_then_approved(
     vm: &VmHost,
     net: &WebInternet,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     (docker, network): (&str, &str),
     site: &str,
 ) {
@@ -721,7 +721,7 @@ async fn refused_then_approved(
 /// variable, reach the fake site named `{phase}-default.invalid` and `{phase}-user.invalid` only
 /// through a rule (refused at once, then approved and retried with no restart), traffic between two
 /// containers on the user bridge is not redirected, and the audit names the host.
-async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceName, phase: &str) {
+async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceId, phase: &str) {
     // dockerd answers (the image's entrypoint starts it after the boot), and the image is built
     // in the guest from files the guest has, `FROM scratch`.
     eventually_async("dockerd to answer", Duration::from_secs(100), || async {

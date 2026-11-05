@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_store::{Actor, NewRequestRule};
-use puddle_types::{Methods, PathPattern, WorkspaceName};
+use puddle_types::{Methods, PathPattern, WorkspaceId};
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
@@ -44,7 +44,7 @@ pub(crate) async fn list_request_rules(
     let workspace = query
         .workspace
         .map(|raw| {
-            WorkspaceName::new(&raw).map_err(|err| ApiError::invalid(format!("workspace: {err}")))
+            WorkspaceId::new(&raw).map_err(|err| ApiError::invalid(format!("workspace: {err}")))
         })
         .transpose()?;
     let rules = blocking(move || {

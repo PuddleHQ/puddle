@@ -77,13 +77,13 @@ mod repositories;
 pub(crate) mod orphans;
 
 impl<R: Runtime + Clone> crate::editor_updates::Builds for HostWorkspaces<R> {
-    fn on_microsoft_server(&self) -> Vec<WorkspaceName> {
+    fn on_microsoft_server(&self) -> Vec<WorkspaceId> {
         self.inner.flavours.on_microsoft()
     }
 
     async fn switch(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         connected_windows: usize,
     ) -> Result<bool, SwitchEditorBuildError> {
         self.switch_editor_build(workspace, connected_windows).await
@@ -91,11 +91,11 @@ impl<R: Runtime + Clone> crate::editor_updates::Builds for HostWorkspaces<R> {
 }
 
 impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
-    fn decrypt_changed(&self, workspace: &WorkspaceName) -> Option<puddle_store::WorkspaceGit> {
+    fn decrypt_changed(&self, workspace: &WorkspaceId) -> Option<puddle_store::WorkspaceGit> {
         Self::decrypt_changed(self, workspace)
     }
 
-    async fn rewrite_authors(&self, workspace: WorkspaceName) {
+    async fn rewrite_authors(&self, workspace: WorkspaceId) {
         Self::rewrite_authors(self, &workspace).await;
     }
 
@@ -109,7 +109,7 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         }
     }
 
-    async fn environment_changed(&self, workspace: WorkspaceName) {
+    async fn environment_changed(&self, workspace: WorkspaceId) {
         Self::environment_changed(self, &workspace).await;
     }
 
@@ -125,17 +125,17 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         .await;
     }
 
-    fn shell_init_changed(&self, workspace: WorkspaceName) -> impl Future<Output = ()> + Send {
+    fn shell_init_changed(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send {
         Self::shell_init_changed(self, &workspace);
         std::future::ready(())
     }
 
     fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send {
-        let names: Vec<WorkspaceName> = self
+        let names: Vec<WorkspaceId> = self
             .state()
             .slots
             .values()
-            .map(|slot| slot.record.name.clone())
+            .map(|slot| slot.record.id.clone())
             .collect();
         for name in names {
             Self::shell_init_changed(self, &name);
@@ -148,8 +148,7 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
 /// returns once the rewrite may go on; the value it returns is dropped when the rewrite ends. Tests
 /// use it to hold one rewrite back and see the rewrites of a workspace run out of order. A host
 /// without one lets every rewrite go on at once.
-pub type RewriteGate =
-    Arc<dyn Fn(&WorkspaceName) -> BoxFuture<'static, Box<dyn Send>> + Send + Sync>;
+pub type RewriteGate = Arc<dyn Fn(&WorkspaceId) -> BoxFuture<'static, Box<dyn Send>> + Send + Sync>;
 
 /// What the service is built from.
 pub(crate) struct Parts<R: Runtime + Clone> {
@@ -269,6 +268,9 @@ struct Inner<R: Runtime + Clone> {
     events: Arc<dyn EventSink>,
     clock: Arc<dyn Clock>,
     settings: Arc<dyn puddle_api::SettingsRepo>,
+    /// The settings routes' lock, shared so a delete's removal of a settings file never falls
+    /// between a settings change's read and its write.
+    settings_lock: Arc<tokio::sync::Mutex<()>>,
     store: Arc<Store>,
     launcher: Arc<dyn Launcher>,
     ssh: Arc<SshSetup>,
@@ -283,19 +285,19 @@ struct Inner<R: Runtime + Clone> {
     front_guests: Arc<dyn puddle_front::Guests>,
     front_halves: Arc<dyn puddle_front::ServerHalves>,
     state: Mutex<State>,
-    live: tokio::sync::Mutex<BTreeMap<WorkspaceName, Live<R>>>,
+    live: tokio::sync::Mutex<BTreeMap<WorkspaceId, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
     running: watch::Sender<usize>,
     /// Workspaces whose start found their shell-init folder changed from inside, until `settle`
     /// has said so (with what the boot hook found, as one notice).
-    shell_init_changed_inside: Mutex<BTreeSet<WorkspaceName>>,
+    shell_init_changed_inside: Mutex<BTreeSet<WorkspaceId>>,
     /// Workspaces whose variables changed while their guest was booting: `settle` applies the
     /// change to the guest once it runs.
-    env_missed_while_booting: Mutex<BTreeSet<WorkspaceName>>,
+    env_missed_while_booting: Mutex<BTreeSet<WorkspaceId>>,
     /// The last listing of each workspace's checkouts; see [`repositories::CachedListing`].
     listings: Mutex<BTreeMap<WorkspaceId, repositories::CachedListing>>,
     /// The disks the host has already warned about, until they drop below the threshold again.
-    disk_warned: Mutex<BTreeSet<(WorkspaceName, DiskKind)>>,
+    disk_warned: Mutex<BTreeSet<(WorkspaceId, DiskKind)>>,
 }
 
 /// Why [`HostWorkspaces::end_extension_hosts`] did not reach the guest.
@@ -362,12 +364,12 @@ fn with_leftovers(reason: String, leftovers: &[String]) -> String {
 }
 
 /// The key of a problem about one workspace.
-fn problem_key(kind: &str, name: &WorkspaceName) -> String {
+fn problem_key(kind: &str, name: &WorkspaceId) -> String {
     format!("{kind}:{name}")
 }
 
 /// The key of the problem about one repository of a workspace that could not be cloned.
-fn clone_problem_key(name: &WorkspaceName, directory: &CheckoutDir) -> String {
+fn clone_problem_key(name: &WorkspaceId, directory: &CheckoutDir) -> String {
     format!("{}:{directory}", problem_key("clone", name))
 }
 
@@ -445,11 +447,11 @@ const AGENT_HELLO_WAIT: Duration = Duration::from_secs(15);
 struct GuestLogin {
     guests: Arc<dyn puddle_front::Guests>,
     ports: Ports,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
 }
 
 /// What the user is told when `workspace` has no agent link to sign in through.
-fn no_link_message(workspace: &WorkspaceName, why: NoLink) -> String {
+fn no_link_message(workspace: &WorkspaceId, why: NoLink) -> String {
     match why {
         NoLink::NotRunning => format!("{workspace} is not running; start it first"),
         NoLink::NotConnected => format!(
@@ -510,7 +512,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(crate) fn new(
         parts: Parts<R>,
         restored: Vec<Stored>,
-        status: &BTreeMap<WorkspaceName, WorkspaceStatus>,
+        status: &BTreeMap<WorkspaceId, WorkspaceStatus>,
     ) -> Result<Self, HostError> {
         let mut slots = BTreeMap::new();
         let mut interrupted = false;
@@ -536,7 +538,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             })?;
             record.created_at = stored.created_at;
             record.disk_size_mib = stored.disk_size_mib;
-            record.status = match status.get(&name) {
+            record.status = match status.get(&id) {
                 Some(WorkspaceStatus::Crashed) => WorkspaceStatus::Crashed,
                 Some(WorkspaceStatus::VolumeMissing) => WorkspaceStatus::VolumeMissing,
                 _ => WorkspaceStatus::Stopped,
@@ -552,6 +554,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 events: parts.events,
                 clock: parts.clock,
                 settings: parts.settings,
+                settings_lock: Arc::default(),
                 store: parts.store,
                 launcher: parts.launcher,
                 ssh: parts.ssh,
@@ -635,12 +638,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     fn status_event(&self, record: &WorkspaceRecord) {
         self.inner.events.emit(Event::StatusChanged {
-            workspace: record.name.clone(),
+            workspace: record.id.clone(),
             status: record.status,
         });
     }
 
-    fn progress(&self, name: &WorkspaceName, step: WorkspaceStep, detail: Option<String>) {
+    fn progress(&self, name: &WorkspaceId, step: WorkspaceStep, detail: Option<String>) {
         self.inner.events.emit(Event::WorkspaceProgress {
             workspace: name.clone(),
             step,
@@ -651,7 +654,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// The cloning step of one repository: the address as the detail, the directory as the
     /// repository it is about.
-    fn progress_cloning(&self, name: &WorkspaceName, repository: &Repository) {
+    fn progress_cloning(&self, name: &WorkspaceId, repository: &Repository) {
         self.inner.events.emit(Event::WorkspaceProgress {
             workspace: name.clone(),
             step: WorkspaceStep::Cloning,
@@ -705,7 +708,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// What `workspace` decrypts, and the CA that certifies it, while its sandbox runs: `None`
     /// for a workspace that is stopped or never started.
     #[must_use]
-    pub fn termination(&self, workspace: &WorkspaceName) -> Option<Arc<puddle_proxy::Termination>> {
+    pub fn termination(&self, workspace: &WorkspaceId) -> Option<Arc<puddle_proxy::Termination>> {
         self.inner.injection.termination(workspace)
     }
 
@@ -719,7 +722,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// [`EndExtensionHostsError::Agent`] when the agent could not be reached or did not answer.
     pub async fn end_extension_hosts(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
     ) -> Result<HostReply, EndExtensionHostsError> {
         let link = self
             .inner
@@ -744,7 +747,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// or the agent did not answer.
     pub async fn switch_editor_build(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         connected_windows: usize,
     ) -> Result<bool, SwitchEditorBuildError> {
         if connected_windows > 0 {
@@ -770,7 +773,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// The SSH endpoint of a running workspace's sandbox.
-    pub async fn ssh_endpoint(&self, workspace: &WorkspaceName) -> Option<std::path::PathBuf> {
+    pub async fn ssh_endpoint(&self, workspace: &WorkspaceId) -> Option<std::path::PathBuf> {
         let live = self.inner.live.lock().await;
         let ssh = live.get(workspace)?.ssh.as_ref()?;
         Some(ssh.endpoint().path().to_path_buf())
@@ -838,7 +841,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 for slot in self.state().slots.values_mut() {
                     let root = sandboxes
                         .iter()
-                        .find(|s| s.name == slot.record.name.sandbox_name().as_str())
+                        .find(|s| s.name == slot.record.id.sandbox_name().as_str())
                         .and_then(|s| s.root_disk);
                     slot.record.root_disk_size_mib = root.map(|r| u64::from(r.size.as_mib()));
                     slot.record.root_disk_used_mib = root.map(|r| u64::from(r.used.as_mib()));
@@ -869,14 +872,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         for record in records {
             let over = record.disk_warnings(threshold);
             for disk in [DiskKind::Root, DiskKind::Volume] {
-                let key = (record.name.clone(), disk);
+                let key = (record.id.clone(), disk);
                 if !over.contains(&disk) {
                     warned.remove(&key);
                 } else if warned.insert(key)
                     && let Some(percent) = record.disk_percent(disk)
                 {
                     self.inner.events.emit(Event::DiskNearlyFull {
-                        workspace: record.name.clone(),
+                        workspace: record.id.clone(),
                         disk,
                         percent,
                     });
@@ -895,7 +898,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         slot.record.busy = None;
         slot.deleting = false;
         let delete_note = slot.delete_note.take();
-        let name = slot.record.name.clone();
+        let name = slot.record.id.clone();
         let mut status_changed = false;
         // Only a failed create or delete leaves the list different from what is saved: the
         // failed create's entry goes, the failed delete's entry comes back.
@@ -968,7 +971,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// start or a stop only when it failed (a start that worked shows in the workspace's state).
     fn audit_operation(
         &self,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         op: Operation,
         result: &Result<(), String>,
         delete_note: Option<&'static str>,
@@ -993,7 +996,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     fn record_op(
         &self,
         op: WorkspaceOpKind,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         outcome: WorkspaceOpOutcome,
         detail: Option<String>,
     ) {
@@ -1017,7 +1020,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// The vCPUs for `name`: its override over the global default over one. The default when the
     /// settings cannot be read (a workspace is not worth a failed start over a CPU count).
-    fn cpus(&self, name: &WorkspaceName) -> CpuCount {
+    fn cpus(&self, name: &WorkspaceId) -> CpuCount {
         let settings = self.inner.settings.as_ref();
         let read = || {
             let global = crate::settings_read::global(settings)?;
@@ -1054,7 +1057,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         fresh: bool,
     ) -> Result<(), String> {
         let inner = &self.inner;
-        let (id, name) = (&record.id, &record.name);
+        let (id, name) = (&record.id, &record.id);
         let size = DiskSize::mib(u32::try_from(record.disk_size_mib).unwrap_or(u32::MAX));
         if announce_pull {
             self.progress(name, WorkspaceStep::PreparingVolume, None);
@@ -1162,7 +1165,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), String> {
         self.plan_guest(
             &record.id,
-            &record.name,
+            &record.id,
             image,
             record.start_folder.as_ref(),
             record.session_user,
@@ -1176,7 +1179,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     async fn plan_guest(
         &self,
         id: &WorkspaceId,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         image: ImageConfig,
         start_folder: Option<&StartFolder>,
         session_user: SessionUser,
@@ -1237,7 +1240,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// changed): what the running workspace decrypts follows at once, and its guest gets the
     /// authors of the new identities. A workspace that does not run reads the settings at its
     /// next start.
-    pub(crate) async fn git_changed(&self, name: &WorkspaceName) {
+    pub(crate) async fn git_changed(&self, name: &WorkspaceId) {
         if self.decrypt_changed(name).is_some() {
             self.rewrite_authors(name).await;
         }
@@ -1246,10 +1249,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Recomputes what the running `name` decrypts from the database: the next connection sees
     /// the new set. The settings of a workspace that does not run, or that cannot be read, change
     /// nothing here.
-    pub(crate) fn decrypt_changed(
-        &self,
-        name: &WorkspaceName,
-    ) -> Option<puddle_store::WorkspaceGit> {
+    pub(crate) fn decrypt_changed(&self, name: &WorkspaceId) -> Option<puddle_store::WorkspaceGit> {
         let problems = &self.inner.problems;
         match self.inner.injection.resync(name) {
             Ok(git) => {
@@ -1277,7 +1277,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Tells the user about the credentials of `git` that Puddle never uses.
-    fn report_credentials(&self, name: &WorkspaceName, git: &puddle_store::WorkspaceGit) {
+    fn report_credentials(&self, name: &WorkspaceId, git: &puddle_store::WorkspaceGit) {
         let hosts = never_decrypted(git);
         GitProblem::Credentials.settle(
             &self.inner.problems,
@@ -1289,7 +1289,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Tells the user about what the Git settings of `name` ask for that Puddle cannot carry out.
     fn report_git_settings(
         &self,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         git: &puddle_store::WorkspaceGit,
         wanted: &Authors,
     ) {
@@ -1299,7 +1299,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// After a boot: Kubernetes tools in the guest are a problem on the workspace, since its
     /// kernel cannot route their Services. A stop ends it, so a start that finds none has none.
-    fn settle_kubernetes(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
+    fn settle_kubernetes(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
         if let Some(problem) = kubernetes_problem(name, &report.kubernetes_tools()) {
             self.inner.problems.raise(problem);
         }
@@ -1309,7 +1309,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// user's that Puddle merges settings into and could not parse is a notice on the workspace.
     /// The file is left as it is, and the run goes on. A file the hook no longer leaves ends its
     /// notice, so a repair is noticed at the next run and a stop ends them all.
-    fn settle_merge_notices(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
+    fn settle_merge_notices(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
         settle_merge_notices(&self.inner.problems, name, &report.left_files());
     }
 
@@ -1317,7 +1317,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// is a problem on the workspace.
     fn settle_git_version(
         &self,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         report: &puddle_boot::BootReport,
         wanted: &Authors,
     ) {
@@ -1334,7 +1334,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The settings are read once the guest is ours alone: rewrites for one workspace start in
     /// any order, and a copy taken when the change arrived could be applied after a newer one,
     /// leaving the old authors and a problem the newer settings already ended.
-    pub(crate) async fn rewrite_authors(&self, name: &WorkspaceName) {
+    pub(crate) async fn rewrite_authors(&self, name: &WorkspaceId) {
         let inner = &self.inner;
         let _held = match &inner.rewrite_gate {
             Some(gate) => Some(gate(name).await),
@@ -1392,7 +1392,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Tells the user the commit authors in `name` could not be updated and why.
-    fn raise_author_sync(problems: &Problems, name: &WorkspaceName, reason: &str) {
+    fn raise_author_sync(problems: &Problems, name: &WorkspaceId, reason: &str) {
         GitProblem::AuthorSync.settle(
             problems,
             name,
@@ -1412,7 +1412,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// root, or when the guest could not be asked (the problem stays as it was).
     async fn check_start_folder(
         &self,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         gated: &GatedSandbox<R::Sandbox>,
         root: &GuestPath,
         start: Option<&StartFolder>,
@@ -1470,7 +1470,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// (the hook is idempotent) and the folder is looked for. `None` when the workspace does not
     /// run, or the folder cannot be looked for.
     async fn follow_start_folder(&self, record: &WorkspaceRecord) -> Option<bool> {
-        let name = &record.name;
+        let name = &record.id;
         let inner = &self.inner;
         let rewrite = inner
             .live
@@ -1533,7 +1533,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// leaves a file it cannot parse as it is, with a problem naming it); with fewer, Puddle's
     /// lines are taken out of it.
     async fn refresh_editor_file(&self, record: &WorkspaceRecord) {
-        let name = &record.name;
+        let name = &record.id;
         let inner = &self.inner;
         let Some(rewrite) = inner
             .live
@@ -1637,7 +1637,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// the shell init back, the user is told, as a boot would.
     async fn run_plan(
         &self,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         gated: &GatedSandbox<R::Sandbox>,
         guest: &GuestState,
     ) -> Result<(), String> {
@@ -1647,7 +1647,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// As [`Self::run_plan`], with what the hook said.
     async fn run_plan_report(
         &self,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         gated: &GatedSandbox<R::Sandbox>,
         guest: &GuestState,
     ) -> Result<puddle_boot::BootReport, String> {
@@ -1674,7 +1674,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(report)
     }
 
-    fn announce_loader_replaced(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
+    fn announce_loader_replaced(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
         if crate::shell_init::loader_replaced(&report.replaced_files()) {
             self.inner.events.emit(Event::WorkspaceShellInitRestored {
                 workspace: name.clone(),
@@ -1693,13 +1693,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// and the running guest's login-shell file is rewritten, so a terminal opened from now on
     /// sees the new variables with no restart. A process that is already running keeps what it
     /// has, and so does a sandbox's own environment (it is fixed when the sandbox is made).
-    pub(crate) async fn environment_changed(&self, name: &WorkspaceName) {
+    pub(crate) async fn environment_changed(&self, name: &WorkspaceId) {
         if let Some(env) = self.inner.injection.environment_changed(name).await {
             self.rewrite_env(name, env).await;
         }
     }
 
-    fn note_env_missed(&self, name: &WorkspaceName) {
+    fn note_env_missed(&self, name: &WorkspaceId) {
         self.inner
             .env_missed_while_booting
             .lock()
@@ -1709,7 +1709,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Writes `env` into the running guest's login-shell file by running the boot plan again (the
     /// hook is idempotent: only the files that differ change).
-    async fn rewrite_env(&self, name: &WorkspaceName, env: GuestEnv) {
+    async fn rewrite_env(&self, name: &WorkspaceId, env: GuestEnv) {
         let inner = &self.inner;
         // The miss is recorded under the `live` lock: `start` inserts the entry under the same
         // lock before `settle` reads the record, so a change either finds the entry or is seen by
@@ -1769,7 +1769,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Writes `name`'s saved shell init to the folder its guest sees, for a start. A folder that
     /// held something else is put right and remembered, so `settle` tells the user.
-    fn publish_shell_init(&self, id: &WorkspaceId, name: &WorkspaceName) -> Result<(), String> {
+    fn publish_shell_init(&self, id: &WorkspaceId, name: &WorkspaceId) -> Result<(), String> {
         let published = self.inner.kit.shell_init().publish(id, name)?;
         if published == crate::shell_init::Published::Restored {
             self.inner
@@ -1783,12 +1783,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// The user saved or removed `name`'s shell init: the folder the running guest sees follows
     /// at once. A workspace that is gone is left alone.
-    pub(crate) fn shell_init_changed(&self, name: &WorkspaceName) {
+    pub(crate) fn shell_init_changed(&self, name: &WorkspaceId) {
         let id = self
             .state()
             .slots
             .iter()
-            .find(|(_, slot)| &slot.record.name == name && !slot.deleting)
+            .find(|(_, slot)| &slot.record.id == name && !slot.deleting)
             .map(|(id, _)| id.clone());
         let Some(id) = id else { return };
         let key = problem_key("shell-init-copy", name);
@@ -1815,7 +1815,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// (the start goes on: the workspace is usable without it, and a refusal would lock the user
     /// out of the way to look at it). The start cleared the earlier one ([`ReportDesk::begin`]);
     /// one that fails later is the guest agent's report, in the same words.
-    fn settle_entrypoint(&self, name: &WorkspaceName, report: &puddle_boot::BootReport) {
+    fn settle_entrypoint(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
         if let Some(failure) = report.entrypoint_failure() {
             tracing::warn!(workspace = %name, %failure, "the image's entrypoint exited at once");
             self.inner.problems.raise(entrypoint_problem(name, failure));
@@ -1827,7 +1827,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// prints nothing. A script that fails the check does not stop the start: it is a problem on
     /// the workspace, because a start that refuses over a user's own script would lock them out of
     /// the way to fix it.
-    async fn settle_shell_init(&self, name: &WorkspaceName, gated: &GatedSandbox<R::Sandbox>) {
+    async fn settle_shell_init(&self, name: &WorkspaceId, gated: &GatedSandbox<R::Sandbox>) {
         let inner = &self.inner;
         let folder_changed = inner
             .shell_init_changed_inside
@@ -1886,7 +1886,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// nothing, else what is wrong with it.
     async fn run_shell_init_check(
         &self,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         gated: &GatedSandbox<R::Sandbox>,
         script: &str,
     ) -> Result<Option<String>, String> {
@@ -1927,7 +1927,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// problem when they were.
     fn report_locks(
         &self,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         locks: Result<puddle_workspace::LockReport, puddle_workspace::WorkspaceError>,
     ) {
         let key = problem_key("git-locks", name);
@@ -1958,7 +1958,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// shell init, the SSH endpoint, and the handle the lifecycle stops at exit.
     async fn settle(&self, record: &WorkspaceRecord) -> Result<(), String> {
         let inner = &self.inner;
-        let (id, name) = (&record.id, &record.name);
+        let (id, name) = (&record.id, &record.id);
         self.progress(name, WorkspaceStep::Syncing, None);
         let gated = {
             let live = inner.live.lock().await;
@@ -2023,7 +2023,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// It is its override over the global default over off. Settings that cannot be read count as
     /// off, with the reason logged (and shown on the workspace by the API).
     #[must_use]
-    pub fn direct_ssh_allowed(&self, name: &WorkspaceName) -> bool {
+    pub fn direct_ssh_allowed(&self, name: &WorkspaceId) -> bool {
         match self.direct_ssh_setting(name) {
             Ok(on) => on,
             Err(reason) => {
@@ -2043,7 +2043,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     ///
     /// Why the editor cannot be opened, for the user.
     async fn desktop_target(&self, record: &WorkspaceRecord) -> Result<DesktopTarget, String> {
-        let name = &record.name;
+        let name = &record.id;
         match self.direct_ssh_setting(name) {
             Ok(true) => {}
             Ok(false) => {
@@ -2133,7 +2133,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// The browser editor's reconnection grace for `name`, in seconds: the settings' value, the
     /// default when they cannot be read (the editor is not worth a failed start).
-    fn reconnection_grace(&self, name: &WorkspaceName) -> u32 {
+    fn reconnection_grace(&self, name: &WorkspaceId) -> u32 {
         let settings = self.inner.settings.as_ref();
         let read = || {
             let global = crate::settings_read::global(settings)?;
@@ -2153,7 +2153,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// window (the default, so `puddle serve`) says the editor opens from the desktop app: the
     /// password is held back from anything but a shell.
     async fn attach_browser(&self, record: &WorkspaceRecord) -> Attached {
-        let name = &record.name;
+        let name = &record.id;
         // No window opens on settings that cannot be read: the user may have tightened what the
         // window does (no clipboard prompt, no zoom keys), and the defaults would undo that.
         let settings = match self.window_settings(name) {
@@ -2199,14 +2199,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// What `name`'s settings say about its window, or why they cannot be read.
-    fn window_settings(&self, name: &WorkspaceName) -> Result<Effective, String> {
+    fn window_settings(&self, name: &WorkspaceId) -> Result<Effective, String> {
         let settings = self.inner.settings.as_ref();
         let global = crate::settings_read::global(settings)?;
         let own = crate::settings_read::workspace(settings, name)?;
         Ok(resolve(&global, Some(&own)))
     }
 
-    fn direct_ssh_setting(&self, name: &WorkspaceName) -> Result<bool, String> {
+    fn direct_ssh_setting(&self, name: &WorkspaceId) -> Result<bool, String> {
         let settings = self.inner.settings.as_ref();
         let global = crate::settings_read::global(settings)?;
         let own = crate::settings_read::workspace(settings, name)?;
@@ -2216,7 +2216,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Opens the SSH endpoint of a running sandbox and puts its entry in Puddle's ssh config. A
     /// failure is reported to the user ([`Event::WorkspaceSshFailed`] and a problem that lasts
     /// until it works): the workspace runs without direct SSH.
-    async fn open_ssh(&self, name: &WorkspaceName, gated: Arc<GatedSandbox<R::Sandbox>>) {
+    async fn open_ssh(&self, name: &WorkspaceId, gated: Arc<GatedSandbox<R::Sandbox>>) {
         let inner = &self.inner;
         let listener = match inner.kit.ipc().listen() {
             Ok(listener) => listener,
@@ -2266,7 +2266,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Puts `name`'s entry in Puddle's ssh config, naming `endpoint` and logging in as `user`. The
     /// caller has checked [`Self::direct_ssh_allowed`]. A failure is a problem on the workspace:
     /// its endpoint is up, but nothing can name it.
-    fn publish_entry(&self, name: &WorkspaceName, endpoint: &std::path::Path, user: SessionUser) {
+    fn publish_entry(&self, name: &WorkspaceId, endpoint: &std::path::Path, user: SessionUser) {
         let key = problem_key("ssh", name);
         match self.inner.ssh.publish(name, endpoint, user) {
             Ok(()) => self.inner.problems.clear(&key),
@@ -2274,13 +2274,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    fn endpoint_failed(&self, name: &WorkspaceName, error: &dyn std::fmt::Display) {
+    fn endpoint_failed(&self, name: &WorkspaceId, error: &dyn std::fmt::Display) {
         report_no_endpoint(self.inner.events.as_ref(), name, error);
         self.ssh_not_usable(name, &format!("it has no SSH endpoint ({error})"));
     }
 
     /// Raises the problem that direct SSH is on for `name` and cannot be used.
-    fn ssh_not_usable(&self, name: &WorkspaceName, reason: &str) {
+    fn ssh_not_usable(&self, name: &WorkspaceId, reason: &str) {
         tracing::warn!(workspace = %name, %reason, "direct SSH is on but not usable");
         self.inner.problems.raise(
             Problem::new(
@@ -2298,7 +2298,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Ends `name`'s SSH way in: the entry first, so nothing names a closed endpoint, then the
     /// endpoint, and the problem about it. An entry that cannot be taken out is a problem that
     /// stays: the file names an endpoint that is closed.
-    async fn close_ssh(&self, name: &WorkspaceName, ssh: SshEndpoint) {
+    async fn close_ssh(&self, name: &WorkspaceId, ssh: SshEndpoint) {
         let key = problem_key("ssh", name);
         match self.inner.ssh.withdraw(name) {
             Ok(()) => self.inner.problems.clear(&key),
@@ -2326,7 +2326,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Makes every running sandbox's SSH endpoint and ssh config entry match its direct SSH
     /// setting, at once and without a restart.
     async fn apply_direct_ssh(&self) {
-        type Running<S> = (WorkspaceName, Option<Arc<GatedSandbox<S>>>, bool);
+        type Running<S> = (WorkspaceId, Option<Arc<GatedSandbox<S>>>, bool);
         let running: Vec<Running<R::Sandbox>> = {
             let live = self.inner.live.lock().await;
             live.iter()
@@ -2363,7 +2363,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Stops what a failed boot or a finished stop leaves: the SSH endpoint and the lifecycle's
     /// handle. The route stays (the sandbox may start again); `drop_route` ends it too.
-    async fn quiesce(&self, name: &WorkspaceName, drop_route: bool) {
+    async fn quiesce(&self, name: &WorkspaceId, drop_route: bool) {
         self.inner.lifecycle.release(&name.sandbox_name());
         // Its forwards close; the pinned ones come back at the next start.
         self.inner.ports.stopped(name).await;
@@ -2411,7 +2411,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     ) -> String {
         let inner = &self.inner;
         let mut leftovers = Vec::new();
-        let name = &record.name;
+        let name = &record.id;
         let gated = inner
             .live
             .lock()
@@ -2453,7 +2453,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         record: WorkspaceRecord,
         imports: Vec<Import>,
     ) -> Result<(), String> {
-        self.inner.reports.begin(&record.name);
+        self.inner.reports.begin(&record.id);
         let (imported, mut created_volume) = self.import_all(&record, &imports).await?;
         let mut created_by_boot = false;
         if let Err(reason) = self
@@ -2470,7 +2470,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
-        let gated = self.gated(&record.name).await?;
+        let gated = self.gated(&record.id).await?;
         if let Err(reason) = self.clone_all(&record, gated.ungated(), &imported).await {
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
@@ -2504,7 +2504,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .iter()
                 .find(|r| r.directory == import.directory)
             {
-                self.progress_cloning(&record.name, repository);
+                self.progress_cloning(&record.id, repository);
             }
         }
         let report = self
@@ -2519,7 +2519,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .iter()
                 .find(|r| &r.directory == directory)
             {
-                tracing::warn!(workspace = %record.name, checkout = %directory, %reason, "a checkout of a new workspace was not imported");
+                tracing::warn!(workspace = %record.id, checkout = %directory, %reason, "a checkout of a new workspace was not imported");
                 let reason = format!(
                     "{reason}. To try again, add the repository by its address on the Git tab"
                 );
@@ -2569,21 +2569,21 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 continue;
             }
             any_cloned = true;
-            self.progress_cloning(&record.name, repository);
-            let key = clone_problem_key(&record.name, &repository.directory);
+            self.progress_cloning(&record.id, repository);
+            let key = clone_problem_key(&record.id, &repository.directory);
             let cloned = workspaces
                 .clone_checkout(
                     sandbox,
                     &record.id,
                     repository.url.as_str(),
                     &repository.directory,
-                    self.booted_user(&record.name).await,
+                    self.booted_user(&record.id).await,
                 )
                 .await;
             match cloned {
                 Ok(_) => self.inner.problems.clear(&key),
                 Err(puddle_workspace::WorkspaceError::Clone { reason, .. }) => {
-                    tracing::warn!(workspace = %record.name, url = %repository.url, %reason, "a repository of a new workspace was not cloned");
+                    tracing::warn!(workspace = %record.id, url = %repository.url, %reason, "a repository of a new workspace was not cloned");
                     self.raise_clone_problem(record, repository, &reason, true);
                 }
                 Err(other) => return Err(other.to_string()),
@@ -2600,7 +2600,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// The user the running guest of `name` started with, which its clones and checks run as
     /// until the next start whatever the setting says now; root when it does not run.
-    async fn booted_user(&self, name: &WorkspaceName) -> SessionUser {
+    async fn booted_user(&self, name: &WorkspaceId) -> SessionUser {
         self.inner
             .live
             .lock()
@@ -2610,7 +2610,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map_or(SessionUser::Root, |g| g.session_user)
     }
 
-    async fn gated(&self, name: &WorkspaceName) -> Result<Arc<GatedSandbox<R::Sandbox>>, String> {
+    async fn gated(&self, name: &WorkspaceId) -> Result<Arc<GatedSandbox<R::Sandbox>>, String> {
         self.inner
             .live
             .lock()
@@ -2622,7 +2622,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Removes the workspace's sandbox, if it has one: the root disk goes with it, the volume
     /// stays, and the next start makes both again from the image.
-    async fn reset_root_disk_work(&self, name: &WorkspaceName) -> Result<(), String> {
+    async fn reset_root_disk_work(&self, name: &WorkspaceId) -> Result<(), String> {
         let sandbox = name.sandbox_name();
         let exists = self
             .inner
@@ -2647,7 +2647,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     async fn start_work(&self, record: WorkspaceRecord) -> Result<(), String> {
         let inner = &self.inner;
-        let name = &record.name;
+        let name = &record.id;
         self.progress(name, WorkspaceStep::Starting, None);
         inner.problems.clear(&problem_key("forced-stop", name));
         inner.problems.clear(&problem_key("start-refused", name));
@@ -2701,7 +2701,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// the caller makes a new one on the same volume (the volume holds the work, not the sandbox).
     async fn restart_in_place(&self, record: &WorkspaceRecord) -> Result<bool, String> {
         let inner = &self.inner;
-        let name = &record.name;
+        let name = &record.id;
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
         self.publish_shell_init(&record.id, name)?;
@@ -2740,7 +2740,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         plan: &puddle_boot::BootPlan,
     ) -> Result<GatedSandbox<R::Sandbox>, String> {
         let inner = &self.inner;
-        let name = &record.name;
+        let name = &record.id;
         let gate = inner
             .live
             .lock()
@@ -2774,7 +2774,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Raises the problem that the runtime refused to start `name` and why.
-    fn raise_start_refused(&self, name: &WorkspaceName, cause: StartRefusal) {
+    fn raise_start_refused(&self, name: &WorkspaceId, cause: StartRefusal) {
         self.inner.problems.raise(
             Problem::new(
                 problem_key("start-refused", name),
@@ -2789,7 +2789,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), String> {
-        let name = &record.name;
+        let name = &record.id;
         // The windows go first, so the editor can disconnect and the guest end its extension hosts
         // before the stop (best effort: the close is asked for, not waited for).
         self.inner.launcher.close_browser(name).await;
@@ -2837,12 +2837,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
-    /// Deletes the workspace's settings document, so one made later under the same name starts
-    /// from the defaults (direct SSH off). A failure is a notice (the file stays and the name
-    /// would inherit it).
-    fn forget_settings_file(&self, name: &WorkspaceName) {
+    /// Deletes the workspace's settings document. A failure is a notice (the file stays). A new
+    /// workspace has a new id, so it never inherits a stuck file.
+    /// Under the settings routes' lock, so a settings change that read the file before this
+    /// removal cannot write it back after.
+    async fn forget_settings_file(&self, name: &WorkspaceId) {
         let inner = &self.inner;
         let key = problem_key("settings", name);
+        let _lock = inner.settings_lock.lock().await;
         match inner.settings.delete_workspace(name) {
             Ok(()) => inner.problems.clear(&key),
             Err(e) => inner.problems.raise(Problem::new(
@@ -2858,7 +2860,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Deletes what the browser editor kept under `name`: the front's half of Microsoft's secret
     /// key and the windows' browser data. Returns what could not be deleted, one reason each.
-    async fn clear_browser_state(&self, name: &WorkspaceName) -> Vec<String> {
+    async fn clear_browser_state(&self, name: &WorkspaceId) -> Vec<String> {
         let inner = &self.inner;
         let mut failed = Vec::new();
         // The windows first: one still open could mint the key again after it was forgotten.
@@ -2879,11 +2881,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         id: &WorkspaceId,
         name: &WorkspaceName,
     ) -> Result<(), WorkspaceError> {
-        let failed = self.clear_browser_state(name).await;
+        let failed = self.clear_browser_state(id).await;
         if failed.is_empty() {
-            self.inner
-                .problems
-                .clear(&problem_key("browser-data", name));
+            self.inner.problems.clear(&problem_key("browser-data", id));
             return Ok(());
         }
         // Give the name back (not saved yet): the create is refused.
@@ -2899,7 +2899,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Deletes what the browser editor kept for a deleted workspace, so one made later under the
     /// same name starts clean. A failure is a notice (the data stays; a create under the name
     /// tries again and is refused while it cannot).
-    async fn forget_browser_state(&self, name: &WorkspaceName) {
+    async fn forget_browser_state(&self, name: &WorkspaceId) {
         let inner = &self.inner;
         let key = problem_key("browser-data", name);
         let failed = self.clear_browser_state(name).await;
@@ -2925,25 +2925,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         report: puddle_workspace::DeleteReport,
     ) -> Result<(), String> {
         let inner = &self.inner;
-        self.progress(&record.name, WorkspaceStep::Checking, None);
-        inner.launcher.close_browser(&record.name).await;
-        self.progress(&record.name, WorkspaceStep::Removing, None);
+        self.progress(&record.id, WorkspaceStep::Checking, None);
+        inner.launcher.close_browser(&record.id).await;
+        self.progress(&record.id, WorkspaceStep::Removing, None);
         inner
             .workspaces
             .delete(&inner.runtime, &record.id, &report.confirm())
             .await
             .map_err(|e| e.to_string())?;
-        self.quiesce(&record.name, true).await;
-        self.inner.reports.forget(&record.name);
+        self.quiesce(&record.id, true).await;
+        self.inner.reports.forget(&record.id);
         // What the workspace held in Puddle's settings goes with it: its rules, its identities,
         // its environment and the values of its own secrets.
-        inner.injection.forget(&record.name).await;
+        inner.injection.forget(&record.id).await;
         inner.kit.shell_init().forget(&record.id);
         inner
             .problems
-            .clear_prefix(&format!("{}:", problem_key("clone", &record.name)));
-        self.forget_settings_file(&record.name);
-        self.forget_browser_state(&record.name).await;
+            .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
+        self.forget_settings_file(&record.id).await;
+        self.forget_browser_state(&record.id).await;
         Ok(())
     }
 }
@@ -3006,7 +3006,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let id = WorkspaceId::new(new.name.as_str()).map_err(|e| {
+            let id = new.id().map_err(|e| {
                 WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
             })?;
             let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
@@ -3087,7 +3087,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 }
             }
             // The name is reserved and the list saved: set up what the clones need first.
-            git.set_up(&new.name, &new.repositories).await;
+            git.set_up(&record.id, &new.repositories).await;
             self.status_event(&record);
             let imports: Vec<Import> = new
                 .repositories
@@ -3161,7 +3161,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |r| r.status = WorkspaceStatus::Draining,
             )?;
-            self.inner.reports.pause(&record.name);
+            self.inner.reports.pause(&record.id);
             self.status_event(&record);
             let this = self.clone();
             let work = record.clone();
@@ -3199,7 +3199,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let this = self.clone();
             let work = record.clone();
             self.run(&record, Operation::Reclaiming, async move {
-                this.progress(&work.name, WorkspaceStep::Reclaiming, None);
+                this.progress(&work.id, WorkspaceStep::Reclaiming, None);
                 this.inner
                     .workspaces
                     .reclaim_space(&this.inner.runtime, &work.id)
@@ -3235,8 +3235,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let this = self.clone();
             let work = record.clone();
             self.run(&record, Operation::ResettingRootDisk, async move {
-                this.progress(&work.name, WorkspaceStep::ResettingRootDisk, None);
-                this.reset_root_disk_work(&work.name).await
+                this.progress(&work.id, WorkspaceStep::ResettingRootDisk, None);
+                this.reset_root_disk_work(&work.id).await
             })
             .await;
             Ok(record)
@@ -3371,7 +3371,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 if let Some(slot) = state.slots.get_mut(id) {
                     slot.record.display_name = before;
                 }
-                let name = state.slots.get(id).map(|s| s.record.name.clone());
+                let name = state.slots.get(id).map(|s| s.record.id.clone());
                 drop(state);
                 let reason = format!("the workspace was not renamed: {e}; {SAVE_HINT}");
                 if let Some(name) = name {
@@ -3396,7 +3396,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             };
             self.record_op(
                 WorkspaceOpKind::Rename,
-                &record.name,
+                &record.id,
                 WorkspaceOpOutcome::Succeeded,
                 Some(detail),
             );
@@ -3439,7 +3439,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             if record.status != WorkspaceStatus::Running {
                 // A stopped workspace is looked at when it starts; the old problem ends now.
                 for kind in ["start-folder", "start-folder-file"] {
-                    self.inner.problems.clear(&problem_key(kind, &record.name));
+                    self.inner.problems.clear(&problem_key(kind, &record.id));
                 }
             }
             Ok(StartFolderChange::new(record, exists))
@@ -3511,7 +3511,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
         Box::pin(async move {
             let record = self.get(id).await?;
-            let list = self.inner.injection.kept_logins(&record.name).await;
+            let list = self.inner.injection.kept_logins(&record.id).await;
             Ok(KeptLogins {
                 logins: list
                     .logins
@@ -3530,12 +3530,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
         Box::pin(async move {
             let record = self.get(id).await?;
-            match self
-                .inner
-                .injection
-                .forget_login(&record.name, service)
-                .await
-            {
+            match self.inner.injection.forget_login(&record.id, service).await {
                 Ok(true) => Ok(()),
                 Ok(false) => Err(WorkspaceError::NotFound(format!(
                     "no login service {service:?}"
@@ -3557,7 +3552,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 .live
                 .lock()
                 .await
-                .get(&record.name)
+                .get(&record.id)
                 .and_then(|live| live.gated.clone());
             let Some(gated) = running else {
                 return Ok(ShellInitCheck::NotRun(format!(
@@ -3565,10 +3560,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     record.name
                 )));
             };
-            match self
-                .run_shell_init_check(&record.name, &gated, script)
-                .await
-            {
+            match self.run_shell_init_check(&record.id, &gated, script).await {
                 Ok(None) => Ok(ShellInitCheck::Passed),
                 Ok(Some(why)) => Ok(ShellInitCheck::Refused(why)),
                 Err(reason) => Err(WorkspaceError::Unavailable(reason)),
@@ -3625,6 +3617,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn settings_changed(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move { self.apply_direct_ssh().await })
     }
+
+    fn settings_lock(&self) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        Some(self.inner.settings_lock.clone())
+    }
 }
 
 /// The workspace ids a book entry set names, for the inventory reconcile works from. An entry
@@ -3674,7 +3670,7 @@ mod no_link_words {
 
     #[test]
     fn a_running_workspace_whose_agent_is_late_is_not_called_stopped_and_the_user_is_not_blamed() {
-        let acme = WorkspaceName::new("acme").unwrap();
+        let acme = WorkspaceId::new("acme").unwrap();
         assert_eq!(
             no_link_message(&acme, NoLink::NotRunning),
             "acme is not running; start it first"

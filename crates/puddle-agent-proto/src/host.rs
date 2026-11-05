@@ -5,7 +5,7 @@
 //! ```no_run
 //! # use std::sync::Arc;
 //! # use puddle_agent_proto::host::{serve_session, GuestStream, HostConfig, StreamHandler};
-//! # use puddle_types::{NullSink, WorkspaceName};
+//! # use puddle_types::{NullSink, WorkspaceId};
 //! struct Proxy;
 //! impl StreamHandler for Proxy {
 //!     async fn handle(&self, stream: GuestStream) {
@@ -16,7 +16,7 @@
 //! # async fn f(
 //! #     conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
-//! let workspace = WorkspaceName::new("box")?;
+//! let workspace = WorkspaceId::new("box")?;
 //! serve_session(conn, workspace, Arc::new(NullSink), Arc::new(Proxy), HostConfig::default()).await?;
 //! # Ok(()) }
 //! ```
@@ -30,7 +30,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use puddle_types::{Event, EventSink, WorkspaceName};
+use puddle_types::{Event, EventSink, WorkspaceId};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -162,7 +162,7 @@ pub trait StreamHandler: Send + Sync + 'static {
 /// each report on with the workspace of the route that carried it. Must not block.
 pub trait AgentReports: Send + Sync {
     /// Takes one report about `workspace`.
-    fn report(&self, workspace: &WorkspaceName, report: AgentReport);
+    fn report(&self, workspace: &WorkspaceId, report: AgentReport);
 }
 
 /// A report from the guest agent about its own workspace, cleaned by the session. Nothing in it
@@ -212,11 +212,11 @@ pub enum AgentReport {
 pub trait GuestWatcher: Send + Sync + 'static {
     /// The agent of `workspace` is connected; `link` opens streams to it. A later call for the
     /// same workspace (the agent restarted, a session died) replaces the earlier link.
-    fn link(&self, workspace: &WorkspaceName, link: GuestLink);
+    fn link(&self, workspace: &WorkspaceId, link: GuestLink);
 
     /// The ports `workspace`'s guest listens on now: the whole set, ascending, no duplicates, at
     /// most [`MAX_PORTS`]. The guest's claim; nothing else is known.
-    fn ports(&self, workspace: &WorkspaceName, ports: Vec<u16>);
+    fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>);
 }
 
 /// A report from the guest that UDP was refused: the guest's own claim, cleaned by the host
@@ -303,7 +303,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Prefixed<S> {
 
 /// State shared by the streams of one session.
 struct Shared<H> {
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     sink: Arc<dyn EventSink>,
     handler: Arc<H>,
     config: HostConfig,
@@ -327,7 +327,7 @@ struct Shared<H> {
 /// clean close by the guest is `Ok`.
 pub async fn serve_session<IO, H>(
     mut io: IO,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     sink: Arc<dyn EventSink>,
     handler: Arc<H>,
     config: HostConfig,
@@ -640,7 +640,7 @@ async fn on_capture<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
 }
 
 async fn on_editor_status<H: StreamHandler>(
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     kind: EditorProblemKind,
     problem: Option<String>,
     shared: &Shared<H>,

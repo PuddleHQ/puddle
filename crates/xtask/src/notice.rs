@@ -21,6 +21,20 @@ pub fn render(facts: &ForkFacts, os: HostOs, firmware_files: &str) -> String {
         HostOs::Windows => "config-libkrunfw-windows_x86_64",
         HostOs::Linux | HostOs::MacOs => "the kernel configuration of its Linux build",
     };
+    let provenance = match (os, &fw.fork_tag) {
+        (HostOs::Windows, _) => format!(
+            "built from the source below by the release {} of {} (the Windows firmware msb loads)",
+            facts.tag, facts.fork_repo
+        ),
+        (HostOs::Linux | HostOs::MacOs, Some(fork_tag)) => format!(
+            "built by Puddle from {} at tag {fork_tag}: upstream's libkrunfw with a changed kernel configuration (no /dev/mem). Puddle's changes are the commits of that repository on top of upstream's",
+            fw.repo_url
+        ),
+        (HostOs::Linux | HostOs::MacOs, None) => format!(
+            "as published by microsandbox's release {}, unchanged",
+            facts.upstream_tag
+        ),
+    };
     let kernel_series = fw.kernel_version.split('.').next().unwrap_or_default();
     let mut out = format!(
         "\
@@ -62,7 +76,7 @@ in THIRD-PARTY-msb.txt.
 2. libkrunfw {lv} - LGPL-2.1-only (LGPL-2.1.txt), with Linux {kv} - GPL-2.0-only (GPL-2.0.txt)
 ----------------------------------------------------------------------------------------------
 
-{origin} The
+The firmware library in this folder ({firmware_files}) is libkrunfw {lv}, {provenance}. The
 library code is LGPL-2.1-only; it contains a Linux {kv} kernel, with patches and a kernel
 configuration, which is GPL-2.0-only. msb loads it as a separate library, which you may replace.
 
@@ -83,18 +97,6 @@ This offer is valid for anyone in receipt of this runtime.
 
 Puddle itself is GPL-3.0-or-later. Its third-party crates are listed in THIRD-PARTY-puddle.txt.
 ",
-        origin = match &fw.fork_tag {
-            Some(fork_tag) => format!(
-                "The firmware library in this folder ({firmware_files}) is libkrunfw {lv} built by Puddle from {repo} at tag {fork_tag}: upstream's libkrunfw with a changed kernel configuration (no /dev/mem). Puddle's changes are the commits of that repository on top of upstream's.",
-                lv = fw.libkrunfw_version,
-                repo = fw.repo_url,
-            ),
-            None => format!(
-                "The firmware library in this folder ({firmware_files}) is libkrunfw {lv} as published by microsandbox's release {upstream_tag}, unchanged.",
-                lv = fw.libkrunfw_version,
-                upstream_tag = facts.upstream_tag,
-            ),
-        },
         lv = fw.libkrunfw_version,
         kv = fw.kernel_version,
         repo = fw.repo_url,
@@ -174,7 +176,8 @@ mod tests {
     fn names_the_files_of_the_runtime_it_describes() {
         let win = windows(vec![]);
         assert!(win.contains("msb.exe is built from") && win.contains("msb.exe statically links"));
-        assert!(win.contains("(libkrunfw.dll) is libkrunfw 5.6.1"));
+        assert!(win.contains("(libkrunfw.dll) is libkrunfw 5.6.1, built from the source below by the release v0.7.7-puddle.1 of PuddleHQ/microsandbox"));
+        assert!(!win.contains("unchanged. The"));
         assert!(win.contains("config-libkrunfw-windows_x86_64"));
 
         let linux = render(

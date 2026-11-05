@@ -16,7 +16,7 @@ use puddle_store::{
 };
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, Decision, EgressRequest, Fill, Host,
-    PatternKind, PendingId, PendingOutcome, Rgb, RuleId, RuleSetId, SuffixAllows, WorkspaceName,
+    PatternKind, PendingId, PendingOutcome, Rgb, RuleId, RuleSetId, SuffixAllows, WorkspaceId,
 };
 use serde_json::Value;
 
@@ -28,8 +28,8 @@ fn fixture() -> (Arc<ManualClock>, Store) {
     (clock, store)
 }
 
-fn sb(id: &str) -> WorkspaceName {
-    WorkspaceName::new(id).unwrap()
+fn sb(id: &str) -> WorkspaceId {
+    WorkspaceId::new(id).unwrap()
 }
 
 fn req(workspace: &str, host: &str) -> EgressRequest {
@@ -709,7 +709,7 @@ fn r37_a_workspace_override_beats_the_global_switch_which_beats_the_default() {
     let id = user_set(&store, "Layers");
     let set = RuleSetId::User(id);
     let (a, b) = (sb("a"), sb("b"));
-    let is_on = |w: &WorkspaceName| store.rule_set(set).unwrap().is_on(w);
+    let is_on = |w: &WorkspaceId| store.rule_set(set).unwrap().is_on(w);
     // A set the user made is on by default, for everyone.
     assert!(is_on(&a) && is_on(&b));
     // The global switch decides where no override says otherwise.

@@ -5,7 +5,7 @@
 
 use puddle_settings::{GlobalSettings, ServerChoice};
 use puddle_store::{SystemPlan, SystemReason};
-use puddle_types::{Problem, WorkspaceName};
+use puddle_types::{Problem, WorkspaceId};
 
 use puddle_settings::resolve;
 
@@ -31,7 +31,7 @@ const DIRECT_SSH_REASONS: [SystemReason; 4] = [
 ///
 /// Nothing else is derived: a workspace used with another tool gets no host for VS Code's sake.
 #[must_use]
-pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceName]) -> SystemPlan {
+pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceId]) -> SystemPlan {
     let mut plan = SystemPlan::default();
     match global.editor_server() {
         ServerChoice::Microsoft => {
@@ -60,9 +60,9 @@ pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceName]) -> Sys
 /// the next successful refresh ends. A workspace list that can't be read counts as no workspace
 /// with direct SSH on (an allow is only ever dropped then) and raises the same problem.
 pub(crate) async fn refresh(state: &AppState) {
-    let (names, list_error): (Vec<WorkspaceName>, Option<String>) =
+    let (names, list_error): (Vec<WorkspaceId>, Option<String>) =
         match state.workspaces.list().await {
-            Ok(records) => (records.into_iter().map(|w| w.name).collect(), None),
+            Ok(records) => (records.into_iter().map(|w| w.id).collect(), None),
             Err(err) => (Vec::new(), Some(err.to_string())),
         };
     let (store, settings) = (state.store.clone(), state.settings.clone());
@@ -70,7 +70,7 @@ pub(crate) async fn refresh(state: &AppState) {
     let result = blocking(move || {
         let repo = settings.as_ref();
         let global = load_global(repo)?;
-        let direct: Vec<WorkspaceName> = names
+        let direct: Vec<WorkspaceId> = names
             .into_iter()
             .filter(|name| {
                 load_workspace(repo, name).is_ok_and(|own| {
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn r41_direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
-        let ssh = WorkspaceName::new("ssh").unwrap();
+        let ssh = WorkspaceId::new("ssh").unwrap();
         let plan = plan(&GlobalSettings::default(), std::slice::from_ref(&ssh));
         assert_eq!(
             plan.workspaces

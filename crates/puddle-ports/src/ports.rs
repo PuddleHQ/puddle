@@ -14,7 +14,7 @@ use std::time::Duration;
 use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::GuestWatcher;
 use puddle_netpolicy::{HostAddrs, OwnAddresses, PuddleEndpoints};
-use puddle_types::{Event, EventSink, WorkspaceName};
+use puddle_types::{Event, EventSink, WorkspaceId};
 use tokio::net::TcpListener;
 
 use crate::forward::{Forward, LinkCell, MAX_CONNECTIONS, link_cell};
@@ -140,7 +140,7 @@ struct Inner {
     programs: Arc<dyn ProgramLookup>,
     host: Arc<dyn HostAddrs>,
     max_connections: usize,
-    entries: Mutex<HashMap<WorkspaceName, Entry>>,
+    entries: Mutex<HashMap<WorkspaceId, Entry>>,
     /// Serialises the calls that change forwards, so two of them never race for one port.
     changing: tokio::sync::Mutex<()>,
 }
@@ -205,14 +205,14 @@ impl Ports {
         self
     }
 
-    fn entries(&self) -> MutexGuard<'_, HashMap<WorkspaceName, Entry>> {
+    fn entries(&self) -> MutexGuard<'_, HashMap<WorkspaceId, Entry>> {
         self.inner
             .entries
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn changed(&self, workspace: &WorkspaceName) {
+    fn changed(&self, workspace: &WorkspaceId) {
         self.inner.events.emit(Event::WorkspacePortsChanged {
             workspace: workspace.clone(),
         });
@@ -222,7 +222,7 @@ impl Ports {
     /// it once the workspace's boot has settled. A pinned forward whose port on this computer is
     /// taken is not opened; the user is told ([`Event::WorkspacePortForwardFailed`]) and the pin
     /// stays for the next start.
-    pub async fn started(&self, workspace: &WorkspaceName) {
+    pub async fn started(&self, workspace: &WorkspaceId) {
         let _changing = self.inner.changing.lock().await;
         self.entries().entry(workspace.clone()).or_default().running = true;
         match self.inner.pins.pinned(workspace) {
@@ -246,7 +246,7 @@ impl Ports {
         self.changed(workspace);
     }
 
-    fn fail(&self, workspace: &WorkspaceName, pin: Pin, reason: String) {
+    fn fail(&self, workspace: &WorkspaceId, pin: Pin, reason: String) {
         tracing::warn!(%workspace, guest_port = pin.guest_port, host_port = pin.host_port, %reason, "a pinned forward could not be restored");
         if let Some(entry) = self.entries().get_mut(workspace) {
             entry.failed.insert(
@@ -268,7 +268,7 @@ impl Ports {
     /// The way to open streams to `workspace`'s agent, `None` while the workspace is stopped or its
     /// agent has not said hello.
     #[must_use]
-    pub fn guest_link(&self, workspace: &WorkspaceName) -> Option<GuestLink> {
+    pub fn guest_link(&self, workspace: &WorkspaceId) -> Option<GuestLink> {
         let entries = self.entries();
         entries.get(workspace)?.link.as_ref()?.borrow().clone()
     }
@@ -284,7 +284,7 @@ impl Ports {
     /// [`NoLink::NotConnected`] when it runs and no agent said hello within `wait`.
     pub async fn guest_link_within(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         wait: Duration,
     ) -> Result<GuestLink, NoLink> {
         let mut link = {
@@ -302,7 +302,7 @@ impl Ports {
 
     /// The workspace stopped: its forwards close and what the guest listened on is forgotten. Its
     /// pins stay. Idempotent.
-    pub async fn stopped(&self, workspace: &WorkspaceName) {
+    pub async fn stopped(&self, workspace: &WorkspaceId) {
         let _changing = self.inner.changing.lock().await;
         let gone = self.entries().remove(workspace);
         if let Some(entry) = gone {
@@ -322,7 +322,7 @@ impl Ports {
     /// # Errors
     ///
     /// The pins could not be read.
-    pub fn view(&self, workspace: &WorkspaceName) -> Result<PortsView, PortsError> {
+    pub fn view(&self, workspace: &WorkspaceId) -> Result<PortsView, PortsError> {
         let pins = self.inner.pins.pinned(workspace)?;
         let entries = self.entries();
         let entry = entries.get(workspace);
@@ -367,7 +367,7 @@ impl Ports {
     /// opened for a pin that could not be saved is closed again.
     pub async fn forward(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         guest_port: u16,
         host_port: Option<u16>,
         pinned: bool,
@@ -426,7 +426,7 @@ impl Ports {
     /// not be changed.
     pub async fn release(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         guest_port: u16,
     ) -> Result<(), PortsError> {
         let _changing = self.inner.changing.lock().await;
@@ -445,7 +445,7 @@ impl Ports {
     }
 
     /// Opens (or keeps, or moves) the forward for `pin`. `true` when a listener was made.
-    async fn open(&self, workspace: &WorkspaceName, pin: Pin) -> Result<bool, PortsError> {
+    async fn open(&self, workspace: &WorkspaceId, pin: Pin) -> Result<bool, PortsError> {
         let link = {
             let mut entries = self.entries();
             let entry = entries.entry(workspace.clone()).or_default();
@@ -492,13 +492,9 @@ impl Ports {
 
     /// Who already holds `pin`'s port of this computer in Puddle's books: another forward, another
     /// pin, or one of Puddle's own listeners. Not the operating system's view: the bind says that.
-    fn claimed(
-        &self,
-        workspace: &WorkspaceName,
-        pin: Pin,
-    ) -> Result<Option<PortOwner>, PortsError> {
+    fn claimed(&self, workspace: &WorkspaceId, pin: Pin) -> Result<Option<PortOwner>, PortsError> {
         let holds =
-            |w: &WorkspaceName, guest_port: u16| !(w == workspace && guest_port == pin.guest_port);
+            |w: &WorkspaceId, guest_port: u16| !(w == workspace && guest_port == pin.guest_port);
         for (name, entry) in self.entries().iter() {
             for (guest_port, active) in &entry.forwards {
                 if active.host_port == pin.host_port && holds(name, *guest_port) {
@@ -545,7 +541,7 @@ impl Ports {
 }
 
 impl GuestWatcher for Ports {
-    fn link(&self, workspace: &WorkspaceName, link: GuestLink) {
+    fn link(&self, workspace: &WorkspaceId, link: GuestLink) {
         let mut entries = self.entries();
         let entry = entries.entry(workspace.clone()).or_default();
         entry
@@ -554,7 +550,7 @@ impl GuestWatcher for Ports {
             .send_replace(Some(link));
     }
 
-    fn ports(&self, workspace: &WorkspaceName, ports: Vec<u16>) {
+    fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>) {
         let changed = {
             let mut entries = self.entries();
             let entry = entries.entry(workspace.clone()).or_default();

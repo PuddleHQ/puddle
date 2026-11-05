@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Event, EventSink, WorkspaceName};
+use crate::{Event, EventSink, WorkspaceId};
 
 /// One background problem, as `GET /api/problems` lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ pub struct Problem {
     /// The workspace it is about, or `null` when it is about Puddle.
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// What went wrong, in one line. It can quote tool output: escape it when rendering.
     pub title: String,
     /// What Puddle did about it and what the user can do. It can quote tool output: escape it
@@ -45,7 +45,7 @@ impl Problem {
 
     /// The same problem, about `workspace`.
     #[must_use]
-    pub fn about(mut self, workspace: WorkspaceName) -> Self {
+    pub fn about(mut self, workspace: WorkspaceId) -> Self {
         self.workspace = Some(workspace);
         self
     }
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn clearing_by_prefix_ends_only_the_matching_problems() {
         let (_, problems) = problems();
-        let box_name = WorkspaceName::new("box").unwrap();
+        let box_name = WorkspaceId::new("box").unwrap();
         problems.raise(Problem::new("git-locks:box", "a", "b").about(box_name.clone()));
         problems.raise(Problem::new("git-locks:other", "a", "b"));
         problems.clear_prefix("git-locks:box");

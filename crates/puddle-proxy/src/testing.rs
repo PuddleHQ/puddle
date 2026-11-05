@@ -14,7 +14,7 @@ use puddle_agent_proto::resolve::{Record, RecordType};
 
 use puddle_types::{
     ConnectionEvent, ConnectionLog, Decision, DomainName, EgressRequest, Host, PatternKind,
-    PendingId, PendingOutcome, Policy, PolicyError, RuleId, SuffixAllows, WorkspaceName,
+    PendingId, PendingOutcome, Policy, PolicyError, RuleId, SuffixAllows, WorkspaceId,
 };
 
 use crate::destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver};
@@ -43,7 +43,7 @@ pub struct PendingItem {
     /// Its id.
     pub id: PendingId,
     /// The workspace it came from.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The host asked for.
     pub host: Host,
     /// The port asked for.
@@ -250,14 +250,14 @@ pub struct AnyAddress;
 impl AddressCheck for AnyAddress {
     fn check_target(
         &self,
-        _workspace: &WorkspaceName,
+        _workspace: &WorkspaceId,
         _target: &puddle_netpolicy::Target,
         _port: u16,
     ) -> Option<puddle_types::BlockReason> {
         None
     }
 
-    fn check(&self, _workspace: &WorkspaceName, _addr: SocketAddr) -> AddressVerdict {
+    fn check(&self, _workspace: &WorkspaceId, _addr: SocketAddr) -> AddressVerdict {
         AddressVerdict::Allow
     }
 }

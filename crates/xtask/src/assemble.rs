@@ -5,7 +5,7 @@
 //! ```text
 //! Windows                                   Linux
 //! <out>/msb.exe        fork release asset   <out>/msb                   built from the fork tag
-//! <out>/libkrunfw.dll  upstream asset       <out>/libkrunfw.so.5        the libkrunfw fork's asset
+//! <out>/libkrunfw.dll  fork release asset    <out>/libkrunfw.so.5        the libkrunfw fork's asset
 //!                                                                       (upstream's if none pinned)
 //!                                           <out>/libkrunfw.so.<ver>    copy of it, the name msb
 //!                                                                       looks for (<ver> is pinned)
@@ -291,8 +291,14 @@ fn build(
             found: found.unwrap_or_else(|| "none".into()),
         });
     }
-    let fw_origin = firmware_origin(target, &facts.firmware)?;
+    // Windows: the fork release's dll, the one `ci/fetch-msb.sh` pins and the VM tests run, so the
+    // installer ships the tested firmware. Linux: the pinned libkrunfw fork release, else upstream's.
+    let fw_origin = match os {
+        HostOs::Windows => Origin::Fork,
+        HostOs::Linux | HostOs::MacOs => firmware_origin(target, &facts.firmware)?,
+    };
     let fw_list = match (fw_origin, &facts.firmware.fork_tag) {
+        (Origin::Fork, _) => format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
         (Origin::FirmwareFork, Some(fork_tag)) => {
             format!("{FIRMWARE_FORK} {fork_tag} {CHECKSUMS_ASSET}")
         }

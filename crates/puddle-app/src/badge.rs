@@ -198,7 +198,7 @@ pub fn overlay_number(count: usize) -> Pixels {
 
 #[cfg(test)]
 mod tests {
-    use puddle_types::{PendingEnd, PendingSummary, WorkspaceName};
+    use puddle_types::{PendingEnd, PendingSummary, WorkspaceId};
 
     use super::*;
 
@@ -206,7 +206,7 @@ mod tests {
         Event::PendingOpened {
             request: PendingSummary {
                 id,
-                workspace: WorkspaceName::new("demo").unwrap(),
+                workspace: WorkspaceId::new("demo").unwrap(),
                 host: "example.org".to_owned(),
                 registrable_domain: "example.org".to_owned(),
                 port: 443,
@@ -219,7 +219,7 @@ mod tests {
 
     fn closed(id: i64) -> Event {
         Event::PendingClosed {
-            workspace: WorkspaceName::new("demo").unwrap(),
+            workspace: WorkspaceId::new("demo").unwrap(),
             id,
             state: PendingEnd::Allowed,
             rule_id: Some(1),

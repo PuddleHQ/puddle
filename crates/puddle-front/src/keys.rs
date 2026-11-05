@@ -12,7 +12,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 /// Bytes in a half.
 pub const HALF_LEN: usize = 32;
@@ -24,7 +24,7 @@ pub trait ServerHalves: Send + Sync {
     /// # Errors
     ///
     /// The half could not be read, made or stored.
-    fn half(&self, workspace: &WorkspaceName) -> io::Result<[u8; HALF_LEN]>;
+    fn half(&self, workspace: &WorkspaceId) -> io::Result<[u8; HALF_LEN]>;
 
     /// Deletes the workspace's half, for good: a workspace made later under the same name gets a
     /// new one. Idempotent.
@@ -32,14 +32,14 @@ pub trait ServerHalves: Send + Sync {
     /// # Errors
     ///
     /// The file exists and could not be deleted.
-    fn forget(&self, workspace: &WorkspaceName) -> io::Result<()>;
+    fn forget(&self, workspace: &WorkspaceId) -> io::Result<()>;
 }
 
 /// [`ServerHalves`] in owner-only files, `<folder>/<workspace>.key`, hex.
 #[derive(Debug)]
 pub struct FileHalves {
     dir: PathBuf,
-    cache: Mutex<HashMap<WorkspaceName, [u8; HALF_LEN]>>,
+    cache: Mutex<HashMap<WorkspaceId, [u8; HALF_LEN]>>,
 }
 
 impl FileHalves {
@@ -52,7 +52,7 @@ impl FileHalves {
         }
     }
 
-    fn path(&self, workspace: &WorkspaceName) -> PathBuf {
+    fn path(&self, workspace: &WorkspaceId) -> PathBuf {
         self.dir.join(format!("{workspace}.key"))
     }
 }
@@ -78,7 +78,7 @@ fn unhex(text: &str) -> Option<[u8; HALF_LEN]> {
 }
 
 impl ServerHalves for FileHalves {
-    fn half(&self, workspace: &WorkspaceName) -> io::Result<[u8; HALF_LEN]> {
+    fn half(&self, workspace: &WorkspaceId) -> io::Result<[u8; HALF_LEN]> {
         // The lock is held across the file work on purpose: two first requests must not each make
         // a half and keep different ones. The files are 64 bytes.
         let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
@@ -106,7 +106,7 @@ impl ServerHalves for FileHalves {
         Ok(half)
     }
 
-    fn forget(&self, workspace: &WorkspaceName) -> io::Result<()> {
+    fn forget(&self, workspace: &WorkspaceId) -> io::Result<()> {
         let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
         cache.remove(workspace);
         match std::fs::remove_file(self.path(workspace)) {
@@ -120,8 +120,8 @@ impl ServerHalves for FileHalves {
 mod tests {
     use super::*;
 
-    fn name(n: &str) -> WorkspaceName {
-        WorkspaceName::new(n).unwrap()
+    fn name(n: &str) -> WorkspaceId {
+        WorkspaceId::new(n).unwrap()
     }
 
     #[test]

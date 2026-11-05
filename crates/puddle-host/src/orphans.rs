@@ -235,7 +235,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 local: None,
             })
             .collect();
-        git.set_up(&name, &new).await;
+        git.set_up(id, &new).await;
         self.status_event(&record);
         self.refresh_orphan_problem().await;
         Ok(record)
@@ -343,5 +343,27 @@ mod tests {
         assert_eq!(two[0].directory.to_string(), "api");
         let empty = entries_for(&list(vec![]), Some(url), &volume()).unwrap();
         assert_eq!(empty[0].directory.to_string(), "api");
+    }
+
+    #[test]
+    fn an_unreadable_checkout_gives_no_entry_even_with_a_remote_and_is_never_the_named_one() {
+        let mut broken = found("broken", Some("https://example.org/a/broken.git"));
+        broken.unreadable = Some("not a git repository".to_owned());
+        let none = entries_for(&list(vec![broken.clone()]), None, &volume());
+        assert!(
+            matches!(none, Err(WorkspaceError::Invalid(ref m)) if m.contains("enter the address")),
+            "{none:?}"
+        );
+        let url = RepoUrl::parse("https://example.org/a/api").unwrap();
+        // The unreadable one is not "the only checkout without an address": the readable
+        // neighbour is, so the given address goes in its directory.
+        let beside = entries_for(
+            &list(vec![broken, found("bare", None)]),
+            Some(url),
+            &volume(),
+        )
+        .unwrap();
+        assert_eq!(beside.len(), 1);
+        assert_eq!(beside[0].directory.to_string(), "bare");
     }
 }

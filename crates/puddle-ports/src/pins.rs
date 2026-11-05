@@ -2,7 +2,7 @@
 //! Where pinned forwards are kept. The host stores them in the database; the tests keep them in
 //! memory.
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 /// A forward pinned to a workspace: it comes back, on the same port of this computer, every time
 /// the workspace starts.
@@ -26,38 +26,38 @@ pub trait Pins: Send + Sync + 'static {
     /// # Errors
     ///
     /// The store could not be read.
-    fn pinned(&self, workspace: &WorkspaceName) -> Result<Vec<Pin>, PinsError>;
+    fn pinned(&self, workspace: &WorkspaceId) -> Result<Vec<Pin>, PinsError>;
 
     /// Every workspace's pins, to tell which ports of this computer are spoken for.
     ///
     /// # Errors
     ///
     /// The store could not be read.
-    fn all(&self) -> Result<Vec<(WorkspaceName, Pin)>, PinsError>;
+    fn all(&self) -> Result<Vec<(WorkspaceId, Pin)>, PinsError>;
 
     /// Pins `pin` for `workspace`, replacing the pin of the same guest port.
     ///
     /// # Errors
     ///
     /// The store could not be written; nothing changed.
-    fn pin(&self, workspace: &WorkspaceName, pin: Pin) -> Result<(), PinsError>;
+    fn pin(&self, workspace: &WorkspaceId, pin: Pin) -> Result<(), PinsError>;
 
     /// Removes the pin of `guest_port`; `true` when there was one.
     ///
     /// # Errors
     ///
     /// The store could not be written; nothing changed.
-    fn unpin(&self, workspace: &WorkspaceName, guest_port: u16) -> Result<bool, PinsError>;
+    fn unpin(&self, workspace: &WorkspaceId, guest_port: u16) -> Result<bool, PinsError>;
 }
 
 /// Pins kept in memory: for tests and for a host without a database.
 #[derive(Debug, Default)]
 pub struct MemoryPins {
-    rows: std::sync::Mutex<Vec<(WorkspaceName, Pin)>>,
+    rows: std::sync::Mutex<Vec<(WorkspaceId, Pin)>>,
 }
 
 impl MemoryPins {
-    fn rows(&self) -> std::sync::MutexGuard<'_, Vec<(WorkspaceName, Pin)>> {
+    fn rows(&self) -> std::sync::MutexGuard<'_, Vec<(WorkspaceId, Pin)>> {
         self.rows
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -65,7 +65,7 @@ impl MemoryPins {
 }
 
 impl Pins for MemoryPins {
-    fn pinned(&self, workspace: &WorkspaceName) -> Result<Vec<Pin>, PinsError> {
+    fn pinned(&self, workspace: &WorkspaceId) -> Result<Vec<Pin>, PinsError> {
         let mut pins: Vec<Pin> = self
             .rows()
             .iter()
@@ -76,18 +76,18 @@ impl Pins for MemoryPins {
         Ok(pins)
     }
 
-    fn all(&self) -> Result<Vec<(WorkspaceName, Pin)>, PinsError> {
+    fn all(&self) -> Result<Vec<(WorkspaceId, Pin)>, PinsError> {
         Ok(self.rows().clone())
     }
 
-    fn pin(&self, workspace: &WorkspaceName, pin: Pin) -> Result<(), PinsError> {
+    fn pin(&self, workspace: &WorkspaceId, pin: Pin) -> Result<(), PinsError> {
         let mut rows = self.rows();
         rows.retain(|(w, p)| !(w == workspace && p.guest_port == pin.guest_port));
         rows.push((workspace.clone(), pin));
         Ok(())
     }
 
-    fn unpin(&self, workspace: &WorkspaceName, guest_port: u16) -> Result<bool, PinsError> {
+    fn unpin(&self, workspace: &WorkspaceId, guest_port: u16) -> Result<bool, PinsError> {
         let mut rows = self.rows();
         let before = rows.len();
         rows.retain(|(w, p)| !(w == workspace && p.guest_port == guest_port));
@@ -110,8 +110,8 @@ mod tests {
     fn memory_pins_keep_replace_list_and_remove_per_workspace() {
         let pins = MemoryPins::default();
         let (a, b) = (
-            WorkspaceName::new("a").unwrap(),
-            WorkspaceName::new("b").unwrap(),
+            WorkspaceId::new("a").unwrap(),
+            WorkspaceId::new("b").unwrap(),
         );
         pins.pin(&a, pin(80, 8080)).unwrap();
         pins.pin(&a, pin(22, 2222)).unwrap();

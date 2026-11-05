@@ -19,7 +19,7 @@ use puddle_proxy::testing::{AnyAddress, StaticResolver};
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Actor, Effect, Limits, NewRule, Pattern, Scope, Store, SystemClock};
 use puddle_test_kit::eventually;
-use puddle_types::{NullSink, WorkspaceName};
+use puddle_types::{NullSink, WorkspaceId};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -28,8 +28,8 @@ pub(crate) mod stall;
 
 pub(crate) const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
-pub(crate) fn workspace() -> WorkspaceName {
-    WorkspaceName::new("e2e").unwrap()
+pub(crate) fn workspace() -> WorkspaceId {
+    WorkspaceId::new("e2e").unwrap()
 }
 
 pub(crate) struct Rig {

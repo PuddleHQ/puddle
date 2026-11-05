@@ -3345,7 +3345,7 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
          for g in $(id -G agent); do echo \"want-group $g\"; done",
     )
     .await;
-    let field = |key: &str| -> std::collections::BTreeSet<String> {
+    let field = |key: &str| -> BTreeSet<String> {
         creds
             .lines()
             .filter_map(|line| line.strip_prefix(key))

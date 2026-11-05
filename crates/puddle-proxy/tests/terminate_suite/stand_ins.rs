@@ -216,6 +216,7 @@ async fn a_stand_in_toward_another_decrypted_host_goes_out_unchanged_and_is_flag
     assert!(!event.injected, "nothing was added");
     assert_eq!(event.binding_id, None);
     assert!(!captured_logs().contains(REAL_KEY));
+    assert!(captured_logs().contains("a stand-in went out unchanged"));
 }
 
 #[tokio::test]
@@ -322,6 +323,10 @@ async fn hostile_hg40_a_stale_stand_in_is_flagged_and_the_flag_reveals_no_real_c
     assert!(
         !everything.contains(&forgotten),
         "the flag never repeats the token"
+    );
+    assert!(
+        everything.contains("a stand-in went out unchanged"),
+        "the stale flag is logged, so the checks above read the log that carries it"
     );
 }
 
@@ -460,6 +465,11 @@ async fn stand_ins_in_the_path_or_an_escaped_query_go_out_unchanged_and_the_reco
         "both toward their own host, each named once"
     );
     assert!(!event.injected, "nothing was swapped");
+    assert_eq!(
+        event.http.as_ref().unwrap().path(),
+        "/repos/[secret:GH_TOKEN]/x",
+        "the record names the stand-in in the path, never its text"
+    );
     assert!(!captured_logs().contains(REAL_KEY));
     assert!(!captured_logs().contains(REAL_TOKEN));
 }

@@ -3,8 +3,10 @@
   import LoadNotice from "#lib/components/LoadNotice.svelte";
   import { onMount } from "svelte";
   import Plus from "@lucide/svelte/icons/plus";
+  import OrphanVolumesNotice from "#lib/components/OrphanVolumesNotice.svelte";
   import PendingStrip from "#lib/components/PendingStrip.svelte";
   import WorkspaceCard from "#lib/components/WorkspaceCard.svelte";
+  import { orphanVolumes } from "#lib/stores/orphan-volumes.svelte.ts";
   import { pending } from "#lib/stores/pending.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
@@ -16,7 +18,11 @@
     const clock = setInterval(() => {
       now = Date.now();
     }, 30_000);
-    return () => clearInterval(clock);
+    const stopOrphans = orphanVolumes.start();
+    return () => {
+      clearInterval(clock);
+      stopOrphans();
+    };
   });
 
   const waitingBy = $derived.by(() => {
@@ -55,6 +61,8 @@
     <Plus aria-hidden="true" size={16} />New workspace
   </button>
 </div>
+
+<OrphanVolumesNotice store={orphanVolumes} />
 
 {#if workspaces.status === "ready" && workspaces.loadError}
   <LoadNotice what="the workspaces" message={workspaces.loadError} stale />

@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 use puddle_runtime::RuntimeError;
 
 use crate::facts::{
-    BootFacts, CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts,
-    JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
+    BootFacts, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, DiskFacts, GsaFacts,
+    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts,
+    RuntimeState, WritableFolder,
 };
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -37,6 +38,10 @@ pub trait Probe {
     fn job(&self) -> Option<JobFacts>;
     /// The Global Secure Access client; `None` when not on Windows.
     fn global_secure_access(&self) -> Option<GsaFacts>;
+    /// The free space on the drive that holds Puddle's data.
+    fn disk_space(&self) -> DiskFacts;
+    /// The folders above Puddle's data folder; `None` where msb has no such rule (not Linux).
+    fn data_path(&self) -> Option<DataPathFacts>;
 }
 
 /// What to run and how long it may take.
@@ -48,6 +53,10 @@ pub struct Options {
     pub launch_limit: Duration,
     /// Time limit for the whole run; the test boot gets what is left.
     pub budget: Duration,
+    /// Free space, in bytes, under which the disk check warns.
+    pub disk_warn_below: u64,
+    /// Free space, in bytes, under which the disk check fails.
+    pub disk_fail_below: u64,
 }
 
 impl Default for Options {
@@ -56,9 +65,19 @@ impl Default for Options {
             boot: true,
             launch_limit: Duration::from_secs(10),
             budget: Duration::from_secs(28),
+            disk_warn_below: DEFAULT_DISK_WARN_BELOW,
+            disk_fail_below: DEFAULT_DISK_FAIL_BELOW,
         }
     }
 }
+
+/// Puddle's default warning line for free disk space: 20 GB (the settings default is the same).
+pub const DEFAULT_DISK_WARN_BELOW: u64 = 20 * GIB;
+
+/// Puddle's default failure line for free disk space: 5 GB (the settings default is the same).
+pub const DEFAULT_DISK_FAIL_BELOW: u64 = 5 * GIB;
+
+const GIB: u64 = 1024 * 1024 * 1024;
 
 /// The least time worth starting a test boot with.
 const MIN_BOOT_TIME: Duration = Duration::from_secs(5);
@@ -109,6 +128,11 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
             test_boot(os, &rt.msb, &rt.dir, &facts, job.as_ref())
         }
     });
+
+    checks.push(disk_space(&probe.disk_space(), options));
+    if let Some(path) = probe.data_path() {
+        checks.push(data_path(&path));
+    }
 
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
@@ -351,6 +375,150 @@ plain terminal outside a CI runner or IDE.",
             )
             .detail(detail.clone()),
         ),
+    }
+}
+
+// ---- disk space ----
+
+/// `bytes` in GB (1024 x 1024 x 1024 bytes, as Windows and `df -h` count), with a decimal only
+/// when it is not zero.
+fn gb(bytes: u64) -> String {
+    let tenths = u128::from(bytes) * 10 / u128::from(GIB);
+    match tenths % 10 {
+        0 => format!("{}", tenths / 10),
+        t => format!("{}.{t}", tenths / 10),
+    }
+}
+
+const DISK_WHY: &str = "Workspace volumes and root disks, package caches and builds inside a workspace all grow on this drive, \
+and a full drive stops them with errors that do not name the cause (a build that dies halfway, a tool that cannot write).";
+
+fn disk_space(facts: &DiskFacts, options: &Options) -> Check {
+    let id = CheckId::DiskSpace;
+    match facts {
+        DiskFacts::NoFolder => skipped(id, "Puddle's data folder could not be found"),
+        DiskFacts::Unreadable { dir, detail } => Check::new(
+            id,
+            Status::Info,
+            format!(
+                "could not be read; how much room the drive that holds {} has is unknown",
+                dir.display()
+            ),
+        )
+        .finding(Finding::DiskSpaceUnreadable)
+        .fix("Puddle works; this only means it cannot warn you before the drive fills up.")
+        .detail(detail.clone()),
+        DiskFacts::Read { dir, free_bytes } => {
+            let free = gb(*free_bytes);
+            let place = format!("on the drive that holds Puddle's data ({})", dir.display());
+            if *free_bytes < options.disk_fail_below {
+                Check::new(
+                    id,
+                    Status::Fail,
+                    format!(
+                        "only {free} GB free {place}, under the {} GB line",
+                        gb(options.disk_fail_below)
+                    ),
+                )
+                .finding(Finding::DiskSpaceCritical)
+                .fix(format!(
+                    "{DISK_WHY} Free space before you start or build anything in a workspace: delete workspaces you no longer \
+use and files you do not need. The line is the setting \"Fail when free space is under\" in Settings."
+                ))
+            } else if *free_bytes < options.disk_warn_below {
+                Check::new(
+                    id,
+                    Status::Warn,
+                    format!(
+                        "{free} GB free {place}, under the {} GB line",
+                        gb(options.disk_warn_below)
+                    ),
+                )
+                .finding(Finding::DiskSpaceLow)
+                .fix(format!(
+                    "{DISK_WHY} Free some space soon: delete workspaces you no longer use and files you do not need. \
+The line is the setting \"Warn when free space is under\" in Settings."
+                ))
+            } else {
+                Check::new(id, Status::Ok, format!("{free} GB free {place}"))
+            }
+        }
+    }
+}
+
+// ---- data folder path ----
+
+/// `path` as one shell word: bare when it is plain, in single quotes otherwise.
+fn shell_word(path: &Path) -> String {
+    let text = path.display().to_string();
+    let plain = |c: char| c.is_ascii_alphanumeric() || "/._-+@:,=".contains(c);
+    if !text.is_empty() && text.chars().all(plain) {
+        text
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
+}
+
+fn data_path(facts: &DataPathFacts) -> Check {
+    let id = CheckId::DataPath;
+    match facts {
+        DataPathFacts::NoFolder => skipped(id, "Puddle's data folder could not be found"),
+        DataPathFacts::Unreadable { dir, detail } => Check::new(
+            id,
+            Status::Info,
+            format!(
+                "could not be read; whether other accounts can write above {} is unknown",
+                dir.display()
+            ),
+        )
+        .finding(Finding::DataPathUnreadable)
+        .fix("Puddle may still work; this only means the doctor cannot rule out the folder permissions msb refuses.")
+        .detail(detail.clone()),
+        DataPathFacts::Checked { dir, writable } if writable.is_empty() => Check::new(
+            id,
+            Status::Ok,
+            format!("no folder above {} lets other accounts write", dir.display()),
+        ),
+        DataPathFacts::Checked { writable, .. } => {
+            let names = writable
+                .iter()
+                .map(|f| f.path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let any_world = writable.iter().any(WritableFolder::world_writable);
+            let how = if !any_world {
+                "writable by the group"
+            } else if writable.iter().any(WritableFolder::group_writable) {
+                "writable by the group or everyone"
+            } else {
+                "writable by everyone"
+            };
+            let flags = if any_world { "go-w" } else { "g-w" };
+            let sudo = if writable.iter().all(|f| f.owned) { "" } else { "sudo " };
+            let words: Vec<String> = writable.iter().map(|f| shell_word(&f.path)).collect();
+            let detail: Vec<String> = writable
+                .iter()
+                .map(|f| format!("{} mode {:04o}", f.path.display(), f.mode & 0o7777))
+                .collect();
+            Check::new(
+                id,
+                Status::Fail,
+                format!(
+                    "{names} {} {how} and not sticky, so msb will not open Puddle's data below {}",
+                    if writable.len() == 1 { "is" } else { "are" },
+                    if writable.len() == 1 { "it" } else { "them" },
+                ),
+            )
+            .finding(Finding::DataPathWritable)
+            .fix(format!(
+                "msb opens its catalog only below folders where other accounts cannot rename entries, so \
+every sandbox start fails until the write permission is gone. A user created with a private group and umask \
+0002 (the Ubuntu default) often leaves ~/.local at 0775. Run:
+  {sudo}chmod {flags} {}",
+                words.join(" ")
+            ))
+            .detail(detail.join("\n"))
+        }
     }
 }
 

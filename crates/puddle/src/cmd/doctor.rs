@@ -8,6 +8,7 @@ use std::process::ExitCode;
 
 use puddle_doctor::boot::boot_logs_dir;
 use puddle_doctor::{Options, Probe, Report, SystemProbe, diagnose};
+use puddle_host::{FileSettings, HostPaths, disk_limits};
 
 use crate::cli::{Command, UsageError};
 
@@ -54,10 +55,11 @@ where
     reason = "the report is the command's output"
 )]
 pub fn run(args: DoctorArgs) -> ExitCode {
+    let data = data_folder(puddle_fs::data_dir());
     let probe = match std::env::current_exe()
         .map_err(|e| e.to_string())
         .and_then(|exe| SystemProbe::installed(&exe).map_err(|e| e.to_string()))
-        .map(|probe| keeping_logs(probe, data_folder(puddle_fs::data_dir()).as_deref()))
+        .map(|probe| keeping_logs(probe, data.as_deref()))
     {
         Ok(probe) => probe,
         Err(e) => {
@@ -65,7 +67,7 @@ pub fn run(args: DoctorArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let (output, code) = report(&probe, args);
+    let (output, code) = report(&probe, args, free_space_lines(data.as_deref()));
     print!("{output}");
     code
 }
@@ -84,18 +86,38 @@ fn data_folder(found: Result<PathBuf, puddle_fs::DataDirError>) -> Option<PathBu
 }
 
 /// `probe`, keeping a failed test boot's logs in the data folder (`data`) like the system check
-/// in the app does. Without a data folder nothing is kept.
+/// in the app does, and measuring the drive that holds it and checking the folders above it.
+/// Without a data folder nothing is kept and the disk and path checks say so.
 fn keeping_logs(probe: SystemProbe, data: Option<&Path>) -> SystemProbe {
     match data {
-        Some(data) => probe.with_keep_boot_logs(boot_logs_dir(data)),
+        Some(data) => probe
+            .with_keep_boot_logs(boot_logs_dir(data))
+            .with_data_dir(data),
         None => probe,
     }
 }
 
-/// The report on `probe` as the text to print and the exit code.
-pub(crate) fn report(probe: &dyn Probe, args: DoctorArgs) -> (String, ExitCode) {
+/// The free-space lines (warn, fail) in bytes, from the settings in the data folder the app
+/// writes, or Puddle's own when there is no folder, no settings file or the file is not usable.
+fn free_space_lines(data: Option<&Path>) -> (u64, u64) {
+    let limits = match data {
+        Some(data) => disk_limits(&FileSettings::new(HostPaths::new(data).settings())),
+        None => puddle_settings::DiskSpaceLimits::default(),
+    };
+    (limits.warn().bytes(), limits.fail().bytes())
+}
+
+/// The report on `probe` as the text to print and the exit code; `disk_lines` are the free-space
+/// lines in bytes (warn, fail).
+pub(crate) fn report(
+    probe: &dyn Probe,
+    args: DoctorArgs,
+    disk_lines: (u64, u64),
+) -> (String, ExitCode) {
     let options = Options {
         boot: !args.no_boot,
+        disk_warn_below: disk_lines.0,
+        disk_fail_below: disk_lines.1,
         ..Options::default()
     };
     let report = diagnose(probe, &options, puddle_types::VERSION);
@@ -123,8 +145,8 @@ mod tests {
     use std::time::Duration;
 
     use puddle_doctor::{
-        BootFacts, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts,
-        KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
+        BootFacts, CodeIntegrityFacts, DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts,
+        JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
     };
 
     use super::*;
@@ -134,6 +156,8 @@ mod tests {
         runtime_ready: bool,
         /// Makes the test boot fail, with these logs kept.
         failed_boot_kept: Option<KeptLogs>,
+        /// Bytes free on the data folder's drive.
+        free_bytes: u64,
     }
 
     impl Probe for Fake {
@@ -151,6 +175,9 @@ mod tests {
             }
         }
         fn code_integrity(&self) -> Option<CodeIntegrityFacts> {
+            None
+        }
+        fn data_path(&self) -> Option<puddle_doctor::DataPathFacts> {
             None
         }
         fn runtime(&self) -> RuntimeFacts {
@@ -204,7 +231,18 @@ mod tests {
         fn global_secure_access(&self) -> Option<GsaFacts> {
             None
         }
+        fn disk_space(&self) -> DiskFacts {
+            DiskFacts::Read {
+                dir: PathBuf::from("/data/puddle"),
+                free_bytes: self.free_bytes,
+            }
+        }
     }
+
+    const GB: u64 = 1024 * 1024 * 1024;
+
+    /// What the checks use when the settings say nothing.
+    const OWN_LINES: (u64, u64) = (20 * GB, 5 * GB);
 
     fn puddle_runtime_missing() -> puddle_doctor::RuntimeError {
         puddle_doctor::RuntimeError::Missing {
@@ -241,8 +279,10 @@ mod tests {
             &Fake {
                 runtime_ready: true,
                 failed_boot_kept: None,
+                free_bytes: 100 * GB,
             },
             DoctorArgs::default(),
+            OWN_LINES,
         );
         assert!(text.starts_with("puddle doctor (puddle "), "{text}");
         assert!(text.contains("No problems found."), "{text}");
@@ -259,8 +299,10 @@ mod tests {
             &Fake {
                 runtime_ready: false,
                 failed_boot_kept: None,
+                free_bytes: 100 * GB,
             },
             args,
+            OWN_LINES,
         );
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["schema_version"], puddle_doctor::SCHEMA_VERSION);
@@ -286,8 +328,10 @@ mod tests {
             &Fake {
                 runtime_ready: true,
                 failed_boot_kept: None,
+                free_bytes: 100 * GB,
             },
             args,
+            OWN_LINES,
         );
         assert!(text.contains("not checked: --no-boot"), "{text}");
     }
@@ -299,12 +343,13 @@ mod tests {
                 dir: PathBuf::from("/data/puddle/doctor-boot-logs/puddle-doctor-boot-1"),
                 failed: vec![],
             }),
+            free_bytes: 100 * GB,
         };
         let args = DoctorArgs {
             json,
             no_boot: false,
         };
-        report(&probe, args).0
+        report(&probe, args, OWN_LINES).0
     }
 
     #[test]
@@ -364,6 +409,70 @@ mod tests {
         assert_eq!(
             keeping_logs(installed_probe(), None).keep_boot_logs_dir(),
             None
+        );
+    }
+    fn disk_report(free_bytes: u64, lines: (u64, u64)) -> (String, ExitCode) {
+        let probe = Fake {
+            runtime_ready: true,
+            failed_boot_kept: None,
+            free_bytes,
+        };
+        let args = DoctorArgs {
+            json: false,
+            no_boot: true,
+        };
+        report(&probe, args, lines)
+    }
+
+    #[test]
+    fn little_free_space_warns_and_exits_zero() {
+        let (text, code) = disk_report(12 * GB, OWN_LINES);
+        assert!(text.contains("warn  Disk space"), "{text}");
+        assert!(
+            text.contains("12 GB free on the drive that holds Puddle's data"),
+            "{text}"
+        );
+        assert_eq!(code, ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn very_little_free_space_fails_and_exits_one() {
+        let (text, code) = disk_report(3 * GB, OWN_LINES);
+        assert!(text.contains("FAIL  Disk space"), "{text}");
+        assert_eq!(code, ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn the_lines_passed_in_decide() {
+        let (text, code) = disk_report(12 * GB, (10 * GB, 2 * GB));
+        assert!(text.contains("ok    Disk space"), "{text}");
+        assert_eq!(code, ExitCode::SUCCESS);
+        let (_, code) = disk_report(12 * GB, (50 * GB, 40 * GB));
+        assert_eq!(code, ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn the_lines_come_from_the_settings_in_the_data_folder_or_are_puddles_own() {
+        let data = tempfile::tempdir().unwrap();
+        assert_eq!(free_space_lines(None), OWN_LINES);
+        assert_eq!(
+            free_space_lines(Some(data.path())),
+            OWN_LINES,
+            "no settings file"
+        );
+        let settings = data.path().join("settings");
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::write(
+            settings.join("global.json"),
+            r#"{"schema_version": 2, "ui": {"disk_warn_free_gb": 30, "disk_fail_free_gb": 7}}"#,
+        )
+        .unwrap();
+        assert_eq!(free_space_lines(Some(data.path())), (30 * GB, 7 * GB));
+        std::fs::write(settings.join("global.json"), "{not json").unwrap();
+        assert_eq!(
+            free_space_lines(Some(data.path())),
+            OWN_LINES,
+            "damaged file"
         );
     }
 }

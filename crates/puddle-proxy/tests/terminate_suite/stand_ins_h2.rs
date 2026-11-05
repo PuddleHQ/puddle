@@ -116,6 +116,40 @@ async fn a_stand_in_is_swapped_on_an_http2_request_to_an_http2_server() {
 }
 
 #[tokio::test]
+async fn an_http2_request_with_a_stale_stand_in_is_flagged_and_adds_no_credential() {
+    let pki = Pki::new();
+    let server = H2Server::recording(&pki, "bound.test", ok()).await;
+    let (stand_ins, _) = registry(&["bound.test"]);
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(pass_through())
+        .stand_ins(&stand_ins)
+        .build();
+    let removed = secret_stand_in("OLD_KEY").unwrap();
+    let mut guest = rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2", b"http/1.1"]).await;
+    let got = client
+        .request(
+            "GET",
+            "bound.test",
+            "/v1/models",
+            &[("x-api-key", &removed)],
+            full(bytes::Bytes::new()),
+        )
+        .await;
+    assert_eq!(got.status, 200);
+    assert_eq!(
+        server.recorded()[0].headers_named("x-api-key"),
+        [removed.as_str()]
+    );
+    client.close().await;
+    let event = &rig.events(1).await[0];
+    assert!(!event.injected);
+    assert_eq!(event.unswapped_stand_ins, ["stale-stand-in:secret:OLD_KEY"]);
+    assert!(!captured_logs().contains(REAL_KEY));
+}
+
+#[tokio::test]
 async fn an_http2_guest_gets_its_stand_in_swapped_toward_an_http11_server_too() {
     let pki = Pki::new();
     let server = FakeServer::tls(

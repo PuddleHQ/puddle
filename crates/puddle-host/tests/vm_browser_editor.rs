@@ -96,7 +96,7 @@ async fn explorer(
     sandbox: &WorkspaceName,
     result: &str,
 ) -> Value {
-    let page = shell.page(sandbox.as_str());
+    let page = shell.page(sandbox.as_str()).await;
     let request = PageRequest::new("", EXPLORER_READY)
         .result(result)
         .budget(WORKBENCH_BUDGET);
@@ -128,11 +128,17 @@ const EDITOR_UP: &str = "for i in $(seq 1 100); do curl -sf -o /dev/null http://
 const WHERE: &str = "({ path: location.pathname, search: decodeURIComponent(location.search), \
      login: !!document.querySelector('input[type=password]') })";
 
+/// A page's first load, running on its own task: it fails with the browser's message.
+type PageLoad = tokio::task::JoinHandle<Result<(), String>>;
+
 /// The desktop shell's part, with a real browser for its webview (module docs).
 struct ShellStandIn {
-    browser: tokio::sync::Mutex<BrowserSession>,
+    browser: Arc<tokio::sync::Mutex<BrowserSession>>,
     /// The pages open per workspace, oldest first.
-    pages: Mutex<BTreeMap<String, Vec<PageId>>>,
+    pages: Arc<Mutex<BTreeMap<String, Vec<PageId>>>>,
+    /// The page loads still running per workspace, oldest first: an attach returns once a window
+    /// exists, as the shell's does, and the page's first answer comes after.
+    loading: Mutex<BTreeMap<String, Vec<PageLoad>>>,
     /// The session kept per workspace, with the password it was made for (the shell reuses it).
     sessions: Mutex<BTreeMap<String, (String, String)>>,
     /// How many times the shell signed in to the front.
@@ -151,8 +157,9 @@ impl ShellStandIn {
             .await
             .expect("the browser started");
         Arc::new(Self {
-            browser: tokio::sync::Mutex::new(browser),
-            pages: Mutex::default(),
+            browser: Arc::new(tokio::sync::Mutex::new(browser)),
+            pages: Arc::default(),
+            loading: Mutex::default(),
             sessions: Mutex::default(),
             sign_ins: Mutex::default(),
             closed: Mutex::default(),
@@ -160,8 +167,37 @@ impl ShellStandIn {
         })
     }
 
-    /// The newest page open for `workspace`.
-    fn page(&self, workspace: &str) -> PageId {
+    /// Waits until every page opened for `workspace` has had its first answer. A load that failed
+    /// fails the test here, where the test first needs the page.
+    async fn loaded(&self, workspace: &str) {
+        let handles = self
+            .loading
+            .lock()
+            .unwrap()
+            .remove(workspace)
+            .unwrap_or_default();
+        for handle in handles {
+            handle
+                .await
+                .expect("the page load task ran")
+                .unwrap_or_else(|e| panic!("{workspace}'s page did not open: {e}"));
+        }
+    }
+
+    /// Closes the browser. A page load still running keeps it open: then the process ends it.
+    async fn quit(self) {
+        if let Ok(browser) = Arc::try_unwrap(self.browser) {
+            browser
+                .into_inner()
+                .quit()
+                .await
+                .expect("the browser closed");
+        }
+    }
+
+    /// The newest page open for `workspace`, once it has loaded.
+    async fn page(&self, workspace: &str) -> PageId {
+        self.loaded(workspace).await;
         *self.pages.lock().unwrap()[workspace]
             .last()
             .expect("an open page")
@@ -169,7 +205,7 @@ impl ShellStandIn {
 
     /// Waits in `workspace`'s newest page until `ready`, and reads `result`.
     async fn wait(&self, workspace: &str, ready: &str, result: &str, budget: Duration) -> Value {
-        let page = self.page(workspace);
+        let page = self.page(workspace).await;
         self.browser
             .lock()
             .await
@@ -184,6 +220,7 @@ impl ShellStandIn {
 
     /// Closes `workspace`'s pages, as the user closes its windows.
     async fn close_pages(&self, workspace: &str) {
+        self.loaded(workspace).await;
         let pages = self
             .pages
             .lock()
@@ -256,24 +293,30 @@ impl Launcher for ShellStandIn {
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
             self.session(workspace, target).await?;
-            let (page, _) = self
-                .browser
-                .lock()
-                .await
-                .open(
-                    &PageRequest::new(format!("{}/", target.origin), "true")
-                        .on_commit()
-                        .budget(PAGE_BUDGET),
-                )
-                .await
-                .map_err(|e| LaunchError::new(e.to_string()))?;
             self.opened.lock().unwrap().push(target.origin.clone());
-            self.pages
+            // The shell's launcher returns once the window is built and the page loads after; a
+            // load waited for here would run into the API's request limit on a slow host.
+            let request = PageRequest::new(format!("{}/", target.origin), "true")
+                .on_commit()
+                .budget(PAGE_BUDGET);
+            let (browser, pages) = (Arc::clone(&self.browser), Arc::clone(&self.pages));
+            let name = workspace.name.to_string();
+            let load = tokio::spawn(async move {
+                let (page, _) = browser
+                    .lock()
+                    .await
+                    .open(&request)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                pages.lock().unwrap().entry(name).or_default().push(page);
+                Ok(())
+            });
+            self.loading
                 .lock()
                 .unwrap()
                 .entry(workspace.name.to_string())
                 .or_default()
-                .push(page);
+                .push(load);
             Ok(())
         })
     }
@@ -480,20 +523,16 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     .await;
 
     // A terminal in the window: the editor starts its terminal host for it.
-    shell
-        .browser
-        .lock()
-        .await
-        .press(shell.page(&name), "Escape")
-        .await
-        .expect("keys");
-    shell
-        .browser
-        .lock()
-        .await
-        .press(shell.page(&name), "Control+Backquote")
-        .await
-        .expect("keys");
+    let page = shell.page(&name).await;
+    for keys in ["Escape", "Control+Backquote"] {
+        shell
+            .browser
+            .lock()
+            .await
+            .press(page, keys)
+            .await
+            .expect("keys");
+    }
     shell
         .wait(
             &name,
@@ -610,11 +649,8 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
 
     host.shutdown().await;
     drop(host);
-    let browser = Arc::try_unwrap(shell)
-        .ok()
-        .map(|shell| shell.browser.into_inner());
-    if let Some(browser) = browser {
-        browser.quit().await.expect("the browser closed");
+    if let Some(shell) = Arc::into_inner(shell) {
+        shell.quit().await;
     }
 }
 
@@ -941,11 +977,6 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
     host.shutdown().await;
     drop(host);
     if let Some(shell) = Arc::into_inner(shell) {
-        shell
-            .browser
-            .into_inner()
-            .quit()
-            .await
-            .expect("the browser closed");
+        shell.quit().await;
     }
 }

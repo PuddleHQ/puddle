@@ -68,6 +68,7 @@
       .map((s) => ({
         id: userSetNumber(s) ?? 0,
         name: s.name,
+        fill: s.fill,
         everywhere: isOn(s, null),
       })),
   );

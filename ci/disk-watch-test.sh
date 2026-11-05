@@ -13,6 +13,10 @@ trap 'rm -rf "$tmp"' EXIT
 fail=0
 bad() { echo "disk-watch-test: FAIL: $*" >&2; fail=1; }
 has() { grep -q -- "$2" "$1" || bad "$3: no '$2' in $1: $(head -c 600 "$1")"; }
+# Poll (30 s deadline, 0.1 s steps) until a command succeeds: the test orders events on what the guard has logged, not on a delay.
+until_ok() { local _; for _ in $(seq 1 300); do "$@" && return 0; sleep 0.1; done; return 1; }
+# shellcheck disable=SC2329 # called through until_ok
+samples_at_least() { local n; n=$(grep -c 'free=' "$1" 2>/dev/null || true); [ "${n:-0}" -ge "$2" ]; }
 lacks() { ! grep -q -- "$2" "$1" || bad "$3: unexpected '$2' in $1"; }
 
 mkdir -p "$tmp/rt/vmx" "$tmp/root"
@@ -42,7 +46,8 @@ sleep "300.$$" &
 victim=$!
 "$script" guard roomy >"$tmp/out" 2>&1 &
 g=$!
-sleep 1
+# Two samples: the loop ran past its first check with room to spare, and still stopped nothing.
+until_ok samples_at_least "$tmp/rt/disk-watch-roomy.log" 2 || bad "the guard with room logged fewer than two samples in 30 s"
 kill "$g"
 wait "$g" 2>/dev/null
 kill -0 "$victim" 2>/dev/null || bad "a guard with room stopped a process"
@@ -66,8 +71,9 @@ EOS
 chmod +x "$tmp/step.sh"
 DISK_WATCH_KILL='sleep 30[012][.]'"$$"'$' "$tmp/step.sh" &
 step=$!
-sleep 1
-pgrep -f "sleep 300[.]$$" >/dev/null || bad "the step's process did not start"
+until_ok pgrep -f "sleep 300[.]$$" >/dev/null || bad "the step's process did not start"
+until_ok pgrep -f "sleep 302[.]$$" >/dev/null || bad "the step's grandchild did not start"
+until_ok samples_at_least "$tmp/rt/disk-watch-full.log" 1 || bad "the guard under test logged no sample in 30 s"
 echo 2 >"$tmp/free"
 for _ in $(seq 1 300); do kill -0 "$step" 2>/dev/null || break; sleep 0.2; done
 if kill -0 "$step" 2>/dev/null; then bad "the step did not end after the guard stopped its processes"; kill "$step"; fi

@@ -126,6 +126,25 @@ pub(crate) async fn rig_guarded(
     .await
 }
 
+/// Like [`rig_guarded`], with the host's company-network `signals`.
+pub(crate) async fn rig_company(
+    hops: Vec<Hop>,
+    resolver: StaticResolver,
+    access: puddle_netpolicy::LocalAccess,
+    signals: puddle_netpolicy::StaticSignals,
+) -> Rig {
+    let os = FakeOs::new(ProxyConfig {
+        pac_url: Some("http://pac.corp/proxy.pac".into()),
+        ..ProxyConfig::default()
+    });
+    os.set_pac(move |_| Ok(hops.clone()));
+    let discovery = Discovery::new(os, DiscoveryConfig::default());
+    let check = Arc::new(
+        puddle_netpolicy::NetPolicy::new(Arc::new(access)).with_company_signals(Arc::new(signals)),
+    );
+    rig_checked(discovery, basic("lab", "lab"), resolver, check).await
+}
+
 pub(crate) fn allow(store: &Store, host: &str) {
     store
         .as_user(puddle_store::UserId::OWNER)

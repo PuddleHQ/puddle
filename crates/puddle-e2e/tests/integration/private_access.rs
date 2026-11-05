@@ -22,7 +22,7 @@ use puddle_netpolicy::LocalAccess;
 use puddle_proxy::testing::StaticResolver;
 use puddle_types::LocalCategory;
 use puddle_upstream::{Hop, ProxyAddr};
-use rig::{Rig, allow, connection_records, rig_guarded, try_tunnel, tunnel};
+use rig::{Rig, allow, connection_records, rig_company, rig_guarded, try_tunnel, tunnel};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const PUBLIC: &str = "93.184.215.14";
@@ -169,4 +169,113 @@ async fn on_a_proxied_route_the_check_runs_on_the_hosts_own_answer_and_the_audit
     // got past the guard.
     assert_eq!(carried["decision"], "allow", "{carried}");
     assert_eq!(carried["outcome"], "upstream_refused", "{carried}");
+}
+
+/// The signals a host with the stand-in installed reads: the client's adapter and suffix, and the
+/// physical LAN's subnet.
+fn signals() -> puddle_netpolicy::StaticSignals {
+    let adapter = PrivateAccess::adapter();
+    puddle_netpolicy::StaticSignals::new()
+        .with_private_access_client()
+        .with_dns_suffix(adapter.dns_suffix)
+        .with_vpn_route(IpAddr::V4(adapter.route.0), adapter.route.1)
+        .with_lan_subnet("192.168.77.0".parse().unwrap(), 24)
+}
+
+async fn company_rig(access: &PrivateAccess, local: LocalAccess) -> Rig {
+    let hop = Hop::Proxy(ProxyAddr::new("127.0.0.1", access.tunnel_port()));
+    rig_company(vec![hop], resolver(), local, signals()).await
+}
+
+#[tokio::test]
+async fn company_toggle_off_refuses_the_intranet_name_as_company_network() {
+    let access = PrivateAccess::start().await;
+    // The private toggle is on: it does not open a company-network address.
+    let local = LocalAccess::NONE.with_toggle(LocalCategory::Private, true);
+    let rig = company_rig(&access, local).await;
+    allow(&rig.store, PrivateAccess::NAME);
+
+    let refusal = try_tunnel(rig.agent.local_addr(), &authority(PrivateAccess::NAME))
+        .await
+        .unwrap_err();
+    assert!(refusal.contains("403"), "{refusal}");
+    assert!(
+        refusal.contains("x-puddle-blocked: company_network"),
+        "{refusal}"
+    );
+    assert!(refusal.contains("Company network"), "{refusal}");
+    assert!(access.carried().is_empty(), "{:?}", access.carried());
+    let records = connection_records(&rig.store, 1).await;
+    assert_eq!(
+        records[0]["reason"], "company_network_off",
+        "{}",
+        records[0]
+    );
+    assert_eq!(records[0]["category"], "company_network", "{}", records[0]);
+}
+
+#[tokio::test]
+async fn company_toggle_on_still_needs_an_exact_allow() {
+    let access = PrivateAccess::start().await;
+    let local = LocalAccess::NONE.with_toggle(LocalCategory::CompanyNetwork, true);
+    let rig = company_rig(&access, local).await;
+
+    let pending = try_tunnel(rig.agent.local_addr(), &authority(PrivateAccess::NAME))
+        .await
+        .unwrap_err();
+    assert!(pending.contains("x-puddle-pending"), "{pending}");
+
+    allow(&rig.store, "*.corp.test");
+    let wildcard = try_tunnel(rig.agent.local_addr(), &authority(PrivateAccess::NAME))
+        .await
+        .unwrap_err();
+    assert!(wildcard.contains("403"), "{wildcard}");
+    assert!(access.carried().is_empty(), "{:?}", access.carried());
+
+    allow(&rig.store, PrivateAccess::NAME);
+    let reader = tunnel(rig.agent.local_addr(), &authority(PrivateAccess::NAME)).await;
+    assert!(get(reader, PrivateAccess::NAME).await.contains("200"));
+    let records = connection_records(&rig.store, 3).await;
+    let allowed = records.last().unwrap();
+    assert_eq!(allowed["decision"], "allow", "{allowed}");
+    assert_eq!(allowed["category"], "company_network", "{allowed}");
+}
+
+#[tokio::test]
+async fn a_physical_lan_address_stays_with_the_private_toggle_when_the_company_one_is_on() {
+    let access = PrivateAccess::start().await;
+    let local = LocalAccess::NONE.with_toggle(LocalCategory::CompanyNetwork, true);
+    let rig = company_rig(&access, local).await;
+    let lan = PrivateAccess::LAN_ADDRESS.to_string();
+    allow(&rig.store, &lan);
+
+    let refusal = try_tunnel(rig.agent.local_addr(), &authority(&lan))
+        .await
+        .unwrap_err();
+    assert!(
+        refusal.contains("x-puddle-blocked: toggle:private"),
+        "{refusal}"
+    );
+}
+
+#[tokio::test]
+async fn without_the_client_the_same_answer_is_plain_private() {
+    let access = PrivateAccess::start().await;
+    let hop = Hop::Proxy(ProxyAddr::new("127.0.0.1", access.tunnel_port()));
+    // A host that reads no signals: the category is empty.
+    let rig = rig_company(
+        vec![hop],
+        resolver(),
+        LocalAccess::NONE,
+        puddle_netpolicy::StaticSignals::new(),
+    )
+    .await;
+    allow(&rig.store, PrivateAccess::NAME);
+    let refusal = try_tunnel(rig.agent.local_addr(), &authority(PrivateAccess::NAME))
+        .await
+        .unwrap_err();
+    assert!(
+        refusal.contains("x-puddle-blocked: toggle:private"),
+        "{refusal}"
+    );
 }

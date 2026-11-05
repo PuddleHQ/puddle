@@ -163,6 +163,41 @@ async fn a_commit_only_a_tag_holds_is_listed_and_a_git_ignored_file_is_not() {
 }
 
 #[tokio::test]
+async fn a_shallow_clone_with_fetched_tags_lists_only_its_own_commit() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let upstream = tmp.path().join("upstream");
+        std::fs::create_dir_all(&upstream).unwrap();
+        git(&upstream, &["init", "-q", "-b", "main"]);
+        for (file, tag) in [("one", "v1"), ("two", "v2"), ("three", "v3")] {
+            std::fs::write(upstream.join(file), "x\n").unwrap();
+            git(&upstream, &["add", "."]);
+            git(&upstream, &["commit", "-qm", &format!("upstream {file}")]);
+            git(&upstream, &["tag", tag]);
+        }
+        let vol = tmp.path().join("vol");
+        std::fs::create_dir_all(&vol).unwrap();
+        let url = format!("file://{}", upstream.display());
+        git(&vol, &["clone", "-q", "--depth", "1", &url, "solo"]);
+        let repo = vol.join("solo");
+        git(&repo, &["fetch", "-q", "--tags"]);
+        std::fs::write(repo.join("mine"), "m\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "local only"]);
+        let report = check(shell, &vol).await;
+        let solo = &report.findings.repos[0];
+        let subjects: Vec<&str> = solo
+            .unpushed
+            .items
+            .iter()
+            .map(|c| c.split_once(' ').unwrap().1)
+            .collect();
+        assert_eq!(subjects, ["local only"], "{shell}: {:?}", solo.unpushed);
+        assert_eq!(solo.unpushed.total(), 1, "{shell}");
+    }
+}
+
+#[tokio::test]
 async fn long_lists_are_capped_and_counted() {
     for shell in shells() {
         let tmp = tempfile::tempdir().unwrap();

@@ -2871,14 +2871,16 @@ async fn stopping_a_workspace_closes_its_editor_windows() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
+    let forgotten_by_create = rig.launcher.forgotten.lock().unwrap().len();
     let _editor = editor_stand_in(&rig, "acme").await;
     browser_target(&rig, &api, "acme").await;
     assert!(rig.launcher.closed.lock().unwrap().is_empty());
 
     stop_and_wait(&api, &mut events, "acme").await;
     assert_eq!(*rig.launcher.closed.lock().unwrap(), ["acme"]);
-    assert!(
-        rig.launcher.forgotten.lock().unwrap().is_empty(),
+    assert_eq!(
+        rig.launcher.forgotten.lock().unwrap().len(),
+        forgotten_by_create,
         "a stop keeps the windows' data: the workspace comes back"
     );
     host.shutdown().await;
@@ -2924,7 +2926,7 @@ async fn deleting_a_workspace_deletes_the_editor_s_secret_key_and_the_windows_da
     );
     delete_and_wait(&api, &mut events, "acme").await;
     assert!(!key.exists(), "a delete removes the key");
-    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme"]);
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme", "acme"]);
     assert_eq!(
         *rig.launcher.closed.lock().unwrap(),
         ["acme", "acme"],
@@ -2965,6 +2967,80 @@ async fn a_delete_that_cannot_remove_the_editor_s_data_says_so_and_still_deletes
             && problem.detail.contains("a window still holds it"),
         "both failures are named: {}",
         problem.detail
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_workspace_starts_without_browser_data_left_under_its_name() {
+    // A delete that was cut short (a crash, `puddle serve` with no window to clean) leaves the
+    // webview folder and the key half behind; the name's origin is the same, so the next
+    // workspace of that name must not find them. The recording launcher only notes the ask for
+    // the webview folder (its removal is the app's unit test); the key half is a real file.
+    let rig = Rig::new();
+    let key = HostPaths::new(rig.dir.path().join("data"))
+        .front_keys()
+        .join("acme.key");
+    std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+    std::fs::write(&key, b"left by an earlier acme").unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme"]);
+    assert!(!key.exists(), "the old key half is gone");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_duplicate_create_leaves_the_running_workspaces_browser_data_alone() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let asked = rig.launcher.forgotten.lock().unwrap().len();
+    let again = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(again.status, 409, "{}", again.body);
+    assert_eq!(rig.launcher.forgotten.lock().unwrap().len(), asked);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_that_clears_what_a_failed_delete_left_withdraws_its_notice() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
+    delete_and_wait(&api, &mut events, "acme").await;
+    assert!(has_problem(&host, "browser-data:acme"));
+    *rig.launcher.forget_fails_with.lock().unwrap() = None;
+    create(&api, &mut events, "acme").await;
+    assert!(!has_problem(&host, "browser-data:acme"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_that_cannot_clear_left_over_browser_data_is_refused() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert!(
+        reply.body.contains("a window still holds it") && reply.body.contains("browser data"),
+        "{}",
+        reply.body
+    );
+    let list = api.get("/api/workspaces").await;
+    assert!(
+        !list.body.contains("acme"),
+        "no workspace was made: {}",
+        list.body
     );
     host.shutdown().await;
 }
@@ -3656,6 +3732,68 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
         .count();
     assert_eq!(creates, 2);
     assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
+    again.shutdown().await;
+}
+
+/// Docker's data folder is a disk of the sandbox itself: every sandbox the host makes has one,
+/// a stop and start keeps the sandbox (and so the disk), a rebuilt sandbox gets a fresh one, and
+/// the workspace volume never carries it.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_sandbox_has_its_own_20_gib_disk_for_dockers_data_and_the_volume_does_not() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    let docker_disk = |rig: &Rig| {
+        rig.runtime
+            .owned_disks(&sandbox)
+            .into_iter()
+            .map(|d| (d.guest.as_str().to_owned(), d.size))
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![(
+        "/var/lib/docker".to_owned(),
+        puddle_compute::DiskSize::gib(20),
+    )];
+    assert_eq!(docker_disk(&rig), expected);
+    let volumes = rig.runtime.volume_mounts(&sandbox);
+    assert_eq!(volumes.len(), 1, "{volumes:?}");
+    assert!(
+        volumes
+            .iter()
+            .all(|v| !v.guest.as_str().starts_with("/var/lib")),
+        "{volumes:?}"
+    );
+
+    // A stop and start is the same sandbox with the same disk.
+    for step in ["stop", "start"] {
+        let reply = api1.post(&format!("/api/workspaces/acme/{step}"), "").await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+    }
+    assert_eq!(docker_disk(&rig), expected);
+    assert_eq!(
+        rig.runtime
+            .calls()
+            .iter()
+            .filter(|c| format!("{:?}", c.op) == "Create")
+            .count(),
+        1
+    );
+
+    // A new process rebuilds the sandbox, and the new one has the disk too.
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(docker_disk(&rig), expected);
     again.shutdown().await;
 }
 
@@ -9043,6 +9181,31 @@ async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at
     assert_ne!(renewed, cert);
 }
 
+/// A declined system confirmation is asked again at a start (the spec's choice), never at an
+/// attach: closing an editor window and opening one again must not raise it a second time.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_a_start_asks_for_the_development_certificate_never_an_attach() {
+    let rig = Rig::new();
+    rig.dev_cert.give();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(rig.dev_cert.asked(), 1, "the start asked once");
+    allow_direct_ssh(&api, "acme", true).await;
+    for mode in ["browser", "desktop", "browser"] {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/attach",
+                &json!({"mode": mode}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.json()["opened"], true, "{mode}: {}", reply.body);
+    }
+    assert_eq!(rig.dev_cert.asked(), 1, "three attaches asked nothing more");
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_a_development_certificate_writes_nothing_for_it_into_the_guest() {
     let rig = Rig::new();
@@ -9548,6 +9711,57 @@ async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_o
     .await;
     assert!(
         problem_is(&api, "editor-update:acme", false)
+            .await
+            .is_none()
+    );
+    fixed.abort();
+    session.abort();
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_editor_server_that_runs_as_root_for_want_of_its_user_is_a_problem_until_a_start_finds_the_user()
+ {
+    use puddle_agent_proto::{AgentMessage, EditorProblemKind};
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::SessionUser,
+            Some("its user agent is missing in the guest"),
+        )],
+    )
+    .await;
+    let (title, detail) = problem_is(&api, "editor-session-user:acme", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        title,
+        "The browser editor in acme runs as root: its user agent is missing in the guest"
+    );
+    assert!(detail.contains("belong to root"), "{detail}");
+    assert!(
+        detail.contains("switch the workspace's session user to root"),
+        "{detail}"
+    );
+
+    let fixed = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::SessionUser,
+            None,
+        )],
+    )
+    .await;
+    assert!(
+        problem_is(&api, "editor-session-user:acme", false)
             .await
             .is_none()
     );

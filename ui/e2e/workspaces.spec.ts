@@ -552,6 +552,26 @@ test.describe("connecting", () => {
       key: "editor-update:web-shop",
     });
     await expect(main.getByRole("alert")).toHaveCount(0);
+
+    // A server that runs as root for want of the session user is its own line too.
+    await backend.control.step({
+      do: "problem",
+      key: "editor-session-user:web-shop",
+      workspace: "web-shop",
+      title:
+        "The browser editor in web-shop runs as root: its user agent is missing in the guest <img src=x onerror=alert(1)>",
+      detail: "The editor opens and works, but its files belong to root.",
+    });
+    await expect(main.getByRole("alert")).toContainText(
+      "runs as root: its user agent is missing",
+    );
+    await expect(main.locator("img")).toHaveCount(0);
+    await expectNoAxeViolations(page, "workspace page with a root problem");
+    await backend.control.step({
+      do: "clear_problem",
+      key: "editor-session-user:web-shop",
+    });
+    await expect(main.getByRole("alert")).toHaveCount(0);
   });
 
   test("opening in the browser needs no direct SSH and says the window is opening", async ({

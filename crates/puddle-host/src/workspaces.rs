@@ -269,6 +269,9 @@ struct Inner<R: Runtime + Clone> {
     events: Arc<dyn EventSink>,
     clock: Arc<dyn Clock>,
     settings: Arc<dyn puddle_api::SettingsRepo>,
+    /// The settings routes' lock, shared so a delete's removal of a settings file never falls
+    /// between a settings change's read and its write.
+    settings_lock: Arc<tokio::sync::Mutex<()>>,
     store: Arc<Store>,
     launcher: Arc<dyn Launcher>,
     ssh: Arc<SshSetup>,
@@ -543,6 +546,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 events: parts.events,
                 clock: parts.clock,
                 settings: parts.settings,
+                settings_lock: Arc::default(),
                 store: parts.store,
                 launcher: parts.launcher,
                 ssh: parts.ssh,
@@ -2827,9 +2831,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Deletes the workspace's settings document, so one made later under the same name starts
     /// from the defaults (direct SSH off). A failure is a notice (the file stays and the name
     /// would inherit it).
-    fn forget_settings_file(&self, name: &WorkspaceName) {
+    /// Under the settings routes' lock, so a settings change that read the file before this
+    /// removal cannot write it back after.
+    async fn forget_settings_file(&self, name: &WorkspaceName) {
         let inner = &self.inner;
         let key = problem_key("settings", name);
+        let _lock = inner.settings_lock.lock().await;
         match inner.settings.delete_workspace(name) {
             Ok(()) => inner.problems.clear(&key),
             Err(e) => inner.problems.raise(Problem::new(
@@ -2856,6 +2863,40 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             failed.push(format!("the editor's secret key could not be deleted: {e}"));
         }
         failed
+    }
+
+    /// A delete that could not remove `name`'s settings file left a notice, and a workspace made
+    /// now would inherit the file (direct SSH included). Try the removal again: the create goes on
+    /// when it works and is refused, with the reason, when it does not. Resetting the settings
+    /// instead would need the very write that just failed, so the refusal is the one that cannot
+    /// leave a workspace with settings the user did not choose. A name with no notice may have a
+    /// settings file on purpose (set before the workspace existed), so it is left alone.
+    async fn clear_left_over_settings(
+        &self,
+        id: &WorkspaceId,
+        name: &WorkspaceName,
+    ) -> Result<(), WorkspaceError> {
+        let inner = &self.inner;
+        let key = problem_key("settings", name);
+        if !inner.problems.list().iter().any(|p| p.key == key) {
+            return Ok(());
+        }
+        let _lock = inner.settings_lock.lock().await;
+        match inner.settings.delete_workspace(name) {
+            Ok(()) => {
+                inner.problems.clear(&key);
+                Ok(())
+            }
+            Err(e) => {
+                // Give the name back (not saved yet): the create is refused.
+                self.state().slots.remove(id);
+                Err(WorkspaceError::Conflict(format!(
+                    "the settings left from an earlier workspace named {name} could not be \
+                     removed ({e}), and the new one would inherit them, direct SSH included; \
+                     {name} was not created. Delete the file by hand and try again"
+                )))
+            }
+        }
     }
 
     /// The editor's origin is `<name>.localhost`, so a workspace of this name would reach the
@@ -2929,7 +2970,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.name)));
-        self.forget_settings_file(&record.name);
+        self.forget_settings_file(&record.name).await;
         self.forget_browser_state(&record.name).await;
         Ok(())
     }
@@ -3062,6 +3103,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             }
             // Reserved before the clear: a create that loses the race for the name is refused
             // above and cannot clear the winner's data.
+            self.clear_left_over_settings(&id, &new.name).await?;
             self.clear_left_over_browser_state(&id, &new.name).await?;
             {
                 let mut state = self.state();
@@ -3611,6 +3653,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn settings_changed(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move { self.apply_direct_ssh().await })
+    }
+
+    fn settings_lock(&self) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        Some(self.inner.settings_lock.clone())
     }
 }
 

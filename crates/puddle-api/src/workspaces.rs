@@ -1204,6 +1204,13 @@ pub trait WorkspaceService: Send + Sync {
     fn settings_changed(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+
+    /// The lock the settings routes hold from reading a settings document to writing it, when the
+    /// service also writes settings documents itself (a delete removes a workspace's): it takes
+    /// the same lock, so the two never interleave. `None` when it writes none.
+    fn settings_lock(&self) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        None
+    }
 }
 
 /// Opens VS Code on the desktop for a workspace; the desktop shell implements it.

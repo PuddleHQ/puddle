@@ -291,6 +291,20 @@ describe("a record as a row", () => {
     );
     expect(row(connection(2, {}).record).detail).not.toContain("stand-in");
   });
+  it("says a stale stand-in is no longer held, naming a secret but never a token", () => {
+    const view = row(
+      connection(1, {
+        unswapped_stand_ins: [
+          "stale-stand-in:secret:OLD_KEY",
+          "stale-stand-in:github",
+        ],
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "OLD_KEY, a GitHub login looks like a stand-in this workspace no longer holds, so it went out unchanged",
+    );
+    expect(view.detail).not.toContain("went out unchanged (check");
+  });
   it("names the refused address of a mixed answer, apart from the one connected to", () => {
     const view = row(
       connection(1, {

@@ -2873,14 +2873,16 @@ async fn stopping_a_workspace_closes_its_editor_windows() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
+    let forgotten_by_create = rig.launcher.forgotten.lock().unwrap().len();
     let _editor = editor_stand_in(&rig, "acme").await;
     browser_target(&rig, &api, "acme").await;
     assert!(rig.launcher.closed.lock().unwrap().is_empty());
 
     stop_and_wait(&api, &mut events, "acme").await;
     assert_eq!(*rig.launcher.closed.lock().unwrap(), ["acme"]);
-    assert!(
-        rig.launcher.forgotten.lock().unwrap().is_empty(),
+    assert_eq!(
+        rig.launcher.forgotten.lock().unwrap().len(),
+        forgotten_by_create,
         "a stop keeps the windows' data: the workspace comes back"
     );
     host.shutdown().await;
@@ -2926,7 +2928,7 @@ async fn deleting_a_workspace_deletes_the_editor_s_secret_key_and_the_windows_da
     );
     delete_and_wait(&api, &mut events, "acme").await;
     assert!(!key.exists(), "a delete removes the key");
-    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme"]);
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme", "acme"]);
     assert_eq!(
         *rig.launcher.closed.lock().unwrap(),
         ["acme", "acme"],
@@ -2967,6 +2969,80 @@ async fn a_delete_that_cannot_remove_the_editor_s_data_says_so_and_still_deletes
             && problem.detail.contains("a window still holds it"),
         "both failures are named: {}",
         problem.detail
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_workspace_starts_without_browser_data_left_under_its_name() {
+    // A delete that was cut short (a crash, `puddle serve` with no window to clean) leaves the
+    // webview folder and the key half behind; the name's origin is the same, so the next
+    // workspace of that name must not find them. The recording launcher only notes the ask for
+    // the webview folder (its removal is the app's unit test); the key half is a real file.
+    let rig = Rig::new();
+    let key = HostPaths::new(rig.dir.path().join("data"))
+        .front_keys()
+        .join("acme.key");
+    std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+    std::fs::write(&key, b"left by an earlier acme").unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme"]);
+    assert!(!key.exists(), "the old key half is gone");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_duplicate_create_leaves_the_running_workspaces_browser_data_alone() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let asked = rig.launcher.forgotten.lock().unwrap().len();
+    let again = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(again.status, 409, "{}", again.body);
+    assert_eq!(rig.launcher.forgotten.lock().unwrap().len(), asked);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_that_clears_what_a_failed_delete_left_withdraws_its_notice() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
+    delete_and_wait(&api, &mut events, "acme").await;
+    assert!(has_problem(&host, "browser-data:acme"));
+    *rig.launcher.forget_fails_with.lock().unwrap() = None;
+    create(&api, &mut events, "acme").await;
+    assert!(!has_problem(&host, "browser-data:acme"));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_create_that_cannot_clear_left_over_browser_data_is_refused() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert!(
+        reply.body.contains("a window still holds it") && reply.body.contains("browser data"),
+        "{}",
+        reply.body
+    );
+    let list = api.get("/api/workspaces").await;
+    assert!(
+        !list.body.contains("acme"),
+        "no workspace was made: {}",
+        list.body
     );
     host.shutdown().await;
 }
@@ -9040,6 +9116,31 @@ async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at
         "/etc/puddle/dev-cert/localhost.crt",
     );
     assert_ne!(renewed, cert);
+}
+
+/// A declined system confirmation is asked again at a start (the spec's choice), never at an
+/// attach: closing an editor window and opening one again must not raise it a second time.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_a_start_asks_for_the_development_certificate_never_an_attach() {
+    let rig = Rig::new();
+    rig.dev_cert.give();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(rig.dev_cert.asked(), 1, "the start asked once");
+    allow_direct_ssh(&api, "acme", true).await;
+    for mode in ["browser", "desktop", "browser"] {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/attach",
+                &json!({"mode": mode}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.json()["opened"], true, "{mode}: {}", reply.body);
+    }
+    assert_eq!(rig.dev_cert.asked(), 1, "three attaches asked nothing more");
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

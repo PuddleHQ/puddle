@@ -4021,7 +4021,7 @@
         "tags": [
           "rules"
         ],
-        "summary": "Renames a rule set of yours or changes its description.",
+        "summary": "Renames a rule set of yours or changes its description or colour.",
         "operationId": "update_rule_set",
         "parameters": [
           {
@@ -10303,7 +10303,8 @@
           "name",
           "description",
           "created_at",
-          "created_by"
+          "created_by",
+          "fill"
         ],
         "properties": {
           "created_at": {
@@ -10319,6 +10320,17 @@
           "description": {
             "type": "string",
             "description": "Description."
+          },
+          "fill": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Fill",
+                "description": "The colour the user chose; `null` when the set had the default of its number."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "type": "integer",
@@ -12267,6 +12279,31 @@
         ],
         "description": "Something the user should hear about. Serialised as one internally tagged enum\n(`{\"type\":\"oom_kill\",...}`, ADR 0002).\n\nMost events are about one workspace and carry a `workspace` field; global ones (crash report\nwaiting, consent needed, network change, ...) carry none, and [`Event::workspace`] returns\n`None` for them."
       },
+      "Fill": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "One colour.",
+            "required": [
+              "color",
+              "kind"
+            ],
+            "properties": {
+              "color": {
+                "$ref": "#/components/schemas/Rgb",
+                "description": "The colour."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "solid"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What a rule set is painted with: one solid colour today. A gradient would be another `kind`."
+      },
       "FindingList": {
         "type": "object",
         "description": "A bounded list of lines from the unsaved-work check.",
@@ -13388,6 +13425,17 @@
           "description": {
             "type": "string",
             "description": "At most 500 characters."
+          },
+          "fill": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Fill",
+                "description": "The colour; left out for the default of the set's number."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "type": "string",
@@ -14541,6 +14589,14 @@
           }
         }
       },
+      "Rgb": {
+        "type": "string",
+        "description": "A colour as `#rrggbb`.",
+        "examples": [
+          "#0a6a85"
+        ],
+        "pattern": "^#[0-9a-fA-F]{6}$"
+      },
       "RootKind": {
         "type": "string",
         "description": "A certificate kind.",
@@ -14994,7 +15050,7 @@
       },
       "RuleSetUpdateRequest": {
         "type": "object",
-        "description": "A rule set's new name and description.",
+        "description": "A rule set's new name, description and colour.",
         "required": [
           "name"
         ],
@@ -15002,6 +15058,17 @@
           "description": {
             "type": "string",
             "description": "At most 500 characters."
+          },
+          "fill": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Fill",
+                "description": "The new colour; left out keeps the one the set has."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "type": "string",
@@ -15018,6 +15085,7 @@
           "kind",
           "name",
           "description",
+          "fill",
           "default_on",
           "global",
           "overrides",
@@ -15058,6 +15126,10 @@
               "$ref": "#/components/schemas/RuleSetEntry"
             },
             "description": "Its entries."
+          },
+          "fill": {
+            "$ref": "#/components/schemas/Fill",
+            "description": "The colour it is shown in: a built-in set's own, or the one you chose (a set you made\nwithout choosing has a default of its number)."
           },
           "global": {
             "type": [

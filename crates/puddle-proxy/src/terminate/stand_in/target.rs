@@ -220,8 +220,8 @@ fn swap_query(
             let Placement::Query(placed) = &entry.placement else {
                 return None;
             };
-            let is_placed = *param.name == *placed.as_bytes();
-            let once = given.get(placed.as_bytes()) == Some(&1);
+            let is_placed = *param.name == *placed.as_str().as_bytes();
+            let once = given.get(placed.as_str().as_bytes()) == Some(&1);
             let swaps = is_placed && once && entry.hosts.contains(host);
             swaps.then(|| {
                 Swapped::note(&mut report.swapped, entry.id());
@@ -318,8 +318,9 @@ fn encoded(real: &str, keeps: fn(u8) -> bool) -> Zeroizing<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{SecretValue, StandInError, StandInOrigin, TerminationSet, TokenBody};
+    use super::super::{SecretValue, StandInOrigin, TerminationSet, TokenBody};
     use super::*;
+    use puddle_types::QueryName;
 
     const KEY: &str = "puddle-secret-OWM_KEY-00112233445566778899aabbccddeeff";
     const BOT: &str = "puddle-secret-BOT_TOKEN-ffeeddccbbaa99887766554433221100";
@@ -354,7 +355,7 @@ mod tests {
                 KEY,
                 REAL_KEY,
                 &["api.openweathermap.org"],
-                Placement::query("appid").unwrap(),
+                Placement::Query(QueryName::new("appid").unwrap()),
             ),
             entry(
                 "BOT_TOKEN",
@@ -527,7 +528,7 @@ mod tests {
                 KEY,
                 "a b&c=d+e#f/g?h%2Bi%zz;",
                 &["q.example.com"],
-                Placement::query("sig").unwrap(),
+                Placement::Query(QueryName::new("sig").unwrap()),
             ))
             .unwrap();
         registry
@@ -677,7 +678,7 @@ mod tests {
                 KEY,
                 "k&1",
                 &["q.example.com"],
-                Placement::query("sig").unwrap(),
+                Placement::Query(QueryName::new("sig").unwrap()),
             ))
             .unwrap();
         registry
@@ -718,32 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn a_query_name_is_checked() {
-        for good in ["appid", "access_token", "key", "a[b]", "x.y-z~"] {
-            assert_eq!(
-                Placement::query(good),
-                Ok(Placement::Query(good.to_owned()))
-            );
-        }
-        let long = "n".repeat(65);
-        for bad in [
-            "",
-            "a&b",
-            "a=b",
-            "a#",
-            "a%41",
-            "a+b",
-            "a b",
-            "\u{e9}",
-            long.as_str(),
-        ] {
-            assert_eq!(
-                Placement::query(bad),
-                Err(StandInError::QueryName(bad.to_owned())),
-                "{bad:?}"
-            );
-        }
-        assert_eq!(Placement::query(&"n".repeat(64)).map(|_| ()), Ok(()));
+    fn a_placement_is_the_header_unless_told_otherwise() {
         assert_eq!(Placement::default(), Placement::Header);
     }
 

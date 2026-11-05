@@ -67,7 +67,8 @@ export class AuditStore {
   /** Counts the lists that replaced the whole one (a filter applied); a view starts over on it. */
   epoch = $state(0);
   /** Workspace names for the filter. */
-  workspaces = $state.raw<string[]>([]);
+  /** The workspaces the filter offers: the id it filters by, the name it shows. */
+  workspaces = $state.raw<{ id: string; label: string }[]>([]);
 
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
@@ -236,7 +237,10 @@ export class AuditStore {
   async loadWorkspaces(): Promise<void> {
     try {
       const { data } = await this.#api.GET("/api/workspaces");
-      if (data) this.workspaces = data.workspaces.map((w) => w.name).sort();
+      if (data)
+        this.workspaces = data.workspaces
+          .map((w) => ({ id: w.id, label: w.display_name }))
+          .sort((a, b) => a.label.localeCompare(b.label));
     } catch {
       // The filter still offers the workspace it is set to.
     }

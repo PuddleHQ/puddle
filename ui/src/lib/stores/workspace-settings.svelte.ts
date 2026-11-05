@@ -24,7 +24,7 @@ export class WorkspaceSettings {
   global = $state.raw<Effective | null>(null);
   /** Why the settings can't be read, when the API says (a damaged settings file). */
   reason = $state<string | null>(null);
-  #name = "";
+  #id = "";
   /** Calls to `load` and `change` in order, so a slow answer never overwrites a newer one. */
   #ticket = 0;
   readonly #api: StoreApi;
@@ -34,8 +34,8 @@ export class WorkspaceSettings {
   }
 
   /** Reads both layers. `quiet` keeps the form on screen while it does (after a failed save). */
-  async load(name: string, quiet = false): Promise<void> {
-    this.#name = name;
+  async load(id: string, quiet = false): Promise<void> {
+    this.#id = id;
     if (!quiet) {
       this.status = "loading";
       this.reason = null;
@@ -44,7 +44,7 @@ export class WorkspaceSettings {
     try {
       const [mine, global] = await Promise.all([
         this.#api.GET("/api/settings/workspaces/{workspace}", {
-          params: { path: { workspace: name } },
+          params: { path: { workspace: id } },
         }),
         this.#api.GET("/api/settings"),
       ]);
@@ -81,7 +81,7 @@ export class WorkspaceSettings {
       const { data, error } = await this.#api.PUT(
         "/api/settings/workspaces/{workspace}",
         {
-          params: { path: { workspace: this.#name } },
+          params: { path: { workspace: this.#id } },
           body: { overrides: body },
         },
       );

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The hosts Puddle stopped decrypting because a tool in a workspace refused Puddle's certificate:
 // the event that announces one, the call that decrypts a host again, and the notice that offers it.
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import { sentence } from "#lib/rules/model.ts";
@@ -109,7 +110,7 @@ export class LearnedNotices {
       key: learnedKey(event.workspace, event.host),
       tone: "info",
       title: `Puddle stopped decrypting ${event.host}: its client refused Puddle's certificate.`,
-      detail: `In ${event.workspace}. A tool there has its own list of trusted roots or pins the server's certificate, so Puddle passes the host through untouched for a while. Decrypting it again only works once the tool trusts Puddle's certificate.`,
+      detail: `In ${workspaces.labelOf(event.workspace)}. A tool there has its own list of trusted roots or pins the server's certificate, so Puddle passes the host through untouched for a while. Decrypting it again only works once the tool trusts Puddle's certificate.`,
       link: {
         href: `/workspaces/${encodeURIComponent(event.workspace)}/settings`,
         label: "Workspace settings",

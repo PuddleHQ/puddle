@@ -22,6 +22,7 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import LoadNotice from "./LoadNotice.svelte";
   import RequestRuleTable from "./RequestRuleTable.svelte";
+  import { workspaces as workspaceStore } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
 
   // Rules on the method and path of a request. On the Rules screen it lists, adds and deletes them.
@@ -168,7 +169,9 @@
         <span class="mono">DELETE</span> on <span class="mono">/repos/**</span> at
         a host that a workspace may otherwise reach.
       {:else}
-        No rule on method and path applies to {workspace}.
+        No rule on method and path applies to {workspace === undefined
+          ? ""
+          : workspaceStore.labelOf(workspace)}.
       {/if}
     </p>
   {:else}

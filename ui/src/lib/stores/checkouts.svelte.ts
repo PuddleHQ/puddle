@@ -22,9 +22,9 @@ const DOWN = "Puddle's service isn't answering.";
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null;
 
-/** Whether `event` can change what the section shows for workspace `name`. */
-export function touchesCheckouts(event: unknown, name: string): boolean {
-  if (!isObject(event) || event["workspace"] !== name) return false;
+/** Whether `event` can change what the section shows for workspace `id`. */
+export function touchesCheckouts(event: unknown, id: string): boolean {
+  if (!isObject(event) || event["workspace"] !== id) return false;
   switch (event["type"]) {
     case "workspace_repositories_changed":
     case "status_changed":
@@ -41,7 +41,7 @@ export class CheckoutsStore {
   status = $state<Status>("loading");
   /** Why the last read failed, when it did. */
   error = $state<string | null>(null);
-  #name = "";
+  #id = "";
   /** Calls to `load` in order, so a slow answer never overwrites a newer one. */
   #ticket = 0;
   readonly #api: StoreApi;
@@ -59,9 +59,9 @@ export class CheckoutsStore {
   }
 
   /** Reads the listing. `quiet` keeps what the page shows while it does. */
-  async load(name: string, quiet = false): Promise<void> {
-    if (name !== this.#name) {
-      this.#name = name;
+  async load(id: string, quiet = false): Promise<void> {
+    if (id !== this.#id) {
+      this.#id = id;
       this.listing = null;
     }
     if (!quiet) this.status = "loading";
@@ -69,7 +69,7 @@ export class CheckoutsStore {
     try {
       const { data, error } = await this.#api.GET(
         "/api/workspaces/{id}/checkouts",
-        { params: { path: { id: name } } },
+        { params: { path: { id } } },
       );
       if (ticket !== this.#ticket) return;
       if (data) {
@@ -87,14 +87,14 @@ export class CheckoutsStore {
     }
   }
 
-  /** Reads `name` now and keeps it current; returns the function that stops listening. */
-  start(name: string): () => void {
-    void this.load(name);
+  /** Reads workspace `id` now and keeps it current; returns the function that stops listening. */
+  start(id: string): () => void {
+    void this.load(id);
     const unsubscribe = this.#source?.subscribe({
       event: (event) => {
-        if (touchesCheckouts(event, name)) void this.load(name, true);
+        if (touchesCheckouts(event, id)) void this.load(id, true);
       },
-      resync: () => void this.load(name, true),
+      resync: () => void this.load(id, true),
     });
     return () => unsubscribe?.();
   }
@@ -102,7 +102,7 @@ export class CheckoutsStore {
   /** After a change the workspace's record (its list, its busy state) and the listing are read again. */
   async #changed(): Promise<void> {
     await this.#refreshWorkspaces();
-    await this.load(this.#name, true);
+    await this.load(this.#id, true);
   }
 
   async #send(
@@ -133,7 +133,7 @@ export class CheckoutsStore {
     return this.#send(
       () =>
         this.#api.POST("/api/workspaces/{id}/repositories", {
-          params: { path: { id: this.#name } },
+          params: { path: { id: this.#id } },
           body,
         }),
       "Puddle refused to add the repository",
@@ -145,7 +145,7 @@ export class CheckoutsStore {
     return this.#send(
       () =>
         this.#api.POST("/api/workspaces/{id}/repositories/{directory}/clone", {
-          params: { path: { id: this.#name, directory } },
+          params: { path: { id: this.#id, directory } },
         }),
       "Puddle refused to clone it again",
     );
@@ -156,7 +156,7 @@ export class CheckoutsStore {
     return this.#send(
       () =>
         this.#api.DELETE("/api/workspaces/{id}/repositories/{directory}", {
-          params: { path: { id: this.#name, directory } },
+          params: { path: { id: this.#id, directory } },
         }),
       "Puddle refused to remove it from the list",
     );

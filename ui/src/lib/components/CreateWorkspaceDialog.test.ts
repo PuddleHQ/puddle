@@ -350,7 +350,7 @@ describe("CreateWorkspaceDialog", () => {
     expect(toast.tone).toBe("info");
     expect(toast.action?.label).toBe("Open Git tab");
     await toast.action?.run();
-    expect(goto).toHaveBeenCalledWith("/workspaces/made/git");
+    expect(goto).toHaveBeenCalledWith("/workspaces/w-made/git");
   });
 
   it("says nothing extra when an identity covers the repository or the answer has no identity", async () => {

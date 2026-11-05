@@ -32,7 +32,8 @@
 //! out lives in the HTTP library's buffers and is not.
 
 use std::cmp::Reverse;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use ::http::header::{HeaderMap, HeaderName, HeaderValue};
 use base64::Engine as _;
@@ -309,9 +310,20 @@ impl Swapped {
 #[derive(Debug, Default)]
 pub struct StandIns {
     entries: RwLock<Vec<Arc<StandIn>>>,
+    /// The answer scrubber of each host asked for, made from `entries` as they are; any change to
+    /// them empties it.
+    scrubbers: Mutex<HashMap<Host, Option<Arc<answer::Scrubber>>>>,
 }
 
 impl StandIns {
+    /// Empties the answer scrubbers: the entries they were made from change.
+    fn forget_scrubbers(&self) {
+        self.scrubbers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
     /// An empty registry: nothing is swapped.
     #[must_use]
     pub fn new() -> Self {
@@ -325,6 +337,7 @@ impl StandIns {
     /// the other.
     pub fn insert(&self, entry: StandIn) -> Result<(), StandInError> {
         let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        self.forget_scrubbers();
         let overlaps = entries
             .iter()
             .any(|e| e.text.contains(&entry.text) || entry.text.contains(&e.text));
@@ -352,6 +365,7 @@ impl StandIns {
             return Err(StandInError::Origin);
         }
         let mut held = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        self.forget_scrubbers();
         let others: Vec<Arc<StandIn>> = held
             .iter()
             .filter(|e| e.origin != origin)
@@ -386,6 +400,7 @@ impl StandIns {
     /// Removes the entry whose stand-in is `stand_in`. `true` when there was one.
     pub fn remove(&self, stand_in: &str) -> bool {
         let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        self.forget_scrubbers();
         let before = entries.len();
         entries.retain(|e| e.text != stand_in);
         entries.len() != before
@@ -401,6 +416,7 @@ impl StandIns {
             return Err(StandInError::Value);
         }
         let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        self.forget_scrubbers();
         let Some(slot) = entries.iter_mut().find(|e| e.text == stand_in) else {
             return Ok(false);
         };

@@ -35,11 +35,11 @@ use std::time::Duration;
 
 use ::http::header::{self, HeaderMap, HeaderValue};
 use ::http::{Response, StatusCode};
+use aho_corasick::{AhoCorasick, Input, MatchKind};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use http_body::{Body, Frame, SizeHint};
-use memchr::memmem::Finder;
 use puddle_types::Host;
 use zeroize::Zeroizing;
 
@@ -69,12 +69,25 @@ struct Pattern {
 /// The real values an answer from one host may hold, in every form looked for.
 pub(crate) struct Scrubber {
     patterns: Vec<Pattern>,
+    /// Finds the leftmost form, the longest at one place, in one pass whatever their number. Its
+    /// tables hold the forms and are not zeroised (as the HTTP library's buffers are not).
+    finder: AhoCorasick,
     ids: Vec<String>,
     /// Which bytes some form starts with.
     starts: [bool; 256],
     longest: usize,
     /// Every replaceable form has its stand-in's length, so a body keeps its length.
     same_length: bool,
+}
+
+impl std::fmt::Debug for Scrubber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never the forms: they are real values.
+        f.debug_struct("Scrubber")
+            .field("ids", &self.ids)
+            .field("forms", &self.patterns.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// An answer held a real value in a form that cannot be replaced (the id of its stand-in).
@@ -125,48 +138,21 @@ impl ScrubNotes {
 impl StandIns {
     /// What an answer from `host` is scrubbed with: the forms of the real value of every
     /// stand-in that is for `host`, wherever it is placed. `None` when no stand-in is.
-    pub(crate) fn answer_scrubber(&self, host: &Host) -> Option<Scrubber> {
+    pub(crate) fn answer_scrubber(&self, host: &Host) -> Option<Arc<Scrubber>> {
         let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
-        let mut patterns: Vec<Pattern> = Vec::new();
-        let mut ids = Vec::new();
-        for entry in guard.iter().filter(|entry| entry.hosts.contains(host)) {
-            let id = ids.len();
-            ids.push(entry.id());
-            let real = entry.real.expose();
-            for (find, put) in forms(real, &entry.text) {
-                add(&mut patterns, find, Some(put), id);
-            }
-            for core in base64_cores(real) {
-                add(&mut patterns, core, None, id);
-            }
+        let mut cache = self
+            .scrubbers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(known) = cache.get(host) {
+            return known.clone();
         }
-        if patterns.is_empty() {
-            return None;
+        let made = build_scrubber(&guard, host).map(Arc::new);
+        if cache.len() >= MAX_CACHED_SCRUBBERS {
+            cache.clear();
         }
-        // The longest first, so that at one place the longest form wins.
-        patterns.sort_by_key(|pattern| Reverse(pattern.find.len()));
-        let mut starts = [false; 256];
-        for pattern in &patterns {
-            if let Some(&first) = pattern.find.first()
-                && let Some(slot) = starts.get_mut(usize::from(first))
-            {
-                *slot = true;
-            }
-        }
-        let longest = patterns.first().map_or(0, |pattern| pattern.find.len());
-        let same_length = patterns.iter().all(|pattern| {
-            pattern
-                .put
-                .as_ref()
-                .is_none_or(|put| put.len() == pattern.find.len())
-        });
-        Some(Scrubber {
-            patterns,
-            ids,
-            starts,
-            longest,
-            same_length,
-        })
+        cache.insert(host.clone(), made.clone());
+        made
     }
 
     /// Whether answers from `host` are scrubbed: a stand-in is for it.
@@ -177,6 +163,59 @@ impl StandIns {
             .iter()
             .any(|entry| entry.hosts.contains(host))
     }
+}
+
+/// How many hosts' scrubbers a registry keeps made; a `*.` host pattern can match any number.
+const MAX_CACHED_SCRUBBERS: usize = 64;
+
+/// The scrubber for answers from `host`, made from the registry's `entries`.
+fn build_scrubber(entries: &[Arc<super::StandIn>], host: &Host) -> Option<Scrubber> {
+    let mut patterns: Vec<Pattern> = Vec::new();
+    let mut ids = Vec::new();
+    for entry in entries.iter().filter(|entry| entry.hosts.contains(host)) {
+        let id = ids.len();
+        ids.push(entry.id());
+        let real = entry.real.expose();
+        for (find, put) in forms(real, &entry.text) {
+            add(&mut patterns, find, Some(put), id);
+        }
+        for core in base64_cores(real) {
+            add(&mut patterns, core, None, id);
+        }
+    }
+    if patterns.is_empty() {
+        return None;
+    }
+    // The longest first, so that at one place the longest form wins.
+    patterns.sort_by_key(|pattern| Reverse(pattern.find.len()));
+    let mut starts = [false; 256];
+    for pattern in &patterns {
+        if let Some(&first) = pattern.find.first()
+            && let Some(slot) = starts.get_mut(usize::from(first))
+        {
+            *slot = true;
+        }
+    }
+    let longest = patterns.first().map_or(0, |pattern| pattern.find.len());
+    let same_length = patterns.iter().all(|pattern| {
+        pattern
+            .put
+            .as_ref()
+            .is_none_or(|put| put.len() == pattern.find.len())
+    });
+    let finder = AhoCorasick::builder()
+            .match_kind(MatchKind::LeftmostLongest)
+            .build(patterns.iter().map(|pattern| &pattern.find[..]))
+            .inspect_err(|err| tracing::warn!(error = %err, "the forms of the real values could not be searched for"))
+            .ok()?;
+    Some(Scrubber {
+        patterns,
+        finder,
+        ids,
+        starts,
+        longest,
+        same_length,
+    })
 }
 
 /// Adds a form, unless it is empty or known already (a replaceable form wins over the same bytes
@@ -361,35 +400,18 @@ impl Scrubber {
         out: &mut Vec<u8>,
         notes: &ScrubNotes,
     ) -> Result<usize, Withheld> {
-        let finders: Vec<Finder<'_>> = self
-            .patterns
-            .iter()
-            .map(|pattern| Finder::new(&pattern.find[..]))
-            .collect();
-        let find_from = |index: usize, from: usize| {
-            buf.get(from..)
-                .and_then(|rest| finders.get(index)?.find(rest))
-                .map(|at| at + from)
-        };
-        let mut next: Vec<Option<usize>> = (0..finders.len()).map(|i| find_from(i, 0)).collect();
         let mut copied = 0;
         let mut frontier = if end {
             buf.len()
         } else {
             self.frontier(buf, 0)
         };
-        loop {
-            // The leftmost match; at one place the longest (patterns are longest first).
-            let best = next
-                .iter()
-                .enumerate()
-                .filter_map(|(index, at)| Some((at.as_ref().copied()?, index)))
-                .min();
-            let Some((at, index)) = best else { break };
-            if at >= frontier {
+        while let Some(found) = self.finder.find(Input::new(buf).range(copied..)) {
+            // The leftmost form; at one place the longest.
+            if found.start() >= frontier {
                 break;
             }
-            let Some(pattern) = self.patterns.get(index) else {
+            let Some(pattern) = self.patterns.get(found.pattern().as_usize()) else {
                 break;
             };
             let id = self.ids.get(pattern.id).map_or("", String::as_str);
@@ -397,17 +419,12 @@ impl Scrubber {
                 notes.withheld.store(true, Ordering::SeqCst);
                 return Err(Withheld(id.to_owned()));
             };
-            out.extend_from_slice(buf.get(copied..at).unwrap_or_default());
+            out.extend_from_slice(buf.get(copied..found.start()).unwrap_or_default());
             out.extend_from_slice(put);
-            copied = at + pattern.find.len();
+            copied = found.end();
             notes.note(id);
             if frontier < copied {
                 frontier = self.frontier(buf, copied);
-            }
-            for (i, slot) in next.iter_mut().enumerate() {
-                if slot.is_some_and(|at| at < copied) {
-                    *slot = find_from(i, copied);
-                }
             }
         }
         let upto = frontier.max(copied);
@@ -588,7 +605,7 @@ impl Decoder {
 /// An answer's body on its way to the guest with the real values put back as stand-ins.
 pub(crate) struct ScrubBody {
     inner: AnswerBody,
-    scrubber: Scrubber,
+    scrubber: Arc<Scrubber>,
     decoder: Option<Decoder>,
     /// What came but could still be the start of a form; it may hold part of a real value.
     held: Zeroizing<Vec<u8>>,

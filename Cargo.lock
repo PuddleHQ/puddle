@@ -6547,6 +6547,7 @@ dependencies = [
 name = "puddle-proxy"
 version = "0.0.0"
 dependencies = [
+ "aho-corasick",
  "base64 0.23.1",
  "brotli-decompressor",
  "bytes",

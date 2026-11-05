@@ -151,6 +151,8 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 # in them: gzip and deflate through flate2 above, Brotli (pure Rust) and zstd (already in the tree
 # through microsandbox's async-compression).
 brotli-decompressor = { version = "6.2", default-features = false, features = ["std"] }
+# Finds every form of every real value in an answer in one pass; already in the tree through regex.
+aho-corasick = "1.1"
 zstd = { version = "0.14", default-features = false }
 # Desktop shell. Tauri 2.12 (3.0 is alpha). `wry` is the webview; `x11` is the Linux
 # display backend. No `common-controls-v6` (the unit-test executables have no manifest, so they

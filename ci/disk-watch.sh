@@ -9,10 +9,11 @@
 #   disk-watch.sh guard <label>  loop for the duration of one heavy step (run it with `&`, stop it with `kill`):
 #                                logs free space every interval to $RUNNER_TEMP/disk-watch-<label>.log; under the
 #                                warning level takes one deep snapshot; under the floor takes another, annotates
-#                                `::error`, and stops the processes matching $DISK_WATCH_KILL (an ERE for
-#                                `pkill -f`, passed by env so the guard does not match itself; it matches every process on the host,
-#                                so a caller on a shared host must make it unique to its own step), so the step ends
-#                                with a readable cause and the artifact upload still runs.
+#                                `::error`, and stops the process tree it was started for: every descendant of
+#                                the shell that started it (the step), except the guard itself. Nothing outside that
+#                                tree is touched, so a shared host's other jobs survive. $DISK_WATCH_KILL (an ERE
+#                                matched against each process's command line) narrows the tree to the matching
+#                                processes. The step then ends with a readable cause and the artifact upload still runs.
 #
 # Evidence only: both modes exit 0 whatever they find (the guard's kill is the one action, and only under the
 # floor). Knobs: DISK_WATCH_WARN_GB (30), DISK_WATCH_FLOOR_GB (5), DISK_WATCH_INTERVAL (2 s),
@@ -99,8 +100,33 @@ snap() { # <label> [deep]
     fi
 }
 
+descendants() { # <pid>: its children, grandchildren and so on, one pid per line
+    ps -eo pid=,ppid= | awk -v root="$1" '
+        { kids[$2] = kids[$2] " " $1 }
+        function walk(p,   n, a, i) {
+            n = split(kids[p], a, " ")
+            for (i = 1; i <= n; i++) { print a[i]; walk(a[i]) }
+        }
+        END { walk(root) }'
+}
+
+# Signal the step's processes: the descendants of the shell that started the guard, minus the guard and its own
+# children (its sleep). With a pattern, only the ones whose command line matches it.
+stop_step() { # <signal> <step pid>
+    local pid args own
+    own=" $$ $(descendants $$ | tr '\n' ' ')"
+    for pid in $(descendants "$2"); do
+        case "$own" in *" $pid "*) continue ;; esac
+        if [ -n "${DISK_WATCH_KILL:-}" ]; then
+            args=$(ps -o args= -p "$pid" 2>/dev/null) || continue
+            printf '%s\n' "$args" | grep -Eq -- "$DISK_WATCH_KILL" || continue
+        fi
+        kill "-$1" "$pid" 2>/dev/null
+    done
+}
+
 guard() { # <label>
-    local label=$1 log="$temp/disk-watch-$1.log" free min t0=$SECONDS warned=0
+    local label=$1 log="$temp/disk-watch-$1.log" free min t0=$SECONDS warned=0 step=$PPID
     mkdir -p "$temp"
     : >"$log"
     free=$(free_gb)
@@ -116,12 +142,10 @@ guard() { # <label>
         echo "$((SECONDS - t0)) s free=${free}GB" >>"$log"
         if [ "$free" -lt "$floor_gb" ]; then
             echo "::error title=runner disk full::$label: ${free} GB free (floor ${floor_gb} GB) after $((SECONDS - t0)) s; stopping the step's processes so the job ends readable. Sizes in the job summary"
-            if [ -n "${DISK_WATCH_KILL:-}" ]; then
-                pkill -TERM -f -- "$DISK_WATCH_KILL"
-                sleep 10 &
-                wait $!
-                pkill -KILL -f -- "$DISK_WATCH_KILL"
-            fi
+            stop_step TERM "$step"
+            sleep 10 &
+            wait $!
+            stop_step KILL "$step"
             # After the kill: nothing writes any more, and a slow du or lsof can no longer cost the step its disk.
             snap "$label: under the floor" deep >/dev/null
             finish

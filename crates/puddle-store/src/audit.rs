@@ -1801,7 +1801,7 @@ mod tests {
         let mut stmt = conn
             .prepare("SELECT id, type, host, outcome, search FROM audit")
             .unwrap();
-        let rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>)> = stmt
+        let rows: Vec<Row> = stmt
             .query_map([], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
             })

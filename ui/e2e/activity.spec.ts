@@ -292,7 +292,7 @@ test.describe("filters", () => {
     await openActivity(
       page,
       backend,
-      "?workspace=web-shop&type=connection&outcome=allow&host=crates&range=all",
+      "?workspace=web-shop&type=connection&outcome=allow&q=crates&range=all",
     );
     await total(page, expected);
     await expect(page.getByLabel("Workspace")).toHaveValue("web-shop");
@@ -346,7 +346,7 @@ test.describe("filters", () => {
       host: "xn--bcher-kva.example.com",
       decision: "allow",
     });
-    await openActivity(page, backend, "?host=bcher");
+    await openActivity(page, backend, "?q=bcher");
     await expect(rows(page).first()).toContainText("xn--bcher-kva.example.com");
   });
 });
@@ -420,7 +420,7 @@ test.describe("live", () => {
     page,
     backend,
   }) => {
-    await visit(page, backend, "?host=wanted");
+    await visit(page, backend, "?q=wanted");
     await total(page, 0);
     await connect(backend, "unrelated.example.org");
     await connect(backend, "wanted.example.org");
@@ -694,7 +694,7 @@ test.describe("keyboard only", () => {
     // The list is read again 250 ms after a key, and every read starts the view over. On a slow
     // machine a prefix is read too ("ad" already matches this one row), so wait for the whole
     // word: the address carries it once it is read, and the count is busy until the answer.
-    await expect(page).toHaveURL(/[?&]host=ads\.example(&|$)/);
+    await expect(page).toHaveURL(/[?&]q=ads\.example(&|$)/);
     await expect(page.locator("p.count")).toHaveAttribute("aria-busy", "false");
     await expect(rows(page)).toHaveCount(1);
     const toggle = rows(page).first().getByRole("button");

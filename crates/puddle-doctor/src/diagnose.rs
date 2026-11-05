@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 use puddle_runtime::RuntimeError;
 
 use crate::facts::{
-    BootFacts, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, GsaFacts, HypervisorApi,
-    HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
-    WritableFolder,
+    BootFacts, CodeIntegrity, CodeIntegrityFacts, DataPathFacts, DiskFacts, GsaFacts,
+    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, RuntimeFacts,
+    RuntimeState, WritableFolder,
 };
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -38,6 +38,8 @@ pub trait Probe {
     fn job(&self) -> Option<JobFacts>;
     /// The Global Secure Access client; `None` when not on Windows.
     fn global_secure_access(&self) -> Option<GsaFacts>;
+    /// The free space on the drive that holds Puddle's data.
+    fn disk_space(&self) -> DiskFacts;
     /// The folders above Puddle's data folder; `None` where msb has no such rule (not Linux).
     fn data_path(&self) -> Option<DataPathFacts>;
 }
@@ -51,6 +53,10 @@ pub struct Options {
     pub launch_limit: Duration,
     /// Time limit for the whole run; the test boot gets what is left.
     pub budget: Duration,
+    /// Free space, in bytes, under which the disk check warns.
+    pub disk_warn_below: u64,
+    /// Free space, in bytes, under which the disk check fails.
+    pub disk_fail_below: u64,
 }
 
 impl Default for Options {
@@ -59,9 +65,19 @@ impl Default for Options {
             boot: true,
             launch_limit: Duration::from_secs(10),
             budget: Duration::from_secs(28),
+            disk_warn_below: DEFAULT_DISK_WARN_BELOW,
+            disk_fail_below: DEFAULT_DISK_FAIL_BELOW,
         }
     }
 }
+
+/// Puddle's default warning line for free disk space: 20 GB (the settings default is the same).
+pub const DEFAULT_DISK_WARN_BELOW: u64 = 20 * GIB;
+
+/// Puddle's default failure line for free disk space: 5 GB (the settings default is the same).
+pub const DEFAULT_DISK_FAIL_BELOW: u64 = 5 * GIB;
+
+const GIB: u64 = 1024 * 1024 * 1024;
 
 /// The least time worth starting a test boot with.
 const MIN_BOOT_TIME: Duration = Duration::from_secs(5);
@@ -113,6 +129,7 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
         }
     });
 
+    checks.push(disk_space(&probe.disk_space(), options));
     if let Some(path) = probe.data_path() {
         checks.push(data_path(&path));
     }
@@ -358,6 +375,74 @@ plain terminal outside a CI runner or IDE.",
             )
             .detail(detail.clone()),
         ),
+    }
+}
+
+// ---- disk space ----
+
+/// `bytes` in GB (1024 x 1024 x 1024 bytes, as Windows and `df -h` count), with a decimal only
+/// when it is not zero.
+fn gb(bytes: u64) -> String {
+    let tenths = u128::from(bytes) * 10 / u128::from(GIB);
+    match tenths % 10 {
+        0 => format!("{}", tenths / 10),
+        t => format!("{}.{t}", tenths / 10),
+    }
+}
+
+const DISK_WHY: &str = "Workspace volumes and root disks, package caches and builds inside a workspace all grow on this drive, \
+and a full drive stops them with errors that do not name the cause (a build that dies halfway, a tool that cannot write).";
+
+fn disk_space(facts: &DiskFacts, options: &Options) -> Check {
+    let id = CheckId::DiskSpace;
+    match facts {
+        DiskFacts::NoFolder => skipped(id, "Puddle's data folder could not be found"),
+        DiskFacts::Unreadable { dir, detail } => Check::new(
+            id,
+            Status::Info,
+            format!(
+                "could not be read; how much room the drive that holds {} has is unknown",
+                dir.display()
+            ),
+        )
+        .finding(Finding::DiskSpaceUnreadable)
+        .fix("Puddle works; this only means it cannot warn you before the drive fills up.")
+        .detail(detail.clone()),
+        DiskFacts::Read { dir, free_bytes } => {
+            let free = gb(*free_bytes);
+            let place = format!("on the drive that holds Puddle's data ({})", dir.display());
+            if *free_bytes < options.disk_fail_below {
+                Check::new(
+                    id,
+                    Status::Fail,
+                    format!(
+                        "only {free} GB free {place}, under the {} GB line",
+                        gb(options.disk_fail_below)
+                    ),
+                )
+                .finding(Finding::DiskSpaceCritical)
+                .fix(format!(
+                    "{DISK_WHY} Free space before you start or build anything in a workspace: delete workspaces you no longer \
+use and files you do not need. The line is the setting \"Fail when free space is under\" in Settings."
+                ))
+            } else if *free_bytes < options.disk_warn_below {
+                Check::new(
+                    id,
+                    Status::Warn,
+                    format!(
+                        "{free} GB free {place}, under the {} GB line",
+                        gb(options.disk_warn_below)
+                    ),
+                )
+                .finding(Finding::DiskSpaceLow)
+                .fix(format!(
+                    "{DISK_WHY} Free some space soon: delete workspaces you no longer use and files you do not need. \
+The line is the setting \"Warn when free space is under\" in Settings."
+                ))
+            } else {
+                Check::new(id, Status::Ok, format!("{free} GB free {place}"))
+            }
+        }
     }
 }
 

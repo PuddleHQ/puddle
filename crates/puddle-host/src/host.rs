@@ -351,6 +351,8 @@ struct Background {
     _sign_in_notices: AbortOnDrop,
     // Asks Microsoft's editor server to switch to a staged build when no window is on it.
     _editor_updates: AbortOnDrop,
+    // Says when the free space on the drive that holds the data folder crosses a line.
+    _space_watch: AbortOnDrop,
     // Reads the disks' use now and then and warns when one reaches the threshold.
     _disk_watch: AbortOnDrop,
 }
@@ -617,6 +619,12 @@ impl<R: Runtime + Clone> Host<R> {
             service.clone(),
             editor_windows.clone(),
         ));
+        let space_watch = AbortOnDrop(crate::space_watch::spawn(
+            crate::space_watch::DriveOf(config.paths.data().to_path_buf()),
+            config.free_space,
+            settings.clone(),
+            events.clone() as Arc<dyn EventSink>,
+        ));
         let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
         steps.push(Step::WorkspacesReady);
 
@@ -639,6 +647,7 @@ impl<R: Runtime + Clone> Host<R> {
             &config.layout,
             &config.paths,
             &config.expected_runtime,
+            settings.clone(),
         ))
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
@@ -672,6 +681,7 @@ impl<R: Runtime + Clone> Host<R> {
                 _git_changes: git_changes,
                 _sign_in_notices: sign_in_notices,
                 _editor_updates: editor_updates,
+                _space_watch: space_watch,
                 _disk_watch: disk_watch,
             })),
             steps: Mutex::new(steps),

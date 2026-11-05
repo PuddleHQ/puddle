@@ -16,6 +16,7 @@ FAIL  Runtime starts        App Control for Business (WDAC) or Smart App Control
       from: Your organization used Device Guard to block this app. Contact your support person
             for more info. (os error 4551)
 skip  Test boot             not checked: the runtime doesn't start
+ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Global Secure Access  client not installed
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
@@ -61,6 +62,11 @@ ok    Global Secure Access  client not installed
       "id": "test_boot",
       "status": "skipped",
       "summary": "not checked: the runtime doesn't start"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
     },
     {
       "id": "global_secure_access",

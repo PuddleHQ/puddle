@@ -58,6 +58,8 @@ pub enum CheckId {
     JobObject,
     /// Microsoft Entra Global Secure Access.
     GlobalSecureAccess,
+    /// Free space on the drive that holds Puddle's data.
+    DiskSpace,
     /// The folders above Puddle's data: can other accounts write in them.
     DataPath,
 }
@@ -75,6 +77,7 @@ impl CheckId {
             Self::TestBoot => "Test boot",
             Self::JobObject => "Job object",
             Self::GlobalSecureAccess => "Global Secure Access",
+            Self::DiskSpace => "Disk space",
             Self::DataPath => "Data folder path",
         }
     }
@@ -145,6 +148,12 @@ pub enum Finding {
     GlobalSecureAccessInstalled,
     /// Whether the Global Secure Access client is installed couldn't be read.
     GlobalSecureAccessUnknown,
+    /// Free space is under the warning line.
+    DiskSpaceLow,
+    /// Free space is under the failure line.
+    DiskSpaceCritical,
+    /// How much room the drive has couldn't be read.
+    DiskSpaceUnreadable,
     /// A folder above Puddle's data is writable by other accounts and not sticky.
     DataPathWritable,
     /// The folders above Puddle's data couldn't be read.

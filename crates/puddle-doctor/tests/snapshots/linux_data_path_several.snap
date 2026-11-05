@@ -5,6 +5,7 @@ ok    Hypervisor          /dev/kvm is usable
 ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot           a test VM booted and ran a program in 1.1 s
+ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 FAIL  Data folder path    /srv, /srv/my data are writable by the group or everyone and not sticky, so msb will not open Puddle's data below them
       fix:  msb opens its catalog only below folders where other accounts cannot rename entries,
             so every sandbox start fails until the write permission is gone. A user created with
@@ -48,6 +49,11 @@ FAIL  Data folder path    /srv, /srv/my data are writable by the group or everyo
       "id": "test_boot",
       "status": "ok",
       "summary": "a test VM booted and ran a program in 1.1 s"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
     },
     {
       "id": "data_path",

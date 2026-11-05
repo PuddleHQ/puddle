@@ -2521,6 +2521,13 @@ export interface components {
          * @enum {string}
          */
         DiskKind: "root" | "volume";
+        /**
+         * @description How the free space on the drive that holds Puddle's data compares with the warning and the
+         *     failure line (settings `ui.disk_warn_free_gb` and `ui.disk_fail_free_gb`). Ordered from fine to
+         *     worst, so `level > previous` says the space got tighter.
+         * @enum {string}
+         */
+        DiskSpaceLevel: "ok" | "low" | "critical";
         /** @description One line of the system check. */
         DoctorCheck: {
             /** @description Raw evidence: an OS error, the runtime's last output lines; `null` when there is none. */
@@ -2929,6 +2936,16 @@ export interface components {
         } | {
             /** @enum {string} */
             type: "problems_changed";
+        } | {
+            /**
+             * Format: int64
+             * @description The free space at the read that changed the level, in whole MiB.
+             */
+            free_mib: number;
+            /** @description Where the free space stands now. */
+            level: components["schemas"]["DiskSpaceLevel"];
+            /** @enum {string} */
+            type: "disk_space_changed";
         };
         /** @description What a rule set is painted with: one solid colour today. A gradient would be another `kind`. */
         Fill: {
@@ -4555,6 +4572,18 @@ export interface components {
             density: components["schemas"]["DensityChoice"] | null;
             /**
              * Format: int32
+             * @description The free space, in GB, under which `puddle doctor` fails; 1 to 10000, default 5, never above
+             *     the warning line.
+             */
+            disk_fail_free_gb: number | null;
+            /**
+             * Format: int32
+             * @description The free space, in GB (1024 x 1024 x 1024 bytes), under which `puddle doctor` warns and the
+             *     app says so; 1 to 10000, default 20.
+             */
+            disk_warn_free_gb: number | null;
+            /**
+             * Format: int32
              * @description How full a workspace's root disk or volume gets, in percent, before Puddle warns on the
              *     workspace and, with `notify_disk_full`, notifies; 50 to 100 (default 95).
              */
@@ -4567,6 +4596,11 @@ export interface components {
             notifications: boolean | null;
             /** @description Notify when a workspace's root disk or volume reaches `disk_warning_percent` (default on). */
             notify_disk_full: boolean | null;
+            /**
+             * @description Notify when the free space on the drive that holds Puddle's data falls under the warning or
+             *     the failure line (default on).
+             */
+            notify_low_disk_space: boolean | null;
             /** @description Notify only while Puddle's window is not focused (default on). */
             notify_only_unfocused: boolean | null;
             /** @description Notify when a workspace is killed for running out of memory (default on). */

@@ -27,7 +27,7 @@ use puddle_e2e::lab::{
 };
 use puddle_host::Host;
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope, StartValue};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended, hermetic_options};
 use vm_support::{VmHost, guest_within, start_vm_host_platform, web_internet};
@@ -162,7 +162,7 @@ fn split(value: &str) -> String {
     format!("\"{head}\"\"{tail}\"")
 }
 
-fn stand_in_of(host: &Host<MsbRuntime>, workspace: &WorkspaceName, var: &str) -> String {
+fn stand_in_of(host: &Host<MsbRuntime>, workspace: &WorkspaceId, var: &str) -> String {
     host.store()
         .env_for_start(workspace, &mut |_| Err("already made".into()))
         .unwrap()
@@ -175,7 +175,7 @@ fn stand_in_of(host: &Host<MsbRuntime>, workspace: &WorkspaceName, var: &str) ->
         .unwrap_or_else(|| panic!("no secret {var}"))
 }
 
-async fn run(vm: &VmHost, workspace: &WorkspaceName, script: &str, minutes: u64) -> String {
+async fn run(vm: &VmHost, workspace: &WorkspaceId, script: &str, minutes: u64) -> String {
     let wrapped = format!(
         "cat > /tmp/feed.sh <<'PUDDLE_EOF'\n{script}\nPUDDLE_EOF\nbash /tmp/feed.sh </dev/null 2>&1"
     );
@@ -242,7 +242,7 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
     .await;
     let vm = start_vm_host_platform("feed", net.options, &net.platform, |_| {}).await;
     let name = format!("{}-feed", vm.settings.prefix.as_str());
-    let workspace = WorkspaceName::new(&name).unwrap();
+    let workspace = WorkspaceId::new(&name).unwrap();
     for site in [NPM, NUGET, PIP, MAVEN].iter().chain(MIRRORS) {
         vm.host
             .store()

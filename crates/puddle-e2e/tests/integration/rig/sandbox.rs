@@ -116,7 +116,13 @@ pub(crate) async fn rig_guarded(
     os.set_pac(move |_| Ok(hops.clone()));
     let discovery = Discovery::new(os, DiscoveryConfig::default());
     let check = Arc::new(puddle_netpolicy::NetPolicy::new(Arc::new(access)));
-    rig_checked(discovery, basic("lab", "lab"), resolver, check).await
+    rig_checked(
+        discovery,
+        basic("lab", &puddle_types::fixture::password("lab")),
+        resolver,
+        check,
+    )
+    .await
 }
 
 pub(crate) fn allow(store: &Store, host: &str) {

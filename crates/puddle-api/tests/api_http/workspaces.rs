@@ -110,6 +110,9 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             "created_at": START_MS,
             "disk_size_mib": puddle_api::DEFAULT_DISK_MIB,
             "disk_used_mib": 0,
+            "disk_warnings": [],
+            "root_disk_size_mib": 4096,
+            "root_disk_used_mib": 0,
             "direct_ssh": false,
             "settings_error": null,
             "first_connect_notice_due": false,
@@ -517,7 +520,7 @@ async fn start_and_stop_walk_the_states_and_report_them() {
     assert_eq!(started.json()["status"], "starting");
     assert_eq!(started.json()["busy"], "starting");
     // Busy: a second request is refused, whatever it is.
-    for path in ["start", "stop", "reclaim"] {
+    for path in ["start", "stop", "reclaim", "reset-root-disk"] {
         let busy = post(&api, &format!("/api/workspaces/web/{path}")).await;
         assert_eq!(busy.status, 409, "{path}");
         assert!(busy.json()["message"].as_str().unwrap().contains("busy"));
@@ -596,6 +599,50 @@ async fn reclaim_shrinks_what_the_disk_holds() {
 }
 
 #[tokio::test]
+async fn the_root_disk_figures_and_warnings_follow_the_threshold_and_a_reset_empties_it() {
+    let api = start().await;
+    let mut record = WorkspaceRecord::new(
+        WorkspaceId::new("web").unwrap(),
+        WorkspaceName::new("web").unwrap(),
+        Vec::new(),
+    );
+    record.status = WorkspaceStatus::Running;
+    record.root_disk_size_mib = Some(4096);
+    record.root_disk_used_mib = Some(4000);
+    api.workspaces.seed(record, Unsaved::default());
+    let ws = api.get("/api/workspaces/web").await.json();
+    assert_eq!(ws["root_disk_size_mib"], 4096);
+    assert_eq!(ws["root_disk_used_mib"], 4000);
+    assert_eq!(ws["disk_warnings"], json!(["root"]));
+
+    // The threshold is the global setting; the list and the single answer both follow it.
+    let put = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"ui": {"disk_warning_percent": 99}})),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    let list = api.get("/api/workspaces").await.json();
+    assert_eq!(list["workspaces"][0]["disk_warnings"], json!([]));
+
+    // A running workspace is not reset; a stopped one empties its root disk.
+    let refused = post(&api, "/api/workspaces/web/reset-root-disk").await;
+    assert_eq!(refused.status, 409, "{}", refused.body);
+    post(&api, "/api/workspaces/web/stop").await;
+    api.workspaces.idle().await;
+    let reply = post(&api, "/api/workspaces/web/reset-root-disk").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    assert_eq!(reply.json()["busy"], "resetting_root_disk");
+    api.workspaces.idle().await;
+    let ws = api.get("/api/workspaces/web").await.json();
+    assert_eq!(ws["root_disk_used_mib"], 0);
+    assert_eq!(ws["busy"], Value::Null);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn unknown_workspaces_are_404_on_every_route() {
     let api = start().await;
     for id in ["nope", "Not_An_Id"] {
@@ -605,6 +652,7 @@ async fn unknown_workspaces_are_404_on_every_route() {
             ("POST", format!("{base}/start"), Some(json!({}))),
             ("POST", format!("{base}/stop"), Some(json!({}))),
             ("POST", format!("{base}/reclaim"), Some(json!({}))),
+            ("POST", format!("{base}/reset-root-disk"), Some(json!({}))),
             ("GET", format!("{base}/delete-check"), None),
             ("DELETE", base.clone(), Some(json!({"confirm": true}))),
             (
@@ -1224,6 +1272,7 @@ async fn without_a_workspaces_service_every_route_says_unavailable() {
         ("POST", "/api/workspaces/a/start", Some(json!({}))),
         ("POST", "/api/workspaces/a/stop", Some(json!({}))),
         ("POST", "/api/workspaces/a/reclaim", Some(json!({}))),
+        ("POST", "/api/workspaces/a/reset-root-disk", Some(json!({}))),
         ("GET", "/api/workspaces/a/delete-check", None),
         (
             "DELETE",

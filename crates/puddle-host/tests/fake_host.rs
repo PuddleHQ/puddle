@@ -3735,6 +3735,68 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
     again.shutdown().await;
 }
 
+/// Docker's data folder is a disk of the sandbox itself: every sandbox the host makes has one,
+/// a stop and start keeps the sandbox (and so the disk), a rebuilt sandbox gets a fresh one, and
+/// the workspace volume never carries it.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_sandbox_has_its_own_20_gib_disk_for_dockers_data_and_the_volume_does_not() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    let docker_disk = |rig: &Rig| {
+        rig.runtime
+            .owned_disks(&sandbox)
+            .into_iter()
+            .map(|d| (d.guest.as_str().to_owned(), d.size))
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![(
+        "/var/lib/docker".to_owned(),
+        puddle_compute::DiskSize::gib(20),
+    )];
+    assert_eq!(docker_disk(&rig), expected);
+    let volumes = rig.runtime.volume_mounts(&sandbox);
+    assert_eq!(volumes.len(), 1, "{volumes:?}");
+    assert!(
+        volumes
+            .iter()
+            .all(|v| !v.guest.as_str().starts_with("/var/lib")),
+        "{volumes:?}"
+    );
+
+    // A stop and start is the same sandbox with the same disk.
+    for step in ["stop", "start"] {
+        let reply = api1.post(&format!("/api/workspaces/acme/{step}"), "").await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+    }
+    assert_eq!(docker_disk(&rig), expected);
+    assert_eq!(
+        rig.runtime
+            .calls()
+            .iter()
+            .filter(|c| format!("{:?}", c.op) == "Create")
+            .count(),
+        1
+    );
+
+    // A new process rebuilds the sandbox, and the new one has the disk too.
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(docker_disk(&rig), expected);
+    again.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
     let rig = Rig::new();
@@ -8548,6 +8610,198 @@ async fn the_list_and_one_workspace_say_what_the_volume_takes_when_the_runtime_k
     host.shutdown().await;
 }
 
+async fn put_settings(api: &Api, body: serde_json::Value) -> support::Reply {
+    api.request("PUT", "/api/settings", Some(&body.to_string()), true)
+        .await
+}
+
+fn disk_warning(kind: &'static str) -> impl Fn(&serde_json::Value) -> bool {
+    move |e| e["type"] == "disk_nearly_full" && e["disk"] == kind
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_root_disk_at_the_threshold_is_flagged_and_announced_once_until_it_drops_below() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = WorkspaceName::new("acme").unwrap().sandbox_name();
+    let list = || async { api.get("/api/workspaces").await.json()["workspaces"][0].clone() };
+
+    // Below the default 95 %: the figures show, nothing is flagged.
+    rig.runtime.set_root_disk_use(
+        &sandbox,
+        puddle_compute::DiskSize::mib(4096),
+        puddle_compute::DiskSize::mib(3800),
+    );
+    let w = list().await;
+    assert_eq!(w["root_disk_size_mib"], 4096, "{w}");
+    assert_eq!(w["root_disk_used_mib"], 3800, "{w}");
+    assert_eq!(w["disk_warnings"], json!([]), "{w}");
+
+    // At 95 % it is flagged, and the event says which disk and how full.
+    rig.runtime.set_root_disk_use(
+        &sandbox,
+        puddle_compute::DiskSize::mib(4096),
+        puddle_compute::DiskSize::mib(3900),
+    );
+    assert_eq!(list().await["disk_warnings"], json!(["root"]));
+    let said = events
+        .until(disk_warning("root"), Duration::from_secs(20))
+        .await;
+    assert_eq!(
+        (said["workspace"].clone(), said["percent"].clone()),
+        (json!("acme"), json!(95))
+    );
+
+    // Reading again says nothing new; the volume is far below the threshold.
+    let from = events.seen.len();
+    list().await;
+    list().await;
+    assert!(
+        events.seen[from..]
+            .iter()
+            .all(|e| e["type"] != "disk_nearly_full")
+    );
+
+    // Below the threshold re-arms the warning.
+    rig.runtime.set_root_disk_use(
+        &sandbox,
+        puddle_compute::DiskSize::mib(4096),
+        puddle_compute::DiskSize::mib(100),
+    );
+    assert_eq!(list().await["disk_warnings"], json!([]));
+    rig.runtime.set_root_disk_use(
+        &sandbox,
+        puddle_compute::DiskSize::mib(4096),
+        puddle_compute::DiskSize::mib(4096),
+    );
+    list().await;
+    let again = events
+        .until(disk_warning("root"), Duration::from_secs(20))
+        .await;
+    assert_eq!(again["percent"], 100);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runtime_that_cannot_list_leaves_the_last_root_disk_figures() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = WorkspaceName::new("acme").unwrap().sandbox_name();
+    rig.runtime.set_root_disk_use(
+        &sandbox,
+        puddle_compute::DiskSize::mib(4096),
+        puddle_compute::DiskSize::mib(3800),
+    );
+    let list = || async { api.get("/api/workspaces").await.json()["workspaces"][0].clone() };
+    assert_eq!(list().await["root_disk_used_mib"], 3800);
+    rig.runtime
+        .inject(Op::List, Fault::always(disk_error("list")));
+    assert_eq!(list().await["root_disk_used_mib"], 3800);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_full_volume_is_flagged_and_the_threshold_is_a_validated_setting() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let volume = WorkspaceId::new("acme").unwrap().volume_name();
+    let size = rig.runtime.volume(&volume).await.unwrap().unwrap().size;
+    let used = |percent: u32| puddle_compute::DiskSize::mib(size.as_mib() / 100 * percent);
+
+    rig.runtime.set_volume_used(&volume, used(96));
+    let w = api.get("/api/workspaces/acme").await;
+    assert_eq!(
+        w.json()["disk_warnings"],
+        json!([]),
+        "get reads the last refresh"
+    );
+    let list = api.get("/api/workspaces").await.json();
+    assert_eq!(list["workspaces"][0]["disk_warnings"], json!(["volume"]));
+    events
+        .until(disk_warning("volume"), Duration::from_secs(20))
+        .await;
+
+    // A higher threshold takes the flag away; one outside 50 to 100 is refused.
+    let ok = put_settings(&api, json!({"ui": {"disk_warning_percent": 99}})).await;
+    assert_eq!(ok.status, 200, "{}", ok.body);
+    let list = api.get("/api/workspaces").await.json();
+    assert_eq!(list["workspaces"][0]["disk_warnings"], json!([]), "{list}");
+    for bad in [49, 101] {
+        let refused = put_settings(&api, json!({"ui": {"disk_warning_percent": bad}})).await;
+        assert_eq!(refused.status, 422, "{bad}: {}", refused.body);
+    }
+    let kept = api.get("/api/settings").await.json();
+    assert_eq!(kept["ui"]["disk_warning_percent"], 99, "{kept}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resetting_the_root_disk_needs_a_stopped_workspace_and_keeps_the_volume() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = WorkspaceName::new("acme").unwrap().sandbox_name();
+    let volume = WorkspaceId::new("acme").unwrap().volume_name();
+
+    let running = api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    assert_eq!(running.status, 409, "{}", running.body);
+    assert!(running.body.contains("stop it"), "{}", running.body);
+
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let reply = api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    assert_eq!(reply.json()["busy"], "resetting_root_disk");
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done");
+    assert!(
+        rig.runtime
+            .list()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.name != sandbox.as_str()),
+        "the sandbox, and with it the root disk, is gone"
+    );
+    assert!(
+        rig.runtime.volume(&volume).await.unwrap().is_some(),
+        "the volume stays"
+    );
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert!(w["root_disk_used_mib"].is_null(), "{w}");
+    assert_eq!(w["status"], "stopped", "{w}");
+
+    // A reset with no sandbox left has nothing to remove and still ends well.
+    let again = api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    assert_eq!(again.status, 202, "{}", again.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done");
+
+    // The next start makes a fresh sandbox from the image.
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        rig.runtime
+            .list()
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.name == sandbox.as_str())
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_did_not() {
     let rig = Rig::new();
@@ -9059,6 +9313,31 @@ async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at
     assert_ne!(renewed, cert);
 }
 
+/// A declined system confirmation is asked again at a start (the spec's choice), never at an
+/// attach: closing an editor window and opening one again must not raise it a second time.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_a_start_asks_for_the_development_certificate_never_an_attach() {
+    let rig = Rig::new();
+    rig.dev_cert.give();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(rig.dev_cert.asked(), 1, "the start asked once");
+    allow_direct_ssh(&api, "acme", true).await;
+    for mode in ["browser", "desktop", "browser"] {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/attach",
+                &json!({"mode": mode}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.json()["opened"], true, "{mode}: {}", reply.body);
+    }
+    assert_eq!(rig.dev_cert.asked(), 1, "three attaches asked nothing more");
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_a_development_certificate_writes_nothing_for_it_into_the_guest() {
     let rig = Rig::new();
@@ -9564,6 +9843,57 @@ async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_o
     .await;
     assert!(
         problem_is(&api, "editor-update:acme", false)
+            .await
+            .is_none()
+    );
+    fixed.abort();
+    session.abort();
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_editor_server_that_runs_as_root_for_want_of_its_user_is_a_problem_until_a_start_finds_the_user()
+ {
+    use puddle_agent_proto::{AgentMessage, EditorProblemKind};
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    let session = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::SessionUser,
+            Some("its user agent is missing in the guest"),
+        )],
+    )
+    .await;
+    let (title, detail) = problem_is(&api, "editor-session-user:acme", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        title,
+        "The browser editor in acme runs as root: its user agent is missing in the guest"
+    );
+    assert!(detail.contains("belong to root"), "{detail}");
+    assert!(
+        detail.contains("switch the workspace's session user to root"),
+        "{detail}"
+    );
+
+    let fixed = agent_says(
+        &rig,
+        "acme",
+        &[AgentMessage::editor_status(
+            EditorProblemKind::SessionUser,
+            None,
+        )],
+    )
+    .await;
+    assert!(
+        problem_is(&api, "editor-session-user:acme", false)
             .await
             .is_none()
     );

@@ -2,7 +2,8 @@
 //! Wire types of the workspaces resource.
 
 use puddle_types::{
-    CheckoutDir, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceName, WorkspaceStatus,
+    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceName,
+    WorkspaceStatus,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -23,6 +24,8 @@ pub enum WorkspaceOperation {
     Stopping,
     /// Giving freed disk space back to the host.
     Reclaiming,
+    /// Removing the sandbox so the next start makes a fresh root disk.
+    ResettingRootDisk,
     /// Cloning one repository into a running workspace; stop and delete are refused until it
     /// ends.
     Cloning,
@@ -37,6 +40,7 @@ impl From<domain::Operation> for WorkspaceOperation {
             domain::Operation::Starting => Self::Starting,
             domain::Operation::Stopping => Self::Stopping,
             domain::Operation::Reclaiming => Self::Reclaiming,
+            domain::Operation::ResettingRootDisk => Self::ResettingRootDisk,
             domain::Operation::Cloning => Self::Cloning,
             domain::Operation::Deleting => Self::Deleting,
         }
@@ -101,6 +105,18 @@ pub struct Workspace {
     /// What the disk holds in MiB; `null` when not known.
     #[schema(required = true)]
     pub disk_used_mib: Option<u64>,
+    /// The root disk's size in MiB: the most the home directory, tool caches and installed
+    /// packages can take. `null` when not known.
+    #[schema(required = true)]
+    pub root_disk_size_mib: Option<u64>,
+    /// What the root disk holds in MiB; `null` when not known. A root disk that is nearly full
+    /// can be reset (`POST /api/workspaces/{id}/reset-root-disk`).
+    #[schema(required = true)]
+    pub root_disk_used_mib: Option<u64>,
+    /// Which disks are at or over the warning threshold (`ui.disk_warning_percent` in the global
+    /// settings): `root`, `volume`, both or neither.
+    #[schema(required = true)]
+    pub disk_warnings: Vec<DiskKind>,
     /// Whether direct SSH is on for this workspace (its effective setting, `direct_ssh` in the
     /// settings). The workspace is then "trusted": desktop VS Code and other SSH tools can
     /// connect, and what runs in the workspace can reach this computer through them.
@@ -139,6 +155,8 @@ impl Workspace {
             created_at,
             disk_size_mib,
             disk_used_mib,
+            root_disk_size_mib,
+            root_disk_used_mib,
             ..
         } = record;
         #[expect(deprecated, reason = "the field stays on the wire, always false")]
@@ -156,11 +174,21 @@ impl Workspace {
             created_at,
             disk_size_mib,
             disk_used_mib,
+            root_disk_size_mib,
+            root_disk_used_mib,
+            disk_warnings: Vec::new(),
             direct_ssh,
             settings_error: None,
             first_connect_notice_due: false,
             identities: Vec::new(),
         }
+    }
+
+    /// The same workspace, with the disks that are at or over the warning threshold.
+    #[must_use]
+    pub fn with_disk_warnings(mut self, warnings: Vec<DiskKind>) -> Self {
+        self.disk_warnings = warnings;
+        self
     }
 
     /// The same workspace, with what its Git settings started with (the answer to creating it).

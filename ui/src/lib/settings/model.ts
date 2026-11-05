@@ -97,6 +97,26 @@ export function parseGrace(
   return { ok: true, secs };
 }
 
+export const DISK_WARNING_MIN = 50;
+export const DISK_WARNING_MAX = 100;
+export const DISK_WARNING_DEFAULT = 95;
+
+/** The disk warning threshold in percent from what was typed, or the reason it cannot be used. */
+export function parseDiskWarning(
+  text: string,
+): { ok: true; percent: number } | { ok: false; message: string } {
+  const trimmed = text.trim().replace(/\s*%$/, "");
+  if (!/^\d+$/.test(trimmed))
+    return { ok: false, message: "Enter a whole number of percent." };
+  const percent = Number(trimmed);
+  if (percent < DISK_WARNING_MIN || percent > DISK_WARNING_MAX)
+    return {
+      ok: false,
+      message: `Use between ${DISK_WARNING_MIN} and ${DISK_WARNING_MAX} percent.`,
+    };
+  return { ok: true, percent };
+}
+
 export const CLOSE_OPTIONS: { value: CloseBehaviour; label: string }[] = [
   { value: "tray", label: "Keep running in the tray" },
   { value: "quit", label: "Quit Puddle" },

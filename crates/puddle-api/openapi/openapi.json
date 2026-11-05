@@ -8168,6 +8168,98 @@
         }
       }
     },
+    "/api/workspaces/{id}/reset-root-disk": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Removes the stopped workspace's sandbox and with it the root disk, so the next start makes a\nfresh one: what was installed or cached outside the volume is lost, the volume is untouched.\nNothing runs by itself: this is the user's choice. Answers 202.",
+        "operationId": "reset_root_disk",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "reset accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "busy, or not stopped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/session-user": {
       "put": {
         "tags": [
@@ -11122,6 +11214,14 @@
           "unsupported"
         ]
       },
+      "DiskKind": {
+        "type": "string",
+        "description": "Which of a workspace's two disks an event or figure is about.",
+        "enum": [
+          "root",
+          "volume"
+        ]
+      },
       "DoctorCheck": {
         "type": "object",
         "description": "One line of the system check.",
@@ -11575,7 +11675,39 @@
           },
           {
             "type": "object",
-            "description": "A workspace operation (create, start, stop, reclaim, delete) moved on. An operation ends\nwith one event whose step is [`WorkspaceStep::Done`] or [`WorkspaceStep::Failed`].",
+            "description": "A disk of a workspace reached the warning threshold (`ui.disk_warning_percent`) or, with\nthe workspace still over it, grew fuller. Said once when a disk crosses the threshold and\nagain only after it has dropped below it.",
+            "required": [
+              "workspace",
+              "disk",
+              "percent",
+              "type"
+            ],
+            "properties": {
+              "disk": {
+                "$ref": "#/components/schemas/DiskKind",
+                "description": "Which disk."
+              },
+              "percent": {
+                "type": "integer",
+                "format": "int32",
+                "description": "How full it is, in whole percent (rounded down), 0 to 100.",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "disk_nearly_full"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceName",
+                "description": "The workspace."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A workspace operation (create, start, stop, reclaim, reset the root disk, delete) moved on. An operation ends\nwith one event whose step is [`WorkspaceStep::Done`] or [`WorkspaceStep::Failed`].",
             "required": [
               "workspace",
               "step",
@@ -15799,6 +15931,8 @@
           "notify_only_unfocused",
           "badge",
           "notify_oom",
+          "notify_disk_full",
+          "disk_warning_percent",
           "notify_unexpected_stop",
           "confirm_global_rules",
           "inbox_shortcuts",
@@ -15884,6 +16018,16 @@
               }
             ]
           },
+          "disk_warning_percent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How full a workspace's root disk or volume gets, in percent, before Puddle warns on the\nworkspace and, with `notify_disk_full`, notifies; 50 to 100 (default 95).",
+            "maximum": 100,
+            "minimum": 50
+          },
           "inbox_shortcuts": {
             "type": [
               "boolean",
@@ -15904,6 +16048,13 @@
               "null"
             ],
             "description": "A system notification for a new request (default on)."
+          },
+          "notify_disk_full": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Notify when a workspace's root disk or volume reaches `disk_warning_percent` (default on)."
           },
           "notify_only_unfocused": {
             "type": [
@@ -16019,6 +16170,9 @@
           "created_at",
           "disk_size_mib",
           "disk_used_mib",
+          "root_disk_size_mib",
+          "root_disk_used_mib",
+          "disk_warnings",
           "direct_ssh",
           "settings_error",
           "first_connect_notice_due",
@@ -16061,6 +16215,13 @@
             "description": "What the disk holds in MiB; `null` when not known.",
             "minimum": 0
           },
+          "disk_warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiskKind"
+            },
+            "description": "Which disks are at or over the warning threshold (`ui.disk_warning_percent` in the global\nsettings): `root`, `volume`, both or neither."
+          },
           "display_name": {
             "type": "string",
             "description": "What the user calls the workspace: the name until they rename it (`PATCH\n/api/workspaces/{id}`). Show this one; `name` and `id` never change."
@@ -16101,6 +16262,24 @@
               "$ref": "#/components/schemas/WorkspaceRepository"
             },
             "description": "The repositories Puddle manages for it, in the order they were added (0 to 100)."
+          },
+          "root_disk_size_mib": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The root disk's size in MiB: the most the home directory, tool caches and installed\npackages can take. `null` when not known.",
+            "minimum": 0
+          },
+          "root_disk_used_mib": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "What the root disk holds in MiB; `null` when not known. A root disk that is nearly full\ncan be reset (`POST /api/workspaces/{id}/reset-root-disk`).",
+            "minimum": 0
           },
           "session_user": {
             "$ref": "#/components/schemas/SessionUser",
@@ -16272,6 +16451,7 @@
           "starting",
           "stopping",
           "reclaiming",
+          "resetting_root_disk",
           "cloning",
           "deleting"
         ]
@@ -16383,6 +16563,7 @@
           "syncing",
           "checking",
           "reclaiming",
+          "resetting_root_disk",
           "stopping",
           "removing",
           "done",

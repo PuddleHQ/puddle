@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use puddle_settings::UiPrefs;
-use puddle_types::{Event, PendingSummary, WorkspaceName, WorkspaceStatus};
+use puddle_types::{Event, PendingSummary, WorkspaceId, WorkspaceStatus};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
@@ -78,7 +78,7 @@ struct Group {
 #[derive(Debug)]
 pub struct Notifier {
     window: Duration,
-    groups: HashMap<WorkspaceName, Group>,
+    groups: HashMap<WorkspaceId, Group>,
 }
 
 impl Default for Notifier {
@@ -195,7 +195,7 @@ impl Notifier {
     fn flush_ended(&mut self, now: Instant, prefs: &UiPrefs, in_front: bool) -> Vec<Notice> {
         let show = allowed(prefs, prefs.notifications(), in_front);
         let mut notices = Vec::new();
-        let mut ended: Vec<(WorkspaceName, Group)> =
+        let mut ended: Vec<(WorkspaceId, Group)> =
             self.groups.extract_if(|_, g| g.ends <= now).collect();
         ended.sort_by(|a, b| a.0.cmp(&b.0));
         for (name, group) in ended {
@@ -218,7 +218,7 @@ impl Notifier {
 }
 
 /// One notice for the requests a workspace made while its window was running.
-fn summary(workspace: &WorkspaceName, held: &[Held]) -> Notice {
+fn summary(workspace: &WorkspaceId, held: &[Held]) -> Notice {
     let named: Vec<String> = held
         .iter()
         .take(NAMED_IN_SUMMARY)
@@ -280,8 +280,8 @@ mod tests {
 
     const NONE: [Notice; 0] = [];
 
-    fn name(s: &str) -> WorkspaceName {
-        WorkspaceName::new(s).unwrap()
+    fn name(s: &str) -> WorkspaceId {
+        WorkspaceId::new(s).unwrap()
     }
 
     fn open(id: i64, workspace: &str, host: &str) -> Event {

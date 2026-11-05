@@ -207,7 +207,7 @@ async fn a_secret_is_kept_in_the_credential_store_and_its_value_never_comes_back
     let entries = api
         .store
         .env_entries(&puddle_store::EnvScope::Workspace(
-            puddle_types::WorkspaceName::new("shop").unwrap(),
+            puddle_types::WorkspaceId::new("shop").unwrap(),
         ))
         .unwrap();
     assert!(!format!("{entries:?}").contains(canary()));

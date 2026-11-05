@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use hyper::client::conn::http1::SendRequest;
-use puddle_types::{ConnectionOutcome, Host, HttpRequestLine, WorkspaceName};
+use puddle_types::{ConnectionOutcome, Host, HttpRequestLine, WorkspaceId};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
@@ -139,7 +139,7 @@ pub(crate) struct Context {
     /// Why this host is decrypted.
     pub(crate) mode: Mode,
     pub(crate) tls: TlsClient,
-    pub(crate) workspace: WorkspaceName,
+    pub(crate) workspace: WorkspaceId,
     pub(crate) target: Target,
     pub(crate) admitted: Admitted,
     /// The workspace's connection limit; extra upstream sockets of one guest connection count

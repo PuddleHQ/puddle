@@ -24,7 +24,7 @@ use puddle_host::{
 use puddle_proxy::{BoxFuture, Resolver, SystemResolver};
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::MemoryStore;
-use puddle_types::{DomainName, WorkspaceName};
+use puddle_types::{DomainName, WorkspaceId};
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig, ProxyRules};
 use puddle_vm_tests::{RuntimePair, Settings, VmEnv, test_owner};
 
@@ -360,14 +360,14 @@ pub(crate) async fn start_vm_host_platform(
 }
 
 /// Runs `script` as root in the guest and returns what it printed; fails the test if it fails.
-pub(crate) async fn guest(runtime: &MsbRuntime, sandbox: &WorkspaceName, script: &str) -> String {
+pub(crate) async fn guest(runtime: &MsbRuntime, sandbox: &WorkspaceId, script: &str) -> String {
     guest_within(runtime, sandbox, script, Duration::from_secs(120)).await
 }
 
 /// [`guest`] with its own time limit, for a script that may take longer than two minutes.
 pub(crate) async fn guest_within(
     runtime: &MsbRuntime,
-    sandbox: &WorkspaceName,
+    sandbox: &WorkspaceId,
     script: &str,
     timeout: Duration,
 ) -> String {
@@ -378,7 +378,7 @@ pub(crate) async fn guest_within(
 /// package mirror): a timeout or a failure then says that host is the thing to check.
 pub(crate) async fn guest_live(
     runtime: &MsbRuntime,
-    sandbox: &WorkspaceName,
+    sandbox: &WorkspaceId,
     script: &str,
     hosts: &str,
 ) -> String {
@@ -394,7 +394,7 @@ pub(crate) async fn guest_live(
 
 async fn guest_with_third_party(
     runtime: &MsbRuntime,
-    sandbox: &WorkspaceName,
+    sandbox: &WorkspaceId,
     script: &str,
     timeout: Duration,
     hosts: Option<&str>,
@@ -423,7 +423,7 @@ async fn guest_with_third_party(
 
 /// Kills the VM of `sandbox` the hard way (no shutdown, no flush), the way a crash or a power cut
 /// of the VMM would, and waits until the runtime sees it down.
-pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: &WorkspaceName) {
+pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: &WorkspaceId) {
     let harness = VmEnv::new(settings.clone()).await.unwrap();
     let handle = harness
         .scope(Box::pin(microsandbox::Sandbox::get(sandbox.as_str())))

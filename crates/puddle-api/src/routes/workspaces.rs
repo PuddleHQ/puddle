@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use futures_util::future::BoxFuture;
 use puddle_settings::resolve;
 use puddle_store::{IdentityId, RepoGitRequest, RepoRef, Store};
-use puddle_types::{WorkspaceId, WorkspaceName};
+use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
 use crate::WorkspaceRecord;
@@ -55,7 +55,7 @@ impl DirectSsh {
 /// `direct_ssh` of each of `records`, in order. Settings that cannot be read count as off and say
 /// why, so a damaged document is not shown as "off" by the user's choice.
 async fn direct_ssh_of(state: &AppState, records: &[WorkspaceRecord]) -> Vec<DirectSsh> {
-    let names: Vec<_> = records.iter().map(|r| r.name.clone()).collect();
+    let names: Vec<_> = records.iter().map(|r| r.id.clone()).collect();
     let settings = state.settings.clone();
     let _lock = state.settings_lock.lock().await;
     let loaded = blocking(move || {
@@ -189,7 +189,7 @@ fn not_set_up(url: &str, why: Option<&puddle_store::StoreError>) -> NewWorkspace
 /// check) is cloned without any Git settings, and every entry says so.
 fn start_all(
     store: &Store,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     repositories: &[NewRepository],
 ) -> Vec<NewWorkspaceIdentity> {
     let requests: Vec<Option<RepoGitRequest>> = repositories.iter().map(git_request).collect();
@@ -220,7 +220,7 @@ fn start_all(
 impl GitSetup for StoreGitSetup {
     fn set_up<'a>(
         &'a self,
-        workspace: &'a WorkspaceName,
+        workspace: &'a WorkspaceId,
         repositories: &'a [NewRepository],
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
@@ -275,9 +275,12 @@ pub(crate) async fn create_workspace(
     })
     .await?;
     let new = body.into_new(|id| known.contains(&id), &locals)?;
-    let (store, name) = (state.store.clone(), new.name.clone());
+    let planned = new
+        .id()
+        .map_err(|e| ApiError::invalid(format!("this name can't be a workspace: {e}")))?;
+    let store = state.store.clone();
     let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
-    blocking(move || Ok(store.check_repository_git(&name, &requests)?)).await?;
+    blocking(move || Ok(store.check_repository_git(&planned, &requests)?)).await?;
     let git = StoreGitSetup::new(state.store.clone());
     let record = state.workspaces.create(new, &git).await?;
     // A new workspace may start with direct SSH on (the global default).
@@ -547,7 +550,7 @@ mod tests {
     fn a_list_the_store_cannot_set_up_is_cloned_without_and_every_entry_says_why() {
         let store =
             Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let ws = WorkspaceName::new("w").unwrap();
+        let ws = WorkspaceId::new("w").unwrap();
         // The second repository's identity is gone by the time the create sets it up: the first
         // is not set up either, as the list is one transaction.
         let list = [
@@ -577,7 +580,7 @@ mod tests {
     fn a_repository_the_table_cannot_hold_is_skipped_and_the_rest_are_set_up() {
         let store =
             Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let ws = WorkspaceName::new("w").unwrap();
+        let ws = WorkspaceId::new("w").unwrap();
         let list = [
             at("https://github.com/a/b/c", None),
             at("https://github.com/acme/web", None),

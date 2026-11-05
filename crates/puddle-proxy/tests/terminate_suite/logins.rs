@@ -16,7 +16,7 @@ use http_body_util::BodyExt as _;
 use puddle_logins::{LoginNotices, Logins, Problem, Profile, builtin};
 use puddle_proxy::{InjectDecision, StandIns};
 use puddle_secrets::{MemoryStore, SecretStore};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::h2_rig::{H2Server, Reply as H2Reply, Script, full};
 use terminate_support::{
@@ -44,7 +44,7 @@ const REALS: [&str; 6] = [ACCESS_1, REFRESH_1, ACCESS_2, REFRESH_2, API_KEY, GH_
 struct Notices(Mutex<Vec<Problem>>);
 
 impl LoginNotices for Notices {
-    fn problem(&self, _: &WorkspaceName, _: &Profile, problem: Problem) {
+    fn problem(&self, _: &WorkspaceId, _: &Profile, problem: Problem) {
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -115,8 +115,8 @@ struct Login {
     api: FakeServer,
 }
 
-fn workspace() -> WorkspaceName {
-    WorkspaceName::new("box").unwrap()
+fn workspace() -> WorkspaceId {
+    WorkspaceId::new("box").unwrap()
 }
 
 async fn server(pki: &Pki, name: &str, handler: Handler) -> FakeServer {

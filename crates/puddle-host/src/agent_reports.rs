@@ -14,13 +14,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_agent_proto::host::{AgentReport, AgentReports};
 use puddle_agent_proto::{EditorProblemKind, StubDnsTrouble};
-use puddle_types::{Problem, Problems, WorkspaceName};
+use puddle_types::{Problem, Problems, WorkspaceId};
 
 /// Longest entrypoint failure (`<status>: <output>`) put in a problem.
 const MAX_FAILURE_CHARS: usize = 320;
 
 /// The key of the problem about the image's entrypoint of `name`.
-fn entrypoint_key(name: &WorkspaceName) -> String {
+fn entrypoint_key(name: &WorkspaceId) -> String {
     format!("entrypoint:{name}")
 }
 
@@ -28,34 +28,34 @@ fn entrypoint_key(name: &WorkspaceName) -> String {
 const MAX_REASON_CHANGES: u8 = 4;
 
 /// The key of the problem about the browser editor's install in `name`.
-pub(crate) fn editor_install_key(name: &WorkspaceName) -> String {
+pub(crate) fn editor_install_key(name: &WorkspaceId) -> String {
     format!("editor-install:{name}")
 }
 
 /// The key of the problem about the browser editor's updates in `name`.
-fn editor_update_key(name: &WorkspaceName) -> String {
+fn editor_update_key(name: &WorkspaceId) -> String {
     format!("editor-update:{name}")
 }
 
 /// The key of the problem about capture rules the guest tore down in `name`.
-fn capture_tamper_key(name: &WorkspaceName) -> String {
+fn capture_tamper_key(name: &WorkspaceId) -> String {
     format!("capture-tamper:{name}")
 }
 
 /// The key of the problem about capture rules that cannot be installed in `name`.
-fn capture_unavailable_key(name: &WorkspaceName) -> String {
+fn capture_unavailable_key(name: &WorkspaceId) -> String {
     format!("capture-unavailable:{name}")
 }
 
 /// The key of the problem about the stub DNS of `name`.
-fn stub_dns_key(name: &WorkspaceName) -> String {
+fn stub_dns_key(name: &WorkspaceId) -> String {
     format!("stub-dns:{name}")
 }
 
 /// The problem for an entrypoint that exited with a failure. `failure` is `<status>: <end of its
 /// output>`, from the boot hook's watch or the agent's report, which say it the same way, so both
 /// raise the same problem.
-pub(crate) fn entrypoint_problem(name: &WorkspaceName, failure: &str) -> Problem {
+pub(crate) fn entrypoint_problem(name: &WorkspaceId, failure: &str) -> Problem {
     let failure: String = failure
         .chars()
         .take(MAX_FAILURE_CHARS)
@@ -76,7 +76,7 @@ pub(crate) fn entrypoint_problem(name: &WorkspaceName, failure: &str) -> Problem
 
 /// The problem for an editor server that could not be installed (a refused download, or a network
 /// that kept failing); `reason` is the agent's cleaned text.
-fn editor_install_problem(name: &WorkspaceName, reason: &str) -> Problem {
+fn editor_install_problem(name: &WorkspaceId, reason: &str) -> Problem {
     Problem::new(
         editor_install_key(name),
         format!("The browser editor could not be installed in {name}: {reason}"),
@@ -91,7 +91,7 @@ fn editor_install_problem(name: &WorkspaceName, reason: &str) -> Problem {
 
 /// The problem for a newer editor server build that could not be taken (refused, rolled back after
 /// a bad start, or looks that keep failing); `reason` is the agent's cleaned text.
-fn editor_update_problem(name: &WorkspaceName, reason: &str) -> Problem {
+fn editor_update_problem(name: &WorkspaceId, reason: &str) -> Problem {
     Problem::new(
         editor_update_key(name),
         format!("The browser editor in {name} could not update: {reason}"),
@@ -106,7 +106,7 @@ fn editor_update_problem(name: &WorkspaceName, reason: &str) -> Problem {
 /// The problem for capture rules the guest deleted or edited; the agent put them back each time.
 /// No count in the text: a moving count would bring the notice back after the user dismissed it
 /// (the host log has every event).
-fn capture_tamper_problem(name: &WorkspaceName) -> Problem {
+fn capture_tamper_problem(name: &WorkspaceId) -> Problem {
     Problem::new(
         capture_tamper_key(name),
         format!("Something in {name} deleted Puddle's capture rules; Puddle put them back"),
@@ -121,7 +121,7 @@ fn capture_tamper_problem(name: &WorkspaceName) -> Problem {
 }
 
 /// The problem for capture rules that cannot be installed; `reason` is the agent's cleaned text.
-fn capture_unavailable_problem(name: &WorkspaceName, reason: &str) -> Problem {
+fn capture_unavailable_problem(name: &WorkspaceId, reason: &str) -> Problem {
     Problem::new(
         capture_unavailable_key(name),
         format!("Tools in {name} that ignore proxy settings are offline: {reason}"),
@@ -154,7 +154,7 @@ fn stub_dns_effect(kind: StubDnsTrouble) -> Option<&'static str> {
     }
 }
 
-fn stub_dns_problem(name: &WorkspaceName, kinds: &BTreeSet<StubDnsTrouble>) -> Problem {
+fn stub_dns_problem(name: &WorkspaceId, kinds: &BTreeSet<StubDnsTrouble>) -> Problem {
     let effects: Vec<_> = kinds.iter().filter_map(|k| stub_dns_effect(*k)).collect();
     Problem::new(
         stub_dns_key(name),
@@ -243,7 +243,7 @@ impl Run {
 /// service tells it when a run begins and ends.
 pub(crate) struct ReportDesk {
     problems: Arc<Problems>,
-    runs: Mutex<BTreeMap<WorkspaceName, Run>>,
+    runs: Mutex<BTreeMap<WorkspaceId, Run>>,
 }
 
 impl ReportDesk {
@@ -254,13 +254,13 @@ impl ReportDesk {
         }
     }
 
-    fn runs(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceName, Run>> {
+    fn runs(&self) -> std::sync::MutexGuard<'_, BTreeMap<WorkspaceId, Run>> {
         self.runs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// A start or create of `name` begins: its reports count from now, and what the last run
     /// raised ends (the boot hook raises the entrypoint problem again when it fails at once).
-    pub(crate) fn begin(&self, name: &WorkspaceName) {
+    pub(crate) fn begin(&self, name: &WorkspaceId) {
         self.runs().insert(name.clone(), Run::new());
         self.problems.clear(&entrypoint_key(name));
         self.problems.clear(&stub_dns_key(name));
@@ -272,14 +272,14 @@ impl ReportDesk {
 
     /// A stop of `name` was accepted: what its guest reports from now (its entrypoint ended by the
     /// shutdown) does not count.
-    pub(crate) fn pause(&self, name: &WorkspaceName) {
+    pub(crate) fn pause(&self, name: &WorkspaceId) {
         if let Some(run) = self.runs().get_mut(name) {
             run.taking = false;
         }
     }
 
     /// The stop of `name` failed and it runs on: its reports count again.
-    pub(crate) fn resume(&self, name: &WorkspaceName) {
+    pub(crate) fn resume(&self, name: &WorkspaceId) {
         if let Some(run) = self.runs().get_mut(name) {
             run.taking = true;
         }
@@ -288,7 +288,7 @@ impl ReportDesk {
     /// `name` no longer runs: the DNS, editor and capture problems are about a machine that is gone (the
     /// agent of the next start tells again). The entrypoint problem stays until the next start,
     /// because the image still has the fault.
-    pub(crate) fn end(&self, name: &WorkspaceName) {
+    pub(crate) fn end(&self, name: &WorkspaceId) {
         self.runs().remove(name);
         self.problems.clear(&stub_dns_key(name));
         self.problems.clear(&editor_install_key(name));
@@ -298,14 +298,14 @@ impl ReportDesk {
     }
 
     /// `name` was deleted: both problems end.
-    pub(crate) fn forget(&self, name: &WorkspaceName) {
+    pub(crate) fn forget(&self, name: &WorkspaceId) {
         self.end(name);
         self.problems.clear(&entrypoint_key(name));
     }
 }
 
 impl AgentReports for ReportDesk {
-    fn report(&self, workspace: &WorkspaceName, report: AgentReport) {
+    fn report(&self, workspace: &WorkspaceId, report: AgentReport) {
         let mut end_editor = None;
         let mut end_unavailable = false;
         let raise = {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Rules on the method and path of a request on the wire.
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -13,7 +13,7 @@ pub struct RequestRule {
     pub id: i64,
     /// The workspace it applies to; `null` for every workspace.
     #[schema(required = true)]
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// The host pattern: `example.com` or `*.example.com`.
     pub host: String,
     /// The methods it names, upper case; empty for every method.
@@ -71,7 +71,7 @@ fn overridden_warning(
     rule: &puddle_store::RequestRule,
     never: &[(Option<String>, String)],
 ) -> Option<String> {
-    let scope = rule.workspace.as_ref().map(WorkspaceName::as_str);
+    let scope = rule.workspace.as_ref().map(WorkspaceId::as_str);
     let names: Vec<String> = never
         .iter()
         .filter(|(workspace, name)| {
@@ -129,7 +129,7 @@ pub struct NewRequestRuleRequest {
     /// The workspace the rule applies to; `null` for every workspace.
     #[serde(default)]
     #[schema(required = true)]
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// A host name or `*.` followed by a domain with at least two labels; no IP address.
     pub host: String,
     /// HTTP methods (letters and digits, case does not matter); left out or empty for every

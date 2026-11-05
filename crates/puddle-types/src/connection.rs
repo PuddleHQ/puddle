@@ -12,7 +12,7 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BlockReason, Decision, EgressRequest, Host, PendingId, RuleId, RuleSetId, WorkspaceName,
+    BlockReason, Decision, EgressRequest, Host, PendingId, RuleId, RuleSetId, WorkspaceId,
 };
 
 /// How the proxy handled a connection (R-24).
@@ -280,7 +280,7 @@ pub struct ConnectionEvent {
     /// Whose connection it is.
     pub origin: ConnectionOrigin,
     /// The workspace it came from (the route's); `None` for Puddle's own connections.
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
     /// The requested host.
     pub host: Host,
     /// The requested port.
@@ -401,7 +401,7 @@ impl ConnectionEvent {
     /// ```
     /// use puddle_types::*;
     /// let request = EgressRequest::new(
-    ///     WorkspaceName::new("box").unwrap(),
+    ///     WorkspaceId::new("box").unwrap(),
     ///     Host::parse_normalised("example.com").unwrap(),
     ///     443,
     /// );
@@ -543,7 +543,7 @@ mod tests {
 
     fn request() -> EgressRequest {
         EgressRequest::new(
-            WorkspaceName::new("box").unwrap(),
+            WorkspaceId::new("box").unwrap(),
             Host::parse_normalised("api.example.com").unwrap(),
             443,
         )
@@ -703,7 +703,7 @@ mod tests {
         );
         assert_eq!(
             (
-                blocked.workspace.as_ref().map(WorkspaceName::as_str),
+                blocked.workspace.as_ref().map(WorkspaceId::as_str),
                 blocked.host.to_string(),
                 blocked.port
             ),

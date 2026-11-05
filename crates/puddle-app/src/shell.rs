@@ -15,7 +15,7 @@ use crate::autostart::{self, LoginEntry};
 use crate::backend::{Backend, BackendError, EndExtensionHosts, Source};
 use crate::launcher::AppLauncher;
 use puddle_settings::ClipboardRead;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 use crate::sandbox_window::{self, Hooks, NewWindowReport, SandboxWindows, Target, WindowSettings};
 use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
@@ -43,7 +43,7 @@ pub enum ShellError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxProbe {
     /// The workspace the window stands for (`probe`).
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The page to open, on a `<workspace>.localhost:<port>` origin.
     pub url: Url,
     /// WebView2's DevTools Protocol port for that window (Windows).
@@ -65,7 +65,7 @@ impl SandboxProbe {
     /// The probe for these two values; none unless both are there and valid.
     fn parse(url: Option<&str>, debug_port: Option<&str>) -> Option<Self> {
         Some(Self {
-            workspace: WorkspaceName::new("probe").ok()?,
+            workspace: WorkspaceId::new("probe").ok()?,
             url: Url::parse(url?).ok()?,
             debug_port: debug_port?.parse().ok()?,
         })
@@ -204,7 +204,7 @@ fn refuser(problems: &Arc<Problems>) -> Refused {
 fn window_reporter(problems: &Arc<Problems>) -> NewWindowReport {
     let problems = problems.clone();
     Arc::new(
-        move |workspace: &WorkspaceName, end: Result<(), &str>| match end {
+        move |workspace: &WorkspaceId, end: Result<(), &str>| match end {
             Ok(()) => links::window_opened(&problems, workspace),
             Err(reason) => links::report_window_failed(&problems, workspace, reason),
         },
@@ -283,7 +283,7 @@ fn sandbox_hooks<R: Runtime>(
 /// what they started, so a closed window leaves no extension host behind. The window system
 /// calls it, so the guest is asked from the async runtime; a workspace that is stopping already
 /// has nothing to end.
-fn ends_extension_hosts(ends: EndExtensionHosts) -> Arc<dyn Fn(&WorkspaceName) + Send + Sync> {
+fn ends_extension_hosts(ends: EndExtensionHosts) -> Arc<dyn Fn(&WorkspaceId) + Send + Sync> {
     Arc::new(move |workspace| {
         let (ends, workspace) = (Arc::clone(&ends), workspace.clone());
         tauri::async_runtime::spawn(async move {
@@ -422,7 +422,7 @@ pub fn stop<R: Runtime>(app: &AppHandle<R>) -> Option<HostShutdown> {
 /// connection gone) is logged and the quit goes on: nothing may fail because of the sandbox.
 async fn end_extension_hosts(
     ends: &EndExtensionHosts,
-    workspaces: Vec<WorkspaceName>,
+    workspaces: Vec<WorkspaceId>,
     wait: std::time::Duration,
 ) {
     let asks = workspaces.into_iter().map(|workspace| async move {
@@ -625,9 +625,9 @@ pub(crate) mod tests {
         let problems = Arc::new(Problems::new(Arc::new(puddle_api::EventHub::default())));
         let (ends, asked) = recording_ends();
         let hooks = sandbox_hooks(app.handle(), &problems, ends);
-        (hooks.last_closed)(&WorkspaceName::new("demo").unwrap());
+        (hooks.last_closed)(&WorkspaceId::new("demo").unwrap());
         // A workspace that has stopped has nothing to end: not the user's concern either.
-        (hooks.last_closed)(&WorkspaceName::new("stopped").unwrap());
+        (hooks.last_closed)(&WorkspaceId::new("stopped").unwrap());
         // Each ask runs in its own task, so the order is not the calls'.
         let mut seen = wait_for(&asked, 2);
         seen.sort();
@@ -638,7 +638,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn the_quit_asks_every_workspace_at_once_and_goes_on_past_a_refusal() {
         let (ends, asked) = recording_ends();
-        let names = ["demo", "stopped", "other"].map(|n| WorkspaceName::new(n).unwrap());
+        let names = ["demo", "stopped", "other"].map(|n| WorkspaceId::new(n).unwrap());
         end_extension_hosts(&ends, names.to_vec(), std::time::Duration::from_secs(5)).await;
         let mut seen = asked.lock().unwrap().clone();
         seen.sort();
@@ -648,7 +648,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_guest_that_never_answers_holds_the_quit_up_only_for_the_wait() {
         let ends: EndExtensionHosts = Arc::new(|_| Box::pin(std::future::pending()));
-        let demo = WorkspaceName::new("demo").unwrap();
+        let demo = WorkspaceId::new("demo").unwrap();
         let wait = std::time::Duration::from_millis(50);
         let before = tokio::time::Instant::now();
         end_extension_hosts(&ends, vec![demo], wait).await;
@@ -662,7 +662,7 @@ pub(crate) mod tests {
         let (ends, asked) = recording_ends();
         let windows = SandboxWindows::new(sandbox_hooks(app.handle(), &problems, ends));
         let data = tempfile::tempdir().unwrap();
-        let demo = WorkspaceName::new("demo").unwrap();
+        let demo = WorkspaceId::new("demo").unwrap();
         let target = Target {
             origin: "http://demo.localhost:4800/".parse().unwrap(),
             data_folder: sandbox_window::data_folder(data.path(), &demo),
@@ -692,7 +692,7 @@ pub(crate) mod tests {
         let app = tauri::test::mock_app();
         let data = tempfile::tempdir().unwrap();
         let probe = SandboxProbe {
-            workspace: WorkspaceName::new("probe").unwrap(),
+            workspace: WorkspaceId::new("probe").unwrap(),
             url: Url::parse("http://probe.localhost:4900/attack.html").unwrap(),
             debug_port: 9444,
         };
@@ -748,7 +748,7 @@ pub(crate) mod tests {
     fn the_probe_window_logs_each_of_its_links_and_events() {
         let hooks = probe_hooks();
         let url = Url::parse("https://example.org/x").unwrap();
-        let probe = WorkspaceName::new("probe").unwrap();
+        let probe = WorkspaceId::new("probe").unwrap();
         let log = logged(|| {
             (hooks.open_external)(&url);
             (hooks.refused)(&url);
@@ -768,7 +768,7 @@ pub(crate) mod tests {
     #[test]
     fn a_failed_new_window_reaches_the_pages_problem_list_and_a_later_one_withdraws_it() {
         let problems = Arc::new(Problems::new(Arc::new(puddle_api::EventHub::default())));
-        let demo = WorkspaceName::new("demo").unwrap();
+        let demo = WorkspaceId::new("demo").unwrap();
         let report = window_reporter(&problems);
         let window_problems = || {
             problems
@@ -865,7 +865,7 @@ mod fixture_tests {
             &problems,
             app.state::<Backend>().extension_hosts(),
         ));
-        let demo = WorkspaceName::new("demo").unwrap();
+        let demo = WorkspaceId::new("demo").unwrap();
         let editor = tauri::WebviewUrl::External("http://127.0.0.1:1/".parse().unwrap());
         tauri::WebviewWindowBuilder::new(app.handle(), "vs-demo", editor)
             .build()

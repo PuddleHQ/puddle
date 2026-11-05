@@ -32,7 +32,7 @@ use puddle_netpolicy::{EndpointKind, LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_proxy::testing::StaticResolver;
 use puddle_proxy::{Proxy, PullProxy};
 use puddle_store::{Actor, Effect, Limits, ManualClock, NewRule, Pattern, Scope, Store};
-use puddle_types::{ImageRef, LocalCategory, NullSink, WorkspaceName};
+use puddle_types::{ImageRef, LocalCategory, NullSink, WorkspaceId};
 use puddle_vm_tests::{DEBIAN_DEVCONTAINER, Settings};
 use support::mount_attack::{ATTACK, HostDir, Report, judge, judge_outcomes, sha256_hex};
 use support::{cleanup, spec};
@@ -183,7 +183,7 @@ fn host_rig(endpoints: PuddleEndpoints) -> HostRig {
     let root = IpcRoot::new().unwrap();
     let route = proxy.serve_route(
         root.listen().unwrap(),
-        WorkspaceName::new("hostile-agent").unwrap(),
+        WorkspaceId::new("hostile-agent").unwrap(),
     );
     let route_path = route.endpoint().path().to_path_buf();
     HostRig {

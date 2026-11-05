@@ -17,7 +17,7 @@ use puddle_api::{
     BrowserTarget, DesktopTarget, EditorSignIn, LaunchError, Launcher, WorkspaceRecord,
 };
 use puddle_host::VsCodeLauncher;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use tauri::{AppHandle, Runtime};
 use url::Url;
 
@@ -101,7 +101,7 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
                 Some(EditorSignIn::Form(login)) => {
                     let password = login.password().await?;
                     let session = windows
-                        .session(target.front, &workspace.name, &password)
+                        .session(target.front, &workspace.id, &password)
                         .await
                         .map_err(|e| {
                             LaunchError::new(format!(
@@ -116,9 +116,9 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
                 None => None,
             };
             let window = Target {
-                workspace: workspace.name.clone(),
+                workspace: workspace.id.clone(),
                 origin,
-                data_folder: sandbox_window::data_folder(&self.webview_root, &workspace.name),
+                data_folder: sandbox_window::data_folder(&self.webview_root, &workspace.id),
                 settings: WindowSettings::from(&target.settings),
                 cookie,
                 debug_port: None,
@@ -134,7 +134,7 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
         })
     }
 
-    fn close_browser<'a>(&'a self, workspace: &'a WorkspaceName) -> BoxFuture<'a, ()> {
+    fn close_browser<'a>(&'a self, workspace: &'a WorkspaceId) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             if let Some(windows) = self.windows.get() {
                 let asked = windows.close(&self.app, workspace);
@@ -145,7 +145,7 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
 
     fn forget_browser<'a>(
         &'a self,
-        workspace: &'a WorkspaceName,
+        workspace: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
             if let Some(windows) = self.windows.get() {
@@ -195,8 +195,8 @@ mod tests {
     use hyper::service::service_fn;
     use hyper_util::rt::TokioIo;
     use puddle_api::EditorLogin;
+    use puddle_types::WorkspaceId;
     use puddle_types::fixture::password;
-    use puddle_types::{WorkspaceId, WorkspaceName};
     use tauri::Manager;
     use tokio::net::TcpListener;
 
@@ -252,8 +252,8 @@ mod tests {
 
     fn record(name: &str) -> WorkspaceRecord {
         WorkspaceRecord::new(
-            WorkspaceId::new("w").unwrap(),
-            WorkspaceName::new(name).unwrap(),
+            WorkspaceId::new(name).unwrap(),
+            puddle_types::WorkspaceName::new(name).unwrap(),
             Vec::new(),
         )
     }
@@ -333,7 +333,7 @@ mod tests {
             .open_browser(&record("demo"), &with_login)
             .await
             .unwrap();
-        let name = WorkspaceName::new("demo").unwrap();
+        let name = WorkspaceId::new("demo").unwrap();
         let folder = data.path().join("webview").join("demo");
         assert!(folder.is_dir());
 
@@ -370,7 +370,7 @@ mod tests {
             .open_browser(&record("demo"), &target(addr, None))
             .await
             .unwrap();
-        let name = WorkspaceName::new("demo").unwrap();
+        let name = WorkspaceId::new("demo").unwrap();
         // The editor's link to a guest port opened a window of its own on the forward.
         windows.forward_opened(&name);
         std::fs::create_dir_all(data.path().join("webview").join("demo.forward")).unwrap();
@@ -413,7 +413,7 @@ mod tests {
             .await
             .unwrap();
         launcher
-            .forget_browser(&WorkspaceName::new("demo").unwrap())
+            .forget_browser(&WorkspaceId::new("demo").unwrap())
             .await
             .unwrap();
         assert!(!data.path().join("webview").join("demo").exists());
@@ -425,7 +425,7 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let root = data.path().join("webview");
         let launcher = AppLauncher::new(app.handle().clone(), root.clone());
-        let name = WorkspaceName::new("demo").unwrap();
+        let name = WorkspaceId::new("demo").unwrap();
         std::fs::create_dir_all(root.join("demo")).unwrap();
         std::fs::create_dir_all(root.join("other")).unwrap();
         // Not installed yet, nothing to close; nothing there is also fine.
@@ -450,10 +450,10 @@ mod tests {
         let launcher = AppLauncher::new(app.handle().clone(), root);
         launcher.install(windows());
         launcher
-            .close_browser(&WorkspaceName::new("demo").unwrap())
+            .close_browser(&WorkspaceId::new("demo").unwrap())
             .await;
         let err = launcher
-            .forget_browser(&WorkspaceName::new("demo").unwrap())
+            .forget_browser(&WorkspaceId::new("demo").unwrap())
             .await
             .unwrap_err();
         assert!(

@@ -10,7 +10,7 @@ use std::io;
 
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionOutcome, ConnectionReason,
-    WorkspaceName, request_path,
+    WorkspaceId, request_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -146,22 +146,18 @@ impl ConnectionRecord {
 
     /// The `suppressed` summary for a workspace, or for Puddle's own connections when `workspace` is
     /// `None`.
-    pub(crate) fn suppressed_summary(
-        ts: u64,
-        workspace: Option<&WorkspaceName>,
-        count: u64,
-    ) -> Self {
+    pub(crate) fn suppressed_summary(ts: u64, workspace: Option<&WorkspaceId>, count: u64) -> Self {
         Self::summary(ts, workspace, ConnectionReason::Suppressed, count)
     }
 
     /// The `merged` summary of the oldest records of waiting requests a workspace had too many of.
-    pub(crate) fn merged_summary(ts: u64, workspace: &WorkspaceName, count: u64) -> Self {
+    pub(crate) fn merged_summary(ts: u64, workspace: &WorkspaceId, count: u64) -> Self {
         Self::summary(ts, Some(workspace), ConnectionReason::Merged, count)
     }
 
     fn summary(
         ts: u64,
-        workspace: Option<&WorkspaceName>,
+        workspace: Option<&WorkspaceId>,
         reason: ConnectionReason,
         count: u64,
     ) -> Self {
@@ -1035,8 +1031,8 @@ mod tests {
 
     const CANARY: &str = "CANARY-7f3a9c";
 
-    fn sb() -> WorkspaceName {
-        WorkspaceName::new("sb-1").unwrap()
+    fn sb() -> WorkspaceId {
+        WorkspaceId::new("sb-1").unwrap()
     }
 
     fn event() -> ConnectionEvent {

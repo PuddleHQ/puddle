@@ -9,7 +9,7 @@ use puddle_settings::{
     GLOBAL_SCHEMA_VERSION, GlobalSettings, Loaded, SettingsError, WORKSPACE_SCHEMA_VERSION,
     WorkspaceSettings, resolve,
 };
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
 use crate::ApiErrorBody;
@@ -54,7 +54,7 @@ pub(crate) fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettin
 
 pub(crate) fn load_workspace(
     repo: &dyn SettingsRepo,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
 ) -> Result<Loaded<WorkspaceSettings>, ApiError> {
     let what = format!("the settings of workspace {workspace}");
     let document = repo
@@ -73,7 +73,7 @@ pub(crate) fn load_workspace(
 }
 
 fn workspace_view(
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     global: &GlobalSettings,
     loaded: &Loaded<WorkspaceSettings>,
 ) -> WorkspaceSettingsView {
@@ -161,7 +161,7 @@ pub(crate) async fn put_global(
     get,
     path = "/api/settings/workspaces/{workspace}",
     tag = "settings",
-    params(("workspace" = WorkspaceName, Path, description = "workspace name")),
+    params(("workspace" = WorkspaceId, Path, description = "workspace name")),
     responses(
         (status = OK, description = "the workspace's settings", body = WorkspaceSettingsView),
         (status = BAD_REQUEST, description = "invalid workspace name", body = ApiErrorBody),
@@ -170,7 +170,7 @@ pub(crate) async fn put_global(
 )]
 pub(crate) async fn get_workspace_settings(
     State(state): State<AppState>,
-    Path(workspace): Path<WorkspaceName>,
+    Path(workspace): Path<WorkspaceId>,
 ) -> Result<Json<WorkspaceSettingsView>, ApiError> {
     let _lock = state.settings_lock.lock().await;
     let view = blocking(move || {
@@ -188,7 +188,7 @@ pub(crate) async fn get_workspace_settings(
     put,
     path = "/api/settings/workspaces/{workspace}",
     tag = "settings",
-    params(("workspace" = WorkspaceName, Path, description = "workspace name")),
+    params(("workspace" = WorkspaceId, Path, description = "workspace name")),
     request_body = WorkspaceSettingsRequest,
     responses(
         (status = OK, description = "the workspace's new settings", body = WorkspaceSettingsView),
@@ -199,7 +199,7 @@ pub(crate) async fn get_workspace_settings(
 )]
 pub(crate) async fn put_workspace_settings(
     State(state): State<AppState>,
-    Path(workspace): Path<WorkspaceName>,
+    Path(workspace): Path<WorkspaceId>,
     crate::extract::Json(body): crate::extract::Json<WorkspaceSettingsRequest>,
 ) -> Result<Json<WorkspaceSettingsView>, ApiError> {
     let workspaces = state.workspaces.clone();
@@ -305,10 +305,10 @@ mod tests {
         fn save_global(&self, _: Value) -> Result<(), SettingsRepoError> {
             Ok(())
         }
-        fn load_workspace(&self, _: &WorkspaceName) -> Result<Option<Value>, SettingsRepoError> {
+        fn load_workspace(&self, _: &WorkspaceId) -> Result<Option<Value>, SettingsRepoError> {
             Err(SettingsRepoError::new("permission denied"))
         }
-        fn save_workspace(&self, _: &WorkspaceName, _: Value) -> Result<(), SettingsRepoError> {
+        fn save_workspace(&self, _: &WorkspaceId, _: Value) -> Result<(), SettingsRepoError> {
             Ok(())
         }
         fn load_app_icon(&self) -> Result<Option<Vec<u8>>, SettingsRepoError> {
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn the_unreadable_repo_still_accepts_saves() {
         Unreadable.save_global(json!({})).unwrap();
-        let name = WorkspaceName::new("box").unwrap();
+        let name = WorkspaceId::new("box").unwrap();
         Unreadable.save_workspace(&name, json!({})).unwrap();
         assert_eq!(Unreadable.load_app_icon().unwrap(), None);
         Unreadable.save_app_icon(b"x").unwrap();
@@ -343,7 +343,7 @@ mod tests {
         let reason = err.reason();
         assert!(!reason.contains("Puddle cannot read"));
 
-        let name = WorkspaceName::new("box").unwrap();
+        let name = WorkspaceId::new("box").unwrap();
         let err = load_workspace(&Unreadable, &name).unwrap_err();
         assert_eq!(err.code(), ErrorCode::SettingsUnreadable);
         let message = err.message();

@@ -8,10 +8,10 @@ use std::sync::Arc;
 use puddle_boot::{GatedError, GatedSandbox};
 use puddle_compute::{Sandbox, SshStream};
 use puddle_ssh::SshTarget;
-use puddle_types::{Event, EventSink, WorkspaceName};
+use puddle_types::{Event, EventSink, WorkspaceId};
 
 /// Tells the user, and the log, that `workspace`'s direct SSH failed.
-pub(crate) fn report_failure(events: &dyn EventSink, workspace: &WorkspaceName, reason: String) {
+pub(crate) fn report_failure(events: &dyn EventSink, workspace: &WorkspaceId, reason: String) {
     tracing::warn!(workspace = %workspace, %reason, "direct SSH failed");
     events.emit(Event::WorkspaceSshFailed {
         workspace: workspace.clone(),
@@ -20,7 +20,7 @@ pub(crate) fn report_failure(events: &dyn EventSink, workspace: &WorkspaceName, 
 }
 
 /// Tells the user, and the log, that `workspace`'s direct SSH accepts clients again.
-pub(crate) fn report_recovered(events: &dyn EventSink, workspace: &WorkspaceName) {
+pub(crate) fn report_recovered(events: &dyn EventSink, workspace: &WorkspaceId) {
     tracing::info!(workspace = %workspace, "direct SSH accepts connections again");
     events.emit(Event::WorkspaceSshRecovered {
         workspace: workspace.clone(),
@@ -30,7 +30,7 @@ pub(crate) fn report_recovered(events: &dyn EventSink, workspace: &WorkspaceName
 /// Tells the user, and the log, that `workspace` got no SSH endpoint because of `error`.
 pub(crate) fn report_no_endpoint(
     events: &dyn EventSink,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     error: &dyn std::fmt::Display,
 ) {
     report_failure(
@@ -44,14 +44,14 @@ pub(crate) fn report_no_endpoint(
 /// [`Event::WorkspaceSshFailed`].
 pub(crate) struct ReportingTarget<S: Sandbox> {
     gated: Arc<GatedSandbox<S>>,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     events: Arc<dyn EventSink>,
 }
 
 impl<S: Sandbox> ReportingTarget<S> {
     pub(crate) fn new(
         gated: Arc<GatedSandbox<S>>,
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
         events: Arc<dyn EventSink>,
     ) -> Self {
         Self {
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn a_failure_reaches_the_event_stream_with_its_workspace_and_reason() {
         let sink = CollectingSink::default();
-        let workspace = WorkspaceName::new("box").unwrap();
+        let workspace = WorkspaceId::new("box").unwrap();
         report_failure(&sink, &workspace, "the endpoint died".into());
         report_no_endpoint(&sink, &workspace, &"address in use");
         report_recovered(&sink, &workspace);

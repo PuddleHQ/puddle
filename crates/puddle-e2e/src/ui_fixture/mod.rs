@@ -43,7 +43,7 @@ use puddle_store::{
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, Event,
     EventSink, Host, HttpRequestLine, ImageRef, MemoryMib, Methods, PathPattern, Problem, Problems,
-    RuleId, SuffixAllows, WorkspaceId, WorkspaceName, WorkspaceStatus,
+    RuleId, SuffixAllows, WorkspaceId, WorkspaceStatus,
 };
 use tokio::sync::Mutex;
 
@@ -792,7 +792,8 @@ impl State {
     }
 
     fn workspace(&self, seed: &WorkspaceSeed, now: u64) -> Result<(), String> {
-        let name = workspace(&seed.name)?;
+        let name = puddle_types::WorkspaceName::new(&seed.name)
+            .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
         let id = WorkspaceId::new(&seed.name)
             .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
         let at = |err: &dyn std::fmt::Display| format!("workspace {:?}: {err}", seed.name);
@@ -1152,8 +1153,8 @@ fn found_list(seed: &WorkspaceSeed) -> FoundList {
     }
 }
 
-fn workspace(name: &str) -> Result<WorkspaceName, String> {
-    WorkspaceName::new(name).map_err(|err| format!("workspace name {name:?}: {err}"))
+fn workspace(name: &str) -> Result<WorkspaceId, String> {
+    WorkspaceId::new(name).map_err(|err| format!("workspace name {name:?}: {err}"))
 }
 
 fn host(name: &str) -> Result<Host, String> {

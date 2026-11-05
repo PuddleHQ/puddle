@@ -12,9 +12,7 @@ use std::time::{Duration, SystemTime};
 use puddle_netpolicy::{LocalAccess, NetPolicy};
 use puddle_proxy::{AddressCheck, AddressVerdict, ProxyConfig};
 use puddle_types::fixture;
-use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionReason, LocalCategory, WorkspaceName,
-};
+use puddle_types::{BlockReason, ConnectionDecision, ConnectionReason, LocalCategory, WorkspaceId};
 use rustls::pki_types::ServerName;
 use std::fmt::Write as _;
 use std::net::SocketAddr;
@@ -535,7 +533,7 @@ async fn an_injected_authorization_replaces_the_guests_and_proxy_authorization_n
 struct RefusePort(u16);
 
 impl AddressCheck for RefusePort {
-    fn check(&self, _workspace: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
+    fn check(&self, _workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
         if addr.port() == self.0 {
             AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Loopback))
         } else {

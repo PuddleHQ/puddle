@@ -162,15 +162,15 @@ string_newtype!(WorkspaceName);
 
 /// The name of a sandbox in the runtime (the microVM that runs a workspace): a DNS label.
 ///
-/// A workspace's sandbox has the workspace's name ([`WorkspaceName::sandbox_name`]); Puddle's own
+/// A workspace's sandbox has the workspace's id ([`WorkspaceId::sandbox_name`]); Puddle's own
 /// helper sandboxes (such as the one that checks a stopped workspace's volume) have names no
 /// workspace can have, which is why this is a type of its own.
 ///
 /// ```
-/// use puddle_types::{SandboxName, WorkspaceName};
-/// let w = WorkspaceName::new("my-project").unwrap();
+/// use puddle_types::{SandboxName, WorkspaceId};
+/// let w = WorkspaceId::new("my-project").unwrap();
 /// assert_eq!(w.sandbox_name().as_str(), "my-project");
-/// assert_eq!(w.sandbox_name().workspace_name(), Some(w));
+/// assert_eq!(w.sandbox_name().workspace_id(), Some(w));
 /// assert!(SandboxName::new("m--my-project").is_ok());
 /// assert!(SandboxName::new("My_Project").is_err());
 /// ```
@@ -202,22 +202,15 @@ impl SandboxName {
         Ok(Self(name.to_owned()))
     }
 
-    /// The workspace this sandbox runs, or `None` when the name is not a valid workspace name.
+    /// The workspace this sandbox runs, or `None` when the name is not a valid workspace id or
+    /// is one of [`RESERVED_WORKSPACE_NAMES`].
     #[must_use]
-    pub fn workspace_name(&self) -> Option<WorkspaceName> {
-        WorkspaceName::new(&self.0).ok()
+    pub fn workspace_id(&self) -> Option<WorkspaceId> {
+        WorkspaceId::new(&self.0).ok()
     }
 }
 
 string_newtype!(SandboxName);
-
-impl WorkspaceName {
-    /// The name of the sandbox that runs this workspace: the same label.
-    #[must_use]
-    pub fn sandbox_name(&self) -> SandboxName {
-        SandboxName(self.0.clone())
-    }
-}
 
 /// A workspace's identifier: a DNS label of at most 60 characters, so its volume name
 /// (`ws-<id>`, see [`WorkspaceId::volume_name`]) is a DNS label too.
@@ -229,6 +222,19 @@ impl WorkspaceName {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
+#[cfg_attr(
+    feature = "openapi",
+    derive(utoipa::ToSchema),
+    schema(
+        value_type = String,
+        min_length = 1,
+        max_length = 60,
+        pattern = "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+        example = "my-project",
+        description = "A workspace's id: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`) \
+                       of at most 60 characters."
+    )
+)]
 pub struct WorkspaceId(String);
 
 impl WorkspaceId {
@@ -239,10 +245,24 @@ impl WorkspaceId {
     ///
     /// # Errors
     ///
-    /// When `id` isn't a DNS label of at most [`WorkspaceId::MAX_LEN`] characters.
+    /// When `id` isn't a DNS label of at most [`WorkspaceId::MAX_LEN`] characters, or is one of
+    /// [`RESERVED_WORKSPACE_NAMES`] (the desktop shell's own origins).
     pub fn new(id: &str) -> Result<Self, ValidationError> {
         check_label("workspace id", id, Self::MAX_LEN)?;
+        if RESERVED_WORKSPACE_NAMES.contains(&id) {
+            return Err(ValidationError::new(
+                "workspace id",
+                id,
+                "is reserved for the desktop shell",
+            ));
+        }
         Ok(Self(id.to_owned()))
+    }
+
+    /// The name of the sandbox that runs this workspace: the same label.
+    #[must_use]
+    pub fn sandbox_name(&self) -> SandboxName {
+        SandboxName(self.0.clone())
     }
 
     /// The name of the disk volume that holds this workspace's files: `ws-<id>` (ADR 0006).
@@ -509,15 +529,15 @@ mod tests {
 
     #[test]
     fn a_workspaces_sandbox_has_its_name_and_helper_sandboxes_have_none_of_a_workspace() {
-        let w = WorkspaceName::new("acme").unwrap();
+        let w = WorkspaceId::new("acme").unwrap();
         let sandbox = w.sandbox_name();
         assert_eq!(sandbox.as_str(), "acme");
-        assert_eq!(sandbox.workspace_name(), Some(w));
+        assert_eq!(sandbox.workspace_id(), Some(w));
         // A helper sandbox's name is valid as a sandbox name; a reserved one is no workspace's.
         let helper = SandboxName::new("m--acme").unwrap();
-        assert_eq!(helper.workspace_name().unwrap().as_str(), "m--acme");
+        assert_eq!(helper.workspace_id().unwrap().as_str(), "m--acme");
         let reserved = SandboxName::new("tauri").unwrap();
-        assert_eq!(reserved.workspace_name(), None);
+        assert_eq!(reserved.workspace_id(), None);
         let err = SandboxName::new("Acme").unwrap_err();
         assert_eq!(err.what(), "sandbox name");
         assert_eq!(serde_json::to_string(&sandbox).unwrap(), r#""acme""#);
@@ -531,6 +551,16 @@ mod tests {
             assert!(err.reason().contains("reserved"), "{err}");
         }
         assert!(WorkspaceName::new("tauri-app").is_ok());
+    }
+
+    #[test]
+    fn reserved_workspace_names_are_no_workspace_id_either() {
+        for reserved in RESERVED_WORKSPACE_NAMES {
+            let err = WorkspaceId::new(reserved).unwrap_err();
+            assert_eq!(err.what(), "workspace id");
+            assert!(err.reason().contains("reserved"), "{err}");
+        }
+        assert!(WorkspaceId::new("tauri-app").is_ok());
     }
 
     #[test]

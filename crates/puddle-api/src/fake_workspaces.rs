@@ -289,14 +289,14 @@ impl FakeWorkspaces {
 
     fn emit_status(&self, record: &WorkspaceRecord) {
         self.inner.events.emit(Event::StatusChanged {
-            workspace: record.name.clone(),
+            workspace: record.id.clone(),
             status: record.status,
         });
     }
 
     fn progress(&self, record: &WorkspaceRecord, (step, detail, repository): Step) {
         self.inner.events.emit(Event::WorkspaceProgress {
-            workspace: record.name.clone(),
+            workspace: record.id.clone(),
             step,
             detail,
             repository,
@@ -419,7 +419,7 @@ impl FakeWorkspaces {
 
     fn repositories_changed(&self, record: &WorkspaceRecord) {
         self.inner.events.emit(Event::WorkspaceRepositoriesChanged {
-            workspace: record.name.clone(),
+            workspace: record.id.clone(),
         });
     }
 
@@ -467,7 +467,7 @@ impl FakeWorkspaces {
                 }
             },
         )?;
-        git.set_up(&record.name, std::slice::from_ref(&new)).await;
+        git.set_up(&record.id, std::slice::from_ref(&new)).await;
         if add {
             self.repositories_changed(&record);
         }
@@ -558,7 +558,7 @@ impl FakeWorkspaces {
             };
             check_addition(&record.repositories, &repository)?;
             (
-                record.name.clone(),
+                record.id.clone(),
                 NewRepository {
                     repository,
                     identity,
@@ -595,7 +595,7 @@ fn delete_check(entry: &Entry) -> DeleteCheck {
         .record
         .status
         .is_down()
-        .then(|| entry.record.name.sandbox_name());
+        .then(|| entry.record.id.sandbox_name());
     if entry.record.status == WorkspaceStatus::VolumeMissing {
         return DeleteCheck::new(
             entry.record.id.clone(),
@@ -683,7 +683,7 @@ impl WorkspaceService for FakeWorkspaces {
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let id = WorkspaceId::new(new.name.as_str()).map_err(|e| {
+            let id = new.id().map_err(|e| {
                 WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
             })?;
             let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
@@ -722,7 +722,7 @@ impl WorkspaceService for FakeWorkspaces {
                     },
                 );
             }
-            git.set_up(&new.name, &new.repositories).await;
+            git.set_up(&record.id, &new.repositories).await;
             self.emit_status(&record);
             self.run(
                 &record,

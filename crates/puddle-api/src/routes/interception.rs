@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_netpolicy::normalise_host;
-use puddle_types::{Host, WorkspaceName};
+use puddle_types::{Host, WorkspaceId};
 
 use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
@@ -65,13 +65,13 @@ fn patterns(raw: &[String]) -> Result<Vec<String>, ApiError> {
     Ok(out)
 }
 
-async fn named(state: &AppState, raw: &str) -> Result<WorkspaceName, ApiError> {
-    let id = puddle_types::WorkspaceId::new(raw)
-        .map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
-    Ok(state.workspaces.get(&id).await?.name)
+async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
+    let id =
+        WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
+    Ok(state.workspaces.get(&id).await?.id)
 }
 
-fn view(state: &AppState, name: &WorkspaceName) -> Result<InterceptionView, ApiError> {
+fn view(state: &AppState, name: &WorkspaceId) -> Result<InterceptionView, ApiError> {
     let own = state.store.workspace_interception(name)?;
     Ok(InterceptionView {
         workspace: name.clone(),

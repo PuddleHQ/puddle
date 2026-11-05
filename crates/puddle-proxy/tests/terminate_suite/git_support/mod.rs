@@ -262,7 +262,7 @@ impl H2GitRig {
 
 /// The notice for a refused push or pull of `repo` (`owner/name` on `bound.test`).
 pub(crate) fn denied(
-    workspace: &puddle_types::WorkspaceName,
+    workspace: &puddle_types::WorkspaceId,
     repo: &str,
     access: GitAccess,
 ) -> Event {

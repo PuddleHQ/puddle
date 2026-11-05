@@ -52,7 +52,7 @@ mod workspaces;
 pub(crate) fn record_op(
     store: &Store,
     op: WorkspaceOpKind,
-    workspace: Option<&puddle_types::WorkspaceName>,
+    workspace: Option<&puddle_types::WorkspaceId>,
     detail: Option<String>,
 ) {
     let new = NewWorkspaceOp {

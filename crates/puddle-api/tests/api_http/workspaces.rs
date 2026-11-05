@@ -1266,7 +1266,7 @@ async fn unreadable_workspace_settings_are_reported_on_that_workspace_only() {
     running(&api, "web").await;
     running(&api, "db").await;
     api.settings
-        .save_workspace(&WorkspaceName::new("web").unwrap(), json!([1]))
+        .save_workspace(&WorkspaceId::new("web").unwrap(), json!([1]))
         .unwrap();
     assert!(api.get("/api/workspaces/web").await.json()["settings_error"].is_string());
     assert_eq!(

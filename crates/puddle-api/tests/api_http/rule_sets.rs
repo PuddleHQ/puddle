@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 
-use puddle_types::{Decision, EgressRequest, Host, SuffixAllows, WorkspaceName};
+use puddle_types::{Decision, EgressRequest, Host, SuffixAllows, WorkspaceId};
 
 use puddle_api::SettingsRepo as _;
 
@@ -13,7 +13,7 @@ fn decide(api: &Api, workspace: &str, host: &str) -> Decision {
     api.store
         .decide(
             &EgressRequest::new(
-                WorkspaceName::new(workspace).unwrap(),
+                WorkspaceId::new(workspace).unwrap(),
                 Host::parse_normalised(host).unwrap(),
                 443,
             ),

@@ -233,7 +233,7 @@ fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_hos
     let options = options_in(dir.path());
     let backend = start(&options, &Machine::default()).unwrap();
     let ends = backend.extension_hosts();
-    let demo = puddle_types::WorkspaceName::new("demo").unwrap();
+    let demo = puddle_types::WorkspaceId::new("demo").unwrap();
 
     // No workspace of that name runs: the host says so, in words.
     let reason = tauri::async_runtime::block_on(ends(demo.clone())).unwrap_err();

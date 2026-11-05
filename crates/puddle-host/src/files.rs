@@ -53,7 +53,7 @@ pub struct FileSettings {
 struct Cache {
     global: Option<Value>,
     global_read: bool,
-    workspaces: BTreeMap<WorkspaceName, Option<Value>>,
+    workspaces: BTreeMap<WorkspaceId, Option<Value>>,
     app_icon: Option<Vec<u8>>,
     app_icon_read: bool,
 }
@@ -76,14 +76,14 @@ impl FileSettings {
         self.dir.join("app-icon.png")
     }
 
-    fn workspace_path(&self, workspace: &WorkspaceName) -> PathBuf {
+    fn workspace_path(&self, workspace: &WorkspaceId) -> PathBuf {
         self.dir
             .join("workspaces")
             .join(format!("{workspace}.json"))
     }
 
     /// Where workspace documents were kept before they were called workspaces.
-    fn legacy_path(&self, workspace: &WorkspaceName) -> PathBuf {
+    fn legacy_path(&self, workspace: &WorkspaceId) -> PathBuf {
         self.dir.join("sandboxes").join(format!("{workspace}.json"))
     }
 
@@ -112,10 +112,7 @@ impl SettingsRepo for FileSettings {
         Ok(())
     }
 
-    fn load_workspace(
-        &self,
-        workspace: &WorkspaceName,
-    ) -> Result<Option<Value>, SettingsRepoError> {
+    fn load_workspace(&self, workspace: &WorkspaceId) -> Result<Option<Value>, SettingsRepoError> {
         let mut cache = self.cache();
         if let Some(cached) = cache.workspaces.get(workspace) {
             return Ok(cached.clone());
@@ -131,7 +128,7 @@ impl SettingsRepo for FileSettings {
 
     fn save_workspace(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         document: Value,
     ) -> Result<(), SettingsRepoError> {
         let mut cache = self.cache();
@@ -487,7 +484,7 @@ mod tests {
     fn settings_round_trip_and_a_missing_file_is_none() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FileSettings::new(dir.path().join("settings"));
-        let a = WorkspaceName::new("a").unwrap();
+        let a = WorkspaceId::new("a").unwrap();
         assert_eq!(repo.load_global().unwrap(), None);
         assert_eq!(repo.load_workspace(&a).unwrap(), None);
         repo.save_global(json!({"schema_version": 1})).unwrap();
@@ -514,7 +511,7 @@ mod tests {
         let old = dir.path().join("sandboxes");
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("a.json"), br#"{"overrides":{"cpus":2}}"#).unwrap();
-        let a = WorkspaceName::new("a").unwrap();
+        let a = WorkspaceId::new("a").unwrap();
         let repo = FileSettings::new(dir.path());
         assert_eq!(
             repo.load_workspace(&a).unwrap(),

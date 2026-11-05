@@ -30,7 +30,7 @@ use puddle_ports::{MemoryPins, Ports};
 use puddle_proxy::testing::StaticResolver;
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Limits, ManualClock, Store};
-use puddle_types::{LocalCategory, NullSink, WorkspaceName};
+use puddle_types::{LocalCategory, NullSink, WorkspaceId};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -39,7 +39,7 @@ const NOW: u64 = 1_800_000_000_000;
 struct Rig {
     agent: Agent,
     ports: Ports,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     /// Connections the guest's own server has accepted.
     accepted: Arc<AtomicUsize>,
     /// The guest server's port.
@@ -68,7 +68,7 @@ async fn rig() -> Rig {
             .with_address_check(Arc::new(guard))
             .with_guest_watcher(Arc::new(ports.clone())),
     );
-    let workspace = WorkspaceName::new("e2e-fwd").unwrap();
+    let workspace = WorkspaceId::new("e2e-fwd").unwrap();
     let root = IpcRoot::new().unwrap();
     let route = proxy.serve_route(root.listen().unwrap(), workspace.clone());
     let agent = Agent::start(Config {

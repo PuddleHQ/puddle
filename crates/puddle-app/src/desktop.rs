@@ -676,7 +676,7 @@ mod behaviour_tests {
     use std::sync::atomic::AtomicUsize;
 
     use puddle_test_kit::eventually_blocking;
-    use puddle_types::{EventSink, PendingEnd, PendingSummary, WorkspaceName, WorkspaceStatus};
+    use puddle_types::{EventSink, PendingEnd, PendingSummary, WorkspaceId, WorkspaceStatus};
     use serde_json::json;
     use tauri::test::{MockRuntime, mock_builder};
     use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -776,8 +776,8 @@ mod behaviour_tests {
             .unwrap();
     }
 
-    fn workspace() -> WorkspaceName {
-        WorkspaceName::new("demo").unwrap()
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::new("demo").unwrap()
     }
 
     fn opened(id: i64) -> Event {

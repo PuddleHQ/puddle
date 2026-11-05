@@ -2622,7 +2622,7 @@ export interface components {
             /** @enum {string} */
             type: "status_changed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /**
              * Format: int32
@@ -2634,7 +2634,7 @@ export interface components {
             /** @enum {string} */
             type: "oom_kill";
             /** @description The workspace whose guest killed the process. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /**
              * @description More about the step, or why it failed; `null` when there is nothing to add. A cloning
@@ -2647,7 +2647,7 @@ export interface components {
             /** @enum {string} */
             type: "workspace_progress";
             /** @description The workspace's workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @description The request, as `GET /api/pending` shows it. */
             request: components["schemas"]["PendingSummary"];
@@ -2672,7 +2672,7 @@ export interface components {
             /** @enum {string} */
             type: "pending_updated";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /**
              * Format: int64
@@ -2689,7 +2689,7 @@ export interface components {
             /** @enum {string} */
             type: "pending_closed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @enum {string} */
             type: "rules_changed";
@@ -2706,7 +2706,7 @@ export interface components {
             /** @enum {string} */
             type: "workspace_git_changed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @enum {string} */
             type: "global_env_changed";
@@ -2714,46 +2714,46 @@ export interface components {
             /** @enum {string} */
             type: "workspace_env_changed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @description What went wrong, for the user. */
             reason: string;
             /** @enum {string} */
             type: "workspace_env_failed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @enum {string} */
             type: "workspace_shell_init_changed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @enum {string} */
             type: "workspace_shell_init_restored";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @description What went wrong, for the user. */
             reason: string;
             /** @enum {string} */
             type: "workspace_ssh_failed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @enum {string} */
             type: "workspace_ssh_recovered";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @enum {string} */
             type: "workspace_repositories_changed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @enum {string} */
             type: "workspace_ports_changed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /**
              * Format: int32
@@ -2770,14 +2770,14 @@ export interface components {
             /** @enum {string} */
             type: "workspace_port_forward_failed";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @description The host, lower case. */
             host: string;
             /** @enum {string} */
             type: "pass_through_learned";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @description The Git host the workspace was talking to. */
             host: string;
@@ -2797,7 +2797,7 @@ export interface components {
             /** @enum {string} */
             type: "git_access_denied";
             /** @description The workspace that tried. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @description The Git host. */
             host: string;
@@ -2808,7 +2808,7 @@ export interface components {
             /** @enum {string} */
             type: "git_no_identity";
             /** @description The workspace that asked. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /** @description What is wrong. */
             kind: components["schemas"]["LoginProblemKind"];
@@ -2817,7 +2817,7 @@ export interface components {
             /** @enum {string} */
             type: "login_problem";
             /** @description The workspace the login is in. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /**
              * Format: int64
@@ -3038,7 +3038,7 @@ export interface components {
         /** @description What deleting an identity changed. */
         IdentityDeleted: {
             /** @description The workspaces it was taken off. */
-            detached_from: components["schemas"]["WorkspaceName"][];
+            detached_from: components["schemas"]["WorkspaceId"][];
             /**
              * @description The pasted tokens it read that no other identity reads and that the credential store would
              *     not give up (it is locked or unreachable). They stay there until the sweep at the next
@@ -3098,7 +3098,7 @@ export interface components {
             /** @description How it signs. */
             signing: components["schemas"]["IdentitySigning"];
             /** @description The workspaces it is on. */
-            workspaces: components["schemas"]["WorkspaceName"][];
+            workspaces: components["schemas"]["WorkspaceId"][];
         };
         /** @description The inbox: open requests grouped by registrable domain, most recent group first. */
         Inbox: {
@@ -3144,7 +3144,7 @@ export interface components {
              */
             never_decrypt: string[];
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         };
         /** @description The logins kept for a workspace. No token, stand-in or account detail is in it. */
         KeptLoginList: {
@@ -3332,7 +3332,7 @@ export interface components {
              *     `..` resolved and case ignored.
              */
             path: string;
-            workspace: components["schemas"]["WorkspaceName"] | null;
+            workspace: components["schemas"]["WorkspaceId"] | null;
         };
         /** @description A rule to create directly (not from a pending request). */
         NewRuleRequest: {
@@ -3483,7 +3483,7 @@ export interface components {
             /** @description Where the row is in its life. */
             state: components["schemas"]["PendingState"];
             /** @description The requesting workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         };
         /**
          * @description Where a pending request is in its life (R-12).
@@ -3528,7 +3528,7 @@ export interface components {
              */
             registrable_domain: string;
             /** @description The workspace that asked. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         };
         /** @description One port of a workspace. */
         PortEntry: {
@@ -3587,7 +3587,7 @@ export interface components {
             key: string;
             /** @description What went wrong, in one line. It can quote tool output: escape it when rendering. */
             title: string;
-            workspace: components["schemas"]["WorkspaceName"] | null;
+            workspace: components["schemas"]["WorkspaceId"] | null;
         };
         /** @description The background problems that stand. */
         ProblemList: {
@@ -3871,7 +3871,7 @@ export interface components {
              *     the names it overrides; `null` when it overrides none.
              */
             warning: string | null;
-            workspace: components["schemas"]["WorkspaceName"] | null;
+            workspace: components["schemas"]["WorkspaceId"] | null;
         };
         /** @description Rules on method and path. */
         RequestRuleList: {
@@ -4022,7 +4022,7 @@ export interface components {
             /** @enum {string} */
             type: "workspace";
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         } | {
             /**
              * Format: int64
@@ -4076,7 +4076,7 @@ export interface components {
             /** @description On or off there. */
             enabled: boolean;
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         };
         /** @description Switch a set on or off, for every workspace or for one. */
         RuleSetSwitchRequest: {
@@ -4085,7 +4085,7 @@ export interface components {
              *     the set's default).
              */
             enabled: boolean | null;
-            workspace?: components["schemas"]["WorkspaceName"] | null;
+            workspace?: components["schemas"]["WorkspaceId"] | null;
         };
         /** @description What a switch did. */
         RuleSetSwitched: {
@@ -4243,7 +4243,7 @@ export interface components {
             /** @description Whether one is saved. A workspace with none starts all the same. */
             saved: boolean;
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         };
         /** @description The latest sign-in attempt to one proxy. */
         SignInAttempt: {
@@ -4372,7 +4372,7 @@ export interface components {
             reason: components["schemas"]["SystemReason"];
             /** @description The reason in words. */
             reason_text: string;
-            workspace: components["schemas"]["WorkspaceName"] | null;
+            workspace: components["schemas"]["WorkspaceId"] | null;
         };
         /**
          * @description Why Puddle allows a System managed host: a choice you made.
@@ -4524,7 +4524,7 @@ export interface components {
             /** @description Its variables. */
             variables: components["schemas"]["EnvVariable"][];
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         };
         /** @description A workspace's Git settings. */
         WorkspaceGitView: {
@@ -4541,8 +4541,13 @@ export interface components {
             /** @description The repository table. */
             repos: components["schemas"]["GitRepoView"][];
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         };
+        /**
+         * @description A workspace's id: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`) of at most 60 characters.
+         * @example my-project
+         */
+        WorkspaceId: string;
         /** @description The identities a workspace has, replacing its list. */
         WorkspaceIdentitiesRequest: {
             /** @description The ids in order. */
@@ -4609,7 +4614,7 @@ export interface components {
             /** @description Unknown fields in its stored document (kept). */
             unknown_fields: string[];
             /** @description The workspace. */
-            workspace: components["schemas"]["WorkspaceName"];
+            workspace: components["schemas"]["WorkspaceId"];
         };
         /**
          * @description A workspace's state: its sandbox's state as the runtime reports it (msb's states, one for one).
@@ -5905,7 +5910,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description only this workspace's events; global events always come through */
-                workspace?: components["schemas"]["WorkspaceName"];
+                workspace?: components["schemas"]["WorkspaceId"];
             };
             header?: never;
             path?: never;
@@ -7147,7 +7152,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description only this workspace's requests */
-                workspace?: components["schemas"]["WorkspaceName"];
+                workspace?: components["schemas"]["WorkspaceId"];
             };
             header?: never;
             path?: never;
@@ -8677,7 +8682,7 @@ export interface operations {
             header?: never;
             path: {
                 /** @description workspace name */
-                workspace: components["schemas"]["WorkspaceName"];
+                workspace: components["schemas"]["WorkspaceId"];
             };
             cookie?: never;
         };
@@ -8754,7 +8759,7 @@ export interface operations {
             header?: never;
             path: {
                 /** @description workspace name */
-                workspace: components["schemas"]["WorkspaceName"];
+                workspace: components["schemas"]["WorkspaceId"];
             };
             cookie?: never;
         };

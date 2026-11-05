@@ -18,9 +18,7 @@ use puddle_guest_env::{ProxySettings, guest_proxy_config};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
 use puddle_store::Store;
-use puddle_types::{
-    GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId, WorkspaceName,
-};
+use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId};
 use puddle_workspace::Layout;
 
 use crate::dev_cert::GuestCertSource;
@@ -161,7 +159,7 @@ impl BootKit {
 
     /// Starts the egress route of `sandbox`: a fresh owner-only endpoint served by the shared
     /// proxy. It lives as long as the returned [`Route`].
-    pub(crate) fn route(&self, workspace: &WorkspaceName) -> Result<Route, String> {
+    pub(crate) fn route(&self, workspace: &WorkspaceId) -> Result<Route, String> {
         let listener = self.ipc.listen().map_err(|e| e.to_string())?;
         Ok(self.proxy.serve_route(listener, workspace.clone()))
     }
@@ -227,7 +225,7 @@ impl BootKit {
     /// The spec of a new sandbox: image, memory, environment, the route and Puddle's mounts.
     pub(crate) fn spec(
         &self,
-        name: &WorkspaceName,
+        name: &WorkspaceId,
         image: ImageRef,
         memory: MemoryMib,
         env: &GuestEnv,

@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_settings::{ClipboardRead, Effective};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use tauri::webview::{
     NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, cookie::Cookie,
 };
@@ -56,7 +56,7 @@ pub const LABEL_PREFIX: &str = "vs-";
 
 /// The label of the first window of `workspace`.
 #[must_use]
-pub fn label(workspace: &WorkspaceName) -> String {
+pub fn label(workspace: &WorkspaceId) -> String {
     format!("{LABEL_PREFIX}{workspace}")
 }
 
@@ -76,12 +76,12 @@ pub fn remembers_place(label: &str) -> bool {
 
 /// The label of the `n`th further window of `workspace` (the editor's "New Window"). A colon cannot
 /// be part of a workspace name, so no workspace's first window can have this label.
-fn popup_label(workspace: &WorkspaceName, n: usize) -> String {
+fn popup_label(workspace: &WorkspaceId, n: usize) -> String {
     format!("{LABEL_PREFIX}{workspace}:{n}")
 }
 
 /// Whether `label` is a window of `workspace`, the first or a further one.
-fn belongs_to(label: &str, workspace: &WorkspaceName) -> bool {
+fn belongs_to(label: &str, workspace: &WorkspaceId) -> bool {
     let own = self::label(workspace);
     label == own
         || label
@@ -92,7 +92,7 @@ fn belongs_to(label: &str, workspace: &WorkspaceName) -> bool {
 /// The folder of the webview's data (cookies, storage, the editor's unsaved work) for `workspace`
 /// under `webview_root`. Each workspace has its own, so nothing is shared between two editors.
 #[must_use]
-pub fn data_folder(webview_root: &Path, workspace: &WorkspaceName) -> PathBuf {
+pub fn data_folder(webview_root: &Path, workspace: &WorkspaceId) -> PathBuf {
     webview_root.join(workspace.as_str())
 }
 
@@ -103,7 +103,7 @@ pub fn data_folder(webview_root: &Path, workspace: &WorkspaceName) -> PathBuf {
 ///
 /// A folder exists and could not be removed (a window still has it open). The other one is still
 /// tried.
-pub fn delete_data_folder(webview_root: &Path, workspace: &WorkspaceName) -> std::io::Result<()> {
+pub fn delete_data_folder(webview_root: &Path, workspace: &WorkspaceId) -> std::io::Result<()> {
     let editor = data_folder(webview_root, workspace);
     let forward = forward_data_folder(&editor);
     let gone = |folder: &Path| match std::fs::remove_dir_all(folder) {
@@ -215,7 +215,7 @@ pub fn permission_response(settings: &WindowSettings, kind: &PermissionKind) -> 
 #[derive(Debug, Clone)]
 pub struct Target {
     /// The workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The editor's origin, `http://<workspace>.localhost:<port>/` (the front's `origin`).
     pub origin: Url,
     /// The webview's data folder ([`data_folder`]).
@@ -231,7 +231,7 @@ pub struct Target {
 }
 
 /// Reports the end of a request for another window of a workspace (see [`Hooks::new_window`]).
-pub type NewWindowReport = Arc<dyn Fn(&WorkspaceName, Result<(), &str>) + Send + Sync>;
+pub type NewWindowReport = Arc<dyn Fn(&WorkspaceId, Result<(), &str>) + Send + Sync>;
 
 /// What the windows ask of the shell.
 #[derive(Clone)]
@@ -245,7 +245,7 @@ pub struct Hooks {
     pub new_window: NewWindowReport,
     /// Called when a workspace's last window is gone, so the guest can end the editor's extension
     /// hosts. Called from the window system's thread: it must not wait.
-    pub last_closed: Arc<dyn Fn(&WorkspaceName) + Send + Sync>,
+    pub last_closed: Arc<dyn Fn(&WorkspaceId) + Send + Sync>,
 }
 
 impl std::fmt::Debug for Hooks {
@@ -264,10 +264,10 @@ pub struct SandboxWindows {
 struct Inner {
     hooks: Hooks,
     /// Windows open per workspace.
-    open: Mutex<HashMap<WorkspaceName, usize>>,
+    open: Mutex<HashMap<WorkspaceId, usize>>,
     /// Windows open on forwarded ports per workspace. They end nothing, but they hold the
     /// `<workspace>.forward` data folder, so deleting the workspace waits for them.
-    forward_open: Mutex<HashMap<WorkspaceName, usize>>,
+    forward_open: Mutex<HashMap<WorkspaceId, usize>>,
     /// Source of the popup labels.
     popups: AtomicUsize,
     /// Set once the quit has begun: the windows' ends no longer run the hook, because the quit
@@ -275,7 +275,7 @@ struct Inner {
     quitting: AtomicBool,
     /// The cookie the last sign-in gave a workspace, with the password it was for: the editor's
     /// login limits how often one can sign in, and a window reopened a moment later must not hit it.
-    sessions: Mutex<HashMap<WorkspaceName, (String, SessionCookie)>>,
+    sessions: Mutex<HashMap<WorkspaceId, (String, SessionCookie)>>,
 }
 
 impl SandboxWindows {
@@ -296,7 +296,7 @@ impl SandboxWindows {
 
     /// How many windows `workspace` has open.
     #[must_use]
-    pub fn open_count(&self, workspace: &WorkspaceName) -> usize {
+    pub fn open_count(&self, workspace: &WorkspaceId) -> usize {
         self.inner
             .open
             .lock()
@@ -308,7 +308,7 @@ impl SandboxWindows {
 
     /// How many windows on forwarded ports `workspace` has open.
     #[must_use]
-    pub fn forward_open_count(&self, workspace: &WorkspaceName) -> usize {
+    pub fn forward_open_count(&self, workspace: &WorkspaceId) -> usize {
         self.inner
             .forward_open
             .lock()
@@ -318,7 +318,7 @@ impl SandboxWindows {
             .unwrap_or(0)
     }
 
-    pub(crate) fn forward_opened(&self, workspace: &WorkspaceName) {
+    pub(crate) fn forward_opened(&self, workspace: &WorkspaceId) {
         *self
             .inner
             .forward_open
@@ -328,7 +328,7 @@ impl SandboxWindows {
             .or_insert(0) += 1;
     }
 
-    fn forward_closed(&self, workspace: &WorkspaceName) {
+    fn forward_closed(&self, workspace: &WorkspaceId) {
         let mut open = self
             .inner
             .forward_open
@@ -343,7 +343,7 @@ impl SandboxWindows {
     /// windows count as gone. Says which workspaces had an editor window open, sorted, for the
     /// caller to clean up after closing the windows; a second call says none. A window opened
     /// after this is not covered.
-    pub fn begin_quit(&self) -> Vec<WorkspaceName> {
+    pub fn begin_quit(&self) -> Vec<WorkspaceId> {
         self.inner.quitting.store(true, Ordering::SeqCst);
         let mut open: Vec<_> = std::mem::take(
             &mut *self
@@ -358,7 +358,7 @@ impl SandboxWindows {
         open
     }
 
-    pub(crate) fn opened(&self, workspace: &WorkspaceName) {
+    pub(crate) fn opened(&self, workspace: &WorkspaceId) {
         *self
             .inner
             .open
@@ -369,7 +369,7 @@ impl SandboxWindows {
     }
 
     /// A window of `workspace` is gone. The hook runs when it was the last one.
-    fn closed(&self, workspace: &WorkspaceName) {
+    fn closed(&self, workspace: &WorkspaceId) {
         let last = {
             let mut open = self
                 .inner
@@ -402,7 +402,7 @@ impl SandboxWindows {
     pub async fn session(
         &self,
         front: std::net::SocketAddr,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         password: &str,
     ) -> Result<SessionCookie, signin::SignInError> {
         if let Some((for_password, cookie)) = self
@@ -425,7 +425,7 @@ impl SandboxWindows {
     }
 
     /// Forgets what is kept for `workspace` (its session), when the workspace is deleted.
-    pub fn forget(&self, workspace: &WorkspaceName) {
+    pub fn forget(&self, workspace: &WorkspaceId) {
         self.inner
             .sessions
             .lock()
@@ -475,7 +475,7 @@ impl SandboxWindows {
     /// The open windows of `workspace`, the first and any further ones.
     fn windows_of<R: Runtime, M: Manager<R>>(
         manager: &M,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
     ) -> Vec<WebviewWindow<R>> {
         manager
             .webview_windows()
@@ -488,11 +488,7 @@ impl SandboxWindows {
     /// Closes every window of `workspace` the way a user would, so the editor disconnects cleanly.
     /// The close is asked for, not waited for; the last window's end runs the hook. Says how many
     /// windows were asked.
-    pub fn close<R: Runtime, M: Manager<R>>(
-        &self,
-        manager: &M,
-        workspace: &WorkspaceName,
-    ) -> usize {
+    pub fn close<R: Runtime, M: Manager<R>>(&self, manager: &M, workspace: &WorkspaceId) -> usize {
         let windows = Self::windows_of(manager, workspace);
         for window in &windows {
             // A window that is already going away can't be closed again.
@@ -572,7 +568,7 @@ impl SandboxWindows {
     /// What a window of `workspace` does with its events: the end of the window is counted.
     pub(crate) fn on_event(
         &self,
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     ) -> impl Fn(&WindowEvent) + Send + 'static {
         let this = self.clone();
         move |event| {
@@ -585,7 +581,7 @@ impl SandboxWindows {
     /// What a window on a forwarded port does with its events: its end is counted, and nothing else.
     pub(crate) fn on_forward_event(
         &self,
-        workspace: WorkspaceName,
+        workspace: WorkspaceId,
     ) -> impl Fn(&WindowEvent) + Send + 'static {
         let this = self.clone();
         move |event| {
@@ -794,8 +790,8 @@ mod tests {
 
     use super::*;
 
-    fn workspace(name: &str) -> WorkspaceName {
-        WorkspaceName::new(name).unwrap()
+    fn workspace(name: &str) -> WorkspaceId {
+        WorkspaceId::new(name).unwrap()
     }
 
     fn policy() -> OriginPolicy {
@@ -829,7 +825,7 @@ mod tests {
         assert!(!belongs_to("vs-demo-1", &demo));
         assert!(!belongs_to("vs-demo2", &demo));
         assert!(!belongs_to("main", &demo));
-        assert!(WorkspaceName::new("demo:1").is_err());
+        assert!(WorkspaceId::new("demo:1").is_err());
     }
 
     #[test]
@@ -1114,7 +1110,7 @@ mod tests {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
         (
-            Arc::new(move |w: &WorkspaceName, end: Result<(), &str>| {
+            Arc::new(move |w: &WorkspaceId, end: Result<(), &str>| {
                 sink.lock().unwrap().push(match end {
                     Ok(()) => format!("{w}:ok"),
                     Err(reason) => format!("{w}:err:{reason}"),

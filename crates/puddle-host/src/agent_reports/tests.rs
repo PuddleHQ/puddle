@@ -3,8 +3,8 @@ use puddle_types::{CollectingSink, Event};
 
 use super::*;
 
-fn name(s: &str) -> WorkspaceName {
-    WorkspaceName::new(s).unwrap()
+fn name(s: &str) -> WorkspaceId {
+    WorkspaceId::new(s).unwrap()
 }
 
 fn desk() -> (Arc<CollectingSink>, Arc<Problems>, ReportDesk) {
@@ -449,7 +449,7 @@ fn the_capture_problems_end_with_a_stop_a_start_and_a_delete_and_late_reports_ar
     let (_, problems, desk) = desk();
     let box_ = name("box");
     for end in [
-        ReportDesk::end as fn(&ReportDesk, &WorkspaceName),
+        ReportDesk::end as fn(&ReportDesk, &WorkspaceId),
         ReportDesk::begin,
         ReportDesk::forget,
     ] {

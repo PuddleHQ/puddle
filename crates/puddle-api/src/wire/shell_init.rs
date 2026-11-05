@@ -2,7 +2,7 @@
 //! A workspace's shell init on the wire: the script its login shells source. The host's copy is
 //! the only source of truth; the workspace sees a read-only copy.
 
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ShellInitView {
     /// The workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// The script; empty when none is saved.
     pub content: String,
     /// Whether one is saved. A workspace with none starts all the same.

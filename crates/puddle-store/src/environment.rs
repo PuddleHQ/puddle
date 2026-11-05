@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use puddle_secrets::StoredId;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 
 use crate::error::StoreError;
@@ -70,13 +70,13 @@ pub enum EnvScope {
     /// Every workspace; a workspace's own entry of the same name wins.
     Global,
     /// One workspace.
-    Workspace(WorkspaceName),
+    Workspace(WorkspaceId),
 }
 
 impl EnvScope {
     /// The workspace, or `None` for the global scope.
     #[must_use]
-    pub fn workspace(&self) -> Option<&WorkspaceName> {
+    pub fn workspace(&self) -> Option<&WorkspaceId> {
         match self {
             Self::Global => None,
             Self::Workspace(name) => Some(name),
@@ -85,7 +85,7 @@ impl EnvScope {
 
     /// The column value: the workspace's name, or `None` for global.
     pub(crate) fn column(&self) -> Option<&str> {
-        self.workspace().map(WorkspaceName::as_str)
+        self.workspace().map(WorkspaceId::as_str)
     }
 }
 
@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn scopes_read_aloud_and_name_their_workspace() {
-        let ws = WorkspaceName::new("shop").unwrap();
+        let ws = WorkspaceId::new("shop").unwrap();
         assert_eq!(EnvScope::Global.to_string(), "the global environment");
         assert_eq!(
             EnvScope::Workspace(ws.clone()).to_string(),

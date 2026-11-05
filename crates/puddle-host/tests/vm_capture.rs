@@ -39,7 +39,7 @@ use std::time::Duration;
 use puddle_e2e::lab::{WebHost, WebOptions, pip_index};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Resolution, Scope};
 use puddle_test_kit::{eventually, eventually_async};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended, hermetic_options};
 use vm_support::{VmHost, guest, guest_live, start_vm_host, start_vm_host_platform, web_internet};
@@ -52,9 +52,9 @@ const INDEX: &str = "index.invalid";
 const PROJECT: &str = "puddle-probe";
 
 /// Creates a workspace on `host` whose sandbox may reach `allowed` and returns its name.
-async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -> WorkspaceName {
+async fn create_workspace(vm: &VmHost, api: &Api, tag: &str, allowed: &[&str]) -> WorkspaceId {
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
-    let workspace = WorkspaceName::new(&name).unwrap();
+    let workspace = WorkspaceId::new(&name).unwrap();
     for site in allowed {
         vm.host
             .store()
@@ -108,7 +108,7 @@ fn reached_by_host(web: &WebHost, host: &str) -> usize {
 }
 
 /// The open inbox rows of `workspace`, as `host:port`.
-fn open_rows(vm: &VmHost, workspace: &WorkspaceName) -> Vec<String> {
+fn open_rows(vm: &VmHost, workspace: &WorkspaceId) -> Vec<String> {
     vm.host
         .store()
         .open_pending(Some(workspace))
@@ -121,7 +121,7 @@ fn open_rows(vm: &VmHost, workspace: &WorkspaceName) -> Vec<String> {
 /// Waits for the open row of `workspace` for `wanted` and returns its id.
 async fn wait_for_row(
     vm: &VmHost,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     wanted: &str,
 ) -> puddle_types::PendingId {
     eventually(

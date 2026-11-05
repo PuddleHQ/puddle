@@ -148,7 +148,7 @@ export class RuleSetsStore {
           params: { path: { id } },
           body: {
             workspace: workspace as
-              components["schemas"]["WorkspaceName"] | null,
+              components["schemas"]["WorkspaceId"] | null,
             enabled,
           },
         },

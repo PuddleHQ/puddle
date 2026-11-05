@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use puddle_e2e::lab::{NameProxy, Seen, WebAnswer, WebHost, WebOptions};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use support::{Api, ended, hermetic_options};
 use vm_support::{VmHost, guest, start_vm_host_platform, web_internet};
@@ -135,7 +135,7 @@ struct Rig {
     web: WebHost,
     /// The company proxy the host's upstream leg goes through: it stops when dropped.
     _proxy: NameProxy,
-    workspaces: Vec<WorkspaceName>,
+    workspaces: Vec<WorkspaceId>,
 }
 
 async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
@@ -156,7 +156,7 @@ async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
     let mut made = Vec::new();
     for suffix in workspaces {
         let name = format!("{}-{tag}-{suffix}", vm.settings.prefix.as_str());
-        let workspace = WorkspaceName::new(&name).unwrap();
+        let workspace = WorkspaceId::new(&name).unwrap();
         for site in SITES {
             vm.host
                 .store()
@@ -190,14 +190,14 @@ async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
 }
 
 impl Rig {
-    async fn run(&self, workspace: &WorkspaceName, script: &str) -> String {
+    async fn run(&self, workspace: &WorkspaceId, script: &str) -> String {
         guest(&self.vm.runtime, workspace, script).await
     }
 
     /// A POST from the guest of `workspace`; prints the answer, then the status on its own line.
     async fn post(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         url: &str,
         content_type: &str,
         body: &str,
@@ -213,7 +213,7 @@ impl Rig {
     }
 
     /// A login from the guest of `workspace` at `path` of the token host: the tokens it is given.
-    async fn login(&self, workspace: &WorkspaceName, path: &str) -> (String, String) {
+    async fn login(&self, workspace: &WorkspaceId, path: &str) -> (String, String) {
         let answer = self
             .post(
                 workspace,
@@ -409,7 +409,7 @@ async fn vm_logins_hostile_hg34_a_stand_in_means_nothing_in_another_workspace() 
     let (one, two) = (rig.workspaces[0].clone(), rig.workspaces[1].clone());
     let (access, refresh) = rig.login(&one, "/v1/oauth/token").await;
     let bearer = format!("Bearer {access}");
-    let call_api = |workspace: WorkspaceName| {
+    let call_api = |workspace: WorkspaceId| {
         let (rig, access) = (&rig, access.clone());
         async move {
             rig.run(

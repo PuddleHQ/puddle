@@ -3,7 +3,7 @@
 //! the file stays as it is, so the settings Puddle wanted in it are missing until it is fixed.
 
 use puddle_boot::MACHINE_SETTINGS_GUEST;
-use puddle_types::{Problem, Problems, WorkspaceName};
+use puddle_types::{Problem, Problems, WorkspaceId};
 
 /// The system `ssh_config`, where Puddle adds one `Include` line.
 const SSH_CONFIG_SYSTEM: &str = "/etc/ssh/ssh_config";
@@ -13,7 +13,7 @@ const SSH_CONFIG_SYSTEM: &str = "/etc/ssh/ssh_config";
 const EDITOR_FILE_SUFFIX: &str = ".code-workspace";
 
 /// The start of every key of `workspace`'s merge notices, for ending them all.
-pub(crate) fn merge_notice_prefix(workspace: &WorkspaceName) -> String {
+pub(crate) fn merge_notice_prefix(workspace: &WorkspaceId) -> String {
     format!("merge-left:{workspace}:")
 }
 
@@ -36,7 +36,7 @@ fn consequence(path: &str) -> &'static str {
 
 /// The notices for the files the boot hook left as they were (`left`: each path with the reason
 /// the hook gave), one per file. The file editor's multi-root file is not one of them.
-pub(crate) fn merge_notices(workspace: &WorkspaceName, left: &[(&str, &str)]) -> Vec<Problem> {
+pub(crate) fn merge_notices(workspace: &WorkspaceId, left: &[(&str, &str)]) -> Vec<Problem> {
     left.iter()
         .filter(|(path, _)| !path.ends_with(EDITOR_FILE_SUFFIX))
         .map(|(path, why)| {
@@ -59,7 +59,7 @@ pub(crate) fn merge_notices(workspace: &WorkspaceName, left: &[(&str, &str)]) ->
 /// after every plan the hook ran in the guest, so a rewrite while the sandbox runs counts too.
 pub(crate) fn settle_merge_notices(
     problems: &Problems,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     left: &[(&str, &str)],
 ) {
     let notices = merge_notices(workspace, left);
@@ -78,8 +78,8 @@ pub(crate) fn settle_merge_notices(
 mod tests {
     use super::*;
 
-    fn workspace() -> WorkspaceName {
-        WorkspaceName::new("acme").unwrap()
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::new("acme").unwrap()
     }
 
     #[test]

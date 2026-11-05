@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use puddle_types::{Event, Fill, PendingId, RuleId, RuleSetId, SuffixAllows, WorkspaceName};
+use puddle_types::{Event, Fill, PendingId, RuleId, RuleSetId, SuffixAllows, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
@@ -40,7 +40,7 @@ pub struct RuleSetInfo {
     /// The switch for every workspace, if set.
     pub global: Option<bool>,
     /// Workspaces that override the switch, by name.
-    pub overrides: Vec<(WorkspaceName, bool)>,
+    pub overrides: Vec<(WorkspaceId, bool)>,
     /// Its entries.
     pub entries: Vec<RuleSetEntryInfo>,
     /// Built-in sets: when a Puddle update last changed the entries (R-36), else `None`.
@@ -52,7 +52,7 @@ pub struct RuleSetInfo {
 impl RuleSetInfo {
     /// Whether the set is on for `workspace` (R-37).
     #[must_use]
-    pub fn is_on(&self, workspace: &WorkspaceName) -> bool {
+    pub fn is_on(&self, workspace: &WorkspaceId) -> bool {
         self.overrides
             .iter()
             .find(|(s, _)| s == workspace)
@@ -93,7 +93,7 @@ pub struct SystemHost {
     /// Why it is allowed.
     pub reason: SystemReason,
     /// The one workspace it is allowed for, or `None` for every workspace.
-    pub workspace: Option<WorkspaceName>,
+    pub workspace: Option<WorkspaceId>,
 }
 
 /// Which System managed reasons apply where, as derived from the user's setup (R-41).
@@ -102,7 +102,7 @@ pub struct SystemPlan {
     /// Reasons for every workspace (global choices).
     pub everywhere: BTreeSet<SystemReason>,
     /// Reasons for one workspace each (per-workspace choices).
-    pub workspaces: BTreeMap<WorkspaceName, BTreeSet<SystemReason>>,
+    pub workspaces: BTreeMap<WorkspaceId, BTreeSet<SystemReason>>,
 }
 
 /// The set with this wire id (`builtin:<slug>`, `user:<id>`, `system`), if it parses. A built-in
@@ -168,7 +168,7 @@ fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
             continue;
         };
         let workspace = match workspace {
-            Some(name) => match WorkspaceName::new(&name) {
+            Some(name) => match WorkspaceId::new(&name) {
                 Ok(name) => Some(name),
                 // A name this version can't parse is skipped like a set or reason it doesn't
                 // know (R-37: such rows are ignored); the log keeps it from being silent.
@@ -184,9 +184,7 @@ fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
     Ok(switches)
 }
 
-fn load_reasons(
-    conn: &Connection,
-) -> Result<Vec<(Option<WorkspaceName>, SystemReason)>, StoreError> {
+fn load_reasons(conn: &Connection) -> Result<Vec<(Option<WorkspaceId>, SystemReason)>, StoreError> {
     let mut stmt = conn
         .prepare("SELECT workspace_id, reason FROM system_reasons ORDER BY workspace_id, reason")?;
     let rows = stmt.query_map([], |row| {
@@ -201,7 +199,7 @@ fn load_reasons(
             continue;
         };
         let workspace = match workspace {
-            Some(name) => match WorkspaceName::new(&name) {
+            Some(name) => match WorkspaceId::new(&name) {
                 Ok(name) => Some(name),
                 Err(_) => continue,
             },
@@ -314,7 +312,7 @@ fn stored_fill(id: i64, text: Option<&str>) -> Option<Fill> {
 pub(super) fn require_on(
     conn: &Connection,
     id: i64,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
 ) -> Result<(), StoreError> {
     require_user_set(conn, id)?;
     if load_switches(conn)?.is_on(RuleSetId::User(id), workspace) {
@@ -376,7 +374,7 @@ fn checked_names(
 fn close_rows_now_decided(
     tx: &Transaction<'_>,
     index: &RuleIndex,
-    workspace: Option<&WorkspaceName>,
+    workspace: Option<&WorkspaceId>,
     actor: Actor,
     now: u64,
     fx: &mut Vec<Event>,
@@ -386,7 +384,7 @@ fn close_rows_now_decided(
          WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1) ORDER BY id"
     ))?;
     let open = stmt
-        .query_map([workspace.map(WorkspaceName::as_str)], raw_pending)?
+        .query_map([workspace.map(WorkspaceId::as_str)], raw_pending)?
         .map(|raw| pending_from_raw(&raw?))
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
@@ -609,7 +607,7 @@ impl Store {
     pub fn switch_rule_set(
         &self,
         set: RuleSetId,
-        workspace: Option<&WorkspaceName>,
+        workspace: Option<&WorkspaceId>,
         enabled: Option<bool>,
         actor: Actor,
     ) -> Result<Vec<PendingId>, StoreError> {
@@ -628,7 +626,7 @@ impl Store {
                 return Err(StoreError::UnknownRuleSet(set.to_string()));
             }
             let key = set.to_string();
-            let name = workspace.map(WorkspaceName::as_str);
+            let name = workspace.map(WorkspaceId::as_str);
             tx.execute(
                 "DELETE FROM rule_set_switches WHERE rule_set = ?1 AND workspace_id IS ?2",
                 params![key, name],
@@ -653,7 +651,7 @@ impl Store {
             fx.push(Event::RulesChanged {});
             Ok(closed)
         })?;
-        tracing::info!(%set, workspace = ?workspace.map(WorkspaceName::as_str), ?enabled, closed = closed.len(), "rule set switched");
+        tracing::info!(%set, workspace = ?workspace.map(WorkspaceId::as_str), ?enabled, closed = closed.len(), "rule set switched");
         Ok(closed)
     }
 
@@ -684,7 +682,7 @@ impl Store {
     /// # Errors
     /// A database error; nothing changes then.
     pub fn set_system_managed(&self, plan: &SystemPlan) -> Result<Vec<PendingId>, StoreError> {
-        let mut wanted: BTreeMap<Option<WorkspaceName>, BTreeSet<SystemReason>> = BTreeMap::new();
+        let mut wanted: BTreeMap<Option<WorkspaceId>, BTreeSet<SystemReason>> = BTreeMap::new();
         if !plan.everywhere.is_empty() {
             wanted.insert(None, plan.everywhere.clone());
         }
@@ -693,7 +691,7 @@ impl Store {
                 wanted.insert(Some(workspace.clone()), reasons.clone());
             }
         }
-        let current: BTreeMap<Option<WorkspaceName>, BTreeSet<SystemReason>> = {
+        let current: BTreeMap<Option<WorkspaceId>, BTreeSet<SystemReason>> = {
             let mut map: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
             for (workspace, reason) in load_reasons(&lock(&self.conn))? {
                 map.entry(workspace).or_default().insert(reason);
@@ -709,14 +707,11 @@ impl Store {
                 for reason in reasons {
                     tx.execute(
                         "INSERT INTO system_reasons (workspace_id, reason) VALUES (?1, ?2)",
-                        params![
-                            workspace.as_ref().map(WorkspaceName::as_str),
-                            reason.as_str()
-                        ],
+                        params![workspace.as_ref().map(WorkspaceId::as_str), reason.as_str()],
                     )?;
                 }
             }
-            let scopes: BTreeSet<&Option<WorkspaceName>> =
+            let scopes: BTreeSet<&Option<WorkspaceId>> =
                 current.keys().chain(wanted.keys()).collect();
             let empty = BTreeSet::new();
             for scope in scopes {

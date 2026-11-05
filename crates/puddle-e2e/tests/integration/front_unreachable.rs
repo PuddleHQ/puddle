@@ -37,7 +37,7 @@ use puddle_ports::{MemoryPins, Ports};
 use puddle_proxy::testing::StaticResolver;
 use puddle_proxy::{Proxy, Route};
 use puddle_store::{Limits, ManualClock, Store};
-use puddle_types::{LocalCategory, NullSink, WorkspaceName};
+use puddle_types::{LocalCategory, NullSink, WorkspaceId};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -48,7 +48,7 @@ struct Rig {
     agent: Agent,
     ports: Ports,
     endpoints: PuddleEndpoints,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     /// Connections the editor server has accepted.
     accepted: Arc<AtomicUsize>,
     _route: Route,
@@ -80,7 +80,7 @@ async fn rig() -> Rig {
             .with_address_check(Arc::new(guard))
             .with_guest_watcher(Arc::new(ports.clone())),
     );
-    let workspace = WorkspaceName::new("e2e-front").unwrap();
+    let workspace = WorkspaceId::new("e2e-front").unwrap();
     let root = IpcRoot::new().unwrap();
     let route = proxy.serve_route(root.listen().unwrap(), workspace.clone());
 
@@ -142,7 +142,7 @@ async fn rig() -> Rig {
     }
 }
 
-async fn ports_started(ports: &Ports, workspace: &WorkspaceName) {
+async fn ports_started(ports: &Ports, workspace: &WorkspaceId) {
     ports.started(workspace).await;
     puddle_test_kit::eventually("the agent said hello", Duration::from_secs(5), || {
         ports.guest_link(workspace).is_some()
@@ -189,7 +189,7 @@ async fn connect_via(agent: SocketAddr, authority: &str) -> io::Result<(u16, Vec
 }
 
 /// What the user's window gets from the front for `workspace`.
-async fn from_outside(front: &Front, workspace: &WorkspaceName) -> String {
+async fn from_outside(front: &Front, workspace: &WorkspaceId) -> String {
     let port = front.local_addr().port();
     let mut conn = TcpStream::connect(front.local_addr()).await.unwrap();
     conn.write_all(

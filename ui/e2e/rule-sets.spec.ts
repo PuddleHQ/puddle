@@ -4,6 +4,7 @@
 // from the `default` scenario (one pending request, demo -> registry.example.org).
 import type { APIRequestContext, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
+import { SWATCHES } from "../src/lib/rules/fill.ts";
 import { watchCsp, expectNoAxeViolations, staysEmpty } from "./support";
 
 const auth = (backend: Backend) => ({
@@ -170,3 +171,43 @@ test("every set has a colour, and the one you pick is kept", async ({
     )
     .toEqual({ kind: "solid", color: "#2aa1a8" });
 });
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`axe finds nothing in ${scheme}: a set in every swatch, and the picker that offers them`, async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    for (const [index, color] of SWATCHES.entries()) {
+      const made = await request.post("/api/rule-sets", {
+        headers: auth(backend),
+        data: { name: `Swatch ${index + 1}`, fill: { kind: "solid", color } },
+      });
+      expect(made.status()).toBe(201);
+    }
+    await openRules(page, backend);
+    for (const [index, color] of SWATCHES.entries()) {
+      const chip = page
+        .getByRole("article", { name: `Swatch ${index + 1}` })
+        .getByRole("heading", { name: `Swatch ${index + 1}` });
+      await expect(chip).toBeVisible();
+      await expect(chip.locator("[style*='--set-fill']")).toHaveCSS(
+        "background-color",
+        rgb(color),
+      );
+    }
+    await expectNoAxeViolations(page, `rules, every swatch, ${scheme}`);
+    await page.getByRole("button", { name: "New rule set" }).click();
+    const dialog = page.getByRole("dialog", { name: "New rule set" });
+    for (const color of SWATCHES)
+      await expect(dialog.getByRole("button", { name: color })).toBeVisible();
+    await expectNoAxeViolations(page, `the picker, ${scheme}`);
+  });
+}
+
+/** `#rrggbb` as the computed `rgb(r, g, b)` a browser reports. */
+function rgb(hex: string): string {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`;
+}

@@ -25,18 +25,18 @@ use puddle_ports::{
     NoLink, Pin, Pins, PinsError, PortOwner, PortRow, Ports, PortsError, ProgramLookup,
 };
 use puddle_test_kit::accepts;
-use puddle_types::{CollectingSink, Event, WorkspaceName};
+use puddle_types::{CollectingSink, Event, WorkspaceId};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-fn name(text: &str) -> WorkspaceName {
-    WorkspaceName::new(text).unwrap()
+fn name(text: &str) -> WorkspaceId {
+    WorkspaceId::new(text).unwrap()
 }
 
 /// Pins in memory; `broken` makes every call fail.
 #[derive(Default)]
 struct MemoryPins {
-    rows: Mutex<Vec<(WorkspaceName, Pin)>>,
+    rows: Mutex<Vec<(WorkspaceId, Pin)>>,
     /// Every call fails.
     broken: Mutex<bool>,
     /// Reads work, writes fail.
@@ -64,7 +64,7 @@ impl MemoryPins {
 }
 
 impl Pins for MemoryPins {
-    fn pinned(&self, workspace: &WorkspaceName) -> Result<Vec<Pin>, PinsError> {
+    fn pinned(&self, workspace: &WorkspaceId) -> Result<Vec<Pin>, PinsError> {
         self.check()?;
         let mut pins: Vec<Pin> = self
             .rows
@@ -78,12 +78,12 @@ impl Pins for MemoryPins {
         Ok(pins)
     }
 
-    fn all(&self) -> Result<Vec<(WorkspaceName, Pin)>, PinsError> {
+    fn all(&self) -> Result<Vec<(WorkspaceId, Pin)>, PinsError> {
         self.check()?;
         Ok(self.rows.lock().unwrap().clone())
     }
 
-    fn pin(&self, workspace: &WorkspaceName, pin: Pin) -> Result<(), PinsError> {
+    fn pin(&self, workspace: &WorkspaceId, pin: Pin) -> Result<(), PinsError> {
         self.check()?;
         self.writable()?;
         let mut rows = self.rows.lock().unwrap();
@@ -92,7 +92,7 @@ impl Pins for MemoryPins {
         Ok(())
     }
 
-    fn unpin(&self, workspace: &WorkspaceName, guest_port: u16) -> Result<bool, PinsError> {
+    fn unpin(&self, workspace: &WorkspaceId, guest_port: u16) -> Result<bool, PinsError> {
         self.check()?;
         self.writable()?;
         let mut rows = self.rows.lock().unwrap();
@@ -114,7 +114,7 @@ impl ProgramLookup for Named {
 #[derive(Clone)]
 struct Route {
     ports: Ports,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
 }
 
 impl StreamHandler for Route {
@@ -134,7 +134,7 @@ struct Rig {
     pins: Arc<MemoryPins>,
     events: Arc<CollectingSink>,
     endpoints: PuddleEndpoints,
-    workspace: WorkspaceName,
+    workspace: WorkspaceId,
     socket: PathBuf,
     tables: PathBuf,
     _root: IpcRoot,
@@ -329,7 +329,7 @@ async fn on_free_port<T>(
 /// Forwards `guest` to a host port that was free a moment ago; returns that port and the result.
 async fn forward_free(
     ports: &Ports,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     guest: u16,
     pin: bool,
 ) -> (u16, Result<PortRow, PortsError>) {

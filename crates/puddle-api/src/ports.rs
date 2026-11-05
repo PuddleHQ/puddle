@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 
 use crate::wire::{PortEntry, WorkspacePorts};
 
@@ -39,14 +39,14 @@ pub trait PortsService: Send + Sync {
     /// The workspace's ports now.
     fn list(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
     ) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>>;
 
     /// Forwards `guest_port` to `host_port` of this computer (the same number when `None`) and
     /// pins it or not; returns the port's row.
     fn forward(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         guest_port: u16,
         host_port: Option<u16>,
         pinned: bool,
@@ -55,7 +55,7 @@ pub trait PortsService: Send + Sync {
     /// Stops the forward of `guest_port` and unpins it.
     fn release(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         guest_port: u16,
     ) -> BoxFuture<'_, Result<(), PortsServiceError>>;
 }
@@ -73,13 +73,13 @@ fn unavailable<T>() -> BoxFuture<'static, Result<T, PortsServiceError>> {
 }
 
 impl PortsService for NoPorts {
-    fn list(&self, _: &WorkspaceName) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>> {
+    fn list(&self, _: &WorkspaceId) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>> {
         unavailable()
     }
 
     fn forward(
         &self,
-        _: &WorkspaceName,
+        _: &WorkspaceId,
         _: u16,
         _: Option<u16>,
         _: bool,
@@ -87,7 +87,7 @@ impl PortsService for NoPorts {
         unavailable()
     }
 
-    fn release(&self, _: &WorkspaceName, _: u16) -> BoxFuture<'_, Result<(), PortsServiceError>> {
+    fn release(&self, _: &WorkspaceId, _: u16) -> BoxFuture<'_, Result<(), PortsServiceError>> {
         unavailable()
     }
 }
@@ -96,7 +96,7 @@ impl PortsService for NoPorts {
 /// are what the test set, and a forward is a row. Nothing is bound.
 #[derive(Debug, Default)]
 pub struct FakePorts {
-    state: Mutex<BTreeMap<WorkspaceName, BTreeMap<u16, PortEntry>>>,
+    state: Mutex<BTreeMap<WorkspaceId, BTreeMap<u16, PortEntry>>>,
 }
 
 impl FakePorts {
@@ -107,7 +107,7 @@ impl FakePorts {
     }
 
     /// Sets the ports `workspace` listens on (the rows for ports that are forwarded or pinned stay).
-    pub fn set_listening(&self, workspace: &WorkspaceName, ports: &[u16]) {
+    pub fn set_listening(&self, workspace: &WorkspaceId, ports: &[u16]) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let rows = state.entry(workspace.clone()).or_default();
         for row in rows.values_mut() {
@@ -134,7 +134,7 @@ fn blank(guest_port: u16) -> PortEntry {
 impl PortsService for FakePorts {
     fn list(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
     ) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>> {
         let ports = self
             .state
@@ -153,7 +153,7 @@ impl PortsService for FakePorts {
 
     fn forward(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         guest_port: u16,
         host_port: Option<u16>,
         pinned: bool,
@@ -194,7 +194,7 @@ impl PortsService for FakePorts {
 
     fn release(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         guest_port: u16,
     ) -> BoxFuture<'_, Result<(), PortsServiceError>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);

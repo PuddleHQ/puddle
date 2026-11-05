@@ -11,7 +11,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use puddle_netpolicy::{EndpointKind, PuddleEndpoints, Registration};
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::{JoinHandle, JoinSet};
@@ -64,7 +64,7 @@ impl Drop for Front {
 /// The origin of `workspace`'s editor on a front that listens on `port`, for a caller that knows the
 /// port and holds no [`Front`].
 #[must_use]
-pub fn origin_of(port: u16, workspace: &WorkspaceName) -> String {
+pub fn origin_of(port: u16, workspace: &WorkspaceId) -> String {
     format!("http://{workspace}.localhost:{port}")
 }
 
@@ -131,13 +131,13 @@ impl Front {
 
     /// The origin of `workspace`'s editor: where a window opens it.
     #[must_use]
-    pub fn origin(&self, workspace: &WorkspaceName) -> String {
+    pub fn origin(&self, workspace: &WorkspaceId) -> String {
         origin_of(self.addr.port(), workspace)
     }
 
     /// The editor connections `workspace` has open now (see [`Windows`]).
     #[must_use]
-    pub fn connected(&self, workspace: &WorkspaceName) -> usize {
+    pub fn connected(&self, workspace: &WorkspaceId) -> usize {
         self.windows.connected(workspace)
     }
 
@@ -153,7 +153,7 @@ impl Front {
     /// # Errors
     ///
     /// The workspace is not running, or its agent has no password to give yet.
-    pub async fn password(&self, workspace: &WorkspaceName) -> Result<String, Unreachable> {
+    pub async fn password(&self, workspace: &WorkspaceId) -> Result<String, Unreachable> {
         let target = self
             .guests
             .target(workspace)

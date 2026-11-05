@@ -83,9 +83,9 @@ exclude_re = [
     # (not the specificity comparison against an own rule, where equal does matter and a test pins it).
     # They hold the position because the function has a fourth `>` that must stay measured; the
     # `mutants-exclusions` gate fails an entry whose line moved, so re-read the comparisons then.
-    "puddle-store/src/engine\\.rs:303:88: replace > with >= in RuleIndex::decide",
-    "puddle-store/src/engine\\.rs:324:61: replace > with >= in RuleIndex::decide",
-    "puddle-store/src/engine\\.rs:327:93: replace > with >= in RuleIndex::decide",
+    "puddle-store/src/engine\\.rs:298:88: replace > with >= in RuleIndex::decide",
+    "puddle-store/src/engine\\.rs:319:61: replace > with >= in RuleIndex::decide",
+    "puddle-store/src/engine\\.rs:322:93: replace > with >= in RuleIndex::decide",
     # The default body of `SshTarget::failed` is `let _ = reason;`, so `()` is the same code.
     'replace SshTarget::failed with \(\)',
     # `SshEndpoint::drop` aborts the accept task, but dropping the endpoint also drops the `stop`

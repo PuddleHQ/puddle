@@ -677,7 +677,7 @@ mod behaviour_tests {
 
     use puddle_test_kit::eventually_blocking;
     use puddle_types::{
-        DiskKind, EventSink, PendingEnd, PendingSummary, WorkspaceName, WorkspaceStatus,
+        DiskKind, EventSink, PendingEnd, PendingSummary, WorkspaceId, WorkspaceStatus,
     };
     use serde_json::json;
     use tauri::test::{MockRuntime, mock_builder};
@@ -778,8 +778,8 @@ mod behaviour_tests {
             .unwrap();
     }
 
-    fn workspace() -> WorkspaceName {
-        WorkspaceName::new("demo").unwrap()
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::new("demo").unwrap()
     }
 
     fn opened(id: i64) -> Event {

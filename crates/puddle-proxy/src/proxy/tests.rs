@@ -11,8 +11,8 @@ use tokio::net::TcpListener;
 use super::*;
 use crate::testing::{AnyAddress, StaticPolicy, StaticResolver};
 
-fn workspace() -> WorkspaceName {
-    WorkspaceName::new("box").unwrap()
+fn workspace() -> WorkspaceId {
+    WorkspaceId::new("box").unwrap()
 }
 
 fn host(h: &str) -> Host {
@@ -78,7 +78,7 @@ where
 struct Toggles;
 
 impl AddressCheck for Toggles {
-    fn check(&self, _: &WorkspaceName, addr: SocketAddr) -> AddressVerdict {
+    fn check(&self, _: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
         match addr.ip() {
             IpAddr::V4(a) if a.octets()[0] == 10 => {
                 AddressVerdict::ExactOnly(LocalCategory::Private)
@@ -1426,7 +1426,7 @@ mod termination {
         assert_eq!(format!("{config:?}"), "TerminationConfig { .. }");
     }
 
-    fn at(h: &str, port: u16, workspace: WorkspaceName) -> EgressRequest {
+    fn at(h: &str, port: u16, workspace: WorkspaceId) -> EgressRequest {
         EgressRequest::new(workspace, host(h), port)
     }
 
@@ -1475,7 +1475,7 @@ mod termination {
         ] {
             assert!(!terminated(h, port), "{h}:{port}");
         }
-        let other = WorkspaceName::new("other").unwrap();
+        let other = WorkspaceId::new("other").unwrap();
         assert!(
             proxy
                 .terminating(&at("github.com", 443, other), false)

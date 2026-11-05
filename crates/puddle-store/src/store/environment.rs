@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use puddle_secrets::StoredId;
-use puddle_types::{Event, WorkspaceName};
+use puddle_types::{Event, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{Store, lock, sql_ts};
@@ -57,7 +57,7 @@ fn entry_of(raw: Raw) -> Result<EnvEntry, StoreError> {
     let scope = match &raw.workspace {
         None => EnvScope::Global,
         Some(name) => {
-            EnvScope::Workspace(WorkspaceName::new(name).map_err(|e| corrupt(e.to_string()))?)
+            EnvScope::Workspace(WorkspaceId::new(name).map_err(|e| corrupt(e.to_string()))?)
         }
     };
     let name = EnvName::existing(&raw.name).map_err(|e| corrupt(e.to_string()))?;
@@ -162,7 +162,7 @@ impl Store {
     ///
     /// # Errors
     /// A database error, or a stored row that doesn't parse.
-    pub fn workspace_env(&self, workspace: &WorkspaceName) -> Result<Vec<EnvRow>, StoreError> {
+    pub fn workspace_env(&self, workspace: &WorkspaceId) -> Result<Vec<EnvRow>, StoreError> {
         let conn = lock(&self.conn);
         let own = list(&conn, &EnvScope::Workspace(workspace.clone()))?;
         let global = list(&conn, &EnvScope::Global)?;
@@ -295,7 +295,7 @@ impl Store {
     /// [`StoreError::EnvInvalid`] when `mint` fails (its message), or a database error.
     pub fn env_for_start(
         &self,
-        workspace: &WorkspaceName,
+        workspace: &WorkspaceId,
         mint: &mut dyn FnMut(&EnvName) -> Result<String, String>,
     ) -> Result<Vec<StartVar>, StoreError> {
         self.change(|tx, _now, _fx| {
@@ -330,7 +330,7 @@ impl Store {
 /// The stand-in `workspace` holds for the secret row `env_id`, made when it has none.
 fn stand_in(
     tx: &Transaction<'_>,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
     env_id: i64,
     name: &EnvName,
     mint: &mut dyn FnMut(&EnvName) -> Result<String, String>,
@@ -357,7 +357,7 @@ fn stand_in(
 /// secrets are returned, so their values can leave the credential store.
 pub(super) fn delete_workspace_rows(
     tx: &Transaction<'_>,
-    workspace: &WorkspaceName,
+    workspace: &WorkspaceId,
 ) -> Result<(Vec<(EnvName, StoredId)>, bool), StoreError> {
     let own = list(tx, &EnvScope::Workspace(workspace.clone()))?;
     let held = tx.execute(
@@ -393,8 +393,8 @@ mod tests {
         EnvName::new(text).unwrap()
     }
 
-    fn ws(text: &str) -> WorkspaceName {
-        WorkspaceName::new(text).unwrap()
+    fn ws(text: &str) -> WorkspaceId {
+        WorkspaceId::new(text).unwrap()
     }
 
     fn plain(value: &str) -> EnvDraft {

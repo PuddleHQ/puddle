@@ -27,7 +27,7 @@ use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::{
     Actor, Author, Coverage, CredentialBinding, Effect, IdentityDraft, NewRule, Pattern, Scope,
 };
-use puddle_types::{WorkspaceName, WorkspaceStatus};
+use puddle_types::{WorkspaceId, WorkspaceStatus};
 use puddle_vm_tests::{RuntimePair, Settings};
 use serde_json::json;
 use support::{Api, TestDevCert, ended, hermetic_options};
@@ -63,7 +63,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
 
     // The workspace's sandbox may reach the repository host, and nothing else.
     let name = format!("{}-host", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
@@ -176,7 +176,7 @@ async fn vm_host_boots_a_workspace_with_the_cpus_the_settings_name() {
         ..
     } = start_vm_host("cpus").await;
     let name = format!("{}-cpus", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let global = api
         .put(
@@ -246,7 +246,7 @@ async fn vm_host_warns_at_a_start_that_finds_kind_in_the_guest() {
         ..
     } = start_vm_host("kube").await;
     let name = format!("{}-kube", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -314,7 +314,7 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
         _github,
     ) = start_vm_host_github("repos").await;
     let name = format!("{}-repos", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     for allowed in [REPO_HOST, UNREACHABLE_HOST] {
         host.store()
             .add_rule(&NewRule {
@@ -516,7 +516,7 @@ async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
     let before = host_files(&base);
 
     let name = format!("{}-local", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let address = "https://git.example.invalid/acme/shop.git";
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
@@ -622,7 +622,7 @@ async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
 
 /// Boots the killed `sandbox` straight from the runtime and checks that each checkout passes
 /// `git fsck --full` and has a HEAD, then stops it again.
-async fn checkouts_are_whole(runtime: &MsbRuntime, sandbox: &WorkspaceName, dirs: &[&str]) {
+async fn checkouts_are_whole(runtime: &MsbRuntime, sandbox: &WorkspaceId, dirs: &[&str]) {
     let restarted = runtime.start(&sandbox.sandbox_name()).await.unwrap();
     for dir in dirs {
         let repo = format!("/workspaces/{sandbox}/{dir}");
@@ -663,7 +663,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
         _github,
     ) = start_vm_host_github("manage").await;
     let name = format!("{}-manage", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
@@ -850,7 +850,7 @@ async fn vm_host_clones_a_public_repository_when_the_identity_is_not_signed_in_a
         ..
     } = start_vm_host_platform("anon", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-anon", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
@@ -937,7 +937,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         ..
     } = start_vm_host_platform("ca", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-ca", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     for site in ["github.com", SECOND, SITE] {
         host.store()
             .add_rule(&NewRule {
@@ -1163,7 +1163,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
         ..
     } = start_vm_host_platform("quic", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-quic", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
@@ -1349,7 +1349,7 @@ fn split(value: &str) -> String {
 }
 
 /// The stand-in the store keeps for the secret `var` of the workspace.
-fn stand_in_of(host: &Host<MsbRuntime>, workspace: &WorkspaceName, var: &str) -> String {
+fn stand_in_of(host: &Host<MsbRuntime>, workspace: &WorkspaceId, var: &str) -> String {
     let found = host
         .store()
         .env_for_start(workspace, &mut |_| Err("already made".into()))
@@ -1425,7 +1425,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
         root: _,
     } = start_vm_host_platform("env", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-env", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     for site in [ALPHA, BETA, GAMMA] {
         host.store()
             .add_rule(&NewRule {
@@ -1753,7 +1753,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
         root: _,
     } = start_vm_host_platform("login", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-login", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     for site in names {
         host.store()
             .add_rule(&NewRule {
@@ -1971,7 +1971,7 @@ async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_pro
     }
 
     let name = format!("{}-held", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     // The repository host for the clone, and the host's own address for the connections.
     host.store()
         .add_rule(&NewRule {
@@ -2268,7 +2268,7 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
     );
     let port = transparency_fixture().await;
     let name = format!("{}-transp", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
@@ -2406,10 +2406,10 @@ fn identity_for(label: &str, hosts: impl Iterator<Item = &'static &'static str>)
 /// A workspace for a radar: the hosts allowed, the identity attached when `terminate` is set (a
 /// host with no injection, so nothing is added to a request), and the workspace created and
 /// running.
-async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceName, Api) {
+async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceId, Api) {
     let vm = start_vm_host_with(tag, options_without_injection()).await;
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     for site in RADAR_HOSTS {
         vm.host
             .store()
@@ -2762,7 +2762,7 @@ public class Probe {
 /// everything is printed).
 async fn refusal_matrix(
     vm: &VmHost,
-    sandbox: &WorkspaceName,
+    sandbox: &WorkspaceId,
 ) -> (Vec<String>, Vec<String>, Vec<String>) {
     let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
     let (mut lines, mut silent, mut accepted) = (Vec::new(), Vec::new(), Vec::new());
@@ -2978,7 +2978,7 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
         ..
     } = start_vm_host("twice").await;
     let name = format!("{}-twice", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -3073,7 +3073,7 @@ async fn vm_host_a_second_process_on_the_same_data_folder_is_refused_and_the_vm_
 
 /// Waits until the editor server in the guest answers its health check.
 #[cfg(not(windows))]
-async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceName) {
+async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceId) {
     guest(
         runtime,
         sandbox,
@@ -3090,7 +3090,7 @@ async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceName) {
 /// password is the owner's alone, a client signs in with it, and it is on no command line.
 /// Returns the password.
 #[cfg(not(windows))]
-async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceName, name: &str) -> String {
+async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceId, name: &str) -> String {
     // The release is read-only in the guest, and the password is the owner's alone.
     let mount = guest(
         runtime,
@@ -3179,7 +3179,7 @@ async fn vm_host_dockers_data_is_on_a_disk_of_the_sandbox_that_a_rebuild_replace
         ..
     } = start_vm_host("dkdisk").await;
     let name = format!("{}-dkdisk", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -3288,7 +3288,7 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     .await;
 
     let name = format!("{}-edit", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -3416,7 +3416,7 @@ echo "health=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41337/hea
 #[cfg(not(windows))]
 async fn end_hosts_when_connected(
     host: &Host<MsbRuntime>,
-    sandbox: &WorkspaceName,
+    sandbox: &WorkspaceId,
 ) -> Result<
     (puddle_agent_proto::host_control::HostReply, Duration),
     puddle_host::EndExtensionHostsError,
@@ -3459,7 +3459,7 @@ async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_le
     .await;
 
     let name = format!("{}-exth", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -3553,7 +3553,7 @@ async fn vm_host_the_editor_server_opens_a_window_with_every_checkout() {
     })
     .await;
     let name = format!("{}-mroot", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -3702,7 +3702,7 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
     })
     .await;
     let name = format!("{}-reach", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     // The rules allow every name the guest tries, so a refusal below is the address guard's and
     // not a missing rule.
     for site in ["127.0.0.1", "localhost", "host.docker.internal"]
@@ -3860,7 +3860,7 @@ async fn vm_host_shell_init_is_checked_read_only_sourced_by_login_shells_and_res
         secrets: _,
     } = start_vm_host("shi").await;
     let name = format!("{}-shi", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -4130,7 +4130,7 @@ async fn vm_host_boots_the_guest_with_the_development_certificate_and_its_key_st
     } = start_vm_host_with("devc", options).await;
 
     let name = format!("{}-devc", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let reply = api
@@ -4199,7 +4199,7 @@ async fn vm_host_a_login_shell_lands_in_the_start_folder_and_a_missing_one_opens
         secrets: _,
     } = start_vm_host("sf").await;
     let name = format!("{}-sf", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
@@ -4265,7 +4265,7 @@ async fn vm_host_a_login_shell_lands_in_the_start_folder_and_a_missing_one_opens
 
 /// Starts a server in the guest that greets each connection on `addr:port` (perl is part of the
 /// base image), in the background, and waits until it listens.
-async fn greeter(runtime: &MsbRuntime, sandbox: &WorkspaceName, addr: &str, port: u16, who: &str) {
+async fn greeter(runtime: &MsbRuntime, sandbox: &WorkspaceId, addr: &str, port: u16, who: &str) {
     guest(
         runtime,
         sandbox,
@@ -4307,7 +4307,7 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
         ..
     } = start_vm_host("ports").await;
     let name = format!("{}-ports", settings.prefix.as_str());
-    let sandbox = WorkspaceName::new(&name).unwrap();
+    let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());

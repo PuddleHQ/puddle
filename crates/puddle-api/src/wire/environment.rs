@@ -6,7 +6,7 @@
 
 use puddle_secrets::Secret;
 use puddle_store as store;
-use puddle_types::WorkspaceName;
+use puddle_types::WorkspaceId;
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -143,7 +143,7 @@ pub struct EnvList {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct WorkspaceEnv {
     /// The workspace.
-    pub workspace: WorkspaceName,
+    pub workspace: WorkspaceId,
     /// Its variables.
     pub variables: Vec<EnvVariable>,
 }

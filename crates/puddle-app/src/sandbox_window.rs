@@ -217,6 +217,9 @@ pub fn permission_response(settings: &WindowSettings, kind: &PermissionKind) -> 
 pub struct Target {
     /// The workspace.
     pub workspace: WorkspaceId,
+    /// What the user calls the workspace: shown in the window's title, never used to find
+    /// anything.
+    pub display_name: String,
     /// The editor's origin, `http://<workspace>.localhost:<port>/` (the front's `origin`).
     pub origin: Url,
     /// The webview's data folder ([`data_folder`]).
@@ -528,7 +531,7 @@ impl SandboxWindows {
         let hooks = &self.inner.hooks;
         let settings = target.settings;
         let mut builder = WebviewWindowBuilder::new(app, label, start)
-            .title(format!("{} - Puddle", target.workspace))
+            .title(window_title(&target.display_name))
             .inner_size(1400.0, 900.0)
             .zoom_hotkeys_enabled(settings.zoom_hotkeys)
             .devtools(false)
@@ -684,6 +687,11 @@ impl SandboxWindows {
         )?;
         Ok(())
     }
+}
+
+/// A window's title: the workspace's display name, never its id.
+fn window_title(display_name: &str) -> String {
+    format!("{display_name} - Puddle")
 }
 
 /// The target of a window on `address`, a forward of one of `editor`'s workspace's guest ports.
@@ -1211,9 +1219,20 @@ mod tests {
         assert_eq!(windows.begin_quit(), []);
     }
 
+    #[test]
+    fn a_window_is_titled_with_the_display_name_not_the_id() {
+        let named = Target {
+            display_name: "Shop API ü".to_owned(),
+            ..target("a1b2c3", Path::new("/data"), None)
+        };
+        assert_eq!(window_title(&named.display_name), "Shop API ü - Puddle");
+        assert_eq!(named.workspace.as_str(), "a1b2c3");
+    }
+
     fn target(name: &str, data: &Path, cookie: Option<SessionCookie>) -> Target {
         Target {
             workspace: workspace(name),
+            display_name: name.to_owned(),
             origin: Url::parse(&format!("http://{name}.localhost:4800/")).unwrap(),
             data_folder: data.join(name),
             settings: WindowSettings {

@@ -668,7 +668,9 @@ async fn serve_udp<A: Ask>(socket: UdpSocket, stub: Stub<A>, limits: Limits) {
     let slots = Arc::new(Semaphore::new(limits.max_udp_queries.max(1)));
     let mut dropped = DropNotice::new("queries dropped: too many at once (the client asks again)");
     let mut tasks = JoinSet::new();
-    let mut buf = vec![0u8; MAX_QUERY];
+    // The largest UDP datagram, so that no OS cuts or fails on one longer than `MAX_QUERY`: Linux
+    // truncates it silently, Windows fails the receive and loses it.
+    let mut buf = vec![0u8; usize::from(u16::MAX)];
     loop {
         while tasks.try_join_next().is_some() {}
         let (n, peer) = match socket.recv_from(&mut buf).await {
@@ -679,6 +681,11 @@ async fn serve_udp<A: Ask>(socket: UdpSocket, stub: Stub<A>, limits: Limits) {
                 continue;
             }
         };
+        if n > MAX_QUERY {
+            // Over TCP a message this long ends the connection; over UDP it is dropped.
+            tracing::debug!(len = n, "udp query too long, dropped");
+            continue;
+        }
         let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else {
             dropped.note(Instant::now());
             stub.shared.trouble(StubDnsTrouble::UdpDropped);
@@ -725,7 +732,12 @@ async fn serve_tcp<A: Ask>(listener: TcpListener, stub: Stub<A>, limits: Limits)
 }
 
 /// Answers length-prefixed queries one after another until the client goes quiet or misbehaves.
-async fn tcp_connection<A: Ask>(mut stream: tokio::net::TcpStream, stub: Stub<A>, idle: Duration) {
+/// Any byte stream works, so the fuzz target can feed it without a socket.
+pub async fn tcp_connection<A, S>(mut stream: S, stub: Stub<A>, idle: Duration)
+where
+    A: Ask,
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     loop {
         let mut len = [0u8; 2];
         let read = tokio::time::timeout(idle, stream.read_exact(&mut len)).await;

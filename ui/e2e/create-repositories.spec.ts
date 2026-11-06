@@ -496,4 +496,81 @@ test.describe("a checkout on this computer", () => {
       rmSync(base, { recursive: true, force: true });
     }
   });
+
+  test("a browser tab offers no folder dialog; only the typed path", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    await openCreate(page);
+    await rowOf(page, 1).getByLabel("From a folder on this computer").check();
+    await expect(
+      rowOf(page, 1).getByLabel("Folder of the checkout"),
+    ).toBeVisible();
+    await expect(
+      rowOf(page, 1).getByRole("button", { name: "Choose folder" }),
+    ).toHaveCount(0);
+  });
+
+  test("the desktop app's Choose folder fills the field from the native dialog and a cancel leaves it", async ({
+    page,
+    backend,
+  }) => {
+    // The app's window has Tauri's bridge; the page's one call into it is the dialog plugin's
+    // `open`, which this stand-in answers the way the plugin does (a path, or null on cancel).
+    await page.addInitScript(() => {
+      const w = window as unknown as {
+        __answers: (string | null)[];
+        __calls: unknown[];
+        __TAURI_INTERNALS__: object;
+      };
+      w.__answers = [];
+      w.__calls = [];
+      w.__TAURI_INTERNALS__ = {
+        invoke: async (command: string, args: unknown) => {
+          w.__calls.push({ command, args });
+          return w.__answers.shift() ?? null;
+        },
+      };
+    });
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    await rowOf(page, 1).getByLabel("From a folder on this computer").check();
+    const folder = rowOf(page, 1).getByLabel("Folder of the checkout");
+    const choose = rowOf(page, 1).getByRole("button", {
+      name: "Choose folder",
+    });
+    await expect(choose).toBeVisible();
+    await expectNoAxeViolations(page, "the folder field with its button");
+
+    await page.evaluate(() => {
+      (window as unknown as { __answers: string[] }).__answers.push(
+        "/home/you/Shop",
+      );
+    });
+    await choose.click();
+    await expect(folder).toHaveValue("/home/you/Shop");
+    await expect(dialog.getByLabel("Name")).toHaveValue("shop");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __calls: unknown[] }).__calls,
+        ),
+      )
+      .toEqual([
+        {
+          command: "plugin:dialog|open",
+          args: {
+            options: expect.objectContaining({
+              directory: true,
+              multiple: false,
+            }) as unknown,
+          },
+        },
+      ]);
+
+    await choose.click();
+    await expect(choose).toBeEnabled();
+    await expect(folder).toHaveValue("/home/you/Shop");
+  });
 });

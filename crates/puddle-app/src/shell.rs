@@ -165,14 +165,21 @@ pub fn context<R: Runtime>() -> tauri::Context<R> {
 /// Adds the plugins every build has (all but single-instance, which only the real app can have:
 /// it talks to the desktop's message bus). None of them is granted to any window.
 pub fn with_plugins<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder
+    let builder = builder
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_filter(sandbox_window::remembers_place)
                 .build(),
         )
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init());
+    // The dialog plugin links `rfd` against comctl32 v6, which an executable only gets from a
+    // manifest. The library's own unit-test executable has none and cargo gives it no link
+    // argument key (build.rs covers integration tests), so on Windows it would not load
+    // (0xc0000139). Leaving the plugin out of that build keeps `rfd` out of its link; the
+    // integration tests (tests/acl.rs) and the program have the manifest and load it.
+    #[cfg(not(test))]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+    builder.plugin(tauri_plugin_opener::init())
 }
 
 /// Brings the main window to the front (a second launch asks for this).
@@ -370,6 +377,7 @@ fn open_probe<R: Runtime>(
         origin,
         data_folder: sandbox_window::data_folder(&data.join(WEBVIEW_FOLDER), &probe.workspace),
         workspace: probe.workspace.clone(),
+        display_name: probe.workspace.to_string(),
         settings: WindowSettings {
             zoom_hotkeys: true,
             clipboard_read: ClipboardRead::Ask,
@@ -766,6 +774,7 @@ pub(crate) mod tests {
             origin: "http://demo.localhost:4800/".parse().unwrap(),
             data_folder: sandbox_window::data_folder(data.path(), &demo),
             workspace: demo.clone(),
+            display_name: "demo".to_owned(),
             settings: WindowSettings {
                 zoom_hotkeys: true,
                 clipboard_read: ClipboardRead::Ask,

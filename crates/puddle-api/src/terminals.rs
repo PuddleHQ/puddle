@@ -436,6 +436,12 @@ mod tests {
     }
 
     #[test]
+    fn the_limits_are_the_ones_the_screen_design_sets() {
+        assert_eq!(WINDOW_BYTES, 1_048_576);
+        assert_eq!(MAX_MESSAGE_BYTES, 65_536);
+    }
+
+    #[test]
     fn sizes_are_held_to_their_bounds() {
         assert!(TerminalSize::new(2, 1).is_some());
         assert!(TerminalSize::new(500, 300).is_some());

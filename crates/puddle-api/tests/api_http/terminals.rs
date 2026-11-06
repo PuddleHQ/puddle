@@ -347,6 +347,14 @@ async fn an_unknown_or_oversized_message_closes_the_socket_with_1008() {
         Message::Text(json!({"type": "dance"}).to_string().into()),
         Message::Text("not json".into()),
         Message::Binary(vec![b'x'; MAX_MESSAGE_BYTES + 1].into()),
+        // A valid message, one byte over the limit.
+        Message::Text(
+            format!(
+                r#"{{"type":"ack","bytes":1}}{}"#,
+                " ".repeat(MAX_MESSAGE_BYTES + 1 - 24)
+            )
+            .into(),
+        ),
     ] {
         let (terminal, ticket) = ticket(&api, "shop").await;
         let mut socket = connect(&api, "shop", terminal, &ticket).await;
@@ -361,6 +369,27 @@ async fn an_unknown_or_oversized_message_closes_the_socket_with_1008() {
                 Message::Binary(_) => {}
                 other => panic!("{bad:?}: {other:?}"),
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_message_far_over_the_limit_is_cut_off_by_the_socket_itself() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = connect(&api, "shop", terminal, &ticket).await;
+    read_until(&mut socket, "$ ").await;
+    let _ = socket
+        .send(Message::Binary(vec![b'x'; MAX_MESSAGE_BYTES * 2].into()))
+        .await;
+    // The socket drops the connection without the policy close that a message inside its own
+    // limit gets.
+    loop {
+        match socket.next().await {
+            Some(Ok(Message::Binary(_))) => {}
+            Some(Err(_)) | None => break,
+            other => panic!("{other:?}"),
         }
     }
 }

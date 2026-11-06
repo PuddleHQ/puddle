@@ -121,6 +121,11 @@ async fn a_flood_stops_at_one_mebibyte_unacknowledged_and_goes_on_when_acknowled
     {
         received += b.len() as u64;
         assert!(b.len() <= MAX_MESSAGE_BYTES);
+        // Without a window the flood never goes quiet: stop the loop instead of hanging on it.
+        assert!(
+            received < 2 * WINDOW_BYTES,
+            "{received} bytes and still coming"
+        );
     }
     assert!(
         received <= WINDOW_BYTES + 64,

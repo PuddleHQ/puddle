@@ -9,6 +9,7 @@
 //! | [`NtlmProxy`] | a proxy that demands NTLM and accepts any Type 3 | `PUDDLE_MITMDUMP_BIN` |
 //! | [`PacServer`] | the web server that hands out a PAC file | nothing |
 //! | [`WebHost`] | a public website the test only needs to reach, over plain HTTP and TLS | nothing |
+//! | [`PrivateAccess`] | a private-access client's adapter, DNS answers and tunnel to an intranet site | nothing |
 //!
 //! A fixture a test cannot start because its program is missing makes `start` return `None` and
 //! print why; when the matching `PUDDLE_REQUIRE_*` variable is set (CI sets it) a missing program
@@ -30,6 +31,7 @@ mod git_host;
 mod interceptor;
 mod pac;
 mod pip_index;
+mod private_access;
 mod procs;
 #[cfg(unix)]
 mod squid;
@@ -47,6 +49,7 @@ pub use git_host::{GitHost, GitHostOptions, NameProxy, Seen, Versions, clean_git
 pub use interceptor::{Interceptor, NtlmLeg, NtlmProxy, Root};
 pub use pac::{PacServer, failover_pac};
 pub use pip_index::pip_index;
+pub use private_access::{Adapter, PrivateAccess};
 #[cfg(unix)]
 pub use squid::{Squid, SquidOptions};
 pub use web_host::{Responder, WebAnswer, WebHost, WebOptions};

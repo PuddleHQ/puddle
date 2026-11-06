@@ -339,6 +339,18 @@ mod tests {
         assert_eq!(plain.rewrite(&head, b"{}").await, None);
     }
 
+    #[tokio::test]
+    async fn a_buffered_answer_is_at_its_end_only_once_its_bytes_are_taken() {
+        use http_body_util::BodyExt;
+        let mut body = AnswerBody::Buffered(Some(Bytes::from_static(b"{}")));
+        assert!(!body.is_end_stream());
+        assert_eq!(
+            body.frame().await.unwrap().unwrap().into_data().unwrap(),
+            "{}"
+        );
+        assert!(body.is_end_stream());
+    }
+
     #[test]
     fn the_head_of_an_answer_is_read_from_its_headers() {
         let mut headers = HeaderMap::new();
@@ -366,5 +378,81 @@ mod tests {
             AnswerHead::of(StatusCode::OK, &HeaderMap::new()).content_type,
             None
         );
+    }
+
+    /// Wants every answer and counts the ones it was told were too large.
+    struct Wants {
+        too_large: u32,
+    }
+
+    impl AnswerRewriter for Wants {
+        fn wants(&mut self, _: &AnswerHead<'_>) -> bool {
+            true
+        }
+
+        fn rewrite<'a>(
+            &'a mut self,
+            _: &'a AnswerHead<'a>,
+            _: &'a [u8],
+        ) -> BoxFuture<'a, Option<Bytes>> {
+            Box::pin(std::future::ready(None))
+        }
+
+        fn too_large(&mut self) {
+            self.too_large += 1;
+        }
+    }
+
+    /// A response with a body of `len` bytes, read from a real HTTP/1 server over a pipe.
+    async fn response_of(len: usize) -> Response<Incoming> {
+        use hyper_util::rt::TokioIo;
+        let (client_end, server_end) = tokio::io::duplex(1 << 20);
+        let service = hyper::service::service_fn(move |_| async move {
+            Ok::<_, std::convert::Infallible>(Response::new(http_body_util::Full::new(
+                Bytes::from(vec![b'x'; len]),
+            )))
+        });
+        tokio::spawn(
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(server_end), service),
+        );
+        let (mut sender, connection) = hyper::client::conn::http1::handshake::<
+            _,
+            http_body_util::Empty<Bytes>,
+        >(TokioIo::new(client_end))
+        .await
+        .unwrap();
+        tokio::spawn(connection);
+        sender
+            .send_request(
+                ::http::Request::get("/")
+                    .body(http_body_util::Empty::new())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_answer_of_exactly_the_limit_is_read_whole_and_one_byte_more_goes_through() {
+        let mut wants = Wants { too_large: 0 };
+        let at = read_answer(
+            &mut wants,
+            response_of(MAX_EXCHANGE_BODY).await,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(at.body(), AnswerBody::Buffered(_)));
+        assert_eq!(wants.too_large, 0);
+        let over = read_answer(
+            &mut wants,
+            response_of(MAX_EXCHANGE_BODY + 1).await,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(over.body(), AnswerBody::Rejoined { .. }));
+        assert_eq!(wants.too_large, 1);
     }
 }

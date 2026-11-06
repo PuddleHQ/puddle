@@ -23,6 +23,8 @@ import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
 // The limit is 100 (pinned in repo-rows.test.ts); a form with that many rows takes seconds to
 // build in jsdom, so the dialog's use of the limit is tested with a small one.
 const h = vi.hoisted(() => ({
+  desktop: false,
+  pick: vi.fn(),
   repos: undefined as unknown,
   rowLimit: undefined as number | undefined,
 }));
@@ -49,9 +51,17 @@ vi.mock("#lib/workspaces/repo-rows.ts", async (original) => {
   };
 });
 
+// The desktop app's folder dialog is a Tauri plugin; the page's wrapper is replaced here.
+vi.mock("#lib/desktop/folder-picker.ts", () => ({
+  inDesktopApp: () => h.desktop,
+  pickFolder: (title: string) => h.pick(title),
+}));
+
 vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 
 afterEach(() => {
+  h.desktop = false;
+  h.pick.mockReset();
   cleanup();
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 });
@@ -117,6 +127,61 @@ describe("CreateWorkspaceDialog", () => {
     expect(create).toHaveBeenCalledWith({
       name: "shop",
       repositories: [{ url: "", local_path: "/home/you/Shop/" }],
+    });
+  });
+
+  it("offers no folder dialog in a browser", async () => {
+    mount();
+    await screen.findByRole("dialog");
+    await fireEvent.click(screen.getByTestId("source-folder"));
+    expect(screen.queryByTestId("choose-folder")).toBeNull();
+  });
+
+  describe("in the desktop app", () => {
+    beforeEach(() => {
+      h.desktop = true;
+    });
+
+    it("fills the folder field from the dialog, and the name follows", async () => {
+      h.pick.mockResolvedValue("/home/you/Shop");
+      mount();
+      await screen.findByRole("dialog");
+      await fireEvent.click(screen.getByTestId("source-folder"));
+      await fireEvent.click(
+        screen.getByRole("button", { name: "Choose folder" }),
+      );
+      await vi.waitFor(() =>
+        expect(field("Folder of the checkout").value).toBe("/home/you/Shop"),
+      );
+      expect(field("Name").value).toBe("shop");
+      expect(h.pick).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves the typed path alone when the dialog is cancelled", async () => {
+      h.pick.mockResolvedValue(null);
+      mount();
+      await screen.findByRole("dialog");
+      await fireEvent.click(screen.getByTestId("source-folder"));
+      await type("Folder of the checkout", "/home/you/typed");
+      await fireEvent.click(screen.getByTestId("choose-folder"));
+      await vi.waitFor(() => expect(h.pick).toHaveBeenCalled());
+      expect(field("Folder of the checkout").value).toBe("/home/you/typed");
+      expect(screen.getByTestId("choose-folder")).toBeEnabled();
+    });
+
+    it("says so and keeps the typed path when the dialog cannot open", async () => {
+      h.pick.mockRejectedValue(new Error("no dialog"));
+      mount();
+      await screen.findByRole("dialog");
+      await fireEvent.click(screen.getByTestId("source-folder"));
+      await type("Folder of the checkout", "/home/you/typed");
+      await fireEvent.click(screen.getByTestId("choose-folder"));
+      await vi.waitFor(() =>
+        expect(toasts.items.map((t) => t.message)).toContain(
+          "The folder dialog could not open. Type the path instead.",
+        ),
+      );
+      expect(field("Folder of the checkout").value).toBe("/home/you/typed");
     });
   });
 

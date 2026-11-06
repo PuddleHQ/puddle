@@ -1958,7 +1958,21 @@ mod tests {
         let ws = workspace("alpha");
         injection.begin(&ws, true).await.unwrap();
         let sent = events.0.lock().unwrap().clone();
-        assert_eq!(sent.len(), 2, "{sent:?}");
+        let mut services: Vec<&str> = sent
+            .iter()
+            .filter_map(|event| match event {
+                Event::LoginProblem { service, .. } => Some(service.as_str()),
+                _ => None,
+            })
+            .collect();
+        services.sort_unstable();
+        let mut shipped: Vec<&str> = puddle_logins::builtin().iter().map(|p| p.name).collect();
+        shipped.sort_unstable();
+        assert_eq!(
+            services, shipped,
+            "one notice per shipped service: {sent:?}"
+        );
+        assert_eq!(sent.len(), shipped.len(), "{sent:?}");
         assert!(sent.iter().all(|event| matches!(
             event,
             Event::LoginProblem {

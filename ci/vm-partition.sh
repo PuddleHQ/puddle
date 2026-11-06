@@ -23,6 +23,10 @@
 # file, fewer than half the listed tests in it (stale: the tests moved on), a name the filterset cannot carry, or a
 # failed self-check. A test the file does not list (a new one) is not stale data: it gets the median time of the
 # listed ones and a `::notice` names it, so a refresh is visible before it matters.
+# A merge-group run fails instead of falling back (an unread warning hid a fallback for five groups, 2026-11-06);
+# set VM_PARTITION_STRICT=1 to get the same elsewhere, VM_PARTITION_STRICT=0 to turn it off in a merge group.
+# ANSI colour codes in the list (a `cargo nextest list` run with CARGO_TERM_COLOR=always) are stripped before use
+# and a `::notice` names the cause; the workflows also list with `--color never`.
 set -uo pipefail
 export LC_ALL=C
 
@@ -121,13 +125,32 @@ verify() {
     cmp -s "$TMPV.got" "$TMPV.want"
 }
 
+strict() { # true when a fallback must fail the job
+    case "${VM_PARTITION_STRICT:-}" in 1) return 0 ;; 0) return 1 ;; esac
+    [ "${GITHUB_EVENT_NAME:-}" = merge_group ]
+}
+
 fallback() { # <why> <index> <count> <filterset>
+    if strict; then
+        note error "the timing split cannot be used and this run may not fall back to the hash split: $1"
+        exit 1
+    fi
     note warning "falling back to the hash split (hash:$2/$3): $1"
     printf '%s\n' --partition "hash:$2/$3" -E "$4"
 }
 
 TMPV=$(mktemp "${TMPDIR:-/tmp}/vm-partition.XXXXXX")
-trap 'rm -f "$TMPV" "$TMPV.got" "$TMPV.want"' EXIT
+trap 'rm -f "$TMPV" "$TMPV.got" "$TMPV.want" "$TMPV.list"' EXIT
+
+# clean_list <list>: sets $list to a copy without ANSI escape sequences, and says so when it had any.
+clean_list() {
+    esc=$(printf '\033')
+    if grep -q "$esc" "$1" 2>/dev/null; then
+        sed "s/$esc\\[[0-9;]*[A-Za-z]//g" "$1" >"$TMPV.list"
+        list=$TMPV.list
+        note notice "the test list had ANSI colour codes (list it with --color never); they were stripped"
+    fi
+}
 
 case "$mode" in
 args)
@@ -136,6 +159,7 @@ args)
     if [ "$index" -lt 1 ] || [ "$index" -gt "$count" ]; then echo "vm-partition: index $index is not in 1..$count" >&2; exit 2; fi
     if [ ! -s "$list" ]; then fallback "no test list ($list)" "$index" "$count" "$filter"; exit 0; fi
     if [ ! -s "$timings" ]; then fallback "no timing file ($timings), refresh it with ci/vm-timings-refresh.sh" "$index" "$count" "$filter"; exit 0; fi
+    clean_list "$list"
     asg=$(assign "$count" "$list" "$timings"); rc=$?
     if [ "$rc" -ne 0 ]; then
         fallback "$(printf '%s\n' "$asg" | sed -n 's/^#reason //p' | head -1)" "$index" "$count" "$filter"
@@ -155,6 +179,7 @@ args)
     ;;
 check | table)
     count=${2:?count} list=${3:?list} timings=${4:?timings}
+    [ -s "$list" ] && clean_list "$list"
     asg=$(assign "$count" "$list" "$timings") || { printf '%s\n' "$asg" | sed -n 's/^#reason //p' >&2; exit 1; }
     data=$(printf '%s\n' "$asg" | grep -v '^#')
     if [ "$mode" = check ]; then

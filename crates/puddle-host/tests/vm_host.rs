@@ -396,7 +396,14 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
 
 /// Runs `git` on this computer to build a fixture, before anything hostile is put in it.
 fn host_git(dir: &std::path::Path, args: &[&str]) {
-    let out = std::process::Command::new("git")
+    // Under a git hook git exports `GIT_DIR` and friends; none of it is for this fixture.
+    let mut command = std::process::Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let out = command
         .args([
             "-c",
             "user.name=Puddle Test",

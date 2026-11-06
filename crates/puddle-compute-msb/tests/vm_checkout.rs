@@ -114,7 +114,14 @@ fn host_tree(root: &Path) -> BTreeMap<PathBuf, Entry> {
 
 /// Runs `git` on the host to build the fixture (never on anything the guest touched).
 fn git(dir: &Path, args: &[&str]) {
-    let out = std::process::Command::new("git")
+    // Under a git hook git exports `GIT_DIR` and friends; none of it is for this fixture.
+    let mut command = std::process::Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let out = command
         .args([
             "-c",
             "user.name=Puddle Test",

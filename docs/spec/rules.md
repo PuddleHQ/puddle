@@ -258,7 +258,9 @@ readable as JSONL (one record per line).
   identity, which belongs to none), how it ended (`outcome`: `succeeded` or `failed`) and a short
   plain sentence (`detail`, `null` when there is nothing to add). The `op` values are `create`,
   `delete`, `rename`, `start`, `stop`, `identity_created`, `identity_updated`, `identity_deleted`,
-  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched` and `repo_removed`.
+  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed` and
+  `git_repaired` (one record, actor `system`, for each zero-filled or corrupt git file Puddle rebuilt
+  at boot; `detail` names the file and what was done).
   A create or a delete is written whether it worked or not; a start or a stop only when it failed
   (a start that worked shows in the workspace's state); a rename when it worked, or when the
   workspace list could not be saved; the identity and repository changes, a new order of the identities included, when they worked. A call

@@ -16757,7 +16757,8 @@
           "identities_reordered",
           "repo_added",
           "repo_switched",
-          "repo_removed"
+          "repo_removed",
+          "git_repaired"
         ]
       },
       "WorkspaceOpOutcome": {

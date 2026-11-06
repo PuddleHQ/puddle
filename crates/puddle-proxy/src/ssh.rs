@@ -269,6 +269,7 @@ mod tests {
     #[tokio::test]
     async fn a_flush_and_a_shutdown_reach_the_stream_under_the_gate() {
         let mut gate = Gate::new(Sink::default(), false);
+        gate.write_all(b"x").await.unwrap();
         gate.flush().await.unwrap();
         assert!(gate.inner.flushed && !gate.inner.shut);
         gate.shutdown().await.unwrap();

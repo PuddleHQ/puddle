@@ -280,7 +280,9 @@ mod tests {
         use tokio::io::AsyncWriteExt as _;
         let activity = Arc::new(Activity::new(Duration::from_secs(5), Arc::default()));
         let mut moving = Moving::new(Sink::default(), &activity);
+        moving.write_all(b"x").await.unwrap();
         moving.flush().await.unwrap();
+        moving.shutdown().await.unwrap();
         assert!(moving.inner.flushed);
     }
 

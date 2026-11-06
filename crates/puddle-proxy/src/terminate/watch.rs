@@ -544,10 +544,18 @@ mod tests {
 
     #[tokio::test]
     async fn a_flush_and_a_shutdown_reach_the_guest_stream() {
-        use tokio::io::AsyncWriteExt as _;
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
         let mut watched = Watch::new(Sink::default(), Duration::from_secs(1), LimitHit::default());
+        watched.write_all(b"x").await.unwrap();
         watched.flush().await.unwrap();
         watched.shutdown().await.unwrap();
         assert!(watched.inner.flushed && watched.inner.shut);
+        // The sink never has bytes to read: the read waits.
+        let mut buf = [0_u8; 1];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), watched.read(&mut buf))
+                .await
+                .is_err()
+        );
     }
 }

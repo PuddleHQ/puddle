@@ -515,6 +515,7 @@ mod tests {
     async fn a_flush_and_a_shutdown_reach_the_stream_under_the_prefix() {
         use tokio::io::AsyncWriteExt as _;
         let mut prefixed = Prefixed::new(Sink::default(), b"x".to_vec());
+        prefixed.write_all(b"y").await.unwrap();
         prefixed.flush().await.unwrap();
         prefixed.shutdown().await.unwrap();
         assert!(prefixed.inner.flushed && prefixed.inner.shut);

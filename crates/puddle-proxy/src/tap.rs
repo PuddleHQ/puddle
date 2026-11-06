@@ -232,6 +232,7 @@ mod tests {
     #[tokio::test]
     async fn flush_and_shutdown_reach_the_stream_underneath() {
         let mut tap = RequestTap::new(Marks::default(), b"");
+        tap.write_all(b"x").await.unwrap();
         tap.flush().await.unwrap();
         assert!(tap.inner.flushed && !tap.inner.closed);
         tap.shutdown().await.unwrap();

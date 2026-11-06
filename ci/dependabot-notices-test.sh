@@ -7,10 +7,12 @@
 # auto-merge is re-armed only when it was on, and every refusal pushes nothing. Prints ok only when all pass.
 set -uo pipefail
 
-# Run from a git hook (pre-commit, pre-push) these point at the calling repository, which the throwaway repos below must never touch.
-while IFS= read -r v; do unset "$v"; done < <(compgen -e | grep '^GIT_' || true)
-
 here=$(cd "$(dirname "$0")" && pwd)
+# Run from a git hook these variables point at the calling repository, which the throwaway repos below must never touch.
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$here/../scripts/git-clean-env.sh"
+# Also author and committer variables: they would override the bot identity the assertions check.
+while IFS= read -r v; do unset "$v"; done < <(compgen -e | grep '^GIT_' || true)
 script="$here/dependabot-notices.sh"
 fx="$here/fixtures/dependabot-notices"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/dependabot-notices-test.XXXXXX")

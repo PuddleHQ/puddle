@@ -59,17 +59,7 @@ where
     reason = "a CLI's user-facing output goes to stdout/stderr, not to tracing"
 )]
 pub fn run(args: &BackupArgs) -> ExitCode {
-    let data = match &args.data_dir {
-        Some(dir) => dir.clone(),
-        None => match puddle_fs::data_dir() {
-            Ok(dir) => dir,
-            Err(e) => {
-                eprintln!("puddle: {e}");
-                return ExitCode::FAILURE;
-            }
-        },
-    };
-    match puddle_host::backup(&HostPaths::new(data), &args.dest) {
+    match execute(args, puddle_fs::data_dir()) {
         Ok(report) => {
             println!(
                 "backup written to {}: database (schema version {}), {} settings file(s), workspace list {}",
@@ -92,6 +82,19 @@ pub fn run(args: &BackupArgs) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Makes the backup of `args.data_dir`, or of `default_data_dir` (the per-user folder, or why
+/// there is none) when none was given.
+fn execute(
+    args: &BackupArgs,
+    default_data_dir: Result<PathBuf, puddle_fs::DataDirError>,
+) -> Result<puddle_host::BackupReport, String> {
+    let data = match &args.data_dir {
+        Some(dir) => dir.clone(),
+        None => default_data_dir.map_err(|e| e.to_string())?,
+    };
+    puddle_host::backup(&HostPaths::new(data), &args.dest).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -134,5 +137,15 @@ mod tests {
             parse(["--data-dir"].into_iter()),
             Err(UsageError::MissingArgument("--data-dir <path>"))
         );
+    }
+
+    #[test]
+    fn no_per_user_folder_is_an_error_unless_a_data_dir_is_given() {
+        let args = BackupArgs {
+            dest: "out".into(),
+            data_dir: None,
+        };
+        let err = execute(&args, Err(puddle_fs::DataDirError::NoBase)).unwrap_err();
+        assert!(err.contains("per-user data folder"), "{err}");
     }
 }

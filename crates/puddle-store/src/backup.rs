@@ -47,14 +47,20 @@ pub fn backup_database(source: &Path, dest: &Path) -> Result<BackupInfo, StoreEr
 
     let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let check: String = copy.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-    if check != "ok" {
-        return Err(StoreError::Database(rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
-            Some(format!("the copy failed its integrity check: {check}")),
-        )));
-    }
+    verdict(&check)?;
     let schema_version: u32 = copy.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     Ok(BackupInfo { schema_version })
+}
+
+/// `Ok` for SQLite's `ok` integrity answer, otherwise the answer as a corruption error.
+fn verdict(check: &str) -> Result<(), StoreError> {
+    if check == "ok" {
+        return Ok(());
+    }
+    Err(StoreError::Database(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+        Some(format!("the copy failed its integrity check: {check}")),
+    )))
 }
 
 #[cfg(test)]
@@ -110,5 +116,12 @@ mod tests {
         let dest = dir.path().join("it's a copy.db");
         backup_database(&src, &dest).unwrap();
         assert!(dest.exists());
+    }
+
+    #[test]
+    fn integrity_answer_other_than_ok_is_corruption() {
+        assert!(verdict("ok").is_ok());
+        let err = verdict("row 3 missing from index i").unwrap_err();
+        assert!(err.to_string().contains("integrity check"), "{err}");
     }
 }

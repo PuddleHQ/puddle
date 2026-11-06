@@ -73,6 +73,11 @@ fn backup_copies_a_live_database_and_names_what_it_leaves_out() {
         puddle_store::Limits::default(),
     )
     .unwrap();
+    std::fs::write(
+        data.join("workspaces.json"),
+        br#"{"version":2,"workspaces":[]}"#,
+    )
+    .unwrap();
     let out = root.path().join("out");
     let result = puddle(&[
         "backup",
@@ -117,4 +122,29 @@ fn backup_without_a_database_exits_1_and_creates_nothing() {
 #[test]
 fn backup_without_a_destination_exits_2() {
     assert_eq!(puddle(&["backup"]).status.code(), Some(2));
+}
+
+#[test]
+fn backup_without_a_workspace_list_says_it_is_absent() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    drop(
+        puddle_store::Store::open(
+            &data.join("puddle.db"),
+            std::sync::Arc::new(puddle_store::SystemClock),
+            puddle_store::Limits::default(),
+        )
+        .unwrap(),
+    );
+    let out = root.path().join("out");
+    let result = puddle(&[
+        "backup",
+        "--data-dir",
+        data.to_str().unwrap(),
+        out.to_str().unwrap(),
+    ]);
+    assert!(result.status.success(), "{result:?}");
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    assert!(stdout.contains("workspace list absent"), "{stdout}");
 }

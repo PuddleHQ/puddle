@@ -95,9 +95,8 @@ pub fn backup(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupErro
         Ok(report) => Ok(report),
         Err(err) => {
             // The folder is ours (create_new_dir made it a moment ago), so it is safe to remove.
-            if let Err(cleanup) = fs::remove_dir_all(dest) {
-                tracing::warn!(path = %dest.display(), error = %cleanup, "could not remove the unfinished backup");
-            }
+            // Best effort: the failure to report is the backup's, not the cleanup's.
+            drop(fs::remove_dir_all(dest));
             Err(err)
         }
     }
@@ -122,21 +121,10 @@ fn fill(paths: &HostPaths, dest: &Path) -> Result<BackupReport, BackupError> {
 
 /// Refuses a destination that resolves into the data folder.
 fn refuse_inside(data: &Path, dest: &Path) -> Result<(), BackupError> {
-    let Ok(data) = data.canonicalize() else {
-        return Ok(());
-    };
+    let data = data.canonicalize().unwrap_or_else(|_| data.to_path_buf());
     // The destination does not exist yet: resolve its deepest existing ancestor.
-    let mut probe = dest;
-    let resolved = loop {
-        if let Ok(real) = probe.canonicalize() {
-            break real;
-        }
-        match probe.parent() {
-            Some(parent) => probe = parent,
-            None => return Ok(()),
-        }
-    };
-    if resolved.starts_with(&data) {
+    let resolved = dest.ancestors().find_map(|a| a.canonicalize().ok());
+    if resolved.is_some_and(|real| real.starts_with(&data)) {
         return Err(BackupError::InsideData(dest.to_path_buf()));
     }
     Ok(())
@@ -257,14 +245,11 @@ mod tests {
         assert!(report.workspace_list);
 
         // Hostile case: nothing credential-shaped reaches the destination, by name or content.
-        for file in files_below(&dest) {
-            let body = fs::read(&file).unwrap();
-            assert!(
-                !String::from_utf8_lossy(&body).contains(CANARY),
-                "{} holds the canary",
-                file.display()
-            );
-        }
+        let holders: Vec<_> = files_below(&dest)
+            .into_iter()
+            .filter(|f| String::from_utf8_lossy(&fs::read(f).unwrap()).contains(CANARY))
+            .collect();
+        assert!(holders.is_empty(), "{holders:?} hold the canary");
         let names: Vec<_> = files_below(&dest)
             .iter()
             .map(|p| p.strip_prefix(&dest).unwrap().to_path_buf())
@@ -427,5 +412,42 @@ mod tests {
         let report = backup(&paths, &root.path().join("out")).unwrap();
         assert_eq!(report.settings_files, 0);
         assert!(!report.workspace_list);
+    }
+
+    #[test]
+    fn unreadable_workspace_list_fails_the_backup_and_leaves_no_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = data_folder(root.path());
+        drop(open(&paths.store()));
+        // A folder where the list should be: reading it fails with something other than "missing".
+        fs::remove_file(paths.workspace_book()).unwrap();
+        fs::create_dir(paths.workspace_book()).unwrap();
+        let dest = root.path().join("out");
+        assert!(matches!(backup(&paths, &dest), Err(BackupError::Io { .. })));
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn unreadable_settings_folder_fails_the_backup_and_leaves_no_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = data_folder(root.path());
+        drop(open(&paths.store()));
+        // A file where the folder should be.
+        fs::remove_dir_all(paths.settings()).unwrap();
+        fs::write(paths.settings(), b"not a folder").unwrap();
+        let dest = root.path().join("out");
+        assert!(matches!(backup(&paths, &dest), Err(BackupError::Io { .. })));
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn destination_under_a_file_cannot_be_created() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = data_folder(root.path());
+        drop(open(&paths.store()));
+        let blocker = root.path().join("blocker");
+        fs::write(&blocker, b"a file").unwrap();
+        let err = backup(&paths, &blocker.join("out")).unwrap_err();
+        assert!(matches!(err, BackupError::Io { .. }), "{err}");
     }
 }

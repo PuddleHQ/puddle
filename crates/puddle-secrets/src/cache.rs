@@ -31,6 +31,8 @@ pub struct Ttls {
     pub git_credential: Ttl,
     /// Pasted tokens: until the user changes or removes them.
     pub stored: Ttl,
+    /// The Azure CLI: 55 minutes at most, and earlier when the token says it ends sooner.
+    pub az_cli: Ttl,
 }
 
 impl Default for Ttls {
@@ -49,6 +51,10 @@ impl Default for Ttls {
                 fresh: None,
                 grace: Duration::ZERO,
             },
+            az_cli: Ttl {
+                fresh: Some(Duration::from_mins(55)),
+                grace,
+            },
         }
     }
 }
@@ -59,6 +65,7 @@ impl Ttls {
             SourceSpec::Gh { .. } => self.gh,
             SourceSpec::GitCredential { .. } => self.git_credential,
             SourceSpec::Stored { .. } => self.stored,
+            SourceSpec::AzCli { .. } => self.az_cli,
         }
     }
 }
@@ -350,6 +357,31 @@ mod tests {
         assert_eq!(value(&cache, &spec).await.unwrap(), "v0");
         cache.invalidate(&spec);
         assert_eq!(value(&cache, &spec).await.unwrap(), "v1");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn az_cli_renews_five_minutes_before_expiry() {
+        let az = SourceSpec::AzCli {
+            tenant: crate::name::TenantId::new("t1").unwrap(),
+            org: None,
+        };
+        // A token that ends in 20 minutes is renewed at minute 15, long before the 55 minute limit.
+        let script = Script::new(vec![
+            Ok(Some(20 * MIN)),
+            Ok(Some(90 * MIN)),
+            Ok(Some(90 * MIN)),
+        ]);
+        let cache = SecretCache::new(&script);
+        assert_eq!(value(&cache, &az).await.unwrap(), "v0");
+        tokio::time::advance(14 * MIN).await;
+        assert_eq!(value(&cache, &az).await.unwrap(), "v0");
+        tokio::time::advance(2 * MIN).await;
+        assert_eq!(value(&cache, &az).await.unwrap(), "v1");
+        // A 90 minute token is still renewed after 55 minutes.
+        tokio::time::advance(54 * MIN).await;
+        assert_eq!(value(&cache, &az).await.unwrap(), "v1");
+        tokio::time::advance(2 * MIN).await;
+        assert_eq!(value(&cache, &az).await.unwrap(), "v2");
     }
 
     #[tokio::test(start_paused = true)]

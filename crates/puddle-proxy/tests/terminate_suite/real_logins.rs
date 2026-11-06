@@ -617,18 +617,19 @@ impl Screen {
 
     /// Waits for `text` to appear on the screen after the last key, then sends `keys`.
     async fn wait_then_send(&mut self, text: &str, keys: &str) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-        loop {
-            if self.seen.lock().unwrap().contains(text) {
-                break;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "never saw {text:?} on the screen:\n{}",
-                self.seen.lock().unwrap()
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        let seen = Arc::clone(&self.seen);
+        puddle_test_kit::eventually(
+            &format!("{text:?} on the screen"),
+            Duration::from_secs(60),
+            || {
+                let screen = seen.lock().unwrap();
+                screen
+                    .contains(text)
+                    .then_some(())
+                    .ok_or_else(|| screen.clone())
+            },
+        )
+        .await;
         self.seen.lock().unwrap().clear();
         // A paste and the Enter after it must arrive apart, or the Enter is part of the paste.
         tokio::time::sleep(Duration::from_millis(500)).await;

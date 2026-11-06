@@ -289,6 +289,15 @@ fn a_cut_that_fails_is_reported_as_the_cut() {
     );
 }
 
+/// The time the command that plants the cut takes is the test's own, not the transfer's: on a loaded
+/// host `iptables` once took 5.7 s, which the meter read as a 5.7 s gap with no backoff in it.
+#[test]
+fn a_slow_command_that_plants_the_cut_is_not_a_stall() {
+    let slow = r#"sh -c 'case "$*" in *-A*) sleep 4;; esac; exec iptables "$@"' iptables"#;
+    let (passed, text) = drop_in_a_namespace(&[(IPTABLES, slow)]).unwrap();
+    assert!(passed, "a slow cut was taken for a stall:\n{text}");
+}
+
 /// Runs [`kernel_drop_inner`] in a network namespace of its own, with `env` added, and returns
 /// whether it passed and what it printed.
 fn drop_in_a_namespace(env: &[(&str, &str)]) -> Result<(bool, String), String> {

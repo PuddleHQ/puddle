@@ -174,6 +174,49 @@ impl TokenBody {
         }
     }
 
+    /// The text at `path`: a dotted path through the objects of a JSON body (`data.token`), or, for
+    /// a form, the field named `path` (a form has no nesting). A path of one segment is
+    /// [`Self::text`]. `None` when any step is missing or the end is not a string.
+    #[must_use]
+    pub fn text_at(&self, path: &str) -> Option<Cow<'_, str>> {
+        match &self.parsed {
+            Parsed::Json(map) => {
+                let (last, parents) = split_path(path)?;
+                let mut object = map;
+                for step in parents {
+                    object = object.get(step)?.as_object()?;
+                }
+                object.get(last)?.as_str().map(Cow::Borrowed)
+            }
+            Parsed::Form(_) => self.text(path),
+        }
+    }
+
+    /// Replaces the text at `path` (see [`Self::text_at`]) with `value`; `false` (nothing changed)
+    /// when [`Self::text_at`] would not have found it.
+    pub fn set_text_at(&mut self, path: &str, value: &str) -> bool {
+        if self.text_at(path).is_none() {
+            return false;
+        }
+        let Parsed::Json(map) = &mut self.parsed else {
+            return self.set_text(path, value);
+        };
+        let Some((last, parents)) = split_path(path) else {
+            return false;
+        };
+        let mut object = map;
+        for step in parents {
+            match object.get_mut(step).and_then(Value::as_object_mut) {
+                Some(inner) => object = inner,
+                None => return false,
+            }
+        }
+        object
+            .get_mut(last)
+            .map(|slot| *slot = Value::String(value.to_owned()))
+            .is_some()
+    }
+
     /// The body as bytes: JSON compact, a form with each untouched field as it was sent. The
     /// bytes are zeroised when dropped, since they may hold a token.
     #[must_use]
@@ -188,6 +231,16 @@ impl TokenBody {
                 .into_bytes(),
         })
     }
+}
+
+/// The last step of a dotted path and the steps before it; `None` for an empty step.
+fn split_path(path: &str) -> Option<(&str, Vec<&str>)> {
+    let mut steps: Vec<&str> = path.split('.').collect();
+    if steps.iter().any(|step| step.is_empty()) {
+        return None;
+    }
+    let last = steps.pop()?;
+    Some((last, steps))
 }
 
 /// Wipes every text in `value`: a body can hold a token.
@@ -398,5 +451,59 @@ mod tests {
             let read = again.text("zz_target");
             prop_assert_eq!(read.as_deref(), Some(value.as_str()));
         }
+    }
+}
+
+#[cfg(test)]
+mod nested_tests {
+    use super::*;
+
+    fn json(text: &str) -> TokenBody {
+        TokenBody::parse(Some("application/json"), text.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_dotted_path_reads_and_replaces_a_nested_string() {
+        let mut body = json(r#"{"data":{"token":"real","n":1},"token":"top"}"#);
+        assert_eq!(body.text_at("data.token").as_deref(), Some("real"));
+        assert_eq!(body.text_at("token").as_deref(), Some("top"));
+        assert!(body.set_text_at("data.token", "fake"));
+        assert_eq!(
+            *body.render(),
+            br#"{"data":{"n":1,"token":"fake"},"token":"top"}"#.to_vec()
+        );
+    }
+
+    #[test]
+    fn a_path_that_does_not_end_in_a_string_is_not_found_or_changed() {
+        let mut body = json(r#"{"data":{"token":7,"list":["x"]},"s":"v"}"#);
+        for path in [
+            "data.token",
+            "data.list",
+            "data.missing",
+            "s.x",
+            "data..token",
+            ".data",
+            "",
+        ] {
+            assert!(body.text_at(path).is_none(), "{path}");
+            assert!(!body.set_text_at(path, "z"), "{path}");
+        }
+        assert_eq!(
+            *body.render(),
+            br#"{"data":{"list":["x"],"token":7},"s":"v"}"#.to_vec()
+        );
+    }
+
+    #[test]
+    fn a_form_has_no_nesting_and_the_path_is_the_field_name() {
+        let mut body = TokenBody::parse(
+            Some("application/x-www-form-urlencoded"),
+            b"a=1&data.token=t",
+        )
+        .unwrap();
+        assert_eq!(body.text_at("data.token").as_deref(), Some("t"));
+        assert!(body.set_text_at("data.token", "u"));
+        assert_eq!(*body.render(), b"a=1&data.token=u".to_vec());
     }
 }

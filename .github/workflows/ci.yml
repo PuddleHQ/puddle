@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Linux gates on every push to develop/main, every pull request and every merge queue run
 # (docs/STANDARDS.md, "CI").
-# Two jobs run side by side: the Rust and repository gates, and the UI gates (the browser tests are
-# the longest step). A third job, `linux (all gates)`, waits for both and is the one result to
+# Four jobs run side by side so a run takes about as long as the longest: the Rust tests with coverage,
+# the Rust and repository gates, the UI gates with the Chromium end-to-end tests, and the WebKit
+# end-to-end tests. A last job, `linux (all gates)`, waits for all of them and is the one result to
 # require. Every gate runs even when an earlier one fails, so one run shows every problem.
 # A pull request to develop runs only the jobs its changed files can affect (ci/scope.sh, the `scope`
 # job): a docs-only or UI-only change runs a light job (typos, spdx, shellcheck, standalone, secrets)
@@ -10,10 +11,10 @@
 # event, and any doubt, runs everything. `linux (all gates)` accepts a skip only when `scope` said so.
 # A merge queue run (`merge_group`) is scoped the same way, by the group's diff against develop.
 # With the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop runs in the light
-# mode (ci/scope.sh): the `git-env` and `notices` gates skip and the UI end-to-end tests run on
-# Chromium only; the merge queue runs them all on the commit that lands. Unset, every pull request
-# runs the full set. With PUDDLE_TIER set to `on`, a merge queue run also runs the UI end-to-end tests
-# on Chromium only, unless the diff touches markup, styles or the browser test setup (ci/scope.sh);
+# mode (ci/scope.sh): the `git-env` and `notices` gates and the WebKit job skip; the merge queue runs
+# them all on the commit that lands. Unset, every pull request runs the full set. With PUDDLE_TIER set
+# to `on`, a merge queue run also skips the WebKit job, unless the diff touches markup, styles or the
+# browser test setup (ci/scope.sh);
 # webkit.yml runs WebKit nightly, and a pull request to main runs both browsers here.
 # With PUDDLE_QUEUE_SKIP_PUSH set to `on`, a push to develop whose commit a green merge queue run of
 # this workflow tested skips the Rust, msvc and UI jobs when their caches exist (the `queue-tested`
@@ -101,7 +102,7 @@ jobs:
   # A push to develop whose commit a green merge queue run of this workflow already tested (the queue
   # fast-forwards develop to the commit it tested) need not build and test it again. Runs only with
   # PUDDLE_QUEUE_SKIP_PUSH=on, and says skip=true only when that run exists and the caches the heavy
-  # jobs would save (the Rust `linux` entry, the Playwright browsers, cargo-xwin) are all on develop
+  # jobs would save (the Rust `linux` and `gates` entries, the Chromium and WebKit browsers, cargo-xwin) are all on develop
   # for this exact key. Any error or doubt says skip=false and everything runs.
   queue-tested:
     name: already tested in the merge queue?
@@ -138,6 +139,15 @@ jobs:
           shared-key: linux
           lookup-only: true
           save-if: false
+      - name: Rust cache entry of the gates job (lookup only)
+        id: gates-cache
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: gates
+          lookup-only: true
+          save-if: false
       - name: Playwright browsers entry (lookup only)
         id: browsers
         if: steps.queue.outputs.tested == 'true'
@@ -146,6 +156,15 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+          lookup-only: true
+      - name: Playwright WebKit entry (lookup only)
+        id: webkit
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
           lookup-only: true
       - name: cargo-xwin entry (lookup only)
         id: xwin
@@ -161,18 +180,22 @@ jobs:
         env:
           TESTED: ${{ steps.queue.outputs.tested }}
           RUST_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
+          GATES_HIT: ${{ steps.gates-cache.outputs.cache-hit }}
           BROWSERS_HIT: ${{ steps.browsers.outputs.cache-hit }}
+          WEBKIT_HIT: ${{ steps.webkit.outputs.cache-hit }}
           XWIN_HIT: ${{ steps.xwin.outputs.cache-hit }}
         run: |
-          echo "merge queue tested this commit: ${TESTED:-unknown}; cache hits: rust ${RUST_HIT:-none}, browsers ${BROWSERS_HIT:-none}, cargo-xwin ${XWIN_HIT:-none}"
-          if [ "$TESTED" = true ] && [ "$RUST_HIT" = true ] && [ "$BROWSERS_HIT" = true ] && [ "$XWIN_HIT" = true ]; then
+          echo "merge queue tested this commit: ${TESTED:-unknown}; cache hits: rust ${RUST_HIT:-none}, gates ${GATES_HIT:-none}, browsers ${BROWSERS_HIT:-none}, webkit ${WEBKIT_HIT:-none}, cargo-xwin ${XWIN_HIT:-none}"
+          if [ "$TESTED" = true ] && [ "$RUST_HIT" = true ] && [ "$GATES_HIT" = true ] && [ "$BROWSERS_HIT" = true ] && [ "$WEBKIT_HIT" = true ] && [ "$XWIN_HIT" = true ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+  # The Rust tests, with coverage: the instrumented build, the git-env gate (it shares that build) and
+  # everything those need installed. The gates that only read the tree run in `gates` beside it.
   rust:
-    name: linux (Rust and repository gates)
+    name: linux (Rust tests)
     needs: [scope, queue-tested]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' && needs.queue-tested.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
@@ -240,13 +263,15 @@ jobs:
         run: rm -rf target/x86_64-pc-windows-msvc
       - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
-          tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1,cargo-deny@0.20.2,typos@1.50.3,shellcheck@0.11.0,cargo-about@0.9.2,cargo-mutants@27.1.0
-      - name: Node for the API contract's TypeScript types (openapi gate, ADR 0004)
+          tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1
+      - name: Node (the coverage gate's scripts, and the tests that run Node)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: crates/puddle-api/openapi/package-lock.json
+          cache-dependency-path: |
+            crates/puddle-api/openapi/package-lock.json
+            ui/package-lock.json
       - name: System packages (WebKitGTK, the tray library and Xvfb for the desktop shell, Squid for the upstream-chaining e2e, busybox for the guest scripts' shell)
         timeout-minutes: 10
         run: |
@@ -298,6 +323,132 @@ jobs:
             echo "PUDDLE_COPILOT_BIN=$tools/copilot"
             echo "PUDDLE_REQUIRE_LOGIN_TOOLS=1"
           } >> "$GITHUB_ENV"
+      # The light pull request mode skips this gate; the merge queue runs it.
+      - name: git-env (gates run with the variables git sets for a hook)
+        id: git-env
+        if: ${{ !cancelled() && needs.scope.outputs.light != 'true' }}
+        run: scripts/check.sh git-env
+      - name: tests with coverage gate
+        if: ${{ !cancelled() }}
+        env:
+          NEXTEST_PROFILE: ci
+          PUDDLE_SQUID_BIN: /usr/sbin/squid
+          # A test whose prerequisite is missing fails here instead of skipping (scripts/check-silent-skips.sh).
+          # Each flag names what this job provides: Squid, mitmproxy and Node 24 above, `ssh`, `git` and `python3`
+          # from the runner image, busybox above, AF_VSOCK from its kernel, and a non-root user.
+          PUDDLE_REQUIRE_SQUID: "1"
+          PUDDLE_REQUIRE_MITMPROXY: "1"
+          PUDDLE_REQUIRE_NODE: "1"
+          PUDDLE_REQUIRE_SSH_CLIENTS: "1"
+          PUDDLE_REQUIRE_TOOLS: "1"
+          PUDDLE_REQUIRE_VSOCK: "1"
+          PUDDLE_REQUIRE_BUSYBOX: "1"
+          PUDDLE_REQUIRE_NON_ROOT: "1"
+        run: |
+          # The guard logs free space during the build and tests and, under 5 GB, stops cargo and the tests with the
+          # sizes in the job summary, so a filling runner ends the job readable.
+          ci/disk-watch.sh guard coverage &
+          guard=$!
+          trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
+          scripts/check.sh coverage
+          {
+            echo '### Coverage'
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: disk after the tests with coverage (evidence, never a gate)
+        if: ${{ always() }}
+        timeout-minutes: 3
+        continue-on-error: true
+        run: ci/disk-watch.sh snap "rust, after the tests with coverage"
+      - name: upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-test-results
+          path: |
+            ${{ runner.temp }}/disk-watch-*.log
+            target/nextest/ci/junit.xml
+            target/lcov.info
+            target/coverage-summary.json
+          retention-days: 14
+          if-no-files-found: ignore
+      # Off the light mode (worked out again from the event, not from `scope`) the gate must have run.
+      - name: the gates the light mode skips ran
+        if: ${{ !cancelled() }}
+        env:
+          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: ci/scope.sh full-steps git-env=${{ steps.git-env.outcome }}
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
+  # The gates that read the tree and lint it: formatting, repository checks, hooks, clippy, deny, notices,
+  # the API contract and doc builds. They share no build with `rust` (tests and coverage), so the two run side by side
+  # and each keeps its own Rust cache entry. Clippy and the doc build compile the desktop shell, which links
+  # the system WebKitGTK, so that one dev package is installed here; Squid, Xvfb, busybox, mitmproxy and the login
+  # tools are for the tests only.
+  gates:
+    name: linux (Rust and repository gates)
+    needs: [scope, queue-tested]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' && needs.queue-tested.outputs.skip != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: disk at start (evidence, never a gate)
+        run: |
+          # Into the job summary too, and an annotation when the runner starts low: both outlive a dead runner.
+          { echo '### disk at start'; echo '```'; df -h /; echo "runner=${RUNNER_NAME} image=${ImageVersion:-unknown}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          free=$(df -Pk / | awk 'NR == 2 { print int($4 / 1048576) }')
+          [ "$free" -ge 60 ] || echo "::warning title=runner started low on disk::${free} GB free at start (a normal runner has 86 GB)"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the secrets gate scans the pull request's commits
+      # Runners of the pool sometimes start with a 72 GB root disk (14 GB free) instead of 145 GB; this removes
+      # the preinstalled toolchains no job uses when under 60 GB is free (ci/free-disk.sh) and prints what it freed.
+      - name: free disk space on a runner that starts low
+        run: ci/free-disk.sh
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      # The same save and drop rules as the `rust` job, for this job's own entry (key `gates`; the drop prefix
+      # must not match the `linux` entry's `v0-rust-linux-`). The queue-tested job looks this entry up by the same key.
+      - name: Free the Rust cache entry the save below replaces (develop only)
+        if: ${{ github.ref == 'refs/heads/develop' }}
+        uses: ./.github/actions/cache-drop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          prefix: v0-rust-gates-
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: gates
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+          # A develop run that fails after building still saves what it built, so the next run is warm.
+          cache-on-failure: ${{ github.ref == 'refs/heads/develop' }}
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        with:
+          tool: cargo-deny@0.20.2,typos@1.50.3,shellcheck@0.11.0,cargo-about@0.9.2,cargo-mutants@27.1.0
+      - name: Node for the API contract's TypeScript types (openapi gate, ADR 0004)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            crates/puddle-api/openapi/package-lock.json
+            ui/package-lock.json
+      - name: WebKitGTK dev package (clippy and the doc build compile the desktop shell)
+        timeout-minutes: 10
+        run: |
+          # ci/apt-setup.sh and ci/apt-retry.sh: see the `rust` job's system packages step.
+          ci/apt-setup.sh
+          ci/apt-retry.sh sudo apt-get update
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev
       - name: fmt
         run: scripts/check.sh fmt
       # ci/ is an always-run path, so a change to the scoping rules or this test runs this job.
@@ -341,11 +492,6 @@ jobs:
       - name: hooks (pre-push hook and runtime fetch tests)
         if: ${{ !cancelled() }}
         run: scripts/check.sh hooks
-      # The light pull request mode skips the two slowest repository gates; the merge queue runs them.
-      - name: git-env (gates run with the variables git sets for a hook)
-        id: git-env
-        if: ${{ !cancelled() && needs.scope.outputs.light != 'true' }}
-        run: scripts/check.sh git-env
       - name: clippy (linux)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy
@@ -395,59 +541,13 @@ jobs:
       - name: doc tests and rustdoc
         if: ${{ !cancelled() }}
         run: scripts/check.sh doc
-      - name: tests with coverage gate
-        if: ${{ !cancelled() }}
-        env:
-          NEXTEST_PROFILE: ci
-          PUDDLE_SQUID_BIN: /usr/sbin/squid
-          # A test whose prerequisite is missing fails here instead of skipping (scripts/check-silent-skips.sh).
-          # Each flag names what this job provides: Squid, mitmproxy and Node 24 above, `ssh`, `git` and `python3`
-          # from the runner image, busybox above, AF_VSOCK from its kernel, and a non-root user.
-          PUDDLE_REQUIRE_SQUID: "1"
-          PUDDLE_REQUIRE_MITMPROXY: "1"
-          PUDDLE_REQUIRE_NODE: "1"
-          PUDDLE_REQUIRE_SSH_CLIENTS: "1"
-          PUDDLE_REQUIRE_TOOLS: "1"
-          PUDDLE_REQUIRE_VSOCK: "1"
-          PUDDLE_REQUIRE_BUSYBOX: "1"
-          PUDDLE_REQUIRE_NON_ROOT: "1"
-        run: |
-          # The guard logs free space during the build and tests and, under 5 GB, stops cargo and the tests with the
-          # sizes in the job summary, so a filling runner ends the job readable.
-          ci/disk-watch.sh guard coverage &
-          guard=$!
-          trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
-          scripts/check.sh coverage
-          {
-            echo '### Coverage'
-            echo '```'
-            cargo llvm-cov report --summary-only
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: disk after the tests with coverage (evidence, never a gate)
-        if: ${{ always() }}
-        timeout-minutes: 3
-        continue-on-error: true
-        run: ci/disk-watch.sh snap "rust, after the tests with coverage"
-      - name: upload test results
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: linux-test-results
-          path: |
-            ${{ runner.temp }}/disk-watch-*.log
-            target/nextest/ci/junit.xml
-            target/lcov.info
-            target/coverage-summary.json
-          retention-days: 14
-          if-no-files-found: ignore
-      # Off the light mode (worked out again from the event, not from `scope`) both gates must have run.
+      # Off the light mode (worked out again from the event, not from `scope`) the gate must have run.
       - name: the gates the light mode skips ran
         if: ${{ !cancelled() }}
         env:
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh full-steps git-env=${{ steps.git-env.outcome }} notices=${{ steps.notices.outcome }}
+        run: ci/scope.sh full-steps notices=${{ steps.notices.outcome }}
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true
@@ -578,6 +678,7 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
+  # UI unit tests, licences and the Chromium end-to-end tests. WebKit runs in `ui-webkit` beside it.
   ui:
     name: linux (UI gates)
     needs: [scope, queue-tested]
@@ -588,11 +689,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      # The light pull request mode runs the end-to-end tests on Chromium only (ui/playwright.config.ts);
-      # so does a merge queue run with PUDDLE_TIER=on whose diff touches nothing WebKit sees differently
-      # (webkit.yml runs WebKit nightly). Every other run, a pull request to main included, runs both
-      # browsers. Empty means every browser.
-      PUDDLE_E2E_PROJECTS: ${{ (needs.scope.outputs.light == 'true' || needs.scope.outputs.defer_linux_webkit == 'true') && 'chromium' || '' }}
+      PUDDLE_E2E_PROJECTS: chromium
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -616,18 +713,15 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
-      - name: Playwright browsers (Chromium and WebKit, or Chromium alone when narrowed above; their system libraries every time)
+      - name: Playwright Chromium and its system libraries
         timeout-minutes: 10
         run: |
           ci/apt-setup.sh
           cd ui
           npm ci --ignore-scripts --no-audit --no-fund
-          browsers="${PUDDLE_E2E_PROJECTS:-chromium webkit}"
-          # shellcheck disable=SC2086 # one word per browser
-          ../ci/apt-retry.sh npx playwright install-deps $browsers
+          ../ci/apt-retry.sh npx playwright install-deps chromium
           if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
-            # shellcheck disable=SC2086 # one word per browser
-            npx playwright install $browsers
+            npx playwright install chromium
           fi
       - name: Save the Playwright browsers
         if: ${{ github.ref == 'refs/heads/develop' && steps.browsers.outputs.cache-hit != 'true' }}
@@ -640,8 +734,7 @@ jobs:
       - name: UI licences (npm packages in the bundle)
         if: ${{ !cancelled() }}
         run: scripts/check.sh ui-licences
-      - name: UI end-to-end (Playwright, Chromium and WebKit unless narrowed above, axe)
-        id: ui-e2e
+      - name: UI end-to-end (Playwright, Chromium, axe)
         if: ${{ !cancelled() }}
         run: scripts/check.sh ui-e2e
       - name: upload UI test results
@@ -656,16 +749,73 @@ jobs:
             ui/coverage/coverage-summary.json
           retention-days: 14
           if-no-files-found: ignore
-      # Off the light mode (worked out again from the event) both browsers must have run, except on a merge queue
-      # run in the nightly tier that scope said may skip WebKit.
-      - name: the end-to-end tests ran on every browser
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
+  # The WebKit half of the UI end-to-end tests, in a job of its own so it runs beside the Chromium half. It skips
+  # in the light pull request mode (the merge queue runs it) and on a merge queue run in the nightly tier whose
+  # diff changes nothing WebKit sees differently (webkit.yml runs WebKit nightly): the result job accepts both
+  # skips (specs `,queue` and `,defer:defer_linux_webkit`). A pull request to main runs it.
+  ui-webkit:
+    name: linux (UI end-to-end, WebKit)
+    needs: [scope, queue-tested]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ui != 'false' && needs.scope.outputs.light != 'true' && needs.scope.outputs.defer_linux_webkit != 'true' && needs.queue-tested.outputs.skip != 'true' }}
+    permissions:
+      contents: read
+      actions: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PUDDLE_E2E_PROJECTS: webkit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      # No Rust cache, for the reason given in the `ui` job.
+      - name: Node for the UI
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      # Its own key: the entry the `ui` job saves holds Chromium (or both), so a shared key would give this job a hit
+      # without WebKit. Restored everywhere, saved only by develop; webkit.yml restores it too.
+      - name: Playwright WebKit cache
+        id: browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: Playwright WebKit and its system libraries
+        timeout-minutes: 10
+        run: |
+          ci/apt-setup.sh
+          cd ui
+          npm ci --ignore-scripts --no-audit --no-fund
+          ../ci/apt-retry.sh npx playwright install-deps webkit
+          if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
+            npx playwright install webkit
+          fi
+      - name: Save the Playwright WebKit
+        if: ${{ github.ref == 'refs/heads/develop' && steps.browsers.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: UI end-to-end (Playwright, WebKit, axe)
+        run: scripts/check.sh ui-e2e
+      - name: upload UI test results
         if: ${{ !cancelled() }}
-        env:
-          PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
-          PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
-          DEFER_LINUX_WEBKIT: ${{ needs.scope.outputs.defer_linux_webkit }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh full-steps ui-e2e=${{ steps.ui-e2e.outcome }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-ui-webkit-test-results
+          path: |
+            ui/playwright-report
+            ui/test-results
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true
@@ -736,7 +886,7 @@ jobs:
   # develop push the Rust, msvc and UI jobs may also skip when `queue-tested` said so (`pushskip`).
   linux:
     name: linux (all gates)
-    needs: [scope, queue-tested, rust, msvc, light, ui, advisories, advisories-npm]
+    needs: [scope, queue-tested, rust, gates, msvc, light, ui, ui-webkit, advisories, advisories-npm]
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -749,5 +899,6 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
           PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
+          PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh verdict rust=ci_rust,pushskip msvc=ci_rust,pushskip light='!ci_rust' ui=ui,pushskip
+        run: ci/scope.sh verdict rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip light='!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit

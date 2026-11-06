@@ -240,7 +240,7 @@ async fn absolute_form_goes_through_the_company_proxy() {
     rig.policy.allow(&host("plain.test"));
     let mut guest = rig.guest().await;
     let (code, _, mut body) = guest
-        .request("GET http://plain.test:8080/a/b?q=1 HTTP/1.1\r\nHost: plain.test:8080\r\n\r\n")
+        .request("GET http://plain.test:8080/a/b?q=1 HTTP/1.1\r\nHost: plain.test:8080\r\nConnection: close\r\n\r\n")
         .await;
     assert_eq!(code, 200);
     assert_eq!(
@@ -286,7 +286,9 @@ async fn a_407_from_the_company_proxy_is_answered_with_the_configured_credential
 
     // Plain HTTP on the same proxy: probe, credential, request carrying Basic.
     let (code, _, body) = guest
-        .request("GET http://plain.test:80/x HTTP/1.1\r\nHost: plain.test\r\n\r\n")
+        .request(
+            "GET http://plain.test:80/x HTTP/1.1\r\nHost: plain.test\r\nConnection: close\r\n\r\n",
+        )
         .await;
     assert_eq!(
         code, 403,
@@ -295,7 +297,9 @@ async fn a_407_from_the_company_proxy_is_answered_with_the_configured_credential
     drop(body);
     rig.policy.allow(&host("plain.test"));
     let (code, _, mut body) = guest
-        .request("GET http://plain.test:80/x HTTP/1.1\r\nHost: plain.test\r\n\r\n")
+        .request(
+            "GET http://plain.test:80/x HTTP/1.1\r\nHost: plain.test\r\nConnection: close\r\n\r\n",
+        )
         .await;
     assert_eq!(code, 200);
     assert!(
@@ -547,7 +551,7 @@ async fn hostile_when_every_address_is_ip_denied_no_hop_is_contacted() {
 }
 
 #[tokio::test]
-async fn hostile_a_guest_cannot_supply_proxy_credentials_or_a_second_request() {
+async fn hostile_a_guest_cannot_supply_proxy_credentials_or_smuggle_a_second_request() {
     let proxy = FakeProxy::start(Behaviour::Open).await;
     let (up, _) = upstream(vec![via(&proxy)], Arc::new(NoAuth));
     let rig = Rig::new(StaticResolver::new().with("plain.test", &[LOCAL]), up, None);
@@ -560,7 +564,8 @@ async fn hostile_a_guest_cannot_supply_proxy_credentials_or_a_second_request() {
             "Proxy-Authorization: Basic Z3Vlc3Q6Z3Vlc3Q=\r\n",
             "Proxy-Connection: keep-alive\r\n",
             "\r\n",
-            "GET http://plain.test/two HTTP/1.1\r\nHost: plain.test\r\n\r\n",
+            "GET http://plain.test/two HTTP/1.1\r\nHost: plain.test\r\n",
+            "Proxy-Authorization: Basic c2Vjb25kOnNlY29uZA==\r\nConnection: close\r\n\r\n",
         ))
         .await;
     assert_eq!(code, 200);
@@ -570,14 +575,20 @@ async fn hostile_a_guest_cannot_supply_proxy_credentials_or_a_second_request() {
         .into_iter()
         .filter(|s| s.method == "GET")
         .collect();
-    assert_eq!(gets.len(), 1, "the pipelined request was dropped");
-    assert_eq!(gets[0].target, "http://plain.test:80/one");
     assert_eq!(
-        gets[0].proxy_authorization, None,
-        "the guest's credential is not forwarded"
+        gets.iter().map(|g| g.target.as_str()).collect::<Vec<_>>(),
+        ["http://plain.test:80/one", "http://plain.test:80/two"],
+        "the pipelined request goes as its own request, decided on its own"
     );
-    let host_header = gets[0].headers.iter().find(|(n, _)| n == "host").unwrap();
-    assert_eq!(host_header.1, "plain.test", "Host is the checked target");
+    assert_eq!(rig.events(2).await.len(), 2, "one record per request");
+    for get in &gets {
+        assert_eq!(
+            get.proxy_authorization, None,
+            "the guest's credential is not forwarded"
+        );
+        let host_header = get.headers.iter().find(|(n, _)| n == "host").unwrap();
+        assert_eq!(host_header.1, "plain.test", "Host is the checked target");
+    }
 }
 
 /// With Puddle's own credential for the company proxy configured, a guest's `Proxy-Authorization`
@@ -612,7 +623,7 @@ async fn hostile_hg17_the_guests_proxy_authorization_never_reaches_the_company_p
     drop(tunnel);
     let (code, _, mut body) = guest
         .request(&format!(
-            "GET http://site.test:{port}/x HTTP/1.1\r\nHost: site.test\r\nProxy-Authorization: {}\r\nPROXY-AUTHORIZATION: {}\r\n\r\n",
+            "GET http://site.test:{port}/x HTTP/1.1\r\nHost: site.test\r\nProxy-Authorization: {}\r\nPROXY-AUTHORIZATION: {}\r\nConnection: close\r\n\r\n",
             theirs[0],
             theirs[1],
             port = server.addr.port()

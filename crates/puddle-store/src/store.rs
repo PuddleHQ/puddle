@@ -1640,6 +1640,38 @@ mod tests {
     }
 
     #[test]
+    fn an_audit_record_carries_the_name_its_workspace_had_when_it_was_written() {
+        let (_, store) = store();
+        let acme = WorkspaceId::new("acme").unwrap();
+        let op = |workspace: Option<&WorkspaceId>| NewWorkspaceOp {
+            op: WorkspaceOpKind::Rename,
+            workspace: workspace.cloned(),
+            outcome: WorkspaceOpOutcome::Succeeded,
+            actor: Actor::Ui,
+            detail: None,
+        };
+        store.record_workspace_op(&op(Some(&acme))).unwrap(); // before any name
+        store.set_workspace_name(&acme, "Acme shop").unwrap();
+        store.record_workspace_op(&op(Some(&acme))).unwrap();
+        store.set_workspace_name(&acme, "Acme").unwrap();
+        store.record_workspace_op(&op(Some(&acme))).unwrap();
+        store.record_workspace_op(&op(None)).unwrap(); // no workspace
+
+        let ids: Vec<i64> = store
+            .audit_lines(0, 100)
+            .unwrap()
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(ids.len(), 4);
+        let names = store.audit_workspace_names(&ids).unwrap();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert_eq!(names[&ids[1]], "Acme shop");
+        assert_eq!(names[&ids[2]], "Acme");
+        assert!(store.audit_workspace_names(&[]).unwrap().is_empty());
+    }
+
+    #[test]
     fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name() {
         let (_, store) = store();
         let ws = WorkspaceId::new("acme").unwrap();

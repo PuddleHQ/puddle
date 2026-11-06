@@ -276,7 +276,7 @@ struct Inner {
     quitting: AtomicBool,
     /// The cookie the last sign-in gave a workspace, with the password it was for: the editor's
     /// login limits how often one can sign in, and a window reopened a moment later must not hit it.
-    sessions: Mutex<HashMap<WorkspaceId, (String, SessionCookie)>>,
+    sessions: Mutex<HashMap<WorkspaceId, (zeroize::Zeroizing<String>, SessionCookie)>>,
 }
 
 impl SandboxWindows {
@@ -412,7 +412,7 @@ impl SandboxWindows {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(workspace)
-            && for_password == password
+            && **for_password == *password
         {
             return Ok(cookie.clone());
         }
@@ -421,7 +421,10 @@ impl SandboxWindows {
             .sessions
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(workspace.clone(), (password.to_owned(), cookie.clone()));
+            .insert(
+                workspace.clone(),
+                (zeroize::Zeroizing::new(password.to_owned()), cookie.clone()),
+            );
         Ok(cookie)
     }
 

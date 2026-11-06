@@ -16,7 +16,8 @@ use crate::common;
 use common::{CANARY, Fakes};
 use puddle_secrets::{
     AccountName, Fetch, HostName, MemoryStore, OrgName, Refusal, Secret, SecretCache, SecretStore,
-    SignInNeeded, SourceError, SourceSpec, Sources, StoredId, TokenScope, Tool, ToolPaths, UrlPath,
+    SignInNeeded, SourceError, SourceSpec, Sources, StoredId, TenantId, TokenScope, Tool,
+    ToolPaths, UrlPath,
 };
 
 fn sources(gh: Option<PathBuf>, git: Option<PathBuf>) -> Sources {
@@ -313,4 +314,129 @@ async fn a_tool_that_is_not_allowed_to_run_is_not_reported_missing() {
         .await
         .unwrap_err();
     assert_eq!(err, SourceError::CouldNotRun(Tool::Gh));
+}
+
+const TENANT: &str = "72f988bf-86f1-41af-91ab-2d7cd011db47";
+
+fn az_spec() -> SourceSpec {
+    SourceSpec::AzCli {
+        tenant: TenantId::new(TENANT).unwrap(),
+        org: Some(OrgName::new("acme").unwrap()),
+    }
+}
+
+fn az_sources(az: Option<PathBuf>) -> Sources {
+    Sources::new(
+        ToolPaths::new(None, None).with_az(az),
+        Arc::new(MemoryStore::new()),
+    )
+}
+
+fn az_answer(tenant: &str) -> String {
+    format!(
+        "[]\nstdout={{\"accessToken\":\"{CANARY}-az\",\"expires_on\":9999999999,\"tenant\":\"{tenant}\"}}\\n\n"
+    )
+}
+
+#[tokio::test]
+async fn az_cli_uses_the_fixed_arguments() {
+    let fakes = Fakes::new();
+    let az = fakes.install("az", &az_answer(TENANT));
+    let got = az_sources(Some(az.clone()))
+        .fetch(&az_spec())
+        .await
+        .unwrap();
+    assert_eq!(got.credential.secret.expose(), format!("{CANARY}-az"));
+    assert!(got.valid_for.is_some());
+    let log = Fakes::log(&az);
+    assert!(
+        log.contains(&format!(
+            "ARGS account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --tenant {TENANT} --output json\n"
+        )),
+        "{log}"
+    );
+    assert_eq!(az_spec().scope().host.as_str(), "dev.azure.com");
+}
+
+#[tokio::test]
+async fn az_cli_refuses_an_answer_for_another_tenant() {
+    let fakes = Fakes::new();
+    let az = fakes.install("az", &az_answer("11111111-2222-3333-4444-555555555555"));
+    let err = az_sources(Some(az)).fetch(&az_spec()).await.unwrap_err();
+    assert_eq!(err, SourceError::WrongTenant);
+}
+
+#[tokio::test]
+async fn az_cli_exit_one_with_login_hint_is_not_signed_in() {
+    let fakes = Fakes::new();
+    let az = fakes.install(
+        "az",
+        "[]\nexit=1\nstderr=ERROR: Please run 'az login' to setup account.\\n\n",
+    );
+    let err = az_sources(Some(az)).fetch(&az_spec()).await.unwrap_err();
+    assert_eq!(err, SourceError::NotSignedIn);
+    assert!(err.needs_sign_in());
+}
+
+#[tokio::test]
+async fn az_cli_tells_each_missing_piece_apart() {
+    let fakes = Fakes::new();
+    let wrong = fakes.install(
+        "az",
+        "[]\nexit=1\nstderr=AADSTS90002: Tenant not found.\\n\n",
+    );
+    assert_eq!(
+        az_sources(Some(wrong)).fetch(&az_spec()).await.unwrap_err(),
+        SourceError::WrongTenant
+    );
+    let fakes = Fakes::new();
+    let noaccess = fakes.install("az", "[]\nexit=1\nstderr=AADSTS65001: no consent\\n\n");
+    assert_eq!(
+        az_sources(Some(noaccess))
+            .fetch(&az_spec())
+            .await
+            .unwrap_err(),
+        SourceError::NoAccess
+    );
+    assert_eq!(
+        az_sources(None).fetch(&az_spec()).await.unwrap_err(),
+        SourceError::ToolMissing(Tool::Az)
+    );
+    let fakes = Fakes::new();
+    let broken = fakes.install("az", "[]\nexit=2\nstderr=Traceback boom\\n\n");
+    assert_eq!(
+        az_sources(Some(broken))
+            .fetch(&az_spec())
+            .await
+            .unwrap_err(),
+        SourceError::CouldNotRun(Tool::Az)
+    );
+    let fakes = Fakes::new();
+    let slow = fakes.install("az", "[]\nsleep_ms=5000\n");
+    let err = az_sources(Some(slow))
+        .with_timeout(Duration::from_millis(300))
+        .fetch(&az_spec())
+        .await
+        .unwrap_err();
+    assert_eq!(err, SourceError::Timeout(Tool::Az));
+}
+
+#[tokio::test]
+async fn az_cli_stderr_never_reaches_the_error() {
+    let fakes = Fakes::new();
+    let az = fakes.install("az", &format!("[]\nexit=2\nstderr={CANARY}-stderr\\n\n"));
+    let err = az_sources(Some(az)).fetch(&az_spec()).await.unwrap_err();
+    assert!(!format!("{err} {err:?}").contains(CANARY));
+}
+
+#[tokio::test]
+async fn az_cli_is_cached_between_requests() {
+    let fakes = Fakes::new();
+    let az = fakes.install("az", &az_answer(TENANT));
+    let cache = SecretCache::new(az_sources(Some(az.clone())));
+    for _ in 0..3 {
+        let got = cache.get(&az_spec()).await.unwrap();
+        assert_eq!(got.secret.expose(), format!("{CANARY}-az"));
+    }
+    assert_eq!(Fakes::log(&az).matches("ARGS ").count(), 1);
 }

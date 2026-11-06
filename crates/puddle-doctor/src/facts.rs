@@ -592,3 +592,83 @@ mod tests {
         );
     }
 }
+
+/// Whether what holds data is encrypted at rest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Protection {
+    /// An encryption layer covers it.
+    Encrypted {
+        /// Which: `BitLocker`, `FileVault`, `LUKS2`, `dm-crypt`, `eCryptfs`.
+        by: String,
+    },
+    /// It is on a drive with no encryption layer the probe knows.
+    NotEncrypted,
+    /// It never reaches a disk (swap in compressed memory, for example).
+    NotOnDisk {
+        /// What it is instead.
+        what: String,
+    },
+    /// The probe could not tell, or the question does not apply here.
+    Unknown {
+        /// Why.
+        why: String,
+    },
+}
+
+/// One place the OS pages memory out to: a swap partition or file, or a Windows page file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwapArea {
+    /// Its device or file.
+    pub name: String,
+    /// Whether it is encrypted.
+    pub protection: Protection,
+}
+
+/// Swap: where the OS pages memory out to, which is where a secret in Puddle's memory can end up
+/// on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SwapFacts {
+    /// The machine has no swap or page file.
+    None,
+    /// The swap areas in use.
+    Areas(Vec<SwapArea>),
+    /// The list of swap areas could not be read.
+    Unreadable {
+        /// Why.
+        why: String,
+    },
+}
+
+impl SwapFacts {
+    /// The swap areas in use; empty when there are none or the list was unreadable.
+    #[must_use]
+    pub fn areas(&self) -> &[SwapArea] {
+        match self {
+            Self::Areas(areas) => areas,
+            Self::None | Self::Unreadable { .. } => &[],
+        }
+    }
+}
+
+/// Whether the drive that holds Puddle's data folder is encrypted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataEncryption {
+    /// Where Puddle keeps its data could not be worked out.
+    NoFolder,
+    /// The drive that holds `dir`.
+    Volume {
+        /// The data folder.
+        dir: PathBuf,
+        /// Its drive's state.
+        protection: Protection,
+    },
+}
+
+/// Disk encryption: the data folder's drive and the swap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskEncryptionFacts {
+    /// Puddle's data folder.
+    pub data: DataEncryption,
+    /// The swap.
+    pub swap: SwapFacts,
+}

@@ -1,0 +1,905 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Git over SSH, the guest's side: a real SSH client (russh) through the agent's route, the real
+//! proxy and the real Git injector, to a recording upstream. What the client may do, what the
+//! table says about each repository, what the record says, and the limits.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "helpers outside #[test] functions fail the test by panicking"
+)]
+use crate::git_support::GitRig;
+use crate::terminate_support::{Guest, Pki, RigBuilder};
+
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use puddle_agent_proto::ssh::{PROTOCOL_HEADER, SSH};
+use puddle_proxy::{
+    BoxFuture, GitSsh, GitSshCommand, GitSshFailure, GitSshGreeting, GitSshHostKey, GitSshLimits,
+    GitSshStream, GitSshUpstream,
+};
+use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionReason, Host};
+use russh::ChannelMsg;
+use russh::client::{self, Handle};
+use russh::keys::PublicKeyOrCertificate;
+use russh::keys::ssh_key::{Algorithm, rand_core};
+use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
+
+/// The operating system's random numbers, for the host key of a test.
+struct Os;
+
+impl rand_core::TryRng for Os {
+    type Error = std::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        let mut bytes = [0; 4];
+        getrandom::fill(&mut bytes).unwrap();
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        let mut bytes = [0; 8];
+        getrandom::fill(&mut bytes).unwrap();
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        getrandom::fill(dst).unwrap();
+        Ok(())
+    }
+}
+
+impl rand_core::TryCryptoRng for Os {}
+
+fn host_key() -> GitSshHostKey {
+    GitSshHostKey::random(&mut Os, Algorithm::Ed25519).unwrap()
+}
+
+/// An upstream that records what it was asked and plays a small Git host: it says which command
+/// it got, then counts what the guest sends until the guest is done.
+#[derive(Debug, Default)]
+struct Recording {
+    calls: Mutex<Vec<GitSshCommand>>,
+    fail: Mutex<Option<String>>,
+    greet: bool,
+}
+
+impl Recording {
+    fn calls(&self) -> Vec<GitSshCommand> {
+        self.calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl GitSshUpstream for Recording {
+    fn run<'a>(
+        &'a self,
+        command: &'a GitSshCommand,
+        io: &'a mut dyn GitSshStream,
+    ) -> BoxFuture<'a, Result<(), GitSshFailure>> {
+        Box::pin(async move {
+            self.calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(command.clone());
+            if let Some(message) = self
+                .fail
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+            {
+                return Err(GitSshFailure::new(message));
+            }
+            let hello = format!("HELLO {} {}\n", command.service.command(), command.path);
+            io.write_all(hello.as_bytes()).await.unwrap();
+            let mut received = Vec::new();
+            io.read_to_end(&mut received).await.unwrap();
+            io.write_all(format!("GOT {} bytes\n", received.len()).as_bytes())
+                .await
+                .unwrap();
+            Ok(())
+        })
+    }
+
+    fn greeting<'a>(&'a self, host: &'a Host) -> BoxFuture<'a, GitSshGreeting> {
+        if self.greet {
+            return Box::pin(std::future::ready(GitSshGreeting {
+                message: format!("Hi octocat! You have authenticated to {host}.\n"),
+                status: 1,
+            }));
+        }
+        Box::pin(std::future::ready(GitSshGreeting {
+            message: format!("puddle: no identity for {host}\n"),
+            status: 255,
+        }))
+    }
+}
+
+/// A workspace with the Git rig of the HTTPS tests and Git over SSH on top of it.
+struct SshRig {
+    git: GitRig,
+    upstream: Arc<Recording>,
+    key: GitSshHostKey,
+}
+
+impl SshRig {
+    async fn new() -> Self {
+        Self::with(Recording::default(), GitSshLimits::default()).await
+    }
+
+    async fn with(upstream: Recording, limits: GitSshLimits) -> Self {
+        let upstream = Arc::new(upstream);
+        let key = host_key();
+        let git_ssh = GitSsh::new(
+            Arc::clone(&upstream) as Arc<dyn GitSshUpstream>,
+            vec![key.clone()],
+        )
+        .with_limits(limits);
+        let world = GitRig::world();
+        let pki = Pki::new();
+        let server = crate::terminate_support::FakeServer::tls(
+            pki.server_config("bound.test", crate::terminate_support::Flaw::None),
+            Arc::new(|_: &crate::terminate_support::Recorded| {
+                crate::terminate_support::Reply::ok("never asked")
+            }),
+        )
+        .await;
+        let rig = RigBuilder::new(&pki)
+            .name("bound.test", server.addr)
+            .name("github.com", server.addr)
+            .name("ssh.github.com", server.addr)
+            .name("gitlab.com", server.addr)
+            .name("ssh.dev.azure.com", server.addr)
+            .name("elsewhere.test", server.addr)
+            .injector(world.injector.clone())
+            .git_ssh(git_ssh)
+            .build();
+        Self {
+            git: GitRig {
+                world,
+                server,
+                rig,
+                stand_in: String::new(),
+            },
+            upstream,
+            key,
+        }
+    }
+
+    /// An SSH client to `authority` through a `CONNECT` the way the agent's `connect` makes it.
+    async fn client(&self, guest: &mut Guest, authority: &str) -> Handle<Trusting> {
+        self.try_client(guest, authority).await.unwrap()
+    }
+
+    async fn try_client(
+        &self,
+        guest: &mut Guest,
+        authority: &str,
+    ) -> Result<Handle<Trusting>, String> {
+        let mut stream = guest.open_stream().await;
+        stream
+            .write_all(
+                format!(
+                    "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut status = String::new();
+        reader.read_line(&mut status).await.unwrap();
+        if !status.contains(" 200 ") {
+            return Err(status);
+        }
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        let seen = Arc::new(Mutex::new(None));
+        let handler = Trusting {
+            seen: Arc::clone(&seen),
+        };
+        let handle = client::connect_stream(Arc::new(client::Config::default()), reader, handler)
+            .await
+            .map_err(|e| e.to_string())?;
+        let shown = seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the server showed a key");
+        assert_eq!(shown, self.key.public_key().to_openssh().unwrap());
+        Ok(handle)
+    }
+
+    async fn events(&self, count: usize) -> Vec<ConnectionEvent> {
+        self.git.rig.events(count).await
+    }
+}
+
+/// A client that takes the server's key (and checks it is the one Puddle serves).
+struct Trusting {
+    seen: Arc<Mutex<Option<String>>>,
+}
+
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the method of russh's `Handler` is async"
+)]
+impl client::Handler for Trusting {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        key: &PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        if let PublicKeyOrCertificate::PublicKey { key, .. } = key {
+            *self.seen.lock().unwrap() = Some(key.to_openssh().unwrap());
+        }
+        Ok(true)
+    }
+}
+
+/// What a command printed and how it ended.
+#[derive(Debug, Default)]
+struct Ran {
+    out: String,
+    err: String,
+    exit: Option<u32>,
+    /// The replies to the requests sent before the command, in order (`true` = success).
+    replies: Vec<bool>,
+}
+
+async fn exec(handle: &Handle<Trusting>, env: &[(&str, &str)], command: &str, stdin: &[u8]) -> Ran {
+    let mut channel = handle.channel_open_session().await.unwrap();
+    for (name, value) in env {
+        channel.set_env(true, *name, *value).await.unwrap();
+    }
+    channel.exec(true, command).await.unwrap();
+    if !stdin.is_empty() {
+        channel.data(stdin).await.unwrap();
+    }
+    channel.eof().await.unwrap();
+    collect(&mut channel, env.len() + 1).await
+}
+
+async fn collect(channel: &mut russh::Channel<client::Msg>, replies: usize) -> Ran {
+    let mut ran = Ran::default();
+    while let Ok(Some(message)) = tokio::time::timeout(Duration::from_secs(5), channel.wait()).await
+    {
+        match message {
+            ChannelMsg::Data { data } => ran.out.push_str(&String::from_utf8_lossy(&data)),
+            ChannelMsg::ExtendedData { data, ext: 1 } => {
+                ran.err.push_str(&String::from_utf8_lossy(&data));
+            }
+            ChannelMsg::ExitStatus { exit_status } => ran.exit = Some(exit_status),
+            ChannelMsg::Success if ran.replies.len() < replies => ran.replies.push(true),
+            ChannelMsg::Failure if ran.replies.len() < replies => ran.replies.push(false),
+            ChannelMsg::Close => break,
+            _ => {}
+        }
+    }
+    ran
+}
+
+async fn login(handle: &mut Handle<Trusting>) {
+    assert!(handle.authenticate_none("git").await.unwrap().success());
+}
+
+// ---------------------------------------------------------------------------------------------
+// The guest's side: login, commands, the table, the record.
+
+#[tokio::test]
+async fn a_listed_repository_is_read_and_written_and_the_record_says_who_with_what() {
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let fetch = exec(
+        &ssh,
+        &[("GIT_PROTOCOL", "version=2")],
+        "git-upload-pack '/acme/web.git'",
+        b"0014command=ls-refs\n",
+    )
+    .await;
+    assert_eq!(fetch.exit, Some(0), "{fetch:?}");
+    assert_eq!(
+        fetch.out,
+        "HELLO git-upload-pack /acme/web.git\nGOT 20 bytes\n"
+    );
+    assert_eq!(fetch.replies, [true, true]);
+    let push = exec(&ssh, &[], "git-receive-pack 'acme/web'", b"pack").await;
+    assert_eq!(push.exit, Some(0), "{push:?}");
+    assert!(push.out.starts_with("HELLO git-receive-pack /acme/web.git"));
+    let calls = t.upstream.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].host.to_string(), "bound.test");
+    assert_eq!(calls[0].git_protocol.as_deref(), Some("version=2"));
+    assert_eq!(calls[1].git_protocol, None);
+    assert!(
+        calls[0]
+            .binding_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("identity:"))
+    );
+    drop(ssh);
+    let events = t.events(1).await;
+    let event = &events[0];
+    assert_eq!(event.decision, ConnectionDecision::Allow);
+    assert_eq!(event.port, 22);
+    let line = event.http.as_ref().unwrap();
+    assert_eq!(
+        (line.method(), line.path()),
+        ("git-upload-pack", "/acme/web")
+    );
+    assert!(event.injected);
+    assert!(event.binding_id.is_some());
+    assert!(event.bytes_up > 0 && event.bytes_down > 0);
+    assert_eq!(t.git.raised(), []);
+}
+
+#[tokio::test]
+async fn a_push_to_a_repository_off_the_list_ends_before_anything_goes_upstream() {
+    let t = SshRig::new().await;
+    t.git.world.switches(true, false);
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let refused = exec(&ssh, &[], "git-receive-pack 'acme/other.git'", b"").await;
+    assert_eq!(refused.exit, Some(1), "{refused:?}");
+    assert!(
+        refused.err.starts_with(
+            "puddle: push to bound.test/acme/other is not on this workspace's push list"
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(refused.out, "");
+    // A fetch of it is another switch and goes through.
+    let fetched = exec(&ssh, &[], "git-upload-pack 'acme/other.git'", b"").await;
+    assert_eq!(fetched.exit, Some(0), "{fetched:?}");
+    assert_eq!(t.upstream.calls().len(), 1);
+    assert_eq!(t.upstream.calls()[0].service.command(), "git-upload-pack");
+    drop(ssh);
+    let events = t.events(1).await;
+    assert_eq!(events[0].decision, ConnectionDecision::Blocked);
+    assert_eq!(events[0].reason, ConnectionReason::Refused("push_denied"));
+    let line = events[0].http.as_ref().unwrap();
+    assert_eq!(
+        (line.method(), line.path()),
+        ("git-receive-pack", "/acme/other")
+    );
+    assert!(
+        t.git
+            .raised()
+            .iter()
+            .any(|e| matches!(e, puddle_types::Event::GitAccessDenied { .. }))
+    );
+}
+
+#[tokio::test]
+async fn the_owner_in_the_path_chooses_the_identity_and_an_alias_changes_nothing() {
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    // The SSH user name is whatever the guest likes; the owner decides.
+    assert!(
+        ssh.authenticate_none("github-work")
+            .await
+            .unwrap()
+            .success()
+    );
+    exec(&ssh, &[], "git-upload-pack 'acme/web'", b"").await;
+    exec(&ssh, &[], "git-upload-pack 'someone/else'", b"").await;
+    let calls = t.upstream.calls();
+    assert_eq!(calls.len(), 2);
+    assert_ne!(calls[0].binding_id, calls[1].binding_id);
+}
+
+#[tokio::test]
+async fn any_login_method_is_accepted_and_none_of_it_is_kept() {
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    let mut by_password = t.client(&mut guest, "bound.test:22").await;
+    assert!(
+        by_password
+            .authenticate_password("git", "CANARY-PASSWORD")
+            .await
+            .unwrap()
+            .success()
+    );
+    let mut by_key = t.client(&mut guest, "bound.test:22").await;
+    let key = russh::keys::PrivateKey::random(&mut Os, Algorithm::Ed25519).unwrap();
+    assert!(
+        by_key
+            .authenticate_publickey(
+                "git",
+                russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None)
+            )
+            .await
+            .unwrap()
+            .success()
+    );
+    let ran = exec(&by_key, &[], "git-upload-pack 'acme/web'", b"").await;
+    assert_eq!(ran.exit, Some(0));
+    drop((by_password, by_key));
+    assert!(!format!("{:?}", t.events(2).await).contains("CANARY-PASSWORD"));
+    assert!(!crate::terminate_support::captured_logs().contains("CANARY-PASSWORD"));
+}
+
+#[tokio::test]
+async fn commands_outside_the_grammar_are_refused_and_nothing_goes_upstream() {
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    for (command, code) in [
+        (
+            "git-upload-archive 'acme/web.git'",
+            "ssh_command_unsupported",
+        ),
+        ("git upload-pack 'acme/web.git'", "ssh_command_unsupported"),
+        ("; id", "ssh_command_unsupported"),
+        ("sh -c id", "ssh_command_unsupported"),
+        (
+            "git-upload-pack 'acme/web.git' more",
+            "ssh_command_unsupported",
+        ),
+        ("scp -t /tmp", "ssh_command_unsupported"),
+        ("git-upload-pack '../etc'", "bad_git_path"),
+        ("git-upload-pack 'acme/../web'", "bad_git_path"),
+        ("git-upload-pack acme/web", "bad_git_path"),
+        ("git-receive-pack 'acme/web;id'", "bad_git_path"),
+    ] {
+        let ran = exec(&ssh, &[], command, b"x").await;
+        assert_eq!(ran.exit, Some(1), "{command}: {ran:?}");
+        assert!(ran.err.starts_with("puddle: "), "{command}: {ran:?}");
+        assert!(ran.err.contains(code), "{command}: {ran:?}");
+        assert_eq!(ran.out, "", "{command}");
+    }
+    assert_eq!(t.upstream.calls().len(), 0);
+    drop(ssh);
+    let events = t.events(1).await;
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::Refused("ssh_command_unsupported")
+    );
+}
+
+#[tokio::test]
+async fn a_failure_of_the_upstream_is_one_line_and_exit_status_1() {
+    let t = SshRig::new().await;
+    *t.upstream.fail.lock().unwrap() = Some("the Git host did not answer".to_owned());
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let ran = exec(&ssh, &[], "git-upload-pack 'acme/web'", b"").await;
+    assert_eq!(ran.exit, Some(1));
+    assert_eq!(ran.err, "puddle: the Git host did not answer\n");
+}
+
+#[tokio::test]
+async fn git_lfs_falls_back_to_https_with_no_token_in_the_answer() {
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let transfer = exec(&ssh, &[], "git-lfs-transfer 'acme/web.git' upload", b"").await;
+    assert_eq!(
+        (transfer.exit, transfer.out.as_str(), transfer.err.as_str()),
+        (Some(127), "", "")
+    );
+    let auth = exec(&ssh, &[], "git-lfs-authenticate 'acme/web.git' upload", b"").await;
+    assert_eq!(auth.exit, Some(0), "{auth:?}");
+    assert_eq!(
+        auth.out,
+        "{\"href\":\"https://bound.test/acme/web.git/info/lfs\"}\n"
+    );
+    assert!(!auth.out.contains("token"));
+    t.git.world.switches(true, false);
+    let off = exec(
+        &ssh,
+        &[],
+        "git-lfs-authenticate 'acme/other.git' upload",
+        b"",
+    )
+    .await;
+    assert_eq!(off.exit, Some(1));
+    assert!(off.err.contains("push to bound.test/acme/other"), "{off:?}");
+    assert_eq!(t.upstream.calls().len(), 0);
+}
+
+#[tokio::test]
+async fn a_shell_without_a_terminal_gets_the_upstreams_greeting_and_exit_status() {
+    let t = SshRig::with(
+        Recording {
+            greet: true,
+            ..Recording::default()
+        },
+        GitSshLimits::default(),
+    )
+    .await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let mut channel = ssh.channel_open_session().await.unwrap();
+    channel.request_shell(true).await.unwrap();
+    let ran = collect(&mut channel, 1).await;
+    assert_eq!(ran.exit, Some(1));
+    assert_eq!(
+        ran.err,
+        "Hi octocat! You have authenticated to bound.test.\n"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// What a session may not do.
+
+#[tokio::test]
+async fn a_terminal_a_subsystem_agent_x11_a_second_command_and_other_variables_are_refused() {
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+
+    let mut pty = ssh.channel_open_session().await.unwrap();
+    pty.request_pty(true, "xterm", 80, 24, 0, 0, &[])
+        .await
+        .unwrap();
+    assert!(!collect_one(&mut pty).await);
+
+    let mut sftp = ssh.channel_open_session().await.unwrap();
+    sftp.request_subsystem(true, "sftp").await.unwrap();
+    assert!(!collect_one(&mut sftp).await);
+
+    let mut agent = ssh.channel_open_session().await.unwrap();
+    agent.agent_forward(true).await.unwrap();
+    assert!(!collect_one(&mut agent).await);
+
+    let mut x11 = ssh.channel_open_session().await.unwrap();
+    x11.request_x11(true, false, "MIT-MAGIC-COOKIE-1", "00", 0)
+        .await
+        .unwrap();
+    assert!(!collect_one(&mut x11).await);
+
+    let mut env = ssh.channel_open_session().await.unwrap();
+    env.set_env(true, "LD_PRELOAD", "/tmp/x.so").await.unwrap();
+    assert!(!collect_one(&mut env).await);
+    env.set_env(true, "GIT_PROTOCOL", "version=9")
+        .await
+        .unwrap();
+    assert!(!collect_one(&mut env).await);
+    env.set_env(true, "GIT_PROTOCOL", "version=2")
+        .await
+        .unwrap();
+    assert!(collect_one(&mut env).await);
+
+    let mut twice = ssh.channel_open_session().await.unwrap();
+    twice
+        .exec(true, "git-upload-pack 'acme/web'")
+        .await
+        .unwrap();
+    twice
+        .exec(true, "git-upload-pack 'acme/web'")
+        .await
+        .unwrap();
+    twice.eof().await.unwrap();
+    let ran = collect(&mut twice, 2).await;
+    assert_eq!(ran.replies, [true, false], "{ran:?}");
+    assert_eq!(ran.exit, Some(0));
+    assert_eq!(t.upstream.calls().len(), 1);
+}
+
+/// Whether the next reply to a request on `channel` is a success.
+async fn collect_one(channel: &mut russh::Channel<client::Msg>) -> bool {
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(5), channel.wait())
+            .await
+            .expect("an answer")
+            .expect("the channel is open");
+        match message {
+            ChannelMsg::Success => return true,
+            ChannelMsg::Failure => return false,
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn forwarding_in_either_direction_is_refused_with_a_reason() {
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let direct = ssh
+        .channel_open_direct_tcpip("127.0.0.1", 9, "127.0.0.1", 1234)
+        .await;
+    let err = direct.expect_err("a forward is refused").to_string();
+    assert!(err.contains("AdministrativelyProhibited"), "{err}");
+    assert!(ssh.tcpip_forward("127.0.0.1", 2222).await.is_err());
+    assert!(
+        ssh.channel_open_direct_streamlocal("/var/run/docker.sock")
+            .await
+            .is_err()
+    );
+    let ran = exec(&ssh, &[], "git-upload-pack 'acme/web'", b"").await;
+    assert_eq!(ran.exit, Some(0), "the connection still works: {ran:?}");
+    assert_eq!(t.upstream.calls().len(), 1);
+    drop(ssh);
+    let events = t.events(1).await;
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::Refused("ssh_channel_refused")
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Which connections are served, and the limits.
+
+#[tokio::test]
+async fn ssh_to_a_name_that_is_not_a_git_host_is_refused_as_before() {
+    let t = SshRig::new().await;
+    t.git
+        .rig
+        .policy
+        .allow(&crate::terminate_support::host("elsewhere.test"));
+    let mut guest = t.git.rig.guest();
+    let refused = t.try_client(&mut guest, "elsewhere.test:22").await;
+    assert!(refused.is_err_and(|status| status.contains(" 403 ") || status.contains(" 4")));
+    let events = t.events(1).await;
+    assert_eq!(events[0].decision, ConnectionDecision::Blocked);
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::Blocked(puddle_types::BlockReason::SshUnsupported)
+    );
+}
+
+#[tokio::test]
+async fn a_git_host_the_rules_do_not_allow_is_not_served() {
+    let t = SshRig::new().await;
+    t.git
+        .rig
+        .policy
+        .deny_host(&crate::terminate_support::host("bound.test"));
+    let mut guest = t.git.rig.guest();
+    assert!(t.try_client(&mut guest, "bound.test:22").await.is_err());
+    assert_eq!(t.upstream.calls().len(), 0);
+}
+
+#[tokio::test]
+async fn the_built_in_git_hosts_are_served_whether_or_not_an_identity_covers_them() {
+    let t = SshRig::new().await;
+    for name in [
+        "github.com",
+        "ssh.github.com",
+        "gitlab.com",
+        "ssh.dev.azure.com",
+    ] {
+        t.git
+            .rig
+            .policy
+            .allow(&crate::terminate_support::host(name));
+    }
+    let mut guest = t.git.rig.guest();
+    for (name, command, host, path) in [
+        (
+            "github.com:22",
+            "git-upload-pack 'a/b.git'",
+            "github.com",
+            "/a/b.git",
+        ),
+        (
+            "ssh.github.com:443",
+            "git-upload-pack '/a/b'",
+            "github.com",
+            "/a/b.git",
+        ),
+        (
+            "gitlab.com:22",
+            "git-upload-pack 'g/s/p.git'",
+            "gitlab.com",
+            "/g/s/p.git",
+        ),
+        (
+            "ssh.dev.azure.com:22",
+            "git-upload-pack 'v3/org/My%20Proj/repo'",
+            "dev.azure.com",
+            "/org/My%20Proj/_git/repo",
+        ),
+    ] {
+        let mut ssh = t.client(&mut guest, name).await;
+        login(&mut ssh).await;
+        let ran = exec(&ssh, &[], command, b"").await;
+        assert_eq!(ran.exit, Some(0), "{name}: {ran:?}");
+        let call = t.upstream.calls().pop().unwrap();
+        assert_eq!(
+            (call.host.to_string().as_str(), call.path.as_str()),
+            (host, path)
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_guest_that_never_finishes_its_handshake_is_closed() {
+    let limits = GitSshLimits {
+        handshake: Duration::from_millis(300),
+        ..GitSshLimits::default()
+    };
+    let t = SshRig::with(Recording::default(), limits).await;
+    let guest = t.git.rig.guest();
+    let mut stream = guest.open_stream().await;
+    stream
+        .write_all(
+            format!(
+                "CONNECT bound.test:22 HTTP/1.1\r\nHost: bound.test:22\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    // The 200 and Puddle's banner come, then the guest says nothing.
+    let mut sink = Vec::new();
+    // The close may come as a reset: what matters is that it comes.
+    let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut sink))
+        .await
+        .expect("the proxy closes the connection");
+    t.events(1).await;
+}
+
+#[tokio::test]
+async fn a_connection_with_no_open_channel_is_closed_after_the_idle_limit() {
+    let limits = GitSshLimits {
+        idle: Duration::from_millis(300),
+        ..GitSshLimits::default()
+    };
+    let t = SshRig::with(Recording::default(), limits).await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !ssh.is_closed() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the idle connection is closed");
+    t.events(1).await;
+}
+
+#[tokio::test]
+async fn a_busy_connection_is_not_closed_by_the_idle_limit_and_channels_are_capped() {
+    let limits = GitSshLimits {
+        idle: Duration::from_millis(200),
+        channels: 2,
+        ..GitSshLimits::default()
+    };
+    let t = SshRig::with(Recording::default(), limits).await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    // Two commands that wait for the guest's input keep two channels open.
+    let mut first = ssh.channel_open_session().await.unwrap();
+    first
+        .exec(true, "git-upload-pack 'acme/web'")
+        .await
+        .unwrap();
+    let second = ssh.channel_open_session().await.unwrap();
+    second
+        .exec(true, "git-upload-pack 'acme/web'")
+        .await
+        .unwrap();
+    assert!(
+        ssh.channel_open_session().await.is_err(),
+        "a third channel is over the cap"
+    );
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(!ssh.is_closed(), "busy, so not idle");
+    first.eof().await.unwrap();
+    let ran = collect(&mut first, 1).await;
+    assert_eq!(ran.exit, Some(0), "{ran:?}");
+    second.eof().await.unwrap();
+}
+
+/// Swallows the first `skip` bytes written to it: a client whose identification line already went
+/// out with the `CONNECT`, as the agent's `connect` command sends it.
+struct SkipWrites<S> {
+    inner: S,
+    skip: usize,
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for SkipWrites<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for SkipWrites<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        data: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.skip > 0 {
+            let n = self.skip.min(data.len());
+            self.skip -= n;
+            return std::task::Poll::Ready(Ok(n));
+        }
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, data)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[tokio::test]
+async fn a_libssh2_client_is_asked_for_a_key_because_it_fails_a_login_with_none() {
+    // libgit2 (cargo's built-in Git) reads an accepted `none` as "no authentication methods
+    // succeeded"; any key will do.
+    const BANNER: &str = "SSH-2.0-libssh2_1.11.1";
+    let t = SshRig::new().await;
+    let guest = t.git.rig.guest();
+    let mut stream = guest.open_stream().await;
+    stream
+        .write_all(
+            format!(
+                "CONNECT bound.test:22 HTTP/1.1\r\nHost: bound.test:22\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\n{BANNER}\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut reader = BufReader::new(stream);
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        if line == "\r\n" {
+            break;
+        }
+    }
+    let config = client::Config {
+        client_id: russh::SshId::Standard(BANNER.into()),
+        ..client::Config::default()
+    };
+    let handler = Trusting {
+        seen: Arc::new(Mutex::new(None)),
+    };
+    let skipping = SkipWrites {
+        inner: reader,
+        skip: BANNER.len() + 2,
+    };
+    let mut ssh = client::connect_stream(Arc::new(config), skipping, handler)
+        .await
+        .unwrap();
+    assert!(!ssh.authenticate_none("git").await.unwrap().success());
+    let key = russh::keys::PrivateKey::random(&mut Os, Algorithm::Ed25519).unwrap();
+    assert!(
+        ssh.authenticate_publickey(
+            "git",
+            russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None)
+        )
+        .await
+        .unwrap()
+        .success()
+    );
+    let ran = exec(&ssh, &[], "git-upload-pack 'acme/web'", b"").await;
+    assert_eq!(ran.exit, Some(0), "{ran:?}");
+}

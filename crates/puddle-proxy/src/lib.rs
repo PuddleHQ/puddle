@@ -69,6 +69,7 @@ mod records;
 mod resolve;
 mod route;
 mod ssh;
+mod ssh_git;
 mod tap;
 mod target;
 pub mod terminate;
@@ -83,6 +84,10 @@ pub use proxy::{Proxy, ProxyConfig, WorkspaceHandler};
 pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use records::{RecordError, RecordResolver, Records, SystemRecords};
 pub use route::Route;
+pub use ssh_git::{
+    GitService, GitSsh, GitSshCommand, GitSshFailure, GitSshGreeting, GitSshHostKey, GitSshLimits,
+    GitSshStream, GitSshUpstream,
+};
 pub use terminate::{
     AnswerHead, AnswerRewriter, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange, ExchangeRewriter,
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,

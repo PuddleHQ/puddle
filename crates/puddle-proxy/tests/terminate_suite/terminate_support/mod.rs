@@ -635,6 +635,8 @@ pub(crate) struct RigBuilder {
     pub(crate) interception: Interception,
     /// The rules on method and path `box` has.
     pub(crate) request_rules: puddle_proxy::RequestRules,
+    /// Git over SSH for the bound names (off by default).
+    pub(crate) git_ssh: Option<puddle_proxy::GitSsh>,
 }
 
 impl RigBuilder {
@@ -653,7 +655,14 @@ impl RigBuilder {
             exchanges: None,
             interception: Interception::default(),
             request_rules: puddle_proxy::RequestRules::default(),
+            git_ssh: None,
         }
+    }
+
+    /// Serves the SSH of the bound names as Git hosts.
+    pub(crate) fn git_ssh(mut self, git: puddle_proxy::GitSsh) -> Self {
+        self.git_ssh = Some(git);
+        self
     }
 
     /// Gives `box` rules on method and path (they decrypt the hosts they name).
@@ -770,7 +779,8 @@ impl RigBuilder {
         )
         .with_stand_ins(self.stand_ins.0)
         .with_interception(self.interception.clone())
-        .with_request_rules(self.request_rules);
+        .with_request_rules(self.request_rules)
+        .with_git_ssh_hosts(TerminationSet::parse(self.bound.iter().copied()).unwrap());
         if let Some(exchanges) = self.exchanges {
             termination = termination.with_exchanges(exchanges);
         }
@@ -797,6 +807,9 @@ impl RigBuilder {
             );
         if let Some(upstream) = self.upstream {
             proxy = proxy.with_upstream(upstream);
+        }
+        if let Some(git) = self.git_ssh {
+            proxy = proxy.with_git_ssh(git);
         }
         let proxy = Arc::new(proxy);
         let root = IpcRoot::new().unwrap();

@@ -6607,6 +6607,7 @@ dependencies = [
  "puddle-upstream",
  "rcgen",
  "ring",
+ "russh",
  "rustls",
  "serde_json",
  "subtle",

@@ -53,8 +53,10 @@ impl Seen {
 
 /// An HTTP/1.1 server that keeps its connections open. Each request's answer depends on its
 /// path: `/early` is a `413` sent before the body is read (then the server closes), `/204` and
-/// `/304` have no body, `/chunked` is chunked, `/close` runs to the end of the connection, a
-/// `HEAD` gets a length and no body, and anything else gets its own path back as the body.
+/// `/304` have no body, `/chunked` is chunked, `/close` runs to the end of the connection, `/drop`
+/// closes with no answer, `/silent` never answers, `/short` sends 3 of the 10 bytes it announces
+/// and closes, `/extra` is followed by a second answer nobody asked for, a `HEAD` gets a length
+/// and no body, and anything else gets its own path back as the body.
 async fn keep_alive_server() -> (SocketAddr, Seen) {
     let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -100,6 +102,14 @@ async fn serve_one(reader: &mut BufReader<tokio::net::TcpStream>, seen: &Seen) -
         }
     }
     let label = format!("{method} {path}");
+    match path.as_str() {
+        "/drop" => return Some(true),
+        "/silent" => {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            return Some(true);
+        }
+        _ => {}
+    }
     if path == "/early" {
         seen.requests
             .lock()
@@ -144,6 +154,12 @@ async fn serve_one(reader: &mut BufReader<tokio::net::TcpStream>, seen: &Seen) -
             false,
         ),
         (_, "/close") => ("HTTP/1.1 200 OK\r\n\r\nuntil-close".to_owned(), true),
+        (_, "/short") => ("HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\nabc".to_owned(), true),
+        (_, "/extra") => (
+            "HTTP/1.1 200 OK\r\ncontent-length: 6\r\n\r\n/extraHTTP/1.1 200 OK\r\ncontent-length: 6\r\n\r\npoison"
+                .to_owned(),
+            false,
+        ),
         _ => (
             format!(
                 "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{path}",
@@ -727,5 +743,116 @@ async fn a_client_that_asks_to_close_or_to_continue_gets_what_it_asked_for() {
     assert_eq!(
         seen.requests().last().cloned(),
         Some(("PUT /up".to_owned(), b"data".to_vec()))
+    );
+}
+
+/// A server that sends a second answer nobody asked for cannot have it taken for the answer to
+/// the guest's next request: the upstream connection is not used again, and the next request
+/// gets its own answer on a new one.
+#[tokio::test]
+async fn hostile_an_answer_the_server_sends_unasked_never_answers_the_next_request() {
+    let (web, seen) = keep_alive_server().await;
+    let rig = rig(&ProxyConfig::default());
+    let mut guest = rig.guest().await;
+    let mut reader = BufReader::new(guest.stream().await);
+    for path in ["/extra", "/next"] {
+        reader
+            .get_mut()
+            .write_all(get("web.test", web, path).as_bytes())
+            .await
+            .unwrap();
+        let got = answer(&mut reader, "GET").await;
+        assert_eq!((got.code, got.body.as_slice()), (200, path.as_bytes()));
+    }
+    assert_eq!(seen.accepts(), 2, "the poisoned connection was used again");
+}
+
+/// What the upstream does wrong reaches the guest as a refusal that says so, or as a cut-off
+/// answer, and ends the connection: a server that closes without an answer is a `502`, one that
+/// does not answer in time a `504`, and an answer shorter than its length ends without a clean
+/// close.
+#[tokio::test]
+async fn an_upstream_that_fails_ends_the_connection_with_what_happened() {
+    let (web, _) = keep_alive_server().await;
+    let config = ProxyConfig::default().with_terminate_timeouts(
+        Duration::from_secs(10),
+        Duration::from_secs(60),
+        Duration::from_millis(300),
+        Duration::from_secs(120),
+    );
+    let rig = rig(&config);
+    for (path, code) in [("/drop", 502), ("/silent", 504)] {
+        let mut guest = rig.guest().await;
+        let mut reader = BufReader::new(guest.stream().await);
+        reader
+            .get_mut()
+            .write_all(get("web.test", web, path).as_bytes())
+            .await
+            .unwrap();
+        let (got, _) = response_head(&mut reader).await.unwrap();
+        assert_eq!(got, code, "{path}");
+        ended(&mut reader).await;
+    }
+    let mut guest = rig.guest().await;
+    let mut reader = BufReader::new(guest.stream().await);
+    reader
+        .get_mut()
+        .write_all(get("web.test", web, "/short").as_bytes())
+        .await
+        .unwrap();
+    let (code, headers) = response_head(&mut reader).await.unwrap();
+    assert_eq!(code, 200);
+    assert_eq!(
+        header_value(&headers, "content-length").as_deref(),
+        Some("10")
+    );
+    let mut body = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), reader.read_to_end(&mut body))
+        .await
+        .expect("the cut-off answer kept the connection open");
+    assert!(body.len() < 10, "{body:?}");
+    assert_eq!(rig.events(3).await.len(), 3);
+}
+
+/// What the guest sends wrong on a kept connection is refused and ends it: a body whose chunk
+/// framing breaks halfway (`400`, and the server never sees a complete request), an expectation
+/// other than `100-continue` (`417`) and a `CONNECT` (`400`).
+#[tokio::test]
+async fn a_broken_second_request_is_refused_and_ends_the_connection() {
+    let (web, seen) = keep_alive_server().await;
+    let rig = rig(&ProxyConfig::default());
+    let port = web.port();
+    for (second, code) in [
+        (
+            format!(
+                "POST http://web.test:{port}/broken HTTP/1.1\r\nHost: web.test\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\nzz\r\n"
+            ),
+            400,
+        ),
+        (
+            format!(
+                "POST http://web.test:{port}/x HTTP/1.1\r\nHost: web.test\r\nExpect: magic\r\nContent-Length: 1\r\n\r\nx"
+            ),
+            417,
+        ),
+        (format!("CONNECT web.test:{port} HTTP/1.1\r\n\r\n"), 400),
+    ] {
+        let mut guest = rig.guest().await;
+        let mut reader = BufReader::new(guest.stream().await);
+        reader
+            .get_mut()
+            .write_all(get("web.test", web, "/ok").as_bytes())
+            .await
+            .unwrap();
+        assert_eq!(answer(&mut reader, "GET").await.code, 200);
+        reader.get_mut().write_all(second.as_bytes()).await.unwrap();
+        let (got, _) = response_head(&mut reader).await.unwrap();
+        assert_eq!(got, code, "{second}");
+        ended(&mut reader).await;
+    }
+    assert!(
+        seen.requests().iter().all(|(line, _)| line == "GET /ok"),
+        "{:?}",
+        seen.lines()
     );
 }

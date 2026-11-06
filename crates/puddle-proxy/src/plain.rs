@@ -122,7 +122,10 @@ impl Kept {
         }
         // `ready` settles once the last response was read to its end; a connection the server
         // closed, or fed bytes it never asked for, is not ready.
-        self.conn.sender.ready().await.is_ok()
+        matches!(
+            tokio::time::timeout(h1::READY_WAIT, self.conn.sender.ready()).await,
+            Ok(Ok(()))
+        )
     }
 }
 
@@ -248,7 +251,6 @@ where
         Ok(admitted) => admitted,
         Err(refusal) => {
             event.outcome = refusal.outcome;
-            *kept = None;
             refuse(guest.writer, &refusal).await;
             return (Flow::Stop, event);
         }
@@ -260,36 +262,34 @@ where
         Some(&incoming.parsed.target),
     ) {
         change(&mut event);
-        *kept = None;
         refuse(guest.writer, &refusal).await;
         return (Flow::Stop, event);
     }
-    let reuse = match kept.as_mut() {
-        Some(conn) => conn.fits(target, &admitted).await,
-        None => false,
-    };
-    if !reuse {
-        // The old connection closes before the new one is made: a guest connection holds one
-        // upstream socket at a time.
-        *kept = None;
-        match connect(proxy, target, &admitted).await {
-            Ok(conn) => *kept = Some(conn),
+    // A connection that does not fit is closed before a new one is made: a guest connection holds
+    // one upstream socket at a time. It goes back only when the exchange left it usable.
+    let mut reused = kept.take();
+    if let Some(conn) = reused.as_mut()
+        && !conn.fits(target, &admitted).await
+    {
+        reused = None;
+    }
+    let mut conn = match reused {
+        Some(conn) => conn,
+        None => match connect(proxy, target, &admitted).await {
+            Ok(conn) => conn,
             Err(refusal) => {
                 event.outcome = refusal.outcome;
                 refuse(guest.writer, &refusal).await;
                 return (Flow::Stop, event);
             }
-        }
-    }
-    let Some(conn) = kept.as_mut() else {
-        return (Flow::Stop, event);
+        },
     };
     event.outcome = Some(ConnectionOutcome::Connected);
     event.resolved_ip = conn.addr.map(|addr| addr.ip());
     event.upstream.clone_from(&conn.hop);
-    let flow = exchange(proxy, guest, conn, incoming, last).await;
-    if flow != Flow::Continue {
-        *kept = None;
+    let flow = exchange(proxy, guest, &mut conn, incoming, last).await;
+    if flow == Flow::Continue {
+        *kept = Some(conn);
     }
     (flow, event)
 }
@@ -304,19 +304,10 @@ async fn connect(proxy: &Proxy, target: &Target, admitted: &Admitted) -> Result<
         proxy.config.connect_timeout,
     )
     .await?;
+    let name = target.host.to_string();
     let conn = h1::handshake(TokioIo::new(out.stream), proxy)
         .await
-        .map_err(|err| {
-            Refusal::new(
-                "502 Bad Gateway",
-                format!(
-                    "could not talk HTTP to {}: {}",
-                    target.host,
-                    h1::short(&err)
-                ),
-            )
-            .failed(ConnectionOutcome::ConnectFailed)
-        })?;
+        .map_err(|err| h1::setup_refusal(&name, &h1::short(&err)))?;
     Ok(Kept {
         target: target.clone(),
         conn,
@@ -446,12 +437,9 @@ fn upstream_request(
     let uri = match via {
         Some(proxy) => {
             if let Some(secret) = proxy.authorization.as_ref() {
-                let value = HeaderValue::from_str(secret.expose()).map_err(|_| {
-                    Refusal::new(
-                        "502 Bad Gateway",
-                        "the company proxy credential is not a header value",
-                    )
-                })?;
+                let mut value = HeaderValue::from_str(secret.expose())
+                    .map_err(|_| Refusal::new("502 Bad Gateway", "unusable proxy credential"))?;
+                value.set_sensitive(true);
                 headers.insert(PROXY_AUTHORIZATION, value);
             }
             format!("http://{}{path}", proxy.authority)

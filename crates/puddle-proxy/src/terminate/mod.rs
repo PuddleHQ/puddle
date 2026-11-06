@@ -94,7 +94,9 @@ pub(crate) use session::{Context, Outcome, run};
 pub(crate) mod h1 {
     pub(crate) use super::body::{Abort, ChannelBody};
     pub(crate) use super::exchange::AnswerBody;
-    pub(crate) use super::leg::{BoxError, H1Conn, UpBody, h1 as handshake};
+    pub(crate) use super::leg::{
+        BoxError, H1Conn, READY_WAIT, UpBody, h1 as handshake, setup_refusal,
+    };
     pub(crate) use super::request::{Parsed, framed, upstream_headers};
     pub(crate) use super::response::{Written, write as write_response};
     pub(crate) use super::session::{keep_reading, send_and_pump, short};

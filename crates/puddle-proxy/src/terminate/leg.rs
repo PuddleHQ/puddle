@@ -32,7 +32,7 @@ pub(crate) type UpBody = UnsyncBoxBody<Bytes, BoxError>;
 pub(crate) const MAX_POOLED: usize = 8;
 
 /// How long an idle pooled connection may take to prove it is still usable.
-const READY_WAIT: Duration = Duration::from_secs(10);
+pub(crate) const READY_WAIT: Duration = Duration::from_secs(10);
 
 /// How often an HTTP/2 connection with streams open is pinged, and how long it may stay silent
 /// after a ping before it is dropped. A gRPC watch or an event stream is idle by design; the ping
@@ -104,7 +104,7 @@ fn not_offered() -> Refusal {
 }
 
 /// The HTTP client library could not start on a verified connection.
-fn setup_refusal(name: &str, cause: &str) -> Refusal {
+pub(crate) fn setup_refusal(name: &str, cause: &str) -> Refusal {
     Refusal::new(
         "502 Bad Gateway",
         format!("could not talk HTTP to {name}: {cause}"),

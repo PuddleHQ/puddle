@@ -7,7 +7,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
-use crate::profile::{Endpoint, Field, Method, Profile, Role, Scope, StandInKind};
+use crate::profile::{Audience, Endpoint, Field, Method, Profile, Role, Scope, StandInKind};
 use crate::vault::Vault;
 use crate::widened_tests::{Rig, answered, rig_for};
 
@@ -28,6 +28,7 @@ static JWT_PROFILE: [Profile; 1] = [Profile {
                 keep_last: 0,
                 stand_in: StandInKind::Jwt,
                 scope: Scope::Api,
+                audience: Audience::Any,
             },
             Field {
                 path: "refresh_token",
@@ -37,6 +38,7 @@ static JWT_PROFILE: [Profile; 1] = [Profile {
                 keep_last: 0,
                 stand_in: StandInKind::Shaped,
                 scope: Scope::TokenEndpoint,
+                audience: Audience::Any,
             },
         ],
     }],

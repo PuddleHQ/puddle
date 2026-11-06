@@ -327,7 +327,7 @@
         <div class="grow">
           <label for="ws-capture">Keep logins made in this workspace</label>
           <p class="desc" id="ws-capture-desc">
-            When you sign in to Claude Code, GitHub or Copilot inside this
+            When you sign in to Claude Code, GitHub, Copilot or Microsoft Azure inside this
             workspace, Puddle keeps the real token on this computer. The
             workspace gets a stand-in that works only through Puddle, so while
             capture works nothing running in the workspace can copy your login.

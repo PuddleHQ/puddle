@@ -10,7 +10,7 @@ use puddle_types::{Host, WorkspaceId};
 use serde_json::{Value, json};
 
 use crate::profile::{
-    Endpoint, Field, Method, Profile, Role, Scope, Slot, StandInKind, path_matches,
+    Audience, Endpoint, Field, Method, Profile, Role, Scope, Slot, StandInKind, path_matches,
 };
 use crate::vault::{Vault, slot_id};
 use crate::{LoginNotices, Logins, Marker, Problem};
@@ -28,6 +28,7 @@ const fn field(path: &'static str, role: Role, resource: Option<&'static str>) -
         keep_last: 0,
         stand_in: StandInKind::Shaped,
         scope: Scope::Api,
+        audience: Audience::Any,
     }
 }
 

@@ -18,6 +18,8 @@
 #![forbid(unsafe_code)]
 
 #[cfg(test)]
+mod entra_tests;
+#[cfg(test)]
 mod jwt_tests;
 mod logins;
 mod marker;
@@ -32,7 +34,7 @@ mod widened_tests;
 pub use logins::{ForgetError, Kept, KeptList, KeptLogin, LoginNotices, Logins, Problem};
 pub use marker::Marker;
 pub use profile::{
-    CLAUDE, Endpoint, Field, GITHUB, Method, Profile, Role, Scope, Slot, StandInKind, builtin,
-    path_matches,
+    Audience, CLAUDE, ENTRA, Endpoint, Field, GITHUB, Method, Profile, Role, Scope, Slot,
+    StandInKind, builtin, path_matches,
 };
 pub use shape::{ShapeError, stand_in_for};

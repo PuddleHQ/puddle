@@ -835,7 +835,8 @@ async fn a_credential_store_that_is_not_there_at_the_start_is_reported_once_per_
         next.notices.seen(),
         [
             ("claude".to_owned(), Problem::StoreUnavailable),
-            ("github".to_owned(), Problem::StoreUnavailable)
+            ("github".to_owned(), Problem::StoreUnavailable),
+            ("entra".to_owned(), Problem::StoreUnavailable)
         ]
     );
 }
@@ -886,7 +887,7 @@ async fn deleting_the_workspace_deletes_every_token_kept_for_it() {
     rig.store.break_it();
     assert_eq!(
         Logins::delete_workspace(&store, &workspace(), builtin()),
-        CLAUDE.roles().len() + GITHUB.roles().len()
+        CLAUDE.roles().len() + GITHUB.roles().len() + crate::profile::ENTRA.slots().len()
     );
 }
 

@@ -740,7 +740,7 @@
             <label for="set-capture">Keep logins made in workspaces</label>
             <span class="restart">{RESTART_NOTE}</span>
             <p class="desc" id="set-capture-desc">
-              When you sign in to Claude Code, GitHub or Copilot inside a
+              When you sign in to Claude Code, GitHub, Copilot or Microsoft Azure inside a
               workspace, Puddle keeps the real token on this computer and the
               workspace gets a stand-in that works only through Puddle. On by
               default. A workspace can set its own switch; a change takes effect

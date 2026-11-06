@@ -751,7 +751,7 @@ impl NewWorkspace {
         }
     }
 
-    /// The id the new workspace gets: the name as a DNS label ([`id_for_name`]), with `-2`,
+    /// The id the new workspace gets: the name as a DNS label (`id_for_name`), with `-2`,
     /// `-3` and so on added while `taken` says the id is in use, so two names that make the
     /// same label are two workspaces.
     ///

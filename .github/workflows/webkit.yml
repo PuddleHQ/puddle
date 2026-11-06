@@ -50,13 +50,13 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      # Restored, never saved: ci.yml's entry (same key) holds both browsers and only a develop push saves it.
+      # Restored, never saved: ci.yml's `ui-webkit` job (same key) saves it on a develop push.
       - name: Playwright browsers cache
         if: steps.changed.outputs.run == 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
       # `playwright install` does nothing for a browser the restored entry already holds.
       - name: WebKit and its system libraries
         if: steps.changed.outputs.run == 'true'

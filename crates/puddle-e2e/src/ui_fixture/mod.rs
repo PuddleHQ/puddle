@@ -26,10 +26,10 @@ use puddle_api::wire::{DevCertificate, FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DevCertService,
     DoctorService, EventHub, FakeCredentials, FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned,
-    FakeNetworkHealth, FakePorts, FakeProxySignIns, FakeWorkspaces, Found, FoundList, Launcher,
-    LearnedService, Listing, MemorySettings, NetworkHealthService, Operation, PortsService,
-    ProxySignInService, RemoteNote, RepoFindings, RepoService, RepositoryDraft, RunningApi,
-    Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord,
+    FakeNetworkHealth, FakePorts, FakeProxySignIns, FakeTerminals, FakeWorkspaces, Found,
+    FoundList, Launcher, LearnedService, Listing, MemorySettings, NetworkHealthService, Operation,
+    PortsService, ProxySignInService, RemoteNote, RepoFindings, RepoService, RepositoryDraft,
+    RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord,
     check_repositories,
 };
 use puddle_secrets::{
@@ -296,6 +296,7 @@ impl Fixture {
             .with_problems(state.problems.clone())
             .with_ports(state.ports.clone() as Arc<dyn PortsService>)
             .with_learned(state.learned.clone() as Arc<dyn LearnedService>)
+            .with_terminals(Arc::new(FakeTerminals::new()))
             .with_proxy_sign_ins(state.proxy_sign_ins.clone() as Arc<dyn ProxySignInService>);
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),

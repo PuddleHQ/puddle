@@ -35,6 +35,7 @@ use puddle_api::{
     LocalSource, NewWorkspace, OpenTarget, Operation, RepoFindings, Repository, ShellInitCheck,
     StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
+use puddle_api::{EndReason, TerminalError, TerminalLink, TerminalService, TerminalSize};
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
 use puddle_compute::{
@@ -241,6 +242,11 @@ struct GuestState {
     session_user: SessionUser,
 }
 
+/// How long a terminal opened while its workspace starts waits for the boot hook.
+const TERMINAL_BOOT_WAIT: Duration = Duration::from_secs(90);
+/// How often the wait looks again.
+const TERMINAL_BOOT_POLL: Duration = Duration::from_millis(250);
+
 /// What a sandbox owns while this process serves it.
 struct Live<R: Runtime> {
     /// The egress route baked into the sandbox's spec; it outlives stops.
@@ -274,6 +280,8 @@ struct Inner<R: Runtime + Clone> {
     store: Arc<Store>,
     launcher: Arc<dyn Launcher>,
     ssh: Arc<SshSetup>,
+    /// The terminals open now, ended with their reason when the workspace stops.
+    terminals: Arc<crate::terminals::Hub>,
     book: WorkspaceBook,
     injection: Arc<Injection>,
     problems: Arc<Problems>,
@@ -558,6 +566,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 store: parts.store,
                 launcher: parts.launcher,
                 ssh: parts.ssh,
+                terminals: Arc::default(),
                 book: parts.book,
                 injection: parts.injection,
                 problems: parts.problems,
@@ -2412,6 +2421,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// handle. The route stays (the sandbox may start again); `drop_route` ends it too.
     async fn quiesce(&self, name: &WorkspaceId, drop_route: bool) {
         self.inner.lifecycle.release(&name.sandbox_name());
+        let reason = self.terminal_gone(name);
+        self.inner.terminals.end(name, reason);
         // Its forwards close; the pinned ones come back at the next start.
         self.inner.ports.stopped(name).await;
         self.inner.flavours.stopped(name);
@@ -2667,6 +2678,42 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .ok_or_else(|| format!("{name} is not running"))
     }
 
+    /// Why a terminal's connection that ended without an exit status did: the workspace crashed,
+    /// or it stopped (or went away).
+    fn terminal_gone(&self, name: &WorkspaceId) -> EndReason {
+        crate::terminals::reason_for(self.state().slots.get(name).map(|s| s.record.status))
+    }
+
+    /// The running guest's sandbox and the user its sessions run as, once the workspace is
+    /// running; a workspace that is starting is waited for up to [`TERMINAL_BOOT_WAIT`].
+    async fn terminal_target(
+        &self,
+        name: &WorkspaceId,
+    ) -> Result<(Arc<GatedSandbox<R::Sandbox>>, SessionUser), TerminalError> {
+        crate::terminals::wait_until_ready(TERMINAL_BOOT_WAIT, TERMINAL_BOOT_POLL, || async {
+            let record = self.state().slots.get(name).map(|s| s.record.clone());
+            let Some(record) = record.filter(|r| {
+                matches!(
+                    r.status,
+                    WorkspaceStatus::Running | WorkspaceStatus::Starting
+                )
+            }) else {
+                return Err(TerminalError::NotRunning(
+                    "the workspace is not running".into(),
+                ));
+            };
+            let live = self.inner.live.lock().await;
+            Ok(live.get(name).and_then(|l| {
+                let user = l
+                    .guest
+                    .as_ref()
+                    .map_or(record.session_user, |g| g.session_user);
+                Some((l.gated.clone()?, user))
+            }))
+        })
+        .await
+    }
+
     /// Removes the workspace's sandbox, if it has one: the root disk goes with it, the volume
     /// stays, and the next start makes both again from the image.
     async fn reset_root_disk_work(&self, name: &WorkspaceId) -> Result<(), String> {
@@ -2837,6 +2884,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), String> {
         let name = &record.id;
+        // The terminals end first, with the stop as their reason, while the guest can still answer.
+        self.inner.terminals.end(name, EndReason::Stopped);
         // The windows go first, so the editor can disconnect and the guest end its extension hosts
         // before the stop (best effort: the close is asked for, not waited for).
         self.inner.launcher.close_browser(name).await;
@@ -2998,6 +3047,58 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 /// Why a boot failed, for the user.
 fn boot_message(e: &BootError) -> String {
     e.to_string()
+}
+
+impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
+    fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
+        let running = self.state().slots.get(workspace).is_some_and(|s| {
+            matches!(
+                s.record.status,
+                WorkspaceStatus::Running | WorkspaceStatus::Starting
+            )
+        });
+        Box::pin(async move {
+            if running {
+                Ok(())
+            } else {
+                Err(TerminalError::NotRunning(
+                    "the workspace is not running; start it to open a terminal".into(),
+                ))
+            }
+        })
+    }
+
+    fn open(
+        &self,
+        workspace: &WorkspaceId,
+        size: TerminalSize,
+    ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
+        let workspace = workspace.clone();
+        Box::pin(async move {
+            let identity = self
+                .inner
+                .ssh
+                .identity()
+                .map_err(TerminalError::Unavailable)?;
+            let (gated, user) = self.terminal_target(&workspace).await?;
+            let host = self.clone();
+            let named = workspace.clone();
+            crate::terminals::open(
+                &self.inner.terminals,
+                crate::terminals::Open {
+                    workspace: &workspace,
+                    identity: &identity,
+                    user: &user.to_string(),
+                    size,
+                },
+                move |stream| async move {
+                    gated.serve_ssh(stream).await.map_err(|e| e.to_string())
+                },
+                move || host.terminal_gone(&named),
+            )
+            .await
+        })
+    }
 }
 
 impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {

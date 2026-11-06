@@ -882,6 +882,7 @@ async fn relay(
         event.injected = done.injected;
         event.binding_id = done.binding_id;
         event.unswapped_stand_ins = done.unswapped_stand_ins;
+        event.scrubbed_stand_ins = done.scrubbed_stand_ins;
         return event;
     }
     let out = match connect_out(

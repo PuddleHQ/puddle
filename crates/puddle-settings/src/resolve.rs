@@ -63,6 +63,8 @@ pub struct EffectiveToggles {
     pub metadata: Resolved<bool>,
     /// Other special-purpose ranges.
     pub special: Resolved<bool>,
+    /// The company network.
+    pub company_network: Resolved<bool>,
 }
 
 impl EffectiveToggles {
@@ -81,6 +83,7 @@ impl EffectiveToggles {
             LocalCategory::LinkLocal => self.link_local,
             LocalCategory::Metadata => self.metadata,
             LocalCategory::Special => self.special,
+            LocalCategory::CompanyNetwork => self.company_network,
             // Fails closed: a category without a toggle here is off.
             _ => default(false),
         }
@@ -100,6 +103,7 @@ impl Effective {
             link_local: default(false),
             metadata: default(false),
             special: default(false),
+            company_network: default(false),
         },
         wildcards_reach_local: default(false),
         reconnection_grace: default(ReconnectionGrace::DEFAULT),
@@ -173,6 +177,7 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
         link_local,
         metadata,
         special,
+        company_network,
         extra: _,
     } = local_toggles;
     Effective {
@@ -196,6 +201,11 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
                 d.local_toggles.metadata,
             ),
             special: pick(*special, g.local_toggles.special, d.local_toggles.special),
+            company_network: pick(
+                *company_network,
+                g.local_toggles.company_network,
+                d.local_toggles.company_network,
+            ),
         },
         wildcards_reach_local: pick(
             *wildcards_reach_local,
@@ -316,5 +326,29 @@ mod tests {
                 assert_eq!(e.local_toggles.get(other).source, Source::Default);
             }
         }
+    }
+    #[test]
+    fn the_company_network_is_off_until_a_level_turns_it_on() {
+        let c = LocalCategory::CompanyNetwork;
+        assert_eq!(
+            resolve(&GlobalSettings::default(), None)
+                .local_toggles
+                .get(c),
+            Resolved {
+                value: false,
+                source: Source::Default
+            }
+        );
+        // On in a workspace only: another workspace and the global value stay off.
+        let mut s = WorkspaceSettings::default();
+        s.overrides.local_toggles.company_network = Some(true);
+        let g = GlobalSettings::default();
+        assert!(resolve(&g, Some(&s)).local_toggles.get(c).value);
+        assert!(
+            !resolve(&g, Some(&WorkspaceSettings::default()))
+                .local_toggles
+                .get(c)
+                .value
+        );
     }
 }

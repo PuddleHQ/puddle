@@ -9,7 +9,7 @@
 //! response); every failure after the connection is open is passed on as a reset.
 
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,7 +30,9 @@ use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tracing::Instrument;
 
-use puddle_netpolicy::{LocalAccess, LocalCategory, NetPolicy, block_message, normalise_host};
+use puddle_netpolicy::{
+    LocalAccess, LocalCategory, NetPolicy, block_message, company_network_message, normalise_host,
+};
 
 use crate::coalesce::Coalescing;
 use crate::counted::Counted;
@@ -587,7 +589,7 @@ impl WorkspaceHandler {
     /// claim, so only a plain IP address is taken as a destination, and the audit's own rate limit
     /// (R-26) bounds the records.
     async fn record_udp_refusal(&self, refusal: &UdpRefusal) {
-        let Ok(ip) = refusal.address.parse::<std::net::IpAddr>() else {
+        let Ok(ip) = refusal.address.parse::<IpAddr>() else {
             tracing::debug!(workspace = %self.workspace, "UDP refusal report without an IP address ignored");
             return;
         };
@@ -1018,6 +1020,40 @@ fn note_block(event: &mut ConnectionEvent, reason: BlockReason) {
     event.pending_id = None;
 }
 
+/// The addresses of the destination: an IP literal is its own, a name is resolved with the
+/// proxy's timeout. Nothing resolved (or no answer in time) is the early end [`unresolved`]
+/// gives, returned as the error: the destination is left to the company proxy or refused.
+async fn resolve_destination(
+    proxy: &Proxy,
+    host: &Host,
+    port: u16,
+) -> Result<Vec<SocketAddr>, Result<Admitted, Refusal>> {
+    let addrs = match host {
+        Host::Ip(ip) => vec![SocketAddr::new(*ip, port)],
+        Host::Name(name) => {
+            match tokio::time::timeout(
+                proxy.config.resolve_timeout,
+                proxy.resolver.resolve(name, port),
+            )
+            .await
+            {
+                Err(_) => {
+                    return Err(unresolved(proxy, host, Unresolved::TimedOut));
+                }
+                Ok(Err(err)) => {
+                    tracing::info!(%host, error = %err, "resolve failed");
+                    return Err(unresolved(proxy, host, Unresolved::from_error(&err)));
+                }
+                Ok(Ok(addrs)) => addrs,
+            }
+        }
+    };
+    if addrs.is_empty() {
+        return Err(unresolved(proxy, host, Unresolved::NoAddresses));
+    }
+    Ok(addrs)
+}
+
 async fn admit_into(
     proxy: &Proxy,
     request: &EgressRequest,
@@ -1045,29 +1081,10 @@ async fn admit_into(
     let decided = proxy.decide(request, SuffixAllows::Count).await;
     note(event, request, &decided);
     let pattern = allowed(request, decided)?;
-    let addrs = match host {
-        Host::Ip(ip) => vec![SocketAddr::new(*ip, port)],
-        Host::Name(name) => {
-            match tokio::time::timeout(
-                proxy.config.resolve_timeout,
-                proxy.resolver.resolve(name, port),
-            )
-            .await
-            {
-                Err(_) => {
-                    return unresolved(proxy, host, Unresolved::TimedOut);
-                }
-                Ok(Err(err)) => {
-                    tracing::info!(%host, error = %err, "resolve failed");
-                    return unresolved(proxy, host, Unresolved::from_error(&err));
-                }
-                Ok(Ok(addrs)) => addrs,
-            }
-        }
+    let addrs = match resolve_destination(proxy, host, port).await {
+        Ok(addrs) => addrs,
+        Err(done) => return done,
     };
-    if addrs.is_empty() {
-        return unresolved(proxy, host, Unresolved::NoAddresses);
-    }
     let resolved = addrs.len();
     let (addrs, ip_allows) = apply_ip_rules(proxy, request, addrs, event)?;
     let mut usable = Vec::new();
@@ -1075,14 +1092,21 @@ async fn admit_into(
     let mut categories: Vec<LocalCategory> = Vec::new();
     let mut blocked = Vec::new();
     let mut refused_first = None;
+    let mut company_ip = None;
     for addr in addrs {
-        match proxy.addresses.check(&request.workspace, addr) {
+        if event.company_network.is_none() {
+            event.company_network = proxy.addresses.company_signal(host, addr);
+        }
+        match proxy.addresses.check_named(&request.workspace, host, addr) {
             AddressVerdict::Allow => usable.push(addr),
             AddressVerdict::ExactOnly(category) => {
                 exact_only.push(addr);
                 categories.push(category);
             }
             AddressVerdict::Block(reason) => {
+                if matches!(reason, BlockReason::CompanyNetwork(_)) {
+                    company_ip.get_or_insert(addr.ip());
+                }
                 refused_first.get_or_insert((addr.ip(), RefusedReason::Guard(reason)));
                 blocked.push(reason);
             }
@@ -1126,7 +1150,7 @@ async fn admit_into(
             blocked.push(BlockReason::LocalAddress);
         }
         note_block(event, shown_reason(&blocked));
-        return Err(block(request, &blocked));
+        return Err(block_at(request, &blocked, company_ip));
     }
     // A proxy may be told the name only when nothing the name resolved to was dropped: otherwise
     // it could pick the dropped address itself (R-14, R-27).
@@ -1419,15 +1443,21 @@ fn allowed(
 /// The refusal for a blocked request; `reasons` holds every address's reason (at least one).
 /// The header names the first toggle if any (turning it on would help), else the first reason.
 fn block(request: &EgressRequest, reasons: &[BlockReason]) -> Refusal {
+    block_at(request, reasons, None)
+}
+
+/// [`block`] for a block at an address of the destination: a company-network refusal names it.
+fn block_at(request: &EgressRequest, reasons: &[BlockReason], ip: Option<IpAddr>) -> Refusal {
     let host = &request.host;
     let reason = shown_reason(reasons);
     tracing::info!(workspace = %request.workspace, %host, port = request.port, %reason, "blocked");
-    Refusal::new(
-        "403 Forbidden",
-        block_message(host, &request.workspace, reasons),
-    )
-    .header("x-puddle-decision", "blocked")
-    .header("x-puddle-blocked", reason.code())
+    let message = match reason {
+        BlockReason::CompanyNetwork(signal) => company_network_message(host, ip, Some(signal)),
+        _ => block_message(host, &request.workspace, reasons),
+    };
+    Refusal::new("403 Forbidden", message)
+        .header("x-puddle-decision", "blocked")
+        .header("x-puddle-blocked", reason.header_code())
 }
 
 /// The reason a block names: the first toggle or unreadable-settings reason if any (turning the
@@ -1438,7 +1468,9 @@ fn shown_reason(reasons: &[BlockReason]) -> BlockReason {
         .find(|r| {
             matches!(
                 r,
-                BlockReason::LocalToggle(_) | BlockReason::SettingsUnreadable
+                BlockReason::LocalToggle(_)
+                    | BlockReason::CompanyNetwork(_)
+                    | BlockReason::SettingsUnreadable
             )
         })
         .or_else(|| reasons.first())

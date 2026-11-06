@@ -15,6 +15,7 @@
 //! | [`EgressRequest`], [`Decision`], [`Policy`] | what the proxy asks the rules engine and what it gets back |
 //! | [`ConnectionEvent`], [`ConnectionLog`] | one connection as the proxy reports it for the audit, and where it goes (the store) |
 //! | [`QueryName`] | the name of a query parameter a secret is swapped in |
+//! | [`CompanySignal`] | which host signal put an address in the company network (audit `signal`) |
 //! | [`LocalCategory`] | the local-destination categories (spec R-14): one toggle each, classified by `puddle-netpolicy` |
 //! | [`ValidationError`] | the one error every checked constructor returns |
 //!
@@ -56,7 +57,7 @@ pub use event::{
 pub use fill::{Fill, Rgb, SET_PALETTE};
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
-pub use local::LocalCategory;
+pub use local::{CompanySignal, LocalCategory};
 pub use memory::MemoryMib;
 pub use merge::{
     MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,

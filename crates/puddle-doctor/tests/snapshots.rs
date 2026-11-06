@@ -14,10 +14,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use puddle_doctor::{
-    AccessDenied, BlockedBy, BlockedFolder, BootFacts, CheckId, CodeIntegrity, CodeIntegrityFacts,
-    DataPathFacts, DiskFacts, Finding, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts,
-    KeptLogs, Options, Os, Probe, ProcessOutcome, Report, RuntimeFacts, RuntimeState, Status,
-    WritableFolder, diagnose,
+    AccessDenied, AgentService, BlockedBy, BlockedFolder, BootFacts, CheckId, CodeIntegrity,
+    CodeIntegrityFacts, DataPathFacts, DiskFacts, Finding, GsaFacts, HypervisorApi,
+    HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe, ProcessOutcome, Report, RuntimeFacts,
+    RuntimeState, SshAgentFacts, Status, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -27,6 +27,8 @@ const MSB: &str = r"C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe";
 const DATA: &str = "/home/dev/.local/share/puddle";
 const UNIX_DIR: &str = "/opt/puddle/runtime";
 const UNIX_MSB: &str = "/opt/puddle/runtime/msb";
+const WIN_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+const SOCK: &str = "/run/user/1000/agent.sock";
 const EXPECTED: &str = "0.7.7-puddle.2";
 
 /// A machine described by its facts; counts the calls that cost time.
@@ -42,6 +44,7 @@ struct Fake {
     gsa: Option<GsaFacts>,
     disk: DiskFacts,
     data_path: Option<DataPathFacts>,
+    ssh: SshAgentFacts,
     launches: Cell<u32>,
     boots: Cell<u32>,
 }
@@ -103,6 +106,10 @@ fn windows() -> Fake {
         gsa: Some(GsaFacts::NotInstalled),
         disk: disk_with_gb(120),
         data_path: None,
+        ssh: SshAgentFacts::Keys {
+            endpoint: WIN_PIPE.into(),
+            families: vec!["ed25519".into(), "rsa".into()],
+        },
         launches: Cell::new(0),
         boots: Cell::new(0),
     }
@@ -118,6 +125,10 @@ fn linux() -> Fake {
         },
         ci: None,
         gsa: None,
+        ssh: SshAgentFacts::Keys {
+            endpoint: SOCK.into(),
+            families: vec!["ed25519".into()],
+        },
         ..windows()
     }
 }
@@ -169,6 +180,10 @@ impl Probe for Fake {
     }
     fn data_path(&self) -> Option<DataPathFacts> {
         self.data_path.clone()
+    }
+    fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
+        assert_eq!(limit, Duration::from_secs(2), "the agent gets 2 s");
+        self.ssh.clone()
     }
 }
 
@@ -1142,6 +1157,7 @@ fn json_schema_is_versioned_and_stable() {
             "test_boot",
             "disk_space",
             "guest_kernel",
+            "ssh_agent",
             "global_secure_access"
         ]
     );
@@ -1424,4 +1440,199 @@ fn linux_data_path_world_writable_only() {
     let c = r.check(CheckId::DataPath).unwrap();
     assert!(c.summary.contains("writable by everyone"), "{}", c.summary);
     assert!(c.fix.as_deref().unwrap().contains("\n  chmod go-w /data"));
+}
+
+// ---- SSH agent ----
+
+fn ssh_check(name: &str, fake: &Fake, expected: Option<Finding>) -> Report {
+    let r = check(name, fake, CheckId::SshAgent, expected);
+    assert!(r.ok, "the SSH agent never fails the report");
+    r
+}
+
+fn windows_with(ssh: SshAgentFacts) -> Fake {
+    Fake { ssh, ..windows() }
+}
+
+fn linux_with(ssh: SshAgentFacts) -> Fake {
+    Fake { ssh, ..linux() }
+}
+
+fn unreachable(endpoint: &str, service: Option<AgentService>) -> SshAgentFacts {
+    SshAgentFacts::Unreachable {
+        endpoint: endpoint.into(),
+        detail: "The system cannot find the file specified. (os error 2)".into(),
+        service,
+        by_default: endpoint == WIN_PIPE,
+    }
+}
+
+#[test]
+fn ssh_agent_with_keys_is_ok_and_names_only_the_families() {
+    let r = ssh_check("ssh_agent_keys", &windows(), None);
+    let c = r.check(CheckId::SshAgent).unwrap();
+    assert_eq!(c.status, Status::Ok);
+    assert!(
+        c.summary.contains("2 keys (ed25519: 1, rsa: 1)"),
+        "{}",
+        c.summary
+    );
+}
+
+#[test]
+fn ssh_agent_counts_a_single_key_and_repeated_families() {
+    let keys = |families: &[&str]| {
+        let fake = linux_with(SshAgentFacts::Keys {
+            endpoint: SOCK.into(),
+            families: families.iter().map(|f| (*f).to_owned()).collect(),
+        });
+        run(&fake, &Options::default())
+            .check(CheckId::SshAgent)
+            .unwrap()
+            .summary
+            .clone()
+    };
+    assert!(keys(&["rsa"]).contains("holds 1 key (rsa: 1)"));
+    assert!(keys(&["rsa", "ecdsa", "rsa", "rsa"]).contains("4 keys (ecdsa: 1, rsa: 3)"));
+}
+
+#[test]
+fn ssh_agent_missing_on_windows_names_the_pipe_and_both_fixes() {
+    let r = ssh_check(
+        "ssh_agent_missing_windows",
+        &windows_with(unreachable(WIN_PIPE, None)),
+        Some(Finding::SshAgentMissing),
+    );
+    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Info);
+}
+
+#[test]
+fn ssh_agent_service_disabled_stopped_or_missing_says_what_to_do() {
+    for (name, service) in [
+        ("ssh_agent_service_disabled", AgentService::Disabled),
+        ("ssh_agent_service_stopped", AgentService::Stopped),
+        ("ssh_agent_service_missing", AgentService::Missing),
+    ] {
+        let fake = windows_with(unreachable(WIN_PIPE, Some(service)));
+        ssh_check(name, &fake, Some(Finding::SshAgentMissing));
+    }
+}
+
+#[test]
+fn ssh_agent_missing_on_linux_says_to_set_the_socket() {
+    ssh_check(
+        "ssh_agent_missing_linux",
+        &linux_with(unreachable(SOCK, None)),
+        Some(Finding::SshAgentMissing),
+    );
+    ssh_check(
+        "ssh_agent_no_socket_variable",
+        &linux_with(SshAgentFacts::NoEndpoint),
+        Some(Finding::SshAgentMissing),
+    );
+}
+
+/// An absent agent nobody asked for is a normal state (the CI VMs have none), so it is info and
+/// the report stays all ok or info; an agent the user named that does not answer is a warning.
+#[test]
+fn ssh_agent_absent_by_default_is_info_and_a_named_one_that_fails_is_a_warning() {
+    let status_of = |fake: &Fake| {
+        run(fake, &Options::default())
+            .check(CheckId::SshAgent)
+            .unwrap()
+            .status
+    };
+    assert_eq!(
+        status_of(&linux_with(SshAgentFacts::NoEndpoint)),
+        Status::Info
+    );
+    for service in [None, Some(AgentService::Stopped)] {
+        assert_eq!(
+            status_of(&windows_with(unreachable(WIN_PIPE, service))),
+            Status::Info
+        );
+    }
+    assert_eq!(
+        status_of(&linux_with(unreachable(SOCK, None))),
+        Status::Warn
+    );
+    assert_eq!(
+        status_of(&windows_with(unreachable(r"\\.\pipe\pageant.alice", None))),
+        Status::Warn
+    );
+}
+
+#[test]
+fn ssh_agent_locked_warns() {
+    let r = ssh_check(
+        "ssh_agent_locked",
+        &windows_with(SshAgentFacts::Locked {
+            endpoint: WIN_PIPE.into(),
+        }),
+        Some(Finding::SshAgentLocked),
+    );
+    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Warn);
+}
+
+#[test]
+fn ssh_agent_without_keys_is_info() {
+    let r = ssh_check(
+        "ssh_agent_empty",
+        &windows_with(SshAgentFacts::Keys {
+            endpoint: WIN_PIPE.into(),
+            families: vec![],
+        }),
+        Some(Finding::SshAgentEmpty),
+    );
+    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Info);
+}
+
+#[test]
+fn ssh_agent_that_waits_for_the_user_says_so_instead_of_waiting() {
+    let r = ssh_check(
+        "ssh_agent_slow",
+        &windows_with(SshAgentFacts::TimedOut {
+            endpoint: WIN_PIPE.into(),
+            limit: Duration::from_secs(2),
+        }),
+        Some(Finding::SshAgentSlow),
+    );
+    let c = r.check(CheckId::SshAgent).unwrap();
+    assert_eq!(c.status, Status::Info);
+    assert!(
+        c.summary
+            .contains("did not answer within 2 s; it may be waiting for you to unlock it")
+    );
+}
+
+#[test]
+fn ssh_agent_that_is_not_one_is_info_with_the_detail() {
+    let r = ssh_check(
+        "ssh_agent_unusable",
+        &linux_with(SshAgentFacts::Unusable {
+            endpoint: SOCK.into(),
+            detail: "the agent's answer is not valid: not an identities answer".into(),
+        }),
+        Some(Finding::SshAgentUnusable),
+    );
+    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Info);
+}
+
+#[test]
+fn no_ssh_agent_result_is_ever_a_failure() {
+    for ssh in [
+        SshAgentFacts::NoEndpoint,
+        unreachable(WIN_PIPE, Some(AgentService::Disabled)),
+        SshAgentFacts::Locked {
+            endpoint: WIN_PIPE.into(),
+        },
+        SshAgentFacts::Keys {
+            endpoint: WIN_PIPE.into(),
+            families: vec![],
+        },
+    ] {
+        let r = run(&windows_with(ssh), &Options::default());
+        assert_ne!(r.check(CheckId::SshAgent).unwrap().status, Status::Fail);
+        assert!(r.ok);
+    }
 }

@@ -17,3 +17,4 @@ puddle-ssh      # whole-crate sweep 6 min at --jobs 1 (76 mutants)
 puddle-fs       # Linux only: 3 min (69 mutants); Windows-only code is excluded in .cargo/mutants.toml
 puddle-secrets  # 18 min (248 mutants)
 puddle-certs    # Linux only: whole-crate sweep at --jobs 1 (288 mutants); Windows-only code is excluded in .cargo/mutants.toml
+puddle-proxy    # swept file by file at --jobs 1 (about 970 mutants, about 7 h in all); the whole-crate run is the `mutants` workflow's

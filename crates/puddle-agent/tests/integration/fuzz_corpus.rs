@@ -11,7 +11,7 @@ use std::path::Path;
 
 use arbitrary::{Arbitrary, Unstructured};
 
-use puddle_agent::capture::wire::{self, QueryName, Reject};
+use puddle_agent::capture::wire::{self, MAX_QUERY, QueryName, Reject};
 
 // The same checks the cargo-fuzz target runs.
 #[path = "../../../../fuzz/checks/dns_message.rs"]
@@ -19,6 +19,9 @@ mod dns_message;
 #[path = "../../../../fuzz/checks/dns_message_grammar.rs"]
 mod dns_message_grammar;
 use dns_message_grammar::Message;
+#[path = "../../../../fuzz/checks/dns_transport.rs"]
+mod dns_transport;
+use dns_transport::{Probe, Stream};
 
 fn corpus() -> Vec<(String, Vec<u8>)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/dns_message");
@@ -112,5 +115,93 @@ fn the_grammar_corpus_reaches_every_shape_of_message_the_grammar_makes() {
         shapes,
         ["answer", "drop", "query", "unchecked"],
         "the corpus lacks a shape of message"
+    );
+}
+
+fn transport_corpus<T: for<'a> Arbitrary<'a>>(target: &str) -> Vec<T> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fuzz/corpus")
+        .join(target);
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert!(!files.is_empty(), "{} has no inputs", dir.display());
+    files.sort();
+    files
+        .iter()
+        .map(|path| {
+            let bytes = std::fs::read(path).unwrap();
+            let input = T::arbitrary(&mut Unstructured::new(&bytes));
+            assert!(input.is_ok(), "{} does not decode", path.display());
+            input.unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn every_datagram_in_the_udp_corpus_is_answered_as_the_stub_answers_it() {
+    for probe in transport_corpus::<Probe>("dns_udp_datagram") {
+        dns_transport::dns_udp_datagram(&probe);
+    }
+}
+
+#[test]
+fn a_datagram_one_byte_over_the_query_limit_is_dropped_and_the_next_is_answered() {
+    dns_transport::dns_udp_bytes(&dns_transport::padded_query(MAX_QUERY + 1));
+}
+
+#[test]
+fn a_datagram_twice_the_query_limit_is_dropped_and_the_next_is_answered() {
+    dns_transport::dns_udp_bytes(&dns_transport::padded_query(2 * MAX_QUERY));
+}
+
+#[test]
+fn a_query_padded_to_the_query_limit_is_a_query_the_stub_answers() {
+    assert!(wire::parse_query(&dns_transport::padded_query(MAX_QUERY)).is_ok());
+}
+
+#[test]
+fn a_datagram_at_the_query_limit_is_answered_as_the_stub_answers_it() {
+    dns_transport::dns_udp_bytes(&dns_transport::padded_query(MAX_QUERY));
+}
+
+#[test]
+fn the_udp_corpus_holds_every_kind_of_datagram_the_grammar_makes() {
+    let mut shapes: Vec<&str> = transport_corpus::<Probe>("dns_udp_datagram")
+        .iter()
+        .map(Probe::shape)
+        .collect();
+    shapes.sort_unstable();
+    shapes.dedup();
+    assert_eq!(shapes, ["bounded", "grammar", "raw"]);
+}
+
+#[test]
+fn every_stream_in_the_tcp_corpus_is_answered_as_the_framing_says() {
+    for stream in transport_corpus::<Stream>("dns_tcp_stream") {
+        dns_transport::dns_tcp_stream(&stream);
+    }
+}
+
+#[test]
+fn the_tcp_corpus_holds_every_way_a_frame_states_its_length() {
+    let mut kinds: Vec<&str> = transport_corpus::<Stream>("dns_tcp_stream")
+        .iter()
+        .flat_map(Stream::kinds)
+        .collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    assert_eq!(
+        kinds,
+        [
+            "cut",
+            "honest",
+            "limit",
+            "over",
+            "past the limit",
+            "under",
+            "zero"
+        ]
     );
 }

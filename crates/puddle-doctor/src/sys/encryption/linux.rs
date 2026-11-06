@@ -482,6 +482,25 @@ mod tests {
         assert_eq!(facts.swap, SwapFacts::Unreadable { why: "m".into() });
         let facts = facts_from(sys.path(), None, &Ok(vec![]), &Err("s".into()), false);
         assert_eq!(facts.swap, SwapFacts::Unreadable { why: "s".into() });
+        let nodes = tempfile::tempdir().unwrap();
+        let orphan = nodes.path().join("not-in-sys");
+        fs::write(&orphan, b"").unwrap();
+        let mounts = Ok(parse_mounts(&mount(
+            "0:45",
+            "/",
+            "btrfs",
+            &orphan.display().to_string(),
+        )));
+        let swaps = Ok("Filename Type\n/dev/zram0 partition 1 0 -2\n".to_owned());
+        let facts = facts_from(sys.path(), Some(dir), &mounts, &swaps, true);
+        assert_eq!(facts.swap.areas().len(), 1);
+        assert!(matches!(
+            facts.data,
+            DataEncryption::Volume {
+                protection: Protection::Unknown { .. },
+                ..
+            }
+        ));
         let plain = device(sys.path(), "sdz", "8:99", None);
         assert_eq!(crypt_below(&plain, 0), None);
     }

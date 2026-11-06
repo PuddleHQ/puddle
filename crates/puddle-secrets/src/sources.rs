@@ -499,6 +499,14 @@ mod tests {
                 .valid_for
                 .is_some()
         );
+        // An `expires_on` of another type counts as none.
+        let odd = r#"{"accessToken":"a","expires_on":true}"#;
+        assert_eq!(
+            parse_az_token(odd.as_bytes(), &tenant("t.io"), 0)
+                .unwrap()
+                .valid_for,
+            None
+        );
         let none = r#"{"accessToken":"a","expiresOn":"2026-11-06 12:00:00.000000"}"#;
         assert_eq!(
             parse_az_token(none.as_bytes(), &tenant("t.io"), 0)

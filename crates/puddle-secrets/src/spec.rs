@@ -256,6 +256,17 @@ mod tests {
         for (i, a) in steps.iter().enumerate() {
             assert!(steps.iter().skip(i + 1).all(|b| a != b));
         }
+        assert!(
+            az("t1", None)
+                .fix_step(&SourceError::NoAccess)
+                .unwrap()
+                .contains("an organisation administrator")
+        );
+        assert!(
+            spec.fix_step(&SourceError::Timeout(Tool::Az))
+                .unwrap()
+                .contains("az account show")
+        );
         assert_eq!(spec.fix_step(&SourceError::StoreUnavailable), None);
         assert_eq!(gh_spec().fix_step(&SourceError::NotSignedIn), None);
     }

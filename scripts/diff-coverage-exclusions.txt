@@ -592,9 +592,9 @@ crates/puddle-host/src/ports.rs | PinsError(format!("the pinned forwards could n
 crates/puddle-host/src/ports.rs | fn failed(what: &str, err: &puddle_store::StoreError) -> PinsError { | wraps a store failure in words; the store failing is tested in puddle-ports (a broken `Pins`) and the 503 in puddle-api, not through the real store
 crates/puddle-host/src/shell_init.rs | fn unreachable_path(path: &str) -> GuestPath { | the cold arm of a constant that the unit test proves valid; it cannot run
 crates/puddle-host/src/shell_init.rs | panic!("constant guest path {path:?} is not valid") | the cold arm of a constant that the unit test proves valid; it cannot run
-crates/puddle-host/src/ssh_config.rs | String::from_utf8_lossy(&now) | the text of a failed assertion in a test, run only when the assertion fails
 crates/puddle-host/src/ssh_config.rs | text.replace('\\\\', "/") | the Windows-only branch of `cfg!(windows)` in the ssh config's path quoting; a Windows run decides
 crates/puddle-host/src/ssh_config.rs | tracing::warn!(error = %e, "cannot empty Puddle's ssh config at start"); | a log line for a disk error while emptying a file the host just found; the same write is tested with a working disk
+crates/puddle-host/src/ssh_config/tests.rs | String::from_utf8_lossy(&now) | the text of a failed assertion in a test, run only when the assertion fails
 crates/puddle-host/src/ssh_login.rs | String::from_utf8_lossy(&out.stderr) | the text of a failed assertion in a test, run only when the assertion fails
 crates/puddle-host/src/ssh_target.rs | fn recovered(&self) { | called only when the endpoint accepts again after an accept failure, which cannot be provoked from a test; the report itself is covered by `a_failure_reaches_the_event_stream_with_its_workspace_and_reason`
 crates/puddle-host/src/ssh_target.rs | report_recovered(self.events.as_ref(), &self.workspace); | called only when the endpoint accepts again after a failure that cannot be provoked from a test (see the accept arms of the endpoint); the report itself is covered by `a_failure_reaches_the_event_stream_with_its_workspace_and_reason`

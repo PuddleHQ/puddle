@@ -469,7 +469,37 @@ def scan(root):
             add("cargo-lint-allow", "config", "Cargo.toml", i, line)
     kit_dependency_rows(texts, add)
     crate_root_rows(texts, stripped, add)
+    inline_test_rows(texts, stripped, add)
     return rows
+
+
+# An inline test module over INLINE_TEST_MAX lines (the `mod` line to its closing brace) belongs in a sibling file
+# (`<module>/tests.rs`, declared `#[cfg(test)] mod tests;`). A sibling is never flagged, whatever its size.
+INLINE_TEST_MAX = 500
+TEST_MOD = re.compile(r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*\{")
+
+
+def inline_test_rows(texts, stripped, add):
+    for f, (code, _) in stripped.items():
+        if f.startswith("vendor/"):
+            continue
+        raw = texts[f]
+        for i, line in enumerate(code):
+            if not (TEST_CFG.search(raw[i]) and line.lstrip().startswith("#[")):
+                continue
+            s = i + 1
+            while s < len(code) and (not code[s].strip() or code[s].strip().startswith("#[")):
+                s += 1
+            m = s < len(code) and TEST_MOD.match(code[s])
+            if not m:
+                continue
+            e, _ = item_end(code, s)
+            size = e - s + 1
+            if size > INLINE_TEST_MAX:
+                add("inline-test-block", "test", f, s, f"{size} lines")
+                add("noreason", "test", f, s,
+                    f"inline `mod {m.group(1)}` is {size} lines, over {INLINE_TEST_MAX}: move it to a sibling "
+                    f"file (`#[cfg(test)] mod {m.group(1)};` and `<module>/{m.group(1)}.rs`) | " + raw[s])
 
 
 # Every crate root (`crates/<name>/src/lib.rs`, `main.rs`, each bin target `src/bin/*.rs` and `build.rs`, each its own compilation unit) says what it does
@@ -959,6 +989,40 @@ def root_self_test():
     return problems
 
 
+def inline_test_self_test():
+    """An inline test module of 501 lines is flagged and names the sibling form; 500 lines, a sibling
+    file of any size and a 501 line module without `#[cfg(test)]` are not."""
+    import tempfile
+
+    def inline(name, n):
+        body = "".join(f"    fn t{k}() {{}}\n" for k in range(n - 2))
+        return f"pub fn f() {{}}\n\n#[cfg(test)]\nmod {name} {{\n{body}}}\n"
+
+    cases = {
+        "over": inline("tests", 501), "edge": inline("tests", 500),
+        "plain": inline("tests", 501).replace("#[cfg(test)]\n", ""),
+        "sibling": "pub fn f() {}\n\n#[cfg(test)]\nmod tests;\n",
+    }
+    problems = []
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "crates/x/src/sibling"))
+        for name, text in cases.items():
+            with open(os.path.join(d, f"crates/x/src/{name}.rs"), "w", encoding="utf-8") as h:
+                h.write(text)
+        with open(os.path.join(d, "crates/x/src/lib.rs"), "w", encoding="utf-8") as h:
+            h.write("#![forbid(unsafe_code)]\n")
+        with open(os.path.join(d, "crates/x/src/sibling/tests.rs"), "w", encoding="utf-8") as h:
+            h.write("#[test]\nfn t() { assert!(true); }\n" + "".join(f"fn h{k}() {{}}\n" for k in range(900)))
+        rows = [r for r in scan(d) if r[0] == "noreason" and "inline `mod" in r[3]]
+        files = sorted(r[2].split(":")[0] for r in rows)
+        want = ["crates/x/src/over.rs"]
+        if files != want:
+            problems.append(f"inline test block rule flagged {files}, want {want}")
+        elif "sibling" not in rows[0][3] or "tests.rs" not in rows[0][3]:
+            problems.append(f"the message does not name the sibling form: {rows[0][3]}")
+    return problems
+
+
 def flake_self_test():
     """Replay the original code of fixed flakes (scripts/flake-fixtures/, `.txt` so no gate scans them as
     code): each rule must flag the code that flaked, pass the fix where the fix leaves the shape
@@ -1154,6 +1218,10 @@ def self_test():
     bad_root = root_self_test()
     if bad_root:
         print("self-test FAIL crate roots:\n  " + "\n  ".join(bad_root))
+        return 1
+    bad_inline = inline_test_self_test()
+    if bad_inline:
+        print("self-test FAIL inline test blocks:\n  " + "\n  ".join(bad_inline))
         return 1
     bad_flake = flake_self_test()
     if bad_flake:

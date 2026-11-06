@@ -210,11 +210,12 @@ fn github_com(request: &Recorded, pending: &Mutex<bool>) -> Reply {
                 .and_then(|d| d.split_once(':').map(|(_, password)| password.to_owned()));
             if password.as_deref() != Some(GITHUB) {
                 let diag = format!(
-                    "www-authenticate: Basic realm=\"GitHub\"\r\nx-diag: password={:?} auth={:?}\r\n",
-                    password,
-                    request
-                        .header("authorization")
-                        .map(|a| a.replace(|c: char| !c.is_ascii_graphic(), "?"))
+                    "www-authenticate: Basic realm=\"GitHub\"\r\nx-diag: pwlen={:?} gho={:?} real={:?} stand_in_like={:?} authlen={:?}\r\n",
+                    password.as_ref().map(String::len),
+                    password.as_ref().map(|p| p.starts_with("gho_")),
+                    password.as_ref().map(|p| p == GITHUB),
+                    password.as_ref().map(|p| p.len() == GITHUB.len()),
+                    request.header("authorization").map(str::len),
                 );
                 return Reply::status(401, &diag, "no");
             }

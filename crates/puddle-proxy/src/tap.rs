@@ -194,6 +194,8 @@ mod tests {
             b"GET /\xc3\xa9t\xc3\xa9 HTTP/1.1\r\n",
             b"GET ftp://h/ HTTP/1.1\r\n",
             b"GET / HTTP/2\r\n",
+            b"G@T / HTTP/1.1\r\n",   // a method with a character no token holds
+            b" / HTTP/1.1\r\n",      // no method
             b"GET foo HTTP/1.1\r\n", // right method and version, target that is no path
             b"ping",
             b"\r\n\r\n",

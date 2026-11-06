@@ -500,15 +500,15 @@ async fn shutdown_returns_only_when_the_listener_and_its_connections_are_gone() 
     let addr = route.local_addr();
     let open = open_connection(&route, &good).await;
     route.shutdown().await;
-    // No wait here: the task was finished before `shutdown` returned.
-    assert!(
-        tokio::net::TcpStream::connect(addr).await.is_err(),
-        "the listener is closed"
-    );
+    // Nothing below yields to the runtime, so a task that is only marked for abort is still alive.
     let mut buf = [0u8; 1];
     assert!(
         matches!(open.try_read(&mut buf), Ok(0) | Err(_)),
         "the open connection is closed"
+    );
+    assert!(
+        std::net::TcpStream::connect(addr).is_err(),
+        "the listener is closed"
     );
 }
 

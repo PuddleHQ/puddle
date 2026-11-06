@@ -280,9 +280,14 @@ jobs:
           # run only delays the next group. A pull request and the nightly run every test.
           MAX_FAIL: ${{ github.event_name == 'merge_group' && '1' || '' }}
         # The archive is unpacked into the checkout, where the build job's test binaries had their paths
-        # (cargo bakes the workspace and binary paths into them). cargo-nextest runs directly: through
-        # `cargo` it would go by rust-toolchain.toml.
+        # (cargo bakes the workspace and binary paths into them). cargo-nextest runs directly, so the
+        # rustup proxy never sets RUSTUP_TOOLCHAIN for the tests; the one that runs cargo (dev_override)
+        # then synced the runner's `stable` and failed on its rust-src component. Pin it from
+        # rust-toolchain.toml, as `cargo nextest` through the proxy did.
         run: |
+          RUSTUP_TOOLCHAIN="$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)"
+          [ -n "$RUSTUP_TOOLCHAIN" ] || { echo "no channel in rust-toolchain.toml"; exit 1; }
+          export RUSTUP_TOOLCHAIN
           cargo-nextest nextest run --profile ci --retries "$RETRIES" ${MAX_FAIL:+--max-fail "$MAX_FAIL"} \
             --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/tests.tar.zst" \
             --extract-to "$(cygpath -m "$PWD")" --workspace-remap . \

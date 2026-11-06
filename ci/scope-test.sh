@@ -895,6 +895,8 @@ if len(up) != 1 or len(dn) != 1 or up[0]["with"]["name"] != dn[0]["with"]["name"
     bad.append("windows: the build job's upload and the partition job's download must name the same artifact")
 if "cargo nextest archive --workspace --all-features --locked --profile ci" not in wtext2:
     bad.append("windows: the build job must archive the workspace with --all-features --locked --profile ci")
+if 'export RUSTUP_TOOLCHAIN' not in wtext2 or "rust-toolchain.toml" not in str(wj["tests"]["steps"]):
+    bad.append("windows: the partitions must export RUSTUP_TOOLCHAIN from rust-toolchain.toml (dev_override runs cargo)")
 if "nextest run --profile ci" not in wtext2:
     bad.append("windows: the partitions must run the ci profile")
 for j in ("ui-e2e", "ui-unit"):

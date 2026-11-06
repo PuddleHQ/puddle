@@ -18,6 +18,10 @@ pub enum Role {
     Refresh,
     /// A long-lived API key that the login produces next to the tokens.
     ApiKey,
+    /// A session token the service mints from the access token (the Copilot extension trades the
+    /// GitHub token for one). It is made again at every exchange and its fields carry its expiry,
+    /// so every exchange gets a new stand-in and the tool keeps working with the older ones.
+    Copilot,
 }
 
 impl Role {
@@ -28,6 +32,51 @@ impl Role {
             Self::Access => "access",
             Self::Refresh => "refresh",
             Self::ApiKey => "api-key",
+            Self::Copilot => "copilot",
+        }
+    }
+
+    /// How a stand-in for a token of this role is made.
+    #[must_use]
+    pub const fn stand_in(self) -> StandInKind {
+        match self {
+            Self::Copilot => StandInKind::Fields,
+            Self::Access | Self::Refresh | Self::ApiKey => StandInKind::Shaped,
+        }
+    }
+}
+
+/// How the stand-in for a token is made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StandInKind {
+    /// The token's prefix, length and alphabet, random in between ([`crate::shape`]); one
+    /// stand-in per slot, and a refresh puts a new token behind it.
+    Shaped,
+    /// A token of `key=value;` fields and a MAC after a colon: the fields are kept, because the
+    /// client reads them (expiry, endpoints), and only the MAC is random. The fields are claims,
+    /// not the credential.
+    Fields,
+}
+
+/// Which requests to a token endpoint carry the answer that Puddle reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Method {
+    /// A `POST`, as every OAuth token endpoint takes.
+    Post,
+    /// Any method: an endpoint whose method the client picks (Copilot's token request is a `GET`
+    /// in the extension's source, and a different client may use another).
+    Any,
+}
+
+impl Method {
+    /// Whether a request with `method` is to be read.
+    #[must_use]
+    pub fn takes(self, method: &str) -> bool {
+        match self {
+            Self::Post => method == "POST",
+            Self::Any => true,
         }
     }
 }
@@ -65,8 +114,10 @@ pub struct Field {
 pub struct Endpoint {
     /// The host, exactly.
     pub host: &'static str,
-    /// The path, exactly, for a `POST`.
+    /// The path, exactly.
     pub path: &'static str,
+    /// The methods whose answer is read.
+    pub method: Method,
     /// The request field that holds the refresh token, where the stand-in is swapped back.
     pub refresh_field: Option<&'static str>,
     /// The answer's token fields.
@@ -158,6 +209,7 @@ pub const CLAUDE: Profile = Profile {
         Endpoint {
             host: "platform.claude.com",
             path: "/v1/oauth/token",
+            method: Method::Post,
             refresh_field: Some("refresh_token"),
             fields: &[
                 Field {
@@ -179,6 +231,7 @@ pub const CLAUDE: Profile = Profile {
         Endpoint {
             host: "api.anthropic.com",
             path: "/api/oauth/claude_cli/create_api_key",
+            method: Method::Post,
             refresh_field: None,
             fields: &[Field {
                 name: "raw_key",
@@ -200,32 +253,51 @@ pub const CLAUDE: Profile = Profile {
 
 /// GitHub (`gh auth login`, `copilot login`): the OAuth device flow and the web flow end at
 /// `github.com/login/oauth/access_token`, answered as a form or as JSON by the request's `Accept`.
+/// The Copilot extension's session token comes from `api.github.com/copilot_internal/v2/token`.
 /// The tokens go to GitHub's API, to Git over HTTPS and to the host `copilot_internal/user` names
 /// for the Copilot service.
 pub const GITHUB: Profile = Profile {
     id: "github",
     name: "GitHub",
-    endpoints: &[Endpoint {
-        host: "github.com",
-        path: "/login/oauth/access_token",
-        refresh_field: Some("refresh_token"),
-        fields: &[
-            Field {
-                name: "access_token",
-                role: Role::Access,
-                prefixes: &["gho_", "ghu_"],
+    endpoints: &[
+        Endpoint {
+            host: "github.com",
+            path: "/login/oauth/access_token",
+            method: Method::Post,
+            refresh_field: Some("refresh_token"),
+            fields: &[
+                Field {
+                    name: "access_token",
+                    role: Role::Access,
+                    prefixes: &["gho_", "ghu_"],
+                    keep_last: 0,
+                    scope: Scope::Api,
+                },
+                Field {
+                    name: "refresh_token",
+                    role: Role::Refresh,
+                    prefixes: &["ghr_"],
+                    keep_last: 0,
+                    scope: Scope::TokenEndpoint,
+                },
+            ],
+        },
+        // The VS Code Copilot extension trades the stand-in `gho_` token (swapped back toward this
+        // host) for a session token. The extension's request names no method, so it is a `GET`.
+        Endpoint {
+            host: "api.github.com",
+            path: "/copilot_internal/v2/token",
+            method: Method::Any,
+            refresh_field: None,
+            fields: &[Field {
+                name: "token",
+                role: Role::Copilot,
+                prefixes: &[],
                 keep_last: 0,
                 scope: Scope::Api,
-            },
-            Field {
-                name: "refresh_token",
-                role: Role::Refresh,
-                prefixes: &["ghr_"],
-                keep_last: 0,
-                scope: Scope::TokenEndpoint,
-            },
-        ],
-    }],
+            }],
+        },
+    ],
     api_hosts: &[
         "github.com",
         "api.github.com",
@@ -304,7 +376,8 @@ mod tests {
         assert_eq!(CLAUDE.slot_name(Role::ApiKey), "claude-api-key");
         assert_eq!(GITHUB.slot_name(Role::Access), "github-access");
         assert_eq!(CLAUDE.roles(), [Role::Access, Role::Refresh, Role::ApiKey]);
-        assert_eq!(GITHUB.roles(), [Role::Access, Role::Refresh]);
+        assert_eq!(GITHUB.roles(), [Role::Access, Role::Refresh, Role::Copilot]);
+        assert_eq!(GITHUB.slot_name(Role::Copilot), "github-copilot");
         assert_eq!(CLAUDE.fields().count(), 3);
     }
 

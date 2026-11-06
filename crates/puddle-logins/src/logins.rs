@@ -17,7 +17,7 @@
 //! a key, the credential store is not there) the answer goes to the tool as it is, so the tool
 //! keeps working, and the user is told that this login is not protected.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -33,7 +33,7 @@ use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroizing;
 
 use crate::marker::Marker;
-use crate::profile::{Endpoint, Field, Profile, Role, Scope};
+use crate::profile::{Endpoint, Field, Profile, Role, Scope, StandInKind};
 use crate::shape;
 use crate::vault::{STORE_TIMEOUT, Vault, VaultError};
 
@@ -123,7 +123,15 @@ struct Inner {
     store_timeout_ms: AtomicU64,
     /// The stand-in of each slot that has one.
     slots: Mutex<BTreeMap<(&'static str, Role), String>>,
+    /// The earlier stand-ins of a slot whose stand-in is made again at every exchange, newest
+    /// last. The tool may still hold one of them when the next exchange answers, so each stays
+    /// swapped, with the real token of its own exchange, until [`RETIRED_KEPT`] newer ones exist.
+    retired: Mutex<BTreeMap<(&'static str, Role), VecDeque<String>>>,
 }
+
+/// How many earlier stand-ins of a slot stay swapped. A session token lasts about half an hour
+/// and is exchanged again before it ends, so the tool never holds more than the last two.
+const RETIRED_KEPT: usize = 3;
 
 /// One workspace's captured logins. Cheap to clone.
 #[derive(Clone)]
@@ -222,6 +230,7 @@ impl Logins {
                     u64::try_from(STORE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
                 ),
                 slots: Mutex::new(BTreeMap::new()),
+                retired: Mutex::new(BTreeMap::new()),
             }),
         }
     }
@@ -301,9 +310,30 @@ impl Logins {
         )?;
         let old = self.slots().insert((profile.id, role), stand_in.to_owned());
         if let Some(old) = old {
-            self.inner.registry.remove(&old);
+            if role.stand_in() == StandInKind::Fields {
+                self.retire(profile, role, old);
+            } else {
+                self.inner.registry.remove(&old);
+            }
         }
         self.inner.registry.insert(entry)
+    }
+
+    /// Keeps `old` swapped as an earlier stand-in of the slot, and stops swapping the oldest ones
+    /// beyond [`RETIRED_KEPT`].
+    fn retire(&self, profile: &Profile, role: Role, old: String) {
+        let mut retired = self
+            .inner
+            .retired
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let queue = retired.entry((profile.id, role)).or_default();
+        queue.push_back(old);
+        while queue.len() > RETIRED_KEPT {
+            if let Some(oldest) = queue.pop_front() {
+                self.inner.registry.remove(&oldest);
+            }
+        }
     }
 
     /// Reads the logins kept for the workspace and registers their stand-ins, at the workspace's
@@ -522,6 +552,15 @@ impl Logins {
             if let Some(stand_in) = self.slots().remove(&(profile.id, role)) {
                 self.inner.registry.remove(&stand_in);
             }
+            let earlier = self
+                .inner
+                .retired
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&(profile.id, role));
+            for stand_in in earlier.into_iter().flatten() {
+                self.inner.registry.remove(&stand_in);
+            }
             failed |= self
                 .store(move |vault| vault.delete(profile, role))
                 .await
@@ -580,13 +619,22 @@ impl Logins {
         {
             return Err(Problem::BoundToken);
         }
-        if found.iter().any(|(_, real)| !shape::usable(real)) {
+        if found
+            .iter()
+            .any(|(field, real)| !shape::usable_for(field, real))
+        {
             return Err(Problem::UnusableToken);
         }
         let _one_at_a_time = self.inner.capture.lock().await;
         let mut planned: Vec<(&'static Field, Zeroizing<String>, String, bool)> = Vec::new();
         for (field, real) in found {
-            let existing = self.slots().get(&(profile.id, field.role)).cloned();
+            // A session token is made again at every exchange, with its expiry in its fields, so
+            // it never reuses the slot's stand-in.
+            let existing = self
+                .slots()
+                .get(&(profile.id, field.role))
+                .cloned()
+                .filter(|_| field.role.stand_in() == StandInKind::Shaped);
             let planned_stand_in = match existing {
                 Some(stand_in) => (stand_in, false),
                 // The system had no random numbers, or the token cannot be copied: either way
@@ -694,7 +742,7 @@ impl AnswerRewriter for Capture {
 
 impl ExchangeRewriter for Logins {
     fn begin(&self, host: &Host, method: &str, path: &str) -> Option<Exchange> {
-        if !self.inner.enabled || method != "POST" {
+        if !self.inner.enabled {
             return None;
         }
         // The host first: most requests on a decrypted host are not to a token endpoint, and
@@ -707,7 +755,8 @@ impl ExchangeRewriter for Logins {
             .peekable();
         on_host.peek()?;
         let path = canonical_path(path);
-        let route = on_host.find(|route| route.path == path)?;
+        let route =
+            on_host.find(|route| route.path == path && route.endpoint.method.takes(method))?;
         let mut exchange = Exchange::new();
         if let Some(field) = route.endpoint.refresh_field {
             exchange = exchange.swapping(field);

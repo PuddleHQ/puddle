@@ -96,6 +96,7 @@ mod tests {
         for chunk in data.chunks(777) {
             w.write_all(chunk).unwrap();
         }
+        w.flush().unwrap();
         assert_eq!(w.as_ref(), &data[..]);
         assert_eq!(&w.into_bytes()[..], &data[..]);
     }

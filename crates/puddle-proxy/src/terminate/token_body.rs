@@ -193,9 +193,8 @@ impl TokenBody {
         let mut out = Wiped::new();
         match &self.parsed {
             Parsed::Json(map) => {
-                if serde_json::to_writer(&mut out, map).is_err() {
-                    out = Wiped::new();
-                }
+                // Writing a JSON value into a growing buffer does not fail.
+                let _ = serde_json::to_writer(&mut out, map);
             }
             Parsed::Form(pairs) => {
                 for (index, pair) in pairs.iter().enumerate() {

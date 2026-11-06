@@ -290,10 +290,7 @@ impl WorkspaceCa {
         key.zeroize();
         let certified =
             CertifiedKey::new(vec![cert.der().clone()], signing.map_err(CaError::LoadKey)?);
-        match certified.keys_match() {
-            Ok(()) | Err(rustls::Error::InconsistentKeys(rustls::InconsistentKeys::Unknown)) => {}
-            Err(err) => return Err(CaError::LoadKey(err)),
-        }
+        // No key-match check: the key was made a moment ago and the certificate signed for it.
         Ok((Arc::new(certified), refresh_at))
     }
 

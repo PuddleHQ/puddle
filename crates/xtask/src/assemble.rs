@@ -5,7 +5,8 @@
 //! ```text
 //! Windows                                   Linux
 //! <out>/msb.exe        fork release asset   <out>/msb                   built from the fork tag
-//! <out>/libkrunfw.dll  fork release asset    <out>/libkrunfw.so.5        upstream asset
+//! <out>/libkrunfw.dll  fork release asset    <out>/libkrunfw.so.5        the libkrunfw fork's asset
+//!                                                                       (upstream's if none pinned)
 //!                                           <out>/libkrunfw.so.<ver>    copy of it, the name msb
 //!                                                                       looks for (<ver> is pinned)
 //! <out>/runtime.json   version, tags, SHA-256 of msb and the firmware
@@ -25,8 +26,8 @@ use crate::error::{Result, XtaskError};
 use crate::inventory::Inventory;
 use crate::notice;
 use crate::source::{
-    CHECKSUMS_ASSET, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET, MSB_ASSET, MSB_LINUX_ASSET, Origin,
-    ReleaseSource,
+    CHECKSUMS_ASSET, FIRMWARE_FORK, Firmware, ForkFacts, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET,
+    MSB_ASSET, MSB_LINUX_ASSET, Origin, ReleaseSource,
 };
 
 /// The licence texts shipped with every runtime.
@@ -41,7 +42,8 @@ pub const LICENCE_TEXTS: [(&str, &str); 3] = [
 pub enum Target {
     /// Windows: the fork's `msb.exe` and upstream's firmware, both downloaded.
     Windows,
-    /// Linux: the fork's `msb-linux-x86_64` and upstream's firmware, both downloaded.
+    /// Linux: the fork's `msb-linux-x86_64` and the firmware of the libkrunfw fork's pinned
+    /// release (upstream's when none is pinned), both downloaded.
     Linux {
         /// An msb to ship instead of the release's, for a tag whose release has no Linux msb
         /// (built by `ci/fetch-msb.sh`); `None` downloads the release's.
@@ -49,6 +51,9 @@ pub enum Target {
         /// The firmware version msb looks for beside itself, from the runtime pin
         /// ([`crate::pin::libkrunfw_linux_version`]).
         libkrunfw_version: String,
+        /// The libkrunfw fork release the firmware comes from, from the runtime pin
+        /// ([`crate::pin::libkrunfw_linux_tag`]); `None` takes upstream's.
+        firmware_tag: Option<String>,
     },
 }
 
@@ -101,6 +106,32 @@ pub fn plan(target: &Target) -> Result<Vec<(String, Part)>> {
     Ok(plan)
 }
 
+/// Which release the firmware of `target` comes from, given the source's firmware facts: the
+/// libkrunfw fork's release when the pin names one, upstream's otherwise.
+///
+/// # Errors
+///
+/// [`XtaskError::Parse`] when the pin and the facts disagree about the fork release, so the NOTICE
+/// would describe another library than the one shipped.
+pub fn firmware_origin(target: &Target, firmware: &Firmware) -> Result<Origin> {
+    let pinned = match target {
+        Target::Windows => None,
+        Target::Linux { firmware_tag, .. } => firmware_tag.as_deref(),
+    };
+    match (pinned, firmware.fork_tag.as_deref()) {
+        (None, None) => Ok(Origin::Upstream),
+        (Some(pin), Some(facts)) if pin == facts => Ok(Origin::FirmwareFork),
+        (pin, facts) => Err(XtaskError::parse(
+            "firmware",
+            format!(
+                "the pin takes the libkrunfw fork release {} but the firmware facts describe {}",
+                pin.unwrap_or("none (upstream's)"),
+                facts.unwrap_or("none (upstream's)")
+            ),
+        )),
+    }
+}
+
 /// What `runtime.json` records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Manifest {
@@ -117,6 +148,9 @@ pub struct Manifest {
     /// The version in the Linux firmware's versioned name; absent on Windows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub libkrunfw_version: Option<String>,
+    /// The libkrunfw fork release the firmware comes from; absent for upstream's firmware.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub libkrunfw_fork_tag: Option<String>,
 }
 
 /// Builds the runtime folder of `target` at `out` for the msb version `expected` (exact embedded
@@ -198,6 +232,42 @@ fn fetch_verified(
     Ok((file, sha))
 }
 
+/// Downloads and verifies the firmware library. Windows: the fork release's dll, the one
+/// `ci/fetch-msb.sh` pins and the VM tests run, so the installer ships the tested firmware. Linux:
+/// the pinned libkrunfw fork release, else upstream's.
+fn fetch_firmware(
+    source: &dyn ReleaseSource,
+    facts: &ForkFacts,
+    os: HostOs,
+    target: &Target,
+    downloads: &Path,
+) -> Result<(PathBuf, String)> {
+    let fw_origin = match os {
+        HostOs::Windows => Origin::Fork,
+        HostOs::Linux | HostOs::MacOs => firmware_origin(target, &facts.firmware)?,
+    };
+    let fw_list = match (fw_origin, &facts.firmware.fork_tag) {
+        (Origin::Fork, _) => format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
+        (Origin::FirmwareFork, Some(fork_tag)) => {
+            format!("{FIRMWARE_FORK} {fork_tag} {CHECKSUMS_ASSET}")
+        }
+        _ => format!(
+            "{} {} {CHECKSUMS_ASSET}",
+            facts.upstream_repo, facts.upstream_tag
+        ),
+    };
+    fetch_verified(
+        source,
+        fw_origin,
+        match os {
+            HostOs::Windows => LIBKRUNFW_ASSET,
+            HostOs::Linux | HostOs::MacOs => LIBKRUNFW_LINUX_ASSET,
+        },
+        &downloads.join("firmware"),
+        &fw_list,
+    )
+}
+
 /// Copies the downloaded files into `staging` under the names of `layout`.
 fn place(layout: &[(String, Part)], msb: &Path, fw: &Path, staging: &Path) -> Result<()> {
     for (name, part) in layout {
@@ -257,27 +327,7 @@ fn build(
             found: found.unwrap_or_else(|| "none".into()),
         });
     }
-    // Windows: the fork release's dll, the one `ci/fetch-msb.sh` pins and the VM tests run, so the
-    // installer ships the tested firmware. Linux still takes upstream's.
-    let (fw, libkrunfw_sha256) = match os {
-        HostOs::Windows => fetch_verified(
-            source,
-            Origin::Fork,
-            LIBKRUNFW_ASSET,
-            &downloads.join("firmware"),
-            &format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
-        )?,
-        HostOs::Linux | HostOs::MacOs => fetch_verified(
-            source,
-            Origin::Upstream,
-            LIBKRUNFW_LINUX_ASSET,
-            &downloads.join("upstream"),
-            &format!(
-                "{} {} {CHECKSUMS_ASSET}",
-                facts.upstream_repo, facts.upstream_tag
-            ),
-        )?,
-    };
+    let (fw, libkrunfw_sha256) = fetch_firmware(source, &facts, os, target, &downloads)?;
     let msb_inventory = source.msb_inventory(os)?;
     msb_inventory.check()?;
     puddle.check()?;
@@ -312,6 +362,7 @@ fn build(
     )?;
 
     let manifest = Manifest {
+        libkrunfw_fork_tag: facts.firmware.fork_tag.clone(),
         version: expected.to_owned(),
         fork_tag: facts.tag,
         upstream_tag: facts.upstream_tag,
@@ -353,6 +404,58 @@ mod tests {
         Target::Linux {
             msb: None,
             libkrunfw_version: version.to_owned(),
+            firmware_tag: None,
+        }
+    }
+
+    fn firmware(fork_tag: Option<&str>) -> Firmware {
+        Firmware {
+            libkrunfw_version: "5.6.1".into(),
+            kernel_version: "6.12.113".into(),
+            repo_url: "https://github.com/PuddleHQ/libkrunfw".into(),
+            commit: "e".repeat(40),
+            fork_tag: fork_tag.map(ToOwned::to_owned),
+        }
+    }
+
+    fn linux_from(fork_tag: Option<&str>) -> Target {
+        Target::Linux {
+            msb: None,
+            libkrunfw_version: "5.6.1".into(),
+            firmware_tag: fork_tag.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn the_firmware_comes_from_the_fork_release_the_pin_and_the_facts_both_name() {
+        let pinned = Some("v5.6.1-puddle.1");
+        assert_eq!(
+            firmware_origin(&linux_from(pinned), &firmware(pinned)).unwrap(),
+            Origin::FirmwareFork
+        );
+        assert_eq!(
+            firmware_origin(&linux_from(None), &firmware(None)).unwrap(),
+            Origin::Upstream
+        );
+        assert_eq!(
+            firmware_origin(&Target::Windows, &firmware(None)).unwrap(),
+            Origin::Upstream
+        );
+    }
+
+    #[test]
+    fn a_pin_and_facts_naming_different_firmware_are_refused() {
+        for (target, facts) in [
+            (
+                linux_from(Some("v5.6.1-puddle.2")),
+                firmware(Some("v5.6.1-puddle.1")),
+            ),
+            (linux_from(Some("v5.6.1-puddle.1")), firmware(None)),
+            (linux_from(None), firmware(Some("v5.6.1-puddle.1"))),
+            (Target::Windows, firmware(Some("v5.6.1-puddle.1"))),
+        ] {
+            let err = firmware_origin(&target, &facts).unwrap_err().to_string();
+            assert!(err.contains("v5.6.1-puddle.1"), "{err}");
         }
     }
 

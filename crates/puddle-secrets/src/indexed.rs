@@ -399,6 +399,13 @@ mod tests {
         assert_eq!(store.inner.kept_local(), ["tok-a", "tok-b", "puddle-index"]);
     }
 
+    #[test]
+    fn keeping_one_entry_local_reaches_the_store_underneath() {
+        let store = IndexedStore::new(MemoryStore::new());
+        store.keep_local(&id("tok-a")).unwrap();
+        assert_eq!(store.inner.kept_local(), ["tok-a"]);
+    }
+
     /// A store that holds values but cannot rewrite any of them.
     #[derive(Default)]
     struct NoRewrite(MemoryStore);

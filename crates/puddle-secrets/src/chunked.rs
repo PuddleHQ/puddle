@@ -446,6 +446,29 @@ mod tests {
         );
     }
 
+    /// A store that reports how many entries it could not rewrite.
+    struct CountsFailures;
+
+    impl SecretStore for CountsFailures {
+        fn get(&self, _: &StoredId) -> Result<Option<Secret>, StoreError> {
+            Ok(None)
+        }
+        fn set(&self, _: &StoredId, _: &Secret) -> Result<(), StoreError> {
+            Ok(())
+        }
+        fn delete(&self, _: &StoredId) -> Result<(), StoreError> {
+            Ok(())
+        }
+        fn keep_all_local(&self) -> Result<usize, StoreError> {
+            Ok(3)
+        }
+    }
+
+    #[test]
+    fn keeping_all_local_passes_on_the_count_of_failures() {
+        assert_eq!(ChunkedStore::new(CountsFailures).keep_all_local(), Ok(3));
+    }
+
     /// A store that can rewrite whole entries but not the pieces of a long one.
     #[derive(Default)]
     struct PiecesStuck(MemoryStore);

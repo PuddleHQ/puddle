@@ -213,7 +213,7 @@ fn load_reasons(conn: &Connection) -> Result<Vec<(Option<WorkspaceId>, SystemRea
 /// Records what a Puddle update changed in the built-in sets since this database last saw them
 /// (R-36): one `rule_set_changed` per changed set. A set seen for the first time is only noted.
 pub(super) fn note_built_in_changes(conn: &mut Connection, now: u64) -> Result<(), StoreError> {
-    let tx = conn.transaction()?;
+    let tx = super::write_tx(conn)?;
     for set in BUILT_IN_SETS {
         let current: BTreeSet<String> = catalogue::patterns(set.entries)
             .iter()

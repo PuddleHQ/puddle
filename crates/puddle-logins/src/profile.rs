@@ -113,6 +113,21 @@ pub enum Scope {
     TokenEndpoint,
 }
 
+/// How a stand-in is made from the real token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Generator {
+    /// The real token's prefix, length and alphabet with random characters in between (see
+    /// [`crate::stand_in_for`]); a refresh gives the tool the same stand-in.
+    Shaped,
+    /// A token that is a JWT keeps its header and payload, so a tool that reads its claims (who
+    /// it is for, when it expires) reads the real ones, and gets a random signature of the real
+    /// length; a token that is not a JWT is shaped. A refresh makes a new stand-in (the payload
+    /// changed), and the older ones stay swapped for the newest real token until the workspace
+    /// stops.
+    Jwt,
+}
+
 /// One field of a token answer that holds a token.
 #[derive(Debug, Clone, Copy)]
 pub struct Field {
@@ -130,6 +145,8 @@ pub struct Field {
     /// How many of the token's last characters the stand-in keeps. A client may record the end
     /// of a key it was given and compare with it later; no profile needs more than 20.
     pub keep_last: usize,
+    /// How the stand-in is made.
+    pub generator: Generator,
     /// Where the stand-in is swapped for the real token.
     pub scope: Scope,
 }
@@ -287,6 +304,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         role: Role::Access,
         prefixes: &["sk-ant-oat01-"],
         keep_last: 0,
+        generator: Generator::Shaped,
         scope: Scope::Api,
     },
     Field {
@@ -295,6 +313,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         role: Role::Refresh,
         prefixes: &["sk-ant-ort01-"],
         keep_last: 0,
+        generator: Generator::Shaped,
         scope: Scope::TokenEndpoint,
     },
 ];
@@ -332,6 +351,7 @@ pub const CLAUDE: Profile = Profile {
                 prefixes: &["sk-ant-api03-"],
                 // The CLI keeps the last 20 characters of the key it was given.
                 keep_last: 20,
+                generator: Generator::Shaped,
                 scope: Scope::Api,
             }],
         },
@@ -363,6 +383,7 @@ pub const GITHUB: Profile = Profile {
                 role: Role::Access,
                 prefixes: &["gho_", "ghu_"],
                 keep_last: 0,
+                generator: Generator::Shaped,
                 scope: Scope::Api,
             },
             Field {
@@ -371,6 +392,7 @@ pub const GITHUB: Profile = Profile {
                 role: Role::Refresh,
                 prefixes: &["ghr_"],
                 keep_last: 0,
+                generator: Generator::Shaped,
                 scope: Scope::TokenEndpoint,
             },
         ],

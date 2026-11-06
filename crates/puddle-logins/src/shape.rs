@@ -10,11 +10,14 @@
 
 use zeroize::Zeroizing;
 
-use crate::profile::Field;
+use crate::profile::{Field, Generator};
 
-/// The shortest and longest token a stand-in can copy the length of: the registry's own limits.
+/// The shortest and longest token a stand-in can copy the length of, for a shaped token.
 const MIN_LEN: usize = 16;
 const MAX_LEN: usize = 256;
+/// The longest a field made by [`Generator::Jwt`] may be: a JWT is longer than other tokens. It is
+/// the registry's own limit.
+const MAX_JWT_LEN: usize = 1024;
 
 /// The fewest random characters a stand-in has, so it cannot be guessed or confused with another.
 const MIN_RANDOM: usize = 8;
@@ -84,12 +87,41 @@ fn random_text(
 }
 
 /// Whether a token can be copied by a stand-in and can be swapped back into a header: 16 to 256
-/// visible ASCII characters.
-pub(crate) fn usable(real: &str) -> bool {
-    (MIN_LEN..=MAX_LEN).contains(&real.len()) && real.bytes().all(|b| b.is_ascii_graphic())
+/// visible ASCII characters (up to 1024 for a field of [`Generator::Jwt`]).
+pub(crate) fn usable(real: &str, field: &Field) -> bool {
+    let most = match field.generator {
+        Generator::Shaped => MAX_LEN,
+        Generator::Jwt => MAX_JWT_LEN,
+    };
+    (MIN_LEN..=most).contains(&real.len()) && real.bytes().all(|b| b.is_ascii_graphic())
 }
 
-/// A stand-in for `real`, a token of the kind `field` describes: the same length, the prefix it
+/// The signed part of a JWT (`header.payload`) and its signature, when `real` is one: three
+/// segments of base64url, the first two the encoding of a JSON object (`ey` is `{"`), and a
+/// signature with enough characters to replace them with random ones.
+fn jwt_parts(real: &str) -> Option<(&str, &str)> {
+    let (signed, signature) = real.rsplit_once('.')?;
+    let (header, payload) = signed.split_once('.')?;
+    let base64url = |text: &str| text.bytes().all(|b| BASE64URL.contains(&b));
+    let is_jwt = header.starts_with("ey")
+        && payload.starts_with("ey")
+        && base64url(header)
+        && base64url(payload)
+        && base64url(signature)
+        && signature.len() >= MIN_RANDOM;
+    is_jwt.then_some((signed, signature))
+}
+
+/// Whether a refresh of `field`'s token needs a new stand-in: a JWT's payload changes with each
+/// token (its expiry), and the tool reads it, so the stand-in must change with it. Any other token
+/// keeps its stand-in.
+pub(crate) fn renews(real: &str, field: &Field) -> bool {
+    field.generator == Generator::Jwt && jwt_parts(real).is_some()
+}
+
+/// A stand-in for `real`, a token of the kind `field` describes. A field of [`Generator::Jwt`] and a
+/// token that is a JWT: its header and payload with a random signature of the same length. Any other:
+/// the same length, the prefix it
 /// has among `field.prefixes`, the same alphabet and its last `field.keep_last` characters (when
 /// the token is long enough to keep them and still leave random characters in between).
 ///
@@ -105,8 +137,20 @@ pub(crate) fn stand_in_with(
     field: &Field,
     fill: &mut dyn FnMut(&mut [u8]) -> bool,
 ) -> Result<String, ShapeError> {
-    if !usable(real) {
+    if !usable(real, field) {
         return Err(ShapeError::Unusable);
+    }
+    if field.generator == Generator::Jwt {
+        if let Some((signed, signature)) = jwt_parts(real) {
+            let random = random_text(BASE64URL, signature.len(), fill)?;
+            let stand_in = format!("{signed}.{random}");
+            // Not a proper check of the signature's randomness, only that it is not the real one.
+            return if stand_in == real {
+                Err(ShapeError::Random)
+            } else {
+                Ok(stand_in)
+            };
+        }
     }
     let prefix = field
         .prefixes
@@ -296,6 +340,131 @@ mod tests {
         let a = stand_in_with(real, github_access(), &mut counting()).unwrap();
         let b = stand_in_with(real, github_access(), &mut counting()).unwrap();
         assert_eq!(a, b);
+    }
+
+    fn jwt_field() -> Field {
+        Field {
+            generator: Generator::Jwt,
+            prefixes: &[],
+            ..*github_access()
+        }
+    }
+
+    /// A JWT of `signature_len` signature characters, header `{"alg":"RS256"}`, claims `claims`.
+    fn jwt(claims: &str, signature_len: usize) -> String {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        format!(
+            "{}.{}.{}",
+            URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#),
+            URL_SAFE_NO_PAD.encode(claims),
+            "S".repeat(signature_len)
+        )
+    }
+
+    #[test]
+    fn a_jwt_keeps_its_header_and_claims_and_gets_a_random_signature_of_the_same_length() {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let real = jwt(r#"{"sub":"me","tid":"tenant-a","exp":1893456000}"#, 342);
+        let stand_in = stand_in_for(&real, &jwt_field()).unwrap();
+        assert_eq!(stand_in.len(), real.len());
+        let (real_parts, parts): (Vec<&str>, Vec<&str>) =
+            (real.split('.').collect(), stand_in.split('.').collect());
+        assert_eq!(parts.len(), 3);
+        assert_eq!((parts[0], parts[1]), (real_parts[0], real_parts[1]));
+        // What a tool that reads the claims sees.
+        let claims: serde_json::Value =
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
+        assert_eq!(claims["exp"], 1_893_456_000);
+        assert_eq!(claims["tid"], "tenant-a");
+        let header: serde_json::Value =
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
+        assert_eq!(header["alg"], "RS256");
+        // The signature is new, and never the real one.
+        assert_ne!(parts[2], real_parts[2]);
+        assert_eq!(parts[2].len(), 342);
+        assert!(parts[2].bytes().all(|b| BASE64URL.contains(&b)));
+        assert!(!stand_in.contains("SSSSSSSS"));
+    }
+
+    #[test]
+    fn two_stand_ins_of_one_jwt_differ_only_in_the_signature() {
+        let real = jwt(r#"{"exp":1893456000}"#, 43);
+        let a = stand_in_for(&real, &jwt_field()).unwrap();
+        let b = stand_in_for(&real, &jwt_field()).unwrap();
+        assert_ne!(a, b);
+        assert_eq!(a.rsplit_once('.').unwrap().0, b.rsplit_once('.').unwrap().0);
+    }
+
+    #[test]
+    fn a_stand_in_of_a_jwt_equal_to_the_real_one_is_refused() {
+        let real = jwt(r#"{"exp":1893456000}"#, 8);
+        let signature = real.rsplit_once('.').unwrap().1.as_bytes().to_vec();
+        let mut at = 0;
+        let mut fill = |bytes: &mut [u8]| {
+            for b in bytes {
+                let want = signature[at % signature.len()];
+                *b = u8::try_from(BASE64URL.iter().position(|c| *c == want).unwrap()).unwrap();
+                at += 1;
+            }
+            true
+        };
+        assert_eq!(
+            stand_in_with(&real, &jwt_field(), &mut fill),
+            Err(ShapeError::Random)
+        );
+        assert_eq!(
+            stand_in_with(&real, &jwt_field(), &mut |_| false),
+            Err(ShapeError::Random)
+        );
+    }
+
+    #[test]
+    fn a_token_that_is_not_a_jwt_is_shaped_by_a_jwt_field() {
+        let field = jwt_field();
+        let ey = |text: &str| format!("ey{text}");
+        for opaque in [
+            "EwBIA8l6BAAU-opaque-token-0123456789abcdef".to_owned(),
+            // Only two segments, an empty signature (`alg` none), a signature that is too short
+            // to replace, a dot in a fourth place, text outside base64url.
+            format!("{}.{}", ey("Jhbxxxxxx"), ey("Jzdxxxxxxxx")),
+            format!("{}.{}.", ey("Jhbxxxxxx"), ey("Jzdxxxxxxxx")),
+            format!("{}.{}.short", ey("Jhbxxxxxx"), ey("Jzdxxxxxxxx")),
+            format!(
+                "{}.{}.abcdefgh.abcdefgh",
+                ey("Jhbxxxxxx"),
+                ey("Jzdxxxxxxxx")
+            ),
+            format!("{}.{}.abcdef+ghi", ey("Jhbxxxxxx"), ey("Jzdxxxxxxxx")),
+            // A first segment that is not the encoding of an object.
+            format!("Zm9vYmFy.{}.abcdefghijkl", ey("Jzdxxxxxxxx")),
+            format!("{}.Zm9vYmFy.abcdefghijkl", ey("Jhbxxxxxx")),
+        ] {
+            assert!(!renews(&opaque, &field), "{opaque}");
+            let stand_in = stand_in_for(&opaque, &field).unwrap();
+            assert_eq!(stand_in.len(), opaque.len());
+            assert_ne!(stand_in, opaque);
+        }
+        let real = jwt(r#"{"exp":1}"#, 43);
+        assert!(renews(&real, &field));
+        // A shaped field never renews, whatever the token is.
+        assert!(!renews(&real, github_access()));
+    }
+
+    #[test]
+    fn a_jwt_field_takes_up_to_a_thousand_and_twenty_four_characters_and_a_shaped_one_256() {
+        let long = jwt(r#"{"exp":1}"#, 1024 - jwt(r#"{"exp":1}"#, 0).len());
+        assert_eq!(long.len(), 1024);
+        assert_eq!(stand_in_for(&long, &jwt_field()).unwrap().len(), 1024);
+        assert_eq!(
+            stand_in_for(&format!("{long}x"), &jwt_field()),
+            Err(ShapeError::Unusable)
+        );
+        assert_eq!(
+            stand_in_for(&long, github_access()),
+            Err(ShapeError::Unusable)
+        );
     }
 
     proptest! {

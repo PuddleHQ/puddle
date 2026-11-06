@@ -54,8 +54,8 @@ mod target;
 /// it.
 const MIN_STAND_IN_LEN: usize = 16;
 
-/// The longest stand-in or name accepted.
-const MAX_LEN: usize = 256;
+/// The longest stand-in accepted (a login's JWT stand-in is as long as the JWT) and the name.
+const MAX_LEN: usize = 1024;
 
 /// Most random bytes of a generated stand-in: 128 bits.
 const RANDOM_BYTES: usize = 16;
@@ -1134,6 +1134,7 @@ mod tests {
                 hosts,
             )
         };
+        assert!(new("N", &"x".repeat(1024), "r", hosts()).is_ok());
         assert!(matches!(
             new("", GH, "r", hosts()),
             Err(StandInError::Name(_))
@@ -1150,7 +1151,7 @@ mod tests {
             "short",
             "has a space in it, long enough",
             "tab\tin-it-and-long-enough",
-            &"x".repeat(257),
+            &"x".repeat(1025),
         ] {
             assert_eq!(
                 new("N", text, "r", hosts()).unwrap_err(),

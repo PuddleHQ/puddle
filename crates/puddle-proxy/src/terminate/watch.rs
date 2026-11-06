@@ -490,12 +490,12 @@ mod tests {
         let mut open = start();
         open.extend(frame(HEADERS, 0, 1, b"abc"));
         guest.write_all(&open).await.unwrap();
-        watched.read(&mut buf).await.unwrap();
+        assert!(watched.read(&mut buf).await.unwrap() > 0);
         guest
             .write_all(&frame(CONTINUATION, END_HEADERS, 1, b"def"))
             .await
             .unwrap();
-        watched.read(&mut buf).await.unwrap();
+        assert!(watched.read(&mut buf).await.unwrap() > 0);
         tokio::time::advance(timeout * 2).await;
         assert!(
             tokio::time::timeout(Duration::from_secs(1), watched.read(&mut buf))

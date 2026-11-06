@@ -36,11 +36,11 @@ describe("reading the log", () => {
   it("loads the newest page first, with the filter the server applies", async () => {
     fill(250);
     const store = make();
-    await store.load({ ...ALL, workspace: "demo", host: "h1" });
+    await store.load({ ...ALL, workspace: "demo", q: "h1" });
     expect(store.status).toBe("ready");
     expect(api.queries[0]).toEqual({
       workspace: "demo",
-      host_contains: "h1",
+      q: "h1",
       limit: 200,
     });
     expect(ids(store)[0]).toBe(199);
@@ -109,11 +109,11 @@ describe("reading the log", () => {
     fill(5);
     const store = make();
     await store.load(ALL);
-    const first = store.load({ ...ALL, host: "h1" });
+    const first = store.load({ ...ALL, q: "h1" });
     expect(store.status).toBe("ready");
     expect(store.reloading).toBe(true);
     expect(store.entries).toHaveLength(5);
-    const second = store.load({ ...ALL, host: "h2" });
+    const second = store.load({ ...ALL, q: "h2" });
     await Promise.all([first, second]);
     expect(ids(store)).toEqual([2]);
     expect(store.reloading).toBe(false);
@@ -123,7 +123,7 @@ describe("reading the log", () => {
     const store = make();
     await store.load(ALL);
     store.setFollowing(false);
-    await store.load({ ...ALL, host: "h1" });
+    await store.load({ ...ALL, q: "h1" });
     expect(store.following).toBe(true);
   });
   it("survives a failed older page and tries again on the next ask", async () => {
@@ -213,7 +213,7 @@ describe("the live tail", () => {
     api.entries.push(connection(1, { host: "a.test" }));
     const store = make();
     store.start();
-    await store.load({ ...ALL, host: "a.test" });
+    await store.load({ ...ALL, q: "a.test" });
     api.entries.push(
       connection(2, { host: "b.test" }),
       connection(3, { host: "a.test" }),
@@ -221,7 +221,7 @@ describe("the live tail", () => {
     source.emit({ type: "audit_appended", id: 3 });
     await settle();
     expect(ids(store)).toEqual([3, 1]);
-    expect(api.queries.at(-1)).toMatchObject({ host_contains: "a.test" });
+    expect(api.queries.at(-1)).toMatchObject({ q: "a.test" });
   });
   it("reads on past a full page and puts the newest on top", async () => {
     fill(2);
@@ -320,7 +320,7 @@ describe("the live tail", () => {
     await store.load(ALL);
     api.entries.push(connection(3));
     const tail = store.catchUp();
-    const reload = store.load({ ...ALL, host: "h1" });
+    const reload = store.load({ ...ALL, q: "h1" });
     await Promise.all([tail, reload]);
     expect(ids(store)).toEqual([1]);
     expect(store.held).toEqual([]);
@@ -351,10 +351,10 @@ describe("exporting", () => {
   it("applies the filter, and an exact multiple of a page ends on an empty one", async () => {
     fill(500);
     const store = make();
-    const result = await store.export({ filter: { ...ALL, host: "h" } });
+    const result = await store.export({ filter: { ...ALL, q: "h" } });
     expect(result).toMatchObject({ ok: true, records: 500 });
     expect(api.queries).toHaveLength(2);
-    expect(api.queries[0]).toMatchObject({ host_contains: "h" });
+    expect(api.queries[0]).toMatchObject({ q: "h" });
   });
   it("is empty for a filter nothing matches", async () => {
     const result = await make().export({ filter: ALL });

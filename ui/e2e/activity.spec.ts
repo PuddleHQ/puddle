@@ -189,7 +189,7 @@ test.describe("the list", () => {
     await total(page, 1);
     await expect(region(page)).toContainText("System managed changed");
     await expect(region(page)).toContainText("now for code-server");
-    await page.goto("/activity?host=zzz");
+    await page.goto("/activity?q=zzz");
     await expect(
       page.getByRole("heading", { name: "No records match" }),
     ).toBeVisible();
@@ -236,12 +236,12 @@ test.describe("filters", () => {
     await page.getByLabel("Outcome").selectOption("");
     await page.getByLabel("Type").selectOption("");
     await page.getByLabel("Workspace").selectOption("");
-    await page.getByLabel("Host contains").fill("CRATES");
+    await page.getByLabel("Search").fill("CRATES");
     const crates = await matching(request, backend, {
       host_contains: "crates",
     });
     await total(page, crates.length);
-    await expect(page).toHaveURL(/host=CRATES/);
+    await expect(page).toHaveURL(/q=CRATES/);
     // The filters narrow each other: every step found something, and fewer each time.
     expect(everything).toBeGreaterThan(connections);
     expect(connections).toBeGreaterThan(blocked);
@@ -285,20 +285,20 @@ test.describe("filters", () => {
         workspace: "web-shop",
         type: "connection",
         outcome: "allow",
-        host_contains: "crates",
+        q: "crates",
       })
     ).length;
     expect(expected).toBeGreaterThan(0);
     await openActivity(
       page,
       backend,
-      "?workspace=web-shop&type=connection&outcome=allow&host=crates&range=all",
+      "?workspace=web-shop&type=connection&outcome=allow&q=crates&range=all",
     );
     await total(page, expected);
     await expect(page.getByLabel("Workspace")).toHaveValue("web-shop");
     await expect(page.getByLabel("Type")).toHaveValue("connection");
     await expect(page.getByLabel("Outcome")).toHaveValue("allow");
-    await expect(page.getByLabel("Host contains")).toHaveValue("crates");
+    await expect(page.getByLabel("Search")).toHaveValue("crates");
     await expect(page.getByLabel("Time range")).toHaveValue("all");
     await page.reload();
     await total(page, expected);
@@ -330,7 +330,7 @@ test.describe("filters", () => {
     backend,
   }) => {
     await openActivity(page, backend, "?range=all&type=rule_created");
-    await page.getByLabel("Host contains").fill("npmjs");
+    await page.getByLabel("Search").fill("npmjs");
     await expect(rows(page)).toHaveCount(1);
     await expect(rows(page).first()).toContainText("registry.npmjs.org");
     await expect(rows(page).first()).toContainText("Rule added");
@@ -346,7 +346,7 @@ test.describe("filters", () => {
       host: "xn--bcher-kva.example.com",
       decision: "allow",
     });
-    await openActivity(page, backend, "?host=bcher");
+    await openActivity(page, backend, "?q=bcher");
     await expect(rows(page).first()).toContainText("xn--bcher-kva.example.com");
   });
 });
@@ -382,17 +382,14 @@ test.describe("the raw record", () => {
     backend,
     request,
   }) => {
-    await openActivity(page, backend, "?type=connection&host=github");
+    await openActivity(page, backend, "?type=connection&q=github");
     await rows(page).first().click();
     const shown = JSON.parse(
       (await page.locator("tbody tr.detail pre").textContent()) ?? "{}",
     ) as unknown;
-    const reply = await request.get(
-      "/api/audit?type=connection&host_contains=github",
-      {
-        headers: { Authorization: `Bearer ${backend.token}` },
-      },
-    );
+    const reply = await request.get("/api/audit?type=connection&q=github", {
+      headers: { Authorization: `Bearer ${backend.token}` },
+    });
     const body = (await reply.json()) as { entries: { record: unknown }[] };
     expect(shown).toEqual(body.entries[0]?.record);
   });
@@ -423,7 +420,7 @@ test.describe("live", () => {
     page,
     backend,
   }) => {
-    await visit(page, backend, "?host=wanted");
+    await visit(page, backend, "?q=wanted");
     await total(page, 0);
     await connect(backend, "unrelated.example.org");
     await connect(backend, "wanted.example.org");
@@ -595,7 +592,7 @@ test.describe("export", () => {
 
   test("says so when nothing matches the filter", async ({ page, backend }) => {
     await openActivity(page, backend);
-    await page.getByLabel("Host contains").fill("nothing-like-it");
+    await page.getByLabel("Search").fill("nothing-like-it");
     await expect(
       page.getByRole("heading", { name: "No records match" }),
     ).toBeVisible();
@@ -692,12 +689,12 @@ test.describe("keyboard only", () => {
     backend,
   }) => {
     await openActivity(page, backend, "?type=connection");
-    await page.getByLabel("Host contains").focus();
+    await page.getByLabel("Search").focus();
     await page.keyboard.type("ads.example");
     // The list is read again 250 ms after a key, and every read starts the view over. On a slow
     // machine a prefix is read too ("ad" already matches this one row), so wait for the whole
     // word: the address carries it once it is read, and the count is busy until the answer.
-    await expect(page).toHaveURL(/[?&]host=ads\.example(&|$)/);
+    await expect(page).toHaveURL(/[?&]q=ads\.example(&|$)/);
     await expect(page.locator("p.count")).toHaveAttribute("aria-busy", "false");
     await expect(rows(page)).toHaveCount(1);
     const toggle = rows(page).first().getByRole("button");
@@ -795,7 +792,7 @@ test.describe("accessibility", () => {
         await toast(page).getByText("Saved").hover();
         await page.clock.resume();
         await scan(page, "toast");
-        await page.getByLabel("Host contains").fill("zzz-none");
+        await page.getByLabel("Search").fill("zzz-none");
         await expect(
           page.getByRole("heading", { name: "No records match" }),
         ).toBeVisible();
@@ -814,7 +811,7 @@ test.describe("accessibility", () => {
     for (const control of [
       rows(page).first().getByRole("button"),
       page.getByRole("button", { name: "Export JSON lines" }),
-      page.getByLabel("Host contains"),
+      page.getByLabel("Search"),
       page.getByLabel("Workspace"),
       page.getByLabel("Type"),
       page.getByLabel("Outcome"),

@@ -22,7 +22,7 @@
   import Toast from "#lib/components/Toast.svelte";
   import "#lib/theme/controls.css";
 
-  /** How long typing in "Host contains" waits before the log is read again. */
+  /** How long typing in "Search" waits before the log is read again. */
   const TYPING_MS = 250;
 
   let now = $state(Date.now());
@@ -172,12 +172,13 @@
   }}
 >
   <div class="field">
-    <label for="f-host">Host contains</label>
+    <label for="f-q">Search</label>
     <input
-      id="f-host"
+      id="f-q"
       type="search"
       autocomplete="off"
-      bind:value={filter.host}
+      bind:value={filter.q}
+      placeholder="Host, path, method or reason"
       oninput={typed}
     />
   </div>

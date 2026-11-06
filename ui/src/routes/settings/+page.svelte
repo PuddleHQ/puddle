@@ -8,6 +8,7 @@
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
+  import ProxySignIn from "#lib/components/ProxySignIn.svelte";
   import Toast from "#lib/components/Toast.svelte";
   import EnvironmentTable from "#lib/components/EnvironmentTable.svelte";
   import { EnvironmentStore } from "#lib/stores/environment.svelte.ts";
@@ -844,6 +845,7 @@
             ></a
           >
         </div>
+        <ProxySignIn />
         <h3>System check</h3>
         <div class="setting">
           <div class="grow">

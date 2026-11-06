@@ -201,10 +201,9 @@ impl ChannelBody {
         } else {
             Body::Length(len)
         });
-        if len > 0 {
-            // The channel holds four pieces and this is the first.
-            let _ = tx.try_send(bytes);
-        }
+        // The channel holds four pieces and this is the first; for an empty body the receiver is
+        // already gone and the send fails, which is fine.
+        let _ = tx.try_send(bytes);
         (body, tx, abort)
     }
 }
@@ -298,6 +297,68 @@ mod tests {
         ] {
             assert!(decode(input, body).await.is_err(), "{input:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_large_body_is_handed_on_in_pieces_of_64_kib() {
+        let input = vec![7u8; 200 * 1024];
+        let mut r = BufReader::with_capacity(256 * 1024, &input[..]);
+        let mut decoder = BodyReader::new(Body::Length(input.len() as u64));
+        let mut sizes = Vec::new();
+        while let Some(piece) = decoder.next(&mut r).await.unwrap() {
+            sizes.push(piece.len());
+        }
+        assert_eq!(sizes, [64 * 1024, 64 * 1024, 64 * 1024, 8 * 1024]);
+    }
+
+    /// Trailers of exactly 64 KiB (the blank line counted) are accepted, one byte more is not.
+    #[tokio::test]
+    async fn trailers_are_accepted_up_to_64_kib_and_no_further() {
+        let trailers = |extra: usize| {
+            let mut input = b"0\r\n".to_vec();
+            for _ in 0..511 {
+                input.extend_from_slice(b"x-a: ");
+                input.extend(std::iter::repeat_n(b'a', 121));
+                input.extend_from_slice(b"\r\n");
+            }
+            input.extend_from_slice(b"x-a: ");
+            input.extend(std::iter::repeat_n(b'a', 119 + extra));
+            input.extend_from_slice(b"\r\n\r\n");
+            input
+        };
+        assert!(decode(&trailers(0), Body::Chunked).await.is_ok());
+        assert!(decode(&trailers(1), Body::Chunked).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_chunk_may_end_in_a_bare_line_feed() {
+        let input = b"3\nabc\n2\r\nde\n0\n\n";
+        assert_eq!(decode(input, Body::Chunked).await.unwrap(), b"abcde");
+    }
+
+    #[tokio::test]
+    async fn a_channel_body_reports_the_end_of_the_stream_only_when_it_is_over() {
+        let (empty, _tx, _abort) = ChannelBody::new(Body::None);
+        assert!(empty.is_end_stream());
+
+        let (mut open, tx, _abort) = ChannelBody::new(Body::Length(2));
+        assert!(!open.is_end_stream());
+        tx.send(Bytes::from_static(b"hi")).await.unwrap();
+        drop(tx);
+        let frame = std::future::poll_fn(|cx| Pin::new(&mut open).poll_frame(cx)).await;
+        assert!(frame.unwrap().unwrap().is_data());
+        assert!(!open.is_end_stream(), "the end has not been polled yet");
+        assert!(
+            std::future::poll_fn(|cx| Pin::new(&mut open).poll_frame(cx))
+                .await
+                .is_none()
+        );
+        assert!(open.is_end_stream());
+
+        let (done, _tx, _abort) = ChannelBody::prefetched(Bytes::new());
+        assert!(done.is_end_stream());
+        let (pending, _tx, _abort) = ChannelBody::prefetched(Bytes::from_static(b"x"));
+        assert!(!pending.is_end_stream());
     }
 
     #[tokio::test]

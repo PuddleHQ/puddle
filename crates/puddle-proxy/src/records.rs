@@ -56,6 +56,17 @@ pub trait RecordResolver: Send + Sync {
     ) -> BoxFuture<'a, Result<Records, RecordError>>;
 }
 
+/// The DNS type a record type is asked for with; `None` for the types this resolver does not serve
+/// (address lookups go through [`crate::Resolver`]).
+fn dns_type(rtype: RecordType) -> Option<DnsType> {
+    match rtype {
+        RecordType::Srv => Some(DnsType::SRV),
+        RecordType::Txt => Some(DnsType::TXT),
+        RecordType::Mx => Some(DnsType::MX),
+        _ => None,
+    }
+}
+
 /// The host's DNS configuration (`/etc/resolv.conf`, the Windows adapter settings), read at each
 /// lookup so a network change is picked up.
 #[derive(Debug, Clone, Copy, Default)]
@@ -68,11 +79,8 @@ impl RecordResolver for SystemRecords {
         rtype: RecordType,
     ) -> BoxFuture<'a, Result<Records, RecordError>> {
         Box::pin(async move {
-            let dns_type = match rtype {
-                RecordType::Srv => DnsType::SRV,
-                RecordType::Txt => DnsType::TXT,
-                RecordType::Mx => DnsType::MX,
-                _ => return Err(RecordError::NoData),
+            let Some(dns_type) = dns_type(rtype) else {
+                return Err(RecordError::NoData);
             };
             let resolver: TokioResolver = TokioResolver::builder_tokio()
                 .and_then(hickory_resolver::ResolverBuilder::build)
@@ -252,6 +260,27 @@ mod tests {
             .collect();
         let (records, _) = collect("example.net", many.iter().map(|(d, t)| (d, *t)));
         assert_eq!(records.len(), MAX_RECORDS);
+    }
+
+    #[test]
+    fn txt_is_kept_up_to_the_byte_cap_and_left_out_past_it() {
+        use hickory_resolver::proto::rr::rdata::TXT;
+        let txt = |len: usize| (RData::TXT(TXT::new(vec!["t".repeat(len)])), 60);
+        let answers = [txt(8 * 1024), txt(1)];
+        let (records, _) = collect("example.net", answers.iter().map(|(d, t)| (d, *t)));
+        assert_eq!(
+            records.len(),
+            1,
+            "a string of exactly the cap is kept, the next byte is not"
+        );
+    }
+
+    #[test]
+    fn each_served_record_type_asks_for_its_own_dns_type() {
+        assert_eq!(dns_type(RecordType::Srv), Some(DnsType::SRV));
+        assert_eq!(dns_type(RecordType::Txt), Some(DnsType::TXT));
+        assert_eq!(dns_type(RecordType::Mx), Some(DnsType::MX));
+        assert_eq!(dns_type(RecordType::A), None);
     }
 
     #[tokio::test]

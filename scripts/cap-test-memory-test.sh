@@ -17,4 +17,7 @@ rc=0
 rc=0
 PUDDLE_TEST_MEMORY_KB=65536 "$cap" awk 'BEGIN { s = "x"; for (;;) s = s s }' >/dev/null 2>&1 || rc=$?
 [ "$rc" != 0 ] || fail "a runaway allocation must fail at the limit"
+# The limit is soft: a child may lift it for itself (the real tools the login tests start need that).
+out=$(PUDDLE_TEST_MEMORY_KB=65536 "$cap" sh -c 'ulimit -S -d unlimited && ulimit -S -d') || fail "a child must be able to lift the soft limit"
+[ "$out" = unlimited ] || fail "the lifted limit must read unlimited: $out"
 echo "cap-test-memory-test: ok"

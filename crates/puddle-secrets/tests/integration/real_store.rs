@@ -162,3 +162,47 @@ fn a_value_longer_than_one_entry_round_trips_through_the_real_credential_store()
     assert!(store.get(&id).unwrap().is_none());
     store.delete(&id).unwrap();
 }
+
+#[cfg(windows)]
+const SERVICE: &str = "puddle-test-persistence";
+
+/// What the Windows store itself says about an entry's persistence ("Local", "Enterprise", ...).
+#[cfg(windows)]
+fn persistence_of(service: &str, id: &StoredId) -> String {
+    keyring::Entry::store_status().as_ref().unwrap();
+    keyring_core::Entry::new(service, &format!("credential:{id}"))
+        .unwrap()
+        .get_attributes()
+        .unwrap()
+        .remove("persistence")
+        .unwrap()
+}
+
+/// Credential Manager's default "enterprise" persistence lets a roaming profile copy an entry to
+/// the user's other computers. A new entry is "local machine", and one an earlier version wrote as
+/// "enterprise" is rewritten by `keep_local` with its value unchanged.
+#[cfg(windows)]
+#[test]
+fn entries_stay_on_this_computer_and_older_enterprise_ones_are_rewritten() {
+    if !store_available() {
+        return;
+    }
+    let store = KeyringStore::named(SERVICE);
+    let (fresh, old) = (fresh_id(), fresh_id());
+    store.set(&fresh, &Secret::new("v".to_owned())).unwrap();
+    assert_eq!(persistence_of(SERVICE, &fresh), "Local");
+
+    let enterprise = std::collections::HashMap::from([("persistence", "enterprise")]);
+    keyring_core::Entry::new_with_modifiers(SERVICE, &format!("credential:{old}"), &enterprise)
+        .unwrap()
+        .set_password("old value")
+        .unwrap();
+    assert_eq!(persistence_of(SERVICE, &old), "Enterprise");
+    store.keep_local(&old).unwrap();
+    assert_eq!(persistence_of(SERVICE, &old), "Local");
+    assert_eq!(store.get(&old).unwrap().unwrap().expose(), "old value");
+    store.keep_local(&fresh_id()).unwrap();
+
+    store.delete(&fresh).unwrap();
+    store.delete(&old).unwrap();
+}

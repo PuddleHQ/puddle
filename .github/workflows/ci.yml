@@ -287,7 +287,14 @@ jobs:
           gh --version
           # The install step is what provides the tools, so it also turns "tool missing" into a failure.
           echo "$tools" >> "$GITHUB_PATH"
+          # Claude Code 2.1.5 is a second, deliberately frozen install (ci/login-tools-old, not watched by
+          # Dependabot): its login ends on console.anthropic.com, which the profile still has to capture.
+          # It stays off PATH so `claude` above is the current one.
+          npm ci --prefix ci/login-tools-old --no-audit --no-fund
+          old="$GITHUB_WORKSPACE/ci/login-tools-old/node_modules/.bin/claude"
+          "$old" --version | grep -qx '2.1.5 (Claude Code)'
           {
+            echo "PUDDLE_CLAUDE_OLD_BIN=$old"
             echo "PUDDLE_COPILOT_BIN=$tools/copilot"
             echo "PUDDLE_REQUIRE_LOGIN_TOOLS=1"
           } >> "$GITHUB_ENV"

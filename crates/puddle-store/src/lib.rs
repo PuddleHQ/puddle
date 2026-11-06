@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod audit;
+mod backup;
 mod catalogue;
 mod clock;
 mod engine;
@@ -30,6 +31,7 @@ pub use audit::{
     PendingExpiryReason, PendingWire, RequestRuleWire, RuleDeleteReason, RuleSetWire, RuleWire,
     WorkspaceOpKind, WorkspaceOpOutcome,
 };
+pub use backup::{BackupInfo, backup_database};
 pub use catalogue::{BUILT_IN_SETS, BuiltInSet, CatalogueEntry, SystemReason, built_in};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use environment::{

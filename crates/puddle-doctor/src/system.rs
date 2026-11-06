@@ -16,8 +16,9 @@ use puddle_ssh_agent::{
 
 use crate::diagnose::Probe;
 use crate::facts::{
-    AccessDenied, AgentService, BootFacts, CodeIntegrityFacts, DataPathFacts, DiskFacts, GsaFacts,
-    HypervisorFacts, JobFacts, Os, ProcessOutcome, RuntimeFacts, RuntimeState, SshAgentFacts,
+    AccessDenied, AgentService, BootFacts, CodeIntegrityFacts, DataPathFacts, DiskEncryptionFacts,
+    DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
+    SshAgentFacts,
 };
 use crate::{boot, launch, sys};
 
@@ -208,6 +209,10 @@ impl Probe for SystemProbe {
                 detail: e.to_string(),
             },
         }
+    }
+
+    fn disk_encryption(&self) -> DiskEncryptionFacts {
+        sys::disk_encryption(self.data_dir.as_deref())
     }
 
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {

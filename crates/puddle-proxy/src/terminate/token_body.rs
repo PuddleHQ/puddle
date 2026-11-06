@@ -41,8 +41,9 @@ pub enum FieldKind {
 pub struct BodyField {
     /// The field's name; an element of an array has its array's name.
     pub name: String,
-    /// 0 for a top-level field.
-    pub depth: usize,
+    /// The dotted path from the top of the body (`data.token`), the spelling a profile's field
+    /// path uses; an element of an array has its array's path, a form field its name.
+    pub path: String,
     /// What the field holds.
     pub kind: FieldKind,
 }
@@ -185,21 +186,21 @@ impl TokenBody {
                 Value::Bool(_) | Value::Number(_) => FieldKind::Other,
             }
         }
-        fn walk(name: &str, value: &Value, depth: usize, out: &mut Vec<BodyField>) {
+        fn walk(name: &str, path: &str, value: &Value, out: &mut Vec<BodyField>) {
             out.push(BodyField {
                 name: name.to_owned(),
-                depth,
+                path: path.to_owned(),
                 kind: kind_of(value),
             });
             match value {
                 Value::Object(map) => {
                     for (key, inner) in map {
-                        walk(key, inner, depth + 1, out);
+                        walk(key, &format!("{path}.{key}"), inner, out);
                     }
                 }
                 Value::Array(items) => {
                     for inner in items {
-                        walk(name, inner, depth + 1, out);
+                        walk(name, path, inner, out);
                     }
                 }
                 _ => {}
@@ -209,7 +210,7 @@ impl TokenBody {
         match &self.parsed {
             Parsed::Json(map) => {
                 for (key, value) in map {
-                    walk(key, value, 0, &mut out);
+                    walk(key, key, value, &mut out);
                 }
             }
             Parsed::Form(pairs) => {
@@ -221,7 +222,7 @@ impl TokenBody {
                     };
                     out.push(BodyField {
                         name: pair.key.clone(),
-                        depth: 0,
+                        path: pair.key.clone(),
                         kind,
                     });
                 }
@@ -256,6 +257,48 @@ impl TokenBody {
         }
     }
 
+    /// The text at `path`: a dotted path through the objects of a JSON body (`data.token`), or, for
+    /// a form, the field named `path` (a form has no nesting). A path of one segment is
+    /// [`Self::text`]. `None` when any step is missing or the end is not a string.
+    #[must_use]
+    pub fn text_at(&self, path: &str) -> Option<Cow<'_, str>> {
+        match &self.parsed {
+            Parsed::Json(map) => {
+                let (last, parents) = split_path(path)?;
+                let mut object = map;
+                for step in parents {
+                    object = object.get(step)?.as_object()?;
+                }
+                object.get(last)?.as_str().map(Cow::Borrowed)
+            }
+            Parsed::Form(_) => self.text(path),
+        }
+    }
+
+    /// Replaces the text at `path` (see [`Self::text_at`]) with `value`; `false` (nothing changed)
+    /// when [`Self::text_at`] would not have found it.
+    pub fn set_text_at(&mut self, path: &str, value: &str) -> bool {
+        match &mut self.parsed {
+            Parsed::Json(map) => {
+                let Some(slot) = split_path(path).and_then(|(last, parents)| {
+                    let mut object = map;
+                    for step in parents {
+                        object = object.get_mut(step)?.as_object_mut()?;
+                    }
+                    object.get_mut(last)
+                }) else {
+                    return false;
+                };
+                if !slot.is_string() {
+                    return false;
+                }
+                *slot = Value::String(value.to_owned());
+                true
+            }
+            Parsed::Form(_) => self.set_text(path, value),
+        }
+    }
+
     /// The body as bytes: JSON compact, a form with each untouched field as it was sent. The
     /// bytes are zeroised when dropped, since they may hold a token.
     #[must_use]
@@ -270,6 +313,16 @@ impl TokenBody {
                 .into_bytes(),
         })
     }
+}
+
+/// The last step of a dotted path and the steps before it; `None` for an empty step.
+fn split_path(path: &str) -> Option<(&str, Vec<&str>)> {
+    let mut steps: Vec<&str> = path.split('.').collect();
+    if steps.iter().any(|step| step.is_empty()) {
+        return None;
+    }
+    let last = steps.pop()?;
+    Some((last, steps))
 }
 
 /// Wipes every text in `value`: a body can hold a token.
@@ -307,25 +360,26 @@ mod tests {
     }
 
     #[test]
-    fn the_fields_of_a_body_are_listed_with_kinds_and_depth_and_never_a_value() {
+    fn the_fields_of_a_body_are_listed_with_kinds_and_paths_and_never_a_value() {
         let body = json(r#"{"a":"abc","b":"","c":null,"d":7,"e":{"f":"xy"},"g":[{"h":"z"}]}"#);
-        let listed: Vec<(String, usize, FieldKind)> = body
+        let listed: Vec<(String, String, FieldKind)> = body
             .fields()
             .into_iter()
-            .map(|f| (f.name, f.depth, f.kind))
+            .map(|f| (f.name, f.path, f.kind))
             .collect();
+        let row = |name: &str, path: &str, kind| (name.to_owned(), path.to_owned(), kind);
         assert_eq!(
             listed,
             [
-                ("a".to_owned(), 0, FieldKind::Text(3)),
-                ("b".to_owned(), 0, FieldKind::Empty),
-                ("c".to_owned(), 0, FieldKind::Empty),
-                ("d".to_owned(), 0, FieldKind::Other),
-                ("e".to_owned(), 0, FieldKind::Structured),
-                ("f".to_owned(), 1, FieldKind::Text(2)),
-                ("g".to_owned(), 0, FieldKind::Structured),
-                ("g".to_owned(), 1, FieldKind::Structured),
-                ("h".to_owned(), 2, FieldKind::Text(1)),
+                row("a", "a", FieldKind::Text(3)),
+                row("b", "b", FieldKind::Empty),
+                row("c", "c", FieldKind::Empty),
+                row("d", "d", FieldKind::Other),
+                row("e", "e", FieldKind::Structured),
+                row("f", "e.f", FieldKind::Text(2)),
+                row("g", "g", FieldKind::Structured),
+                row("g", "g", FieldKind::Structured),
+                row("h", "g.h", FieldKind::Text(1)),
             ]
         );
         let repeated = form("a=1&a=2&b=");
@@ -518,5 +572,59 @@ mod tests {
             let read = again.text("zz_target");
             prop_assert_eq!(read.as_deref(), Some(value.as_str()));
         }
+    }
+}
+
+#[cfg(test)]
+mod nested_tests {
+    use super::*;
+
+    fn json(text: &str) -> TokenBody {
+        TokenBody::parse(Some("application/json"), text.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_dotted_path_reads_and_replaces_a_nested_string() {
+        let mut body = json(r#"{"data":{"token":"real","n":1},"token":"top"}"#);
+        assert_eq!(body.text_at("data.token").as_deref(), Some("real"));
+        assert_eq!(body.text_at("token").as_deref(), Some("top"));
+        assert!(body.set_text_at("data.token", "fake"));
+        assert_eq!(
+            *body.render(),
+            br#"{"data":{"n":1,"token":"fake"},"token":"top"}"#.to_vec()
+        );
+    }
+
+    #[test]
+    fn a_path_that_does_not_end_in_a_string_is_not_found_or_changed() {
+        let mut body = json(r#"{"data":{"token":7,"list":["x"]},"s":"v"}"#);
+        for path in [
+            "data.token",
+            "data.list",
+            "data.missing",
+            "s.x",
+            "data..token",
+            ".data",
+            "",
+        ] {
+            assert!(body.text_at(path).is_none(), "{path}");
+            assert!(!body.set_text_at(path, "z"), "{path}");
+        }
+        assert_eq!(
+            *body.render(),
+            br#"{"data":{"list":["x"],"token":7},"s":"v"}"#.to_vec()
+        );
+    }
+
+    #[test]
+    fn a_form_has_no_nesting_and_the_path_is_the_field_name() {
+        let mut body = TokenBody::parse(
+            Some("application/x-www-form-urlencoded"),
+            b"a=1&data.token=t",
+        )
+        .unwrap();
+        assert_eq!(body.text_at("data.token").as_deref(), Some("t"));
+        assert!(body.set_text_at("data.token", "u"));
+        assert_eq!(*body.render(), b"a=1&data.token=u".to_vec());
     }
 }

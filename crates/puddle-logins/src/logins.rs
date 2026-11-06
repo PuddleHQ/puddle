@@ -35,7 +35,7 @@ use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroizing;
 
 use crate::marker::Marker;
-use crate::profile::{Endpoint, Field, Profile, Role, Scope};
+use crate::profile::{Endpoint, Field, Method, Profile, Role, Scope, Slot, path_matches};
 use crate::shape;
 use crate::vault::{STORE_TIMEOUT, Vault, VaultError};
 
@@ -108,6 +108,7 @@ struct Route {
     host: Host,
     /// The endpoint's path as [`canonical_path`] spells it.
     path: String,
+    method: Method,
     profile: &'static Profile,
     endpoint: &'static Endpoint,
 }
@@ -126,7 +127,7 @@ struct Inner {
     /// How long a call on the credential store may take, in milliseconds.
     store_timeout_ms: AtomicU64,
     /// The stand-in of each slot that has one.
-    slots: Mutex<BTreeMap<(&'static str, Role), String>>,
+    slots: Mutex<BTreeMap<(&'static str, Slot), String>>,
 }
 
 /// One workspace's captured logins. Cheap to clone.
@@ -205,6 +206,7 @@ impl Logins {
                     Some(Route {
                         host,
                         path: canonical_path(endpoint.path),
+                        method: endpoint.method,
                         profile,
                         endpoint,
                     })
@@ -253,7 +255,7 @@ impl Logins {
         set
     }
 
-    fn slots(&self) -> std::sync::MutexGuard<'_, BTreeMap<(&'static str, Role), String>> {
+    fn slots(&self) -> std::sync::MutexGuard<'_, BTreeMap<(&'static str, Slot), String>> {
         self.inner
             .slots
             .lock()
@@ -292,18 +294,18 @@ impl Logins {
     fn install(
         &self,
         profile: &'static Profile,
-        (role, scope): (Role, Scope),
+        (slot, scope): (Slot, Scope),
         stand_in: &str,
         real: &str,
     ) -> Result<(), StandInError> {
         let entry = StandIn::new(
             StandInOrigin::CapturedLogin,
-            &profile.slot_name(role),
+            &profile.slot_name_of(slot),
             stand_in,
             SecretValue::new(real),
             profile.hosts_for(scope),
         )?;
-        let old = self.slots().insert((profile.id, role), stand_in.to_owned());
+        let old = self.slots().insert((profile.id, slot), stand_in.to_owned());
         if let Some(old) = old {
             self.inner.registry.remove(&old);
         }
@@ -401,8 +403,8 @@ impl Logins {
     async fn kept_in_store(&self) -> Option<BTreeSet<String>> {
         let mut kept: BTreeSet<String> = BTreeSet::new();
         for profile in self.inner.profiles {
-            for role in profile.roles() {
-                match self.store(move |vault| vault.holds(profile, role)).await {
+            for (slot, _) in profile.slots() {
+                match self.store(move |vault| vault.holds(profile, slot)).await {
                     Ok(true) => {
                         kept.insert(profile.id.to_owned());
                         break;
@@ -491,11 +493,13 @@ impl Logins {
             .profiles
             .iter()
             .filter_map(|profile| {
-                let roles: Vec<Role> = profile
-                    .roles()
+                let mut roles: Vec<Role> = profile
+                    .slots()
                     .into_iter()
-                    .filter(|role| slots.contains_key(&(profile.id, *role)))
+                    .filter(|(slot, _)| slots.contains_key(&(profile.id, *slot)))
+                    .map(|(slot, _)| slot.role)
                     .collect();
+                roles.dedup();
                 (!roles.is_empty()).then_some(Kept {
                     profile: profile.id,
                     name: profile.name,
@@ -522,12 +526,12 @@ impl Logins {
             return Ok(false);
         };
         let mut failed = false;
-        for role in profile.roles() {
-            if let Some(stand_in) = self.slots().remove(&(profile.id, role)) {
+        for (slot, _) in profile.slots() {
+            if let Some(stand_in) = self.slots().remove(&(profile.id, slot)) {
                 self.inner.registry.remove(&stand_in);
             }
             failed |= self
-                .store(move |vault| vault.delete(profile, role))
+                .store(move |vault| vault.delete(profile, slot))
                 .await
                 .is_err();
         }
@@ -550,8 +554,13 @@ impl Logins {
         let vault = Vault::new(Arc::clone(store), workspace);
         profiles
             .iter()
-            .flat_map(|profile| profile.roles().into_iter().map(move |role| (profile, role)))
-            .filter(|(profile, role)| vault.delete(profile, *role).is_err())
+            .flat_map(|profile| {
+                profile
+                    .slots()
+                    .into_iter()
+                    .map(move |(slot, _)| (profile, slot))
+            })
+            .filter(|(profile, slot)| vault.delete(profile, *slot).is_err())
             .count()
     }
 
@@ -573,7 +582,7 @@ impl Logins {
             .fields
             .iter()
             .filter_map(|field| {
-                let text = parsed.text(field.name)?;
+                let text = parsed.text_at(field.path)?;
                 (!text.is_empty()).then(|| (field, Zeroizing::new(text.into_owned())))
             })
             .collect();
@@ -593,7 +602,7 @@ impl Logins {
         let _one_at_a_time = self.inner.capture.lock().await;
         let mut planned: Vec<(&'static Field, Zeroizing<String>, String, bool)> = Vec::new();
         for (field, real) in found {
-            let existing = self.slots().get(&(profile.id, field.role)).cloned();
+            let existing = self.slots().get(&(profile.id, field.slot())).cloned();
             let planned_stand_in = match existing {
                 Some(stand_in) => (stand_in, false),
                 // The system had no random numbers, or the token cannot be copied: either way
@@ -607,15 +616,15 @@ impl Logins {
         }
         // The credential store first: a token that was not kept is not replaced in the answer.
         for (field, real, stand_in, _) in &planned {
-            let role = field.role;
+            let slot = field.slot();
             let (stand_in, real) = (stand_in.clone(), real.clone());
-            self.store(move |vault| vault.write(profile, role, &stand_in, &real))
+            self.store(move |vault| vault.write(profile, slot, &stand_in, &real))
                 .await
                 .map_err(|_| Problem::StoreUnavailable)?;
         }
         self.mark(profile, true);
         for (field, real, stand_in, is_new) in &planned {
-            let slot = (field.role, field.scope);
+            let slot = (field.slot(), field.scope);
             // A refresh gives the stand-in a new token without a moment in which it has none; a
             // slot the registry has lost (a forgotten login) is made again.
             let refreshed = !is_new
@@ -628,7 +637,7 @@ impl Logins {
                 self.install(profile, slot, stand_in, real)
                     .map_err(|_| Problem::UnusableToken)?;
             }
-            parsed.set_text(field.name, stand_in);
+            parsed.set_text_at(field.path, stand_in);
             tracing::info!(
                 workspace = %self.inner.workspace,
                 profile = profile.id,
@@ -675,16 +684,10 @@ fn token_like(name: &str) -> bool {
 /// the endpoint does not name (at any depth), or a named field that is repeated or structured
 /// (the tool may read the one Puddle did not).
 fn holds_unnamed_token(endpoint: &Endpoint, fields: &[BodyField]) -> bool {
-    let named = |field: &BodyField| {
-        field.depth == 0 && endpoint.fields.iter().any(|f| f.name == field.name)
-    };
+    let named = |field: &BodyField| endpoint.fields.iter().any(|f| f.path == field.path);
     fields.iter().any(|field| {
         if named(field) {
-            let repeated = fields
-                .iter()
-                .filter(|f| f.depth == 0 && f.name == field.name)
-                .count()
-                > 1;
+            let repeated = fields.iter().filter(|f| f.path == field.path).count() > 1;
             return repeated || field.kind == FieldKind::Structured;
         }
         matches!(field.kind, FieldKind::Text(n) if n >= MIN_TOKEN_LEN) && token_like(&field.name)
@@ -781,7 +784,7 @@ impl AnswerRewriter for Capture {
 
 impl ExchangeRewriter for Logins {
     fn begin(&self, host: &Host, method: &str, path: &str) -> Option<Exchange> {
-        if !self.inner.enabled || method != "POST" {
+        if !self.inner.enabled {
             return None;
         }
         // The host first: most requests on a decrypted host are not to a token endpoint, and
@@ -794,7 +797,8 @@ impl ExchangeRewriter for Logins {
             .peekable();
         on_host.peek()?;
         let path = canonical_path(path);
-        let route = on_host.find(|route| route.path == path)?;
+        let route = on_host
+            .find(|route| route.method.accepts(method) && path_matches(&route.path, &path))?;
         let mut exchange = Exchange::new();
         if let Some(field) = route.endpoint.refresh_field {
             exchange = exchange.swapping(field);
@@ -813,10 +817,10 @@ mod refusal_tests {
     use super::*;
     use crate::profile::CLAUDE;
 
-    fn field(name: &str, depth: usize, kind: FieldKind) -> BodyField {
+    fn field(path: &str, kind: FieldKind) -> BodyField {
         BodyField {
-            name: name.to_owned(),
-            depth,
+            name: path.rsplit('.').next().unwrap_or(path).to_owned(),
+            path: path.to_owned(),
             kind,
         }
     }
@@ -871,25 +875,49 @@ mod refusal_tests {
     }
 
     #[test]
+    fn a_field_named_by_a_dotted_path_is_named_at_that_path_only() {
+        static NESTED: [crate::profile::Field; 1] = [crate::profile::Field {
+            path: "data.token",
+            role: crate::profile::Role::Access,
+            resource: None,
+            prefixes: &[],
+            keep_last: 0,
+            scope: crate::profile::Scope::Api,
+        }];
+        let mut endpoint = CLAUDE.endpoints[0].clone();
+        endpoint.fields = &NESTED;
+        let long = FieldKind::Text(MIN_TOKEN_LEN);
+        let holds = |fields: Vec<BodyField>| holds_unnamed_token(&endpoint, &fields);
+        assert!(!holds(vec![field("data.token", long)]));
+        assert!(holds(vec![
+            field("data.token", long),
+            field("data.token", long)
+        ]));
+        assert!(holds(vec![field("data.token", FieldKind::Structured)]));
+        assert!(holds(vec![field("other.token", long)]));
+        assert!(holds(vec![field("token", long)]));
+    }
+
+    #[test]
     fn a_credential_puddle_would_not_replace_is_found_in_the_answers_fields() {
         let endpoint = &CLAUDE.endpoints[0];
         let long = FieldKind::Text(MIN_TOKEN_LEN);
         let short = FieldKind::Text(MIN_TOKEN_LEN - 1);
         let holds = |fields: Vec<BodyField>| holds_unnamed_token(endpoint, &fields);
-        assert!(!holds(vec![field("access_token", 0, long)]));
+        assert!(!holds(vec![field("access_token", long)]));
         assert!(holds(vec![
-            field("access_token", 0, long),
-            field("access_token", 0, long)
+            field("access_token", long),
+            field("access_token", long)
         ]));
-        assert!(holds(vec![field("access_token", 0, FieldKind::Structured)]));
-        assert!(holds(vec![field("access_token", 1, long)]));
-        assert!(holds(vec![field("id_token", 0, long)]));
-        assert!(!holds(vec![field("id_token", 0, short)]));
-        assert!(!holds(vec![field("id_token", 0, FieldKind::Empty)]));
-        assert!(!holds(vec![field("note", 0, long)]));
+        assert!(holds(vec![field("access_token", FieldKind::Structured)]));
+        assert!(holds(vec![field("data.access_token", long)]));
+        assert!(holds(vec![field("id_token", long)]));
+        assert!(!holds(vec![field("id_token", short)]));
+        assert!(!holds(vec![field("id_token", FieldKind::Empty)]));
+        assert!(!holds(vec![field("note", long)]));
         assert!(!holds(vec![
-            field("access_token", 0, long),
-            field("refresh_token", 0, long)
+            field("access_token", long),
+            field("refresh_token", long)
         ]));
     }
 }

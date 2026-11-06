@@ -5,6 +5,7 @@
 
 #[cfg(target_os = "linux")]
 mod ancestors;
+mod encryption;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -16,6 +17,7 @@ mod windows;
 
 #[cfg(target_os = "linux")]
 pub(crate) use ancestors::data_path;
+pub(crate) use encryption::disk_encryption;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::hypervisor;
 #[cfg(target_os = "macos")]

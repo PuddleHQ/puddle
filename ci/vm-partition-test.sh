@@ -6,6 +6,8 @@
 # name the filterset cannot carry; reads a list with ANSI colour codes; fails a merge-group run instead of falling back; the refresh takes the median of passing tests only. Prints ok only when every case passes.
 set -uo pipefail
 
+# a merge-group or strict environment must not change the cases below: each case sets what it needs
+unset GITHUB_EVENT_NAME VM_PARTITION_STRICT GITHUB_STEP_SUMMARY
 here=$(cd "$(dirname "$0")" && pwd)
 part="$here/vm-partition.sh"
 refresh="$here/vm-timings-refresh.sh"

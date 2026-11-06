@@ -223,7 +223,6 @@ fn the_folder_dialog_is_allowed_to_the_main_window_on_the_api_origin_only() {
     for origin in [
         "http://127.0.0.2:4711/",
         "http://localhost:4711/",
-        "http://tauri.localhost/",
         "https://example.org/",
         "https://127.0.0.1:4711/",
     ] {
@@ -233,6 +232,18 @@ fn the_folder_dialog_is_allowed_to_the_main_window_on_the_api_origin_only() {
         ));
         assert!(message.contains("not allowed"), "{origin}: {message}");
     }
+    // `http://tauri.localhost` is the app's own asset origin on Windows, the same local origin as
+    // `tauri://localhost` elsewhere: Tauri lets the capability cover it on Windows only. The
+    // window never navigates there, so the test pins what Tauri does instead of hiding the case.
+    let message = refusal(get_ipc_response(
+        &window,
+        invoke("plugin:dialog|open", "http://tauri.localhost/"),
+    ));
+    assert_eq!(
+        message.contains("not allowed"),
+        !cfg!(windows),
+        "http://tauri.localhost/: {message}"
+    );
 }
 
 mod sandbox_windows {

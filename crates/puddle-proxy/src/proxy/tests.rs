@@ -1691,3 +1691,32 @@ mod company_network {
         assert_eq!(event.reason.to_string(), "company_network_off");
     }
 }
+
+mod tunnel_end {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    use super::*;
+    use crate::counted::Counted;
+
+    /// A tunnel whose guest is gone before the `200` can be written still reports the request
+    /// line the guest sent with its `CONNECT`.
+    #[tokio::test]
+    async fn a_tunnel_that_fails_before_the_splice_keeps_the_request_line_it_saw() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let server = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (_accepted, _) = listener.accept().await.unwrap();
+        let (mut peer, near) = tokio::io::duplex(1024);
+        peer.write_all(b"GET /early HTTP/1.1\r\nHost: h.test\r\n\r\n")
+            .await
+            .unwrap();
+        let mut reader = ClientReader::new(Counted::new(near).0);
+        assert!(!reader.fill_buf().await.unwrap().is_empty());
+        drop(peer);
+        let end = tunnel(reader, server, None, None, None).await;
+        let line = end.http.expect("the early request line is kept");
+        assert_eq!((line.method(), line.path()), ("GET", "/early"));
+        assert!(!end.ssh && !end.token_endpoint);
+    }
+}

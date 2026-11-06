@@ -85,7 +85,7 @@ impl SecretStore for KeyringStore {
         {
             let entry = self.entry(id)?;
             match entry.get_attributes() {
-                Ok(attributes) if attributes.get("persistence").is_some_and(|p| p == "Local") => {}
+                Ok(attributes) if is_kept_local(&attributes) => {}
                 Ok(_) => {
                     let value = entry.get_password().map_err(|_| StoreError)?;
                     entry.set_password(&value).map_err(|_| StoreError)?;
@@ -97,6 +97,12 @@ impl SecretStore for KeyringStore {
         let _ = id;
         Ok(())
     }
+}
+
+/// Whether the attributes Credential Manager reports for an entry say it stays on this computer.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_kept_local(attributes: &std::collections::HashMap<String, String>) -> bool {
+    attributes.get("persistence").is_some_and(|p| p == "Local")
 }
 
 /// Whether the platform store can be used at all (a Linux host with no Secret Service cannot).
@@ -120,6 +126,16 @@ mod tests {
             KeyringStore::named("puddle-test-x").service.as_deref(),
             Some("puddle-test-x")
         );
+    }
+
+    #[test]
+    fn only_an_entry_reported_as_local_is_kept_local() {
+        let with = |value: &str| {
+            std::collections::HashMap::from([("persistence".to_owned(), value.to_owned())])
+        };
+        assert!(is_kept_local(&with("Local")));
+        assert!(!is_kept_local(&with("Enterprise")));
+        assert!(!is_kept_local(&std::collections::HashMap::new()));
     }
 
     #[test]

@@ -710,6 +710,7 @@ crates/puddle-proxy/src/terminate/stand_in/answer.rs | known.put = put;\nknown.i
 crates/puddle-proxy/src/terminate/stand_in/answer.rs | let Some(pattern) = self.patterns.get(found.pattern().as_usize()) else {\nbreak; | the automaton is built from these patterns, so the index always exists; written without indexing
 crates/puddle-proxy/src/terminate/stand_in/answer.rs | return Err(NotScrubbed::Failed); | a held body larger than the Content-Length it declared; hyper refuses such a body first
 crates/puddle-proxy/src/terminate/stand_in/answer.rs | return Err(NotScrubbed::Failed);\n} | closing line of the overrun check above
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | whole.extend_from_slice(&data);\n} | the branch of a trailers frame in a held body; a body with a Content-Length up to 64 KiB and trailers is not one a server sends
 crates/puddle-secrets/src/discovery.rs | let Ok(host) = HostName::new("dev.azure.com") else {\nreturn Vec::new(); | the two host names are literals that always parse; the guard exists only to avoid an unwrap
 crates/puddle-secrets/src/discovery.rs | let Some(host) = github_host() else {\nreturn Vec::new(); | the two host names are literals that always parse; the guard exists only to avoid an unwrap
 crates/puddle-secrets/src/keyring_store.rs | * | the OS credential store exists on a desktop session or the Windows job, not on the Linux gate host; `the_os_store_round_trips_a_test_owned_entry` runs there against a test-owned entry and skips where no store exists

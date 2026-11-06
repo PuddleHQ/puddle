@@ -30,6 +30,13 @@ exclude_globs = [
 
 # Equivalent mutants, each with its reason:
 exclude_re = [
+    # `KeyringStore::keep_local` is `Ok(())` outside Windows: its rewrite is `#[cfg(windows)]`, so a
+    # Linux mutation run never compiles the match guard (`is_kept_local`, which holds the testable
+    # part, is tested) and replacing the body or the guard changes nothing it can run. The trait's
+    # default `keep_local` body is `Ok(())` too, so replacing it with `Ok(())` is the same code.
+    'keyring_store\.rs:\d+:\d+: replace <impl SecretStore for KeyringStore>::keep_local -> Result<\(\), StoreError> with Ok\(\(\)\)',
+    'keyring_store\.rs:\d+:\d+: replace match guard is_kept_local\(&attributes\) with (true|false) in <impl SecretStore for KeyringStore>::keep_local',
+    'store\.rs:\d+:\d+: replace SecretStore::keep_local -> Result<\(\), StoreError> with Ok\(\(\)\)',
     # `send_and_pump` cuts the upload off when the response came before the body was in. Without the
     # cut-off the sender is dropped with the function, so the body still ends in error for a declared
     # length and, for a chunked body, hyper's connection task would have to write the closing chunk

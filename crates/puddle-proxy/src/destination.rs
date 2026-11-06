@@ -17,7 +17,7 @@ use dns_lookup::{AddrInfoHints, LookupError, LookupErrorKind, SockType};
 
 pub use puddle_netpolicy::AddressVerdict;
 use puddle_netpolicy::{NetPolicy, Target};
-use puddle_types::{BlockReason, DomainName, Host, WorkspaceId};
+use puddle_types::{BlockReason, CompanySignal, DomainName, Host, WorkspaceId};
 
 /// Decides per destination and per resolved address (R-14). [`NetPolicy`] is the product
 /// implementation; tests use doubles.
@@ -41,6 +41,24 @@ pub trait AddressCheck: Send + Sync {
 
     /// The verdict for connecting `workspace` to `addr`.
     fn check(&self, workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict;
+
+    /// The verdict for connecting `workspace` to `addr`, an address of the name `host`, which
+    /// the company-network signals about the name (its DNS suffix, the proxy script) need. The
+    /// default ignores the name.
+    fn check_named(
+        &self,
+        workspace: &WorkspaceId,
+        _host: &Host,
+        addr: SocketAddr,
+    ) -> AddressVerdict {
+        self.check(workspace, addr)
+    }
+
+    /// The company-network signal that puts `addr` (an address of `host`) in that category, for
+    /// the audit; `None` when it is not in it, and by default.
+    fn company_signal(&self, _host: &Host, _addr: SocketAddr) -> Option<CompanySignal> {
+        None
+    }
 }
 
 impl AddressCheck for NetPolicy {
@@ -55,6 +73,19 @@ impl AddressCheck for NetPolicy {
 
     fn check(&self, workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
         self.check_address(workspace, addr)
+    }
+
+    fn check_named(
+        &self,
+        workspace: &WorkspaceId,
+        host: &Host,
+        addr: SocketAddr,
+    ) -> AddressVerdict {
+        self.check_address_named(workspace, Some(host), addr)
+    }
+
+    fn company_signal(&self, host: &Host, addr: SocketAddr) -> Option<CompanySignal> {
+        NetPolicy::company_signal(self, Some(host), addr)
     }
 }
 

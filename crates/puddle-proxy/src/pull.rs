@@ -75,12 +75,14 @@ const USER: &str = "puddle";
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 /// What a pull may reach besides public addresses, unless [`PullProxy::with_local_access`] says
-/// otherwise: private networks (a company registry) and loopback (a local registry). Puddle's own
+/// otherwise: private networks and the company network (a company registry) and loopback (a
+/// local registry). Puddle's own
 /// endpoints stay blocked whatever this says.
 #[must_use]
 pub fn default_pull_access() -> LocalAccess {
     LocalAccess::NONE
         .with_toggle(LocalCategory::Private, true)
+        .with_toggle(LocalCategory::CompanyNetwork, true)
         .with_toggle(LocalCategory::Loopback, true)
 }
 
@@ -548,6 +550,8 @@ fn verdict(guard: &NetPolicy, access: LocalAccess, addr: SocketAddr) -> Result<(
         AddressClass::Public => Ok(()),
         AddressClass::Local { category, .. } if access.is_on(category) => Ok(()),
         AddressClass::Local { category, .. } => Err(BlockReason::LocalToggle(category)),
+        AddressClass::Company(_) if access.is_on(LocalCategory::CompanyNetwork) => Ok(()),
+        AddressClass::Company(signal) => Err(BlockReason::CompanyNetwork(signal)),
         // Puddle's own endpoints, and any class this version doesn't know.
         _ => Err(BlockReason::PuddleEndpoint),
     }
@@ -662,6 +666,7 @@ fn blocked(
     let what = match reason {
         BlockReason::PuddleEndpoint => "one of Puddle's own endpoints".to_owned(),
         BlockReason::LocalToggle(category) => format!("a {} address", category.describe()),
+        BlockReason::CompanyNetwork(_) => "a company network address".to_owned(),
         _ => "an address image pulls may not reach".to_owned(),
     };
     Refusal::new(
@@ -669,7 +674,7 @@ fn blocked(
         format!("{host} is {what}; image pulls never go there"),
     )
     .header("x-puddle-decision", "blocked")
-    .header("x-puddle-blocked", reason.code())
+    .header("x-puddle-blocked", reason.header_code())
 }
 
 #[cfg(test)]
@@ -845,6 +850,39 @@ mod tests {
         assert_eq!(
             verdict(&strict, none, "10.1.2.3:443".parse().unwrap()),
             Err(BlockReason::LocalToggle(LocalCategory::Private))
+        );
+    }
+
+    #[test]
+    fn a_company_registry_is_reachable_by_default_and_refused_when_its_toggle_is_off() {
+        let signals = Arc::new(puddle_netpolicy::StaticSignals::new().with_private_access_client());
+        let guard_for =
+            |access| NetPolicy::new(Arc::new(access)).with_company_signals(signals.clone());
+        let access = default_pull_access();
+        let guard = guard_for(access);
+        assert_eq!(
+            verdict(&guard, access, "100.64.3.7:443".parse().unwrap()),
+            Ok(())
+        );
+        // Switched off, the pull is refused with the company reason and the header names it.
+        let off = access.with_toggle(LocalCategory::CompanyNetwork, false);
+        let guard = guard_for(off);
+        let reason = verdict(&guard, off, "100.64.3.7:443".parse().unwrap()).unwrap_err();
+        assert!(matches!(reason, BlockReason::CompanyNetwork(_)));
+        let host = Host::parse_normalised("registry.corp.example").unwrap();
+        let mut event = ConnectionEvent::puddle(
+            host.clone(),
+            443,
+            ConnectionDecision::Allow,
+            ConnectionReason::PuddleRequest,
+        );
+        let refusal = blocked(&host, 443, &[reason], &mut event);
+        assert!(refusal.message.contains("a company network address"));
+        assert!(
+            refusal
+                .headers
+                .iter()
+                .any(|(n, v)| *n == "x-puddle-blocked" && v == "company_network")
         );
     }
 

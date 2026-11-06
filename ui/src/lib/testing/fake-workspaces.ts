@@ -118,6 +118,7 @@ const noLayer = (): Layer => ({
     metadata: null,
     private: null,
     special: null,
+    company_network: null,
   },
   memory: null,
   cpus: null,
@@ -227,6 +228,7 @@ export class FakeWorkspaces {
         metadata: pick(o.local_toggles.metadata),
         private: pick(o.local_toggles.private),
         special: pick(o.local_toggles.special),
+        company_network: pick(o.local_toggles.company_network),
       },
       memory:
         o.memory === null

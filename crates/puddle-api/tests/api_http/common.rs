@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, CredentialService, DevCertService, DoctorService, EventHub,
-    FakeCredentials, FakeLauncher, FakeLearned, FakePorts, FakeRepos, FakeWorkspaces, Launcher,
-    MemorySettings, NetworkHealthService, RepoService, RunningApi, Services, SettingsRepo,
+    FakeCredentials, FakeLauncher, FakeLearned, FakePorts, FakeProxySignIns, FakeRepos,
+    FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, RepoService, RunningApi,
+    Services, SettingsRepo,
 };
 use puddle_secrets::MemoryStore;
 use puddle_store::{Limits, ManualClock, Store};
@@ -45,6 +46,8 @@ pub(crate) struct Api {
     pub(crate) ports: Arc<FakePorts>,
     /// The learned pass-through hosts the API serves.
     pub(crate) learned: Arc<FakeLearned>,
+    /// The proxy sign-ins the API serves.
+    pub(crate) proxy_sign_ins: Arc<FakeProxySignIns>,
 }
 
 pub(crate) async fn start() -> Api {
@@ -193,6 +196,8 @@ async fn start_inner(
     let services = services.with_ports(ports.clone());
     let learned = Arc::new(FakeLearned::new());
     let services = services.with_learned(learned.clone());
+    let proxy_sign_ins = Arc::new(FakeProxySignIns::new());
+    let services = services.with_proxy_sign_ins(proxy_sign_ins.clone());
     let server = ApiServer::bind(config, token.clone(), services)
         .await
         .unwrap();
@@ -213,6 +218,7 @@ async fn start_inner(
         repos,
         ports,
         learned,
+        proxy_sign_ins,
     }
 }
 

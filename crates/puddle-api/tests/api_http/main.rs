@@ -26,6 +26,7 @@ mod network_health;
 mod orphan_volumes;
 mod ports;
 mod problems;
+mod proxy_sign_in;
 mod repos;
 mod repositories;
 mod request_rules;

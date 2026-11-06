@@ -187,6 +187,36 @@ async fn a_basic_407_is_answered_on_the_same_connection_then_sent_up_front() {
 }
 
 #[tokio::test]
+async fn forgetting_the_remembered_basic_headers_makes_the_next_connection_ask_again() {
+    let secret = fixture::password("secret");
+    let echo = start_echo().await;
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "alice".into(),
+        password: secret.clone(),
+    })
+    .await;
+    proxy.resolve_name("a.test", echo.addr);
+    let chain = chain(vec![via(&proxy)], basic("alice", &secret));
+    let dest = https("a.test");
+    let request = Request::new(&dest, Form::Tunnel, &[]).name_ok(true);
+
+    let mut first = chain.connect(&request).await.unwrap();
+    round_trip(&mut first.stream, b"one").await;
+    assert_eq!(proxy.seen().len(), 2);
+
+    chain.forget_basic_headers();
+    let mut second = chain.connect(&request).await.unwrap();
+    round_trip(&mut second.stream, b"two").await;
+    let seen = proxy.seen();
+    assert_eq!(
+        seen.len(),
+        4,
+        "a 407 and the credential again, not one request"
+    );
+    assert_eq!(seen[2].proxy_authorization, None);
+}
+
+#[tokio::test]
 async fn a_wrong_password_is_one_attempt_not_a_loop() {
     let right = fixture::password("right");
     let wrong = fixture::password("wrong");

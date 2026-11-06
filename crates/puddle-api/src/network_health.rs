@@ -21,6 +21,7 @@ use puddle_upstream::{
 };
 use tokio::task::JoinHandle;
 
+use crate::proxy_sign_in::ProxySignInService;
 use crate::wire::{
     DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,
     ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,
@@ -67,6 +68,7 @@ struct RootsState {
 pub struct HostNetworkHealth {
     discovery: Arc<Discovery>,
     chain: Option<Arc<Chain>>,
+    sign_ins: Option<Arc<dyn ProxySignInService>>,
     clock: Arc<dyn Clock>,
     roots: RwLock<Option<RootsState>>,
     /// Company certificates Puddle's own TLS client could not use.
@@ -88,6 +90,7 @@ impl HostNetworkHealth {
         Self {
             discovery,
             chain: None,
+            sign_ins: None,
             clock,
             roots: RwLock::new(None),
             left_out_of_tls: RwLock::new(Vec::new()),
@@ -102,6 +105,13 @@ impl HostNetworkHealth {
     #[must_use]
     pub fn with_chain(mut self, chain: Arc<Chain>) -> Self {
         self.chain = Some(chain);
+        self
+    }
+
+    /// Reports the stored sign-ins `sign_ins` holds (names only).
+    #[must_use]
+    pub fn with_sign_ins(mut self, sign_ins: Arc<dyn ProxySignInService>) -> Self {
+        self.sign_ins = Some(sign_ins);
         self
     }
 
@@ -162,6 +172,10 @@ impl HostNetworkHealth {
             sign_in: SignInReport {
                 methods: methods.into_iter().map(str::to_owned).collect(),
                 attempts: attempts.iter().map(attempt).collect(),
+                stored: self
+                    .sign_ins
+                    .as_ref()
+                    .map_or_else(Vec::new, |sign_ins| sign_ins.list()),
             },
             roots: roots_report(
                 self.roots
@@ -392,6 +406,7 @@ fn roots_report(state: Option<&RootsState>, left_out_of_tls: Vec<SkippedRoot>) -
 pub struct FakeNetworkHealth {
     report: Mutex<NetworkHealth>,
     clock: Arc<dyn Clock>,
+    sign_ins: Option<Arc<dyn ProxySignInService>>,
 }
 
 impl std::fmt::Debug for FakeNetworkHealth {
@@ -408,7 +423,15 @@ impl FakeNetworkHealth {
         Self {
             report: Mutex::new(report),
             clock,
+            sign_ins: None,
         }
+    }
+
+    /// Reports the stored sign-ins of `sign_ins` in place of the ones in the served report.
+    #[must_use]
+    pub fn with_sign_ins(mut self, sign_ins: Arc<dyn ProxySignInService>) -> Self {
+        self.sign_ins = Some(sign_ins);
+        self
     }
 
     /// Serves `report` from now on.
@@ -426,6 +449,9 @@ impl NetworkHealthService for FakeNetworkHealth {
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone();
             report.generated_at = self.clock.now_ms();
+            if let Some(sign_ins) = &self.sign_ins {
+                report.sign_in.stored = sign_ins.list();
+            }
             Ok(report)
         })
     }

@@ -462,6 +462,20 @@ impl Chain {
             );
     }
 
+    /// Drops every remembered Basic header, so the next connection asks the stored sign-ins again.
+    /// Call it when a stored sign-in changed or was removed: a header remembered from the old one
+    /// would otherwise keep being sent until the network changes.
+    pub fn forget_basic_headers(&self) {
+        for memo in self
+            .memo
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values_mut()
+        {
+            memo.basic = None;
+        }
+    }
+
     fn forget_basic(&self, proxy: &ProxyAddr) {
         if let Some(memo) = self
             .memo

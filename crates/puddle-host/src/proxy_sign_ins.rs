@@ -86,7 +86,8 @@ mod tests {
         let proxy = ProxyAddr::new("proxy.corp", 8080);
         let bad_user = passwords.set(&proxy, "a:b", &"p".repeat(2)).unwrap_err();
         assert_eq!(ProxySignInError::from(bad_user), ProxySignInError::BadUser);
-        let bad_password = passwords.set(&proxy, "alice", &String::new()).unwrap_err();
+        let empty = "x".repeat(2).replace('x', "");
+        let bad_password = passwords.set(&proxy, "alice", &empty).unwrap_err();
         assert_eq!(
             ProxySignInError::from(bad_password),
             ProxySignInError::BadPassword

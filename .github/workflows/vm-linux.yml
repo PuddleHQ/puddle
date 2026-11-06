@@ -306,7 +306,9 @@ jobs:
       # the corepack home) is kept in this folder between runs: a warm cache installs with no third-party host
       # (a 504 from services.gradle.org once failed a merge queue run). The folder is saved only by a develop run
       # (the nightly or a dispatch), because a pull request or merge queue ref cannot share its entries; they all
-      # restore it, and a miss is filled by the test itself from the real mirrors.
+      # restore it, and a miss is filled by the test itself from the real mirrors. GitHub purges the repo's caches without a
+      # log when a Rust entry is replaced (2026-11-06: gone 100 minutes after the save), so cache-gc.yml dispatches a develop
+      # run to refill it (ci/tools-cache-heal.sh).
       - name: guest tools cache (vm_guest_env)
         id: tools-cache
         if: steps.kvm.outputs.ok == 'true'

@@ -378,6 +378,10 @@ impl Tools {
             .env("GH_BROWSER", "true")
             .env("GH_NO_UPDATE_NOTIFIER", "1")
             .env("GIT_TERMINAL_PROMPT", "0")
+            // The home may sit inside a repository (the mutation run puts the temporary directory
+            // under the checkout, whose config carries the CI token as an `extraheader` for
+            // github.com): git must not look above it.
+            .env("GIT_CEILING_DIRECTORIES", home.parent().unwrap_or(home))
             .env("DO_NOT_TRACK", "1")
             .current_dir(home)
             .kill_on_drop(true)
@@ -842,4 +846,17 @@ async fn copilot_cli_uses_the_stand_in_from_a_gh_login_on_the_copilot_hosts() {
         "the stand-in went out"
     );
     tools.assert_no_real_token_in_the_workspace();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tool_run_never_discovers_a_repository_above_its_home() {
+    let tools = Tools::new(false).await;
+    let command = tools.command(Path::new("git"));
+    let ceiling = command
+        .as_std()
+        .get_envs()
+        .find(|(name, _)| *name == "GIT_CEILING_DIRECTORIES")
+        .and_then(|(_, value)| value.map(PathBuf::from))
+        .expect("the ceiling is set");
+    assert_eq!(Some(ceiling.as_path()), tools.home.path().parent());
 }

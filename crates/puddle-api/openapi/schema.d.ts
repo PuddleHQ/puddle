@@ -997,6 +997,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Finds a workspace by text a person typed: its id exactly, or its name ignoring case. For a
+         *     command line or a script; every other route takes the id.
+         */
+        get: operations["lookup_workspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}": {
         parameters: {
             query?: never;
@@ -1017,8 +1037,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Renames a workspace: sets the display name the UI shows. Only the label changes (the id, the
-         *     name, the volume and the sandbox stay), so it works on a running workspace and restarts
+         * Renames a workspace: sets the name the UI shows. Only the name changes (the id, the volume
+         *     and the sandbox stay), so it works on a running workspace and restarts
          *     nothing. A name another workspace already goes by (ignoring case) is refused with 409, and so
          *     is a rename while the workspace is being created or deleted.
          */
@@ -1791,6 +1811,11 @@ export interface components {
             id: number;
             /** @description The record. */
             record: components["schemas"]["AuditRecord"];
+            /**
+             * @description The name the record's workspace had when the record was written; `null` for a record
+             *     written before names were kept, and for one about no workspace. Show the id then.
+             */
+            workspace_name: string | null;
         };
         /**
          * @description What an audit record says happened, for the `outcome` filter.
@@ -3598,8 +3623,12 @@ export interface components {
              * @description Memory in MiB (256 to 1048576); left out or `null` is the default.
              */
             memory_mib?: number | null;
-            /** @description The workspace's name, which is also its workspace's name. */
-            name: components["schemas"]["WorkspaceName"];
+            /**
+             * @description What the user calls the workspace: display text of 1 to 60 characters, spaces at the
+             *     ends dropped, no line breaks or control characters. Another live workspace's name (ignoring
+             *     case) is `409`. The answer carries the new workspace's `id`.
+             */
+            name: string;
             /**
              * @description The repositories to clone, in order (0 to 100); left out is none. The list is checked
              *     whole before anything exists.
@@ -3916,10 +3945,10 @@ export interface components {
         /** @description `PATCH /api/workspaces/{id}`. */
         RenameWorkspaceRequest: {
             /**
-             * @description The new display name: 1 to 60 characters, spaces at the ends dropped, no line breaks.
-             *     `null` goes back to the workspace's name. Required, so an empty body never resets it.
+             * @description The new name: 1 to 60 characters, spaces at the ends dropped, no line breaks or control
+             *     characters. Required.
              */
-            display_name: string | null;
+            name: string;
         };
         /** @description What one checkout holds that is not on a remote. */
         RepoFindings: {
@@ -4815,17 +4844,15 @@ export interface components {
              */
             disk_warnings: components["schemas"]["DiskKind"][];
             /**
-             * @description What the user calls the workspace: the name until they rename it (`PATCH
-             *     /api/workspaces/{id}`). Show this one; `name` and `id` never change.
-             */
-            display_name: string;
-            /**
              * @deprecated
              * @description Deprecated and always `false`: the first-connect notice is the "Allow direct SSH"
              *     confirmation now. Read `direct_ssh` instead.
              */
             first_connect_notice_due: boolean;
-            /** @description The id used in paths. Today it is the workspace's name. */
+            /**
+             * @description The id every path, query parameter, event and rule scope uses. It never changes; a
+             *     rename changes `name` only.
+             */
             id: string;
             /**
              * @description Which identity each repository of a new workspace got and why, one per repository of the
@@ -4840,8 +4867,11 @@ export interface components {
              * @description Memory in MiB, applied at the next start.
              */
             memory_mib: number;
-            /** @description The name of the workspace that runs it; events and per-workspace settings use this name. */
-            name: components["schemas"]["WorkspaceName"];
+            /**
+             * @description What the user calls the workspace: display text of 1 to 60 characters, renamed with
+             *     `PATCH /api/workspaces/{id}`. It names nothing else; use `id` for that.
+             */
+            name: string;
             /** @description The repositories Puddle manages for it, in the order they were added (0 to 100). */
             repositories: components["schemas"]["WorkspaceRepository"][];
             /**
@@ -4920,11 +4950,22 @@ export interface components {
             /** @description Every workspace, ordered by id. */
             workspaces: components["schemas"]["Workspace"][];
         };
-        /**
-         * @description A workspace's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), not `tauri`, `ipc` or `asset`.
-         * @example my-project
-         */
-        WorkspaceName: string;
+        /** @description The answer when a lookup text names two workspaces: one's id is the other's name. */
+        WorkspaceLookupConflict: {
+            /** @description Always `conflict`. */
+            error: components["schemas"]["ErrorCode"];
+            /** @description Every workspace the text names, with its id. */
+            matches: components["schemas"]["WorkspaceMatch"][];
+            /** @description Names both workspaces and asks for the id. */
+            message: string;
+        };
+        /** @description One workspace a lookup found. */
+        WorkspaceMatch: {
+            /** @description The workspace's id. */
+            id: string;
+            /** @description The workspace's name. */
+            name: string;
+        };
         /**
          * @description What a `workspace_op` record is about.
          * @enum {string}
@@ -9676,7 +9717,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description the name is taken, or two identities of the list cover the same place (`identity_collision`) */
+            /** @description another workspace has that name (ignoring case), or the id it would get is taken, or two identities of the list cover the same place (`identity_collision`) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9714,6 +9755,92 @@ export interface operations {
             };
             /** @description workspaces are not available */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    lookup_workspace: {
+        parameters: {
+            query: {
+                /** @description an id, or a name ignoring case */
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the one workspace it names */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMatch"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no workspace has that id or name */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the text is one workspace's id and another's name; ask for the id */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceLookupConflict"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description `q` is empty */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

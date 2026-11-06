@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The workspaces resource over real HTTP, against `FakeWorkspaces`.
 
+use puddle_api::DisplayName;
 use puddle_api::{
     Listing, Operation, RepoFindings, RepoUrl, Repository, SettingsRepo, Unsaved, WorkspaceRecord,
 };
-use puddle_types::{WorkspaceId, WorkspaceName, WorkspaceStatus};
+use puddle_types::{WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};
 
 use crate::common::{Api, START_MS, start, start_without_workspaces};
@@ -49,7 +50,7 @@ async fn running(api: &Api, name: &str) {
 fn seed(api: &Api, name: &str, status: WorkspaceStatus, unsaved: Unsaved) {
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new(name).unwrap(),
-        WorkspaceName::new(name).unwrap(),
+        DisplayName::parse(name).unwrap(),
         vec![Repository::at_default_directory(
             RepoUrl::parse(REPO).unwrap(),
         )],
@@ -99,7 +100,6 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
         json!({
             "id": "web",
             "name": "web",
-            "display_name": "web",
             "repositories": [{"url": REPO, "directory": "api"}],
             "start_folder": null,
             "session_user": "agent",
@@ -356,7 +356,7 @@ async fn create_with_two_identities_that_cover_the_same_place_is_a_409_and_makes
 }
 
 /// Create bodies the API refuses with 422, each with a part of the message it gives.
-fn refused_bodies() -> [(Value, &'static str); 19] {
+fn refused_bodies() -> [(Value, &'static str); 20] {
     let long = "w".repeat(61);
     [
         (
@@ -384,16 +384,20 @@ fn refused_bodies() -> [(Value, &'static str); 19] {
             "spaces",
         ),
         (
-            json!({"name": "m--a", "repositories": [{"url": REPO}]}),
-            "reserved",
+            json!({"name": "", "repositories": [{"url": REPO}]}),
+            "must not be empty",
         ),
         (
-            json!({"name": "A_b", "repositories": [{"url": REPO}]}),
-            "workspace name",
+            json!({"name": "  ", "repositories": [{"url": REPO}]}),
+            "must not be empty",
         ),
         (
             json!({"name": long, "repositories": [{"url": REPO}]}),
-            "can't be a workspace",
+            "longer than 60",
+        ),
+        (
+            json!({"name": "two\nlines", "repositories": [{"url": REPO}]}),
+            "line breaks",
         ),
         (
             json!({"name": "a", "repositories": [{"url": REPO}], "memory_mib": 10}),
@@ -582,7 +586,7 @@ async fn reclaim_shrinks_what_the_disk_holds() {
     let api = start().await;
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
-        WorkspaceName::new("web").unwrap(),
+        DisplayName::parse("web").unwrap(),
         Vec::new(),
     );
     record.status = WorkspaceStatus::Stopped;
@@ -603,7 +607,7 @@ async fn the_root_disk_figures_and_warnings_follow_the_threshold_and_a_reset_emp
     let api = start().await;
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
-        WorkspaceName::new("web").unwrap(),
+        DisplayName::parse("web").unwrap(),
         Vec::new(),
     );
     record.status = WorkspaceStatus::Running;
@@ -1093,46 +1097,51 @@ async fn rename(api: &Api, id: &str, body: &Value) -> crate::common::Reply {
         .await
 }
 
+async fn lookup(api: &Api, q: &str) -> crate::common::Reply {
+    let q: String = q
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    api.get(&format!("/api/workspaces/lookup?q={q}")).await
+}
+
 #[tokio::test]
-async fn a_running_workspace_is_renamed_without_touching_its_id_name_or_state() {
+async fn a_running_workspace_is_renamed_without_touching_its_id_or_state() {
     let api = start().await;
     running(&api, "web").await;
-    let reply = rename(&api, "web", &json!({"display_name": "  Web shop "})).await;
+    let reply = rename(&api, "web", &json!({"name": "  Web shop "})).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let ws = reply.json();
     assert_eq!(
+        (&ws["id"], &ws["name"], &ws["status"], &ws["busy"]),
         (
-            &ws["id"],
-            &ws["name"],
-            &ws["display_name"],
-            &ws["status"],
-            &ws["busy"]
-        ),
-        (
-            &json!("web"),
             &json!("web"),
             &json!("Web shop"),
             &json!("running"),
             &Value::Null
         )
     );
+    assert!(ws.get("display_name").is_none(), "{ws}");
     // Every read shows it, and the id in paths is still the old one.
     assert_eq!(
-        api.get("/api/workspaces/web").await.json()["display_name"],
+        api.get("/api/workspaces/web").await.json()["name"],
         "Web shop"
     );
     let list = api.get("/api/workspaces").await.json();
-    assert_eq!(list["workspaces"][0]["display_name"], "Web shop");
-    // Naming it the same again is not a clash with itself; `null` goes back to the name.
+    assert_eq!(list["workspaces"][0]["name"], "Web shop");
+    // Naming it the same again, in other case, is not a clash with itself.
     assert_eq!(
-        rename(&api, "web", &json!({"display_name": "WEB SHOP"}))
+        rename(&api, "web", &json!({"name": "WEB SHOP"}))
             .await
             .status,
         200
     );
-    let reset = rename(&api, "web", &json!({"display_name": null})).await;
-    assert_eq!(reset.status, 200, "{}", reset.body);
-    assert_eq!(reset.json()["display_name"], "web");
     api.running.shutdown().await;
 }
 
@@ -1142,18 +1151,13 @@ async fn a_rename_that_clashes_with_another_workspace_is_a_409_ignoring_case() {
     created(&api, "web").await;
     created(&api, "docs").await;
     assert_eq!(
-        rename(&api, "web", &json!({"display_name": "Handbook"}))
+        rename(&api, "web", &json!({"name": "Handbook"}))
             .await
             .status,
         200
     );
-    for taken in ["handbook", "HANDBOOK ", "docs"] {
-        let reply = rename(&api, "docs", &json!({"display_name": taken})).await;
-        if taken == "docs" {
-            // Its own name is free for it.
-            assert_eq!(reply.status, 200, "{}", reply.body);
-            continue;
-        }
+    for taken in ["handbook", "HANDBOOK "] {
+        let reply = rename(&api, "docs", &json!({"name": taken})).await;
         assert_eq!(reply.status, 409, "{taken}: {}", reply.body);
         assert_eq!(reply.error(), "conflict");
         assert!(
@@ -1163,14 +1167,12 @@ async fn a_rename_that_clashes_with_another_workspace_is_a_409_ignoring_case() {
                 .contains("already called Handbook")
         );
     }
-    // A workspace that was renamed away from "web" frees that label for another to take.
+    // A workspace renamed away from "web" frees that name for another to take.
     assert_eq!(
-        rename(&api, "docs", &json!({"display_name": "web"}))
-            .await
-            .status,
+        rename(&api, "docs", &json!({"name": "web"})).await.status,
         200
     );
-    // The old label is not free for a new workspace while someone answers to it.
+    // "Handbook" is not free for a new workspace while a workspace has it.
     let create = api
         .send(
             "POST",
@@ -1179,6 +1181,14 @@ async fn a_rename_that_clashes_with_another_workspace_is_a_409_ignoring_case() {
         )
         .await;
     assert_eq!(create.status, 409, "{}", create.body);
+    let taken_by_rename = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({"name": "web", "repositories": [{"url": REPO}]})),
+        )
+        .await;
+    assert_eq!(taken_by_rename.status, 409, "{}", taken_by_rename.body);
     api.running.shutdown().await;
 }
 
@@ -1187,20 +1197,18 @@ async fn a_rename_is_refused_while_the_workspace_is_created_or_deleted() {
     let api = start().await;
     api.workspaces.hold();
     create(&api, "web").await;
-    let reply = rename(&api, "web", &json!({"display_name": "Web"})).await;
+    let reply = rename(&api, "web", &json!({"name": "Web"})).await;
     assert_eq!(reply.status, 409, "{}", reply.body);
     api.workspaces.release();
     api.workspaces.idle().await;
     assert_eq!(
-        rename(&api, "web", &json!({"display_name": "Web"}))
-            .await
-            .status,
+        rename(&api, "web", &json!({"name": "Web"})).await.status,
         200
     );
-    // Starting and stopping are not in the way: only the label changes.
+    // Starting and stopping are not in the way: only the name changes.
     api.workspaces.hold();
     assert_eq!(post(&api, "/api/workspaces/web/start").await.status, 202);
-    let during = rename(&api, "web", &json!({"display_name": "Web 2"})).await;
+    let during = rename(&api, "web", &json!({"name": "Web 2"})).await;
     assert_eq!(during.status, 200, "{}", during.body);
     assert_eq!(during.json()["busy"], "starting");
     api.workspaces.release();
@@ -1214,41 +1222,172 @@ async fn a_rename_refuses_bad_names_and_bodies_and_unknown_workspaces() {
     created(&api, "web").await;
     let long = "a".repeat(61);
     for body in [
-        json!({"display_name": ""}),
-        json!({"display_name": "   "}),
-        json!({"display_name": long}),
-        json!({"display_name": "two\nlines"}),
-        // Missing field must not reset the name by accident.
+        json!({"name": ""}),
+        json!({"name": "   "}),
+        json!({"name": long}),
+        json!({"name": "two\nlines"}),
+        json!({"name": null}),
+        // The retired field, a missing field and an extra one are refused, never a reset.
+        json!({"display_name": "x"}),
         json!({}),
-        json!({"display_name": "x", "name": "y"}),
-        json!({"display_name": 5}),
+        json!({"name": "x", "display_name": "y"}),
+        json!({"name": 5}),
     ] {
         let reply = rename(&api, "web", &body).await;
         assert_eq!(reply.status, 422, "{body}: {}", reply.body);
     }
+    assert_eq!(api.get("/api/workspaces/web").await.json()["name"], "web");
     assert_eq!(
-        api.get("/api/workspaces/web").await.json()["display_name"],
-        "web"
-    );
-    assert_eq!(
-        rename(&api, "ghost", &json!({"display_name": "x"}))
-            .await
-            .status,
+        rename(&api, "ghost", &json!({"name": "x"})).await.status,
         404
     );
+    // A name is never looked up: it is no id.
     assert_eq!(
-        rename(&api, "Not_An_Id", &json!({"display_name": "x"}))
+        rename(&api, "Not_An_Id", &json!({"name": "x"}))
             .await
             .status,
         404
     );
     // Sixty characters, counted as characters, are accepted.
-    let sixty = "é".repeat(60);
+    let sixty = "\u{e9}".repeat(60);
     assert_eq!(
-        rename(&api, "web", &json!({"display_name": sixty}))
-            .await
-            .status,
+        rename(&api, "web", &json!({"name": sixty})).await.status,
         200
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_name_of_spaces_capitals_and_other_scripts_creates_a_workspace_known_by_its_id() {
+    let api = start().await;
+    let ws = create(&api, "  Shop API \u{fc}  ").await;
+    assert_eq!(ws["name"], "Shop API \u{fc}");
+    let id = ws["id"].as_str().unwrap().to_owned();
+    assert_eq!(id, "shop-api");
+    api.workspaces.idle().await;
+    // Every call takes the id; the name is no path.
+    assert_eq!(api.get("/api/workspaces/shop-api").await.status, 200);
+    assert_eq!(
+        api.get("/api/workspaces/Shop%20API%20%C3%BC").await.status,
+        404
+    );
+    // The same name in other case is a clash.
+    let reply = api
+        .send(
+            "POST",
+            "/api/workspaces",
+            Some(&json!({"name": "shop api \u{dc}", "repositories": [{"url": REPO}]})),
+        )
+        .await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert_eq!(reply.error(), "conflict");
+    // Another name that makes the same label is its own workspace, with an id of its own.
+    let second = create(&api, "shop-api").await;
+    assert_eq!(
+        (second["name"].as_str(), second["id"].as_str()),
+        (Some("shop-api"), Some("shop-api-2"))
+    );
+    api.workspaces.idle().await;
+    // A name no DNS label could hold still creates, with an id of its own.
+    let other = create(&api, "\u{65e5}\u{672c}\u{8a9e}").await;
+    assert_eq!(other["name"], "\u{65e5}\u{672c}\u{8a9e}");
+    assert!(
+        other["id"].as_str().unwrap().starts_with("workspace-"),
+        "{other}"
+    );
+    // The events of one workspace are asked for by its id.
+    let _stream = Stream::open(&api, "?workspace=shop-api").await;
+    api.workspaces.idle().await;
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn create_takes_text_the_old_rules_refused_and_checks_only_the_text_rules() {
+    let api = start().await;
+    // Reserved shell names and a leading `m--` were names that could not be; as text they are fine.
+    for name in ["tauri", "m--a", "A_b", "a.b"] {
+        let ws = create(&api, name).await;
+        assert_eq!(ws["name"], name);
+        api.workspaces.idle().await;
+    }
+    // "A_b" and "a.b" make the same label: the second gets a number.
+    let ids = api.get("/api/workspaces").await.json();
+    let ids: Vec<&str> = ids["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"a-b") && ids.contains(&"a-b-2"), "{ids:?}");
+    let ids: Vec<String> = api.get("/api/workspaces").await.json()["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        !ids.iter()
+            .any(|i| ["tauri", "ipc", "asset"].contains(&i.as_str())),
+        "{ids:?}"
+    );
+    assert!(ids.iter().all(|i| !i.starts_with("m--")), "{ids:?}");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn lookup_answers_one_none_or_two() {
+    let api = start().await;
+    created(&api, "Shop API \u{fc}").await;
+    created(&api, "docs").await;
+    // One: an exact id, or a name ignoring case and the spaces at the ends.
+    for q in ["shop-api", "shop api \u{dc}", " SHOP API \u{fc} "] {
+        let reply = lookup(&api, q).await;
+        assert_eq!(reply.status, 200, "{q}: {}", reply.body);
+        assert_eq!(
+            reply.json(),
+            json!({"id": "shop-api", "name": "Shop API \u{fc}"})
+        );
+    }
+    assert_eq!(
+        lookup(&api, "docs").await.json(),
+        json!({"id": "docs", "name": "docs"})
+    );
+    // None.
+    let none = lookup(&api, "nothing").await;
+    assert_eq!(none.status, 404, "{}", none.body);
+    assert_eq!(none.error(), "not_found");
+    // Empty text is a mistake, not "nothing".
+    assert_eq!(lookup(&api, " ").await.status, 422);
+    let extra = api.get("/api/workspaces/lookup?q=a&x=1").await;
+    assert_eq!(extra.status, 400, "{}", extra.body);
+    // Two: a legacy id that is also another workspace's name.
+    seed(&api, "legacy", WorkspaceStatus::Stopped, Unsaved::default());
+    let mut other = WorkspaceRecord::new(
+        WorkspaceId::new("k7m2x9qa").unwrap(),
+        DisplayName::parse("Another").unwrap(),
+        Vec::new(),
+    );
+    other.status = WorkspaceStatus::Stopped;
+    api.workspaces.seed(other, Unsaved::default());
+    // The legacy workspace is renamed away from its id, then the other takes the id as its name.
+    let first = rename(&api, "legacy", &json!({"name": "Legacy shop"})).await;
+    assert_eq!(first.status, 200, "{}", first.body);
+    let second = rename(&api, "k7m2x9qa", &json!({"name": "legacy"})).await;
+    assert_eq!(second.status, 200, "{}", second.body);
+    let both = lookup(&api, "legacy").await;
+    assert_eq!(both.status, 409, "{}", both.body);
+    let body = both.json();
+    assert_eq!(body["error"], "conflict");
+    assert_eq!(
+        body["matches"],
+        json!([
+            {"id": "k7m2x9qa", "name": "legacy"},
+            {"id": "legacy", "name": "Legacy shop"}
+        ])
+    );
+    assert!(
+        body["message"].as_str().unwrap().contains("use the id"),
+        "{body}"
     );
     api.running.shutdown().await;
 }
@@ -1264,11 +1403,8 @@ async fn without_a_workspaces_service_every_route_says_unavailable() {
             Some(json!({"name": "a", "repositories": [{"url": REPO}]})),
         ),
         ("GET", "/api/workspaces/a", None),
-        (
-            "PATCH",
-            "/api/workspaces/a",
-            Some(json!({"display_name": "A"})),
-        ),
+        ("GET", "/api/workspaces/lookup?q=a", None),
+        ("PATCH", "/api/workspaces/a", Some(json!({"name": "A"}))),
         ("POST", "/api/workspaces/a/start", Some(json!({}))),
         ("POST", "/api/workspaces/a/stop", Some(json!({}))),
         ("POST", "/api/workspaces/a/reclaim", Some(json!({}))),

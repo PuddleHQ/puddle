@@ -14,7 +14,6 @@ export function workspace(
   return {
     id: "w-" + name,
     name,
-    display_name: name,
     repositories: [
       { url: `https://github.com/acme/${name}.git`, directory: name },
     ],
@@ -336,11 +335,7 @@ export class FakeWorkspaces {
     if (path === "/api/workspaces") {
       const body = init.body ?? {};
       const name = String(body["name"]);
-      if (
-        this.list.some(
-          (w) => w.display_name.toLowerCase() === name.toLowerCase(),
-        )
-      )
+      if (this.list.some((w) => w.name.toLowerCase() === name.toLowerCase()))
         return this.reply(
           409,
           undefined,
@@ -410,7 +405,7 @@ export class FakeWorkspaces {
     path: string,
     init: {
       params: { path: { id: string } };
-      body: { display_name: string | null };
+      body: { name: string };
     },
   ) => {
     this.calls.push(`PATCH ${path}`);
@@ -420,19 +415,17 @@ export class FakeWorkspaces {
     if (refused) return refused;
     const found = this.find(init.params.path.id);
     if (!found) return this.reply(404, undefined, "no such workspace");
-    const shown = init.body.display_name?.trim() ?? found.name;
+    const shown = init.body.name.trim();
     const clash = this.list.find(
-      (w) =>
-        w.id !== found.id &&
-        w.display_name.toLowerCase() === shown.toLowerCase(),
+      (w) => w.id !== found.id && w.name.toLowerCase() === shown.toLowerCase(),
     );
     if (clash)
       return this.reply(
         409,
         undefined,
-        `another workspace is already called ${clash.display_name}; choose a different name`,
+        `another workspace is already called ${clash.name}; choose a different name`,
       );
-    const next: Workspace = { ...found, display_name: shown };
+    const next: Workspace = { ...found, name: shown };
     this.list = this.list.map((w) => (w.id === found.id ? next : w));
     return this.reply(200, next);
   };

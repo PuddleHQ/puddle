@@ -10,11 +10,11 @@ use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 15;
+pub const SCHEMA_VERSION: u32 = 16;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -453,6 +453,18 @@ pub(crate) fn migrate(conn: &mut Connection) -> Result<u32, StoreError> {
 }
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.
+/// The name a workspace had when an audit record was written, so a record of a renamed or
+/// deleted workspace still reads as the user knew it. `workspace_names` holds the current name
+/// of each workspace (the host keeps it up to date); a new audit row copies it. Rows written
+/// before this column have `NULL`, and a reader shows the id for them.
+const V16: &str = r"
+CREATE TABLE workspace_names (
+    workspace_id TEXT PRIMARY KEY,
+    name         TEXT NOT NULL
+) STRICT;
+ALTER TABLE audit ADD COLUMN workspace_name TEXT;
+";
+
 #[cfg(test)]
 pub(crate) fn migrate_up_to(conn: &mut Connection, version: usize) -> Result<u32, StoreError> {
     migrate_with(conn, &MIGRATIONS[..version])

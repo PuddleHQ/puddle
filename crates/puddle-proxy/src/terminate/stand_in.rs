@@ -61,8 +61,10 @@ pub(crate) use answer::{
 /// it.
 const MIN_STAND_IN_LEN: usize = 16;
 
-/// The longest stand-in accepted: a Copilot session token is a few hundred characters.
-const MAX_LEN: usize = 1024;
+/// The longest stand-in accepted: a Copilot session token is a few hundred characters, a Microsoft
+/// access token is one to three thousand, and one with many group claims reaches about six thousand.
+/// A header carries 64 KiB, and the credential store keeps a long value in pieces.
+const MAX_LEN: usize = 8192;
 
 /// Most random bytes of a generated stand-in: 128 bits.
 const RANDOM_BYTES: usize = 16;

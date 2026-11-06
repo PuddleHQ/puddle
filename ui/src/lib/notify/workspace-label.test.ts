@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe("notices name a workspace by its display name and key it by its id", () => {
   it("shows the name in the words, the id in the key and the link", () => {
-    workspaces.list = [workspace("web", { display_name: "Web shop" })];
+    workspaces.list = [workspace("web", { name: "Web shop" })];
     const center = new NoticeCenter();
     const watcher = new NoticeWatcher({
       source: new FakeSource(),
@@ -38,7 +38,7 @@ describe("notices name a workspace by its display name and key it by its id", ()
 
   it("falls back to the id for a workspace that is no longer listed", () => {
     expect(workspaces.labelOf("w-gone")).toBe("w-gone");
-    workspaces.list = [workspace("web", { display_name: "Web shop" })];
+    workspaces.list = [workspace("web", { name: "Web shop" })];
     expect(workspaces.labelOf("w-web")).toBe("Web shop");
   });
 });

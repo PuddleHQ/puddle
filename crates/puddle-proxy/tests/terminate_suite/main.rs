@@ -10,6 +10,7 @@ mod basic;
 mod body;
 mod chain;
 mod copilot_session;
+mod docker_login;
 mod everything;
 mod exchange;
 mod git_inject;

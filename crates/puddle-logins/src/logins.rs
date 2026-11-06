@@ -781,6 +781,11 @@ impl ExchangeRewriter for Logins {
         for field in route.endpoint.request_fields {
             exchange = exchange.swapping(*field);
         }
+        // An endpoint with no token fields (a revoke) is only a request to swap in: its answer
+        // is not read, so an empty `200` is not an unexpected answer.
+        if route.endpoint.fields.is_empty() {
+            return Some(exchange);
+        }
         Some(exchange.answered_by(Box::new(Capture {
             logins: self.clone(),
             profile: route.profile,

@@ -258,10 +258,13 @@ async fn requests_on_a_kept_connection_share_one_upstream_connection_and_are_eac
     let mut guest = rig.guest().await;
     let mut reader = BufReader::new(guest.stream().await);
     let mut down = 0;
+    let mut request_len = 0;
     for path in ["/1", "/2", "/3"] {
+        let request = get("web.test", web, path);
+        request_len = request.len() as u64;
         reader
             .get_mut()
-            .write_all(get("web.test", web, path).as_bytes())
+            .write_all(request.as_bytes())
             .await
             .unwrap();
         let got = answer(&mut reader, "GET").await;
@@ -278,7 +281,9 @@ async fn requests_on_a_kept_connection_share_one_upstream_connection_and_are_eac
     for event in &events {
         assert_eq!(event.decision, ConnectionDecision::Allow);
         assert_eq!(event.resolved_ip, Some(LOCAL));
-        assert!(event.bytes_up > 0 && event.bytes_down > 0, "{event:?}");
+        // each record counts its own request's bytes, not the connection's running total
+        assert_eq!(event.bytes_up, request_len, "{event:?}");
+        assert!(event.bytes_down > 0, "{event:?}");
         down += event.bytes_down;
     }
     drop(reader);
@@ -596,6 +601,38 @@ async fn hostile_hg16_ambiguous_framing_on_a_kept_connection_is_refused_before_i
     }
     assert_eq!(seen.lines(), vec!["GET /ok"; framings.len()]);
     assert_eq!(rig.policy.pending().len(), 0);
+}
+
+/// `Expect: 100-continue` on a request that has no body gets no interim `100`: the first thing the
+/// guest reads is the final answer, and the connection stays usable.
+#[tokio::test]
+async fn an_expect_continue_request_without_a_body_gets_no_interim_100() {
+    let (web, seen) = keep_alive_server().await;
+    let rig = rig(&ProxyConfig::default());
+    let mut guest = rig.guest().await;
+    let mut reader = BufReader::new(guest.stream().await);
+    let request = format!(
+        "GET http://web.test:{}/nobody HTTP/1.1\r\nHost: web.test\r\nExpect: 100-continue\r\nContent-Length: 0\r\n\r\n",
+        web.port()
+    );
+    reader
+        .get_mut()
+        .write_all(request.as_bytes())
+        .await
+        .unwrap();
+    let got = answer(&mut reader, "GET").await;
+    assert_eq!(
+        (got.code, got.body.as_slice()),
+        (200, &b"/nobody"[..]),
+        "no interim 100 for a request without a body"
+    );
+    reader
+        .get_mut()
+        .write_all(get("web.test", web, "/after").as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(answer(&mut reader, "GET").await.body, b"/after");
+    assert_eq!(seen.lines(), ["GET /nobody", "GET /after"]);
 }
 
 /// The next head may come in pieces: it is read whole across the reads and decided once.

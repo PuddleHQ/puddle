@@ -11178,8 +11178,6 @@ async fn event_reader_sees_an_event_queued_past_the_deadline() {
         .unwrap();
     stream.readable().await.unwrap();
     let mut events = support::Events::over(stream);
-    let found = events
-        .until(|e| e["type"] == "ping", std::time::Duration::ZERO)
-        .await;
+    let found = events.until(|e| e["type"] == "ping", Duration::ZERO).await;
     assert_eq!(found["type"], "ping");
 }

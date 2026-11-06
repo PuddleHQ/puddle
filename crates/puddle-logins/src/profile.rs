@@ -50,7 +50,7 @@ impl Role {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StandInKind {
-    /// The token's prefix, length and alphabet, random in between ([`crate::shape`]); one
+    /// The token's prefix, length and alphabet, random in between; one
     /// stand-in per slot, and a refresh puts a new token behind it.
     Shaped,
     /// A token of `key=value;` fields and a MAC after a colon: the fields are kept, because the

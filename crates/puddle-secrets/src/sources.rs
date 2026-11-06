@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::{Refusal, SourceError, Tool};
-use crate::name::{AccountName, HostName, StoredId, UrlPath};
-use crate::run::{TOOL_TIMEOUT, ToolPaths, run};
+use crate::name::{AccountName, HostName, StoredId, TenantId, UrlPath};
+use crate::run::{AZ_TIMEOUT, TOOL_TIMEOUT, ToolPaths, run, run_capturing};
 use crate::secret::Secret;
 use crate::spec::SourceSpec;
 use crate::store::SecretStore;
@@ -43,11 +43,15 @@ pub trait Fetch: Send + Sync {
     -> impl Future<Output = Result<Fetched, SourceError>> + Send;
 }
 
-/// The real sources: `gh`, `git credential fill` and the OS store.
+/// Azure DevOps' own application id: the resource an Azure DevOps token is asked for.
+const AZURE_DEVOPS_RESOURCE: &str = "499b84ac-1321-427f-aa17-267ca6975798";
+
+/// The real sources: `gh`, `git credential fill`, `az` and the OS store.
 pub struct Sources {
     tools: ToolPaths,
     store: Arc<dyn SecretStore>,
     timeout: Duration,
+    az_timeout: Duration,
 }
 
 impl Sources {
@@ -58,14 +62,41 @@ impl Sources {
             tools,
             store,
             timeout: TOOL_TIMEOUT,
+            az_timeout: AZ_TIMEOUT,
         }
     }
 
-    /// The same sources with another time limit per tool call (the default is 10 seconds).
+    /// The same sources with another time limit per tool call (the default is 10 seconds, and 20
+    /// for `az`, whose cold start is slow).
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self.az_timeout = timeout;
         self
+    }
+
+    /// Reads an Entra token for Azure DevOps from the account signed in to `az` for `tenant`.
+    /// `az` answers from its own login cache; nothing here reads or writes that cache, and
+    /// nothing starts a sign-in.
+    async fn az_cli(&self, tenant: &TenantId) -> Result<Fetched, SourceError> {
+        let program = self.tools.get(Tool::Az)?;
+        let args = [
+            "account",
+            "get-access-token",
+            "--resource",
+            AZURE_DEVOPS_RESOURCE,
+            "--tenant",
+            tenant.as_str(),
+            "--output",
+            "json",
+        ];
+        let out = run_capturing(Tool::Az, program, &args, self.az_timeout).await?;
+        if !out.success {
+            let err = classify_az_failure(&String::from_utf8_lossy(&out.stderr));
+            tracing::debug!(error = %err, "az could not give a token");
+            return Err(err);
+        }
+        parse_az_token(&out.stdout, tenant, unix_now())
     }
 
     /// Reads the token of one `gh` account. `gh auth token --user` answers from the keyring
@@ -163,8 +194,114 @@ impl Fetch for Sources {
                 username,
             } => self.git_credential(host, path, username.as_ref()).await,
             SourceSpec::Stored { id, .. } => self.stored(id).await,
+            SourceSpec::AzCli { tenant, .. } => self.az_cli(tenant).await,
         }
     }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Sorts a failed `az account get-access-token` by what it said on standard error, so the user is
+/// told which piece is missing. The text is read here and dropped: it is never logged or sent.
+pub(crate) fn classify_az_failure(stderr: &str) -> SourceError {
+    let text = stderr.to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| text.contains(n));
+    // The account is in no such tenant, or the tenant does not exist.
+    if has(&["aadsts90002", "aadsts50020", "aadsts90072", "aadsts700016"])
+        || (text.contains("tenant")
+            && has(&[
+                "not found",
+                "not a member",
+                "doesn't exist",
+                "does not exist",
+            ]))
+    {
+        return SourceError::WrongTenant;
+    }
+    // Signed in, but Azure DevOps is not open to this account in this tenant.
+    if has(&[
+        "aadsts65001",
+        "aadsts50105",
+        "aadsts500011",
+        "aadsts650057",
+        "aadsts53003",
+    ]) || has(&["does not have access", "not authorized to access"])
+    {
+        return SourceError::NoAccess;
+    }
+    // No login, or one that must be redone (expired refresh token, MFA, conditional access).
+    if has(&[
+        "az login",
+        "no accounts",
+        "interactive authentication is needed",
+        "refresh token has expired",
+        "aadsts50173",
+        "aadsts50076",
+        "aadsts50079",
+        "aadsts70043",
+        "aadsts70008",
+        "aadsts700082",
+        "aadsts50078",
+        "aadsts50132",
+        "aadsts50133",
+    ]) {
+        return SourceError::NotSignedIn;
+    }
+    SourceError::CouldNotRun(Tool::Az)
+}
+
+/// Reads the answer of `az account get-access-token`: three fields, nothing else kept. The token
+/// is used only for the tenant that was asked for, when that is a GUID (a domain name is resolved
+/// by `az`, which answers with the GUID, so it cannot be compared).
+pub(crate) fn parse_az_token(
+    stdout: &[u8],
+    tenant: &TenantId,
+    now: u64,
+) -> Result<Fetched, SourceError> {
+    let unreadable = || SourceError::Refused(Refusal::Unreadable);
+    let mut doc: serde_json::Value = serde_json::from_slice(stdout).map_err(|_| unreadable())?;
+    let token = match doc.get_mut("accessToken").map(serde_json::Value::take) {
+        Some(serde_json::Value::String(s)) => zeroize::Zeroizing::new(s),
+        _ => return Err(unreadable()),
+    };
+    if is_guid(tenant.as_str()) {
+        let answered = doc.get("tenant").and_then(serde_json::Value::as_str);
+        if !answered.is_some_and(|t| t.eq_ignore_ascii_case(tenant.as_str())) {
+            return Err(SourceError::WrongTenant);
+        }
+    }
+    // `expires_on` is epoch seconds (a number, or a string on older versions). `expiresOn` is local
+    // time and has no zone, so it is not read: the cache's 55 minute limit covers an answer
+    // without `expires_on`.
+    let expiry = doc.get("expires_on").and_then(|v| match v {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    });
+    let valid_for = remaining_validity(expiry, now)?;
+    let secret = token_secret(token.trim(), false)?;
+    Ok(Fetched {
+        credential: Credential {
+            username: None,
+            secret,
+        },
+        valid_for,
+    })
+}
+
+/// `8-4-4-4-12` hexadecimal digits.
+fn is_guid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// Checks a token's characters and wraps it. `allow_space` is for helper passwords, which are not
@@ -337,6 +474,116 @@ mod tests {
             parse_fill(dead, &h, &p, None).unwrap_err(),
             SourceError::NotSignedIn
         );
+    }
+
+    const GUID: &str = "72f988bf-86f1-41af-91ab-2d7cd011db47";
+
+    fn tenant(s: &str) -> TenantId {
+        TenantId::new(s).unwrap()
+    }
+
+    #[test]
+    fn az_answer_is_read_field_by_field() {
+        let json = format!(
+            r#"{{"accessToken":"CANARY-az","expiresOn":"2026-11-06 12:00:00.000000","expires_on":1000100,"subscription":"x","tenant":"{}","tokenType":"Bearer"}}"#,
+            GUID.to_uppercase()
+        );
+        let got = parse_az_token(json.as_bytes(), &tenant(GUID), 1_000_000).unwrap();
+        assert_eq!(got.credential.secret.expose(), "CANARY-az");
+        assert_eq!(got.valid_for, Some(Duration::from_secs(100)));
+        // A string epoch (older az) and a missing one (the cache limit applies) both work.
+        let text = r#"{"accessToken":"a","expires_on":"1000100","tenant":"t"}"#;
+        assert!(
+            parse_az_token(text.as_bytes(), &tenant("t.io"), 1_000_000)
+                .unwrap()
+                .valid_for
+                .is_some()
+        );
+        let none = r#"{"accessToken":"a","expiresOn":"2026-11-06 12:00:00.000000"}"#;
+        assert_eq!(
+            parse_az_token(none.as_bytes(), &tenant("t.io"), 0)
+                .unwrap()
+                .valid_for,
+            None
+        );
+    }
+
+    #[test]
+    fn az_answer_for_another_tenant_or_unreadable_is_refused() {
+        let other = r#"{"accessToken":"a","expires_on":9999999999,"tenant":"11111111-2222-3333-4444-555555555555"}"#;
+        assert_eq!(
+            parse_az_token(other.as_bytes(), &tenant(GUID), 0).unwrap_err(),
+            SourceError::WrongTenant
+        );
+        let missing = r#"{"accessToken":"a","expires_on":9999999999}"#;
+        assert_eq!(
+            parse_az_token(missing.as_bytes(), &tenant(GUID), 0).unwrap_err(),
+            SourceError::WrongTenant
+        );
+        for (bad, why) in [
+            ("not json", Refusal::Unreadable),
+            ("{}", Refusal::Unreadable),
+            (r#"{"accessToken":5}"#, Refusal::Unreadable),
+            (r#"{"accessToken":"a b"}"#, Refusal::Malformed),
+            (r#"{"accessToken":"a\nb"}"#, Refusal::Malformed),
+        ] {
+            assert_eq!(
+                parse_az_token(bad.as_bytes(), &tenant("t.io"), 0).unwrap_err(),
+                SourceError::Refused(why),
+                "{bad}"
+            );
+        }
+        let past = r#"{"accessToken":"a","expires_on":5}"#;
+        assert_eq!(
+            parse_az_token(past.as_bytes(), &tenant("t.io"), 10).unwrap_err(),
+            SourceError::NotSignedIn
+        );
+    }
+
+    #[test]
+    fn az_failures_name_the_missing_piece() {
+        for (stderr, want) in [
+            (
+                "ERROR: Please run 'az login' to setup account.",
+                SourceError::NotSignedIn,
+            ),
+            ("ERROR: No accounts were found", SourceError::NotSignedIn),
+            (
+                "AADSTS70043: The refresh token has expired",
+                SourceError::NotSignedIn,
+            ),
+            (
+                "AADSTS50076: MFA needed. Interactive authentication is needed.",
+                SourceError::NotSignedIn,
+            ),
+            (
+                "AADSTS90002: Tenant 'x' not found.",
+                SourceError::WrongTenant,
+            ),
+            (
+                "AADSTS50020: User account from another identity provider",
+                SourceError::WrongTenant,
+            ),
+            (
+                "ERROR: Tenant 'abc' is not found in the account",
+                SourceError::WrongTenant,
+            ),
+            (
+                "AADSTS65001: The user has not consented",
+                SourceError::NoAccess,
+            ),
+            (
+                "AADSTS500011: resource principal not found",
+                SourceError::NoAccess,
+            ),
+            (
+                "Traceback (most recent call last): boom",
+                SourceError::CouldNotRun(Tool::Az),
+            ),
+            ("", SourceError::CouldNotRun(Tool::Az)),
+        ] {
+            assert_eq!(classify_az_failure(stderr), want, "{stderr}");
+        }
     }
 
     #[test]

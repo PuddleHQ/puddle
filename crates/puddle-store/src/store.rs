@@ -15,7 +15,7 @@ use puddle_types::{
     Host, NullSink, PendingEnd, PendingId, PendingOutcome, PendingSummary, Policy, PolicyError,
     RuleId, SuffixAllows, WorkspaceId,
 };
-use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
 use crate::audit::{
     AuditOutcome, AuditRecord, ConnectionRecord, ConnectionWindow, PendingExpiryReason,
@@ -226,6 +226,14 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Starts a transaction that holds the write lock from its first statement. Every write here begins
+/// with a read (`audit_head`), and a plain `BEGIN` that reads first and writes later fails the moment
+/// another connection to the file (the CLI, a second host start) holds the write lock: SQLite does not
+/// call the busy handler for a read that must become a write, so the 5 s wait never starts.
+pub(crate) fn write_tx(conn: &mut Connection) -> Result<Transaction<'_>, rusqlite::Error> {
+    conn.transaction_with_behavior(TransactionBehavior::Immediate)
+}
+
 /// Epoch ms as SQLite stores it. Times past year 292 million saturate.
 fn sql_ts(ms: u64) -> i64 {
     i64::try_from(ms).unwrap_or(i64::MAX)
@@ -332,7 +340,7 @@ impl Store {
         if let Some(decision) = self.match_rules(request, now, suffix_allows) {
             return Ok(decision);
         }
-        let tx = conn.transaction()?;
+        let tx = write_tx(conn)?;
         let head = audit_head(&tx)?;
         let mut fx = Vec::new();
         let outcome = self.record_pending(&tx, request, now, &mut fx)?;
@@ -452,7 +460,7 @@ impl Store {
     ) -> Result<T, StoreError> {
         let mut conn = lock(&self.conn);
         let now = self.clock.now_ms();
-        let tx = conn.transaction()?;
+        let tx = write_tx(&mut conn)?;
         let head = audit_head(&tx)?;
         let mut fx = Vec::new();
         let out = change(&tx, now, &mut fx)?;
@@ -682,7 +690,7 @@ impl Store {
         }
         let written = (|| {
             let mut conn = lock(&self.conn);
-            let tx = conn.transaction()?;
+            let tx = write_tx(&mut conn)?;
             let head = audit_head(&tx)?;
             if let Some((ts, count)) = summary {
                 let record =
@@ -863,7 +871,7 @@ impl Store {
     fn merge_waiting_connections(&self) -> Result<u64, StoreError> {
         let cap = i64::try_from(self.limits.max_waiting_connection_records).unwrap_or(i64::MAX);
         let mut conn = lock(&self.conn);
-        let tx = conn.transaction()?;
+        let tx = write_tx(&mut conn)?;
         let head = audit_head(&tx)?;
         let over: Vec<(String, i64)> = {
             let mut stmt = tx.prepare(
@@ -933,7 +941,7 @@ impl Store {
         }
         let written = (|| {
             let mut conn = lock(&self.conn);
-            let tx = conn.transaction()?;
+            let tx = write_tx(&mut conn)?;
             let head = audit_head(&tx)?;
             for record in &records {
                 append(&tx, record)?;
@@ -972,7 +980,7 @@ impl Store {
         }
         loop {
             let mut conn = lock(&self.conn);
-            let tx = conn.transaction()?;
+            let tx = write_tx(&mut conn)?;
             let total = audit_bytes(&tx)?;
             let Some(excess) = total.checked_sub(self.limits.audit_trim_to_bytes) else {
                 break;
@@ -1001,7 +1009,7 @@ impl Store {
             tx.commit()?;
         }
         let mut conn = lock(&self.conn);
-        let tx = conn.transaction()?;
+        let tx = write_tx(&mut conn)?;
         let head = audit_head(&tx)?;
         let oldest: Option<i64> = tx
             .query_row("SELECT ts FROM audit ORDER BY id LIMIT 1", [], |row| {
@@ -1573,6 +1581,26 @@ mod tests {
         let clock = Arc::new(ManualClock::new(1_000_000));
         let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
         (clock, store)
+    }
+
+    #[test]
+    fn a_write_waits_for_another_connection_holding_the_file_instead_of_failing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.db");
+        let clock = Arc::new(ManualClock::new(1_000_000));
+        let store = Store::open(&path, clock, Limits::default()).unwrap();
+        // The other writer: the CLI, or the host a restart has not finished with.
+        let holder = Connection::open(&path).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let release = std::thread::spawn(move || {
+            // The write below blocks inside the call under test, so no signal can mark the moment to
+            // release: the lock is held for a fixed window that the write has to wait out.
+            std::thread::sleep(Duration::from_millis(300));
+            holder.execute_batch("COMMIT").unwrap();
+        });
+        let made = store.create_rule_set("Waits", "", None, Actor::Ui);
+        release.join().unwrap();
+        assert!(made.is_ok(), "{:?}", made.err());
     }
 
     #[test]

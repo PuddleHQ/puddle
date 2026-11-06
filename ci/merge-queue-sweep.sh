@@ -37,7 +37,7 @@ stuck=$(jq -r --argjson now "$now" --argjson min "$min" '
 
 # shellcheck disable=SC2016 # GraphQL variables, not shell ones
 enqueue='mutation($id: ID!, $sha: GitObjectID!) { enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $sha}) { mergeQueueEntry { state } } }'
-# shellcheck disable=SC2016
+# shellcheck disable=SC2016 # GraphQL variables, not shell ones
 readback='query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { state } } } }'
 queued() {
     sleep "$wait"

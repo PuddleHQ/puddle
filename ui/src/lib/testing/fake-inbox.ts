@@ -93,6 +93,7 @@ export class FakeInbox {
             link_local: v("link_local"),
             metadata: v("metadata"),
             special: v("special"),
+            company_network: v("company_network"),
           },
         },
       });

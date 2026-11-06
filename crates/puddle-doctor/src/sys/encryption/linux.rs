@@ -80,9 +80,7 @@ run puddle doctor in Windows"
         to_unknown(protection);
     }
     if let SwapFacts::Areas(areas) = &mut facts.swap {
-        for a in areas {
-            to_unknown(&mut a.protection);
-        }
+        areas.iter_mut().for_each(|a| to_unknown(&mut a.protection));
     }
 }
 

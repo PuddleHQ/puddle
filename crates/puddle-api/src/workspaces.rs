@@ -1956,6 +1956,30 @@ mod tests {
     }
 
     #[test]
+    fn a_taken_id_gets_a_number_and_the_numbers_run_out() {
+        let new = |name: &str| NewWorkspace::new(DisplayName::parse(name).unwrap(), Vec::new());
+        let taken =
+            |ids: &'static [&'static str]| move |id: &WorkspaceId| ids.contains(&id.as_str());
+        assert_eq!(new("Shop").id(taken(&[])).unwrap().as_str(), "shop");
+        assert_eq!(new("Shop").id(taken(&["shop"])).unwrap().as_str(), "shop-2");
+        assert_eq!(
+            new("shop!")
+                .id(taken(&["shop", "shop-2"]))
+                .unwrap()
+                .as_str(),
+            "shop-3"
+        );
+        // The number fits under the longest id: the label is cut, never the number.
+        let long = "a".repeat(DisplayName::MAX_CHARS);
+        let full = WorkspaceId::new(&long).unwrap();
+        let second = new(&long).id(|id| *id == full).unwrap();
+        assert_eq!(second.as_str().len(), WorkspaceId::MAX_LEN);
+        assert!(second.as_str().ends_with("-2"), "{second}");
+        // At most 99 of one label.
+        assert!(new("Shop").id(|_| true).is_err());
+    }
+
+    #[test]
     fn a_lookup_finds_an_id_or_a_name_ignoring_case_and_counts_a_workspace_once() {
         let mk = |id: &str, name: &str| {
             WorkspaceRecord::new(

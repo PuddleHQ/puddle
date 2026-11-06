@@ -1001,7 +1001,7 @@ mod behaviour_tests {
         hub: &Arc<puddle_api::EventHub>,
         notifier: Notifier,
         poll: Duration,
-        labels: crate::backend::WorkspaceLabel,
+        labels: WorkspaceLabel,
     ) {
         let stream = hub.subscribe();
         let settings = rig.backend.settings().clone();

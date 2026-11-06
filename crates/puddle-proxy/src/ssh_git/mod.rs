@@ -175,3 +175,43 @@ impl GitSsh {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct Nothing;
+
+    impl GitSshUpstream for Nothing {
+        fn run<'a>(
+            &'a self,
+            _: &'a GitSshCommand,
+            _: &'a mut dyn GitSshStream,
+        ) -> BoxFuture<'a, Result<(), GitSshFailure>> {
+            Box::pin(std::future::ready(Ok(())))
+        }
+    }
+
+    #[test]
+    fn the_debug_output_names_the_number_of_keys_and_never_a_key() {
+        let git = GitSsh::new(Arc::new(Nothing), Vec::new()).with_limits(GitSshLimits {
+            channels: 3,
+            ..GitSshLimits::default()
+        });
+        let shown = format!("{git:?}");
+        assert!(shown.contains("host_keys: 0"), "{shown}");
+        assert!(shown.contains("channels: 3"), "{shown}");
+    }
+
+    #[tokio::test]
+    async fn without_an_answer_of_its_own_a_shell_says_no_identity_and_ends_255() {
+        let host = Host::parse_normalised("github.com").unwrap();
+        let greeting = Nothing.greeting(&host).await;
+        assert_eq!(greeting.status, 255);
+        assert_eq!(
+            greeting.message,
+            "puddle: no identity on this workspace has a credential for github.com; add one on the workspace's Git tab\n"
+        );
+    }
+}

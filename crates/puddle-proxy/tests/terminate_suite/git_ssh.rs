@@ -426,8 +426,16 @@ async fn any_login_method_is_accepted_and_none_of_it_is_kept() {
     );
     let ran = exec(&by_key, &[], "git-upload-pack 'acme/web'", b"").await;
     assert_eq!(ran.exit, Some(0));
-    drop((by_password, by_key));
-    assert!(!format!("{:?}", t.events(2).await).contains("CANARY-PASSWORD"));
+    let mut by_prompt = t.client(&mut guest, "bound.test:22").await;
+    assert!(matches!(
+        by_prompt
+            .authenticate_keyboard_interactive_start("git", None)
+            .await
+            .unwrap(),
+        client::KeyboardInteractiveAuthResponse::Success
+    ));
+    drop((by_password, by_key, by_prompt));
+    assert!(!format!("{:?}", t.events(3).await).contains("CANARY-PASSWORD"));
     assert!(!crate::terminate_support::captured_logs().contains("CANARY-PASSWORD"));
 }
 
@@ -626,6 +634,8 @@ async fn forwarding_in_either_direction_is_refused_with_a_reason() {
             .await
             .is_err()
     );
+    assert!(ssh.channel_open_x11("127.0.0.1", 6000).await.is_err());
+    assert!(ssh.streamlocal_forward("/tmp/guest.sock").await.is_err());
     let ran = exec(&ssh, &[], "git-upload-pack 'acme/web'", b"").await;
     assert_eq!(ran.exit, Some(0), "the connection still works: {ran:?}");
     assert_eq!(t.upstream.calls().len(), 1);
@@ -902,4 +912,95 @@ async fn a_libssh2_client_is_asked_for_a_key_because_it_fails_a_login_with_none(
     );
     let ran = exec(&ssh, &[], "git-upload-pack 'acme/web'", b"").await;
     assert_eq!(ran.exit, Some(0), "{ran:?}");
+}
+
+#[tokio::test]
+async fn a_closed_channel_frees_its_place_and_a_second_shell_on_one_channel_is_refused() {
+    let limits = GitSshLimits {
+        channels: 1,
+        ..GitSshLimits::default()
+    };
+    let t = SshRig::with(Recording::default(), limits).await;
+    let guest = t.git.rig.guest();
+    let mut guest = guest;
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let unused = ssh.channel_open_session().await.unwrap();
+    assert!(
+        ssh.channel_open_session().await.is_err(),
+        "the one place is taken"
+    );
+    unused.close().await.unwrap();
+    let mut shell = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(channel) = ssh.channel_open_session().await {
+                return channel;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a closed channel frees its place");
+    shell.request_shell(true).await.unwrap();
+    shell.request_shell(true).await.unwrap();
+    let ran = collect(&mut shell, 2).await;
+    assert_eq!(ran.replies, [true, false], "{ran:?}");
+    assert_eq!(ran.exit, Some(255));
+}
+
+#[tokio::test]
+async fn a_download_of_lfs_objects_asks_the_table_about_a_fetch() {
+    let t = SshRig::new().await;
+    t.git.world.switches(false, true);
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let off = exec(
+        &ssh,
+        &[],
+        "git-lfs-authenticate 'acme/other.git' download",
+        b"",
+    )
+    .await;
+    assert_eq!(off.exit, Some(1), "{off:?}");
+    assert!(
+        off.err.contains("pull from bound.test/acme/other"),
+        "{off:?}"
+    );
+    let on = exec(
+        &ssh,
+        &[],
+        "git-lfs-authenticate 'acme/web.git' download",
+        b"",
+    )
+    .await;
+    assert_eq!(on.exit, Some(0), "{on:?}");
+    drop(ssh);
+    let events = t.events(1).await;
+    assert_eq!(events[0].reason, ConnectionReason::Refused("pull_denied"));
+    let line = events[0].http.as_ref().unwrap();
+    assert_eq!(line.method(), "git-lfs-download");
+}
+
+#[tokio::test]
+async fn bytes_that_are_not_ssh_end_the_connection_without_a_command() {
+    let t = SshRig::new().await;
+    let guest = t.git.rig.guest();
+    let mut stream = guest.open_stream().await;
+    stream
+        .write_all(
+            format!(
+                "CONNECT bound.test:22 HTTP/1.1\r\nHost: bound.test:22\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\nGET / HTTP/1.1\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut sink = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut sink))
+        .await
+        .expect("the proxy ends the connection");
+    assert_eq!(t.upstream.calls().len(), 0);
+    let events = t.events(1).await;
+    assert!(events[0].http.is_none());
 }

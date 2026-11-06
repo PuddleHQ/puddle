@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::pin::pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_types::{
@@ -100,7 +99,6 @@ enum Phase {
 /// The open session channels and the phase they put the connection in.
 struct Open {
     channels: Mutex<HashSet<ChannelId>>,
-    authenticated: AtomicBool,
     phase: watch::Sender<Phase>,
 }
 
@@ -128,15 +126,13 @@ impl Open {
         self.update();
     }
 
+    /// The client authenticated: from here the idle limit watches the connection.
     fn authenticated(&self) {
-        self.authenticated.store(true, Ordering::SeqCst);
         self.update();
     }
 
     fn update(&self) {
-        let phase = if !self.authenticated.load(Ordering::SeqCst) {
-            Phase::Handshake
-        } else if self.count() == 0 {
+        let phase = if self.count() == 0 {
             Phase::Idle
         } else {
             Phase::Busy
@@ -173,13 +169,10 @@ where
     }
     let early = reader.buffer().to_vec();
     let mut stream = reader.into_inner();
-    if stream
+    // A guest that is gone fails the handshake below, which ends the connection the same way.
+    let _ = stream
         .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        .await
-        .is_err()
-    {
-        return event;
-    }
+        .await;
     // libssh2 (libgit2, so cargo's built-in Git) treats an accepted `none` as a failed login.
     let libssh2 = early.windows(7).any(|w| w == b"libssh2");
     let stream = Prefixed::new(stream, early);
@@ -193,7 +186,6 @@ where
         summary: Mutex::new(Summary::default()),
         open: Open {
             channels: Mutex::new(HashSet::new()),
-            authenticated: AtomicBool::new(false),
             phase,
         },
     });
@@ -268,17 +260,9 @@ async fn watch_connection<S>(
             Phase::Busy => None,
         };
         tokio::select! {
-            ended = &mut running => {
-                if let Err(err) = ended {
-                    tracing::debug!(error = %err, "ssh session ended");
-                }
-                return;
-            }
-            changed = watching.changed() => {
-                if changed.is_err() {
-                    return;
-                }
-            }
+            _ = &mut running => return,
+            // The sender lives as long as the connection's context: a change only restarts the timer.
+            _ = watching.changed() => {}
             () = async {
                 match limit {
                     Some(at) => sleep_until(at).await,
@@ -297,19 +281,18 @@ struct Disconnect(russh::server::Handle);
 
 impl Drop for Disconnect {
     fn drop(&mut self) {
-        let handle = self.0.clone();
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move {
-                let _ = handle
-                    .disconnect(
-                        russh::Disconnect::ByApplication,
-                        "closed by Puddle".to_owned(),
-                        String::new(),
-                    )
-                    .await;
-            });
-        }
+        tokio::spawn(disconnect(self.0.clone()));
     }
+}
+
+async fn disconnect(handle: russh::server::Handle) {
+    let _ = handle
+        .disconnect(
+            russh::Disconnect::ByApplication,
+            "closed by Puddle".to_owned(),
+            String::new(),
+        )
+        .await;
 }
 
 /// A session channel the client opened and has not used yet.
@@ -425,21 +408,6 @@ impl russh::server::Handler for Conn {
     }
 
     async fn channel_open_direct_tcpip(
-        &mut self,
-        _: Channel<Msg>,
-        _: &str,
-        _: u32,
-        _: &str,
-        _: u32,
-        reply: russh::server::ChannelOpenHandle,
-        _: &mut Session,
-    ) -> Result<(), Self::Error> {
-        self.refuse_channel("port forwarding");
-        reply.reject(prohibited("port forwarding")).await;
-        Ok(())
-    }
-
-    async fn channel_open_forwarded_tcpip(
         &mut self,
         _: Channel<Msg>,
         _: &str,
@@ -848,12 +816,9 @@ async fn pump(
     };
     let main = async { tokio::join!(run, to_guest) };
     tokio::select! {
-        (result, copied) = main => {
-            if let Err(err) = copied {
-                tracing::debug!(error = %err, "the guest's channel ended while the command ran");
-            }
-            result
-        }
+        // A copy that fails is the guest's channel ending under the command: the command's own
+        // result says how it went.
+        (result, _copied) = main => result,
         never = from_guest => never,
     }
 }

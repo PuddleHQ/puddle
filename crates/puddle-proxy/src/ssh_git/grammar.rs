@@ -251,7 +251,7 @@ mod tests {
             Command::Git(service, repository) => {
                 Ok((service, format!("{}{}", repository.host, repository.path)))
             }
-            other => panic!("{other:?}"),
+            Command::LfsAuthenticate { .. } | Command::LfsTransfer => Err(Refused::Unsupported),
         }
     }
 
@@ -398,14 +398,19 @@ mod tests {
             parse("git-lfs-transfer", &host("github.com")),
             Ok(Command::LfsTransfer)
         );
-        let Ok(Command::LfsAuthenticate { repository, upload }) = parse(
-            "git-lfs-authenticate 'acme/web.git' upload",
-            &host("github.com"),
-        ) else {
-            panic!("not read");
-        };
-        assert!(upload);
-        assert_eq!(repository.path, "/acme/web.git");
+        assert_eq!(
+            parse(
+                "git-lfs-authenticate 'acme/web.git' upload",
+                &host("github.com")
+            ),
+            Ok(Command::LfsAuthenticate {
+                repository: Repository {
+                    host: Host::parse_normalised("github.com").unwrap(),
+                    path: "/acme/web.git".to_owned(),
+                },
+                upload: true,
+            })
+        );
         assert_eq!(
             parse(
                 "git-lfs-authenticate 'acme/../web.git' download",
@@ -417,19 +422,9 @@ mod tests {
 
     #[test]
     fn the_audit_spelling_is_lower_case_without_dot_git() {
-        let Command::Git(_, repository) =
-            parse("git-upload-pack 'Acme/Web.git'", &host("github.com")).unwrap()
-        else {
-            panic!()
-        };
-        assert_eq!(repository.audit_path(), "/acme/web");
-        let Command::Git(_, azure) = parse(
-            "git-upload-pack 'v3/Org/Proj/Repo'",
-            &host("ssh.dev.azure.com"),
-        )
-        .unwrap() else {
-            panic!()
-        };
+        let plain = repository("'Acme/Web.git'", &host("github.com")).unwrap();
+        assert_eq!(plain.audit_path(), "/acme/web");
+        let azure = repository("'v3/Org/Proj/Repo'", &host("ssh.dev.azure.com")).unwrap();
         assert_eq!(azure.audit_path(), "/org/proj/repo");
     }
 

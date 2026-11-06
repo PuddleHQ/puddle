@@ -1067,6 +1067,83 @@ async fn vm_kill_mid_commit_then_boot_clears_the_locks() {
     rt.remove_volume(&id.volume_name()).await.unwrap();
 }
 
+/// A power cut leaves `HEAD` and the index zero-filled (the renames reached the journal, the data
+/// blocks did not). The boot step rewrites `HEAD` from `logs/HEAD` and rebuilds the index, and the
+/// repository then passes `git fsck --full` and takes a commit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_zero_filled_head_and_index_are_repaired_at_boot() {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let (id, name) = names(&settings, "gitfix");
+    let boot = Boot::new(rt, "gitfix", &GuestEnv::new(), false).await;
+    let w = workspaces();
+    let repo = Layout::new(&id).unwrap().checkout(&repo_dir()).unwrap();
+    let repo = repo.as_str();
+    let mut sb = boot.create(rt, &w, &id, base_spec(&name)).await;
+    sh_ok(
+        sb.ungated(),
+        &format!(
+            "git init -q -b main {repo} && cd {repo} && echo 0 > f && git add f && git commit -qm c0 \
+             && git checkout -qb feature && echo 1 > g && git add g && git commit -qm c1 \
+             && echo edit > f && head -c 24 /dev/zero > .git/HEAD && head -c 500 /dev/zero > .git/index \\
+             && chown -R 1000:1000 {repo} && sync"
+        ),
+    )
+    .await;
+    // The repository belongs to another user than the root the boot step runs as.
+    let safe = "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*';";
+    let broken = sh(sb.ungated(), &format!("{safe} git -C {repo} status")).await;
+    assert!(
+        !broken.status.success() && broken.stderr_text().contains("not a git repository"),
+        "git still works: {}",
+        broken.stderr_text()
+    );
+    sb = kill_and_restart(rt, &settings, &boot, &name, sb).await;
+    let report = w
+        .after_boot(sb.ungated(), &id, SessionUser::Root)
+        .await
+        .unwrap()
+        .unwrap();
+    eprintln!("repaired: {report:?}");
+    assert_eq!(report.repaired.len(), 2, "{report:?}");
+    assert!(report.damaged.is_empty(), "{report:?}");
+    assert_eq!(
+        sh_ok(
+            sb.ungated(),
+            &format!("stat -c %u {repo}/.git/HEAD {repo}/.git/index")
+        )
+        .await,
+        "1000\n1000",
+        "the repaired files keep the repository's owner (read before the test's own git runs as root)"
+    );
+    sh_ok(
+        sb.ungated(),
+        &format!("{safe} cd {repo} && git fsck --full"),
+    )
+    .await;
+    assert_eq!(
+        sh_ok(
+            sb.ungated(),
+            &format!("{safe} git -C {repo} branch --show-current")
+        )
+        .await,
+        "feature"
+    );
+    assert_eq!(
+        sh_ok(
+            sb.ungated(),
+            &format!("{safe} git -C {repo} status --porcelain")
+        )
+        .await,
+        " M f"
+    );
+    w.stop(sb.ungated()).await.unwrap();
+    drop(sb);
+    rt.remove(&name).await.unwrap();
+    w.sandbox_removed(&name);
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+}
+
 /// The checkout the lab repository is cloned into.
 fn repo_dir() -> puddle_types::CheckoutDir {
     puddle_types::CheckoutDir::new("repo").unwrap()

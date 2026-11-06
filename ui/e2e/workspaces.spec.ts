@@ -258,7 +258,7 @@ test.describe("creating", () => {
     await dialog
       .getByLabel("Git repository (HTTPS)")
       .fill("git@github.com:acme/web-shop.git");
-    await dialog.getByLabel("Name").fill("Bad Name");
+    await dialog.getByLabel("Name").fill("x".repeat(61));
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog.getByRole("alert").first()).toContainText(
       "SSH remotes are not supported yet; use the repository's HTTPS URL instead.",
@@ -268,12 +268,12 @@ test.describe("creating", () => {
       "true",
     );
     await expect(dialog.getByRole("alert").nth(1)).toContainText(
-      "lowercase letters",
+      "Use at most 60 characters.",
     );
     expect((await workspaceList(request, backend)).length).toBe(before);
   });
 
-  test("a name that is taken is refused by the service and shown at the name", async ({
+  test("a name another workspace has is refused at the name, ignoring case", async ({
     page,
     request,
     backend,
@@ -289,8 +289,13 @@ test.describe("creating", () => {
       "aria-invalid",
       "true",
     );
-    await expect(dialog.getByRole("alert")).toContainText("already exists");
+    await expect(dialog.getByRole("alert")).toContainText(
+      'Another workspace is already called "web-shop"',
+    );
     await expect(dialog.getByLabel("Name")).toBeFocused();
+    await dialog.getByLabel("Name").fill("WEB-SHOP");
+    await dialog.getByRole("button", { name: "Create workspace" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("already called");
     expect((await workspaceList(request, backend)).length).toBe(before);
   });
 
@@ -1017,7 +1022,7 @@ test.describe("renaming", () => {
     expect(made?.id).toBe("shop-api");
     // The page's address and the overview use the id; the heading uses the name.
     await card(page, "Shop API \u00fc")
-      .getByRole("link", { name: "Shop API \u00fc" })
+      .getByRole("link", { name: "Shop API \u00fc", exact: true })
       .click();
     await expect(page).toHaveURL(/\/workspaces\/shop-api$/);
     await expect(

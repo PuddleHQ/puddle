@@ -423,7 +423,7 @@ describe("run on a real git repository", () => {
       );
     }
   }, HOOK_MS);
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }), HOOK_MS);
   afterEach(() => vi.restoreAllMocks());
 
   const opts = (lcov: string): Options => ({

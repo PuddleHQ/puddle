@@ -33,6 +33,11 @@ export default defineConfig({
     // times, with a 5000 ms timeout; 256 busy loops on 16 cores reproduce it). A test that hangs
     // never finishes, so a long bound catches it just the same.
     testTimeout: 60_000,
+    // A hook has its own bound (10 s by default), and so does the worker's teardown (also 10 s):
+    // `testTimeout` covers neither, so an `afterAll` that removes a directory failed at 10 s on a
+    // starved host while the tests around it passed. The same wall-clock reasoning applies.
+    hookTimeout: 60_000,
+    teardownTimeout: 60_000,
     // Two projects over one config. The warm-up and the testing-library setup cost about a sixth of a
     // CPU second per test file, so only the files that draw components run them; the stores, models
     // and tools tests get the globals alone. Both keep jsdom: a plain Node environment would compile

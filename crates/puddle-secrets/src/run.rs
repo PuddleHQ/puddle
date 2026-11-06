@@ -288,6 +288,16 @@ mod tests {
         let mut reader = &data[..];
         let read = read_wiping(&mut reader).await.unwrap();
         assert_eq!(&read[..], &data[..]);
+        // The buffer doubled itself three times; a Vec growing on its own would not stop at that.
+        assert_eq!(read.capacity(), FIRST_READ * 8);
+    }
+
+    #[tokio::test]
+    async fn a_small_output_stays_in_the_first_buffer() {
+        let mut reader = &b"token"[..];
+        let read = read_wiping(&mut reader).await.unwrap();
+        assert_eq!(&read[..], b"token");
+        assert_eq!(read.capacity(), FIRST_READ);
     }
 
     #[cfg(unix)]

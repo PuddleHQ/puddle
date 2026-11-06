@@ -617,4 +617,19 @@ mod tests {
         drop(reading);
         assert_eq!(cache.evict_expired(), 1);
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_sweep_forgets_an_emptied_slot_nobody_waits_on() {
+        let script = Script::new(vec![Ok(None)]);
+        let cache = SecretCache::new(&script);
+        cache.get(&stored()).await.unwrap();
+        tokio::time::advance(40 * MIN).await;
+        // Someone holds the slot, as a read about to start would.
+        let waiting = Arc::clone(cache.slots.lock().unwrap().get(&stored()).unwrap());
+        assert_eq!(cache.evict_expired(), 1);
+        assert_eq!(cache.slots.lock().unwrap().len(), 1, "kept for the waiter");
+        drop(waiting);
+        assert_eq!(cache.evict_expired(), 0);
+        assert!(cache.slots.lock().unwrap().is_empty(), "nobody waits: gone");
+    }
 }

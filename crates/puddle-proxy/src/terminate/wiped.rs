@@ -102,6 +102,17 @@ mod tests {
     }
 
     #[test]
+    fn bytes_that_exactly_fill_the_buffer_do_not_grow_it() {
+        let mut w = Wiped::with_capacity(8);
+        w.extend_from_slice(b"abcd");
+        w.extend_from_slice(b"efgh");
+        assert_eq!(w.0.capacity(), 8);
+        w.extend_from_slice(b"i");
+        assert_eq!(w.as_ref(), b"abcdefghi");
+        assert_eq!(w.0.capacity(), 16);
+    }
+
+    #[test]
     fn a_copy_is_exactly_as_big_as_its_source() {
         let w = Wiped::copy_of(b"abc");
         assert_eq!(w.len(), 3);

@@ -35,7 +35,7 @@ fn basic(user: &str, token: &str) -> SecretValue {
     plain.push_str(user);
     plain.push(':');
     plain.push_str(token);
-    let encoded = base64::encoded_len(plain.len(), true).unwrap_or(plain.len() * 2);
+    let encoded = base64::encoded_len(plain.len(), true).unwrap_or_default();
     let mut value = String::with_capacity(PREFIX.len() + encoded);
     value.push_str(PREFIX);
     STANDARD.encode_string(plain.as_bytes(), &mut value);

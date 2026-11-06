@@ -668,8 +668,6 @@ fn token_like(name: &str) -> bool {
     name.contains("token")
         || name.contains("secret")
         || name.contains("password")
-        || name == "key"
-        || name.ends_with("_key")
         || name.ends_with("key")
 }
 
@@ -815,6 +813,14 @@ mod refusal_tests {
     use super::*;
     use crate::profile::CLAUDE;
 
+    fn field(name: &str, depth: usize, kind: FieldKind) -> BodyField {
+        BodyField {
+            name: name.to_owned(),
+            depth,
+            kind,
+        }
+    }
+
     #[test]
     fn every_problem_a_tool_can_be_refused_for_says_its_own_reason() {
         for (problem, reason) in [
@@ -832,5 +838,58 @@ mod refusal_tests {
             assert_eq!(refusal.status(), 502);
             assert!(refusal.message().contains(reason), "{problem:?}");
         }
+    }
+
+    #[test]
+    fn a_field_name_says_it_holds_a_credential_by_each_of_its_endings_and_words() {
+        for name in [
+            "id_token",
+            "Client_Secret",
+            "password",
+            "key",
+            "api_key",
+            "apikey",
+            "signing_secret_value",
+            "my_password_hash",
+        ] {
+            assert!(token_like(name), "{name}");
+        }
+        for name in [
+            "token_type",
+            "token_expires_in",
+            "token_expires_at",
+            "token_url",
+            "token_uri",
+            "token_endpoint",
+            "token_scope",
+            "scope",
+            "keyboard",
+            "account",
+        ] {
+            assert!(!token_like(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_credential_puddle_would_not_replace_is_found_in_the_answers_fields() {
+        let endpoint = &CLAUDE.endpoints[0];
+        let long = FieldKind::Text(MIN_TOKEN_LEN);
+        let short = FieldKind::Text(MIN_TOKEN_LEN - 1);
+        let holds = |fields: Vec<BodyField>| holds_unnamed_token(endpoint, &fields);
+        assert!(!holds(vec![field("access_token", 0, long)]));
+        assert!(holds(vec![
+            field("access_token", 0, long),
+            field("access_token", 0, long)
+        ]));
+        assert!(holds(vec![field("access_token", 0, FieldKind::Structured)]));
+        assert!(holds(vec![field("access_token", 1, long)]));
+        assert!(holds(vec![field("id_token", 0, long)]));
+        assert!(!holds(vec![field("id_token", 0, short)]));
+        assert!(!holds(vec![field("id_token", 0, FieldKind::Empty)]));
+        assert!(!holds(vec![field("note", 0, long)]));
+        assert!(!holds(vec![
+            field("access_token", 0, long),
+            field("refresh_token", 0, long)
+        ]));
     }
 }

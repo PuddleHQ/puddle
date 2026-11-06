@@ -1153,3 +1153,21 @@ async fn a_long_token_in_a_field_the_profile_does_not_name_is_refused() {
         [("claude".to_owned(), Problem::UnnamedToken)]
     );
 }
+
+#[tokio::test]
+async fn an_answer_found_too_large_while_it_streams_is_refused_and_the_user_is_told() {
+    let rig = rig();
+    let mut exchange = rig
+        .logins
+        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token")
+        .unwrap();
+    let answer = exchange.answer_mut().unwrap();
+    answer.too_large();
+    let refusal = answer.refusal().expect("the answer is refused");
+    assert_eq!(refusal.code(), "login_not_kept");
+    assert!(answer.refusal().is_none());
+    assert_eq!(
+        rig.notices.seen(),
+        [("claude".to_owned(), Problem::UnexpectedAnswer)]
+    );
+}

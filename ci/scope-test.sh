@@ -357,6 +357,8 @@ verdict pull_request 1 "a failed test job" "$VMF" build=vm tests=vm -- build=ski
 verdict pull_request 1 "a cancelled build" "$VM" build=vm tests=vm -- build=cancelled tests=skipped
 verdict pull_request 1 "a job missing from needs" "$VM" build=vm tests=vm -- build=success
 verdict schedule 0 "nightly skips tests on a green commit" "$VM" --nightly-skips build=vm tests=vm -- build=success tests=skipped
+verdict pull_request 1 "a failed agent job" "$VM" build=vm agent=vm tests=vm -- build=success agent=failure tests=skipped
+verdict pull_request 0 "agent, build and tests passed" "$VM" build=vm agent=vm tests=vm -- build=success agent=success tests=success
 verdict schedule 0 "nightly skips everything" "$VM" --nightly-skips build=vm tests=vm -- build=skipped tests=skipped
 verdict schedule 1 "nightly failure" "$VM" --nightly-skips build=vm tests=vm -- build=success tests=failure
 verdict merge_group 1 "a merge queue run never skips as a nightly" "$VM" --nightly-skips build=vm tests=vm -- build=skipped tests=skipped
@@ -480,8 +482,8 @@ matrix_bg() { (fail=0; matrix "$@"; echo "matrix $1: $MATRIX_CASES cases" >&2; e
 mpids=()
 matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip
 matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust ui=ui,queue,defer:defer_win_ui
-matrix_bg vm-linux --nightly-skips vm build=vm,queue tests=vm,queue
-matrix_bg vm-windows --nightly-skips vm build=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows
+matrix_bg vm-linux --nightly-skips vm build=vm,queue agent=vm,queue tests=vm,queue
+matrix_bg vm-windows --nightly-skips vm build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows
 for p in "${mpids[@]}"; do wait "$p" || fail=1; done
 verdict push 0 "ci push: light skipped because the Rust gates ran" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
 verdict schedule 0 "ci nightly: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
@@ -490,11 +492,11 @@ verdict push 1 "ci push: light ran, rust skipped" "$CI_FULL" "${ci_specs[@]}" --
 
 # The light mode: a queue-only job may skip on a pull request to develop with PUDDLE_QUEUE=on, and
 # nowhere else. The verdict works the mode out from the event, not from the scope job's output.
-VM_Q=(--nightly-skips 'build=vm,queue' 'tests=vm,queue')
+VM_Q=(--nightly-skips 'build=vm,queue' 'agent=vm,queue' 'tests=vm,queue')
 WIN_Q=('clippy=win_rust,queue' 'tests=win_rust' 'ui=ui,queue')
 WIN_ALL='{"win_rust":"true","ui":"true","light":"true"}'
 VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=develop)
-verdict pull_request 0 "light: vm skipped" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
+verdict pull_request 0 "light: vm skipped" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 verdict pull_request 0 "light: windows clippy and ui skipped, tests ran, release skipped" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
 verdict pull_request 1 "light: windows tests skipped though a rust path changed" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
 verdict pull_request 1 "light: windows tests failed" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=failure ui=skipped release=skipped
@@ -502,37 +504,37 @@ verdict pull_request 1 "light: windows tests cancelled" "$WIN_ALL" "${WIN_Q[@]}"
 WIN_DOCS='{"win_rust":"false","ui":"false","light":"true"}'
 verdict pull_request 0 "light: docs-only, every windows job skipped by scope" "$WIN_DOCS" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
 verdict pull_request 1 "light: docs-only, a windows job failed" "$WIN_DOCS" "${WIN_Q[@]}" -- clippy=skipped tests=failure ui=skipped release=skipped
-verdict pull_request 0 "light: vm ran anyway" "$VM" "${VM_Q[@]}" -- build=success tests=success
-verdict pull_request 1 "light: vm build failed" "$VM" "${VM_Q[@]}" -- build=failure tests=skipped
+verdict pull_request 0 "light: vm ran anyway" "$VM" "${VM_Q[@]}" -- build=success agent=success tests=success
+verdict pull_request 1 "light: vm build failed" "$VM" "${VM_Q[@]}" -- build=failure agent=failure tests=skipped
 verdict pull_request 1 "light: a cancelled windows job" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=cancelled tests=success ui=skipped release=skipped
 verdict pull_request 1 "light: a skip without the queue mark" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped light=skipped ui=success
-verdict merge_group 1 "light env on a merge queue run" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
-verdict push 1 "light env on a push" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
+verdict merge_group 1 "light env on a merge queue run" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
+verdict push 1 "light env on a push" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=main)
 verdict pull_request 1 "light: pull request to main" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=success ui=skipped release=success
 VERDICT_ENV=(PUDDLE_QUEUE=ON PR_BASE_REF=develop)
-verdict pull_request 1 "light: PUDDLE_QUEUE=ON is not on" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
+verdict pull_request 1 "light: PUDDLE_QUEUE=ON is not on" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 VERDICT_ENV=(PR_BASE_REF=develop)
-verdict pull_request 1 "light: PUDDLE_QUEUE unset" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
-verdict merge_group 1 "merge queue: a wrongly skipped vm job" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
-verdict merge_group 0 "merge queue: vm scoped out by the group's diff" "$VMF" "${VM_Q[@]}" -- build=skipped tests=skipped
+verdict pull_request 1 "light: PUDDLE_QUEUE unset" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
+verdict merge_group 1 "merge queue: a wrongly skipped vm job" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
+verdict merge_group 0 "merge queue: vm scoped out by the group's diff" "$VMF" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 
 # The nightly tier: the result job accepts the skip of a moved job on a merge queue run only with
 # PUDDLE_TIER=on and scope's defer output true for that job; the summary says so.
-VMT=(--nightly-skips 'build=vm,queue,defer:defer_vm_windows' 'tests=vm,queue,defer:defer_vm_windows')
+VMT=(--nightly-skips 'build=vm,queue,defer:defer_vm_windows' 'agent=vm,queue,defer:defer_vm_windows' 'tests=vm,queue,defer:defer_vm_windows')
 WINT=('clippy=win_rust,queue,defer:defer_win_clippy' 'tests=win_rust' 'ui=ui,queue,defer:defer_win_ui')
 VM_D='{"vm":"true","defer_vm_windows":"true"}'
 VM_E='{"vm":"true","defer_vm_windows":"false"}'
 WIN_D='{"win_rust":"true","ui":"true","defer_win_clippy":"true","defer_win_ui":"true"}'
 VERDICT_ENV=(PUDDLE_TIER=on)
-verdict merge_group 0 "tier: vm deferred, both jobs skipped" "$VM_D" "${VMT[@]}" -- build=skipped tests=skipped
-verdict merge_group 0 "tier: vm deferred but it ran anyway" "$VM_D" "${VMT[@]}" -- build=success tests=success
-verdict merge_group 1 "tier: vm escalated and skipped" "$VM_E" "${VMT[@]}" -- build=skipped tests=skipped
-verdict merge_group 0 "tier: vm escalated and ran" "$VM_E" "${VMT[@]}" -- build=success tests=success
-verdict merge_group 1 "tier: vm escalated, a test failed" "$VM_E" "${VMT[@]}" -- build=success tests=failure
-verdict merge_group 1 "tier: vm deferred output lost" "$VM" "${VMT[@]}" -- build=skipped tests=skipped
-verdict merge_group 1 "tier: vm deferred, build cancelled" "$VM_D" "${VMT[@]}" -- build=cancelled tests=skipped
-verdict merge_group 1 "tier: vm deferred, build failed" "$VM_D" "${VMT[@]}" -- build=failure tests=skipped
+verdict merge_group 0 "tier: vm deferred, both jobs skipped" "$VM_D" "${VMT[@]}" -- build=skipped agent=skipped tests=skipped
+verdict merge_group 0 "tier: vm deferred but it ran anyway" "$VM_D" "${VMT[@]}" -- build=success agent=success tests=success
+verdict merge_group 1 "tier: vm escalated and skipped" "$VM_E" "${VMT[@]}" -- build=skipped agent=skipped tests=skipped
+verdict merge_group 0 "tier: vm escalated and ran" "$VM_E" "${VMT[@]}" -- build=success agent=success tests=success
+verdict merge_group 1 "tier: vm escalated, a test failed" "$VM_E" "${VMT[@]}" -- build=success agent=success tests=failure
+verdict merge_group 1 "tier: vm deferred output lost" "$VM" "${VMT[@]}" -- build=skipped agent=skipped tests=skipped
+verdict merge_group 1 "tier: vm deferred, build cancelled" "$VM_D" "${VMT[@]}" -- build=cancelled agent=cancelled tests=skipped
+verdict merge_group 1 "tier: vm deferred, build failed" "$VM_D" "${VMT[@]}" -- build=failure agent=failure tests=skipped
 verdict merge_group 0 "tier: windows ui and clippy deferred, tests ran" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
 verdict merge_group 1 "tier: windows tests are never deferred" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
 verdict merge_group 1 "tier: ui deferred, clippy escalated and skipped" '{"win_rust":"true","ui":"true","defer_win_clippy":"false","defer_win_ui":"true"}' "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
@@ -540,21 +542,21 @@ verdict merge_group 1 "tier: a deferred ui job failed" "$WIN_D" "${WINT[@]}" -- 
 for ev in pull_request push schedule workflow_dispatch; do
     verdict "$ev" 1 "tier: $ev never accepts the deferred skip (ui)" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
 done
-verdict pull_request 1 "tier: a pull request to develop never defers (vm)" "$VM_D" "${VMT[@]}" -- build=skipped tests=skipped
+verdict pull_request 1 "tier: a pull request to develop never defers (vm)" "$VM_D" "${VMT[@]}" -- build=skipped agent=skipped tests=skipped
 for v in "" off ON On true 1 yes "on "; do
     VERDICT_ENV=("PUDDLE_TIER=$v")
-    verdict merge_group 1 "tier: PUDDLE_TIER='$v' is not on (vm)" "$VM_D" "${VMT[@]}" -- build=skipped tests=skipped
+    verdict merge_group 1 "tier: PUDDLE_TIER='$v' is not on (vm)" "$VM_D" "${VMT[@]}" -- build=skipped agent=skipped tests=skipped
     verdict merge_group 1 "tier: PUDDLE_TIER='$v' is not on (windows)" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
 done
 # The job summary of a skipped required check says it ran in the nightly or release tier.
 VERDICT_ENV=(PUDDLE_TIER=on)
 : >"$tmp/summary"
-env -u PUDDLE_QUEUE -u PR_BASE_REF NEEDS="$(needs "$VM_D" build=skipped tests=skipped)" GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on \
+env -u PUDDLE_QUEUE -u PR_BASE_REF NEEDS="$(needs "$VM_D" build=skipped agent=skipped tests=skipped)" GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on \
     GITHUB_STEP_SUMMARY="$tmp/summary" "$scope" verdict "${VMT[@]}" >/dev/null 2>&1 || bad "tier: summary case did not pass"
 grep -q 'nightly and release tier' "$tmp/summary" || bad "tier: the summary of a deferred skip must name the nightly and release tier"
 grep -q 'not a test result' "$tmp/summary" || bad "tier: the summary of a deferred skip must say it is not a test result"
 : >"$tmp/summary"
-env -u PUDDLE_QUEUE -u PR_BASE_REF NEEDS="$(needs "$VM_E" build=success tests=success)" GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on \
+env -u PUDDLE_QUEUE -u PR_BASE_REF NEEDS="$(needs "$VM_E" build=success agent=success tests=success)" GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on \
     GITHUB_STEP_SUMMARY="$tmp/summary" "$scope" verdict "${VMT[@]}" >/dev/null 2>&1 || bad "tier: summary case (ran) did not pass"
 [ ! -s "$tmp/summary" ] || bad "tier: a job that ran leaves no deferral note in the summary"
 VERDICT_ENV=()
@@ -653,8 +655,8 @@ d = sys.argv[1]
 results = {  # workflow: (result job id, required name, verdict specs as the matrix above tests them)
     "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip"),
     "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust ui=ui,queue,defer:defer_win_ui"),
-    "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue tests=vm,queue"),
-    "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows"),
+    "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue agent=vm,queue tests=vm,queue"),
+    "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows"),
 }
 LIGHT = "needs.scope.outputs.light != 'true'"
 PUSHSKIP = "needs.queue-tested.outputs.skip != 'true'"

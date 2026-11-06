@@ -2,10 +2,6 @@
 //! A login whose access token is a JWT, through the real proxy: the tool reads the claims of the
 //! stand-in it is given, and every stand-in it was given since the workspace started is swapped for
 //! the newest real token toward the service's API host. A fake server stands in for the service.
-#![expect(
-    clippy::unwrap_used,
-    reason = "helpers outside #[test] functions fail the test by panicking"
-)]
 use crate::terminate_support;
 
 use std::sync::{Arc, Mutex, PoisonError};

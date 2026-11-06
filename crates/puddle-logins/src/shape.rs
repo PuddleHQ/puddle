@@ -140,17 +140,17 @@ pub(crate) fn stand_in_with(
     if !usable(real, field) {
         return Err(ShapeError::Unusable);
     }
-    if field.generator == Generator::Jwt {
-        if let Some((signed, signature)) = jwt_parts(real) {
-            let random = random_text(BASE64URL, signature.len(), fill)?;
-            let stand_in = format!("{signed}.{random}");
-            // Not a proper check of the signature's randomness, only that it is not the real one.
-            return if stand_in == real {
-                Err(ShapeError::Random)
-            } else {
-                Ok(stand_in)
-            };
-        }
+    if field.generator == Generator::Jwt
+        && let Some((signed, signature)) = jwt_parts(real)
+    {
+        let random = random_text(BASE64URL, signature.len(), fill)?;
+        let stand_in = format!("{signed}.{random}");
+        // Not a proper check of the signature's randomness, only that it is not the real one.
+        return if stand_in == real {
+            Err(ShapeError::Random)
+        } else {
+            Ok(stand_in)
+        };
     }
     let prefix = field
         .prefixes

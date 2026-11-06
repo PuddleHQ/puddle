@@ -97,28 +97,19 @@ struct Kept {
 
 impl Kept {
     /// Whether a request for `target`, admitted as `admitted`, may go out on this connection: the
-    /// same host and port, an address the request's own checks let through, a route that still
-    /// has this connection's hop, and a connection the server left open after its last answer.
+    /// same host and port, an address the request's own checks let through, no network change
+    /// since it was made, and a connection the server left open after its last answer.
+    ///
+    /// Any network change counts, even one whose route still has this connection's hop: asking
+    /// the new route may wait (a PAC script), and a new connection costs one connect.
     async fn fits(&mut self, target: &Target, admitted: &Admitted) -> bool {
-        if self.target != *target {
-            return false;
-        }
         let address_passes = match self.addr {
             Some(addr) => admitted.addrs.contains(&addr),
             None => admitted.name_ok,
         };
-        if !address_passes {
+        let network_moved = self.watch.as_ref().is_some_and(RouteWatch::epoch_moved);
+        if self.target != *target || !address_passes || network_moved {
             return false;
-        }
-        if let Some(watch) = self.watch.as_mut() {
-            let moved = tokio::select! {
-                biased;
-                () = watch.changed() => true,
-                () = std::future::ready(()) => false,
-            };
-            if moved {
-                return false;
-            }
         }
         // `ready` settles once the last response was read to its end; a connection the server
         // closed, or fed bytes it never asked for, is not ready.

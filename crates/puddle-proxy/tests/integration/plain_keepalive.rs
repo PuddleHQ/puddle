@@ -10,14 +10,16 @@
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use puddle_proxy::ProxyConfig;
 use puddle_proxy::testing::StaticResolver;
-use puddle_types::ConnectionDecision;
+use puddle_proxy::{AddressCheck, AddressVerdict, ProxyConfig};
+use puddle_types::{
+    BlockReason, ConnectionDecision, ConnectionOutcome, LocalCategory, WorkspaceId,
+};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
@@ -29,7 +31,7 @@ type Request = (String, Vec<u8>);
 /// What a [`keep_alive_server`] saw: each request as `METHOD path` with its body, and how many
 /// connections it accepted.
 #[derive(Clone, Default)]
-struct Seen {
+pub(crate) struct Seen {
     requests: Arc<Mutex<Vec<Request>>>,
     accepts: Arc<AtomicUsize>,
 }
@@ -42,7 +44,7 @@ impl Seen {
             .clone()
     }
 
-    fn lines(&self) -> Vec<String> {
+    pub(crate) fn lines(&self) -> Vec<String> {
         self.requests().into_iter().map(|(line, _)| line).collect()
     }
 
@@ -57,7 +59,7 @@ impl Seen {
 /// closes with no answer, `/silent` never answers, `/short` sends 3 of the 10 bytes it announces
 /// and closes, `/extra` is followed by a second answer nobody asked for, a `HEAD` gets a length
 /// and no body, and anything else gets its own path back as the body.
-async fn keep_alive_server() -> (SocketAddr, Seen) {
+pub(crate) async fn keep_alive_server() -> (SocketAddr, Seen) {
     let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let seen = Seen::default();
@@ -173,10 +175,10 @@ async fn serve_one(reader: &mut BufReader<tokio::net::TcpStream>, seen: &Seen) -
 }
 
 /// One response as the guest reads it: status, header lines and the body its framing gives.
-struct Answer {
-    code: u16,
+pub(crate) struct Answer {
+    pub(crate) code: u16,
     headers: Vec<String>,
-    body: Vec<u8>,
+    pub(crate) body: Vec<u8>,
 }
 
 impl Answer {
@@ -185,7 +187,10 @@ impl Answer {
     }
 }
 
-async fn answer<R: AsyncRead + Unpin>(reader: &mut BufReader<R>, method: &str) -> Answer {
+pub(crate) async fn answer<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+    method: &str,
+) -> Answer {
     let (code, headers) = response_head(reader).await.unwrap();
     let mut body = Vec::new();
     let no_body = method == "HEAD" || code == 204 || code == 304 || (100..200).contains(&code);
@@ -230,7 +235,7 @@ fn rig(config: &ProxyConfig) -> Rig {
     rig
 }
 
-fn get(host: &str, server: SocketAddr, path: &str) -> String {
+pub(crate) fn get(host: &str, server: SocketAddr, path: &str) -> String {
     format!(
         "GET http://{host}:{}{path} HTTP/1.1\r\nHost: {host}\r\n\r\n",
         server.port()
@@ -816,7 +821,8 @@ async fn an_upstream_that_fails_ends_the_connection_with_what_happened() {
 
 /// What the guest sends wrong on a kept connection is refused and ends it: a body whose chunk
 /// framing breaks halfway (`400`, and the server never sees a complete request), an expectation
-/// other than `100-continue` (`417`) and a `CONNECT` (`400`).
+/// other than `100-continue` (`417`), a `CONNECT` (`400`) and a header name no server would take
+/// (`400`).
 #[tokio::test]
 async fn a_broken_second_request_is_refused_and_ends_the_connection() {
     let (web, seen) = keep_alive_server().await;
@@ -836,6 +842,12 @@ async fn a_broken_second_request_is_refused_and_ends_the_connection() {
             417,
         ),
         (format!("CONNECT web.test:{port} HTTP/1.1\r\n\r\n"), 400),
+        (
+            format!(
+                "GET http://web.test:{port}/x HTTP/1.1\r\nHost: web.test\r\nBad\"Name: x\r\n\r\n"
+            ),
+            400,
+        ),
     ] {
         let mut guest = rig.guest().await;
         let mut reader = BufReader::new(guest.stream().await);
@@ -855,4 +867,118 @@ async fn a_broken_second_request_is_refused_and_ends_the_connection() {
         "{:?}",
         seen.lines()
     );
+}
+
+/// The same mistakes as the first request on a connection are refused before anything connects.
+#[tokio::test]
+async fn a_broken_first_request_is_refused_before_anything_connects() {
+    let (web, seen) = keep_alive_server().await;
+    let rig = rig(&ProxyConfig::default());
+    let port = web.port();
+    for (first, code) in [
+        (
+            format!(
+                "POST http://web.test:{port}/x HTTP/1.1\r\nHost: web.test\r\nExpect: magic\r\nContent-Length: 1\r\n\r\nx"
+            ),
+            417,
+        ),
+        (
+            format!(
+                "POST http://web.test:{port}/x HTTP/1.1\r\nHost: web.test\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+            ),
+            400,
+        ),
+    ] {
+        let mut guest = rig.guest().await;
+        let mut reader = BufReader::new(guest.stream().await);
+        reader.get_mut().write_all(first.as_bytes()).await.unwrap();
+        let (got, _) = response_head(&mut reader).await.unwrap();
+        assert_eq!(got, code, "{first}");
+        ended(&mut reader).await;
+    }
+    assert_eq!(seen.accepts(), 0, "nothing connected");
+}
+
+/// An empty line after an answer (some clients end a body with an extra CRLF, RFC 9112 §2.2) and
+/// then the end of the stream close the connection quietly: no answer, no second record.
+#[tokio::test]
+async fn a_stray_empty_line_and_then_the_end_close_the_connection_quietly() {
+    let (web, _) = keep_alive_server().await;
+    let rig = rig(&ProxyConfig::default());
+    let mut guest = rig.guest().await;
+    let mut reader = BufReader::new(guest.stream().await);
+    reader
+        .get_mut()
+        .write_all(get("web.test", web, "/ok").as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(answer(&mut reader, "GET").await.code, 200);
+    reader.get_mut().write_all(b"\r\n").await.unwrap();
+    reader.get_mut().shutdown().await.unwrap();
+    assert_eq!(ended(&mut reader).await, b"", "nothing is answered");
+    // The connection ended, so its loop is done and every record it makes is written.
+    assert_eq!(rig.events(1).await.len(), 1, "no record for the empty line");
+}
+
+/// Lets every address through until `refuse` is set, then refuses `addr` as loopback: the guard
+/// changing its mind between two requests (a local-network toggle switched off).
+struct RefuseLater {
+    addr: IpAddr,
+    refuse: AtomicBool,
+}
+
+impl AddressCheck for RefuseLater {
+    fn check(&self, _workspace: &WorkspaceId, addr: SocketAddr) -> AddressVerdict {
+        if self.refuse.load(Ordering::SeqCst) && addr.ip() == self.addr {
+            AddressVerdict::Block(BlockReason::LocalToggle(LocalCategory::Loopback))
+        } else {
+            AddressVerdict::Allow
+        }
+    }
+}
+
+/// A kept upstream connection whose address the checks no longer let through is not used for the
+/// next request, even for the same host: that request connects anew, to an address it was
+/// admitted for (here one nobody listens on, so it gets a `502` and a record that says so).
+#[tokio::test]
+async fn hostile_a_kept_connection_to_an_address_now_refused_is_not_reused() {
+    let (web, seen) = keep_alive_server().await;
+    let elsewhere = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+    let check = Arc::new(RefuseLater {
+        addr: LOCAL,
+        refuse: AtomicBool::new(false),
+    });
+    let rig = Rig::with_checks(
+        &ProxyConfig::default()
+            .with_network_timeouts(Duration::from_secs(5), Duration::from_secs(2)),
+        StaticResolver::new().with("web.test", &[LOCAL, elsewhere]),
+        check.clone(),
+    );
+    rig.policy.allow(&host("web.test"));
+    let mut guest = rig.guest().await;
+    let mut reader = BufReader::new(guest.stream().await);
+    reader
+        .get_mut()
+        .write_all(get("web.test", web, "/1").as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(answer(&mut reader, "GET").await.code, 200);
+
+    check.refuse.store(true, Ordering::SeqCst);
+    reader
+        .get_mut()
+        .write_all(get("web.test", web, "/2").as_bytes())
+        .await
+        .unwrap();
+    let (code, _) = response_head(&mut reader).await.unwrap();
+    assert_eq!(code, 502);
+    ended(&mut reader).await;
+    assert_eq!(
+        seen.lines(),
+        ["GET /1"],
+        "the second never reached the old address"
+    );
+    let events = rig.events(2).await;
+    assert_eq!(events[0].resolved_ip, Some(LOCAL));
+    assert_eq!(events[1].outcome, Some(ConnectionOutcome::ConnectFailed));
 }

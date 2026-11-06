@@ -60,7 +60,7 @@ impl Rig {
     }
 
     /// As [`Self::with_resolver`], with `check` deciding which resolved addresses may be used.
-    fn with_checks(
+    pub(crate) fn with_checks(
         config: &ProxyConfig,
         resolver: StaticResolver,
         check: Arc<dyn AddressCheck>,

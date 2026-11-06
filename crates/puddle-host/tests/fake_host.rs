@@ -8425,6 +8425,21 @@ async fn git_files_repaired_at_boot_are_audited_and_told_in_plain_words() {
         "{ops:?}"
     );
 
+    // A boot that repaired something and left nothing damaged says only what was repaired.
+    *rig.guest.locks_answer.lock().unwrap() = Some((
+        0,
+        "R\tapi/.git/HEAD\tHEAD was zero-filled, rewritten: branch main\nD\n",
+    ));
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let (_, _, title, detail) = &problems[0];
+    assert!(title.contains("repaired git files in acme"), "{title}");
+    assert!(!detail.contains("fixed by hand"), "{detail}");
+
     // A boot that finds nothing withdraws the notice and writes no new audit line.
     *rig.guest.locks_answer.lock().unwrap() = None;
     api.post("/api/workspaces/acme/stop", "").await;
@@ -8435,7 +8450,7 @@ async fn git_files_repaired_at_boot_are_audited_and_told_in_plain_words() {
     let again = workspace_ops("workspace=acme", &api).await;
     assert_eq!(
         again.iter().filter(|r| r["op"] == "git_repaired").count(),
-        2
+        3
     );
     host.shutdown().await;
 }

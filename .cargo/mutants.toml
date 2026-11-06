@@ -113,6 +113,11 @@ exclude_re = [
     # exists) is never compiled on Linux. The Unix one has the same name and is measured and caught, so
     # the entry holds the Windows body's position; the `mutants-exclusions` gate fails it when it moves.
     'run\.rs:98:5: replace is_executable -> bool',
+    # Not measured: the Windows `ask` of `puddle-ssh-agent` is `#[cfg(windows)]`, so a Linux run never
+    # compiles it and every change to it passes; the Windows test job runs `tests/agent.rs` against a
+    # real pipe. The Unix one has the same name and is measured and caught, so each entry holds the
+    # position of one mutant of the Windows body (the `mutants-exclusions` gate fails an entry that moves).
+    'puddle-ssh-agent/src/list\.rs:72:5: replace ask -> Result<Vec<Identity>, AgentError> with Ok\(vec!\[(Default::default\(\))?\]\)',
     # Not measured: the Windows `allocated_bytes` is `#[cfg(windows)]`, so a Linux run never compiles it
     # and every change to it passes. The mutation run covers Linux only; this function is tested by the
     # Windows test job and is not part of the clean claim. The Unix one has the same name and is

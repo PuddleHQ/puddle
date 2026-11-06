@@ -3333,6 +3333,43 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
         "server agent\ndata agent\ndata agent",
         "{owners}"
     );
+    // The server's kernel credentials equal the session user's: the owner name above would also
+    // pass if the server kept root's groups or group. Uid and Gid read from the process's own
+    // status; the group set is the supplementary groups plus the group, as `id -G` lists them.
+    let creds = guest(
+        &runtime,
+        &sandbox,
+        "for p in /proc/[0-9]*; do \
+           case \"$(tr '\\0' ' ' <$p/cmdline 2>/dev/null)\" in \
+             /puddle/code-server/*--bind-addr*) \
+               awk '$1==\"Uid:\"{print \"uid\", $2, $3, $4, $5} $1==\"Gid:\"{print \"gid\", $2, $3, $4, $5} \
+                    $1==\"Groups:\"{for(i=2;i<=NF;i++)print \"group\", $i}' $p/status \
+               ; break;; \
+           esac; \
+         done | sort -u; \
+         u=$(id -u agent); g=$(id -g agent); \
+         echo \"want-uid $u $u $u $u\"; echo \"want-gid $g $g $g $g\"; \
+         for g in $(id -G agent); do echo \"want-group $g\"; done",
+    )
+    .await;
+    let field = |key: &str| -> BTreeSet<String> {
+        creds
+            .lines()
+            .filter_map(|line| line.strip_prefix(key))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(field("uid "), field("want-uid "), "{creds}");
+    assert_eq!(field("gid "), field("want-gid "), "{creds}");
+    assert!(!field("uid ").is_empty(), "{creds}");
+    let mut server_groups = field("group ");
+    server_groups.extend(
+        field("gid ")
+            .iter()
+            .filter_map(|g| g.split(' ').next())
+            .map(str::to_owned),
+    );
+    assert_eq!(server_groups, field("want-group "), "{creds}");
     // Data on the volume: the server made its folders there, and a marker we add stays.
     guest(
         &runtime,

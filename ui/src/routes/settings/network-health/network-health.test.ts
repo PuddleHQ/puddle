@@ -190,6 +190,28 @@ describe("network health page", () => {
     ).toBeInTheDocument();
   });
 
+  it("names each stored proxy sign-in by proxy and user, and points to the setting when there is none", () => {
+    const r = report();
+    store.report = r;
+    store.status = "ready";
+    const { unmount } = render(Page);
+    const none = section("Signing in to the proxy");
+    expect(
+      within(none).getByText(/No user name and password is stored/),
+    ).toBeInTheDocument();
+    expect(
+      within(none).getByRole("link", { name: /Enter one in Settings/ }),
+    ).toHaveAttribute("href", "/settings#s-net");
+    unmount();
+
+    r.sign_in.stored = [{ proxy: "p:8080", user: "svc-alice" }];
+    store.report = { ...r };
+    render(Page);
+    const sign = section("Signing in to the proxy");
+    expect(within(sign).getByText("p:8080")).toBeInTheDocument();
+    expect(within(sign).getByText("svc-alice")).toBeInTheDocument();
+  });
+
   it("shows trouble with a fix for each item, and singular wording", () => {
     const r = report();
     r.proxy.mode = "direct";
@@ -199,6 +221,7 @@ describe("network health page", () => {
     r.proxy.dead_proxies = [{ proxy: "d:1", retry_in_secs: 30 }];
     r.sign_in = {
       methods: [],
+      stored: [],
       attempts: [
         {
           proxy: "d:1",

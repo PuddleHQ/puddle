@@ -21,6 +21,7 @@ vi.mock("$app/navigation", () => ({
   beforeNavigate: (hook: (typeof nav.hooks)[number]) => nav.hooks.push(hook),
 }));
 
+import { report } from "#lib/testing/fake-network.ts";
 import { microsoftChosenToast, MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
@@ -660,6 +661,104 @@ describe("workspace defaults and the network", () => {
     );
     await screen.findByText("Saved.");
     expect(api.neverDecrypt).toEqual(["*.corp.test", "bank.example"]);
+  });
+
+  it("stores a proxy sign-in, lists it by name, never shows the password and forgets it on Remove", async () => {
+    await open();
+    await screen.findByText("No proxy sign-in is stored.");
+    await fireEvent.input(screen.getByLabelText("Proxy"), {
+      target: { value: "proxy.corp.example:8080" },
+    });
+    await fireEvent.input(screen.getByLabelText("User name"), {
+      target: { value: "alice" },
+    });
+    const password = screen.getByLabelText("Password") as HTMLInputElement;
+    expect(password.type).toBe("password");
+    await fireEvent.input(password, { target: { value: "s3cret-pw" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Keep sign-in" }));
+    await screen.findByText("Saved.");
+    expect(api.proxyPasswords.get("proxy.corp.example:8080")).toBe("s3cret-pw");
+    const list = screen.getByRole("list", { name: "Stored proxy sign-ins" });
+    expect(list).toHaveTextContent("proxy.corp.example:8080");
+    expect(list).toHaveTextContent("signs in as alice");
+    expect(document.body.textContent).not.toContain("s3cret-pw");
+    // The boxes are empty again: nothing keeps the password on the screen.
+    expect(password.value).toBe("");
+
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Remove the sign-in for proxy.corp.example:8080",
+      }),
+    );
+    await screen.findByText("No proxy sign-in is stored.");
+    expect(api.proxySignIns).toEqual([]);
+  });
+
+  it("says why a proxy sign-in was refused and keeps what was typed", async () => {
+    await open();
+    await screen.findByText("No proxy sign-in is stored.");
+    api.refuse.set("PUT /api/proxy-sign-ins", {
+      status: 503,
+      error: "unavailable",
+      message:
+        "the operating system's credential store did not answer; unlock it and try again",
+    });
+    await fireEvent.input(screen.getByLabelText("Proxy"), {
+      target: { value: "p:1" },
+    });
+    await fireEvent.input(screen.getByLabelText("User name"), {
+      target: { value: "alice" },
+    });
+    await fireEvent.input(screen.getByLabelText("Password"), {
+      target: { value: "pw" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Keep sign-in" }));
+    expect(
+      await screen.findByText(/credential store did not answer/),
+    ).toBeInTheDocument();
+    expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe(
+      "pw",
+    );
+  });
+
+  it("offers the proxies the network report names, and says when a removal was refused", async () => {
+    const r = report();
+    r.proxy.https_proxy = "proxy.corp.example:8080";
+    api.health = r;
+    api.proxySignIns = [{ proxy: "proxy.corp.example:8080", user: "alice" }];
+    await open();
+    await screen.findByRole("list", { name: "Stored proxy sign-ins" });
+    await waitFor(() => {
+      const options = document.querySelectorAll("datalist option");
+      expect([...options].map((o) => o.getAttribute("value"))).toEqual([
+        "proxy.corp.example:8080",
+      ]);
+    });
+    api.refuse.set("DELETE /api/proxy-sign-ins/{proxy}", {
+      status: 503,
+      error: "unavailable",
+      message: "the credential store did not answer",
+    });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Remove the sign-in for proxy.corp.example:8080",
+      }),
+    );
+    expect(
+      await screen.findByText("The credential store did not answer."),
+    ).toBeInTheDocument();
+    expect(api.proxySignIns).toHaveLength(1);
+  });
+
+  it("says the proxy sign-ins can't be read, and shows no form", async () => {
+    api.refuse.set("GET /api/proxy-sign-ins", {
+      status: 500,
+      error: "internal",
+      message: "sign-ins broken",
+    });
+    await open();
+    expect(await screen.findByText("Sign-ins broken.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("User name")).toBeNull();
   });
 
   it("shows the limits for hosts left alone and saves new ones in the units the API keeps", async () => {

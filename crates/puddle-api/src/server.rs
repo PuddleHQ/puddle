@@ -32,6 +32,7 @@ use crate::events::EventHub;
 use crate::learned::{LearnedService, NoLearned};
 use crate::network_health::{NetworkHealthService, NoNetworkHealth};
 use crate::ports::{NoPorts, PortsService};
+use crate::proxy_sign_in::{NoProxySignIns, ProxySignInService};
 use crate::repos::{NoRepos, RepoService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
@@ -155,6 +156,10 @@ pub struct Services {
     /// Terminals: a shell in a running workspace. Starts with [`NoTerminals`]; set the real one with
     /// [`Services::with_terminals`].
     pub terminals: Arc<dyn TerminalService>,
+    /// The sign-ins for company proxies that ask for a user name and password.
+    /// [`Services::new`] starts with [`NoProxySignIns`] (nothing stored, a change answers 503);
+    /// set the real one with [`Services::with_proxy_sign_ins`].
+    pub proxy_sign_ins: Arc<dyn ProxySignInService>,
     /// What the host reads of the company network; [`NoSignals`] until the host sets it with
     /// [`Services::with_company_signals`], so no pending request is marked `company_network`.
     pub company_signals: Arc<dyn CompanySignals>,
@@ -190,6 +195,7 @@ impl Services {
             ports: Arc::new(NoPorts),
             learned: Arc::new(NoLearned),
             terminals: Arc::new(NoTerminals),
+            proxy_sign_ins: Arc::new(NoProxySignIns),
             company_signals: Arc::new(NoSignals),
             endpoints: PuddleEndpoints::new(),
         }
@@ -262,6 +268,13 @@ impl Services {
     #[must_use]
     pub fn with_terminals(mut self, terminals: Arc<dyn TerminalService>) -> Self {
         self.terminals = terminals;
+        self
+    }
+
+    /// These services with this proxy sign-in implementation.
+    #[must_use]
+    pub fn with_proxy_sign_ins(mut self, proxy_sign_ins: Arc<dyn ProxySignInService>) -> Self {
+        self.proxy_sign_ins = proxy_sign_ins;
         self
     }
 
@@ -359,6 +372,7 @@ impl ApiServer {
             learned: services.learned,
             terminal_service: services.terminals,
             terminals: Arc::new(Registry::default()),
+            proxy_sign_ins: services.proxy_sign_ins,
             company_signals: services.company_signals,
             shutdown,
         };

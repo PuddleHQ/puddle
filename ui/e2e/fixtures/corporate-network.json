@@ -24,6 +24,7 @@
     },
     "sign_in": {
       "methods": ["negotiate", "ntlm"],
+      "stored": [],
       "attempts": [
         {
           "proxy": "proxy-a.corp.example:8080",
@@ -129,6 +130,7 @@
         },
         "sign_in": {
           "methods": ["negotiate", "ntlm"],
+          "stored": [],
           "attempts": [
             {
               "proxy": "proxy-a.corp.example:8080",
@@ -213,6 +215,7 @@
         },
         "sign_in": {
           "methods": ["negotiate", "ntlm"],
+          "stored": [],
           "attempts": [
             {
               "proxy": "fallback.corp.example:3128",

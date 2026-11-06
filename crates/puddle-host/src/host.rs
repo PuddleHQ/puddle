@@ -20,7 +20,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, HostCredentials, HostNetworkHealth, Launcher,
-    RunningApi, Services, SettingsRepo, forward_network_changes, forward_proxy_sign_in_failures,
+    ProxySignInService, RunningApi, Services, SettingsRepo, forward_network_changes,
+    forward_proxy_sign_in_failures,
 };
 use puddle_certs::CorporateRoots;
 use puddle_compute::{Runtime, SandboxInfo};
@@ -52,6 +53,7 @@ use crate::injection::{
 };
 use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
+use crate::proxy_sign_ins::HostProxySignIns;
 use crate::ssh_config::SshSetup;
 use crate::workspaces::{Parts, RewriteGate, known_ids};
 use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords, VsCodeLauncher};
@@ -529,7 +531,12 @@ impl<R: Runtime + Clone> Host<R> {
             EgressParts::new(injecting.termination(), &proxy_passwords, &reports, &ports),
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
-        let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
+        let sign_ins: Arc<dyn ProxySignInService> = Arc::new(HostProxySignIns::new(
+            proxy_passwords.clone(),
+            egress.chain.clone(),
+        ));
+        let network_health =
+            network_health_of(&egress.chain, &discovery, &clock, &roots, sign_ins.clone());
         network_health.set_tls_left_out(injecting.tls.rejected_roots(), &roots);
         let pull_url = pull.proxy_url();
         // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
@@ -671,6 +678,7 @@ impl<R: Runtime + Clone> Host<R> {
         .with_ports(Arc::new(HostPorts::new(ports)))
         .with_terminals(Arc::new(service.clone()))
         .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
+        .with_proxy_sign_ins(sign_ins)
         .with_company_signals(signals)
         .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
@@ -908,9 +916,12 @@ fn network_health_of(
     discovery: &Arc<Discovery>,
     clock: &Arc<SystemClock>,
     roots: &CorporateRoots,
+    sign_ins: Arc<dyn ProxySignInService>,
 ) -> Arc<HostNetworkHealth> {
     let health = Arc::new(
-        HostNetworkHealth::new(discovery.clone(), clock.clone()).with_chain(chain.clone()),
+        HostNetworkHealth::new(discovery.clone(), clock.clone())
+            .with_chain(chain.clone())
+            .with_sign_ins(sign_ins),
     );
     health.set_roots(Arc::new(roots.clone()));
     health

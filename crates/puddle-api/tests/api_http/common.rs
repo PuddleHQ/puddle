@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, CredentialService, DevCertService, DoctorService, EventHub,
-    FakeCredentials, FakeLauncher, FakeLearned, FakePorts, FakeRepos, FakeTerminals,
-    FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, RepoService, RunningApi,
-    Services, SettingsRepo,
+    FakeCredentials, FakeLauncher, FakeLearned, FakePorts, FakeProxySignIns, FakeRepos,
+    FakeTerminals, FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, RepoService,
+    RunningApi, Services, SettingsRepo,
 };
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
@@ -49,6 +49,8 @@ pub(crate) struct Api {
     pub(crate) learned: Arc<FakeLearned>,
     /// The terminals service the API runs on.
     pub(crate) terminals: Arc<FakeTerminals>,
+    /// The proxy sign-ins the API serves.
+    pub(crate) proxy_sign_ins: Arc<FakeProxySignIns>,
 }
 
 pub(crate) async fn start() -> Api {
@@ -238,6 +240,8 @@ async fn start_inner_with(
     let services = services.with_learned(learned.clone());
     let terminals = Arc::new(FakeTerminals::new());
     let services = services.with_terminals(terminals.clone());
+    let proxy_sign_ins = Arc::new(FakeProxySignIns::new());
+    let services = services.with_proxy_sign_ins(proxy_sign_ins.clone());
     let services = match company_signals {
         Some(signals) => services.with_company_signals(signals),
         None => services,
@@ -263,6 +267,7 @@ async fn start_inner_with(
         ports,
         learned,
         terminals,
+        proxy_sign_ins,
     }
 }
 

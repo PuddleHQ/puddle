@@ -8659,6 +8659,78 @@ async fn a_stored_proxy_sign_in_answers_the_proxy_and_is_there_after_a_restart()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_proxy_sign_in_entered_through_the_api_answers_the_proxy_shows_in_the_report_and_goes_when_removed()
+ {
+    use puddle_upstream::{Behaviour, FakeProxy};
+    let rig = Rig::new();
+    let stored = fixture::password("entered");
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: stored.clone(),
+    })
+    .await;
+    let host = host_behind_proxy_without_a_configured_password(&rig, &proxy).await;
+    proxy_sign_ins_loaded(&host, 0).await;
+    let api = api(&host);
+    let address = proxy.proxy_addr().to_string();
+
+    let put = api
+        .put(
+            "/api/proxy-sign-ins",
+            &json!({"proxy": address, "user": "svc", "password": stored}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    fixture::assert_absent("the sign-in reply", &put.body, &stored);
+    assert_eq!(
+        put.json()["sign_ins"],
+        json!([{"proxy": address, "user": "svc"}])
+    );
+
+    add_github_identity(&api, "ghp_unused_token").await;
+    let _ = api.get("/api/repos").await;
+    let expected = format!("Basic {}", base64(format!("svc:{stored}").as_bytes()));
+    assert!(
+        proxy
+            .seen()
+            .iter()
+            .any(|request| request.method == "CONNECT"
+                && request.proxy_authorization.as_deref() == Some(expected.as_str())),
+        "the proxy never saw the entered sign-in"
+    );
+    let report = api.get("/api/network-health").await;
+    fixture::assert_absent("the network-health reply", &report.body, &stored);
+    assert_eq!(
+        report.json()["sign_in"]["stored"],
+        json!([{"proxy": address, "user": "svc"}])
+    );
+    assert_eq!(
+        report.json()["sign_in"]["attempts"][0]["result"],
+        "signed_in"
+    );
+
+    // A removal stops the answers at once.
+    let gone = api
+        .delete(&format!("/api/proxy-sign-ins/{address}"), None)
+        .await;
+    assert_eq!(gone.status, 204, "{}", gone.body);
+    assert!(host.proxy_passwords().proxies().is_empty());
+    let before = proxy.seen().len();
+    let _ = api.post("/api/repos/refresh", "{}").await;
+    let after = proxy.seen();
+    assert!(after.len() > before, "the listing made no new request");
+    assert!(
+        after[before..]
+            .iter()
+            .all(|request| request.proxy_authorization.as_deref() != Some(expected.as_str())),
+        "the removed sign-in was still sent"
+    );
+    let report = api.get("/api/network-health").await.json();
+    assert_eq!(report["sign_in"]["stored"], json!([]));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt() {
     use puddle_upstream::{Behaviour, FakeProxy};
     let rig = Rig::new();

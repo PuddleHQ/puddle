@@ -214,7 +214,9 @@ readable as JSONL (one record per line).
   `websocket_idle`; the first limit that fires on a connection is the one recorded); a request refused for the workspace's HTTP/2 stream budget is `blocked` with
   `stream_limit`.
   The proxy writes one `connection` record per request whose destination it parsed, when the
-  connection ends; a request refused before that (bad request, head too large or too slow) has no
+  connection ends. A guest connection that carries several plain-HTTP requests (keep-alive) writes
+  one per request, each decided on its own and written once its answer has gone, with the bytes
+  moved while it ran. A request refused before that (bad request, head too large or too slow) has no
   destination and only goes to the log. A connection over the workspace's limit is read for up to
   5 s so its destination is known: it gets a `503` saying why and a `blocked` record with reason
   `connection_limit`, and the rules are not asked. `resolved_ip`
@@ -542,8 +544,8 @@ ever refuses, so no rule of this kind can open anything and there is no preceden
   does not repeat the path or the query, so nothing of them lands in a line the tool prints.
 - **R-54 Audit.** A refused request is the connection's `connection` record with `decision: deny`,
   `reason: request_rule`, `request_rule` (the rule's id, `null` in every other record), and the
-  `method` and `path` of the refused request (R-25 holds: no query, no header value). A connection
-  that carries several requests has one record: the first refused request is the one it names,
+  `method` and `path` of the refused request (R-25 holds: no query, no header value). A decrypted
+  connection that carries several requests has one record: the first refused request is the one it names,
   and a connection no rule refused names its first request as before. A refused tunnel is
   `decision: blocked`, `reason: request_rule_port`, with `request_rule` the lowest-numbered rule
   on the host (its `403` carries the same id in `x-puddle-request-rule`).

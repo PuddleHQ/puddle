@@ -19,7 +19,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize as _, Zeroizing};
 
-use crate::profile::{Profile, Role};
+use crate::profile::{Profile, Slot};
+// The tests below name roles through `super::*`.
+#[cfg(test)]
+use crate::profile::Role;
 
 /// The version of what an entry holds; a version this build does not know is left alone.
 const ENTRY_VERSION: u8 = 1;
@@ -81,13 +84,17 @@ impl Vault {
         }
     }
 
-    fn id(&self, profile: &Profile, role: Role) -> Option<StoredId> {
-        slot_id(&self.workspace, profile.id, role)
+    fn id(&self, profile: &Profile, slot: Slot) -> Option<StoredId> {
+        slot_id(&self.workspace, profile.id, slot)
     }
 
     /// The saved pair of `profile`'s `role`, or `None` when there is none. Blocking.
-    pub(crate) fn read(&self, profile: &Profile, role: Role) -> Result<Option<Saved>, VaultError> {
-        let id = self.id(profile, role).ok_or(VaultError::Damaged)?;
+    pub(crate) fn read(
+        &self,
+        profile: &Profile,
+        slot: impl Into<Slot>,
+    ) -> Result<Option<Saved>, VaultError> {
+        let id = self.id(profile, slot.into()).ok_or(VaultError::Damaged)?;
         let Some(secret) = self.store.get(&id).map_err(|_| VaultError::Unavailable)? else {
             return Ok(None);
         };
@@ -104,8 +111,12 @@ impl Vault {
 
     /// Whether an entry for `profile`'s `role` exists, without reading its token into memory.
     /// Blocking.
-    pub(crate) fn holds(&self, profile: &Profile, role: Role) -> Result<bool, VaultError> {
-        let id = self.id(profile, role).ok_or(VaultError::Damaged)?;
+    pub(crate) fn holds(
+        &self,
+        profile: &Profile,
+        slot: impl Into<Slot>,
+    ) -> Result<bool, VaultError> {
+        let id = self.id(profile, slot.into()).ok_or(VaultError::Damaged)?;
         self.store
             .get(&id)
             .map(|found| found.is_some())
@@ -116,11 +127,11 @@ impl Vault {
     pub(crate) fn write(
         &self,
         profile: &Profile,
-        role: Role,
+        slot: impl Into<Slot>,
         stand_in: &str,
         real: &str,
     ) -> Result<(), VaultError> {
-        let id = self.id(profile, role).ok_or(VaultError::Damaged)?;
+        let id = self.id(profile, slot.into()).ok_or(VaultError::Damaged)?;
         let text = Zeroizing::new(
             serde_json::to_string(&EntryRef {
                 v: ENTRY_VERSION,
@@ -135,17 +146,23 @@ impl Vault {
     }
 
     /// Deletes the pair of `profile`'s `role`; one that is not there is fine. Blocking.
-    pub(crate) fn delete(&self, profile: &Profile, role: Role) -> Result<(), VaultError> {
-        let id = self.id(profile, role).ok_or(VaultError::Damaged)?;
+    pub(crate) fn delete(
+        &self,
+        profile: &Profile,
+        slot: impl Into<Slot>,
+    ) -> Result<(), VaultError> {
+        let id = self.id(profile, slot.into()).ok_or(VaultError::Damaged)?;
         self.store.delete(&id).map_err(|_| VaultError::Unavailable)
     }
 }
 
-/// The name of the entry for one slot: `login-<16 hex of the workspace's hash>-<profile>-<role>`.
-/// The workspace is hashed because its name and the rest may not fit the store's 64 characters.
-pub(crate) fn slot_id(workspace: &str, profile: &str, role: Role) -> Option<StoredId> {
+/// The name of the entry for one slot: `login-<16 hex of the workspace's hash>-<profile>-<role>`,
+/// with `-<resource>` after the role for a slot that has one (a slot without keeps the name it
+/// always had). The workspace is hashed because its name and the rest may not fit the store's 64
+/// characters.
+pub(crate) fn slot_id(workspace: &str, profile: &str, slot: impl Into<Slot>) -> Option<StoredId> {
     let hex = workspace_hash(workspace);
-    StoredId::new(format!("login-{hex}-{profile}-{}", role.key())).ok()
+    StoredId::new(format!("login-{hex}-{profile}-{}", slot.into().key())).ok()
 }
 
 /// 16 hex characters of the hash of a workspace's name: what names its entries and its marker.

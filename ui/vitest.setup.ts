@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { cleanup } from "@testing-library/svelte";
+import { cleanup, configure } from "@testing-library/svelte";
 import "@testing-library/jest-dom/vitest";
 import process from "node:process";
 import { afterAll, afterEach, expect } from "vitest";
@@ -16,6 +16,11 @@ const stopLagProbe = startLagProbe({
     `worker ${process.env["VITEST_POOL_ID"] ?? "?"} ${expect.getState().testPath ?? "(no test running)"}`,
 });
 afterAll(stopLagProbe);
+
+// findBy and waitFor return the moment their condition holds, so a long bound costs nothing on a
+// pass; the default 1000 ms is wall clock too, and a starved worker outlasts it (see testTimeout
+// in vite.config.ts).
+configure({ asyncUtilTimeout: 30_000 });
 
 // testing-library unmounts after each test only when the test API is global, which this suite
 // doesn't use; without it a test's DOM stays in the body for the next test (or repeat) in the file.

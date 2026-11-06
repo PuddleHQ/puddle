@@ -29,6 +29,15 @@ want() { # want <label> <expected> <paths...>
     [ "$got" = "$exp" ] || bad "$label: got '$got', want '$exp'"
 }
 FULL="full true true true true"
+# Every always-run path of the list is a workflow the VM jobs do not use (the one way a full run skips the VM jobs).
+vm_unrelated_only() {
+    local p
+    for p in "$@"; do
+        if grep -Eq "$always_re" <<<"$p" && ! grep -Eq "$data_re" <<<"$p"; then
+            grep -Eq '^\.github/workflows/[^/]+\.ya?ml$' <<<"$p" && ! grep -Eq 'workflows/vm-(linux|windows)\.yml$' <<<"$p" || return 1
+        fi
+    done
+}
 
 # 1. Replay of the merged pull requests: class and outputs as recorded, and an independent check
 # that any pull request with an always-run path got a full run.
@@ -45,7 +54,9 @@ flush() {
     for p in "${paths[@]}"; do
         if grep -Eq "$always_re" <<<"$p" && ! grep -Eq "$data_re" <<<"$p"; then always=1; fi
     done
-    if [ "$always" = 1 ] && [ "$got" != "$FULL" ]; then bad "pr $pr has an always-run path but got '$got'"; fi
+    if [ "$always" = 1 ] && [ "$got" != "$FULL" ] && ! { [ "$got" = "full true true true false" ] && vm_unrelated_only "${paths[@]}"; }; then
+        bad "pr $pr has an always-run path but got '$got'"
+    fi
     seen_class[${got%% *}]=1
     replayed=$((replayed + 1))
 }
@@ -70,8 +81,8 @@ done
 
 # 2. Every always-run path alone, and added to a docs-only and to a UI-only change, runs everything.
 for p in Cargo.lock Cargo.toml rust-toolchain.toml .cargo/config.toml .config/nextest.toml .githooks/pre-push \
-    .github/workflows/ci.yml ci/scope.sh ci/msb-runtime.sha256 scripts/check.sh scripts/gate-sched.sh \
-    crates/puddle-vm-tests/src/lib.rs crates/puddle-vm-tests/tests/x.rs crates/puddle-api/openapi/openapi.json \
+    .github/workflows/vm-linux.yml .github/workflows/vm-windows.yml ci/scope.sh ci/msb-runtime.sha256 scripts/check.sh scripts/gate-sched.sh \
+    crates/puddle-vm-tests/src/lib.rs crates/puddle-vm-tests/tests/x.rs crates/puddle-vm-tests/tests/vm_x.rs crates/puddle-api/openapi/openapi.json \
     crates/puddle-agent/Cargo.toml ui/package-lock.json ui/src/lib/api/schema.d.ts ui/THIRD-PARTY-NOTICES.txt \
     crates/puddle-store/tests/data/repo-urls.json .github/actions/x/action.yml ui/scripts/diff-coverage.ts ui/scripts/coverage-ratchet.ts deny.toml about.toml clippy.toml rustfmt.toml _typos.toml \
     .gitleaks.toml .gitattributes; do
@@ -104,6 +115,30 @@ want "crate outside the VM set, in the UI closure" "rust true true true false" c
 want "crate in neither" "rust true true false false" crates/xtask/src/main.rs
 want "crate with a README only" "rust true true true true" crates/puddle-host/README.md
 want "rename out of an always-run path" "$FULL" ui/src/a.ts ci/old.sh
+
+# 4a. Diffs the VM jobs skip although the paths are not docs: other workflows and non-VM test files.
+# Each case also has its other direction: a path that can reach a VM test keeps `vm` true, and any
+# mix with such a path runs the VM jobs.
+want "another workflow only" "full true true true false" .github/workflows/ci.yml
+want "several other workflows" "full true true true false" .github/workflows/windows.yml .github/workflows/cache-gc.yml docs/x.md
+want "vm-linux workflow" "$FULL" .github/workflows/vm-linux.yml
+want "vm-windows workflow" "$FULL" .github/workflows/vm-windows.yml
+want "other workflow with the vm-linux workflow" "$FULL" .github/workflows/ci.yml .github/workflows/vm-linux.yml
+want "other workflow with a shared action" "$FULL" .github/workflows/ci.yml .github/actions/cancel-group/action.yml
+want "other workflow with a ci script" "$FULL" .github/workflows/ci.yml ci/vm-partition.sh
+want "other workflow with a scripts file" "$FULL" .github/workflows/ci.yml scripts/check.sh
+want "other workflow with an unknown path" "$FULL" .github/workflows/ci.yml mystery/file.txt
+want "other workflow with a vm crate" "full true true true true" .github/workflows/ci.yml crates/puddle-host/src/lib.rs
+want "a nested path under workflows" "$FULL" .github/workflows/sub/x.yml
+want "a non-VM test file" "rust true true true false" crates/puddle-host/tests/fake_host.rs
+want "a non-VM test file with a source file" "rust true true true true" crates/puddle-host/tests/fake_host.rs crates/puddle-host/src/lib.rs
+want "a vm_ test file" "rust true true true true" crates/puddle-host/tests/vm_git.rs
+want "a shared test module file" "rust true true true true" crates/puddle-host/tests/support.rs
+want "a shared test module folder" "rust true true true true" crates/puddle-compute-msb/tests/support/mod.rs
+want "a data file under tests" "rust true true true true" crates/puddle-host/tests/data/x.json
+want "a test file nested in a folder" "rust true true true true" crates/puddle-host/tests/integration/x.rs
+want "a non-VM test file of the VM test crate" "$FULL" crates/puddle-vm-tests/tests/x.rs
+want "a test file in a crate outside the VM set" "rust true true true false" crates/puddle-app/tests/x.rs
 
 # 4b. The nightly tier: which jobs a merge queue run defers (PUDDLE_TIER=on) and which paths pull a
 # job back into the queue. defers <event> <PUDDLE_TIER> <paths...> -> "vm ui clippy webkit", each true
@@ -211,8 +246,17 @@ main_case() { # main_case <label> <want class> <args of run_main>
     [ "$(grep -c . "$tmp/out")" = 10 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the ten outputs"
     grep -q "^light=${WANT_LIGHT:-false}$" "$tmp/out" || bad "main: $label: want light=${WANT_LIGHT:-false}, got: $(tr '\n' ' ' <"$tmp/out")"
 }
+printf '.github/workflows/ci.yml\ncrates/puddle-host/tests/fake_host.rs\n' >"$tmp/other-workflow.txt"
+want_out() { grep -q "^$1\$" "$tmp/out" || bad "main: $2: want $1, got: $(tr '\n' ' ' <"$tmp/out")"; }
 main_case "ui-only pull request to develop" ui pull_request develop ok "$tmp/ui.txt"
 main_case "push" full push develop ok "$tmp/ui.txt"
+for ev in push schedule workflow_dispatch; do
+    : >"$tmp/out"
+    MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1)
+    run_main "$ev" develop ok "$tmp/other-workflow.txt" >/dev/null
+    grep -q '^vm=true$' "$tmp/out" || bad "main: a $ev run of a diff no VM test can see must still run the VM jobs in full"
+done
+MAIN_ENV=()
 main_case "schedule" full schedule develop ok "$tmp/ui.txt"
 main_case "workflow_dispatch" full workflow_dispatch develop ok "$tmp/ui.txt"
 main_case "pull request to main" full pull_request main ok "$tmp/ui.txt"
@@ -233,6 +277,8 @@ out=$(env PATH="$tmp/nothing" GITHUB_EVENT_NAME=pull_request PR_BASE_REF=develop
 # anything doubtful runs everything. Never the light mode, whatever PUDDLE_QUEUE says.
 MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 PUDDLE_QUEUE=on)
 main_case "merge group, ui-only diff" ui merge_group "" ok "$tmp/ui.txt"
+main_case "merge group, another workflow and a non-VM test file" full merge_group "" ok "$tmp/other-workflow.txt"
+want_out vm=false "merge group: a diff no VM test can see skips the VM jobs"
 main_case "merge group, always-run path" full merge_group "" ok "$tmp/rename.txt"
 main_case "merge group, compare fails" full merge_group "" error "$tmp/ui.txt"
 main_case "merge group, empty diff" full merge_group "" ok "$tmp/empty.txt"
@@ -272,7 +318,6 @@ main_case "light: PUDDLE_QUEUE unset" ui pull_request develop ok "$tmp/ui.txt"
 printf 'crates/puddle-fs/src/lib.rs\n' >"$tmp/rust.txt"
 printf 'docs/STANDARDS.md\nREADME.md\n' >"$tmp/docs.txt"
 printf 'ui/e2e/fixtures/data.json\n' >"$tmp/fixture.txt"
-want_out() { grep -q "^$1\$" "$tmp/out" || bad "main: $2: want $1, got: $(tr '\n' ' ' <"$tmp/out")"; }
 MAIN_ENV=(PUDDLE_QUEUE=on)
 WANT_LIGHT=true main_case "light: rust-only pull request" rust pull_request develop ok "$tmp/rust.txt"
 want_out win_rust=true "light: a rust-only pull request keeps the Windows tests"
@@ -367,17 +412,31 @@ verdict push 1 "a skipped job off a pull request without the flag" "$CI_FULL" ru
 verdict push 0 "ci push, all passed" "$CI_FULL" rust=ci_rust ui=ui -- rust=success ui=success
 CI_UI='{"ci_rust":"false","ui":"true"}'
 CI_DOCS='{"ci_rust":"false","ui":"false"}'
-ci_specs=(rust=ci_rust 'light=!ci_rust' ui=ui)
-verdict pull_request 0 "ci full run" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
-verdict pull_request 0 "ci ui-only: light and ui" "$CI_UI" "${ci_specs[@]}" -- rust=skipped light=success ui=success
-verdict pull_request 0 "ci docs-only: light only" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped light=success ui=skipped
-verdict pull_request 1 "ci docs-only: light failed" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped light=failure ui=skipped
-verdict pull_request 1 "ci docs-only: light skipped too" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped light=skipped ui=skipped
-verdict pull_request 1 "ci full: rust skipped, light ran" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped light=success ui=success
-verdict pull_request 1 "ci full: rust failed" "$CI_FULL" "${ci_specs[@]}" -- rust=failure light=skipped ui=success
-verdict pull_request 1 "ci ui job skipped though needed" "$CI_UI" "${ci_specs[@]}" -- rust=skipped light=success ui=skipped
-verdict pull_request 0 "ci scope failed: everything ran" '{}' "${ci_specs[@]}" -- rust=success light=skipped ui=success
-verdict pull_request 1 "ci scope failed: rust skipped" '{}' "${ci_specs[@]}" -- rust=skipped light=success ui=success
+ci_specs=(rust=ci_rust gates=ci_rust 'light=!ci_rust' ui=ui 'ui-webkit=ui,queue,defer:defer_linux_webkit')
+verdict pull_request 0 "ci full run" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
+verdict pull_request 0 "ci ui-only: light and ui" "$CI_UI" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=success ui-webkit=success
+verdict pull_request 0 "ci docs-only: light only" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=skipped ui-webkit=skipped
+verdict pull_request 1 "ci docs-only: light failed" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped gates=skipped light=failure ui=skipped ui-webkit=skipped
+verdict pull_request 1 "ci docs-only: light skipped too" "$CI_DOCS" "${ci_specs[@]}" -- rust=skipped gates=skipped light=skipped ui=skipped ui-webkit=skipped
+verdict pull_request 1 "ci full: rust skipped, light ran" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=success ui-webkit=success
+verdict pull_request 1 "ci full: rust failed" "$CI_FULL" "${ci_specs[@]}" -- rust=failure gates=failure light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci ui job skipped though needed" "$CI_UI" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=skipped ui-webkit=skipped
+verdict pull_request 0 "ci scope failed: everything ran" '{}' "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci scope failed: rust skipped" '{}' "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=success ui-webkit=success
+verdict pull_request 1 "ci full: gates failed, tests passed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=failure light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci full: gates skipped though needed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=skipped light=skipped ui=success ui-webkit=success
+verdict pull_request 1 "ci full: webkit failed" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=failure
+verdict pull_request 1 "ci full: webkit skipped without the light mode" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
+# The nightly tier skips the WebKit job on a merge queue run when scope says so, and nowhere else.
+CI_WK='{"ci_rust":"true","ui":"true","defer_linux_webkit":"true"}'
+CI_NOWK='{"ci_rust":"true","ui":"true","defer_linux_webkit":"false"}'
+VERDICT_ENV=(PUDDLE_TIER=on)
+verdict merge_group 0 "tier: webkit deferred" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
+verdict merge_group 1 "tier: webkit kept in the queue but skipped" "$CI_NOWK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
+verdict merge_group 1 "tier: chromium skipped, only webkit may defer" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=skipped ui-webkit=skipped
+verdict pull_request 1 "tier: a pull request never defers webkit" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
+VERDICT_ENV=()
+verdict merge_group 1 "tier unset: webkit deferred" "$CI_WK" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=skipped
 # Windows: the release build is not scoped (its own event rule skips it on a pull request to develop).
 WIN_UI='{"win_rust":"false","ui":"true"}'
 verdict pull_request 0 "windows ui-only, release skipped" "$WIN_UI" clippy=win_rust test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui ui-unit=ui -- \
@@ -500,15 +559,15 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key[,fl
 # The three run side by side (about 2000 cases); each prints its case count.
 matrix_bg() { (fail=0; matrix "$@"; echo "matrix $1: $MATRIX_CASES cases" >&2; exit "$fail") & mpids+=($!); }
 mpids=()
-matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip
+matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit
 matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui
 matrix_bg vm-linux --nightly-skips vm build=vm,queue agent=vm,queue tests=vm,queue
 matrix_bg vm-windows --nightly-skips vm build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows
 for p in "${mpids[@]}"; do wait "$p" || fail=1; done
-verdict push 0 "ci push: light skipped because the Rust gates ran" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
-verdict schedule 0 "ci nightly: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
-verdict workflow_dispatch 0 "ci dispatch: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success light=skipped ui=success
-verdict push 1 "ci push: light ran, rust skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped light=success ui=success
+verdict push 0 "ci push: light skipped because the Rust gates ran" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
+verdict schedule 0 "ci nightly: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
+verdict workflow_dispatch 0 "ci dispatch: light skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=success gates=success light=skipped ui=success ui-webkit=success
+verdict push 1 "ci push: light ran, rust skipped" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped gates=skipped light=success ui=success ui-webkit=success
 
 # The light mode: a queue-only job may skip on a pull request to develop with PUDDLE_QUEUE=on, and
 # nowhere else. The verdict works the mode out from the event, not from the scope job's output.
@@ -527,7 +586,7 @@ verdict pull_request 1 "light: docs-only, a windows job failed" "$WIN_DOCS" "${W
 verdict pull_request 0 "light: vm ran anyway" "$VM" "${VM_Q[@]}" -- build=success agent=success tests=success
 verdict pull_request 1 "light: vm build failed" "$VM" "${VM_Q[@]}" -- build=failure agent=failure tests=skipped
 verdict pull_request 1 "light: a cancelled windows job" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=cancelled test-build=success tests=success docs=success ui-e2e=skipped ui-unit=skipped release=skipped
-verdict pull_request 1 "light: a skip without the queue mark" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped light=skipped ui=success
+verdict pull_request 1 "light: a skip without the queue mark" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped gates=skipped light=skipped ui=success ui-webkit=success
 verdict merge_group 1 "light env on a merge queue run" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 verdict push 1 "light env on a push" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=main)
@@ -583,7 +642,7 @@ VERDICT_ENV=()
 
 # A develop push run whose commit a green merge queue run tested: the heavy ci jobs may skip when
 # PUDDLE_QUEUE_SKIP_PUSH=on and the queue-tested job succeeded and said so; anything else runs them.
-CI_P=('rust=ci_rust,pushskip' 'msvc=ci_rust,pushskip' 'light=!ci_rust' 'ui=ui,pushskip')
+CI_P=('rust=ci_rust,pushskip' 'gates=ci_rust,pushskip' 'msvc=ci_rust,pushskip' 'light=!ci_rust' 'ui=ui,pushskip' 'ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit')
 TESTED='queue-tested=success'
 needs_tested() { needs "$@" | jq -c '.["queue-tested"].outputs = {skip: "'"${SKIP_OUT-true}"'"}'; }
 push_case() { # push_case <want> <label> <job=result>...
@@ -594,28 +653,27 @@ push_case() { # push_case <want> <label> <job=result>...
     [ "$rc" = "$exp" ] || bad "verdict: tested push: $label: exit $rc, want $exp"
 }
 VERDICT_ENV=(PUDDLE_QUEUE_SKIP_PUSH=on)
-push_case 0 "all heavy jobs skipped" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
-push_case 0 "heavy jobs ran anyway" rust=success msvc=success light=skipped ui=success "$TESTED"
-push_case 1 "rust failed" rust=failure msvc=skipped light=skipped ui=skipped "$TESTED"
-push_case 1 "lookup failed" rust=skipped msvc=skipped light=skipped ui=skipped queue-tested=failure
-push_case 1 "lookup skipped" rust=skipped msvc=skipped light=skipped ui=skipped queue-tested=skipped
-SKIP_OUT=false push_case 1 "lookup said run" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
-SKIP_OUT="" push_case 1 "lookup output lost" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
-PUSH_REF=refs/heads/main push_case 1 "a push to main" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
-PUSH_EVENT=workflow_dispatch push_case 1 "a dispatch" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
-PUSH_EVENT=merge_group push_case 1 "a merge queue run" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+push_case 0 "all heavy jobs skipped" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+push_case 0 "heavy jobs ran anyway" rust=success gates=success msvc=success light=skipped ui=success ui-webkit=success "$TESTED"
+push_case 1 "rust failed" rust=failure gates=failure msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+push_case 1 "lookup failed" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped queue-tested=failure
+push_case 1 "lookup skipped" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped queue-tested=skipped
+SKIP_OUT=false push_case 1 "lookup said run" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+SKIP_OUT="" push_case 1 "lookup output lost" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+PUSH_REF=refs/heads/main push_case 1 "a push to main" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+PUSH_EVENT=workflow_dispatch push_case 1 "a dispatch" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
+PUSH_EVENT=merge_group push_case 1 "a merge queue run" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
 VERDICT_ENV=()
-push_case 1 "PUDDLE_QUEUE_SKIP_PUSH unset" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+push_case 1 "PUDDLE_QUEUE_SKIP_PUSH unset" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
 VERDICT_ENV=(PUDDLE_QUEUE_SKIP_PUSH=yes)
-push_case 1 "PUDDLE_QUEUE_SKIP_PUSH=yes is not on" rust=skipped msvc=skipped light=skipped ui=skipped "$TESTED"
+push_case 1 "PUDDLE_QUEUE_SKIP_PUSH=yes is not on" rust=skipped gates=skipped msvc=skipped light=skipped ui=skipped ui-webkit=skipped "$TESTED"
 VERDICT_ENV=()
 
-# full-steps: off the light mode every guarded step must have succeeded and the browsers must not
-# be narrowed; in the light mode anything goes.
+# full-steps: off the light mode every guarded step must have succeeded; in the light mode anything goes.
 steps_case() { # steps_case <want> <label> <args>...
     local exp=$1 label=$2 rc=0
     shift 2
-    env -u PUDDLE_QUEUE -u PR_BASE_REF -u PUDDLE_E2E_PROJECTS "${STEPS_ENV[@]}" "$scope" full-steps "$@" >/dev/null 2>&1 || rc=$?
+    env -u PUDDLE_QUEUE -u PR_BASE_REF "${STEPS_ENV[@]}" "$scope" full-steps "$@" >/dev/null 2>&1 || rc=$?
     [ "$rc" = "$exp" ] || bad "full-steps: $label: exit $rc, want $exp"
 }
 for ev in push schedule workflow_dispatch merge_group pull_request; do
@@ -624,47 +682,15 @@ for ev in push schedule workflow_dispatch merge_group pull_request; do
     steps_case 1 "$ev: one skipped" git-env=skipped notices=success
     steps_case 1 "$ev: one failed" git-env=success notices=failure
     steps_case 1 "$ev: one lost" git-env= notices=success
-    STEPS_ENV+=(PUDDLE_E2E_PROJECTS=chromium)
-    steps_case 1 "$ev: browsers narrowed" ui-e2e=success
     STEPS_ENV=("GITHUB_EVENT_NAME=$ev" PR_BASE_REF=develop PUDDLE_QUEUE=on)
     if [ "$ev" = pull_request ]; then
         steps_case 0 "light: skipped" git-env=skipped notices=skipped
-        STEPS_ENV+=(PUDDLE_E2E_PROJECTS=chromium)
-        steps_case 0 "light: browsers narrowed" ui-e2e=success
     else
         steps_case 1 "$ev with PUDDLE_QUEUE=on: one skipped" git-env=skipped notices=success
     fi
 done
 STEPS_ENV=(GITHUB_EVENT_NAME=pull_request PR_BASE_REF=main PUDDLE_QUEUE=on)
 steps_case 1 "pull request to main with PUDDLE_QUEUE=on: one skipped" git-env=skipped
-# The nightly tier narrows the browsers to Chromium on a merge queue run when scope said so, and nowhere else.
-tier_steps=(PUDDLE_TIER=on DEFER_LINUX_WEBKIT=true PUDDLE_E2E_PROJECTS=chromium)
-STEPS_ENV=(GITHUB_EVENT_NAME=merge_group "${tier_steps[@]}")
-steps_case 0 "tier: chromium on a merge queue run" ui-e2e=success
-steps_case 1 "tier: chromium, the e2e step failed" ui-e2e=failure
-steps_case 1 "tier: chromium, the e2e step skipped" ui-e2e=skipped
-STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on DEFER_LINUX_WEBKIT=true PUDDLE_E2E_PROJECTS=webkit)
-steps_case 1 "tier: only chromium may narrow" ui-e2e=success
-STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on DEFER_LINUX_WEBKIT=true "PUDDLE_E2E_PROJECTS=chromium,webkit")
-steps_case 1 "tier: a list is not chromium" ui-e2e=success
-STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on DEFER_LINUX_WEBKIT=true)
-steps_case 0 "tier: both browsers ran although WebKit was deferred" ui-e2e=success
-STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on DEFER_LINUX_WEBKIT=false PUDDLE_E2E_PROJECTS=chromium)
-steps_case 1 "tier: chromium although scope kept WebKit" ui-e2e=success
-STEPS_ENV=(GITHUB_EVENT_NAME=merge_group PUDDLE_TIER=on PUDDLE_E2E_PROJECTS=chromium)
-steps_case 1 "tier: chromium with scope's output lost" ui-e2e=success
-for v in "" off ON "on "; do
-    STEPS_ENV=(GITHUB_EVENT_NAME=merge_group "PUDDLE_TIER=$v" DEFER_LINUX_WEBKIT=true PUDDLE_E2E_PROJECTS=chromium)
-    steps_case 1 "tier: PUDDLE_TIER='$v' is not on" ui-e2e=success
-done
-for ev in push schedule workflow_dispatch pull_request; do
-    STEPS_ENV=("GITHUB_EVENT_NAME=$ev" PR_BASE_REF=main "${tier_steps[@]}")
-    steps_case 1 "tier: $ev never narrows" ui-e2e=success
-done
-# The note a narrowed run leaves in the job summary.
-env -u PUDDLE_QUEUE -u PR_BASE_REF GITHUB_EVENT_NAME=merge_group "${tier_steps[@]}" GITHUB_STEP_SUMMARY="$tmp/summary-wk" \
-    "$scope" full-steps ui-e2e=success >/dev/null 2>&1 || bad "tier: summary case did not pass"
-grep -q 'WebKit not run here' "$tmp/summary-wk" || bad "tier: a Chromium-only run must say in its summary that WebKit did not run"
 [ "$(NEEDS='' GITHUB_EVENT_NAME=pull_request "$scope" verdict x=y >/dev/null 2>&1; echo $?)" = 1 ] || bad "verdict: empty NEEDS must fail"
 
 # 7. The workflows are wired to match their result job's verdict (needs PyYAML).
@@ -673,7 +699,7 @@ if python3 -c 'import yaml' 2>/dev/null; then
 import re, sys, yaml
 d = sys.argv[1]
 results = {  # workflow: (result job id, required name, verdict specs as the matrix above tests them)
-    "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip"),
+    "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit"),
     "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui"),
     "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue agent=vm,queue tests=vm,queue"),
     "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows"),
@@ -796,17 +822,19 @@ for wf, (rid, rname, want_specs) in results.items():
         n = [n] if isinstance(n, str) else (n or [])
         if not any(x in needs for x in n):
             bad.append(f"{wf}: job {j} is not covered by the result job")
-    # Steps the light mode skips or narrows inside a running job: the verdict cannot see them, so the
-    # job's full-steps guard names each one (by its id) and reads the event's own variables.
+    # Steps the light mode skips inside a running job: the verdict cannot see them, so the job's
+    # full-steps guard names each one (by its id) and reads the event's own variables. A job's own
+    # environment never narrows in the light mode: a skipped job (`ui-webkit`) is what the verdict sees.
     for j, spec in jobs.items():
         steps = spec.get("steps") or []
         light_steps = [s for s in steps if "outputs.light" in str(s.get("if", ""))]
-        narrows = "outputs.light" in str(spec.get("env", ""))
-        if not light_steps and not narrows:
+        if "outputs.light" in str(spec.get("env", "")):
+            bad.append(f"{wf}: job {j} narrows its environment in the light mode, which no guard can see (skip the job instead)")
+        if not light_steps:
             continue
         guards = [s for s in steps if "ci/scope.sh full-steps" in str(s.get("run", ""))]
         if len(guards) != 1:
-            bad.append(f"{wf}: job {j} skips or narrows steps in the light mode but has {len(guards)} full-steps guards")
+            bad.append(f"{wf}: job {j} skips steps in the light mode but has {len(guards)} full-steps guards")
             continue
         g = guards[0]
         tail = [x for x in steps if x.get("uses") != "./.github/actions/cancel-group"]
@@ -821,17 +849,22 @@ for wf, (rid, rname, want_specs) in results.items():
             sid = s.get("id")
             if not sid or f"{sid}=${{{{ steps.{sid}.outcome }}}}" not in g["run"]:
                 bad.append(f"{wf}: job {j}: step {s.get('name')!r} skips in the light mode but the guard does not check it")
-        if narrows and "PUDDLE_E2E_PROJECTS" not in str(spec.get("env", "")):
-            bad.append(f"{wf}: job {j} narrows something other than PUDDLE_E2E_PROJECTS, which the guard cannot see")
-        # The nightly tier's Chromium-only run: the guard must see the variable and scope's output, and the
-        # scope job must pass both through.
-        if "outputs.defer_linux_webkit" in str(spec.get("env", "")):
-            if genv.get("PUDDLE_TIER") != "${{ vars.PUDDLE_TIER }}" or genv.get("DEFER_LINUX_WEBKIT") != "${{ needs.scope.outputs.defer_linux_webkit }}":
-                bad.append(f"{wf}: job {j}: the full-steps guard needs PUDDLE_TIER and DEFER_LINUX_WEBKIT from scope's output")
-            if "defer_linux_webkit" not in sc.get("outputs", {}):
-                bad.append(f"{wf}: scope job has no output defer_linux_webkit")
-            if scope_env.get("PUDDLE_TIER") != "${{ vars.PUDDLE_TIER }}":
-                bad.append(f"{wf}: the scope step needs PUDDLE_TIER from vars")
+    # The Linux browsers: the `ui` job runs the end-to-end tests on Chromium, `ui-webkit` on WebKit, and nothing else
+    # narrows them, so a pull request to main runs both (webkit.yml runs WebKit nightly for the skips above).
+    if wf == "ci":
+        for j, want in (("ui", "chromium"), ("ui-webkit", "webkit")):
+            got = (jobs[j].get("env") or {}).get("PUDDLE_E2E_PROJECTS")
+            if got != want:
+                bad.append(f"ci: job {j} runs PUDDLE_E2E_PROJECTS={got!r}, want {want!r}")
+            if not any("scripts/check.sh ui-e2e" in str(s.get("run", "")) for s in jobs[j]["steps"]):
+                bad.append(f"ci: job {j} does not run the ui-e2e gate")
+        # The two browser entries have their own keys (a shared one would give the WebKit job a Chromium-only hit),
+        # webkit.yml restores the WebKit one, and the queue-tested lookup covers both.
+        text = open(f"{d}/ci.yml").read()
+        if text.count("key: playwright-webkit-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}") < 3:
+            bad.append("ci: the ui-webkit job and queue-tested must use the key playwright-webkit-... for the WebKit browsers")
+        if "key: playwright-webkit-${{ runner.os }}" not in open(f"{d}/webkit.yml").read():
+            bad.append("webkit: must restore the key playwright-webkit-... the ui-webkit job saves")
 # The nightly gates of the VM jobs, Windows UI and clippy count only nightly and manual runs: a merge
 # queue run on develop's commit must not skip the soak tests or the nightly UI run.
 for wf in ("windows", "vm-linux", "vm-windows"):
@@ -888,7 +921,7 @@ wtext = open(f"{d}/webkit.yml").read()
 if "run: ci/should-run.sh webkit.yml\n" not in wtext:
     bad.append("webkit: the nightly gate must be `ci/should-run.sh webkit.yml`")
 if "actions/cache/save" in wtext:
-    bad.append("webkit: must not save the Playwright cache (the key is shared with ci.yml's both-browser entry)")
+    bad.append("webkit: must not save the Playwright cache (ci.yml's `ui-webkit` job saves that key)")
 for j, spec in wk["jobs"].items():
     if (spec.get("env") or {}).get("PUDDLE_E2E_PROJECTS") != "webkit":
         bad.append(f"webkit: job {j} must run PUDDLE_E2E_PROJECTS=webkit")
@@ -930,6 +963,26 @@ PY
 else
     echo "note: PyYAML missing, workflow wiring not checked" >&2
 fi
+
+# 7b. What `vm_unrelated` (ci/scope.sh) assumes about the real tree, so a later change cannot make it wrong silently:
+# the VM workflows call no other workflow, and no top-level non-VM test file of a crate holds a `vm_`
+# test or is a module of a `vm_*` test file (`mod <name>;` or `#[path]`).
+root="$here/.."
+if grep -Ehn "uses: *\./\.github/workflows/|workflow_call|workflow_run" "$root/.github/workflows/vm-linux.yml" "$root/.github/workflows/vm-windows.yml" >&2; then
+    bad "a VM workflow calls another workflow: vm_unrelated in ci/scope.sh would skip them for it"
+fi
+for f in "$root"/crates/*/tests/*.rs; do
+    [ -e "$f" ] || continue
+    case ${f##*/} in vm_*.rs | support.rs | common.rs | mod.rs) continue ;; esac
+    [ "${f#"$root"/crates/puddle-vm-tests/}" != "$f" ] && continue
+    stem=${f##*/}
+    stem=${stem%.rs}
+    if grep -Eq 'fn vm_[a-z0-9_]*' "$f"; then bad "$f holds a vm_ test, but vm_unrelated treats it as a non-VM file"; fi
+    for v in "${f%/*}"/vm_*.rs; do
+        [ -e "$v" ] || continue
+        if grep -Eq "^[[:space:]]*(pub +)?mod +$stem *;|#\[path *= *\"$stem\.rs\"" "$v"; then bad "$v includes $f, but vm_unrelated treats it as a non-VM file"; fi
+    done
+done
 
 # 8. The crate sets against the real graph (opt in: needs cargo; CI's Rust job turns it on).
 if [ "${SCOPE_TEST_METADATA:-0}" = 1 ]; then

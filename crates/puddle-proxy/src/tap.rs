@@ -194,11 +194,24 @@ mod tests {
             b"GET /\xc3\xa9t\xc3\xa9 HTTP/1.1\r\n",
             b"GET ftp://h/ HTTP/1.1\r\n",
             b"GET / HTTP/2\r\n",
+            b"GET foo HTTP/1.1\r\n", // right method and version, target that is no path
             b"ping",
             b"\r\n\r\n",
         ] {
             assert_eq!(line(bytes), None, "{}", String::from_utf8_lossy(bytes));
         }
+    }
+
+    #[test]
+    fn a_line_of_a_few_thousand_bytes_is_still_recorded() {
+        // Literal sizes: a test built from `MAX_TAPPED` would follow a changed limit.
+        assert_eq!(MAX_TAPPED, 8192);
+        let mut early = b"GET /".to_vec();
+        early.extend(vec![b'a'; 3000]);
+        early.extend_from_slice(b" HTTP/1.1\r\n");
+        let tap = RequestTap::new(tokio::io::empty(), &early);
+        let line = tap.request_line().expect("a 3 KB line is within the limit");
+        assert_eq!(line.path().len(), 3001);
     }
 
     #[tokio::test]

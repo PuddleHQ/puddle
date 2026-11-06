@@ -223,6 +223,13 @@ impl<'a> Progress<'a> {
         }
     }
 
+    /// Starts the next gap now without closing the current one: for time the transfer did not
+    /// spend waiting on its peer, such as a test planting a fault between two writes.
+    pub(crate) fn skip(&mut self) {
+        self.last = Instant::now();
+        self.kernel_at_last = self.backoff.accrued();
+    }
+
     /// Progress happened: closes the gap and starts the next.
     pub(crate) fn mark(&mut self) {
         let gap = self.gap();

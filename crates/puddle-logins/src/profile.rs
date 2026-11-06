@@ -278,8 +278,30 @@ impl Profile {
     }
 }
 
+/// The token fields Claude Code's token endpoints answer with, the same on every host that serves
+/// the exchange.
+const CLAUDE_TOKEN_FIELDS: &[Field] = &[
+    Field {
+        path: "access_token",
+        resource: None,
+        role: Role::Access,
+        prefixes: &["sk-ant-oat01-"],
+        keep_last: 0,
+        scope: Scope::Api,
+    },
+    Field {
+        path: "refresh_token",
+        resource: None,
+        role: Role::Refresh,
+        prefixes: &["sk-ant-ort01-"],
+        keep_last: 0,
+        scope: Scope::TokenEndpoint,
+    },
+];
+
 /// Claude Code (`claude auth login`, `/login`): the OAuth code exchange and refresh at
-/// `platform.claude.com`, JSON both ways, and the API key the login creates.
+/// `platform.claude.com`, JSON both ways, and the API key the login creates. Versions up to 2.1.5
+/// use `console.anthropic.com` for the same exchange.
 pub const CLAUDE: Profile = Profile {
     id: "claude",
     name: "Claude Code",
@@ -289,24 +311,14 @@ pub const CLAUDE: Profile = Profile {
             method: Method::Post,
             path: "/v1/oauth/token",
             refresh_field: Some("refresh_token"),
-            fields: &[
-                Field {
-                    path: "access_token",
-                    resource: None,
-                    role: Role::Access,
-                    prefixes: &["sk-ant-oat01-"],
-                    keep_last: 0,
-                    scope: Scope::Api,
-                },
-                Field {
-                    path: "refresh_token",
-                    resource: None,
-                    role: Role::Refresh,
-                    prefixes: &["sk-ant-ort01-"],
-                    keep_last: 0,
-                    scope: Scope::TokenEndpoint,
-                },
-            ],
+            fields: CLAUDE_TOKEN_FIELDS,
+        },
+        Endpoint {
+            host: "console.anthropic.com",
+            method: Method::Post,
+            path: "/v1/oauth/token",
+            refresh_field: Some("refresh_token"),
+            fields: CLAUDE_TOKEN_FIELDS,
         },
         Endpoint {
             host: "api.anthropic.com",
@@ -416,6 +428,7 @@ mod tests {
     fn a_refresh_token_is_swapped_toward_the_token_endpoint_only() {
         let claude = CLAUDE.hosts_for(Scope::TokenEndpoint);
         assert!(claude.contains(&host("platform.claude.com")));
+        assert!(claude.contains(&host("console.anthropic.com")));
         assert!(
             !claude.contains(&host("api.anthropic.com")),
             "the endpoint that creates a key takes no refresh token"
@@ -442,7 +455,8 @@ mod tests {
         assert_eq!(GITHUB.slot_name(Role::Access), "github-access");
         assert_eq!(CLAUDE.roles(), [Role::Access, Role::Refresh, Role::ApiKey]);
         assert_eq!(GITHUB.roles(), [Role::Access, Role::Refresh]);
-        assert_eq!(CLAUDE.fields().count(), 3);
+        // Two token hosts with two fields each, and the key.
+        assert_eq!(CLAUDE.fields().count(), 5);
     }
 
     #[test]

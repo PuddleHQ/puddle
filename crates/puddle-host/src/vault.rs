@@ -72,12 +72,15 @@ fn report(outcome: Result<Sweep, &'static str>, problems: &Problems) {
 
 /// Runs [`sweep`] off the async threads: a locked keyring may take a long time to answer, and
 /// starting must not wait for it. Values this run writes meanwhile are never swept.
+///
+/// The sweep holds the store, so the host awaits the returned handle at shutdown: a restart on
+/// the same folder must not open the database while this run's connection is still closing.
 pub(crate) fn sweep_in_background(
     vault: Arc<dyn SecretStore>,
     store: Arc<Store>,
     problems: Arc<Problems>,
-) {
-    tokio::task::spawn_blocking(move || report(sweep(vault.as_ref(), &store), &problems));
+) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || report(sweep(vault.as_ref(), &store), &problems))
 }
 
 #[cfg(test)]
@@ -192,11 +195,12 @@ mod tests {
         );
         let disk = Arc::new(MemoryStore::new());
         put(&IndexedStore::new(Shared(disk.clone())), "tok-a");
-        sweep_in_background(
+        let sweep = sweep_in_background(
             Arc::new(IndexedStore::new(Shared(disk.clone()))),
             store,
             Arc::new(Problems::new(Arc::new(puddle_types::NullSink))),
         );
+        sweep.await.unwrap();
         puddle_test_kit::eventually("the sweep ran", std::time::Duration::from_secs(5), || {
             disk.get(&id("tok-a")).unwrap().is_none()
         })

@@ -5467,6 +5467,24 @@ async fn host_with_listed_workspace_whose_volume_is_gone() -> (Rig, Host<FakeRun
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_host_has_closed_its_database_so_a_restart_never_waits_on_it() {
+    // SQLite deletes the write-ahead log when the last connection closes; a close still
+    // running (a checkpoint that fsyncs) is what made a quick restart hit "database is locked"
+    // when the disk stalled.
+    let rig = Rig::new();
+    let wal = rig.dir.path().join("data").join("puddle.db-wal");
+    for _ in 0..20 {
+        let host = rig.start().await;
+        host.shutdown().await;
+        drop(host);
+        assert!(
+            !wal.exists(),
+            "the database was still open after the host was dropped"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn starting_a_workspace_whose_volume_is_gone_refuses_and_makes_no_empty_volume() {
     let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
     let api = api(&host);

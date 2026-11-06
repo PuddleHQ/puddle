@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Second half of the notices refresh on a Dependabot npm PR (first half: dependabot-notices-build.yml). Runs from
+# develop's copy of this file after the build run, holds a write token, and never runs the PR's code: it takes the one
+# file the build run uploaded as data, and ci/dependabot-notices.sh checks it and pushes it as a bot commit with plain
+# git. Even a forged file only ends in a red `ui-licences` gate, which regenerates and compares. A push by the
+# workflow token starts no checks, so the script dispatches the required workflows on the branch (the one event
+# that token may start); `actions: write` is for that.
+name: dependabot-notices
+
+on:
+  workflow_run:
+    workflows: [dependabot-notices-build]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  push:
+    name: push regenerated notices
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.actor.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: dependabot-notices-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          sparse-checkout: ci/dependabot-notices.sh
+          persist-credentials: false
+      - name: Download the regenerated file (data only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '[.artifacts[] | select(.name == "ui-notices")] | length')
+          if [ "$n" = 0 ]; then
+            echo "no ui-notices artifact on run $RUN_ID: the notices were already current"
+          else
+            gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -n ui-notices -D notices-in
+          fi
+      - name: Commit it to the PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          [ -f notices-in/THIRD-PARTY-NOTICES.txt ] || exit 0
+          ci/dependabot-notices.sh "$BRANCH" "$HEAD_SHA" notices-in/THIRD-PARTY-NOTICES.txt

@@ -221,6 +221,11 @@ fn run_bounded(mut command: Command, call: &str, limit: Duration) -> Result<Stri
         .spawn()
         .unwrap();
     let start = Instant::now();
+    // The longest this process went without running between two polls. A 100 ms sleep that took
+    // seconds means the whole machine stalled (a runner freeze delays every process, PowerShell's
+    // start included), so the timeout is not this call's doing.
+    let mut longest_gap = Duration::ZERO;
+    let mut last_poll = start;
     // flake-ok: waits for a child with a limit whose outcome is a killed process tree and an `Err` value the caller matches on, not a panic
     loop {
         if child.try_wait().unwrap().is_some() {
@@ -229,10 +234,15 @@ fn run_bounded(mut command: Command, call: &str, limit: Duration) -> Result<Stri
         if start.elapsed() > limit {
             kill_tree(&mut child);
             return Err(Failure::TimedOut(format!(
-                "timed out after {limit:?}, process tree killed: {call}"
+                "timed out after {limit:?}, process tree killed: {call} (this test process was \
+                 itself away for up to {longest_gap:?} between two 100 ms polls; over a second \
+                 means the machine stalled, not this call)"
             )));
         }
         std::thread::sleep(Duration::from_millis(100));
+        let now = Instant::now();
+        longest_gap = longest_gap.max(now - last_poll);
+        last_poll = now;
     }
     let out = child.wait_with_output().unwrap();
     let text = format!(
@@ -835,6 +845,10 @@ fn a_hung_call_is_killed_with_its_children_and_named() {
     // No time bar: the child pings for 3000 s or more, so a kill that waited for it never returns
     // here, and the test fails by nextest's own timeout instead of passing slowly.
     assert!(message.contains("Remove-Item the-hung-call"), "{message}");
+    assert!(
+        message.contains("between two 100 ms polls"),
+        "a timeout says how long this process itself was away: {message}"
+    );
     assert_eq!(
         pings_running(marker),
         0,

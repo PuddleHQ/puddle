@@ -42,6 +42,11 @@ const GRADLE_VERSION: &str = "8.14.3";
 const GRADLE_SHA256: &str = "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531";
 const PNPM: &str = "pnpm@10.12.1";
 const YARN_BERRY: &str = "yarn@4.9.2";
+/// The SHA-512 corepack computes over each archive it downloads, i.e. the `+sha512.<hex>` suffix
+/// `corepack use <tool>@<version>` writes into `packageManager`. The pnpm one equals the registry's
+/// `dist.integrity` of `pnpm@10.12.1` (base64 of the same digest).
+const PNPM_SHA512: &str = "f0dda8580f0ee9481c5c79a1d927b9164f2c478e90992ad268bbb2465a736984391d6333d2c327913578b2804af33474ca554ba29c04a8b13060a717675ae3ac";
+const YARN_BERRY_SHA512: &str = "1fc009bc09d13cfd0e19efa44cbfc2b9cf6ca61482725eb35bbc5e257e093ebf4130db6dfe15d604ff4b79efd8e1e8e99b25fa7d0a6197c9f9826358d4d65c3c";
 
 const CREATE_BUDGET: Duration = Duration::from_secs(300);
 /// Per setup step; the guest enforces it with `timeout` (a bit less) and writes the step's output to a
@@ -129,11 +134,15 @@ const SETUP_STEPS: &[(&str, &str, &str)] = &[
     ),
     (
         // The corepack home holds both tools; on a cold cache it is copied out once both are there.
+        // Each archive is fetched with its `+sha512` pin, so a wrong hash or a swapped archive fails
+        // the step here, naming the tool, instead of passing on corepack's registry signature check.
         "corepack pnpm and yarn berry",
         "registry.npmjs.org, repo.yarnpkg.com (cold cache only)",
         "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0; H=\"$HOME/.cache/node/corepack\"; C=/vmcache/corepack; \
          if [ -f $C/ok ]; then mkdir -p \"$H\" && cp -a $C/home/. \"$H\"/; fi; \
-         corepack enable pnpm && corepack install -g \"$PNPM\" && \
+         corepack enable pnpm && \
+         { corepack install -g \"$PNPM+sha512.$PNPM_SHA512\" || { echo \"pnpm archive check or download failed: $PNPM+sha512.$PNPM_SHA512\"; exit 1; }; } && \
+         { corepack install -g \"$YARN_BERRY+sha512.$YARN_BERRY_SHA512\" || { echo \"yarn berry archive check or download failed: $YARN_BERRY+sha512.$YARN_BERRY_SHA512\"; exit 1; }; } && \
          mkdir -p /tmp/warm && cd /tmp/warm && corepack \"$YARN_BERRY\" --version && \
          if [ ! -f $C/ok ]; then \
            rm -rf $C.tmp && mkdir -p $C.tmp/home && cp -a \"$H\"/. $C.tmp/home/ && touch $C.tmp/ok && \
@@ -165,7 +174,9 @@ fn tools_cache() -> std::path::PathBuf {
         APT_PACKAGES,
         GRADLE_SHA256,
         PNPM,
+        PNPM_SHA512,
         YARN_BERRY,
+        YARN_BERRY_SHA512,
         SETUP_STEPS,
     )
         .hash(&mut hasher);
@@ -679,6 +690,8 @@ async fn setup_step(sb: &Sandbox, name: &str, host: &str, script: &str) {
                 .env("APT_PACKAGES", APT_PACKAGES)
                 .env("PNPM", PNPM)
                 .env("YARN_BERRY", YARN_BERRY)
+                .env("PNPM_SHA512", PNPM_SHA512)
+                .env("YARN_BERRY_SHA512", YARN_BERRY_SHA512)
                 .timeout(SETUP_STEP_BUDGET)
         }),
     )

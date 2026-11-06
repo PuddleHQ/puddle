@@ -27,6 +27,9 @@ pub enum Role {
     /// GitHub token for one). It is made again at every exchange and its fields carry its expiry,
     /// so every exchange gets a new stand-in and the tool keeps working with the older ones.
     Copilot,
+    /// The identity token of an `OpenID` Connect login: a JWT the tool reads the claims of (who
+    /// signed in), and hands back to the token endpoint to trade for an API key.
+    IdToken,
 }
 
 impl Role {
@@ -38,6 +41,7 @@ impl Role {
             Self::Refresh => "refresh",
             Self::ApiKey => "api-key",
             Self::Copilot => "copilot",
+            Self::IdToken => "id-token",
         }
     }
 }
@@ -156,6 +160,11 @@ pub struct Field {
     /// that is a JWT, is made again at every exchange (its expiry is in what the client reads),
     /// so the slot's earlier stand-ins stay swapped for a few exchanges.
     pub stand_in: StandInKind,
+    /// Whether the field only takes a token that starts with one of `prefixes`. Two fields of one
+    /// endpoint may name the same answer field when the answers differ (a token exchange answers
+    /// with an API key where the login answered with a JWT): the first field in the list that takes
+    /// the token is the one used, so a field with no such condition goes last.
+    pub only_prefixed: bool,
     /// Where the stand-in is swapped for the real token.
     pub scope: Scope,
 }
@@ -184,8 +193,10 @@ pub struct Endpoint {
     /// stands for any segment that starts with the text before it (`org.couchdb.user:*`). The
     /// segments are read as [`path_matches`] says.
     pub path: &'static str,
-    /// The request field that holds the refresh token, where the stand-in is swapped back.
-    pub refresh_field: Option<&'static str>,
+    /// The top-level request fields that hold one of the workspace's stand-ins (the refresh
+    /// token, a token handed in for another), where the stand-in is swapped for the real token.
+    /// An endpoint with some is also a token endpoint for [`Scope::TokenEndpoint`].
+    pub request_fields: &'static [&'static str],
     /// The answer's token fields.
     pub fields: &'static [Field],
 }
@@ -252,7 +263,7 @@ impl Profile {
             Scope::TokenEndpoint => (
                 self.endpoints
                     .iter()
-                    .filter(|e| e.refresh_field.is_some())
+                    .filter(|e| !e.request_fields.is_empty())
                     .collect(),
                 &[],
             ),
@@ -314,6 +325,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["sk-ant-oat01-"],
         keep_last: 0,
         stand_in: StandInKind::Shaped,
+        only_prefixed: false,
         scope: Scope::Api,
     },
     Field {
@@ -323,6 +335,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["sk-ant-ort01-"],
         keep_last: 0,
         stand_in: StandInKind::Shaped,
+        only_prefixed: false,
         scope: Scope::TokenEndpoint,
     },
 ];
@@ -338,21 +351,21 @@ pub const CLAUDE: Profile = Profile {
             host: "platform.claude.com",
             method: Method::Post,
             path: "/v1/oauth/token",
-            refresh_field: Some("refresh_token"),
+            request_fields: &["refresh_token"],
             fields: CLAUDE_TOKEN_FIELDS,
         },
         Endpoint {
             host: "console.anthropic.com",
             method: Method::Post,
             path: "/v1/oauth/token",
-            refresh_field: Some("refresh_token"),
+            request_fields: &["refresh_token"],
             fields: CLAUDE_TOKEN_FIELDS,
         },
         Endpoint {
             host: "api.anthropic.com",
             method: Method::Post,
             path: "/api/oauth/claude_cli/create_api_key",
-            refresh_field: None,
+            request_fields: &[],
             fields: &[Field {
                 path: "raw_key",
                 resource: None,
@@ -361,6 +374,7 @@ pub const CLAUDE: Profile = Profile {
                 // The CLI keeps the last 20 characters of the key it was given.
                 keep_last: 20,
                 stand_in: StandInKind::Shaped,
+                only_prefixed: false,
                 scope: Scope::Api,
             }],
         },
@@ -386,7 +400,7 @@ pub const GITHUB: Profile = Profile {
             host: "github.com",
             method: Method::Post,
             path: "/login/oauth/access_token",
-            refresh_field: Some("refresh_token"),
+            request_fields: &["refresh_token"],
             fields: &[
                 Field {
                     path: "access_token",
@@ -395,6 +409,7 @@ pub const GITHUB: Profile = Profile {
                     prefixes: &["gho_", "ghu_"],
                     keep_last: 0,
                     stand_in: StandInKind::Shaped,
+                    only_prefixed: false,
                     scope: Scope::Api,
                 },
                 Field {
@@ -404,6 +419,7 @@ pub const GITHUB: Profile = Profile {
                     prefixes: &["ghr_"],
                     keep_last: 0,
                     stand_in: StandInKind::Shaped,
+                    only_prefixed: false,
                     scope: Scope::TokenEndpoint,
                 },
             ],
@@ -414,7 +430,7 @@ pub const GITHUB: Profile = Profile {
             host: "api.github.com",
             method: Method::Any,
             path: "/copilot_internal/v2/token",
-            refresh_field: None,
+            request_fields: &[],
             fields: &[Field {
                 path: "token",
                 resource: None,
@@ -422,6 +438,7 @@ pub const GITHUB: Profile = Profile {
                 prefixes: &[],
                 keep_last: 0,
                 stand_in: StandInKind::Fields,
+                only_prefixed: false,
                 scope: Scope::Api,
             }],
         },
@@ -434,10 +451,79 @@ pub const GITHUB: Profile = Profile {
     ],
 };
 
+/// `OpenAI`'s Codex (`codex login` with a `ChatGPT` account): the OAuth code exchange, the refresh and
+/// the token exchange that trades the identity token for an API key all go to
+/// `auth.openai.com/oauth/token`.
+///
+/// - The code exchange and the refresh answer with `id_token`, `access_token` and `refresh_token`.
+///   Both JWTs are read by Codex (who signed in, which plan, when the token ends), so their stand-ins
+///   keep header and payload.
+/// - The token exchange answers with an API key (`sk-...`) in the same `access_token` field, so
+///   that field is listed twice: the API key first, because it only takes a token with its prefix.
+/// - The refresh sends `refresh_token`, the token exchange sends the identity token as
+///   `subject_token`.
+/// - The tokens go to the API (`api.openai.com`) and to `ChatGPT`'s backend (`chatgpt.com`).
+///
+/// The hosts and the shape of the tokens are from the Codex source and public descriptions of the
+/// login, not from a recording.
+pub const OPENAI: Profile = Profile {
+    id: "openai",
+    name: "OpenAI Codex",
+    endpoints: &[Endpoint {
+        host: "auth.openai.com",
+        method: Method::Post,
+        path: "/oauth/token",
+        request_fields: &["refresh_token", "subject_token"],
+        fields: &[
+            Field {
+                path: "access_token",
+                resource: None,
+                role: Role::ApiKey,
+                prefixes: &["sk-"],
+                keep_last: 0,
+                stand_in: StandInKind::Shaped,
+                only_prefixed: true,
+                scope: Scope::Api,
+            },
+            Field {
+                path: "access_token",
+                resource: None,
+                role: Role::Access,
+                prefixes: &[],
+                keep_last: 0,
+                stand_in: StandInKind::Jwt,
+                only_prefixed: false,
+                scope: Scope::Api,
+            },
+            Field {
+                path: "id_token",
+                resource: None,
+                role: Role::IdToken,
+                prefixes: &[],
+                keep_last: 0,
+                stand_in: StandInKind::Jwt,
+                only_prefixed: false,
+                scope: Scope::TokenEndpoint,
+            },
+            Field {
+                path: "refresh_token",
+                resource: None,
+                role: Role::Refresh,
+                prefixes: &["rt_"],
+                keep_last: 0,
+                stand_in: StandInKind::Shaped,
+                only_prefixed: false,
+                scope: Scope::TokenEndpoint,
+            },
+        ],
+    }],
+    api_hosts: &["api.openai.com", "chatgpt.com"],
+};
+
 /// The profiles Puddle ships.
 #[must_use]
 pub fn builtin() -> &'static [Profile] {
-    &[CLAUDE, GITHUB]
+    &[CLAUDE, GITHUB, OPENAI]
 }
 
 #[cfg(test)]
@@ -458,7 +544,7 @@ mod tests {
                 let wanted: Vec<&str> = profile
                     .endpoints
                     .iter()
-                    .filter(|e| scope == Scope::Api || e.refresh_field.is_some())
+                    .filter(|e| scope == Scope::Api || !e.request_fields.is_empty())
                     .map(|e| e.host)
                     .chain(match scope {
                         Scope::Api => profile.api_hosts.iter().copied(),

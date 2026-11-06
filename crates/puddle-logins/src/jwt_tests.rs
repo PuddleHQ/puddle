@@ -18,7 +18,7 @@ static JWT_PROFILE: [Profile; 1] = [Profile {
         host: "login.jwt.test",
         method: Method::Post,
         path: "/token",
-        refresh_field: Some("refresh_token"),
+        request_fields: &["refresh_token"],
         fields: &[
             Field {
                 path: "access_token",
@@ -27,6 +27,7 @@ static JWT_PROFILE: [Profile; 1] = [Profile {
                 prefixes: &[],
                 keep_last: 0,
                 stand_in: StandInKind::Jwt,
+                only_prefixed: false,
                 scope: Scope::Api,
             },
             Field {
@@ -36,6 +37,7 @@ static JWT_PROFILE: [Profile; 1] = [Profile {
                 prefixes: &["rt_"],
                 keep_last: 0,
                 stand_in: StandInKind::Shaped,
+                only_prefixed: false,
                 scope: Scope::TokenEndpoint,
             },
         ],

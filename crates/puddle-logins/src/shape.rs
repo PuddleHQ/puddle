@@ -171,7 +171,7 @@ pub(crate) fn jwt_stand_in_with(
 
 /// The longest token of fields or a JWT: a Copilot session token is a few hundred characters, a JWT
 /// longer. The registry's own limit.
-const MAX_FIELDS_LEN: usize = 1024;
+const MAX_FIELDS_LEN: usize = 4096;
 
 /// A stand-in for a token of `key=value;` fields and a MAC after the first colon: the fields as
 /// they are, the MAC replaced by random characters of its alphabet and length. The client reads
@@ -384,7 +384,7 @@ mod tests {
         assert!(stand_in_for(&long, copilot_session()).is_ok());
         assert!(usable_for(copilot_session(), &long));
         assert!(!usable_for(github_access(), &long));
-        let too_long = format!("tid=1;pad={}:{SESSION_MAC}", "x".repeat(1100));
+        let too_long = format!("tid=1;pad={}:{SESSION_MAC}", "x".repeat(4100));
         assert_eq!(
             stand_in_for(&too_long, copilot_session()),
             Err(ShapeError::Unusable)
@@ -593,10 +593,10 @@ mod tests {
     }
 
     #[test]
-    fn a_jwt_field_takes_up_to_a_thousand_and_twenty_four_characters_and_a_shaped_one_256() {
-        let long = jwt(r#"{"exp":1}"#, 1024 - jwt(r#"{"exp":1}"#, 0).len());
-        assert_eq!(long.len(), 1024);
-        assert_eq!(stand_in_for(&long, &jwt_field()).unwrap().len(), 1024);
+    fn a_jwt_field_takes_up_to_4096_characters_and_a_shaped_one_256() {
+        let long = jwt(r#"{"exp":1}"#, 4096 - jwt(r#"{"exp":1}"#, 0).len());
+        assert_eq!(long.len(), 4096);
+        assert_eq!(stand_in_for(&long, &jwt_field()).unwrap().len(), 4096);
         assert_eq!(
             stand_in_for(&format!("{long}x"), &jwt_field()),
             Err(ShapeError::Unusable)

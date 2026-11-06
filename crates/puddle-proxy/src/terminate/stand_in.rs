@@ -61,8 +61,9 @@ pub(crate) use answer::{
 /// it.
 const MIN_STAND_IN_LEN: usize = 16;
 
-/// The longest stand-in accepted: a Copilot session token is a few hundred characters.
-const MAX_LEN: usize = 1024;
+/// The longest stand-in accepted: a Copilot session token is a few hundred characters, a `ChatGPT`
+/// access token (a JWT with the account's claims) a couple of thousand.
+const MAX_LEN: usize = 4096;
 
 /// Most random bytes of a generated stand-in: 128 bits.
 const RANDOM_BYTES: usize = 16;

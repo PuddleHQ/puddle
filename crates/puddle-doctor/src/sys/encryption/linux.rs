@@ -21,19 +21,28 @@ pub(crate) fn disk_encryption(dir: Option<&Path>) -> DiskEncryptionFacts {
         .map_err(|e| format!("/proc/self/mountinfo: {e}"));
     let swaps = std::fs::read_to_string("/proc/swaps").map_err(|e| format!("/proc/swaps: {e}"));
     let wsl = is_wsl(&std::fs::read_to_string("/proc/version").unwrap_or_default());
-    let sys = Path::new("/sys");
+    facts_from(Path::new("/sys"), dir, &mounts, &swaps, wsl)
+}
+
+fn facts_from(
+    sys: &Path,
+    dir: Option<&Path>,
+    mounts: &Result<Vec<Mount>, String>,
+    swaps: &Result<String, String>,
+    wsl: bool,
+) -> DiskEncryptionFacts {
     let mut facts = DiskEncryptionFacts {
         data: match dir {
             None => DataEncryption::NoFolder,
             Some(dir) => DataEncryption::Volume {
                 dir: dir.to_path_buf(),
-                protection: match &mounts {
+                protection: match mounts {
                     Ok(mounts) => path_protection(sys, mounts, &nearest_existing(dir)),
                     Err(why) => Protection::Unknown { why: why.clone() },
                 },
             },
         },
-        swap: match (&swaps, &mounts) {
+        swap: match (swaps, mounts) {
             (Ok(swaps), Ok(mounts)) => swap_facts(sys, mounts, swaps),
             (Err(why), _) | (_, Err(why)) => SwapFacts::Unreadable { why: why.clone() },
         },
@@ -146,7 +155,7 @@ fn path_protection(sys: &Path, mounts: &[Mount], path: &Path) -> Protection {
         return block_protection(&by_number);
     }
     // btrfs and similar report an anonymous device number: go by the source device instead.
-    if mount.source.starts_with("/dev/")
+    if Path::new(&mount.source).is_absolute()
         && let Ok(real) = Path::new(&mount.source).canonicalize()
         && let Some(name) = real.file_name()
     {
@@ -388,9 +397,8 @@ mod tests {
             "Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 100 0 100\n/nonexistent/part partition 1 0 -2\n{} file 1 0 -3\n",
             file.display()
         );
-        let SwapFacts::Areas(areas) = swap_facts(sys.path(), &mounts, &swaps) else {
-            panic!("areas")
-        };
+        let result = swap_facts(sys.path(), &mounts, &swaps);
+        let areas = result.areas();
         assert!(matches!(areas[0].protection, Protection::NotOnDisk { .. }));
         assert!(matches!(areas[1].protection, Protection::Unknown { .. }));
         assert_eq!(areas[2].protection, Protection::NotEncrypted);
@@ -415,7 +423,7 @@ mod tests {
             },
             swap: SwapFacts::Areas(vec![SwapArea {
                 name: "/swap".into(),
-                protection: Protection::Encrypted { by: "LUKS".into() },
+                protection: Protection::NotEncrypted,
             }]),
         };
         wsl_unknown(&mut facts);
@@ -426,9 +434,56 @@ mod tests {
                 ..
             }
         ));
-        assert!(
-            matches!(&facts.swap, SwapFacts::Areas(a) if matches!(a[0].protection, Protection::Encrypted { .. }))
+        assert!(matches!(
+            facts.swap.areas()[0].protection,
+            Protection::Unknown { .. }
+        ));
+    }
+
+    #[test]
+    fn a_source_device_is_followed_when_the_device_number_is_anonymous() {
+        let sys = tempfile::tempdir().unwrap();
+        let _dev = device(sys.path(), "dm-0", "253:0", Some("CRYPT-LUKS2-a"));
+        let nodes = tempfile::tempdir().unwrap();
+        let node = nodes.path().join("dm-0");
+        fs::write(&node, b"").unwrap();
+        let text = mount("0:44", "/", "btrfs", &node.display().to_string());
+        let mounts = parse_mounts(&text);
+        assert!(matches!(
+            path_protection(sys.path(), &mounts, Path::new("/")),
+            Protection::Encrypted { .. }
+        ));
+        let swaps = format!("Filename Type\n{} partition 1 0 -2\n", node.display());
+        let result = swap_facts(sys.path(), &mounts, &swaps);
+        assert!(matches!(
+            result.areas()[0].protection,
+            Protection::Encrypted { .. }
+        ));
+    }
+
+    #[test]
+    fn unreadable_inputs_say_unknown_and_the_walk_is_bounded() {
+        let sys = tempfile::tempdir().unwrap();
+        let dir = Path::new("/");
+        let facts = facts_from(
+            sys.path(),
+            Some(dir),
+            &Err("m".into()),
+            &Ok(String::new()),
+            false,
         );
+        assert!(matches!(
+            facts.data,
+            DataEncryption::Volume {
+                protection: Protection::Unknown { .. },
+                ..
+            }
+        ));
+        assert_eq!(facts.swap, SwapFacts::Unreadable { why: "m".into() });
+        let facts = facts_from(sys.path(), None, &Ok(vec![]), &Err("s".into()), false);
+        assert_eq!(facts.swap, SwapFacts::Unreadable { why: "s".into() });
+        let plain = device(sys.path(), "sdz", "8:99", None);
+        assert_eq!(crypt_below(&plain, 0), None);
     }
 
     #[test]

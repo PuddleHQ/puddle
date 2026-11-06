@@ -90,16 +90,15 @@ mod tests {
 
     #[test]
     fn a_protected_drive_with_its_page_file_on_it() {
-        let a = parse("puddle-encryption data=1 pagefile-encrypted=0 pagefiles=C:1").unwrap();
+        let a =
+            parse("puddle-encryption extra=1 data=1 pagefile-encrypted=0 pagefiles=C:1").unwrap();
         assert_eq!(
             a.data,
             Protection::Encrypted {
                 by: "BitLocker".into()
             }
         );
-        let SwapFacts::Areas(areas) = a.swap else {
-            panic!("areas")
-        };
+        let areas = a.swap.areas();
         assert_eq!(areas[0].name, r"C:\pagefile.sys");
         assert!(matches!(areas[0].protection, Protection::Encrypted { .. }));
     }
@@ -108,9 +107,7 @@ mod tests {
     fn an_encrypted_page_file_setting_covers_an_unprotected_drive() {
         let a = parse("puddle-encryption data=2 pagefile-encrypted=1 pagefiles=D:2").unwrap();
         assert_eq!(a.data, Protection::NotEncrypted);
-        let SwapFacts::Areas(areas) = a.swap else {
-            panic!("areas")
-        };
+        let areas = a.swap.areas();
         assert!(
             matches!(&areas[0].protection, Protection::Encrypted { by } if by.contains("page file"))
         );
@@ -123,9 +120,7 @@ mod tests {
         assert_eq!(a.swap, SwapFacts::None);
         let b = parse("puddle-encryption data=9 pagefile-encrypted=0 pagefiles=C:0,D:x").unwrap();
         assert!(matches!(b.data, Protection::Unknown { .. }));
-        let SwapFacts::Areas(areas) = b.swap else {
-            panic!("areas")
-        };
+        let areas = b.swap.areas();
         assert_eq!(areas[0].protection, Protection::NotEncrypted);
         assert!(matches!(areas[1].protection, Protection::Unknown { .. }));
     }

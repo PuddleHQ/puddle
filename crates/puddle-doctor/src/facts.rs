@@ -639,6 +639,17 @@ pub enum SwapFacts {
     },
 }
 
+impl SwapFacts {
+    /// The swap areas in use; empty when there are none or the list was unreadable.
+    #[must_use]
+    pub fn areas(&self) -> &[SwapArea] {
+        match self {
+            Self::Areas(areas) => areas,
+            Self::None | Self::Unreadable { .. } => &[],
+        }
+    }
+}
+
 /// Whether the drive that holds Puddle's data folder is encrypted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataEncryption {

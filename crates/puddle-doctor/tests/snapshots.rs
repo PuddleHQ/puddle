@@ -1759,3 +1759,53 @@ fn an_unreadable_state_is_info_and_swap_in_memory_is_fine() {
         Status::Info
     );
 }
+
+#[test]
+fn an_unreadable_swap_list_with_an_unencrypted_drive_still_warns_and_keeps_the_reason() {
+    let fake = Fake {
+        enc: DiskEncryptionFacts {
+            data: DataEncryption::Volume {
+                dir: PathBuf::from(DATA),
+                protection: Protection::NotEncrypted,
+            },
+            swap: SwapFacts::Unreadable {
+                why: "/proc/swaps: permission denied".into(),
+            },
+        },
+        ..linux()
+    };
+    let r = check(
+        "encryption_swap_list_unreadable",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskNotEncrypted),
+    );
+    let c = r.check(CheckId::DiskEncryption).unwrap();
+    assert!(c.detail.as_deref().unwrap().contains("/proc/swaps"));
+    assert_eq!(SwapFacts::None.areas().len(), 0);
+}
+
+#[test]
+fn drive_and_swap_both_unencrypted_on_an_unknown_os_gets_generic_advice() {
+    let fake = Fake {
+        os: Os::Other,
+        enc: encryption(Protection::NotEncrypted, Protection::NotEncrypted),
+        ..linux()
+    };
+    let r = check(
+        "encryption_both_not_encrypted_other_os",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskNotEncrypted),
+    );
+    let fix = r
+        .check(CheckId::DiskEncryption)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(
+        fix.starts_with("The drive and the swap are not encrypted"),
+        "{fix}"
+    );
+}

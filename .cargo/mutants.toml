@@ -148,6 +148,11 @@ exclude_re = [
     # checked against the wire (`Streaming`, `Rejoined`), so no body can end short of its hint
     # without hyper's own error first; the guard is a defence against a body that breaks the trait.
     'response\.rs:\d+:\d+: replace match guard sent != n with false in write',
+    # `TokenBody` wipes its texts on drop (`wipe`, only called from `drop`). The wiped memory is
+    # freed right after, so no safe code can read what the wipe cleared: the two outcomes cannot be
+    # told apart by a test (the same reason as the drop of a `SecretValue`).
+    'token_body\.rs:\d+:\d+: replace wipe with \(\)',
+    'token_body\.rs:\d+:\d+: replace <impl Drop for TokenBody>::drop with \(\)',
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

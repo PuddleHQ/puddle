@@ -1553,6 +1553,9 @@ async fn an_ip_rule_deny_names_the_refused_address_on_the_audit_row() {
     let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
     assert_eq!(back, response);
     received.await.unwrap();
+    // A request is recorded when it ends, which can be after the guest has its answer: wait for
+    // the first row so the refused CONNECT cannot be recorded ahead of it.
+    rig.events(1).await;
     let (code, _) = guest.connect_to("only.test:443").await;
     assert_eq!(code, 403);
     let events = rig.events(2).await;

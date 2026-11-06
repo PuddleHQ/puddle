@@ -131,6 +131,23 @@ exclude_re = [
     # `tests/windows_store.rs` fails it where the snapshot is not empty.
     'platform/mod\.rs:(18|28):5: replace read -> Result<StoreSnapshot, StoreError> with Ok\(Default::default\(\)\)',
     'store\.rs:\d+:5: replace read_host_stores -> Result<StoreSnapshot, StoreError> with Ok\(Default::default\(\)\)',
+    # `watch.rs` reads a frame's 24-bit length as `a << 16 | b << 8 | c`: the three terms share no
+    # bit, so `^` gives the same length for every input.
+    'watch\.rs:\d+:\d+: replace \| with \^ in Frames::observe',
+    # `percent_decoded` joins `high << 4 | low` with `low` below 16: the shifted value has its low
+    # four bits clear, so `^` gives the same byte for every input.
+    'alt_svc\.rs:\d+:\d+: replace \| with \^ in percent_decoded',
+    # `PassThrough` entries expire when their age passes the ttl: `<` against `<=` differs only for
+    # an age equal to the ttl to the nanosecond, which no clock reading can produce on purpose.
+    'intercept\.rs:\d+:\d+: replace < with <= in PassThrough::(learn|contains|forget|clear)',
+    # `records_answer` truncates to `MAX_RECORDS`: with exactly `MAX_RECORDS` records `truncate` is a
+    # no-op, so `>` and `>=` give the same answer.
+    'resolve\.rs:\d+:\d+: replace > with >= in records_answer',
+    # `response::write` rejects a body shorter than its `Content-Length`. The answer's body is
+    # `AnswerBody`, whose exact size hint is its own length (`Buffered`) or one hyper has already
+    # checked against the wire (`Streaming`, `Rejoined`), so no body can end short of its hint
+    # without hyper's own error first; the guard is a defence against a body that breaks the trait.
+    'response\.rs:\d+:\d+: replace match guard sent != n with false in write',
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

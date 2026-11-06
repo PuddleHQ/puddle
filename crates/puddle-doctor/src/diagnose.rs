@@ -1100,7 +1100,7 @@ fn ssh_agent(os: Os, facts: &SshAgentFacts) -> Check {
     match facts {
         SshAgentFacts::NoEndpoint => Check::new(
             id,
-            Status::Warn,
+            Status::Info,
             "no agent is named: SSH_AUTH_SOCK is not set in Puddle's session",
         )
         .finding(Finding::SshAgentMissing)
@@ -1109,9 +1109,14 @@ fn ssh_agent(os: Os, facts: &SshAgentFacts) -> Check {
             endpoint,
             detail,
             service,
+            by_default,
         } => Check::new(
             id,
-            Status::Warn,
+            if *by_default {
+                Status::Info
+            } else {
+                Status::Warn
+            },
             format!(
                 "no agent answers on {endpoint}: {SSH_AGENT_LIMITS}; start your agent or name its {} in the settings",
                 if os == Os::Windows { "pipe" } else { "socket" }

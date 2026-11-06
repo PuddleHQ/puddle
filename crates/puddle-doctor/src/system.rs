@@ -256,6 +256,7 @@ fn facts_from_answer(
         },
         Err(AgentError::Unreachable(e)) => SshAgentFacts::Unreachable {
             service: (shown == WINDOWS_DEFAULT_PIPE).then(service).flatten(),
+            by_default: shown == WINDOWS_DEFAULT_PIPE,
             endpoint: shown,
             detail: e.to_string(),
         },
@@ -378,7 +379,7 @@ mod tests {
         .with_ssh_agent_pipe(Some(missing.display().to_string()));
         let got = probe.ssh_agent(Duration::from_secs(2));
         assert!(
-            matches!(&got, SshAgentFacts::Unreachable { endpoint, service: None, .. } if *endpoint == missing.display().to_string()),
+            matches!(&got, SshAgentFacts::Unreachable { endpoint, service: None, by_default: false, .. } if *endpoint == missing.display().to_string()),
             "{got:?}"
         );
     }

@@ -340,6 +340,9 @@ pub enum SshAgentFacts {
         detail: String,
         /// The OpenSSH Authentication Agent service (Windows); `None` elsewhere.
         service: Option<AgentService>,
+        /// The endpoint is the Windows default pipe, which nobody named: an agent that is not
+        /// there is a normal state, not a problem.
+        by_default: bool,
     },
     /// The agent refused the request, as a locked agent does.
     Locked {

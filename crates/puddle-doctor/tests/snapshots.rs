@@ -1448,6 +1448,7 @@ fn unreachable(endpoint: &str, service: Option<AgentService>) -> SshAgentFacts {
         endpoint: endpoint.into(),
         detail: "The system cannot find the file specified. (os error 2)".into(),
         service,
+        by_default: endpoint == WIN_PIPE,
     }
 }
 
@@ -1487,7 +1488,7 @@ fn ssh_agent_missing_on_windows_names_the_pipe_and_both_fixes() {
         &windows_with(unreachable(WIN_PIPE, None)),
         Some(Finding::SshAgentMissing),
     );
-    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Warn);
+    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Info);
 }
 
 #[test]
@@ -1513,6 +1514,36 @@ fn ssh_agent_missing_on_linux_says_to_set_the_socket() {
         "ssh_agent_no_socket_variable",
         &linux_with(SshAgentFacts::NoEndpoint),
         Some(Finding::SshAgentMissing),
+    );
+}
+
+/// An absent agent nobody asked for is a normal state (the CI VMs have none), so it is info and
+/// the report stays all ok or info; an agent the user named that does not answer is a warning.
+#[test]
+fn ssh_agent_absent_by_default_is_info_and_a_named_one_that_fails_is_a_warning() {
+    let status_of = |fake: &Fake| {
+        run(fake, &Options::default())
+            .check(CheckId::SshAgent)
+            .unwrap()
+            .status
+    };
+    assert_eq!(
+        status_of(&linux_with(SshAgentFacts::NoEndpoint)),
+        Status::Info
+    );
+    for service in [None, Some(AgentService::Stopped)] {
+        assert_eq!(
+            status_of(&windows_with(unreachable(WIN_PIPE, service))),
+            Status::Info
+        );
+    }
+    assert_eq!(
+        status_of(&linux_with(unreachable(SOCK, None))),
+        Status::Warn
+    );
+    assert_eq!(
+        status_of(&windows_with(unreachable(r"\\.\pipe\pageant.alice", None))),
+        Status::Warn
     );
 }
 

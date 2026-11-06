@@ -58,6 +58,16 @@ IFS=$ifs_saved
 
 cd "$(dirname "$0")/.."
 
+# Local runs build without debug info: the default dev and test profile writes full DWARF, which is most
+# of every test executable (a full workspace test build links about 200 of them and fills tens of GB).
+# No gate reads it. A panic message still names file:line; only RUST_BACKTRACE frames lose their lines.
+# CI keeps the default. A value already set wins: CARGO_PROFILE_DEV_DEBUG=line-tables-only for frame
+# lines, =2 for a debugger.
+if [ -z "${CI:-}" ]; then
+    export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
+    export CARGO_PROFILE_TEST_DEBUG="${CARGO_PROFILE_TEST_DEBUG:-0}"
+fi
+
 # The directory of a concurrent run's per-gate logs (scripts/gate-sched.sh); unset when gates run inline.
 run_tmp=
 
@@ -174,7 +184,7 @@ run_gate() {
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
             ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
-            ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/vm-tests-report-test.sh
+            ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/dependabot-auto-merge-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/vm-tests-report-test.sh
         ;;
     git-env)
         # Through the coverage gate's build (same arguments), so it compiles no test binary of its own.

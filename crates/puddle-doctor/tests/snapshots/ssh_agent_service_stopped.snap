@@ -7,7 +7,7 @@ ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Progr
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot             a test VM booted and ran a program in 1.1 s
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
-warn  SSH agent             no agent answers on \\.\pipe\openssh-ssh-agent: SSH to servers other than Git hosts gets no key from Puddle; start your agent or name its pipe in the settings
+info  SSH agent             no agent answers on \\.\pipe\openssh-ssh-agent: SSH to servers other than Git hosts gets no key from Puddle; start your agent or name its pipe in the settings
       note: SSH to servers other than Git hosts gets no key from Puddle. The OpenSSH
             Authentication Agent service is not running: start it in Services (services.msc), or
             in PowerShell as administrator: Start-Service ssh-agent. Git hosts need no agent:
@@ -15,7 +15,7 @@ warn  SSH agent             no agent answers on \\.\pipe\openssh-ssh-agent: SSH 
       from: The system cannot find the file specified. (os error 2)
 ok    Global Secure Access  client not installed
 
-No problems found; 1 warning to know about. (1.2 s)
+No problems found. (1.2 s)
 
 ---
 {
@@ -62,7 +62,7 @@ No problems found; 1 warning to know about. (1.2 s)
     },
     {
       "id": "ssh_agent",
-      "status": "warn",
+      "status": "info",
       "summary": "no agent answers on \\\\.\\pipe\\openssh-ssh-agent: SSH to servers other than Git hosts gets no key from Puddle; start your agent or name its pipe in the settings",
       "finding": "ssh_agent_missing",
       "fix": "SSH to servers other than Git hosts gets no key from Puddle. The OpenSSH Authentication Agent service is not running: start it in Services (services.msc), or in PowerShell as administrator: Start-Service ssh-agent. Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is not affected.",

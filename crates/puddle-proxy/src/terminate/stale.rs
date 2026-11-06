@@ -140,6 +140,15 @@ mod tests {
     const REAL_SECRET: &str = "puddle-secret-API_KEY-00112233445566778899aabbccddeeff";
     const ENTROPY: &str = "abcdefghijklmnopqrstuvwxyzABCD";
 
+    #[test]
+    fn a_secret_name_of_64_bytes_is_the_longest_that_counts() {
+        // Literal lengths: the limit is 64 bytes, whatever the constant says.
+        let run = |len: usize| format!("{}-00112233445566778899aabbccddeeff", "N".repeat(len));
+        assert_eq!(secret_name(run(64).as_bytes()).map(str::len), Some(64));
+        assert_eq!(secret_name(run(65).as_bytes()), None);
+        assert_eq!(secret_name(run(0).as_bytes()), None);
+    }
+
     /// A token with the right checksum, built here so no source line looks like a real token.
     fn github_valid(prefix: &str) -> String {
         let checksum = String::from_utf8(checksum_of(ENTROPY.as_bytes()).to_vec()).unwrap();

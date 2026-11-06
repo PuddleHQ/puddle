@@ -128,6 +128,29 @@ describe("findings", () => {
     expect(findings(r)[0]?.fix).toMatch(/no way to sign in/);
   });
 
+  it("tells where to enter a user name and password, or to change the stored one", () => {
+    const r = report();
+    r.sign_in.attempts = [
+      {
+        proxy: "p:1",
+        scheme: "Basic",
+        result: "failed",
+        detail: null,
+        at: 1,
+      },
+    ];
+    expect(findings(r)[0]?.fix).toContain(
+      "enter them in Settings, Network, Proxy sign-in",
+    );
+    r.sign_in.stored = [{ proxy: "p:1", user: "alice" }];
+    expect(findings(r)[0]?.fix).toContain(
+      "change it in Settings, Network, Proxy sign-in",
+    );
+    expect(findings(r)[0]?.fix).toContain("alice");
+    r.sign_in.attempts[0]!.result = "unsupported";
+    expect(findings(r)[0]?.fix).toContain("Proxy sign-in");
+  });
+
   it("reports unreadable stores with a count, and does not also say the roots are unread", () => {
     const r = report();
     r.roots.synced = false;

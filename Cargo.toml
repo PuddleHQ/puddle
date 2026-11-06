@@ -40,6 +40,7 @@ puddle-lifecycle = { path = "crates/puddle-lifecycle" }
 puddle-upstream = { path = "crates/puddle-upstream" }
 puddle-fs = { path = "crates/puddle-fs" }
 puddle-fd-limit = { path = "crates/puddle-fd-limit" }
+puddle-no-dump = { path = "crates/puddle-no-dump" }
 puddle-log = { path = "crates/puddle-log" }
 puddle-host = { path = "crates/puddle-host" }
 puddle-secrets = { path = "crates/puddle-secrets" }

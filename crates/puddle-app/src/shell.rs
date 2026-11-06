@@ -546,6 +546,8 @@ fn init_logging_from_env() {
 /// [`ShellError`] if the app can't start.
 pub fn run(options: &Options) -> Result<(), ShellError> {
     init_logging_from_env();
+    // Before the host reads a credential; `PUDDLE_ALLOW_DUMPS=1` keeps native dumps for diagnosis.
+    puddle_no_dump::harden_from_env().log();
     // Every panic after this writes a crash file into the data folder (nothing is sent).
     if let Some(folder) = data_folder(options) {
         crash::install(folder.join(crash::FOLDER));

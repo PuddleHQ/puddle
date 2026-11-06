@@ -20,6 +20,7 @@ puddle-fs = { workspace = true }
 puddle-host = { workspace = true }
 puddle-lifecycle = { workspace = true }
 puddle-log = { workspace = true }
+puddle-no-dump = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-ssh = { workspace = true }
 puddle-types = { workspace = true }

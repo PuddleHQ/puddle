@@ -33,6 +33,7 @@ puddle-compute = { workspace = true }
 puddle-host = { workspace = true, features = ["embedded-ui"] }
 puddle-lifecycle = { workspace = true }
 puddle-log = { workspace = true }
+puddle-no-dump = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-store = { workspace = true }

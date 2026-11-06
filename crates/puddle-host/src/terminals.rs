@@ -133,7 +133,7 @@ where
     Fut: Future<Output = Result<(), String>> + Send + 'static,
     G: Fn() -> EndReason + Send + Sync + 'static,
 {
-    let (near, far) = tokio::io::duplex(64 * 1024);
+    let (near, far) = tokio::io::duplex(65_536);
     let mut server = tokio::spawn(serve(far));
     let started = tokio::select! {
         ended = &mut server => {

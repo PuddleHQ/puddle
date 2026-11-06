@@ -293,6 +293,15 @@ async fn a_server_that_refuses_the_login_the_pty_or_the_shell_or_hangs_up_says_w
     }
 }
 
+#[test]
+fn the_hub_forgets_sessions_whose_end_nobody_listens_to_any_more() {
+    let hub = Hub::default();
+    let _kept = hub.register(&workspace());
+    drop(hub.register(&workspace()));
+    let _newest = hub.register(&workspace());
+    assert_eq!(hub.open.lock().unwrap().len(), 2);
+}
+
 #[tokio::test]
 async fn a_server_that_sends_stray_messages_before_the_shell_still_gives_one() {
     let hub = Hub::default();

@@ -2,8 +2,7 @@
 //! Wire types of the workspaces resource.
 
 use puddle_types::{
-    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceName,
-    WorkspaceStatus,
+    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceStatus,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -71,13 +70,13 @@ impl From<domain::Repository> for WorkspaceRepository {
 /// user put there), and the sandbox that runs it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Workspace {
-    /// The id used in paths. Today it is the workspace's name.
+    /// The id every path, query parameter, event and rule scope uses. It never changes; a
+    /// rename changes `name` only.
     pub id: String,
-    /// The name of the workspace that runs it; events and per-workspace settings use this name.
-    pub name: WorkspaceName,
-    /// What the user calls the workspace: the name until they rename it (`PATCH
-    /// /api/workspaces/{id}`). Show this one; `name` and `id` never change.
-    pub display_name: String,
+    /// What the user calls the workspace: display text of 1 to 60 characters, renamed with
+    /// `PATCH /api/workspaces/{id}`. It names nothing else; use `id` for that.
+    #[schema(min_length = 1, max_length = 60)]
+    pub name: String,
     /// The repositories Puddle manages for it, in the order they were added (0 to 100).
     pub repositories: Vec<WorkspaceRepository>,
     /// Where new terminals land and what the editor opens: a path under the volume, or `null`
@@ -141,7 +140,6 @@ impl Workspace {
     /// The workspace as the API shows it, with whether direct SSH is on for it.
     #[must_use]
     pub fn new(record: domain::WorkspaceRecord, direct_ssh: bool) -> Self {
-        let display_name = record.label().to_owned();
         let domain::WorkspaceRecord {
             id,
             name,
@@ -162,8 +160,7 @@ impl Workspace {
         #[expect(deprecated, reason = "the field stays on the wire, always false")]
         Self {
             id: id.to_string(),
-            name,
-            display_name,
+            name: name.to_string(),
             repositories: repositories.into_iter().map(Into::into).collect(),
             start_folder: start_folder.map(|f| f.as_str().to_owned()),
             session_user,
@@ -260,8 +257,11 @@ fn retired<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Retired>
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewWorkspaceRequest {
-    /// The workspace's name, which is also its workspace's name.
-    pub name: WorkspaceName,
+    /// What the user calls the workspace: display text of 1 to 60 characters, spaces at the
+    /// ends dropped, no line breaks or control characters. Another live workspace's name (ignoring
+    /// case) is `409`. The answer carries the new workspace's `id`.
+    #[schema(min_length = 1, max_length = 60)]
+    pub name: String,
     /// The repositories to clone, in order (0 to 100); left out is none. The list is checked
     /// whole before anything exists.
     #[serde(default)]
@@ -286,9 +286,6 @@ pub struct NewWorkspaceRequest {
     pub repo_url: Option<Retired>,
 }
 
-/// Names starting with this are Puddle's own short-lived maintenance workspaces.
-const RESERVED_PREFIX: &str = "m--";
-
 impl NewWorkspaceRequest {
     /// The `local_path` of every repository that has one.
     pub(crate) fn local_paths(&self) -> Vec<String> {
@@ -309,11 +306,6 @@ impl NewWorkspaceRequest {
             return Err(ApiError::invalid(
                 "repo_url was replaced by repositories, a list of {url}",
             ));
-        }
-        if self.name.as_str().starts_with(RESERVED_PREFIX) {
-            return Err(ApiError::invalid(format!(
-                "names starting with {RESERVED_PREFIX} are reserved for Puddle"
-            )));
         }
         let drafts: Vec<domain::RepositoryDraft> = self
             .repositories
@@ -346,8 +338,9 @@ impl NewWorkspaceRequest {
             .map(MemoryMib::new)
             .transpose()
             .map_err(|e| ApiError::invalid(e.to_string()))?;
+        let name = domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)?;
         Ok(domain::NewWorkspace {
-            name: self.name,
+            name,
             repositories,
             start_folder,
             image,
@@ -452,24 +445,39 @@ pub struct DeleteWorkspaceRequest {
     pub fingerprint: Option<String>,
 }
 
+/// One workspace a lookup found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct WorkspaceMatch {
+    /// The workspace's id.
+    pub id: String,
+    /// The workspace's name.
+    pub name: String,
+}
+
+/// The answer when a lookup text names two workspaces: one's id is the other's name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct WorkspaceLookupConflict {
+    /// Always `conflict`.
+    pub error: crate::ErrorCode,
+    /// Names both workspaces and asks for the id.
+    pub message: String,
+    /// Every workspace the text names, with its id.
+    pub matches: Vec<WorkspaceMatch>,
+}
+
 /// `PATCH /api/workspaces/{id}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RenameWorkspaceRequest {
-    /// The new display name: 1 to 60 characters, spaces at the ends dropped, no line breaks.
-    /// `null` goes back to the workspace's name. Required, so an empty body never resets it.
-    #[serde(deserialize_with = "Option::deserialize")]
-    #[schema(required = true)]
-    pub display_name: Option<String>,
+    /// The new name: 1 to 60 characters, spaces at the ends dropped, no line breaks or control
+    /// characters. Required.
+    #[schema(min_length = 1, max_length = 60)]
+    pub name: String,
 }
 
 impl RenameWorkspaceRequest {
-    pub(crate) fn into_display_name(self) -> Result<Option<domain::DisplayName>, ApiError> {
-        self.display_name
-            .as_deref()
-            .map(domain::DisplayName::parse)
-            .transpose()
-            .map_err(ApiError::invalid)
+    pub(crate) fn into_name(self) -> Result<domain::DisplayName, ApiError> {
+        domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)
     }
 }
 

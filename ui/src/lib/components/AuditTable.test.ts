@@ -51,6 +51,7 @@ describe("AuditTable", () => {
       entries: [
         {
           id: 1,
+          workspace_name: null,
           record: {
             type: "audit_trimmed",
             ts: 1,

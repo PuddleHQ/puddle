@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
   import { untrack } from "svelte";
-  import { displayNameProblem, type Workspace } from "#lib/workspaces/model.ts";
+  import { nameProblem, type Workspace } from "#lib/workspaces/model.ts";
   import FormDialog from "./FormDialog.svelte";
 
   // Renames a workspace: only the name Puddle shows. `onSubmit` returns the service's refusal as
@@ -26,7 +26,7 @@
 
   // Checked as you type once you have typed, and against the list as it is now.
   const problem = $derived(
-    touched ? displayNameProblem(text, workspace, all) : null,
+    touched ? nameProblem(text, workspace.id, all) : null,
   );
   const shown = $derived(problem ?? refusal);
 
@@ -35,7 +35,7 @@
   let wasOpen = false;
   $effect(() => {
     if (open && !wasOpen) {
-      text = untrack(() => workspace.display_name);
+      text = untrack(() => workspace.name);
       refusal = null;
       touched = false;
     }
@@ -45,7 +45,7 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     touched = true;
-    if (displayNameProblem(text, workspace, all)) return;
+    if (nameProblem(text, workspace.id, all)) return;
     busy = true;
     try {
       refusal = await onSubmit(text);
@@ -81,8 +81,8 @@
         <p class="error" id="{id}-error" role="alert">{shown}</p>
       {:else}
         <p class="hint" id="{id}-hint">
-          Identifier: <span class="mono">{workspace.id}</span>. It names the
-          disk and does not change.
+          The workspace id, <span class="mono">{workspace.id}</span>, stays as
+          it is.
         </p>
       {/if}
     </div>

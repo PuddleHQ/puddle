@@ -18,7 +18,7 @@ use futures_util::future::BoxFuture;
 use puddle_store::{IdentityId, RepoRef};
 use puddle_types::{
     CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
-    WorkspaceName, WorkspaceStatus,
+    WorkspaceStatus,
 };
 use sha2::{Digest, Sha256};
 
@@ -63,11 +63,9 @@ impl fmt::Display for Operation {
 pub struct WorkspaceRecord {
     /// The workspace's id (its volume is `ws-<id>`).
     pub id: WorkspaceId,
-    /// The workspace that runs it; events and settings use this name. It never changes.
-    pub name: WorkspaceName,
-    /// What the user renamed the workspace to; `None` until they do. Only a label: nothing
-    /// else (sandbox, volume, rules, settings) uses it.
-    pub display_name: Option<DisplayName>,
+    /// What the user calls the workspace: display text. Nothing else (sandbox, volume, rules,
+    /// settings, events) uses it; the id does.
+    pub name: DisplayName,
     /// The repositories Puddle manages for it, in the order they were added.
     pub repositories: Vec<Repository>,
     /// Where new terminals land and what the editor opens; `None` is the volume root.
@@ -98,11 +96,10 @@ pub struct WorkspaceRecord {
 impl WorkspaceRecord {
     /// A record with the defaults the fake and the tests start from.
     #[must_use]
-    pub fn new(id: WorkspaceId, name: WorkspaceName, repositories: Vec<Repository>) -> Self {
+    pub fn new(id: WorkspaceId, name: DisplayName, repositories: Vec<Repository>) -> Self {
         Self {
             id,
             name,
-            display_name: None,
             repositories,
             start_folder: None,
             session_user: SessionUser::Agent,
@@ -153,16 +150,14 @@ impl WorkspaceRecord {
 }
 
 impl WorkspaceRecord {
-    /// What the user calls the workspace: its display name, else its name.
+    /// What the user calls the workspace: its name.
     #[must_use]
     pub fn label(&self) -> &str {
-        self.display_name
-            .as_ref()
-            .map_or(self.name.as_str(), DisplayName::as_str)
+        self.name.as_str()
     }
 }
 
-/// A name the user chose for a workspace: free text of 1 to [`DisplayName::MAX_CHARS`]
+/// A workspace's name: free text of 1 to [`DisplayName::MAX_CHARS`]
 /// characters, trimmed, with no control characters (a line break included).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DisplayName(String);
@@ -219,8 +214,7 @@ pub fn label_taken<'a>(
         .find(|r| Some(&r.id) != except && r.label().to_lowercase() == wanted)
 }
 
-/// Whether the workspace `id` may take `display_name` (or go back to its name for `None`) among
-/// `records`. The one rule both services apply.
+/// Whether the workspace `id` may take `name` among `records`. The one rule both services apply.
 ///
 /// # Errors
 ///
@@ -230,7 +224,7 @@ pub fn label_taken<'a>(
 pub fn check_rename<'a>(
     records: impl IntoIterator<Item = &'a WorkspaceRecord> + Clone,
     id: &WorkspaceId,
-    display_name: Option<&DisplayName>,
+    name: &DisplayName,
 ) -> Result<(), WorkspaceError> {
     let record = records
         .clone()
@@ -243,14 +237,29 @@ pub fn check_rename<'a>(
             record.label()
         )));
     }
-    let label = display_name.map_or(record.name.as_str(), DisplayName::as_str);
-    match label_taken(records, label, Some(id)) {
+    match label_taken(records, name.as_str(), Some(id)) {
         Some(other) => Err(WorkspaceError::Conflict(format!(
             "another workspace is already called {}; choose a different name",
             other.label()
         ))),
         None => Ok(()),
     }
+}
+
+/// Which workspaces `query` names, for a person who types text: the one whose id
+/// is exactly `query`, and the ones whose name equals it ignoring case and the spaces at the
+/// ends. A workspace whose id and name both match counts once. At most one match is the normal
+/// case; two happen only when one workspace's id is another's name (a legacy id).
+#[must_use]
+pub(crate) fn lookup<'a>(
+    records: impl IntoIterator<Item = &'a WorkspaceRecord>,
+    query: &str,
+) -> Vec<&'a WorkspaceRecord> {
+    let wanted = query.trim().to_lowercase();
+    records
+        .into_iter()
+        .filter(|r| r.id.as_str() == query || r.name.as_str().to_lowercase() == wanted)
+        .collect()
 }
 
 /// The image a workspace gets when the request names none.
@@ -684,12 +693,41 @@ impl fmt::Display for StartFolder {
     }
 }
 
+/// The id a workspace of this name gets while ids are derived from names: ASCII letters and
+/// digits lower-cased, every other run of characters one hyphen, at most
+/// [`WorkspaceId::MAX_LEN`] characters. A name with nothing usable in it, or one that comes out
+/// reserved, gets `workspace-` and eight hex digits of a hash of the name, so the same name
+/// always gives the same id.
+pub(crate) fn id_for_name(
+    name: &DisplayName,
+) -> Result<WorkspaceId, puddle_types::ValidationError> {
+    let mut slug = String::new();
+    for c in name.as_str().chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.truncate(WorkspaceId::MAX_LEN);
+    let slug = slug.trim_matches('-');
+    if let Ok(id) = WorkspaceId::new(slug) {
+        return Ok(id);
+    }
+    let digest = Sha256::digest(name.as_str().to_lowercase().as_bytes());
+    let hex = digest.iter().take(4).fold(String::new(), |mut out, b| {
+        let _ = fmt::Write::write_fmt(&mut out, format_args!("{b:02x}"));
+        out
+    });
+    WorkspaceId::new(&format!("workspace-{hex}"))
+}
+
 /// What `create` needs. Build it from a request with [`check_repositories`] and the typed names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NewWorkspace {
-    /// The workspace's name; its id is derived from it.
-    pub name: WorkspaceName,
+    /// The workspace's name: display text. Its id is derived from it (until ids are generated).
+    pub name: DisplayName,
     /// What to clone, in order, with the Git settings each starts with.
     pub repositories: Vec<NewRepository>,
     /// The start folder; `None` is the volume root.
@@ -703,7 +741,7 @@ pub struct NewWorkspace {
 impl NewWorkspace {
     /// A request for a workspace with the defaults.
     #[must_use]
-    pub fn new(name: WorkspaceName, repositories: Vec<NewRepository>) -> Self {
+    pub fn new(name: DisplayName, repositories: Vec<NewRepository>) -> Self {
         Self {
             name,
             repositories,
@@ -713,13 +751,35 @@ impl NewWorkspace {
         }
     }
 
-    /// The id the new workspace gets. Today it is the name; generated ids replace this.
+    /// The id the new workspace gets: the name as a DNS label (`id_for_name`), with `-2`,
+    /// `-3` and so on added while `taken` says the id is in use, so two names that make the
+    /// same label are two workspaces.
     ///
     /// # Errors
     ///
-    /// When the name is not a valid id (longer than [`WorkspaceId::MAX_LEN`]).
-    pub fn id(&self) -> Result<WorkspaceId, puddle_types::ValidationError> {
-        WorkspaceId::new(self.name.as_str())
+    /// When 99 ids of that label are taken.
+    pub fn id(
+        &self,
+        taken: impl Fn(&WorkspaceId) -> bool,
+    ) -> Result<WorkspaceId, puddle_types::ValidationError> {
+        let base = id_for_name(&self.name)?;
+        if !taken(&base) {
+            return Ok(base);
+        }
+        for n in 2..=99 {
+            let suffix = format!("-{n}");
+            let room = WorkspaceId::MAX_LEN - suffix.len();
+            let stem: String = base.as_str().chars().take(room).collect();
+            let candidate = WorkspaceId::new(&format!("{}{suffix}", stem.trim_end_matches('-')))?;
+            if !taken(&candidate) {
+                return Ok(candidate);
+            }
+        }
+        Err(puddle_types::ValidationError::new(
+            "workspace id",
+            base.as_str(),
+            "has too many workspaces with the same name",
+        ))
     }
 
     /// The entries the new workspace's list holds.
@@ -1033,15 +1093,14 @@ pub trait WorkspaceService: Send + Sync {
         fingerprint: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
-    /// Gives the workspace a display name (`None` goes back to its name). Only the label
-    /// changes: the id, the name, the volume and the sandbox stay, so this works on a running
-    /// workspace and does not restart anything. [`WorkspaceError::Conflict`] when another
+    /// Renames the workspace. Only the name changes: the id, the volume and the sandbox stay,
+    /// so this works on a running workspace and does not restart anything. [`WorkspaceError::Conflict`] when another
     /// workspace already goes by that name (ignoring case), or while this one is being created
     /// or deleted.
     fn rename<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        display_name: Option<DisplayName>,
+        name: DisplayName,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
     /// Sets where new terminals land and what the editor opens: a path under the volume, or
@@ -1450,7 +1509,7 @@ impl WorkspaceService for NoWorkspaces {
     fn rename<'a>(
         &'a self,
         _: &'a WorkspaceId,
-        _: Option<DisplayName>,
+        _: DisplayName,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
@@ -1541,7 +1600,7 @@ mod tests {
     fn sized(root: Option<(u64, u64)>, volume: Option<u64>) -> WorkspaceRecord {
         let mut record = WorkspaceRecord::new(
             WorkspaceId::new("demo").unwrap(),
-            WorkspaceName::new("demo").unwrap(),
+            DisplayName::parse("demo").unwrap(),
             vec![],
         );
         record.root_disk_used_mib = root.map(|(used, _)| used);
@@ -1602,7 +1661,7 @@ mod tests {
 
     #[test]
     fn a_launcher_with_no_window_has_nothing_to_close_and_nothing_to_forget() {
-        let name = WorkspaceName::new("demo").unwrap();
+        let name = DisplayName::parse("demo").unwrap();
         let record = WorkspaceRecord::new(WorkspaceId::new("demo").unwrap(), name.clone(), vec![]);
         let desktop = DesktopTarget {
             ssh_host: "puddle-demo".into(),
@@ -1747,7 +1806,7 @@ mod tests {
     async fn the_empty_service_says_it_is_unavailable() {
         let svc = NoWorkspaces;
         let id = WorkspaceId::new("w").unwrap();
-        let name = WorkspaceName::new("w").unwrap();
+        let name = DisplayName::parse("w").unwrap();
         let dir = CheckoutDir::new("a").unwrap();
         let url = RepoUrl::parse("https://example.com/a").unwrap();
         let repos = vec![NewRepository {
@@ -1769,7 +1828,9 @@ mod tests {
             svc.reset_root_disk(&id).await.map(|_| ()),
             svc.delete_check(&id).await.map(|_| ()),
             svc.delete(&id, None).await.map(|_| ()),
-            svc.rename(&id, None).await.map(|_| ()),
+            svc.rename(&id, DisplayName::parse("x").unwrap())
+                .await
+                .map(|_| ()),
             svc.set_session_user(&id, SessionUser::Root)
                 .await
                 .map(|_| ()),
@@ -1848,18 +1909,15 @@ mod tests {
 
     #[test]
     fn a_label_is_taken_ignoring_case_and_the_workspace_itself() {
-        let mk = |id: &str, shown: Option<&str>| {
-            let mut r = WorkspaceRecord::new(
+        let mk = |id: &str, shown: &str| {
+            WorkspaceRecord::new(
                 WorkspaceId::new(id).unwrap(),
-                WorkspaceName::new(id).unwrap(),
+                DisplayName::parse(shown).unwrap(),
                 Vec::new(),
-            );
-            r.display_name = shown.map(|s| DisplayName::parse(s).unwrap());
-            r
+            )
         };
-        let all = [mk("alpha", None), mk("beta", Some("Web Shop"))];
+        let all = [mk("alpha", "alpha"), mk("beta", "Web Shop")];
         assert_eq!(all[1].label(), "Web Shop");
-        assert_eq!(all[0].label(), "alpha");
         let beta = WorkspaceId::new("beta").unwrap();
         assert_eq!(label_taken(&all, "web shop", None).unwrap().id, beta);
         assert_eq!(
@@ -1867,8 +1925,92 @@ mod tests {
             "alpha"
         );
         assert!(label_taken(&all, "web shop", Some(&beta)).is_none());
-        // A workspace that was renamed no longer goes by its old name.
+        // The id is no name: nothing goes by "beta".
         assert!(label_taken(&all, "beta", None).is_none());
+    }
+
+    #[test]
+    fn an_id_for_a_name_is_a_label_the_same_every_time() {
+        let id = |s: &str| {
+            id_for_name(&DisplayName::parse(s).unwrap())
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(id("Shop API \u{fc}"), "shop-api");
+        assert_eq!(id("  --My  Project__2--"), "my-project-2");
+        assert_eq!(id("acme"), "acme");
+        let long = id(&"ab ".repeat(20));
+        assert!(
+            long.len() <= WorkspaceId::MAX_LEN && !long.ends_with('-'),
+            "{long}"
+        );
+        for odd in ["\u{65e5}\u{672c}", "!!!", "tauri", "ipc"] {
+            let one = id(odd);
+            assert!(
+                one.starts_with("workspace-") && one.len() == 18,
+                "{odd}: {one}"
+            );
+            assert_eq!(one, id(odd));
+        }
+        assert_ne!(id("\u{65e5}\u{672c}"), id("\u{4e2d}\u{6587}"));
+    }
+
+    #[test]
+    fn a_taken_id_gets_a_number_and_the_numbers_run_out() {
+        let new = |name: &str| NewWorkspace::new(DisplayName::parse(name).unwrap(), Vec::new());
+        let taken =
+            |ids: &'static [&'static str]| move |id: &WorkspaceId| ids.contains(&id.as_str());
+        assert_eq!(new("Shop").id(taken(&[])).unwrap().as_str(), "shop");
+        assert_eq!(new("Shop").id(taken(&["shop"])).unwrap().as_str(), "shop-2");
+        assert_eq!(
+            new("shop!")
+                .id(taken(&["shop", "shop-2"]))
+                .unwrap()
+                .as_str(),
+            "shop-3"
+        );
+        // The number fits under the longest id: the label is cut, never the number.
+        let long = "a".repeat(DisplayName::MAX_CHARS);
+        let full = WorkspaceId::new(&long).unwrap();
+        let second = new(&long).id(|id| *id == full).unwrap();
+        assert_eq!(second.as_str().len(), WorkspaceId::MAX_LEN);
+        assert!(second.as_str().ends_with("-2"), "{second}");
+        // At most 99 of one label.
+        assert!(new("Shop").id(|_| true).is_err());
+    }
+
+    #[test]
+    fn a_lookup_finds_an_id_or_a_name_ignoring_case_and_counts_a_workspace_once() {
+        let mk = |id: &str, name: &str| {
+            WorkspaceRecord::new(
+                WorkspaceId::new(id).unwrap(),
+                DisplayName::parse(name).unwrap(),
+                Vec::new(),
+            )
+        };
+        let all = [
+            mk("shop", "Shop"),
+            mk("k7m2x9qa", "Web Shop \u{fc}"),
+            mk("web", "x"),
+        ];
+        let ids =
+            |q: &str| -> Vec<String> { lookup(&all, q).iter().map(|r| r.id.to_string()).collect() };
+        assert_eq!(ids("k7m2x9qa"), ["k7m2x9qa"]);
+        assert_eq!(ids("  WEB shop \u{dc} "), ["k7m2x9qa"]);
+        assert_eq!(
+            ids("shop"),
+            ["shop"],
+            "an id that is also the name is one match"
+        );
+        assert_eq!(ids("nothing"), Vec::<String>::new());
+        // One workspace's id is another's name: two matches.
+        assert_eq!(ids("web"), ["web"]);
+        let all = [mk("shop", "Shop"), mk("k7m2x9qa", "shop")];
+        let found: Vec<_> = lookup(&all, "shop")
+            .iter()
+            .map(|r| r.id.to_string())
+            .collect();
+        assert_eq!(found, ["shop", "k7m2x9qa"]);
     }
 
     #[test]
@@ -1876,29 +2018,32 @@ mod tests {
         let mk = |id: &str| {
             WorkspaceRecord::new(
                 WorkspaceId::new(id).unwrap(),
-                WorkspaceName::new(id).unwrap(),
+                DisplayName::parse(id).unwrap(),
                 Vec::new(),
             )
         };
         let (mut a, b) = (mk("alpha"), mk("beta"));
-        let name = |s: &str| Some(DisplayName::parse(s).unwrap());
+        let name = |s: &str| DisplayName::parse(s).unwrap();
         let ida = a.id.clone();
-        let check = |a: &WorkspaceRecord, to: Option<&DisplayName>| check_rename([a, &b], &ida, to);
-        assert!(check(&a, name("Web").as_ref()).is_ok());
+        let check = |a: &WorkspaceRecord, to: &DisplayName| check_rename([a, &b], &ida, to);
+        assert!(check(&a, &name("Web")).is_ok());
         assert!(
-            check(&a, name("alpha").as_ref()).is_ok(),
+            check(&a, &name("alpha")).is_ok(),
             "its own name is not a clash"
         );
         assert!(matches!(
-            check(&a, name("BETA").as_ref()),
+            check(&a, &name("BETA")),
             Err(WorkspaceError::Conflict(m)) if m.contains("already called beta")
         ));
         a.busy = Some(Operation::Creating);
         assert!(
-            matches!(check(&a, None), Err(WorkspaceError::Conflict(m)) if m.contains("creating"))
+            matches!(check(&a, &name("Web")), Err(WorkspaceError::Conflict(m)) if m.contains("creating"))
         );
         a.busy = Some(Operation::Deleting);
-        assert!(matches!(check(&a, None), Err(WorkspaceError::Conflict(_))));
+        assert!(matches!(
+            check(&a, &name("Web")),
+            Err(WorkspaceError::Conflict(_))
+        ));
         for busy in [
             Operation::Starting,
             Operation::Stopping,
@@ -1906,11 +2051,11 @@ mod tests {
             Operation::ResettingRootDisk,
         ] {
             a.busy = Some(busy);
-            assert!(check(&a, name("Web").as_ref()).is_ok(), "{busy}");
+            assert!(check(&a, &name("Web")).is_ok(), "{busy}");
         }
         let missing = WorkspaceId::new("nope").unwrap();
         assert!(matches!(
-            check_rename([&a, &b], &missing, None),
+            check_rename([&a, &b], &missing, &name("x")),
             Err(WorkspaceError::NotFound(_))
         ));
 

@@ -27,6 +27,10 @@ pub enum Role {
     /// GitHub token for one). It is made again at every exchange and its fields carry its expiry,
     /// so every exchange gets a new stand-in and the tool keeps working with the older ones.
     Copilot,
+    /// A token that says who signed in (an `OpenID` Connect `id_token`). The tool reads its claims
+    /// and no service takes it as a credential, so it is only swapped back toward the token
+    /// endpoint.
+    IdToken,
 }
 
 impl Role {
@@ -38,6 +42,7 @@ impl Role {
             Self::Refresh => "refresh",
             Self::ApiKey => "api-key",
             Self::Copilot => "copilot",
+            Self::IdToken => "id-token",
         }
     }
 }
@@ -57,6 +62,27 @@ pub enum StandInKind {
     /// when it expires), and gets a random signature of the real length. The claims are not the
     /// credential. A token that is not a JWT is shaped.
     Jwt,
+    /// Like [`Self::Shaped`] for a token longer than a service's usual one (a Microsoft refresh
+    /// token is over a thousand characters): the same prefix, length and alphabet, and the
+    /// registry's full length limit.
+    ShapedLong,
+}
+
+/// Which answers a field applies to, for a token endpoint that hands out tokens for several
+/// resources through one field: Microsoft Entra answers `access_token` for the resource the
+/// request named (Azure Resource Manager, Graph, Azure `DevOps`), and each is a different token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Audience {
+    /// Every answer.
+    Any,
+    /// An answer that names one of these resources (case does not matter). The name is looked for
+    /// in the answer's `scope` and `resource` fields and in the `aud` claim of the token itself;
+    /// the first named field of a path that matches takes the token.
+    Named(&'static [&'static str]),
+    /// An answer no [`Self::Named`] field of the same path took: the resource is one the profile
+    /// does not name, and its tokens share this slot (the slot keeps the last few stand-ins).
+    Unnamed,
 }
 
 /// What a stand-in is kept under: a role, and for a service that hands out one token per resource
@@ -158,6 +184,8 @@ pub struct Field {
     pub stand_in: StandInKind,
     /// Where the stand-in is swapped for the real token.
     pub scope: Scope,
+    /// Which answers the field applies to.
+    pub audience: Audience,
 }
 
 impl Field {
@@ -315,6 +343,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         keep_last: 0,
         stand_in: StandInKind::Shaped,
         scope: Scope::Api,
+        audience: Audience::Any,
     },
     Field {
         path: "refresh_token",
@@ -324,6 +353,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         keep_last: 0,
         stand_in: StandInKind::Shaped,
         scope: Scope::TokenEndpoint,
+        audience: Audience::Any,
     },
 ];
 
@@ -362,6 +392,7 @@ pub const CLAUDE: Profile = Profile {
                 keep_last: 20,
                 stand_in: StandInKind::Shaped,
                 scope: Scope::Api,
+                audience: Audience::Any,
             }],
         },
     ],
@@ -396,6 +427,7 @@ pub const GITHUB: Profile = Profile {
                     keep_last: 0,
                     stand_in: StandInKind::Shaped,
                     scope: Scope::Api,
+                    audience: Audience::Any,
                 },
                 Field {
                     path: "refresh_token",
@@ -405,6 +437,7 @@ pub const GITHUB: Profile = Profile {
                     keep_last: 0,
                     stand_in: StandInKind::Shaped,
                     scope: Scope::TokenEndpoint,
+                    audience: Audience::Any,
                 },
             ],
         },
@@ -423,6 +456,7 @@ pub const GITHUB: Profile = Profile {
                 keep_last: 0,
                 stand_in: StandInKind::Fields,
                 scope: Scope::Api,
+                audience: Audience::Any,
             }],
         },
     ],
@@ -434,10 +468,140 @@ pub const GITHUB: Profile = Profile {
     ],
 };
 
+/// The token fields Microsoft Entra answers with, the same at the v1 and v2 endpoints.
+const ENTRA_TOKEN_FIELDS: &[Field] = &[
+    // One access token field per resource: a tool holds tokens for several at once (`az` has one for
+    // Azure Resource Manager and one for Graph), and a refresh of one must not replace the other.
+    Field {
+        path: "access_token",
+        resource: Some("arm"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::Api,
+        audience: Audience::Named(&["management.azure.com", "management.core.windows.net"]),
+    },
+    Field {
+        path: "access_token",
+        resource: Some("graph"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::Api,
+        audience: Audience::Named(&[
+            "graph.microsoft.com",
+            "00000003-0000-0000-c000-000000000000",
+        ]),
+    },
+    Field {
+        path: "access_token",
+        resource: Some("devops"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::Api,
+        audience: Audience::Named(&[
+            "499b84ac-1321-427f-aa17-267ca6975798",
+            "dev.azure.com",
+            "visualstudio.com",
+        ]),
+    },
+    Field {
+        path: "access_token",
+        resource: Some("vault"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::Api,
+        audience: Audience::Named(&["vault.azure.net"]),
+    },
+    // A resource none of the above names (Storage, Azure SQL, Azure Data Explorer, an app's own
+    // API): they share one slot, which keeps the last few stand-ins.
+    Field {
+        path: "access_token",
+        resource: Some("other"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::Api,
+        audience: Audience::Unnamed,
+    },
+    Field {
+        path: "refresh_token",
+        resource: None,
+        role: Role::Refresh,
+        // A Microsoft refresh token starts with its version and a dot, and is over a thousand
+        // characters long.
+        prefixes: &["0.", "1."],
+        keep_last: 0,
+        stand_in: StandInKind::ShapedLong,
+        scope: Scope::TokenEndpoint,
+        audience: Audience::Any,
+    },
+    // The tool reads who signed in and for how long from it; no service takes it as a credential.
+    Field {
+        path: "id_token",
+        resource: None,
+        role: Role::IdToken,
+        prefixes: &[],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::TokenEndpoint,
+        audience: Audience::Any,
+    },
+];
+
+/// Microsoft Entra (`az login`, Git Credential Manager for Azure `DevOps`, VS Code's Azure
+/// sign-in): the OAuth token endpoint of the public cloud, `/{tenant}/oauth2/v2.0/token` and the
+/// older `/{tenant}/oauth2/token`, answered as JSON for the code exchange, the device flow's poll
+/// and the refresh. The tenant is any one segment (an id, a domain, `common`, `organizations`).
+/// The access tokens go to Azure Resource Manager, Graph, Azure `DevOps` and Key Vault, and to the
+/// other hosts the tokens name. The national clouds (their own login hosts) are not covered.
+pub const ENTRA: Profile = Profile {
+    id: "entra",
+    name: "Microsoft Entra",
+    endpoints: &[
+        Endpoint {
+            host: "login.microsoftonline.com",
+            method: Method::Post,
+            path: "/*/oauth2/v2.0/token",
+            refresh_field: Some("refresh_token"),
+            fields: ENTRA_TOKEN_FIELDS,
+        },
+        Endpoint {
+            host: "login.microsoftonline.com",
+            method: Method::Post,
+            path: "/*/oauth2/token",
+            refresh_field: Some("refresh_token"),
+            fields: ENTRA_TOKEN_FIELDS,
+        },
+    ],
+    api_hosts: &[
+        "management.azure.com",
+        "management.core.windows.net",
+        "graph.microsoft.com",
+        "graph.windows.net",
+        "dev.azure.com",
+        "*.dev.azure.com",
+        "*.visualstudio.com",
+        "*.vault.azure.net",
+    ],
+};
+
 /// The profiles Puddle ships.
 #[must_use]
 pub fn builtin() -> &'static [Profile] {
-    &[CLAUDE, GITHUB]
+    &[CLAUDE, GITHUB, ENTRA]
 }
 
 #[cfg(test)]

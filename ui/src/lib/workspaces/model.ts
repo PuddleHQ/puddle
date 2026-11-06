@@ -130,25 +130,6 @@ export function stepPosition(
   return at < 0 ? null : { index: at + 1, of: steps.length };
 }
 
-/** Largest first name length: 63 for a DNS label, less the `ws-` volume prefix. */
-export const MAX_NAME_LENGTH = 60;
-const RESERVED_NAMES = new Set(["tauri", "ipc", "asset"]);
-
-/** The reason a name can't be a workspace, or `null` when it can. */
-export function nameProblem(name: string): string | null {
-  if (name === "") return "Give the workspace a name.";
-  if (name.length > MAX_NAME_LENGTH)
-    return `Use at most ${MAX_NAME_LENGTH} characters.`;
-  if (!/^[a-z0-9-]+$/.test(name))
-    return "Use only lowercase letters, digits and hyphens.";
-  if (name.startsWith("-") || name.endsWith("-"))
-    return "Start and end with a letter or digit.";
-  if (name.startsWith("m--"))
-    return "Names starting with m-- are reserved for Puddle's own use.";
-  if (RESERVED_NAMES.has(name)) return `"${name}" is reserved; pick another.`;
-  return null;
-}
-
 export const SSH_MESSAGE =
   "SSH remotes are not supported yet; use the repository's HTTPS URL instead.";
 
@@ -177,18 +158,12 @@ export function repoUrlProblem(raw: string): string | null {
   return null;
 }
 
-/** A workspace name suggested by a repository URL: its last path segment, made a valid label. */
+/** A workspace name suggested by a repository URL: its last path segment, as typed. */
 export function suggestName(repoUrl: string): string {
   const path = repoUrl.trim().split(/[?#]/)[0] ?? "";
   const last = path.split("/").filter(Boolean).pop() ?? "";
-  const label = last
-    .replace(/\.git$/i, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, MAX_NAME_LENGTH)
-    .replace(/-+$/g, "");
-  return RESERVED_NAMES.has(label) ? "" : label;
+  const name = last.replace(/\.git$/i, "");
+  return [...name].slice(0, MAX_NAME_LENGTH).join("");
 }
 
 export const MIN_MEMORY_MIB = 256;
@@ -251,41 +226,37 @@ export function diskPercent(w: Workspace, kind: DiskKind): number | null {
 /** What the user calls them orders the list; the store sorts again after a rename. */
 export function sortWorkspaces(list: readonly Workspace[]): Workspace[] {
   return [...list].sort(
-    (a, b) =>
-      a.display_name.localeCompare(b.display_name) ||
-      a.name.localeCompare(b.name),
+    (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
   );
 }
 
-/** Longest display name, in characters (the API counts characters, not bytes). */
-export const MAX_DISPLAY_NAME_LENGTH = 60;
+/** Longest name, in characters (the API counts characters, not bytes). */
+export const MAX_NAME_LENGTH = 60;
 
 /**
- * The reason `text` can't be `workspace`'s new display name, or `null` when it can. Another
- * workspace's name, ignoring case, is a clash (the API refuses it too: 409).
+ * The reason `text` can't be a workspace's name, or `null` when it can: the name is display text,
+ * so only empty, too long, a control character and another workspace's name (ignoring case; the
+ * API refuses it too: 409) are refused. `exceptId` is the workspace being renamed, which may keep
+ * its own name in other case.
  */
-export function displayNameProblem(
+export function nameProblem(
   text: string,
-  workspace: Workspace,
+  exceptId: string | null,
   all: readonly Workspace[],
 ): string | null {
   const shown = text.trim();
   if (shown === "") return "Give the workspace a name.";
-  if ([...shown].length > MAX_DISPLAY_NAME_LENGTH)
-    return `Use at most ${MAX_DISPLAY_NAME_LENGTH} characters.`;
+  if ([...shown].length > MAX_NAME_LENGTH)
+    return `Use at most ${MAX_NAME_LENGTH} characters.`;
   if (/\p{Cc}/u.test(shown))
     return "Use a single line, without control characters.";
   const clash = all.find(
-    (w) =>
-      w.id !== workspace.id &&
-      w.display_name.toLowerCase() === shown.toLowerCase(),
+    (w) => w.id !== exceptId && w.name.toLowerCase() === shown.toLowerCase(),
   );
-  return clash
-    ? `Another workspace is already called "${clash.display_name}".`
-    : null;
+  return clash ? `Another workspace is already called "${clash.name}".` : null;
 }
 
-/** A rename goes through while the workspace is settled; it is only a label, so up or down is fine. */
+/** A rename goes through while the workspace is settled; only the name changes, so up or down is fine. */
 export const canRename = (w: Workspace): boolean =>
   w.busy !== "creating" && w.busy !== "deleting";
 

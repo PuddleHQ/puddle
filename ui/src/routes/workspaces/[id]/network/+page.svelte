@@ -78,7 +78,7 @@
           padded
         />
       {/if}
-      <p class="muted pad">Nothing is waiting for {workspace.display_name}.</p>
+      <p class="muted pad">Nothing is waiting for {workspace.name}.</p>
     {:else}
       {#if pending.loadError}
         <LoadNotice
@@ -126,8 +126,7 @@
         />
       {/if}
       <p class="muted pad">
-        No rule applies to {workspace.display_name} yet. Requests wait here until
-        you decide.
+        No rule applies to {workspace.name} yet. Requests wait here until you decide.
       </p>
     {:else}
       {#if rulesStore.loadError}

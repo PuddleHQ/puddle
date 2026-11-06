@@ -239,7 +239,7 @@ export class AuditStore {
       const { data } = await this.#api.GET("/api/workspaces");
       if (data)
         this.workspaces = data.workspaces
-          .map((w) => ({ id: w.id, label: w.display_name }))
+          .map((w) => ({ id: w.id, label: w.name }))
           .sort((a, b) => a.label.localeCompare(b.label));
     } catch {
       // The filter still offers the workspace it is set to.

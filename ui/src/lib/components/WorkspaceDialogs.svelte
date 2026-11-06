@@ -57,7 +57,7 @@
 <!-- The trust text, said once when direct SSH is turned on for a workspace. -->
 <DirectSshDialog
   bind:open={actions.trustOpen}
-  words={trustWordsFor(actions.trustFor?.display_name ?? "this workspace")}
+  words={trustWordsFor(actions.trustFor?.name ?? "this workspace")}
   onConfirm={actions.confirmTrust}
   onCancel={actions.cancelTrust}
 />
@@ -74,7 +74,7 @@
 {#if actions.deleting}
   <DeleteWorkspaceDialog
     bind:open={actions.deleteOpen}
-    name={actions.deleting.workspace.display_name}
+    name={actions.deleting.workspace.name}
     check={actions.deleting.check}
     removes={actions.deleting.removes}
     working={actions.deleting.working}

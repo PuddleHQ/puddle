@@ -5983,6 +5983,7 @@ dependencies = [
  "puddle-log",
  "puddle-settings",
  "puddle-ssh",
+ "puddle-store",
  "puddle-test-kit",
  "puddle-types",
  "puddle-vm-tests",

@@ -11,6 +11,7 @@ warn  Disk space          12 GB free on the drive that holds Puddle's data (/hom
             cause (a build that dies halfway, a tool that cannot write). Free some space soon:
             delete workspaces you no longer use and files you do not need. The line is the
             setting "Warn when free space is under" in Settings.
+ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 
 No problems found; 1 warning to know about. (1.2 s)
@@ -54,6 +55,11 @@ No problems found; 1 warning to know about. (1.2 s)
       "summary": "12 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle), under the 20 GB line",
       "finding": "disk_space_low",
       "fix": "Workspace volumes and root disks, package caches and builds inside a workspace all grow on this drive, and a full drive stops them with errors that do not name the cause (a build that dies halfway, a tool that cannot write). Free some space soon: delete workspaces you no longer use and files you do not need. The line is the setting \"Warn when free space is under\" in Settings."
+    },
+    {
+      "id": "disk_encryption",
+      "status": "ok",
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
     },
     {
       "id": "ssh_agent",

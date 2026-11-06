@@ -343,23 +343,25 @@ pub struct HostShutdown {
 
 struct Background {
     sweeper: Sweeper,
+    // Holds the store; awaited at shutdown so the database is closed when the host is.
+    vault_sweep: tokio::task::JoinHandle<()>,
     pull: PullRoute,
     front: Front,
     // Dropped (stopped) with the rest; `None` where the OS cannot watch.
     _watching: Option<Watching>,
     // Tells the API's event stream about each new network epoch; ended with the rest.
-    _network_events: AbortOnDrop,
-    _sign_in_failures: AbortOnDrop,
+    network_events: AbortOnDrop,
+    sign_in_failures: AbortOnDrop,
     // Applies a change of a running workspace's identities to what it decrypts and its authors.
-    _git_changes: AbortOnDrop,
+    git_changes: AbortOnDrop,
     // Turns a read that needs a sign-in into the user's notice.
-    _sign_in_notices: AbortOnDrop,
+    sign_in_notices: AbortOnDrop,
     // Asks Microsoft's editor server to switch to a staged build when no window is on it.
-    _editor_updates: AbortOnDrop,
+    editor_updates: AbortOnDrop,
     // Says when the free space on the drive that holds the data folder crosses a line.
-    _space_watch: AbortOnDrop,
+    space_watch: AbortOnDrop,
     // Reads the disks' use now and then and warns when one reaches the threshold.
-    _disk_watch: AbortOnDrop,
+    disk_watch: AbortOnDrop,
 }
 
 /// Aborts its task when dropped, so a forwarder never outlives the host.
@@ -382,6 +384,15 @@ impl AbortOnDrop {
             chain,
             events.clone() as Arc<dyn EventSink>,
         ))
+    }
+}
+
+impl AbortOnDrop {
+    /// Aborts the task and waits until it is gone: an abort only takes effect when the runtime
+    /// next polls the task, and what the task holds (a store handle) is released then.
+    async fn stop(&mut self) {
+        self.0.abort();
+        let _ = (&mut self.0).await;
     }
 }
 
@@ -492,7 +503,8 @@ impl<R: Runtime + Clone> Host<R> {
             .secret_store
             .clone()
             .unwrap_or_else(crate::vault::os_vault);
-        crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
+        let vault_sweep =
+            crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
         let marks = config.paths.login_markers();
         let injecting = Injecting::build(&options, &vault, &store, &events, &roots, marks)?;
         let proxy_passwords = ProxyPasswords::new(vault.clone());
@@ -681,16 +693,17 @@ impl<R: Runtime + Clone> Host<R> {
             api: AsyncMutex::new(Some(served.api)),
             background: AsyncMutex::new(Some(Background {
                 sweeper,
+                vault_sweep,
                 pull,
                 front,
                 _watching: watching,
-                _network_events: network_events,
-                _sign_in_failures: sign_in_failures,
-                _git_changes: git_changes,
-                _sign_in_notices: sign_in_notices,
-                _editor_updates: editor_updates,
-                _space_watch: space_watch,
-                _disk_watch: disk_watch,
+                network_events,
+                sign_in_failures,
+                git_changes,
+                sign_in_notices,
+                editor_updates,
+                space_watch,
+                disk_watch,
             })),
             steps: Mutex::new(steps),
             reconcile: report,
@@ -809,10 +822,23 @@ impl<R: Runtime + Clone> Host<R> {
                     api.shutdown().await;
                 }
                 self.step(Step::ApiStopped);
-                if let Some(background) = self.background.lock().await.take() {
+                if let Some(mut background) = self.background.lock().await.take() {
                     background.sweeper.shutdown().await;
                     background.pull.shutdown().await;
                     background.front.close().await;
+                    // A panic in the sweep was reported by the sweep; nothing more to do here.
+                    let _ = background.vault_sweep.await;
+                    for task in [
+                        &mut background.network_events,
+                        &mut background.sign_in_failures,
+                        &mut background.git_changes,
+                        &mut background.sign_in_notices,
+                        &mut background.editor_updates,
+                        &mut background.space_watch,
+                        &mut background.disk_watch,
+                    ] {
+                        task.stop().await;
+                    }
                 }
                 self.step(Step::BackgroundStopped);
                 let steps = self

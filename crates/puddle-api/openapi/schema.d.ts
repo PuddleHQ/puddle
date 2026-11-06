@@ -4776,7 +4776,7 @@ export interface components {
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired";
         /**
          * @description How a workspace operation ended.
          * @enum {string}
@@ -5087,6 +5087,8 @@ export interface operations {
                 origin?: components["schemas"]["ConnectionOrigin"];
                 /** @description records whose host (a rule's pattern) contains this text, case-insensitive */
                 host_contains?: string;
+                /** @description records whose host (a rule's pattern), method, path or reason contains this text, case-insensitive; combines with the other filters */
+                q?: string;
                 /** @description records at or after this epoch ms */
                 from?: number;
                 /** @description records before this epoch ms */

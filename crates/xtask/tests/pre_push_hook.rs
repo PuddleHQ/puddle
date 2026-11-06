@@ -27,7 +27,15 @@ fn git(dir: &Path, args: &[&str]) {
 
 #[test]
 fn the_gates_start_without_the_repository_variables_a_hook_exports() {
-    let hook = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.githooks/pre-push");
+    for name in ["pre-push", "pre-commit"] {
+        gates_start_clean(name);
+    }
+}
+
+fn gates_start_clean(name: &str) {
+    let hook = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.githooks")
+        .join(name);
     let repo = tempfile::tempdir().unwrap();
     let dir = repo.path();
     git(dir, &["init", "-q"]);
@@ -61,10 +69,13 @@ fn the_gates_start_without_the_repository_variables_a_hook_exports() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(!stdout.contains("GIT_"), "the gates inherited: {stdout}");
+    assert!(
+        !stdout.contains("GIT_"),
+        "{name}: the gates inherited: {stdout}"
+    );
     assert_eq!(
         Path::new(stdout.trim()).canonicalize().unwrap(),
         dir.canonicalize().unwrap(),
-        "the gates run from the repository's top level"
+        "{name}: the gates run from the repository's top level"
     );
 }

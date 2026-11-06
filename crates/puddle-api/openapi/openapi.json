@@ -330,6 +330,15 @@
             }
           },
           {
+            "name": "q",
+            "in": "query",
+            "description": "records whose host (a rule's pattern), method, path or reason contains this text, case-insensitive; combines with the other filters",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "description": "records at or after this epoch ms",
@@ -16756,7 +16765,8 @@
           "identities_reordered",
           "repo_added",
           "repo_switched",
-          "repo_removed"
+          "repo_removed",
+          "git_repaired"
         ]
       },
       "WorkspaceOpOutcome": {

@@ -216,3 +216,38 @@ async fn a_responder_answers_the_requests_it_wants_and_the_site_records_what_it_
     );
     assert!(format!("{:?}", WebOptions::default()).contains("responder"));
 }
+
+#[tokio::test]
+async fn a_refusal_with_401_carries_a_basic_challenge() {
+    let responder: puddle_e2e::lab::Responder = std::sync::Arc::new(|_| {
+        Some(puddle_e2e::lab::WebAnswer {
+            status: 401,
+            content_type: "text/plain",
+            body: b"no".to_vec(),
+        })
+    });
+    let web = WebHost::start(
+        &["locked.test"],
+        WebOptions {
+            responder: Some(responder),
+            ..WebOptions::default()
+        },
+    )
+    .await;
+    let proxy = NameProxy::start(&[]).await;
+    web.register(&proxy, &["locked.test"]);
+    let mut conn = through(
+        &proxy,
+        "GET http://locked.test/ HTTP/1.1\r\n",
+        "Host: locked.test\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    let mut text = String::new();
+    conn.read_to_string(&mut text).await.unwrap();
+    assert!(text.starts_with("HTTP/1.1 401"), "{text}");
+    assert!(
+        text.to_lowercase()
+            .contains("www-authenticate: basic realm"),
+        "{text}"
+    );
+}

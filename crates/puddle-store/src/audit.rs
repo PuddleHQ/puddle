@@ -414,6 +414,8 @@ pub enum WorkspaceOpKind {
     RepoSwitched,
     /// A repository removed from a workspace's list.
     RepoRemoved,
+    /// A zero-filled or corrupt git file (`HEAD`, the index) of a checkout rebuilt at boot.
+    GitRepaired,
 }
 
 /// How a workspace operation ended.
@@ -718,6 +720,35 @@ impl AuditRecord {
             | Self::AuditTrimmed { .. } => return None,
         };
         Some(host.to_ascii_lowercase())
+    }
+
+    /// The text the audit search box matches, lower case (ASCII), one part per line: a
+    /// connection's host, method, path and reason; a rule on method and path's host and path;
+    /// otherwise the record's [`host`](Self::host). Stored in a column so `q` needs no JSON
+    /// parsing. The migration that added the column derives the same value in SQL
+    /// (`schema.rs`); a test keeps the two equal.
+    #[must_use]
+    pub fn search_text(&self) -> Option<String> {
+        let parts: Vec<Option<String>> = match self {
+            Self::Connection(r) => vec![
+                r.host.clone(),
+                r.method.clone(),
+                r.path.clone(),
+                Some(r.reason.clone()),
+            ],
+            Self::RequestRuleCreated { rule, .. } | Self::RequestRuleDeleted { rule, .. } => {
+                vec![Some(rule.host.clone()), Some(rule.path.clone())]
+            }
+            _ => vec![self.host()],
+        };
+        let text = parts
+            .into_iter()
+            .flatten()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .to_ascii_lowercase();
+        (!text.is_empty()).then_some(text)
     }
 
     /// Whose connection the record describes: `connection` records only (every other record
@@ -1747,11 +1778,22 @@ mod tests {
         }
     }
 
+    type Row = (i64, String, Option<String>, Option<String>, Option<String>);
+
     #[test]
-    fn migration_backfills_host_and_outcome_as_the_code_derives_them() {
+    fn migration_backfills_host_outcome_and_search_text_as_the_code_derives_them() {
         let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         crate::schema::migrate_up_to(&mut conn, 1).unwrap();
         let mut records = every_record();
+        // Upper-case text in every searched field, and empty or missing ones.
+        let mut shouting = ConnectionRecord::from_event(9, &event());
+        shouting.host = Some("API.Example.COM".into());
+        shouting.method = Some("PoSt".into());
+        shouting.path = Some("/V1/Ítems".into());
+        records.push(AuditRecord::Connection(shouting.clone()));
+        shouting.path = Some(String::new());
+        shouting.host = None;
+        records.push(AuditRecord::Connection(shouting));
         let mut allowed = pending_wire();
         allowed.state = "allowed".into();
         let mut denied = pending_wire();
@@ -1784,15 +1826,17 @@ mod tests {
         }
         crate::schema::migrate(&mut conn).unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, type, host, outcome FROM audit")
+            .prepare("SELECT id, type, host, outcome, search FROM audit")
             .unwrap();
-        let rows: Vec<(i64, String, Option<String>, Option<String>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        let rows: Vec<Row> = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
             .unwrap()
             .map(Result::unwrap)
             .collect();
         assert_eq!(rows.len(), records.len());
-        for (id, kind, host, outcome) in rows {
+        for (id, kind, host, outcome, search) in rows {
             let record = by_id
                 .get(&id)
                 .unwrap_or_else(|| panic!("the migration made up a row {id}"));
@@ -1803,6 +1847,35 @@ mod tests {
                 record.outcome().map(AuditOutcome::as_str),
                 "{kind} outcome"
             );
+            assert_eq!(search, record.search_text(), "{kind} search text");
         }
+    }
+
+    #[test]
+    fn search_text_is_the_lower_case_fields_a_person_would_type() {
+        let mut connection = ConnectionRecord::from_event(9, &event());
+        connection.method = Some("GET".into());
+        connection.path = Some("/V1/Items".into());
+        assert_eq!(
+            AuditRecord::Connection(connection).search_text().as_deref(),
+            Some("api.example.com\nget\n/v1/items\nrule")
+        );
+        let summary =
+            AuditRecord::Connection(ConnectionRecord::suppressed_summary(1, Some(&sb()), 5));
+        assert_eq!(summary.search_text().as_deref(), Some("suppressed"));
+        let mut rule = rule_wire();
+        rule.pattern = ".Example.COM".into();
+        assert_eq!(
+            AuditRecord::RuleCreated { ts: 1, rule }
+                .search_text()
+                .as_deref(),
+            Some(".example.com")
+        );
+        let nothing = AuditRecord::PendingSuppressed {
+            ts: 1,
+            workspace_id: "sb-1".into(),
+            count: 1,
+        };
+        assert_eq!(nothing.search_text(), None);
     }
 }

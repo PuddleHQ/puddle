@@ -30,8 +30,8 @@ export interface Filter {
   workspace: string;
   type: AuditType | "";
   outcome: AuditOutcome | "";
-  /** Text the host (or a rule's pattern) contains; empty for all. */
-  host: string;
+  /** Text a record's host (or a rule's pattern), method, path or reason contains; empty for all. */
+  q: string;
   range: RangeKey;
 }
 
@@ -39,7 +39,7 @@ export const NO_FILTER: Filter = {
   workspace: "",
   type: "",
   outcome: "",
-  host: "",
+  q: "",
   range: DEFAULT_RANGE,
 };
 
@@ -92,7 +92,7 @@ export function isFiltered(filter: Filter): boolean {
     filter.workspace !== "" ||
     filter.type !== "" ||
     filter.outcome !== "" ||
-    filter.host.trim() !== "" ||
+    filter.q.trim() !== "" ||
     filter.range !== DEFAULT_RANGE
   );
 }
@@ -103,7 +103,7 @@ export function isNarrowed(filter: Filter): boolean {
     filter.workspace !== "" ||
     filter.type !== "" ||
     filter.outcome !== "" ||
-    filter.host.trim() !== "" ||
+    filter.q.trim() !== "" ||
     filter.range !== "all"
   );
 }
@@ -113,7 +113,7 @@ export interface AuditQuery {
   workspace?: string;
   type?: AuditType;
   outcome?: AuditOutcome;
-  host_contains?: string;
+  q?: string;
   from?: number;
 }
 
@@ -122,8 +122,8 @@ export function toQuery(filter: Filter, now: number): AuditQuery {
   if (filter.workspace !== "") query.workspace = filter.workspace;
   if (filter.type !== "") query.type = filter.type;
   if (filter.outcome !== "") query.outcome = filter.outcome;
-  const host = filter.host.trim();
-  if (host !== "") query.host_contains = host;
+  const q = filter.q.trim();
+  if (q !== "") query.q = q;
   const range = RANGES.find((r) => r.key === filter.range);
   if (range && range.ms > 0) query.from = now - range.ms;
   return query;
@@ -135,7 +135,7 @@ export function toSearch(filter: Filter): string {
   if (filter.workspace !== "") params.set("workspace", filter.workspace);
   if (filter.type !== "") params.set("type", filter.type);
   if (filter.outcome !== "") params.set("outcome", filter.outcome);
-  if (filter.host.trim() !== "") params.set("host", filter.host.trim());
+  if (filter.q.trim() !== "") params.set("q", filter.q.trim());
   if (filter.range !== DEFAULT_RANGE) params.set("range", filter.range);
   const text = params.toString();
   return text === "" ? "" : `?${text}`;
@@ -153,7 +153,7 @@ export function fromSearch(search: string): Filter {
     outcome: OUTCOMES.some((o) => o.value === outcome)
       ? (outcome as AuditOutcome)
       : "",
-    host: params.get("host") ?? "",
+    q: params.get("q") ?? params.get("host") ?? "",
     range: RANGES.some((r) => r.key === range)
       ? (range as RangeKey)
       : DEFAULT_RANGE,
@@ -347,6 +347,10 @@ const WORKSPACE_OPS: Record<
   repo_removed: {
     done: "Repository removed",
     failed: "Removing a repository failed",
+  },
+  git_repaired: {
+    done: "Git repaired after a crash",
+    failed: "Repairing git after a crash failed",
   },
 };
 

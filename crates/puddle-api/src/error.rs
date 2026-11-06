@@ -13,6 +13,7 @@ use crate::credentials::CredentialsError;
 use crate::doctor::DoctorError;
 use crate::network_health::NetworkHealthError;
 use crate::ports::PortsServiceError;
+use crate::proxy_sign_in::ProxySignInError;
 use crate::repos::ReposError;
 use crate::settings::SettingsRepoError;
 use crate::workspaces::WorkspaceError;
@@ -231,6 +232,21 @@ impl From<NetworkHealthError> for ApiError {
             NetworkHealthError::Unavailable(m) => {
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
             }
+        }
+    }
+}
+
+impl From<ProxySignInError> for ApiError {
+    fn from(err: ProxySignInError) -> Self {
+        match err {
+            ProxySignInError::BadUser | ProxySignInError::BadPassword => {
+                Self::invalid(err.to_string())
+            }
+            ProxySignInError::Store | ProxySignInError::Unavailable(_) => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::Unavailable,
+                err.to_string(),
+            ),
         }
     }
 }

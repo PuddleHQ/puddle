@@ -20,6 +20,9 @@ pub struct Ttl {
     pub fresh: Option<Duration>,
     /// After `fresh`, a failed refresh keeps serving the old value this much longer.
     pub grace: Duration,
+    /// A value nobody asked for this long is dropped from memory and read again on the next ask;
+    /// `None` means it is kept while it is otherwise valid.
+    pub idle: Option<Duration>,
 }
 
 /// The expiry per source kind.
@@ -29,11 +32,15 @@ pub struct Ttls {
     pub gh: Ttl,
     /// Git credential helpers: 30 minutes.
     pub git_credential: Ttl,
-    /// Pasted tokens: until the user changes or removes them.
+    /// Pasted tokens: until the user changes or removes them, but dropped from memory after 30
+    /// minutes without a use (the next use reads the operating system's store again).
     pub stored: Ttl,
     /// The Azure CLI: 55 minutes at most, and earlier when the token says it ends sooner.
     pub az_cli: Ttl,
 }
+
+/// How long a pasted token stays in memory without being used.
+const STORED_IDLE: Duration = Duration::from_mins(30);
 
 impl Default for Ttls {
     fn default() -> Self {
@@ -42,18 +49,22 @@ impl Default for Ttls {
             gh: Ttl {
                 fresh: Some(Duration::from_mins(55)),
                 grace,
+                idle: None,
             },
             git_credential: Ttl {
                 fresh: Some(Duration::from_mins(30)),
                 grace,
+                idle: None,
             },
             stored: Ttl {
                 fresh: None,
                 grace: Duration::ZERO,
+                idle: Some(STORED_IDLE),
             },
             az_cli: Ttl {
                 fresh: Some(Duration::from_mins(55)),
                 grace,
+                idle: None,
             },
         }
     }
@@ -84,6 +95,17 @@ struct Held {
     refresh_at: Option<Instant>,
     /// Past this the old value is never served again; `None` = never.
     dead_at: Option<Instant>,
+    /// Past this without a use the value is dropped; `None` = never. Each use moves it.
+    idle_at: Option<Instant>,
+    /// How far each use moves `idle_at`.
+    idle: Option<Duration>,
+}
+
+impl Held {
+    /// Nothing may serve this any more: its grace is over, or nobody used it for too long.
+    fn gone(&self, now: Instant) -> bool {
+        self.dead_at.is_some_and(|at| now >= at) || self.idle_at.is_some_and(|at| now >= at)
+    }
 }
 
 type Slot = Arc<tokio::sync::Mutex<Option<Held>>>;
@@ -100,6 +122,26 @@ pub struct SecretCache<F> {
 
 /// A credential should be renewed this long before its source says it ends.
 const RENEW_EARLY: Duration = Duration::from_mins(5);
+
+impl<F: Fetch + Send + Sync + 'static> SecretCache<F> {
+    /// Runs [`evict_expired`](Self::evict_expired) every minute until the last `Arc` of the cache
+    /// is gone. Needs a Tokio runtime.
+    pub fn spawn_sweeper(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(SWEEP_EVERY).await;
+                let Some(cache) = weak.upgrade() else {
+                    return;
+                };
+                cache.evict_expired();
+            }
+        })
+    }
+}
+
+/// How often the sweeper looks for values to drop.
+const SWEEP_EVERY: Duration = Duration::from_mins(1);
 
 impl<F: Fetch> SecretCache<F> {
     /// A cache over `fetcher` with the default expiry.
@@ -140,6 +182,26 @@ impl<F: Fetch> SecretCache<F> {
             .remove(spec);
     }
 
+    /// Drops every held value that may not be served any more (its grace is over, or nobody used
+    /// it for its idle time), so an idle source does not keep its plaintext until the process
+    /// ends. A value being read right now is left alone. Returns how many were dropped.
+    pub fn evict_expired(&self) -> usize {
+        let now = Instant::now();
+        let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut dropped = 0;
+        slots.retain(|_, slot| {
+            let Ok(mut held) = slot.try_lock() else {
+                return true;
+            };
+            if held.as_ref().is_some_and(|h| h.gone(now)) {
+                *held = None;
+                dropped += 1;
+            }
+            held.is_some() || Arc::strong_count(slot) > 1
+        });
+        dropped
+    }
+
     /// The credential `spec` names: from the cache while fresh, else read again.
     ///
     /// # Errors
@@ -160,9 +222,16 @@ impl<F: Fetch> SecretCache<F> {
         };
         let mut held = slot.lock().await;
         let now = Instant::now();
-        if let Some(h) = held.as_ref()
+        if held
+            .as_ref()
+            .is_some_and(|h| h.idle_at.is_some_and(|at| now >= at))
+        {
+            *held = None;
+        }
+        if let Some(h) = held.as_mut()
             && h.refresh_at.is_none_or(|at| now < at)
         {
+            h.idle_at = h.idle.map(|d| now + d);
             return Ok(h.credential.clone());
         }
         match self.fetcher.fetch(spec).await {
@@ -184,6 +253,8 @@ impl<F: Fetch> SecretCache<F> {
                     credential: fetched.credential,
                     refresh_at,
                     dead_at,
+                    idle_at: ttl.idle.map(|d| now + d),
+                    idle: ttl.idle,
                 });
                 Ok(credential)
             }
@@ -258,6 +329,16 @@ mod tests {
                 },
                 valid_for,
             }))
+        }
+    }
+
+    fn stored() -> SourceSpec {
+        SourceSpec::Stored {
+            id: StoredId::new("a").unwrap(),
+            scope: TokenScope {
+                host: HostName::new("github.com").unwrap(),
+                org: None,
+            },
         }
     }
 
@@ -342,19 +423,16 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn stored_values_never_expire_and_invalidate_drops_them() {
-        let spec = SourceSpec::Stored {
-            id: StoredId::new("a").unwrap(),
-            scope: TokenScope {
-                host: HostName::new("github.com").unwrap(),
-                org: None,
-            },
-        };
+    async fn a_used_stored_value_never_expires_and_invalidate_drops_it() {
+        let spec = stored();
         let script = Script::new(vec![Ok(None), Ok(None)]);
         let cache = SecretCache::new(&script);
         assert_eq!(value(&cache, &spec).await.unwrap(), "v0");
-        tokio::time::advance(Duration::from_hours(720)).await;
-        assert_eq!(value(&cache, &spec).await.unwrap(), "v0");
+        for _ in 0..100 {
+            tokio::time::advance(20 * MIN).await;
+            assert_eq!(value(&cache, &spec).await.unwrap(), "v0");
+        }
+        assert_eq!(script.calls(), 1);
         cache.invalidate(&spec);
         assert_eq!(value(&cache, &spec).await.unwrap(), "v1");
     }
@@ -482,5 +560,76 @@ mod tests {
         // At the end it does not, though the cache's own time to live would allow it.
         tokio::time::advance(4 * MIN).await;
         assert!(value(&cache, &gh()).await.is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stored_value_nobody_asks_for_is_read_again_after_the_idle_time() {
+        let script = Script::new(vec![Ok(None), Ok(None)]);
+        let cache = SecretCache::new(&script);
+        assert_eq!(value(&cache, &stored()).await.unwrap(), "v0");
+        tokio::time::advance(31 * MIN).await;
+        assert_eq!(value(&cache, &stored()).await.unwrap(), "v1");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evicting_drops_the_secret_of_an_idle_source_without_a_new_ask() {
+        let script = Script::new(vec![Ok(None), Ok(None)]);
+        let cache = SecretCache::new(&script);
+        let weak = Arc::downgrade(&cache.get(&stored()).await.unwrap().secret);
+        let gh_weak = Arc::downgrade(&cache.get(&gh()).await.unwrap().secret);
+        tokio::time::advance(20 * MIN).await;
+        assert_eq!(cache.evict_expired(), 0, "nothing is over yet");
+        tokio::time::advance(11 * MIN).await;
+        assert_eq!(cache.evict_expired(), 1, "the pasted token was idle");
+        assert!(weak.upgrade().is_none(), "the buffer is released");
+        assert!(gh_weak.upgrade().is_some(), "gh is still inside its time");
+        tokio::time::advance(30 * MIN).await;
+        assert_eq!(cache.evict_expired(), 1, "gh is past its grace");
+        assert!(gh_weak.upgrade().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_sweeper_evicts_on_its_own_and_stops_with_the_cache() {
+        let script: &'static Script = Box::leak(Box::new(Script::new(vec![Ok(None)])));
+        let cache = Arc::new(SecretCache::new(script));
+        let handle = cache.spawn_sweeper();
+        let weak = Arc::downgrade(&cache.get(&stored()).await.unwrap().secret);
+        // The sweeper sleeps one minute at a time, so let it run between the steps.
+        for _ in 0..33 {
+            tokio::time::advance(MIN).await;
+            tokio::task::yield_now().await;
+        }
+        assert!(weak.upgrade().is_none());
+        drop(cache);
+        tokio::time::advance(2 * MIN).await;
+        handle.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_value_being_read_right_now_is_left_alone_by_the_sweep() {
+        let script = Script::new(vec![Ok(None)]);
+        let cache = SecretCache::new(&script);
+        cache.get(&stored()).await.unwrap();
+        tokio::time::advance(40 * MIN).await;
+        let slot = Arc::clone(cache.slots.lock().unwrap().get(&stored()).unwrap());
+        let reading = slot.lock().await;
+        assert_eq!(cache.evict_expired(), 0, "a slot in use is skipped");
+        drop(reading);
+        assert_eq!(cache.evict_expired(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_sweep_forgets_an_emptied_slot_nobody_waits_on() {
+        let script = Script::new(vec![Ok(None)]);
+        let cache = SecretCache::new(&script);
+        cache.get(&stored()).await.unwrap();
+        tokio::time::advance(40 * MIN).await;
+        // Someone holds the slot, as a read about to start would.
+        let waiting = Arc::clone(cache.slots.lock().unwrap().get(&stored()).unwrap());
+        assert_eq!(cache.evict_expired(), 1);
+        assert_eq!(cache.slots.lock().unwrap().len(), 1, "kept for the waiter");
+        drop(waiting);
+        assert_eq!(cache.evict_expired(), 0);
+        assert!(cache.slots.lock().unwrap().is_empty(), "nobody waits: gone");
     }
 }

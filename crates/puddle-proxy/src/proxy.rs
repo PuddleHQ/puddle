@@ -44,6 +44,7 @@ use crate::ssh;
 use crate::tap::RequestTap;
 use crate::target::Target;
 use crate::terminate::{self, TerminationSource};
+use crate::token_gate::{self, TokenGate};
 use crate::upstream::{Admitted, ProxyForm, Upstream, connect_out};
 use puddle_upstream::RouteWatch;
 
@@ -895,6 +896,7 @@ async fn relay(
         event.injected = done.injected;
         event.binding_id = done.binding_id;
         event.unswapped_stand_ins = done.unswapped_stand_ins;
+        event.scrubbed_stand_ins = done.scrubbed_stand_ins;
         return event;
     }
     let out = match connect_out(
@@ -919,12 +921,34 @@ async fn relay(
     if let Some(code) = proxy.skipped(request, from_container) {
         event.reason = ConnectionReason::PassedThrough(code);
     }
-    let end = tunnel(reader, out.stream, Some(request), out.watch).await;
+    note_tunnel(proxy, reader, (out.stream, out.watch), request, &mut event).await;
+    event
+}
+
+/// Splices a `CONNECT` tunnel that is not decrypted, and puts on `event` what it saw.
+async fn note_tunnel(
+    proxy: &Proxy,
+    reader: GuestReader,
+    (stream, watch): (TcpStream, Option<RouteWatch>),
+    request: &EgressRequest,
+    event: &mut ConnectionEvent,
+) {
+    let end = tunnel(
+        reader,
+        stream,
+        Some(request),
+        watch,
+        proxy.termination_of(request),
+    )
+    .await;
     event.http = end.http;
     if end.ssh {
-        note_block(&mut event, BlockReason::SshUnsupported);
+        note_block(event, BlockReason::SshUnsupported);
     }
-    event
+    if end.token_endpoint {
+        event.decision = ConnectionDecision::Blocked;
+        event.reason = ConnectionReason::Refused(token_gate::CODE);
+    }
 }
 
 /// The client side of one proxied stream, counted for the audit.
@@ -1487,6 +1511,9 @@ pub(crate) struct TunnelEnd {
     pub(crate) http: Option<HttpRequestLine>,
     /// The guest started SSH: nothing of it was passed on, and the guest got the refusal.
     pub(crate) ssh: bool,
+    /// The guest's `ClientHello` asked for a token endpoint of the workspace's logins: it was not
+    /// passed on, and the guest got a TLS alert.
+    pub(crate) token_endpoint: bool,
 }
 
 /// `CONNECT`: answer `200`, pass on bytes the guest sent early, splice. On an error both ends
@@ -1505,12 +1532,21 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     mut server: TcpStream,
     ssh_for: Option<&EgressRequest>,
     mut watch: Option<RouteWatch>,
+    token_endpoints: Option<Arc<terminate::Termination>>,
 ) -> TunnelEnd {
     let early = reader.buffer().to_vec();
     let mut guest = ssh::Gate::new(
-        RequestTap::new(reader.into_inner(), &early),
+        TokenGate::new(
+            RequestTap::new(reader.into_inner(), &early),
+            token_endpoints,
+            &early,
+        ),
         ssh_for.is_some() && early.is_empty(),
     );
+    if guest.inner().refused() {
+        abort(&server);
+        return refuse_token_endpoint(&mut guest).await;
+    }
     let opened = async {
         guest
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -1520,10 +1556,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     if let Err(err) = opened.await {
         tracing::debug!(error = %err, "tunnel failed before the splice");
         abort(&server);
-        return TunnelEnd {
-            http: guest.inner().request_line(),
-            ssh: false,
-        };
+        return seen_only(&guest);
     }
     // A tunnel can outlive the network it was made on. When the route to its destination changes
     // so that the hop it uses is no longer on it, both ends are reset (the same ending as any
@@ -1531,10 +1564,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     let spliced = splice_watched(&mut server, &mut guest, watch.as_mut()).await;
     let Some(spliced) = spliced else {
         abort(&server);
-        return TunnelEnd {
-            http: guest.inner().request_line(),
-            ssh: false,
-        };
+        return seen_only(&guest);
     };
     match spliced {
         Ok((up, down)) => tracing::debug!(
@@ -1553,16 +1583,37 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
                 let _ = guest.write_all(&ssh::pre_banner(&message)).await;
                 let _ = guest.shutdown().await;
                 return TunnelEnd {
-                    http: None,
                     ssh: true,
+                    ..TunnelEnd::default()
                 };
+            }
+            if guest.inner().refused() {
+                return refuse_token_endpoint(&mut guest).await;
             }
             tracing::debug!(error = %err, "tunnel aborted");
         }
     }
+    seen_only(&guest)
+}
+
+/// What a tunnel that ended without a refusal saw: its first request line, if it carried plain HTTP.
+fn seen_only<S>(guest: &ssh::Gate<TokenGate<RequestTap<S>>>) -> TunnelEnd {
     TunnelEnd {
-        http: guest.inner().request_line(),
-        ssh: false,
+        http: guest.inner().inner().request_line(),
+        ..TunnelEnd::default()
+    }
+}
+
+/// Ends a tunnel whose hello asked for a token endpoint: a TLS alert to the guest, a clean close.
+async fn refuse_token_endpoint<S: AsyncRead + AsyncWrite + Unpin>(
+    guest: &mut ssh::Gate<TokenGate<S>>,
+) -> TunnelEnd {
+    tracing::info!("tunnel refused: the TLS hello asks for a token endpoint");
+    let _ = guest.write_all(&token_gate::ALERT).await;
+    let _ = guest.shutdown().await;
+    TunnelEnd {
+        token_endpoint: true,
+        ..TunnelEnd::default()
     }
 }
 

@@ -8,12 +8,12 @@ use std::time::Duration;
 
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    Issuer, KeyPair, KeyUsagePurpose, SanType,
+    Issuer, KeyPair, KeyUsagePurpose, PublicKeyData, SanType, SignatureAlgorithm, SigningKey,
 };
-use rustls::crypto::CryptoProvider;
-use rustls::pki_types::PrivateKeyDer;
+use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::sign::CertifiedKey;
 use time::OffsetDateTime;
+use zeroize::Zeroize as _;
 
 use crate::name::DnsName;
 use crate::{CaCertificate, CaError};
@@ -143,7 +143,7 @@ impl CaBuilder {
         params.not_before = not_before;
         params.not_after = not_after;
 
-        let key = KeyPair::generate().map_err(CaError::Generate)?;
+        let key = WipedKey(KeyPair::generate().map_err(CaError::Generate)?);
         let cert = params.self_signed(&key).map_err(CaError::Generate)?;
         Ok(WorkspaceCa {
             certificate: CaCertificate::new(&cert),
@@ -152,9 +152,34 @@ impl CaBuilder {
             not_after,
             leaf_validity: self.leaf_validity,
             backdate: self.backdate,
-            provider: Arc::new(rustls::crypto::ring::default_provider()),
             cache: Mutex::new(LeafCache::new(self.leaf_cache_capacity)),
         })
+    }
+}
+
+/// The CA's signing key, whose serialised form is overwritten when the CA drops. (The key inside
+/// `ring` is not reachable and stays as it is.)
+struct WipedKey(KeyPair);
+
+impl PublicKeyData for WipedKey {
+    fn der_bytes(&self) -> &[u8] {
+        self.0.der_bytes()
+    }
+
+    fn algorithm(&self) -> &'static SignatureAlgorithm {
+        self.0.algorithm()
+    }
+}
+
+impl SigningKey for WipedKey {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, rcgen::Error> {
+        self.0.sign(msg)
+    }
+}
+
+impl Drop for WipedKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
     }
 }
 
@@ -166,12 +191,11 @@ impl CaBuilder {
 /// to the guest would be a separate, name-constrained type.
 pub struct WorkspaceCa {
     certificate: CaCertificate,
-    issuer: Issuer<'static, KeyPair>,
+    issuer: Issuer<'static, WipedKey>,
     not_before: OffsetDateTime,
     not_after: OffsetDateTime,
     leaf_validity: Duration,
     backdate: Duration,
-    provider: Arc<CryptoProvider>,
     cache: Mutex<LeafCache>,
 }
 
@@ -254,16 +278,19 @@ impl WorkspaceCa {
         params.not_before = not_before;
         params.not_after = not_after;
 
-        let key = KeyPair::generate().map_err(CaError::Generate)?;
+        let mut key = KeyPair::generate().map_err(CaError::Generate)?;
         let cert = params
             .signed_by(&key, &self.issuer)
             .map_err(CaError::Generate)?;
-        let certified = CertifiedKey::from_der(
-            vec![cert.der().clone()],
-            PrivateKeyDer::from(key),
-            &self.provider,
-        )
-        .map_err(CaError::LoadKey)?;
+        // `CertifiedKey::from_der` would hand the key to rustls, which frees it as it is. The
+        // copy made here and the key pair's own are overwritten as soon as `ring` has parsed it.
+        let mut der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+        let signing = rustls::crypto::ring::sign::any_ecdsa_type(&der);
+        der.zeroize();
+        key.zeroize();
+        let certified =
+            CertifiedKey::new(vec![cert.der().clone()], signing.map_err(CaError::LoadKey)?);
+        // No key-match check: the key was made a moment ago and the certificate signed for it.
         Ok((Arc::new(certified), refresh_at))
     }
 
@@ -278,7 +305,7 @@ impl WorkspaceCa {
 
     #[cfg(test)]
     pub(crate) fn key_der_for_test(&self) -> Vec<u8> {
-        self.issuer.key().serialize_der()
+        self.issuer.key().0.serialize_der()
     }
 }
 

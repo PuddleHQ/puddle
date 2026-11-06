@@ -163,6 +163,14 @@ exclude_re = [
     # `SecretValue::drop` only zeroizes the string just before it is freed; no safe code can read the
     # buffer after the drop, so a test cannot tell the zeroed buffer from the untouched one.
     'replace <impl Drop for SecretValue>::drop with \(\)',
+    # The same holds for the drops of `Wiped`, `WipedKey` and `PullToken`, which only zeroize their
+    # own memory before it is freed.
+    'replace <impl Drop for (Wiped|WipedKey|PullToken)>::drop with \(\)',
+    # `Wiped::extend_from_slice` makes the next buffer itself so it can overwrite the old one. Where
+    # that branch is skipped (`>` to `==`, or `+` to `*` in the size) the `Vec` grows the same
+    # way (to at least double, at least the needed size), so only the overwrite of the freed
+    # buffer, which no safe code can read, differs.
+    'wiped\.rs:\d+:\d+: replace (\+ with \*|> with ==) in Wiped::extend_from_slice',
     # `PassThrough::set_limits` keeps a host while its age is under the time; `<=` differs only for an
     # age equal to the time to the nanosecond, which a clock that moves cannot be made to show.
     'intercept\.rs:\d+:\d+: replace < with <= in PassThrough::set_limits',
@@ -181,6 +189,10 @@ exclude_re = [
     # The same for `head`: its `clean` check of the parsed head is an oracle that never fires on the
     # real parser (it refuses control characters first), so a weaker oracle fails no input.
     'fuzzing\.rs:\d+:\d+: replace \|\| with && in head',
+    # `Scrubber::run` looks for a new frontier after a replacement only when the old one lies inside the
+    # form just replaced (`frontier < copied`). With `<=` it also looks when the frontier sits exactly at
+    # the end of the replaced form; the search from there finds that same place, so the output is the same.
+    'answer\.rs:\d+:\d+: replace < with <= in Scrubber::run',
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

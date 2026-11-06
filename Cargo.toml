@@ -121,7 +121,7 @@ windows-sys = "0.61"
 dns-lookup = "4.0.2"
 # Per-sandbox CA and leaf certificates. ring, not aws-lc-rs: aws-lc-sys carries the
 # OpenSSL licence, which deny.toml does not allow; ring is Apache-2.0 AND ISC.
-rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring", "zeroize"] }
 # tls12: real upstream servers still negotiate TLS 1.2, and nothing may fail because of the sandbox.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
@@ -133,11 +133,15 @@ pem = { version = "4", default-features = false, features = ["std"] }
 # OpenAPI schemas for the API's wire types (ADR 0004).
 utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
 # Local HTTP API: axum on loopback; utoipa-axum registers routes and spec together.
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "query", "tokio", "tracing"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "query", "tokio", "tracing", "ws"] }
 # Served through hyper directly (not `axum::serve`) for a header-read timeout and owned connection tasks.
 hyper = { version = "1.11", default-features = false, features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.21", default-features = false, features = ["http1", "server", "server-graceful", "service", "tokio"] }
 utoipa-axum = "0.3.0"
+# The host's own SSH client for the terminal (the runtime's SSH server stack, already in the tree through msb) and the fake runtime's PTY stand-in.
+russh = "0.65.0"
+# WebSocket client of the terminal route's tests (the same crate axum's `ws` feature serves with).
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
 tower-http = { version = "0.7.1", default-features = false, features = ["timeout"] }
 subtle = { version = "2.6.1", default-features = false, features = ["std"] }
 # Basic credentials of the image-pull proxy; already in the tree through reqwest.
@@ -151,6 +155,13 @@ rustls-platform-verifier = "0.7"
 tar = { version = "0.4", default-features = false }
 # Unpacks the bundled code-server release (cargo xtask code-server); already in the tree.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# Encoded answers of a terminated connection are decoded so the proxy can find real secret values
+# in them: gzip and deflate through flate2 above, Brotli (pure Rust) and zstd (already in the tree
+# through microsandbox's async-compression).
+brotli-decompressor = { version = "6.2", default-features = false, features = ["std"] }
+# Finds every form of every real value in an answer in one pass; already in the tree through regex.
+aho-corasick = "1.1"
+zstd = { version = "0.14", default-features = false }
 # Desktop shell. Tauri 2.12 (3.0 is alpha). `wry` is the webview; `x11` is the Linux
 # display backend. No `common-controls-v6` (the unit-test executables have no manifest, so they
 # fail to load with 0xc0000139; `tauri-plugin-dialog` turns it on for `rfd` anyway, so `crates/puddle-app/build.rs` gives its test executables the manifest dependency) and no `compression`

@@ -51,6 +51,11 @@
 //!   otherwise it is the server's answer like any other. The HTTP/3 entries of `Alt-Svc` are
 //!   removed on both HTTP versions: a workspace has no UDP path, so a client would only try
 //!   HTTP/3 and fail.
+//! - **Token endpoints**: a connection that is not decrypted (another name, another port, a host
+//!   decrypted only because every host is) is refused when its `ClientHello` asks for a token
+//!   endpoint of the workspace's logins (audit reason `token_endpoint_spliced`): the refresh token
+//!   or authorization code it would send is swapped only on a decrypted connection. This stops a
+//!   careless tool, not a guest that hides the name (encrypted `ClientHello`, none, fronting).
 //! - **WebSocket**: HTTP/1.1 `Upgrade` and HTTP/2 extended `CONNECT` (RFC 8441) are checked and
 //!   injected like any request; once the server agrees, the two connections are a byte pipe.
 
@@ -58,6 +63,9 @@ mod alt_svc;
 mod body;
 mod exchange;
 mod guest;
+#[cfg(test)]
+pub(crate) use guest::test_client_hello;
+pub(crate) use guest::{Scan, scan_hello};
 mod h2;
 mod handshake;
 mod inject;
@@ -73,6 +81,7 @@ mod stand_in;
 mod streams;
 mod token_body;
 mod watch;
+mod wiped;
 mod ws;
 
 use std::collections::HashMap;
@@ -237,6 +246,14 @@ impl Termination {
     pub fn with_exchanges(mut self, exchanges: Arc<dyn ExchangeRewriter>) -> Self {
         self.exchanges = Some(exchanges);
         self
+    }
+
+    /// Whether `host` is a token endpoint of the workspace's logins (see
+    /// [`ExchangeRewriter::is_token_endpoint`]); `false` without a rewriter.
+    pub(crate) fn is_token_endpoint(&self, host: &puddle_types::Host) -> bool {
+        self.exchanges
+            .as_deref()
+            .is_some_and(|exchanges| exchanges.is_token_endpoint(host))
     }
 
     /// The hosts that are decrypted.

@@ -8659,6 +8659,78 @@ async fn a_stored_proxy_sign_in_answers_the_proxy_and_is_there_after_a_restart()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_proxy_sign_in_entered_through_the_api_answers_the_proxy_shows_in_the_report_and_goes_when_removed()
+ {
+    use puddle_upstream::{Behaviour, FakeProxy};
+    let rig = Rig::new();
+    let stored = fixture::password("entered");
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: stored.clone(),
+    })
+    .await;
+    let host = host_behind_proxy_without_a_configured_password(&rig, &proxy).await;
+    proxy_sign_ins_loaded(&host, 0).await;
+    let api = api(&host);
+    let address = proxy.proxy_addr().to_string();
+
+    let put = api
+        .put(
+            "/api/proxy-sign-ins",
+            &json!({"proxy": address, "user": "svc", "password": stored}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    fixture::assert_absent("the sign-in reply", &put.body, &stored);
+    assert_eq!(
+        put.json()["sign_ins"],
+        json!([{"proxy": address, "user": "svc"}])
+    );
+
+    add_github_identity(&api, "ghp_unused_token").await;
+    let _ = api.get("/api/repos").await;
+    let expected = format!("Basic {}", base64(format!("svc:{stored}").as_bytes()));
+    assert!(
+        proxy
+            .seen()
+            .iter()
+            .any(|request| request.method == "CONNECT"
+                && request.proxy_authorization.as_deref() == Some(expected.as_str())),
+        "the proxy never saw the entered sign-in"
+    );
+    let report = api.get("/api/network-health").await;
+    fixture::assert_absent("the network-health reply", &report.body, &stored);
+    assert_eq!(
+        report.json()["sign_in"]["stored"],
+        json!([{"proxy": address, "user": "svc"}])
+    );
+    assert_eq!(
+        report.json()["sign_in"]["attempts"][0]["result"],
+        "signed_in"
+    );
+
+    // A removal stops the answers at once.
+    let gone = api
+        .delete(&format!("/api/proxy-sign-ins/{address}"), None)
+        .await;
+    assert_eq!(gone.status, 204, "{}", gone.body);
+    assert!(host.proxy_passwords().proxies().is_empty());
+    let before = proxy.seen().len();
+    let _ = api.post("/api/repos/refresh", "{}").await;
+    let after = proxy.seen();
+    assert!(after.len() > before, "the listing made no new request");
+    assert!(
+        after[before..]
+            .iter()
+            .all(|request| request.proxy_authorization.as_deref() != Some(expected.as_str())),
+        "the removed sign-in was still sent"
+    );
+    let report = api.get("/api/network-health").await.json();
+    assert_eq!(report["sign_in"]["stored"], json!([]));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_proxy_that_turns_the_sign_in_down_is_one_event_and_a_failed_attempt() {
     use puddle_upstream::{Behaviour, FakeProxy};
     let rig = Rig::new();
@@ -11088,5 +11160,82 @@ async fn a_disk_that_cannot_be_read_makes_no_entry() {
     assert_eq!(orphan_ids(&api).await, ["stuck"]);
     assert_eq!(volume_names(&rig).await, ["ws-stuck"]);
     assert!(rig.runtime.list().await.unwrap().is_empty());
+    host.shutdown().await;
+}
+
+// ---- the terminal ------------------------------------------------------------------------
+
+async fn terminal_output_until(
+    link: &mut puddle_api::TerminalLink,
+    text: &str,
+) -> puddle_api::TerminalEnd {
+    let mut seen = String::new();
+    loop {
+        let item = tokio::time::timeout(Duration::from_secs(10), link.output.recv())
+            .await
+            .unwrap();
+        // A link that closes without an end fails the caller's assertion on the reason.
+        let Some(item) = item else {
+            return puddle_api::TerminalEnd::of(puddle_api::EndReason::Quitting);
+        };
+        match item {
+            puddle_api::TerminalOutput::Bytes(b) => {
+                seen.push_str(&String::from_utf8_lossy(&b));
+                if seen.contains(text) {
+                    return puddle_api::TerminalEnd::of(puddle_api::EndReason::Exited);
+                }
+            }
+            puddle_api::TerminalOutput::Ended(end) => return end,
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped_reason() {
+    let rig = Rig::new();
+    rig.runtime.serve_terminals();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let user = api.get("/api/workspaces/acme").await.json()["session_user"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = WorkspaceId::new("acme").unwrap();
+    let size = puddle_api::TerminalSize::new(80, 24).unwrap();
+
+    let service = host.workspaces();
+    puddle_api::TerminalService::check(service, &id)
+        .await
+        .unwrap();
+    let mut link = puddle_api::TerminalService::open(service, &id, size)
+        .await
+        .unwrap();
+    link.input
+        .send(puddle_api::TerminalInput::Bytes(b"whoami\r".to_vec()))
+        .await
+        .unwrap();
+    let reached = terminal_output_until(&mut link, &format!("{user}\r\n")).await;
+    assert_eq!(reached.reason, puddle_api::EndReason::Exited, "{reached:?}");
+
+    let stop = api.post("/api/workspaces/acme/stop", "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = terminal_output_until(&mut link, "never printed").await;
+    assert_eq!(end.reason, puddle_api::EndReason::Stopped, "{end:?}");
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    // A stopped workspace has no terminal to open.
+    let refused = puddle_api::TerminalService::open(service, &id, size)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, puddle_api::TerminalError::NotRunning(_)),
+        "{refused:?}"
+    );
+    assert!(matches!(
+        puddle_api::TerminalService::check(service, &id).await,
+        Err(puddle_api::TerminalError::NotRunning(_))
+    ));
     host.shutdown().await;
 }

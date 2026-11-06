@@ -33,9 +33,7 @@ use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroizing;
 
 use crate::marker::Marker;
-use crate::profile::{
-    Endpoint, Field, Method, Profile, Role, Scope, Slot, StandInKind, path_matches,
-};
+use crate::profile::{Endpoint, Field, Method, Profile, Role, Scope, Slot, path_matches};
 use crate::shape;
 use crate::vault::{STORE_TIMEOUT, Vault, VaultError};
 
@@ -304,6 +302,7 @@ impl Logins {
         (slot, scope): (Slot, Scope),
         stand_in: &str,
         real: &str,
+        retire: bool,
     ) -> Result<(), StandInError> {
         let entry = StandIn::new(
             StandInOrigin::CapturedLogin,
@@ -314,7 +313,7 @@ impl Logins {
         )?;
         let old = self.slots().insert((profile.id, slot), stand_in.to_owned());
         if let Some(old) = old {
-            if slot.role.stand_in() == StandInKind::Fields {
+            if retire {
                 self.retire(profile, slot, old);
             } else {
                 self.inner.registry.remove(&old);
@@ -363,7 +362,7 @@ impl Logins {
                     Ok(Some(saved)) => {
                         kept.insert(profile.id.to_owned());
                         if self
-                            .install(profile, slot, &saved.stand_in, &saved.real)
+                            .install(profile, slot, &saved.stand_in, &saved.real, false)
                             .is_err()
                         {
                             unreadable.push(profile);
@@ -639,13 +638,13 @@ impl Logins {
         let _one_at_a_time = self.inner.capture.lock().await;
         let mut planned: Vec<(&'static Field, Zeroizing<String>, String, bool)> = Vec::new();
         for (field, real) in found {
-            // A session token is made again at every exchange, with its expiry in its fields, so
-            // it never reuses the slot's stand-in.
+            // A session token's fields and a JWT's claims hold its expiry, so a new token gets a
+            // new stand-in; any other token keeps the slot's.
             let existing = self
                 .slots()
                 .get(&(profile.id, field.slot()))
                 .cloned()
-                .filter(|_| field.role.stand_in() == StandInKind::Shaped);
+                .filter(|_| !shape::renews(&real, field));
             let planned_stand_in = match existing {
                 Some(stand_in) => (stand_in, false),
                 // The system had no random numbers, or the token cannot be copied: either way
@@ -677,7 +676,7 @@ impl Logins {
                     .set_real(stand_in, SecretValue::new(real.as_str()))
                     == Ok(true);
             if !refreshed {
-                self.install(profile, slot, stand_in, real)
+                self.install(profile, slot, stand_in, real, shape::renews(real, field))
                     .map_err(|_| Problem::UnusableToken)?;
             }
             parsed.set_text_at(field.path, stand_in);
@@ -752,6 +751,10 @@ impl AnswerRewriter for Capture {
 }
 
 impl ExchangeRewriter for Logins {
+    fn is_token_endpoint(&self, host: &Host) -> bool {
+        self.inner.enabled && self.inner.routes.iter().any(|route| route.host == *host)
+    }
+
     fn begin(&self, host: &Host, method: &str, path: &str) -> Option<Exchange> {
         if !self.inner.enabled {
             return None;

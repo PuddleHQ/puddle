@@ -176,6 +176,23 @@
         <b>{report.sign_in.methods.map(methodLabel).join(", ")}</b>.
       {/if}
     </p>
+    {#if report.sign_in.stored.length > 0}
+      <p>
+        Stored user name and password (Basic), used when a proxy still asks
+        after the Windows sign-in:
+      </p>
+      <ul class="plain" aria-label="Stored proxy sign-ins">
+        {#each report.sign_in.stored as s (s.proxy)}
+          <li><span class="mono">{s.proxy}</span> as <b>{s.user}</b></li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="muted">
+        No user name and password is stored for a proxy. <a
+          href="/settings#s-net">Enter one in Settings, Network.</a
+        >
+      </p>
+    {/if}
     {#if report.sign_in.attempts.length === 0}
       <p class="muted">No proxy has been signed in to yet.</p>
     {:else}

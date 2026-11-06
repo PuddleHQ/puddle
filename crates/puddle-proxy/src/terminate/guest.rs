@@ -197,6 +197,63 @@ pub(crate) fn parse_hello(captured: &[u8], host: &Host) -> Option<Hello> {
     None
 }
 
+/// What the first bytes of a connection say about a TLS `ClientHello`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Scan {
+    /// A record that begins a hello, cut short: more bytes can still complete it.
+    More,
+    /// Not a `ClientHello` (another protocol, or garbage).
+    Other,
+    /// A whole `ClientHello`, with the name it asks for (`None`: no name, or one that is not a
+    /// host name).
+    Name(Option<Host>),
+}
+
+/// Reads `captured` as the start of a `ClientHello` without a connection.
+pub(crate) fn scan_hello(captured: &[u8]) -> Scan {
+    let mut acceptor = rustls::server::Acceptor::default();
+    let mut rest = captured;
+    while !rest.is_empty() {
+        if acceptor.read_tls(&mut rest).is_err() {
+            return Scan::Other;
+        }
+        match acceptor.accept() {
+            Ok(Some(accepted)) => {
+                let name = accepted
+                    .client_hello()
+                    .server_name()
+                    .and_then(|name| normalise_host(name).ok())
+                    .map(puddle_netpolicy::Target::into_host);
+                return Scan::Name(name);
+            }
+            Ok(None) => {}
+            Err(_) => return Scan::Other,
+        }
+    }
+    Scan::More
+}
+
+#[cfg(test)]
+/// A real `ClientHello` for `name` with `alpn`, as a TLS client sends it.
+pub(crate) fn test_client_hello(name: &str, alpn: &[&[u8]]) -> Vec<u8> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add_parsable_certificates(Vec::new());
+    let mut config = rustls::ClientConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
+    let mut conn = rustls::ClientConnection::new(
+        Arc::new(config),
+        rustls::pki_types::ServerName::try_from(name.to_owned()).unwrap(),
+    )
+    .unwrap();
+    let mut out = Vec::new();
+    conn.write_tls(&mut out).unwrap();
+    out
+}
+
 /// Whether a `ClientHello`'s name is `host`.
 fn name_is(sni: Option<&str>, host: &str) -> bool {
     let wanted = sni
@@ -337,26 +394,6 @@ mod tests {
 
     use super::*;
 
-    /// A real `ClientHello` for `name` with `alpn`, as a TLS client sends it.
-    fn client_hello(name: &str, alpn: &[&[u8]]) -> Vec<u8> {
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add_parsable_certificates(Vec::new());
-        let mut config = rustls::ClientConfig::builder_with_provider(provider())
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        config.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
-        let mut conn = rustls::ClientConnection::new(
-            Arc::new(config),
-            rustls::pki_types::ServerName::try_from(name.to_owned()).unwrap(),
-        )
-        .unwrap();
-        let mut out = Vec::new();
-        conn.write_tls(&mut out).unwrap();
-        out
-    }
-
     async fn capture(bytes: Vec<u8>, early: &[u8]) -> FirstBytes {
         let (mut a, b) = tokio::io::duplex(64 * 1024);
         tokio::io::AsyncWriteExt::write_all(&mut a, &bytes)
@@ -393,7 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_client_hello_is_captured_whole_and_read_without_a_connection() {
-        let hello = client_hello("free.test", &[b"h2", b"http/1.1"]);
+        let hello = test_client_hello("free.test", &[b"h2", b"http/1.1"]);
         assert_eq!(
             capture(hello.clone(), &[]).await,
             FirstBytes::Tls(hello.clone())
@@ -403,14 +440,14 @@ mod tests {
         assert!(read.name_matches && read.offers_h2 && read.offers_h1);
         let other = Host::parse_normalised("other.test").unwrap();
         assert!(!parse_hello(&hello, &other).unwrap().name_matches);
-        let h2_only = client_hello("free.test", &[b"h2"]);
+        let h2_only = test_client_hello("free.test", &[b"h2"]);
         let read = parse_hello(&h2_only, &host).unwrap();
         assert!(read.offers_h2 && !read.offers_h1);
     }
 
     #[tokio::test]
     async fn bytes_read_before_the_capture_count_as_the_start_of_the_record() {
-        let hello = client_hello("free.test", &[]);
+        let hello = test_client_hello("free.test", &[]);
         let (early, rest) = hello.split_at(3);
         assert_eq!(
             capture(rest.to_vec(), early).await,
@@ -421,7 +458,7 @@ mod tests {
 
     #[tokio::test]
     async fn anything_that_is_not_one_whole_client_hello_is_other_and_keeps_its_bytes() {
-        let hello = client_hello("free.test", &[]);
+        let hello = test_client_hello("free.test", &[]);
         let cases: Vec<Vec<u8>> = vec![
             b"GET / HTTP/1.1
 
@@ -446,10 +483,23 @@ mod tests {
     #[test]
     fn bytes_that_are_not_a_whole_client_hello_give_no_hello() {
         let host = Host::parse_normalised("free.test").unwrap();
-        let hello = client_hello("free.test", &[]);
+        let hello = test_client_hello("free.test", &[]);
         assert!(parse_hello(&hello[..hello.len() - 1], &host).is_none());
         assert!(parse_hello(b"GET / HTTP/1.1\r\n\r\n", &host).is_none());
         assert!(parse_hello(&[], &host).is_none());
+    }
+
+    #[test]
+    fn a_scan_tells_a_whole_hello_from_a_cut_one_and_from_another_protocol() {
+        let hello = test_client_hello("free.test", &[]);
+        assert_eq!(
+            scan_hello(&hello),
+            Scan::Name(Host::parse_normalised("free.test").ok())
+        );
+        assert_eq!(scan_hello(&hello[..hello.len() - 1]), Scan::More);
+        assert_eq!(scan_hello(&[]), Scan::More);
+        assert_eq!(scan_hello(b"GET / HTTP/1.1\r\n\r\n"), Scan::Other);
+        assert_eq!(scan_hello(&[0x17, 3, 3, 0, 1, 0]), Scan::Other);
     }
 
     #[tokio::test]

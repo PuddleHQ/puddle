@@ -702,6 +702,10 @@ impl AnswerRewriter for Capture {
 }
 
 impl ExchangeRewriter for Logins {
+    fn is_token_endpoint(&self, host: &Host) -> bool {
+        self.inner.enabled && self.inner.routes.iter().any(|route| route.host == *host)
+    }
+
     fn begin(&self, host: &Host, method: &str, path: &str) -> Option<Exchange> {
         if !self.inner.enabled {
             return None;

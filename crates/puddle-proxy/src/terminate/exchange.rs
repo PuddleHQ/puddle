@@ -152,6 +152,12 @@ pub trait ExchangeRewriter: Send + Sync + fmt::Debug {
     /// exchange. Asked after the upstream certificate is verified and the injector has decided,
     /// for every request on a decrypted host, so it answers from memory and never waits.
     fn begin(&self, host: &Host, method: &str, path: &str) -> Option<Exchange>;
+
+    /// Whether `host` is the host of a token endpoint this rewriter reads. Asked of the name in
+    /// the `ClientHello` of a connection that is not decrypted, which is refused when it is.
+    fn is_token_endpoint(&self, _host: &Host) -> bool {
+        false
+    }
 }
 
 /// The request body of an exchange with its stand-ins swapped: `Some` with the new body when

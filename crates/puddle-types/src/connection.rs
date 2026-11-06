@@ -133,7 +133,7 @@ impl From<BlockReason> for RefusedReason {
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
 /// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`,
 /// `connection_limit`, `request_rule`, `suppressed`, `merged`, `limit:<code>` (a limit ended the connection or cut a stream of it), `pass_through:<code>` (a host the workspace decrypts only because it decrypts every host was passed through untouched), `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
-/// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
+/// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, `token_endpoint_spliced`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionReason {

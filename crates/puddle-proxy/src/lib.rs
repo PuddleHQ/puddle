@@ -74,6 +74,7 @@ mod target;
 pub mod terminate;
 #[cfg(feature = "testing")]
 pub mod testing;
+mod token_gate;
 mod upstream;
 
 pub use coalesce::Coalescing;

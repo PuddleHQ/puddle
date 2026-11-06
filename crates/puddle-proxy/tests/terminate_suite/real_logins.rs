@@ -628,8 +628,28 @@ async fn gh_logs_in_with_the_device_flow_and_its_token_works_for_the_api_and_for
         "ls-remote",
         "https://github.com/acme/web.git",
     ]);
+    ls.env("GIT_CURL_VERBOSE", "1").env("GIT_TRACE", "1");
     let ran = tools.run(ls, "", Duration::from_secs(60)).await;
-    assert!(ran.ok && ran.out.contains(SHA), "{}", ran.out);
+    let hosts_now =
+        std::fs::read_to_string(tools.home.path().join(".config/gh/hosts.yml")).unwrap_or_default();
+    let gh_version = std::process::Command::new(&gh)
+        .arg("--version")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let git_version = std::process::Command::new(&git)
+        .arg("--version")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    assert!(
+        ran.ok && ran.out.contains(SHA),
+        "DIAG gh={gh_version} git={git_version} gh_path={} hosts={hosts_now} github_com_requests={:?} api={:?}\n{}",
+        gh.display(),
+        authorizations(tools.server("github.com")),
+        authorizations(tools.server("api.github.com")),
+        ran.out
+    );
     tools.assert_no_real_token_in_the_workspace();
 }
 

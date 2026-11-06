@@ -11,7 +11,7 @@ use std::path::Path;
 
 use arbitrary::{Arbitrary, Unstructured};
 
-use puddle_agent::capture::wire::{self, QueryName, Reject};
+use puddle_agent::capture::wire::{self, MAX_QUERY, QueryName, Reject};
 
 // The same checks the cargo-fuzz target runs.
 #[path = "../../../../fuzz/checks/dns_message.rs"]
@@ -144,6 +144,26 @@ fn every_datagram_in_the_udp_corpus_is_answered_as_the_stub_answers_it() {
     for probe in transport_corpus::<Probe>("dns_udp_datagram") {
         dns_transport::dns_udp_datagram(&probe);
     }
+}
+
+#[test]
+fn a_datagram_one_byte_over_the_query_limit_is_dropped_and_the_next_is_answered() {
+    dns_transport::dns_udp_bytes(&dns_transport::padded_query(MAX_QUERY + 1));
+}
+
+#[test]
+fn a_datagram_twice_the_query_limit_is_dropped_and_the_next_is_answered() {
+    dns_transport::dns_udp_bytes(&dns_transport::padded_query(2 * MAX_QUERY));
+}
+
+#[test]
+fn a_query_padded_to_the_query_limit_is_a_query_the_stub_answers() {
+    assert!(wire::parse_query(&dns_transport::padded_query(MAX_QUERY)).is_ok());
+}
+
+#[test]
+fn a_datagram_at_the_query_limit_is_answered_as_the_stub_answers_it() {
+    dns_transport::dns_udp_bytes(&dns_transport::padded_query(MAX_QUERY));
 }
 
 #[test]

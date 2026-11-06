@@ -200,19 +200,37 @@ fn sentinel() -> Vec<u8> {
     bounded(0xBEEF, "small.example.com", 1, 1232, 0)
 }
 
+/// A query the stub answers, padded with zero bytes after the question to `len` bytes.
+pub(crate) fn padded_query(len: usize) -> Vec<u8> {
+    let mut message = sentinel();
+    message.resize(len, 0);
+    message
+}
+
 /// Sends one datagram to the stub's UDP socket and checks what comes back.
 ///
 /// # Panics
 ///
-/// When the answer (or the lack of one) differs from what the stub says to the datagram's first
-/// `MAX_QUERY` bytes called directly (a longer datagram is cut to the receive buffer), or when no
-/// answer comes in two seconds.
+/// When the answer (or the lack of one) differs from what the stub says to the
+/// datagram called directly (a datagram over `MAX_QUERY` bytes is dropped, as on every OS), or
+/// when no answer comes in two seconds.
 pub(crate) fn dns_udp_datagram(probe: &Probe) {
-    let sent = probe.bytes();
+    dns_udp_bytes(probe.bytes());
+}
+
+/// [`dns_udp_datagram`] for one datagram given as bytes.
+///
+/// # Panics
+///
+/// As [`dns_udp_datagram`].
+pub(crate) fn dns_udp_bytes(sent: &[u8]) {
     RIG.with(|rig| {
         rig.runtime.block_on(async {
-            let cut = sent.get(..MAX_QUERY).unwrap_or(sent);
-            let mut want: Vec<Vec<u8>> = rig.stub.answer(cut, true).await.into_iter().collect();
+            let mut want: Vec<Vec<u8>> = if sent.len() > MAX_QUERY {
+                Vec::new()
+            } else {
+                rig.stub.answer(sent, true).await.into_iter().collect()
+            };
             let sentinel = sentinel();
             want.extend(rig.stub.answer(&sentinel, true).await);
 

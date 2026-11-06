@@ -1252,6 +1252,23 @@ async fn every_session_token_exchange_gets_a_new_stand_in_and_the_last_few_stay_
 }
 
 #[tokio::test]
+async fn a_long_run_of_session_exchanges_never_holds_more_than_the_bound() {
+    let rig = rig();
+    for n in 1..=60 {
+        copilot_exchange(&rig, "GET", &session_token(n))
+            .await
+            .unwrap();
+        assert!(
+            rig.registry.len() <= 1 + crate::logins::RETIRED_KEPT,
+            "exchange {n}"
+        );
+    }
+    assert_eq!(rig.registry.len(), 1 + crate::logins::RETIRED_KEPT);
+    assert_eq!(rig.logins.forget("github").await, Ok(true));
+    assert_eq!(rig.registry.len(), 0);
+}
+
+#[tokio::test]
 async fn forgetting_the_github_login_drops_every_session_stand_in() {
     let rig = rig();
     for n in 1..=3 {

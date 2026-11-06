@@ -265,4 +265,59 @@ mod tests {
                 && head.contains("connection: close\r\n")
         );
     }
+
+    use bytes::Bytes;
+
+    async fn written(
+        method: &str,
+        status: StatusCode,
+        http11: bool,
+        body: &'static [u8],
+    ) -> (String, Written) {
+        let response = Response::builder()
+            .status(status)
+            .body(AnswerBody::Buffered(Some(Bytes::from_static(body))))
+            .unwrap();
+        let mut out = Vec::new();
+        let how = write(
+            &mut out,
+            response,
+            method,
+            http11,
+            false,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        (text(&out), how)
+    }
+
+    #[tokio::test]
+    async fn an_answer_to_head_204_and_304_is_written_without_a_body_or_a_length_of_its_own() {
+        for (method, status) in [
+            ("HEAD", StatusCode::OK),
+            ("head", StatusCode::OK),
+            ("GET", StatusCode::NO_CONTENT),
+            ("GET", StatusCode::NOT_MODIFIED),
+        ] {
+            let (out, _) = written(method, status, true, b"").await;
+            assert!(
+                !out.contains("content-length"),
+                "{method} {status} must not get a length of its own: {out:?}"
+            );
+            assert!(out.ends_with("\r\n\r\n"), "{out:?}");
+        }
+        let (out, _) = written("GET", StatusCode::OK, true, b"abc").await;
+        assert!(out.contains("content-length: 3\r\n") && out.ends_with("\r\n\r\nabc"));
+    }
+
+    #[tokio::test]
+    async fn an_http_1_0_guest_or_a_close_request_gets_the_connection_closed() {
+        let (out, how) = written("GET", StatusCode::OK, false, b"abc").await;
+        assert!(out.contains("connection: close\r\n"), "{out:?}");
+        assert!(matches!(how, Written::Close));
+        let (out, how) = written("GET", StatusCode::OK, true, b"abc").await;
+        assert!(!out.contains("connection:"), "{out:?}");
+        assert!(matches!(how, Written::KeepOpen));
+    }
 }

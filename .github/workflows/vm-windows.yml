@@ -89,7 +89,7 @@ jobs:
         uses: ./.github/actions/cancel-group
 
   build:
-    name: vm-windows build (test archive, guest agent)
+    name: vm-windows build (test archive)
     needs: scope
     if: ${{ !cancelled() && needs.scope.outputs.vm != 'false' && needs.scope.outputs.light != 'true' && needs.scope.outputs.defer_vm_windows != 'true' }}
     # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
@@ -120,17 +120,13 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
-      - name: guest agent (static musl build)
+      - name: build the VM tests once (nextest archive)
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/bundle"
-          cp "$(ci/build-agent.sh --locked)" "$RUNNER_TEMP/bundle/puddle-agent"
-      - name: build the VM tests once (nextest archive)
-        if: steps.changed.outputs.run == 'true'
-        shell: bash
-        run: cargo nextest archive $VM_CRATES --profile vm --locked --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
-      - name: share the archive and the agent with the test jobs
+          cargo nextest archive $VM_CRATES --profile vm --locked --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
+      - name: share the archive with the test jobs
         if: steps.changed.outputs.run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -143,9 +139,50 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
+  # The guest agent (a static musl build, 120 s cold), built beside the archive build, which is the longest step
+  # of `build`. It asks should-run.sh itself, so a nightly on a green commit builds nothing here either.
+  agent:
+    name: vm-windows guest agent (musl build)
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.vm != 'false' && needs.scope.outputs.light != 'true' && needs.scope.outputs.defer_vm_windows != 'true' }}
+    permissions:
+      contents: read
+      actions: write
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh vm-windows.yml --events schedule,workflow_dispatch
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - name: guest agent (static musl build)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent"
+          cp "$(ci/build-agent.sh --locked)" "$RUNNER_TEMP/agent/puddle-agent"
+      - name: share the agent with the test jobs
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-windows-agent
+          path: ${{ runner.temp }}/agent
+          retention-days: 1
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
   tests:
     name: vm-windows tests (partition ${{ matrix.partition }} of 5)
-    needs: build
+    needs: [build, agent]
     if: needs.build.outputs.run == 'true'
     permissions:
       contents: read
@@ -198,11 +235,17 @@ jobs:
           ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
-      - name: the test archive and the guest agent from the build job
+      - name: the test archive from the build job
         if: steps.whp.outputs.ok == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-windows-build
+          path: ${{ runner.temp }}/bundle
+      - name: the guest agent from the agent job
+        if: steps.whp.outputs.ok == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-agent
           path: ${{ runner.temp }}/bundle
       - name: VM tests (tier W, partition ${{ matrix.partition }} of 5)
         if: steps.whp.outputs.ok == 'true'
@@ -285,7 +328,7 @@ jobs:
   # KVM/WHP infrastructure skip is a skipped step inside a passing job, not a skipped job.
   vm-windows:
     name: vm-windows (WHP, msb microVMs)
-    needs: [scope, build, tests]
+    needs: [scope, build, agent, tests]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -299,4 +342,4 @@ jobs:
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
           PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh verdict --nightly-skips build=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows
+        run: ci/scope.sh verdict --nightly-skips build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows

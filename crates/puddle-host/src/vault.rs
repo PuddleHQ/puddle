@@ -232,6 +232,16 @@ mod tests {
         assert!(kept.contains(&"puddle-index".to_owned()));
     }
 
+    #[test]
+    fn a_store_that_cannot_be_rewritten_does_not_stop_the_sweep() {
+        let store =
+            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+        let broken = MemoryStore::new();
+        broken.break_it();
+        keep_local(&broken, [id("a")].iter());
+        assert_eq!(sweep(&broken, &store), Ok(Sweep::default()));
+    }
+
     #[tokio::test]
     async fn the_background_sweep_runs_off_the_async_threads() {
         let store = Arc::new(

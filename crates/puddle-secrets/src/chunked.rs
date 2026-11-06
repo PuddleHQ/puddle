@@ -437,4 +437,12 @@ mod tests {
         assert_eq!(kept[0], "long");
         assert!(kept[1..].iter().all(|piece| piece.starts_with("long-")));
     }
+
+    #[test]
+    fn keeping_all_local_asks_the_store_underneath() {
+        assert_eq!(
+            ChunkedStore::new(MemoryStore::new()).keep_all_local(),
+            Ok(0)
+        );
+    }
 }

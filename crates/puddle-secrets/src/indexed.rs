@@ -398,4 +398,31 @@ mod tests {
         assert_eq!(store.keep_all_local(), Ok(0));
         assert_eq!(store.inner.kept_local(), ["tok-a", "tok-b", "puddle-index"]);
     }
+
+    /// A store that holds values but cannot rewrite any of them.
+    #[derive(Default)]
+    struct NoRewrite(MemoryStore);
+
+    impl SecretStore for NoRewrite {
+        fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
+            self.0.get(id)
+        }
+        fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), StoreError> {
+            self.0.set(id, secret)
+        }
+        fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
+            self.0.delete(id)
+        }
+        fn keep_local(&self, _: &StoredId) -> Result<(), StoreError> {
+            Err(StoreError)
+        }
+    }
+
+    #[test]
+    fn entries_that_cannot_be_rewritten_are_counted_not_fatal() {
+        let store = IndexedStore::new(NoRewrite::default());
+        store.set(&id("tok-a"), &secret("a")).unwrap();
+        // The listed id and the index itself.
+        assert_eq!(store.keep_all_local(), Ok(2));
+    }
 }

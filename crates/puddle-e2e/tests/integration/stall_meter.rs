@@ -152,6 +152,8 @@ async fn send_for<'a>(
         client.write_all(&chunk).await.unwrap();
         progress.mark();
         after_chunk(start.elapsed());
+        // What the callback took (a fault planted between writes) is the test's time, not a wait of the transfer.
+        progress.skip();
     }
     client.shutdown().await.unwrap();
     progress
@@ -287,6 +289,15 @@ fn a_cut_that_fails_is_reported_as_the_cut() {
         !text.contains("did not back off"),
         "the failed cut was reported as the meter's:\n{text}"
     );
+}
+
+/// The time the command that plants the cut takes is the test's own, not the transfer's: on a loaded
+/// host `iptables` once took 5.7 s, which the meter read as a 5.7 s gap with no backoff in it.
+#[test]
+fn a_slow_command_that_plants_the_cut_is_not_a_stall() {
+    let slow = r#"sh -c 'case "$*" in *-A*) sleep 4;; esac; exec iptables "$@"' iptables"#;
+    let (passed, text) = drop_in_a_namespace(&[(IPTABLES, slow)]).unwrap();
+    assert!(passed, "a slow cut was taken for a stall:\n{text}");
 }
 
 /// Runs [`kernel_drop_inner`] in a network namespace of its own, with `env` added, and returns

@@ -7,7 +7,8 @@
 set -eu
 
 # check.sh runs under hooks that export GIT_DIR and friends; a leaked one would point `git init` at the real repository.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_NAMESPACE
+# shellcheck disable=SC1091 # the helper sits beside this script
+. "$(dirname "$0")/git-clean-env.sh"
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)

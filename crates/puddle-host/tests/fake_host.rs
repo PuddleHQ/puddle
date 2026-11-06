@@ -8379,6 +8379,82 @@ async fn locks_that_could_not_be_removed_one_by_one_are_listed_in_the_problem() 
     host.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn git_files_repaired_at_boot_are_audited_and_told_in_plain_words() {
+    let rig = Rig::new();
+    *rig.guest.locks_answer.lock().unwrap() = Some((
+        0,
+        "R\tapi/.git/HEAD\tHEAD was zero-filled, rewritten: branch main\n\
+         R\tapi/.git/index\tindex was damaged, rebuilt from HEAD (staged changes are not kept)\n\
+         P\tweb/.git/HEAD\tHEAD is damaged and the last commit in logs/HEAD (abc) is not in the repository\nD\n",
+    ));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let (key, workspace, title, detail) = &problems[0];
+    assert_eq!(key, "git-repair:acme");
+    assert_eq!(workspace.as_deref(), Some("acme"));
+    assert!(title.contains("could not repair"), "{title}");
+    assert!(
+        detail.contains("api/.git/HEAD: HEAD was zero-filled"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("web/.git/HEAD: HEAD is damaged"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("add it again"),
+        "the staged-changes notice: {detail}"
+    );
+    assert!(detail.contains("fixed by hand"), "{detail}");
+
+    let ops = workspace_ops("workspace=acme", &api).await;
+    let repaired: Vec<_> = ops.iter().filter(|r| r["op"] == "git_repaired").collect();
+    assert_eq!(repaired.len(), 2, "one audit line per repair: {ops:?}");
+    assert_eq!(repaired[0]["actor"], "system", "{ops:?}");
+    assert_eq!(repaired[0]["workspace_id"], "acme", "{ops:?}");
+    assert!(
+        repaired[0]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("api/.git/HEAD:"),
+        "{ops:?}"
+    );
+
+    // A boot that repaired something and left nothing damaged says only what was repaired.
+    *rig.guest.locks_answer.lock().unwrap() = Some((
+        0,
+        "R\tapi/.git/HEAD\tHEAD was zero-filled, rewritten: branch main\nD\n",
+    ));
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let (_, _, title, detail) = &problems[0];
+    assert!(title.contains("repaired git files in acme"), "{title}");
+    assert!(!detail.contains("fixed by hand"), "{detail}");
+
+    // A boot that finds nothing withdraws the notice and writes no new audit line.
+    *rig.guest.locks_answer.lock().unwrap() = None;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(problems_of(&api).await, []);
+    let again = workspace_ops("workspace=acme", &api).await;
+    assert_eq!(
+        again.iter().filter(|r| r["op"] == "git_repaired").count(),
+        3
+    );
+    host.shutdown().await;
+}
+
 /// Waits until the host has read its stored proxy sign-ins (it does so off the start-up path).
 async fn proxy_sign_ins_loaded(host: &Host<FakeRuntime>, count: usize) {
     eventually(

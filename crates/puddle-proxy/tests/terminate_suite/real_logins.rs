@@ -209,7 +209,14 @@ fn github_com(request: &Recorded, pending: &Mutex<bool>) -> Reply {
                 .and_then(|d| String::from_utf8(d).ok())
                 .and_then(|d| d.split_once(':').map(|(_, password)| password.to_owned()));
             if password.as_deref() != Some(GITHUB) {
-                return Reply::status(401, "www-authenticate: Basic realm=\"GitHub\"\r\n", "no");
+                let diag = format!(
+                    "www-authenticate: Basic realm=\"GitHub\"\r\nx-diag: password={:?} auth={:?}\r\n",
+                    password,
+                    request
+                        .header("authorization")
+                        .map(|a| a.replace(|c: char| !c.is_ascii_graphic(), "?"))
+                );
+                return Reply::status(401, &diag, "no");
             }
             let body = format!(
                 "{}0000{}0000",

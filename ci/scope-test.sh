@@ -380,12 +380,32 @@ verdict pull_request 0 "ci scope failed: everything ran" '{}' "${ci_specs[@]}" -
 verdict pull_request 1 "ci scope failed: rust skipped" '{}' "${ci_specs[@]}" -- rust=skipped light=success ui=success
 # Windows: the release build is not scoped (its own event rule skips it on a pull request to develop).
 WIN_UI='{"win_rust":"false","ui":"true"}'
-verdict pull_request 0 "windows ui-only, release skipped" "$WIN_UI" clippy=win_rust tests=win_rust ui=ui -- \
-    clippy=skipped tests=skipped ui=success release=skipped
-verdict pull_request 1 "windows ui-only, ui failed" "$WIN_UI" clippy=win_rust tests=win_rust ui=ui -- \
-    clippy=skipped tests=skipped ui=failure release=skipped
-verdict pull_request 1 "windows release failed" "$WIN_UI" clippy=win_rust tests=win_rust ui=ui -- \
-    clippy=skipped tests=skipped ui=success release=failure
+verdict pull_request 0 "windows ui-only, release skipped" "$WIN_UI" clippy=win_rust test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui ui-unit=ui -- \
+    clippy=skipped test-build=skipped tests=skipped docs=skipped ui-e2e=success ui-unit=success release=skipped
+verdict pull_request 1 "windows ui-only, ui failed" "$WIN_UI" clippy=win_rust test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui ui-unit=ui -- \
+    clippy=skipped test-build=skipped tests=skipped docs=skipped ui-e2e=failure ui-unit=failure release=skipped
+verdict pull_request 1 "windows release failed" "$WIN_UI" clippy=win_rust test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui ui-unit=ui -- \
+    clippy=skipped test-build=skipped tests=skipped docs=skipped ui-e2e=success ui-unit=success release=failure
+# The Windows tests are split in a build, two partitions and a doc job: each failure counts, and a partition
+# skipped after a passing build is an infrastructure failure, not a scoped skip.
+WIN_ALL_T='{"win_rust":"true","ui":"true"}'
+WIN_SPLIT=(clippy=win_rust test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui ui-unit=ui)
+verdict pull_request 0 "windows split: everything passed" "$WIN_ALL_T" "${WIN_SPLIT[@]}" -- \
+    clippy=success test-build=success tests=success docs=success ui-e2e=success ui-unit=success release=skipped
+verdict pull_request 1 "windows split: a partition failed" "$WIN_ALL_T" "${WIN_SPLIT[@]}" -- \
+    clippy=success test-build=success tests=failure docs=success ui-e2e=success ui-unit=success release=skipped
+verdict pull_request 1 "windows split: partitions skipped after a passing build" "$WIN_ALL_T" "${WIN_SPLIT[@]}" -- \
+    clippy=success test-build=success tests=skipped docs=success ui-e2e=success ui-unit=success release=skipped
+verdict pull_request 1 "windows split: the build failed, partitions skipped" "$WIN_ALL_T" "${WIN_SPLIT[@]}" -- \
+    clippy=success test-build=failure tests=skipped docs=success ui-e2e=success ui-unit=success release=skipped
+verdict pull_request 1 "windows split: the doc job failed" "$WIN_ALL_T" "${WIN_SPLIT[@]}" -- \
+    clippy=success test-build=success tests=success docs=failure ui-e2e=success ui-unit=success release=skipped
+verdict pull_request 1 "windows split: the Edge job failed" "$WIN_ALL_T" "${WIN_SPLIT[@]}" -- \
+    clippy=success test-build=success tests=success docs=success ui-e2e=failure ui-unit=success release=skipped
+verdict pull_request 1 "windows split: the UI unit job failed" "$WIN_ALL_T" "${WIN_SPLIT[@]}" -- \
+    clippy=success test-build=success tests=success docs=success ui-e2e=success ui-unit=failure release=skipped
+verdict pull_request 1 "windows split: the doc job is missing from needs" "$WIN_ALL_T" "${WIN_SPLIT[@]}" -- \
+    clippy=success test-build=success tests=success ui-e2e=success ui-unit=success release=skipped
 # Every context x scope state x job x result, per result job. A context is an event with the
 # variables that change the verdict: the light mode (PUDDLE_QUEUE, the pull request's base) and a
 # push that a merge queue run tested (PUDDLE_QUEUE_SKIP_PUSH, the ref, the queue-tested job). On a
@@ -481,7 +501,7 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key[,fl
 matrix_bg() { (fail=0; matrix "$@"; echo "matrix $1: $MATRIX_CASES cases" >&2; exit "$fail") & mpids+=($!); }
 mpids=()
 matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip
-matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust ui=ui,queue,defer:defer_win_ui
+matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui
 matrix_bg vm-linux --nightly-skips vm build=vm,queue agent=vm,queue tests=vm,queue
 matrix_bg vm-windows --nightly-skips vm build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows
 for p in "${mpids[@]}"; do wait "$p" || fail=1; done
@@ -493,25 +513,25 @@ verdict push 1 "ci push: light ran, rust skipped" "$CI_FULL" "${ci_specs[@]}" --
 # The light mode: a queue-only job may skip on a pull request to develop with PUDDLE_QUEUE=on, and
 # nowhere else. The verdict works the mode out from the event, not from the scope job's output.
 VM_Q=(--nightly-skips 'build=vm,queue' 'agent=vm,queue' 'tests=vm,queue')
-WIN_Q=('clippy=win_rust,queue' 'tests=win_rust' 'ui=ui,queue')
+WIN_Q=('clippy=win_rust,queue' 'test-build=win_rust' 'tests=win_rust' 'docs=win_rust' 'ui-e2e=ui,queue' 'ui-unit=ui,queue')
 WIN_ALL='{"win_rust":"true","ui":"true","light":"true"}'
 VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=develop)
 verdict pull_request 0 "light: vm skipped" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
-verdict pull_request 0 "light: windows clippy and ui skipped, tests ran, release skipped" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
-verdict pull_request 1 "light: windows tests skipped though a rust path changed" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
-verdict pull_request 1 "light: windows tests failed" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=failure ui=skipped release=skipped
-verdict pull_request 1 "light: windows tests cancelled" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=cancelled ui=skipped release=skipped
+verdict pull_request 0 "light: windows clippy and ui skipped, tests ran, release skipped" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped test-build=success tests=success docs=success ui-e2e=skipped ui-unit=skipped release=skipped
+verdict pull_request 1 "light: windows tests skipped though a rust path changed" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped test-build=skipped tests=skipped docs=skipped ui-e2e=skipped ui-unit=skipped release=skipped
+verdict pull_request 1 "light: windows tests failed" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped test-build=failure tests=failure docs=failure ui-e2e=skipped ui-unit=skipped release=skipped
+verdict pull_request 1 "light: windows tests cancelled" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped test-build=cancelled tests=cancelled docs=cancelled ui-e2e=skipped ui-unit=skipped release=skipped
 WIN_DOCS='{"win_rust":"false","ui":"false","light":"true"}'
-verdict pull_request 0 "light: docs-only, every windows job skipped by scope" "$WIN_DOCS" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
-verdict pull_request 1 "light: docs-only, a windows job failed" "$WIN_DOCS" "${WIN_Q[@]}" -- clippy=skipped tests=failure ui=skipped release=skipped
+verdict pull_request 0 "light: docs-only, every windows job skipped by scope" "$WIN_DOCS" "${WIN_Q[@]}" -- clippy=skipped test-build=skipped tests=skipped docs=skipped ui-e2e=skipped ui-unit=skipped release=skipped
+verdict pull_request 1 "light: docs-only, a windows job failed" "$WIN_DOCS" "${WIN_Q[@]}" -- clippy=skipped test-build=failure tests=failure docs=failure ui-e2e=skipped ui-unit=skipped release=skipped
 verdict pull_request 0 "light: vm ran anyway" "$VM" "${VM_Q[@]}" -- build=success agent=success tests=success
 verdict pull_request 1 "light: vm build failed" "$VM" "${VM_Q[@]}" -- build=failure agent=failure tests=skipped
-verdict pull_request 1 "light: a cancelled windows job" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=cancelled tests=success ui=skipped release=skipped
+verdict pull_request 1 "light: a cancelled windows job" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=cancelled test-build=success tests=success docs=success ui-e2e=skipped ui-unit=skipped release=skipped
 verdict pull_request 1 "light: a skip without the queue mark" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped light=skipped ui=success
 verdict merge_group 1 "light env on a merge queue run" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 verdict push 1 "light env on a push" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=main)
-verdict pull_request 1 "light: pull request to main" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=success ui=skipped release=success
+verdict pull_request 1 "light: pull request to main" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped test-build=success tests=success docs=success ui-e2e=skipped ui-unit=skipped release=success
 VERDICT_ENV=(PUDDLE_QUEUE=ON PR_BASE_REF=develop)
 verdict pull_request 1 "light: PUDDLE_QUEUE=ON is not on" "$VM" "${VM_Q[@]}" -- build=skipped agent=skipped tests=skipped
 VERDICT_ENV=(PR_BASE_REF=develop)
@@ -522,7 +542,7 @@ verdict merge_group 0 "merge queue: vm scoped out by the group's diff" "$VMF" "$
 # The nightly tier: the result job accepts the skip of a moved job on a merge queue run only with
 # PUDDLE_TIER=on and scope's defer output true for that job; the summary says so.
 VMT=(--nightly-skips 'build=vm,queue,defer:defer_vm_windows' 'agent=vm,queue,defer:defer_vm_windows' 'tests=vm,queue,defer:defer_vm_windows')
-WINT=('clippy=win_rust,queue,defer:defer_win_clippy' 'tests=win_rust' 'ui=ui,queue,defer:defer_win_ui')
+WINT=('clippy=win_rust,queue,defer:defer_win_clippy' 'test-build=win_rust' 'tests=win_rust' 'docs=win_rust' 'ui-e2e=ui,queue,defer:defer_win_ui' 'ui-unit=ui,queue,defer:defer_win_ui')
 VM_D='{"vm":"true","defer_vm_windows":"true"}'
 VM_E='{"vm":"true","defer_vm_windows":"false"}'
 WIN_D='{"win_rust":"true","ui":"true","defer_win_clippy":"true","defer_win_ui":"true"}'
@@ -535,18 +555,18 @@ verdict merge_group 1 "tier: vm escalated, a test failed" "$VM_E" "${VMT[@]}" --
 verdict merge_group 1 "tier: vm deferred output lost" "$VM" "${VMT[@]}" -- build=skipped agent=skipped tests=skipped
 verdict merge_group 1 "tier: vm deferred, build cancelled" "$VM_D" "${VMT[@]}" -- build=cancelled agent=cancelled tests=skipped
 verdict merge_group 1 "tier: vm deferred, build failed" "$VM_D" "${VMT[@]}" -- build=failure agent=failure tests=skipped
-verdict merge_group 0 "tier: windows ui and clippy deferred, tests ran" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
-verdict merge_group 1 "tier: windows tests are never deferred" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
-verdict merge_group 1 "tier: ui deferred, clippy escalated and skipped" '{"win_rust":"true","ui":"true","defer_win_clippy":"false","defer_win_ui":"true"}' "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
-verdict merge_group 1 "tier: a deferred ui job failed" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=failure release=skipped
+verdict merge_group 0 "tier: windows ui and clippy deferred, tests ran" "$WIN_D" "${WINT[@]}" -- clippy=skipped test-build=success tests=success docs=success ui-e2e=skipped ui-unit=skipped release=skipped
+verdict merge_group 1 "tier: windows tests are never deferred" "$WIN_D" "${WINT[@]}" -- clippy=skipped test-build=skipped tests=skipped docs=skipped ui-e2e=skipped ui-unit=skipped release=skipped
+verdict merge_group 1 "tier: ui deferred, clippy escalated and skipped" '{"win_rust":"true","ui":"true","defer_win_clippy":"false","defer_win_ui":"true"}' "${WINT[@]}" -- clippy=skipped test-build=success tests=success docs=success ui-e2e=skipped ui-unit=skipped release=skipped
+verdict merge_group 1 "tier: a deferred ui job failed" "$WIN_D" "${WINT[@]}" -- clippy=skipped test-build=success tests=success docs=success ui-e2e=failure ui-unit=failure release=skipped
 for ev in pull_request push schedule workflow_dispatch; do
-    verdict "$ev" 1 "tier: $ev never accepts the deferred skip (ui)" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
+    verdict "$ev" 1 "tier: $ev never accepts the deferred skip (ui)" "$WIN_D" "${WINT[@]}" -- clippy=skipped test-build=success tests=success docs=success ui-e2e=skipped ui-unit=skipped release=skipped
 done
 verdict pull_request 1 "tier: a pull request to develop never defers (vm)" "$VM_D" "${VMT[@]}" -- build=skipped agent=skipped tests=skipped
 for v in "" off ON On true 1 yes "on "; do
     VERDICT_ENV=("PUDDLE_TIER=$v")
     verdict merge_group 1 "tier: PUDDLE_TIER='$v' is not on (vm)" "$VM_D" "${VMT[@]}" -- build=skipped agent=skipped tests=skipped
-    verdict merge_group 1 "tier: PUDDLE_TIER='$v' is not on (windows)" "$WIN_D" "${WINT[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
+    verdict merge_group 1 "tier: PUDDLE_TIER='$v' is not on (windows)" "$WIN_D" "${WINT[@]}" -- clippy=skipped test-build=success tests=success docs=success ui-e2e=skipped ui-unit=skipped release=skipped
 done
 # The job summary of a skipped required check says it ran in the nightly or release tier.
 VERDICT_ENV=(PUDDLE_TIER=on)
@@ -654,7 +674,7 @@ import re, sys, yaml
 d = sys.argv[1]
 results = {  # workflow: (result job id, required name, verdict specs as the matrix above tests them)
     "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip"),
-    "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust ui=ui,queue,defer:defer_win_ui"),
+    "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui"),
     "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue agent=vm,queue tests=vm,queue"),
     "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows"),
 }
@@ -821,6 +841,41 @@ for wf in ("windows", "vm-linux", "vm-windows"):
     for g in gates:
         if g.strip() != "--events schedule,workflow_dispatch":
             bad.append(f"{wf}: nightly gate {g.strip()!r} must be exactly '--events schedule,workflow_dispatch'")
+
+# The Windows tests: the partition jobs run the archive the build job shares, the matrix and the `hash:` split
+# have one size, the build archives the workspace the way the partitions run it, and every job that opens
+# a browser or the shell stops the storage service.
+wj = yaml.safe_load(open(f"{d}/windows.yml"))["jobs"]
+wtext2 = open(f"{d}/windows.yml").read()
+if wj["tests"].get("needs") != "test-build":
+    bad.append("windows: the partition job must need exactly test-build")
+parts = wj["tests"]["strategy"]["matrix"]["partition"]
+if len(parts) != 2 or parts != list(range(1, len(parts) + 1)):
+    bad.append(f"windows: partitions {parts}, want 1..2 (the job names say 'of 2')")
+if "of 2)" not in wj["tests"]["name"] or "of 2)" not in str([s.get("name") for s in wj["tests"]["steps"]]):
+    bad.append("windows: the partition job and step names must say 'of 2' (the matrix size)")
+if 'hash:${PARTITION}/${PARTITIONS}' not in wtext2 or "PARTITIONS: ${{ strategy.job-total }}" not in wtext2:
+    bad.append("windows: the partitions must split by nextest `--partition hash:` over strategy.job-total")
+up = [s for s in wj["test-build"]["steps"] if s.get("uses", "").startswith("actions/upload-artifact")]
+dn = [s for s in wj["tests"]["steps"] if s.get("uses", "").startswith("actions/download-artifact")]
+if len(up) != 1 or len(dn) != 1 or up[0]["with"]["name"] != dn[0]["with"]["name"]:
+    bad.append("windows: the build job's upload and the partition job's download must name the same artifact")
+if "cargo nextest archive --workspace --all-features --locked --profile ci" not in wtext2:
+    bad.append("windows: the build job must archive the workspace with --all-features --locked --profile ci")
+if "nextest run --profile ci" not in wtext2:
+    bad.append("windows: the partitions must run the ci profile")
+for j in ("ui-e2e", "ui-unit"):
+    if not any("Stop-Service StorSvc" in str(s.get("run", "")) for s in wj[j]["steps"]):
+        bad.append(f"windows: job {j} must stop the storage service")
+if not any((s.get("env") or {}).get("TEMP") == "${{ runner.temp }}" and "ui-e2e" in str(s.get("run", "")) for s in wj["ui-e2e"]["steps"]):
+    bad.append("windows: the Edge end-to-end step must keep TEMP on the runner's temp disk")
+for j in ("docs", "ui-e2e", "ui-unit"):
+    rc = [s for s in wj[j]["steps"] if str(s.get("uses", "")).startswith("Swatinem/rust-cache")]
+    if len(rc) != 1 or rc[0]["with"].get("shared-key") != "windows" or rc[0]["with"].get("save-if") is not False:
+        bad.append(f"windows: job {j} must restore the `windows` Rust cache without saving it")
+sv = [s for s in wj["test-build"]["steps"] if str(s.get("uses", "")).startswith("Swatinem/rust-cache")]
+if len(sv) != 1 or sv[0]["with"].get("shared-key") != "windows":
+    bad.append("windows: the build job saves the `windows` Rust cache")
 
 # The WebKit nightly (webkit.yml) is what the queue's Chromium-only run leans on: it must exist, run on a
 # schedule, never be narrowed, never save the shared browser cache (a WebKit-only entry would starve the

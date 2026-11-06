@@ -4,7 +4,9 @@
 # develop's head), and by hand. Linux CI already cross-checks clippy for the msvc target.
 # Clippy, tests and UI run on every trigger; the release build runs only on the nightly, on pull
 # requests to main and on manual runs from develop, so a pull request to develop skips it. The jobs
-# run side by side, so the run takes as long as the slowest one instead of the sum. Two cache entries
+# run side by side, so the run takes as long as the slowest one instead of the sum: the tests are built once
+# (`test-build`, a nextest archive) and run on two runners (`tests`), the doc tests and the secret scan have a
+# job (`docs`), and the UI is split into Edge end-to-end (`ui-e2e`) and the rest (`ui-unit`). Two cache entries
 # (debug builds, clippy's check builds); only runs on develop save them. The release build has none.
 # A pull request runs only the jobs its changed files can affect (ci/scope.sh, the `scope` job):
 # no Rust, fixture or UI path skips clippy and tests, no UI-relevant path skips the UI job. Every
@@ -12,7 +14,7 @@
 # said so. A merge queue run is scoped by the group's diff against develop.
 # With the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop skips clippy
 # and UI here (the light mode, ci/scope.sh) and the merge queue runs them on the commit that
-# lands; the result job still reports. The tests job runs on every pull request that changes
+# lands; the result job still reports. The test jobs (`test-build`, `tests`, `docs`) run on every pull request that changes
 # Rust or fixtures (a Windows-only failure then shows on the pull request, not first in the queue),
 # and again in the queue. A pull request with no such path skips it, and the result job accepts that.
 # Unset, every pull request runs all of them.
@@ -20,7 +22,7 @@
 # clippy job and the whole UI job (they run nightly and on a pull request to main) unless the
 # group's diff touches a path that can break them (ci/scope.sh `escalates`: crates/puddle-app, any
 # path with `windows` in its name, this workflow). The result job accepts the skip and its summary
-# says the check is not a test result for them. The tests job stays in the queue, where nextest stops at the first failure (--max-fail 1).
+# says the check is not a test result for them. The test jobs stay in the queue, where each partition's nextest stops at its first failure (--max-fail 1).
 # The nightly also reruns each failed test once and lists the ones that pass only on retry
 # (ci/flaky-report.py); it never turns the run red. The nightly gate (ci/should-run.sh --events) counts
 # only nightly and manual runs as "already green" for every job, so a merge queue run on develop's
@@ -130,19 +132,22 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
-  tests:
-    name: windows tests (nextest, doc tests, secret scan)
+  # The tests are compiled once here and run from the archive in the partition jobs below. This job saves
+  # the `windows` entry (on develop), which the doc tests and both UI jobs restore.
+  test-build:
+    name: windows tests (build, test archive)
     needs: scope
     if: ${{ !cancelled() && needs.scope.outputs.win_rust != 'false' }}
     runs-on: windows-2025
-    # Most of it is compiling and linking the test binaries (about 6.5 min of a 14.5 min median
-    # run); running the roughly 4,400 tests takes about 4.3 min. The job runs beside the Linux
-    # jobs, which take longer, so splitting the tests across runners would not shorten the pull request's wait.
+    # Compiling and linking the test binaries takes about 6.5 min with a warm cache (7 min measured in a
+    # merge group); a cold cache (any Cargo.lock change) is far longer.
     timeout-minutes: 45
     # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
     permissions:
       contents: read
       actions: write
+    outputs:
+      run: ${{ steps.changed.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: anything new since the last green run?
@@ -155,22 +160,80 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      # One entry for the debug builds (this job saves it, the UI job restores it); only develop
-      # saves, and cache-gc.yml deletes the superseded one (10 GB cap for the whole repo).
+      # One entry for the debug builds (this job saves it); only develop saves, and cache-gc.yml
+      # deletes the superseded one (10 GB cap for the whole repo).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changed.outputs.run == 'true'
         with:
           shared-key: windows
-          cache-on-failure: true # a red test must not forfeit the build
+          cache-on-failure: true # a red build must not forfeit the dependencies
           save-if: ${{ github.ref == 'refs/heads/develop' }}
       - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
+      - name: build the tests once (nextest archive)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bundle"
+          cargo nextest archive --workspace --all-features --locked --profile ci --archive-file "$RUNNER_TEMP/bundle/tests.tar.zst"
+      # The UI jobs' desktop shell smoke test builds `-p puddle-app`, whose dependency features
+      # differ from the workspace build above, so it compiled 130+ crates each run. Building it
+      # here puts them in the entry this job saves (only develop saves, so only develop pays).
+      - name: desktop shell dependencies (for the entry the UI jobs restore)
+        if: ${{ steps.changed.outputs.run == 'true' && github.ref == 'refs/heads/develop' }}
+        shell: bash
+        run: cargo build -p puddle-app --all-features --locked
+      - name: share the archive with the partition jobs
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-tests-build
+          path: ${{ runner.temp }}/bundle
+          retention-days: 1
+          compression-level: 0 # the archive is already compressed
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
+  # Two runners run the archive side by side (nextest `--partition hash:`: a test's partition follows its name, so
+  # a new test never moves the others). Each runner makes its own second-user account and runs its own mitmproxy.
+  # The job is not skipped when the build job found nothing new (a nightly on a green commit): its steps are, so
+  # the result job sees a success and not a skip it would have to explain.
+  tests:
+    name: windows tests (nextest, partition ${{ matrix.partition }} of 2)
+    needs: test-build
+    if: ${{ !cancelled() && needs.test-build.result == 'success' }}
+    runs-on: windows-2025
+    # About 4.3 min of tests across both partitions, plus the steps before them (a few minutes).
+    timeout-minutes: 30
+    # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.test-build.outputs.run == 'true'
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        if: needs.test-build.outputs.run == 'true'
+        with:
+          tool: cargo-nextest@0.9.146
+      # One test (puddle-runtime's dev_override) runs `cargo check --offline` on the workspace, so the
+      # pinned toolchain and the downloaded crates must be here although nothing is compiled by the job itself.
+      - name: Toolchain and crate sources (for the one test that runs cargo)
+        if: needs.test-build.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install && cargo fetch --locked
       # The corporate-lab fixtures (crates/puddle-e2e/src/lab) run mitmproxy as the NTLM proxy and the
       # TLS interceptor; pinned with hashes in ci/lab/requirements.txt (Dependabot's uv entry bumps it).
       - name: mitmproxy for the corporate-lab fixtures
-        if: steps.changed.outputs.run == 'true'
+        if: needs.test-build.outputs.run == 'true'
         shell: bash
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
@@ -183,16 +246,24 @@ jobs:
       # trivial start every 2 s through the tests, and the step after them prints the counts, the
       # runner image and the Defender state, so each run says whether it had such a window.
       - name: process start canary
-        if: steps.changed.outputs.run == 'true'
+        if: needs.test-build.outputs.run == 'true'
         shell: pwsh
         run: Start-Process -WindowStyle Hidden pwsh -ArgumentList '-NoProfile', '-File', 'ci/start-canary.ps1', '-Out', (Join-Path $env:RUNNER_TEMP 'start-canary.txt')
-      - name: tests
-        if: steps.changed.outputs.run == 'true'
+      - name: the test archive from the build job
+        if: needs.test-build.outputs.run == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-tests-build
+          path: ${{ runner.temp }}/bundle
+      - name: tests (partition ${{ matrix.partition }} of 2)
+        if: needs.test-build.outputs.run == 'true'
         shell: bash
         env:
           # The nightly retries a failed test once, only to report flakes (below). The profile
           # keeps retries at 0 for every other run (docs/STANDARDS.md, "Flaky tests").
           RETRIES: ${{ github.event_name == 'schedule' && '1' || '0' }}
+          PARTITION: ${{ matrix.partition }}
+          PARTITIONS: ${{ strategy.job-total }}
           # The hostile-guest second-user tests make a local account; if the hosted runner stops
           # allowing that, they fail here instead of skipping without a trace.
           PUDDLE_REQUIRE_SECOND_USER: "1"
@@ -208,16 +279,23 @@ jobs:
           # The queue stops at the first failure: the group is removed anyway, so the rest of the
           # run only delays the next group. A pull request and the nightly run every test.
           MAX_FAIL: ${{ github.event_name == 'merge_group' && '1' || '' }}
-        run: cargo nextest run --workspace --all-features --locked --profile ci --retries "$RETRIES" ${MAX_FAIL:+--max-fail "$MAX_FAIL"}
+        # The archive is unpacked into the checkout, where the build job's test binaries had their paths
+        # (cargo bakes the workspace and binary paths into them). cargo-nextest runs directly: through
+        # `cargo` it would go by rust-toolchain.toml.
+        run: |
+          cargo-nextest nextest run --profile ci --retries "$RETRIES" ${MAX_FAIL:+--max-fail "$MAX_FAIL"} \
+            --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/tests.tar.zst" \
+            --extract-to "$(cygpath -m "$PWD")" --workspace-remap . \
+            --partition "hash:${PARTITION}/${PARTITIONS}"
       - name: process start canary (summary)
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        if: ${{ needs.test-build.outputs.run == 'true' && !cancelled() }}
         shell: pwsh
         continue-on-error: true
         run: ./ci/start-canary.ps1 -Summary (Join-Path $env:RUNNER_TEMP 'start-canary.txt')
       # The test kit picks its quiet ports in 20000..32000. This prints the excluded and dynamic TCP
       # ranges of the runner and says QUIET PORT RANGE HIT when one overlaps that span.
       - name: TCP port ranges
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        if: ${{ needs.test-build.outputs.run == 'true' && !cancelled() }}
         shell: pwsh
         continue-on-error: true
         run: |
@@ -228,7 +306,7 @@ jobs:
       # the test log alone does not show what held, so a red run records the processes, the
       # cryptographic service and the CAPI2 and Application events of the last 10 minutes.
       - name: what held the machine (processes, CryptSvc, CAPI2 events)
-        if: ${{ failure() && steps.changed.outputs.run == 'true' }}
+        if: ${{ failure() && needs.test-build.outputs.run == 'true' }}
         shell: pwsh
         continue-on-error: true
         run: |
@@ -245,22 +323,56 @@ jobs:
               ForEach-Object { '{0:s} {1} {2} {3}' -f $_.TimeCreated, $_.Id, $_.LevelDisplayName, (($_.Message -replace '\s+', ' ')[0..300] -join '') }
           }
       - name: flaky tests (nightly report)
-        if: ${{ github.event_name == 'schedule' && steps.changed.outputs.run == 'true' && !cancelled() }}
+        if: ${{ github.event_name == 'schedule' && needs.test-build.outputs.run == 'true' && !cancelled() }}
         shell: bash
         run: python3 ci/flaky-report.py target/nextest/ci/junit.xml | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: upload test results
+        if: ${{ needs.test-build.outputs.run == 'true' && !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-test-results-${{ matrix.partition }}
+          path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
+  # The doc tests and the secret scan compile no test binary of the archive, so they run beside the partitions.
+  docs:
+    name: windows doc tests and secret scan
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.win_rust != 'false' }}
+    runs-on: windows-2025
+    timeout-minutes: 30
+    # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh windows.yml --events schedule,workflow_dispatch
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.changed.outputs.run == 'true'
+        with:
+          shared-key: windows # saved by the test build job
+          save-if: false
       - name: doc tests
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        if: steps.changed.outputs.run == 'true'
         shell: bash
         run: cargo test --doc --workspace --all-features --locked --no-fail-fast
-      # The UI job's desktop shell smoke test builds `-p puddle-app`, whose dependency features
-      # differ from the workspace build above, so it compiled 130+ crates each run. Building it
-      # here puts them in the entry this job saves (only develop saves, so only develop pays).
-      - name: desktop shell dependencies (for the entry the UI job restores)
-        if: ${{ steps.changed.outputs.run == 'true' && github.ref == 'refs/heads/develop' }}
-        shell: bash
-        run: cargo build -p puddle-app --all-features --locked
       - name: gitleaks download cache (the script still checks the pin)
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        if: steps.changed.outputs.run == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/gitleaks-cache
@@ -273,12 +385,78 @@ jobs:
         run: |
           GITLEAKS_CACHE_DIR="$HOME/gitleaks-cache" ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
           PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
-      - name: upload test results
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
+  # The two UI jobs run side by side. Each stops the storage service and keeps Edge's files on the runner's temp
+  # disk, since the Edge stalls (StorSvc, the system disk) hit any job that starts a browser or the shell.
+  ui-e2e:
+    name: windows UI (end-to-end on Edge)
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.ui != 'false' && needs.scope.outputs.light != 'true' && needs.scope.outputs.defer_win_ui != 'true' }}
+    runs-on: windows-2025
+    timeout-minutes: 40
+    # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: stop the storage service (it scans the disk and stalls the tests)
+        shell: pwsh
+        # StorSvc reads the whole MFT (about 1.3 GB) roughly ten minutes after Explorer starts, and the
+        # e2e tests stall behind that read on hosted runners (measured: with the service stopped the
+        # read never appears). The runner is thrown away after the job. An already stopped service is fine.
+        run: |
+          Stop-Service StorSvc -Force -ErrorAction SilentlyContinue
+          Set-Service StorSvc -StartupType Disabled
+          Get-Service StorSvc | Format-List Name, Status, StartType
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh windows.yml --events schedule,workflow_dispatch
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.changed.outputs.run == 'true'
+        with:
+          shared-key: windows # saved by the test build job
+          save-if: false
+      - name: Node for the UI
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: UI end-to-end (Playwright on the installed Edge, axe)
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        # Edge's profile, its downloads and Playwright's artifacts go to the temp folder, which is on
+        # the system disk (C:) by default. That disk takes a few hundred I/O operations a second and
+        # Edge, Defender and Windows Update together queue 20 to 40 of them (measured on windows-2025):
+        # a page load, a download or Edge's first start then stalls for 5 to 35 s while the CPU idles.
+        # The runner's temp folder is on the local temp disk (D:), which keeps up. A stopgap for the
+        # runner image: drop it when a run without it shows no stall (first start under 5 s, a download
+        # event under 1 s) after a windows-2025 image update.
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: scripts/check.sh ui-e2e
+      - name: upload UI end-to-end results
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-test-results
-          path: target/nextest/ci/junit.xml
+          name: windows-ui-e2e-results
+          path: |
+            ui/playwright-report
+            ui/test-results
           retention-days: 14
           if-no-files-found: ignore
       - name: Cancel the rest of the merge group
@@ -286,8 +464,8 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
-  ui:
-    name: windows UI (unit tests, e2e on Edge, desktop shell smoke)
+  ui-unit:
+    name: windows UI (unit tests, certificate, desktop shell smoke)
     needs: scope
     if: ${{ !cancelled() && needs.scope.outputs.ui != 'false' && needs.scope.outputs.light != 'true' && needs.scope.outputs.defer_win_ui != 'true' }}
     runs-on: windows-2025
@@ -322,7 +500,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changed.outputs.run == 'true'
         with:
-          shared-key: windows # saved by the tests job
+          shared-key: windows # saved by the test build job
           save-if: false
       - name: Node for the UI
         if: steps.changed.outputs.run == 'true'
@@ -337,20 +515,6 @@ jobs:
         env:
           DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: scripts/check.sh ui
-      - name: UI end-to-end (Playwright on the installed Edge, axe)
-        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
-        shell: bash
-        # Edge's profile, its downloads and Playwright's artifacts go to the temp folder, which is on
-        # the system disk (C:) by default. That disk takes a few hundred I/O operations a second and
-        # Edge, Defender and Windows Update together queue 20 to 40 of them (measured on windows-2025):
-        # a page load, a download or Edge's first start then stalls for 5 to 35 s while the CPU idles.
-        # The runner's temp folder is on the local temp disk (D:), which keeps up. A stopgap for the
-        # runner image: drop it when a run without it shows no stall (first start under 5 s, a download
-        # event under 1 s) after a windows-2025 image update.
-        env:
-          TEMP: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
-        run: scripts/check.sh ui-e2e
       # The development certificate in the three browsers the runner image has: the trust dialog is
       # answered No (each browser must show its certificate warning for the leaf), then Yes (each
       # must load the page with no warning). The throwaway runner may take the click; a person's
@@ -392,11 +556,11 @@ jobs:
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
           $env:SMOKE_BACKEND = 'host'
           node crates/puddle-app/e2e/smoke.mjs
-      - name: upload UI test results
+      - name: upload UI unit test results
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: windows-ui-test-results
+          name: windows-ui-unit-results
           path: |
             ui/playwright-report
             ui/test-results
@@ -464,7 +628,7 @@ jobs:
   # changes the ruleset in the same change.
   windows:
     name: windows-msvc (build, clippy, tests)
-    needs: [scope, clippy, tests, ui, release]
+    needs: [scope, clippy, test-build, tests, docs, ui-e2e, ui-unit, release]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -478,4 +642,4 @@ jobs:
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
           PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh verdict clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust ui=ui,queue,defer:defer_win_ui
+        run: ci/scope.sh verdict clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui

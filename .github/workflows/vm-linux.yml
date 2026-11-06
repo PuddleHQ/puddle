@@ -154,7 +154,7 @@ jobs:
       - name: list the VM tests for the partition jobs
         if: steps.changed.outputs.run == 'true'
         run: |
-          cargo nextest list $VM_CRATES --profile vm --locked -E "$(ci/vm-filter.sh)" \
+          cargo nextest list $VM_CRATES --profile vm --locked --color never -E "$(ci/vm-filter.sh)" \
             --message-format oneline > "$RUNNER_TEMP/bundle/vm-tests.list"
           wc -l < "$RUNNER_TEMP/bundle/vm-tests.list"
       - name: share the archive and the test list with the test jobs

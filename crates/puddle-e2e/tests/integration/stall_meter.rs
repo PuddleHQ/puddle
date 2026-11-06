@@ -152,6 +152,8 @@ async fn send_for<'a>(
         client.write_all(&chunk).await.unwrap();
         progress.mark();
         after_chunk(start.elapsed());
+        // What the callback took (a fault planted between writes) is the test's time, not a wait of the transfer.
+        progress.skip();
     }
     client.shutdown().await.unwrap();
     progress

@@ -6132,6 +6132,7 @@ dependencies = [
  "windows",
  "winreg",
  "zbus 6.2.1",
+ "zeroize",
 ]
 
 [[package]]
@@ -6174,6 +6175,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "time",
+ "zeroize",
 ]
 
 [[package]]
@@ -6432,6 +6434,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -6736,6 +6739,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -7013,6 +7017,7 @@ dependencies = [
  "time",
  "x509-parser",
  "yasna",
+ "zeroize",
 ]
 
 [[package]]

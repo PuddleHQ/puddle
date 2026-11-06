@@ -100,8 +100,8 @@ impl PullToken {
     ///
     /// When the OS has no randomness to give.
     pub fn generate() -> io::Result<Self> {
-        let mut bytes = [0u8; TOKEN_BYTES];
-        getrandom::fill(&mut bytes).map_err(|err| io::Error::other(err.to_string()))?;
+        let mut bytes = zeroize::Zeroizing::new([0u8; TOKEN_BYTES]);
+        getrandom::fill(&mut *bytes).map_err(|err| io::Error::other(err.to_string()))?;
         let text = bytes
             .iter()
             .fold(String::with_capacity(TOKEN_BYTES * 2), |mut text, b| {
@@ -119,7 +119,14 @@ impl PullToken {
 
     /// The `Proxy-Authorization: Basic` credentials a client sends for this token.
     fn basic_credentials(&self) -> String {
-        BASE64.encode(format!("{USER}:{}", self.0))
+        let plain = zeroize::Zeroizing::new(format!("{USER}:{}", self.0));
+        BASE64.encode(plain.as_bytes())
+    }
+}
+
+impl Drop for PullToken {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
     }
 }
 

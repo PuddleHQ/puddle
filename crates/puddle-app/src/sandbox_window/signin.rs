@@ -23,7 +23,8 @@ pub const SESSION_COOKIE: &str = "code-server-session";
 /// How long the editor gets to answer the login.
 const TIMEOUT: Duration = Duration::from_secs(15);
 
-/// The editor's session: a secret that signs the window in.
+/// The editor's session: a secret that signs the window in. The value is overwritten when this
+/// drops.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SessionCookie {
     name: String,
@@ -69,6 +70,12 @@ impl SessionCookie {
     #[must_use]
     pub fn script_reads(&self) -> bool {
         self.script_reads
+    }
+}
+
+impl Drop for SessionCookie {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.value);
     }
 }
 

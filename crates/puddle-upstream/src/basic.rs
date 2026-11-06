@@ -12,11 +12,13 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::auth::{AuthError, AuthSession, AuthStep, ProxyAuth};
 use crate::hop::ProxyAddr;
 
-/// A user name and password for one proxy (or the default for every proxy).
+/// A user name and password for one proxy (or the default for every proxy). Both are overwritten
+/// when the value drops.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Credentials {
     user: String,
@@ -39,12 +41,29 @@ impl Credentials {
         &self.user
     }
 
-    /// The `Proxy-Authorization` value, `Basic base64(user:password)`.
-    fn header(&self) -> String {
-        format!(
-            "Basic {}",
-            BASE64.encode(format!("{}:{}", self.user, self.password))
-        )
+    /// The `Proxy-Authorization` value, `Basic base64(user:password)`. The `user:password`
+    /// temporary and the value itself are sized first, so nothing grows and frees an unwiped
+    /// smaller copy, and both are overwritten when they drop.
+    fn header(&self) -> Zeroizing<String> {
+        const PREFIX: &str = "Basic ";
+        let mut plain = Zeroizing::new(String::with_capacity(
+            self.user.len() + 1 + self.password.len(),
+        ));
+        plain.push_str(&self.user);
+        plain.push(':');
+        plain.push_str(&self.password);
+        let encoded_len = base64::encoded_len(plain.len(), true).unwrap_or(plain.len() * 2);
+        let mut header = Zeroizing::new(String::with_capacity(PREFIX.len() + encoded_len));
+        header.push_str(PREFIX);
+        BASE64.encode_string(plain.as_bytes(), &mut header);
+        header
+    }
+}
+
+impl Drop for Credentials {
+    fn drop(&mut self) {
+        self.user.zeroize();
+        self.password.zeroize();
     }
 }
 
@@ -148,7 +167,7 @@ impl ProxyAuth for BasicAuth {
 }
 
 struct BasicSession {
-    header: String,
+    header: Zeroizing<String>,
     sent: bool,
 }
 
@@ -168,7 +187,7 @@ impl AuthSession for BasicSession {
             ));
         }
         self.sent = true;
-        Ok(AuthStep::Authorization(self.header.clone()))
+        Ok(AuthStep::Authorization((*self.header).clone()))
     }
 }
 

@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use ::http::header::{self, HeaderMap};
 use ::http::{HeaderValue, Response, StatusCode};
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use http_body::{Body, Frame, SizeHint};
 use http_body_util::BodyExt as _;
 use hyper::body::Incoming;
@@ -33,6 +33,7 @@ use puddle_types::Host;
 
 use super::stand_in::{StandIns, Swapped};
 use super::token_body::TokenBody;
+use super::wiped::Wiped;
 use crate::destination::BoxFuture;
 
 /// The most of a request or answer body an exchange reads. A token message is a few hundred
@@ -174,10 +175,7 @@ pub(crate) fn swap_request_body(
         return (None, Swapped::default());
     };
     let (report, changed) = stand_ins.swap_fields(&mut parsed, exchange.swap_fields(), host);
-    (
-        changed.then(|| Bytes::copy_from_slice(&parsed.render())),
-        report,
-    )
+    (changed.then(|| parsed.render_bytes()), report)
 }
 
 /// An answer's body on its way to the guest: the upstream's own, or what the rewriter had in hand.
@@ -256,7 +254,9 @@ pub(crate) async fn read_answer(
     if !answer.wants(&head) {
         return Ok(Response::from_parts(parts, AnswerBody::Streaming(body)));
     }
-    let mut whole = BytesMut::new();
+    // The answer carries the real tokens: it is gathered in a buffer that is overwritten, and
+    // never reallocated unwiped, however the upstream frames it.
+    let mut whole = Wiped::new();
     loop {
         let frame = tokio::time::timeout(idle, body.frame())
             .await
@@ -274,15 +274,14 @@ pub(crate) async fn read_answer(
             return Ok(Response::from_parts(
                 parts,
                 AnswerBody::Rejoined {
-                    first: Some(whole.freeze()),
+                    first: Some(whole.into_bytes()),
                     rest: body,
                 },
             ));
         }
     }
-    let whole = whole.freeze();
-    let replaced = answer.rewrite(&head, &whole).await;
-    let body = replaced.unwrap_or(whole);
+    let replaced = answer.rewrite(&head, whole.as_ref()).await;
+    let body = replaced.unwrap_or_else(|| whole.into_bytes());
     // Whatever framing the upstream used, the guest gets this body at its own length.
     if let Ok(length) = HeaderValue::from_str(&body.len().to_string()) {
         parts.headers.insert(header::CONTENT_LENGTH, length);

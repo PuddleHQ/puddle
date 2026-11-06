@@ -628,6 +628,50 @@ fn a_leaf_that_has_not_begun_or_is_not_ours_is_not_used() {
 }
 
 #[test]
+fn a_stored_leaf_with_another_block_in_its_file_is_still_reused() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTrust::new(vec![]);
+    let m = manager(&dir, &fake);
+    let first = m.ensure(now()).unwrap();
+    let mut body = fs::read_to_string(leaf_path(&dir)).unwrap();
+    body.push_str(&pem::encode(&pem::Pem::new("NOTE", b"extra".to_vec())));
+    puddle_fs::private::write_atomic(&leaf_path(&dir), body.as_bytes()).unwrap();
+
+    let again = m.ensure(now()).unwrap();
+    assert_eq!(again.material.cert_der(), first.material.cert_der());
+    assert_eq!(
+        again.material.key().pkcs8_der(),
+        first.material.key().pkcs8_der()
+    );
+}
+
+#[test]
+fn a_second_certificate_or_key_in_the_leaf_file_never_replaces_the_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTrust::new(vec![]);
+    let m = manager(&dir, &fake);
+    let first = m.ensure(now()).unwrap();
+    let mut body = fs::read_to_string(leaf_path(&dir)).unwrap();
+    body.push_str(&pem::encode(&pem::Pem::new(
+        "CERTIFICATE",
+        Spec::good().build().der,
+    )));
+    body.push_str(
+        PrivateKey::from_pkcs8_der(b"junk".to_vec())
+            .to_pem()
+            .as_str(),
+    );
+    puddle_fs::private::write_atomic(&leaf_path(&dir), body.as_bytes()).unwrap();
+
+    let again = m.ensure(now()).unwrap();
+    assert_eq!(again.material.cert_der(), first.material.cert_der());
+    assert_eq!(
+        again.material.key().pkcs8_der(),
+        first.material.key().pkcs8_der()
+    );
+}
+
+#[test]
 fn garbage_in_the_leaf_file_is_replaced() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeTrust::new(vec![]);

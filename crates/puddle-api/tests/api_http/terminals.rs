@@ -2,7 +2,10 @@
 //! Terminals over a real WebSocket: the ticket, the limits, the messages and the ends.
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use puddle_api::{MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, SUBPROTOCOL};
+use puddle_api::{
+    EndReason, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, SUBPROTOCOL, TerminalEnd,
+    TerminalError,
+};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
@@ -422,4 +425,71 @@ async fn the_host_and_origin_checks_still_guard_the_socket_path_and_no_token_is_
         other.status, 401,
         "only the socket's GET goes without the token"
     );
+}
+
+async fn ended_message(socket: &mut Socket) -> Value {
+    let Message::Text(ended) = next(socket).await else {
+        panic!("the end is a text message");
+    };
+    serde_json::from_str(&ended).unwrap()
+}
+
+#[tokio::test]
+async fn a_session_that_cannot_open_ends_the_socket_with_its_reason_and_message() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    for (error, reason, message) in [
+        (
+            TerminalError::Ended(TerminalEnd {
+                reason: EndReason::BootFailed,
+                status: None,
+                message: Some("the server refused".into()),
+            }),
+            "boot_failed",
+            "the server refused",
+        ),
+        (
+            TerminalError::Unavailable("not here".into()),
+            "stopped",
+            "not here",
+        ),
+    ] {
+        api.terminals.refuse_next_open(error);
+        let (terminal, ticket) = ticket(&api, "shop").await;
+        let mut socket = connect(&api, "shop", terminal, &ticket).await;
+        let ended = ended_message(&mut socket).await;
+        assert_eq!(ended["reason"], reason, "{ended}");
+        assert!(ended["message"].as_str().unwrap().contains(message));
+        assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
+    }
+}
+
+#[tokio::test]
+async fn a_session_that_vanishes_without_an_end_is_a_crash_and_pings_are_ignored() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = connect(&api, "shop", terminal, &ticket).await;
+    read_until(&mut socket, "$ ").await;
+    socket
+        .send(Message::Ping(b"hi".to_vec().into()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Binary(b"vanish\r".to_vec().into()))
+        .await
+        .unwrap();
+    // Anything the page sends after the session is gone changes nothing.
+    let _ = socket.send(Message::Binary(b"x".to_vec().into())).await;
+    loop {
+        match next(&mut socket).await {
+            Message::Binary(_) | Message::Pong(_) => {}
+            Message::Text(text) => {
+                let ended: Value = serde_json::from_str(&text).unwrap();
+                assert_eq!(ended["reason"], "crashed", "{ended}");
+                break;
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
 }

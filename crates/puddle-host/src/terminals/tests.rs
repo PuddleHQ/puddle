@@ -50,9 +50,9 @@ async fn bytes_until(link: &mut TerminalLink, text: &str) -> String {
     seen
 }
 
-async fn type_line(link: &TerminalLink, line: &str) {
+async fn type_line(link: &TerminalLink, text: &str) {
     link.input
-        .send(TerminalInput::Bytes(format!("{line}\r").into_bytes()))
+        .send(TerminalInput::Bytes(format!("{text}\r").into_bytes()))
         .await
         .unwrap();
 }
@@ -249,4 +249,124 @@ fn the_window_never_lets_an_acknowledgement_exceed_what_was_sent() {
     assert_eq!(window.room(), 100);
     window.ack(u64::MAX);
     assert_eq!(window.room(), WINDOW_BYTES);
+}
+
+async fn refused_with(user: &str) -> TerminalEnd {
+    let hub = Hub::default();
+    let ident = identity();
+    let err = open(
+        &hub,
+        Open {
+            workspace: &workspace(),
+            identity: &ident,
+            user,
+            size: TerminalSize::new(80, 24).unwrap(),
+        },
+        |stream| async move { pty::serve(stream).await },
+        || EndReason::Crashed,
+    )
+    .await
+    .unwrap_err();
+    let TerminalError::Ended(end) = err else {
+        panic!("{err:?}");
+    };
+    end
+}
+
+#[tokio::test]
+async fn a_server_that_refuses_the_login_the_pty_or_the_shell_or_hangs_up_says_which() {
+    for (user, said) in [
+        ("denied", "refused the login as denied"),
+        ("nopty", "refused to give a pseudo-terminal"),
+        ("noshell", "refused to give a shell"),
+        ("hangup", "ended before a pseudo-terminal was given"),
+    ] {
+        let end = refused_with(user).await;
+        assert_eq!(end.reason, EndReason::BootFailed, "{user}");
+        let message = end.message.unwrap();
+        assert!(message.contains(said), "{user}: {message}");
+    }
+}
+
+/// Keeps the far end of the connection open for a while after the server function returned.
+fn keep_open(stream: tokio::io::DuplexStream) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        drop(stream);
+    });
+}
+
+async fn open_with_server<Fut>(serve: impl FnOnce(tokio::io::DuplexStream) -> Fut) -> TerminalEnd
+where
+    Fut: Future<Output = Result<(), String>> + Send + 'static,
+{
+    let hub = Hub::default();
+    let ident = identity();
+    let err = open(
+        &hub,
+        Open {
+            workspace: &workspace(),
+            identity: &ident,
+            user: "agent",
+            size: TerminalSize::new(80, 24).unwrap(),
+        },
+        serve,
+        || EndReason::Crashed,
+    )
+    .await
+    .unwrap_err();
+    let TerminalError::Ended(end) = err else {
+        panic!("{err:?}");
+    };
+    end
+}
+
+#[tokio::test]
+async fn a_server_that_ends_before_or_after_the_client_gave_up_still_gives_its_reason() {
+    // It ends while the client still waits for the server's greeting.
+    let early = open_with_server(|stream| async move {
+        keep_open(stream);
+        Err("the guest is gone".to_owned())
+    })
+    .await;
+    assert_eq!(early.message.as_deref(), Some("the guest is gone"));
+    let quiet = open_with_server(|stream| async move {
+        keep_open(stream);
+        Ok(())
+    })
+    .await;
+    assert!(quiet.message.unwrap().contains("closed the connection"));
+    // The client gives up first, and the server's own words follow.
+    let later = open_with_server(|stream| async move {
+        drop(stream);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        Err("the guest said no".to_owned())
+    })
+    .await;
+    assert_eq!(later.message.as_deref(), Some("the guest said no"));
+    let silent = open_with_server(|stream| async move {
+        drop(stream);
+        Ok(())
+    })
+    .await;
+    assert!(silent.message.is_some());
+}
+
+#[tokio::test]
+async fn a_shell_killed_by_a_signal_ends_with_status_255_and_a_page_that_left_ends_a_flood() {
+    let hub = Hub::default();
+    let mut link = session(&hub, "agent").await;
+    bytes_until(&mut link, pty::PROMPT).await;
+    type_line(&link, "kill").await;
+    let end = the_end(&mut link).await;
+    assert_eq!((end.reason, end.status), (EndReason::Exited, Some(255)));
+
+    // The page stops reading in the middle of a flood: the session ends and nothing is left.
+    let mut link = session(&hub, "agent").await;
+    bytes_until(&mut link, pty::PROMPT).await;
+    type_line(&link, "flood").await;
+    bytes_until(&mut link, "yyyy").await;
+    let TerminalLink { input, output } = link;
+    drop(output);
+    tokio::time::timeout(STEP, input.closed()).await.unwrap();
 }

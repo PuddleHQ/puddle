@@ -10953,18 +10953,21 @@ async fn terminal_output_until(
 ) -> puddle_api::TerminalEnd {
     let mut seen = String::new();
     loop {
-        match tokio::time::timeout(Duration::from_secs(10), link.output.recv())
+        let item = tokio::time::timeout(Duration::from_secs(10), link.output.recv())
             .await
-            .unwrap()
-        {
-            Some(puddle_api::TerminalOutput::Bytes(b)) => {
+            .unwrap();
+        // A link that closes without an end fails the caller's assertion on the reason.
+        let Some(item) = item else {
+            return puddle_api::TerminalEnd::of(puddle_api::EndReason::Quitting);
+        };
+        match item {
+            puddle_api::TerminalOutput::Bytes(b) => {
                 seen.push_str(&String::from_utf8_lossy(&b));
                 if seen.contains(text) {
                     return puddle_api::TerminalEnd::of(puddle_api::EndReason::Exited);
                 }
             }
-            Some(puddle_api::TerminalOutput::Ended(end)) => return end,
-            None => panic!("the link closed without an end, after {seen:?}"),
+            puddle_api::TerminalOutput::Ended(end) => return end,
         }
     }
 }

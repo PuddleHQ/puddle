@@ -91,6 +91,10 @@ impl Window {
 /// Trusts the server: its other end is this process.
 struct InMemory;
 
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the trait's method is async; the answer is known"
+)]
 impl Handler for InMemory {
     type Error = russh::Error;
 
@@ -149,10 +153,17 @@ where
     let (handle, channel) = match started {
         Ok(started) => started,
         Err(failure) => {
-            // A server that refused says why itself; the client only saw the connection break.
-            let refusal = match tokio::time::timeout(REFUSAL_WAIT, &mut server).await {
-                Ok(Ok(Err(reason))) => reason,
-                _ => failure,
+            // A server that ended the connection says why itself; one that answered with a
+            // refusal is quoted as the client heard it (the client leaving ends the server with
+            // an error of its own).
+            let refusal = match failure {
+                Failure::Broke(text) => {
+                    match tokio::time::timeout(REFUSAL_WAIT, &mut server).await {
+                        Ok(Ok(Err(reason))) => reason,
+                        _ => text,
+                    }
+                }
+                Failure::Refused(text) => text,
             };
             server.abort();
             return Err(TerminalError::Ended(TerminalEnd {
@@ -178,12 +189,20 @@ where
 
 type Shell = russh::Channel<client::Msg>;
 
+/// Why the client could not get a shell.
+enum Failure {
+    /// The connection broke: the server may say why.
+    Broke(String),
+    /// The server answered with a refusal.
+    Refused(String),
+}
+
 async fn start<S>(
     stream: S,
     identity: &Identity,
     user: &str,
     size: TerminalSize,
-) -> Result<(client::Handle<InMemory>, Shell), String>
+) -> Result<(client::Handle<InMemory>, Shell), Failure>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -194,20 +213,20 @@ where
     });
     let mut handle = client::connect_stream(config, stream, InMemory)
         .await
-        .map_err(|e| format!("the SSH connection failed: {e}"))?;
+        .map_err(|e| Failure::Broke(format!("the SSH connection failed: {e}")))?;
     let signed_in = handle
         .authenticate_publickey(user, PrivateKeyWithHashAlg::new(identity.0.clone(), None))
         .await
-        .map_err(|e| format!("signing in failed: {e}"))?;
+        .map_err(|e| Failure::Broke(format!("signing in failed: {e}")))?;
     if !signed_in.success() {
-        return Err(format!(
+        return Err(Failure::Refused(format!(
             "the workspace's SSH server refused the login as {user}"
-        ));
+        )));
     }
     let mut channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| format!("a session could not be opened: {e}"))?;
+        .map_err(|e| Failure::Broke(format!("a session could not be opened: {e}")))?;
     channel
         .request_pty(
             true,
@@ -219,27 +238,31 @@ where
             &[],
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Failure::Broke(e.to_string()))?;
     expect_success(&mut channel, "a pseudo-terminal").await?;
     // Not every server takes variables; the shell works without.
     let _ = channel.set_env(false, "COLORTERM", "truecolor").await;
     channel
         .request_shell(true)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Failure::Broke(e.to_string()))?;
     expect_success(&mut channel, "a shell").await?;
     Ok((handle, channel))
 }
 
-async fn expect_success(channel: &mut Shell, what: &str) -> Result<(), String> {
+async fn expect_success(channel: &mut Shell, what: &str) -> Result<(), Failure> {
     loop {
         match channel.wait().await {
             Some(ChannelMsg::Success) => return Ok(()),
             Some(ChannelMsg::Failure) => {
-                return Err(format!("the workspace's SSH server refused to give {what}"));
+                return Err(Failure::Refused(format!(
+                    "the workspace's SSH server refused to give {what}"
+                )));
             }
             Some(ChannelMsg::Close | ChannelMsg::Eof) | None => {
-                return Err(format!("the connection ended before {what} was given"));
+                return Err(Failure::Refused(format!(
+                    "the connection ended before {what} was given"
+                )));
             }
             Some(_) => {}
         }
@@ -277,9 +300,8 @@ async fn pump(
                 // The page's socket went away.
                 None => return TerminalEnd::of(EndReason::Exited),
                 Some(TerminalInput::Bytes(bytes)) => {
-                    if channel.data_bytes(bytes).await.is_err() && finished.is_none() {
-                        finished = Some(end_of(status, gone));
-                    }
+                    // A closed channel is noticed on the read side, which ends the session.
+                    let _ = channel.data_bytes(bytes).await;
                 }
                 Some(TerminalInput::Resize(size)) => {
                     let _ = channel

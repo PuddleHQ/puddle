@@ -15,7 +15,10 @@
 //! | `flood` | output without end, until the connection closes (a program like `yes`) |
 //! | anything else | nothing, then a new prompt |
 //!
-//! A Ctrl+C byte ends a `flood`.
+//! A Ctrl+C byte ends a `flood`. A few login names make the server misbehave, for a client's
+//! failure paths: `denied` is refused at login, `nopty` and `noshell` get no pseudo-terminal or
+//! shell, `hangup` has the channel closed at the pty request, and `kill` as a line ends the shell
+//! by a signal.
 
 use std::sync::Arc;
 
@@ -46,6 +49,10 @@ impl Drop for Shell {
     }
 }
 
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the trait's methods are async; the stand-in answers at once"
+)]
 impl Handler for Shell {
     type Error = russh::Error;
 
@@ -55,6 +62,12 @@ impl Handler for Shell {
         _key: VerifiedPublicKey<'_>,
     ) -> Result<Auth, Self::Error> {
         user.clone_into(&mut self.user);
+        if user == "denied" {
+            return Ok(Auth::Reject {
+                proceed_with_methods: Some(MethodSet::from(&[MethodKind::PublicKey][..])),
+                partial_success: false,
+            });
+        }
         Ok(Auth::Accept)
     }
 
@@ -79,6 +92,11 @@ impl Handler for Shell {
         _modes: &[(russh::Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        match self.user.as_str() {
+            "nopty" => return session.channel_failure(channel),
+            "hangup" => return session.close(channel),
+            _ => {}
+        }
         term.clone_into(&mut self.term);
         self.cols = col_width;
         self.rows = row_height;
@@ -100,6 +118,9 @@ impl Handler for Shell {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if self.user == "noshell" {
+            return session.channel_failure(channel);
+        }
         session.channel_success(channel)?;
         session.data(channel, PROMPT.as_bytes().to_vec())
     }
@@ -163,6 +184,12 @@ impl Shell {
             ("exit", status) => {
                 let status = status.trim().parse().unwrap_or(0);
                 session.exit_status_request(channel, status)?;
+                session.eof(channel)?;
+                session.close(channel)?;
+                return Ok(false);
+            }
+            ("kill", _) => {
+                session.exit_signal_request(channel, russh::Sig::KILL, false, "", "")?;
                 session.eof(channel)?;
                 session.close(channel)?;
                 return Ok(false);

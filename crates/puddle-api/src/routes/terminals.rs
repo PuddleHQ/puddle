@@ -245,23 +245,35 @@ async fn refuse(socket: &mut WebSocket) {
         .await;
 }
 
-/// What one message from the page asks for; `None` when it is not allowed.
-fn from_page(message: Message) -> Option<Option<TerminalInput>> {
-    match message {
+/// What one message from the page asks for.
+enum FromPage {
+    /// Something for the session.
+    Input(TerminalInput),
+    /// A ping or a pong: nothing.
+    Keepalive,
+    /// Not allowed: the socket closes.
+    Refused,
+}
+
+fn from_page(message: Message) -> FromPage {
+    let input = match message {
         Message::Binary(bytes) if bytes.len() <= MAX_MESSAGE_BYTES => {
-            Some(Some(TerminalInput::Bytes(bytes.to_vec())))
+            TerminalInput::Bytes(bytes.to_vec())
         }
         Message::Text(text) if text.len() <= MAX_MESSAGE_BYTES => {
-            match serde_json::from_str::<Control>(&text).ok()? {
-                Control::Resize { cols, rows } => {
-                    TerminalSize::new(cols, rows).map(|s| Some(TerminalInput::Resize(s)))
-                }
-                Control::Ack { bytes } => Some(Some(TerminalInput::Ack(bytes))),
+            match serde_json::from_str::<Control>(&text) {
+                Ok(Control::Resize { cols, rows }) => match TerminalSize::new(cols, rows) {
+                    Some(size) => TerminalInput::Resize(size),
+                    None => return FromPage::Refused,
+                },
+                Ok(Control::Ack { bytes }) => TerminalInput::Ack(bytes),
+                Err(_) => return FromPage::Refused,
             }
         }
-        Message::Ping(_) | Message::Pong(_) => Some(None),
-        _ => None,
-    }
+        Message::Ping(_) | Message::Pong(_) => return FromPage::Keepalive,
+        _ => return FromPage::Refused,
+    };
+    FromPage::Input(input)
 }
 
 async fn pump(socket: &mut WebSocket, link: TerminalLink, mut shutdown: watch::Receiver<bool>) {
@@ -278,14 +290,10 @@ async fn pump(socket: &mut WebSocket, link: TerminalLink, mut shutdown: watch::R
                     return;
                 }
                 match from_page(message) {
-                    Some(Some(item)) => {
-                        if input.send(item).await.is_err() {
-                            // The session ended; its end is in `output`.
-                            continue;
-                        }
-                    }
-                    Some(None) => {}
-                    None => {
+                    // A closed session's end is waiting in `output`.
+                    FromPage::Input(item) => drop(input.send(item).await),
+                    FromPage::Keepalive => {}
+                    FromPage::Refused => {
                         refuse(socket).await;
                         return;
                     }
@@ -314,5 +322,18 @@ async fn pump(socket: &mut WebSocket, link: TerminalLink, mut shutdown: watch::R
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_service_that_is_unavailable_or_ended_answers_with_the_status_a_client_can_act_on() {
+        let unavailable = ApiError::from(TerminalError::Unavailable("later".into()));
+        assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let ended = ApiError::from(TerminalError::Ended(TerminalEnd::of(EndReason::BootFailed)));
+        assert_eq!(ended.status(), StatusCode::CONFLICT);
     }
 }

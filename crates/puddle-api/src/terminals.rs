@@ -181,10 +181,11 @@ impl TerminalService for NoTerminals {
 
 /// An in-memory service for tests and the UI fixture: every workspace runs and the shell is a
 /// stand-in that echoes what it is typed. `exit N` ends it with status `N`; `size` prints the
-/// rows and columns it was last given.
+/// rows and columns it was last given; `vanish` drops the session without an end.
 #[derive(Debug, Default)]
 pub struct FakeTerminals {
     stopped: Mutex<Vec<WorkspaceId>>,
+    refuse_next: Mutex<Option<TerminalError>>,
 }
 
 impl FakeTerminals {
@@ -200,6 +201,16 @@ impl FakeTerminals {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(workspace.clone());
+    }
+}
+
+impl FakeTerminals {
+    /// Makes the next `open` fail with `error`.
+    pub fn refuse_next_open(&self, error: TerminalError) {
+        *self
+            .refuse_next
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(error);
     }
 }
 
@@ -227,8 +238,16 @@ impl TerminalService for FakeTerminals {
         size: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
         let checked = self.check(workspace);
+        let refused = self
+            .refuse_next
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         Box::pin(async move {
             checked.await?;
+            if let Some(error) = refused {
+                return Err(error);
+            }
             Ok(fake_shell(size))
         })
     }
@@ -266,6 +285,9 @@ fn fake_shell(mut size: TerminalSize) -> TerminalLink {
                                 };
                                 let _ = to_page.send(TerminalOutput::Bytes(answer)).await;
                                 let _ = to_page.send(TerminalOutput::Ended(end)).await;
+                                return;
+                            }
+                            if text == "vanish" {
                                 return;
                             }
                             if text == "size" {
@@ -420,6 +442,29 @@ mod tests {
         for (cols, rows) in [(1, 24), (501, 24), (80, 0), (80, 301), (70_000, 24)] {
             assert_eq!(TerminalSize::new(cols, rows), None, "{cols}x{rows}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_build_without_terminals_says_so_for_a_check_and_an_open() {
+        let none = NoTerminals;
+        assert!(matches!(
+            none.check(&id("a")).await,
+            Err(TerminalError::Unavailable(_))
+        ));
+        assert!(matches!(
+            none.open(&id("a"), size()).await,
+            Err(TerminalError::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn a_ticket_already_used_keeps_its_place_while_new_ones_are_made() {
+        let registry = Registry::default();
+        let a = id("a");
+        let first = registry.create(&a, size(), "t1".into()).unwrap();
+        registry.claim(&a, first, b"t1").unwrap();
+        registry.create(&a, size(), "t2".into()).unwrap();
+        assert_eq!(registry.claim(&a, first, b"t1"), None);
     }
 
     #[tokio::test(start_paused = true)]

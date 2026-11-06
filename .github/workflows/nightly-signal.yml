@@ -2,7 +2,7 @@
 # The red signal for runs no ruleset requires. When a scheduled run (or a manual run on develop) of one of
 # the workflows below ends, ci/nightly-issue.sh opens or rewrites one issue per workflow ("Nightly red:
 # <workflow>") after a failed run and closes it after a green one, so a red nightly is seen the same day.
-# `ci` (its advisories have their own issue), `quality` (a standing report that never fails) and `cache-gc`
+# `ci` (its advisories have their own issue), `quality` (a standing report that never fails), `cache-gc` and `merge-queue-sweep`
 # are left out on purpose; ci/nightly-issue-test.sh fails when a workflow with a schedule is neither here
 # nor in that list. A scheduled run that was cancelled changes nothing.
 name: nightly-signal

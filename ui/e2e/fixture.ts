@@ -8,7 +8,7 @@
 import { test as base, type Page } from "@playwright/test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { loadavg, tmpdir } from "node:os";
+import { availableParallelism, loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   OutputTail,
@@ -17,7 +17,8 @@ import {
 } from "../scripts/backend-start.ts";
 import { throttleCpu } from "./cpu-throttle.ts";
 import { FIXTURE_BIN_ENV } from "./fixture-build.ts";
-import { WARM_UP_TIMEOUT_MS } from "./warm-up.ts";
+import { loadFactor } from "../scripts/load-budget.ts";
+import { WARM_UP_TIMEOUT_MS, within } from "./warm-up.ts";
 
 export interface Control {
   state(): Promise<{
@@ -179,8 +180,11 @@ function pageOpenState(browserName: string): string {
   return `${browserName} worker up ${Date.now() - workerBorn} ms, backend started in ${backendStartMs} ms, load ${load}`;
 }
 
+/** How long the backend may take to start over for a test, before the test's own limit begins. */
+const RESET_TIMEOUT_MS = 60_000;
+
 export const test = base.extend<
-  { backend: Backend },
+  { backend: Backend; loadBudget: void },
   { workerBackend: Backend }
 >({
   workerBackend: [
@@ -196,10 +200,40 @@ export const test = base.extend<
     // the test's 30 s ended the setup first, with a message that names nothing.
     { scope: "worker", timeout: START_TIMEOUT_MS + 15_000 },
   ],
-  backend: async ({ workerBackend }, use) => {
-    await workerBackend.control.reset("default");
-    await use(workerBackend);
-  },
+  // The reset restarts the API on its port, which a busy host stretched from 0.1 s to 4 s, and a
+  // stalled one to the whole 30 s of a test that had not begun. It has its own limit, as the page
+  // open does, and a stall names itself and the load.
+  backend: [
+    async ({ workerBackend }, use) => {
+      try {
+        await within(
+          RESET_TIMEOUT_MS,
+          workerBackend.control.reset("default"),
+          "the fixture backend's reset",
+        );
+      } catch (error) {
+        throw new Error(`${String(error)} (${pageOpenState("this worker")})`, {
+          cause: error,
+        });
+      }
+      await use(workerBackend);
+    },
+    { timeout: RESET_TIMEOUT_MS + 15_000 },
+  ],
+  // Every step of a test costs what the machine's load makes it: the settings tests, 10 to 20
+  // steps and a reload or two each, took 15 to 30 s on a starved host where an idle one needs 1 to
+  // 2 s. The limit grows with the load read as the test starts (scripts/load-budget.ts).
+  loadBudget: [
+    // eslint-disable-next-line no-empty-pattern -- Playwright reads the fixtures from the destructuring
+    async ({}, use, testInfo) => {
+      testInfo.setTimeout(
+        testInfo.timeout *
+          loadFactor(loadavg()[0] ?? 0, availableParallelism()),
+      );
+      await use();
+    },
+    { auto: true },
+  ],
   // As Playwright's own `page`, plus a line when opening it is slow: `newPage` has no time limit
   // of its own, so a stalled open showed only as "Test timeout exceeded while setting up page".
   // The open has its own limit, the one the warm-up gives the same call, so the test's 30 s are

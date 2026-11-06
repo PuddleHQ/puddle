@@ -345,8 +345,17 @@ impl Tools {
         let home = self.home.path();
         let ca = home.join("ca.pem");
         let proxy = format!("http://127.0.0.1:{}", self.port);
-        let mut command = Command::new(program);
+        // The mutation run caps each test process's heap (`ulimit -d`, scripts/cap-test-memory.sh) at a
+        // soft limit that tests with a runaway loop need, but a real tool is no test code: Claude Code
+        // (Bun) reserves about 1 GiB of address space at start and aborts under the cap (`memory
+        // allocation of 81 bytes failed`). The shell lifts the soft limit for the tool alone.
+        let mut command = Command::new("/bin/sh");
         command
+            .args([
+                "-c",
+                "ulimit -S -d unlimited 2>/dev/null; exec \"$0\" \"$@\"",
+            ])
+            .arg(program)
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("HOME", home)

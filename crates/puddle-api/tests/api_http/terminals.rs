@@ -280,15 +280,10 @@ async fn the_limits_are_eight_for_a_workspace_and_thirty_two_in_all_and_a_closed
     read_until(&mut socket, "$ ").await;
     socket.close(None).await.unwrap();
     drop(socket);
-    let mut freed = false;
-    for _ in 0..100 {
-        if ask(&api, "a").await.status == 201 {
-            freed = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    assert!(freed, "a closed socket frees its place");
+    puddle_test_kit::eventually_async("a closed socket frees its place", STEP, || async {
+        ask(&api, "a").await.status == 201
+    })
+    .await;
 
     for name in &names[1..4] {
         for _ in 0..MAX_PER_WORKSPACE {

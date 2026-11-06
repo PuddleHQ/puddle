@@ -327,6 +327,10 @@ pub struct ConnectionEvent {
     /// environment somewhere it should not.
     /// An id reads `stand-in:<secret|login>:<name>`; it never carries a value.
     pub unswapped_stand_ins: Vec<String>,
+    /// The ids of the stand-ins whose real values an answer from one of their hosts held, put back as
+    /// the stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),
+    /// each once, at most 16.
+    pub scrubbed_stand_ins: Vec<String>,
     /// Method and path, when the proxy saw the request in clear.
     pub http: Option<HttpRequestLine>,
     /// Bytes from the guest.
@@ -362,6 +366,7 @@ impl ConnectionEvent {
             binding_id: None,
             injected: false,
             unswapped_stand_ins: Vec::new(),
+            scrubbed_stand_ins: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,
@@ -396,6 +401,7 @@ impl ConnectionEvent {
             binding_id: None,
             injected: false,
             unswapped_stand_ins: Vec::new(),
+            scrubbed_stand_ins: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,

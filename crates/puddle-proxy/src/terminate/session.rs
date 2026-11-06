@@ -26,7 +26,10 @@ use super::inject::{
 use super::leg::{self, BoxError, ConnectError, Connected, H1Conn, Made, UpBody};
 use super::request::{self, Parsed};
 use super::request_rules::{self, Refused};
-use super::stand_in::Swapped;
+use super::stand_in::{
+    ANSWER_WITHHELD, NotScrubbed, ScrubNotes, Swapped, answer_encoding_refusal,
+    answer_failed_refusal, limit_accept_encoding, scrub_answer,
+};
 use super::streams::Activity;
 use super::{Mode, Termination, h2, response, ws};
 use crate::http::{self, HeadError};
@@ -85,6 +88,9 @@ pub(crate) struct Outcome {
     /// The ids of the stand-ins that went out unchanged (wrong host, or in the request target),
     /// each once, at most [`MAX_UNSWAPPED_STAND_INS`].
     pub(crate) unswapped_stand_ins: Vec<String>,
+    /// The ids of the stand-ins whose real values an answer held and got back as the stand-in,
+    /// each once, at most [`MAX_UNSWAPPED_STAND_INS`].
+    pub(crate) scrubbed_stand_ins: Vec<String>,
     /// The address first connected to.
     pub(crate) resolved_ip: Option<std::net::IpAddr>,
     /// The company-proxy hop that carried the first connection.
@@ -129,6 +135,21 @@ impl Outcome {
             {
                 self.unswapped_stand_ins.push(id.clone());
             }
+        }
+    }
+
+    /// Notes what the scrub of the answers did: the stand-ins put back, and an answer cut off
+    /// because it held a real value that cannot be replaced.
+    pub(crate) fn record_scrubbed(&mut self, notes: &ScrubNotes) {
+        for id in notes.ids() {
+            if self.scrubbed_stand_ins.len() < MAX_UNSWAPPED_STAND_INS
+                && !self.scrubbed_stand_ins.contains(&id)
+            {
+                self.scrubbed_stand_ins.push(id);
+            }
+        }
+        if notes.withheld() {
+            self.refused.get_or_insert(ANSWER_WITHHELD);
         }
     }
 }
@@ -774,6 +795,9 @@ where
         self.outcome.record_stand_ins(host, &swapped);
         let (target, in_target) = self.cx.termination.stand_ins().swap_target(target, host);
         self.outcome.record_stand_ins(host, &in_target);
+        if self.cx.termination.stand_ins().scrubs_answers_from(host) {
+            limit_accept_encoding(&mut headers);
+        }
         (headers, target)
     }
 
@@ -855,14 +879,10 @@ where
     /// Writes `response` to the guest while the guest's read side is polled (see [`keep_reading`]).
     async fn write_response(
         &mut self,
-        mut response: ::http::Response<AnswerBody>,
+        response: ::http::Response<AnswerBody>,
         parsed: &Parsed,
         config: &ProxyConfig,
     ) -> io::Result<response::Written> {
-        self.cx
-            .termination
-            .stand_ins()
-            .hide_in_answer(response.headers_mut(), &self.cx.target.host);
         tokio::select! {
             written = response::write(
                 &mut self.writer,
@@ -883,6 +903,13 @@ where
         response: &mut ::http::Response<hyper::body::Incoming>,
     ) -> Flow {
         let upgraded = hyper::upgrade::on(&mut *response);
+        let notes = ScrubNotes::default();
+        self.cx.termination.stand_ins().scrub_answer_headers(
+            response.headers_mut(),
+            &self.cx.target.host,
+            &notes,
+        );
+        self.outcome.record_scrubbed(&notes);
         let mut head =
             b"HTTP/1.1 101 Switching Protocols\r\nconnection: upgrade\r\nupgrade: websocket\r\n"
                 .to_vec();
@@ -1029,7 +1056,28 @@ where
             Ok(response) => response,
             Err(flow) => return flow,
         };
-        let written = self.write_response(response, parsed, &config).await;
+        let notes = Arc::new(ScrubNotes::default());
+        let scrubbed = scrub_answer(
+            self.cx.termination.stand_ins(),
+            response,
+            &self.cx.target.host,
+            parsed.method.eq_ignore_ascii_case("HEAD"),
+            &notes,
+            config.body_idle_timeout,
+        )
+        .await;
+        let written = match scrubbed {
+            Ok(response) => self.write_response(response, parsed, &config).await,
+            Err(why) => {
+                self.upstream = None;
+                let refusal = match why {
+                    NotScrubbed::Encoding => answer_encoding_refusal(&self.cx.target.host),
+                    NotScrubbed::Failed => answer_failed_refusal(&self.cx.target.host),
+                };
+                return self.refuse(&refusal).await;
+            }
+        };
+        self.outcome.record_scrubbed(&notes);
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,
             Ok(_) => {
@@ -1188,5 +1236,26 @@ mod tests {
         assert_eq!(outcome.unswapped_stand_ins, ids[..4]);
         outcome.record_stand_ins(&host, &unswapped(&ids));
         assert_eq!(outcome.unswapped_stand_ins, ids[..MAX_UNSWAPPED_STAND_INS]);
+    }
+
+    #[test]
+    fn the_record_lists_each_scrubbed_stand_in_once_and_stops_at_the_cap() {
+        let ids: Vec<String> = (0..MAX_UNSWAPPED_STAND_INS + 5)
+            .map(|n| format!("stand-in:secret:S{n}"))
+            .collect();
+        let notes = |ids: &[String]| {
+            let notes = ScrubNotes::default();
+            for id in ids {
+                notes.note(id);
+            }
+            notes
+        };
+        let mut outcome = Outcome::default();
+        outcome.record_scrubbed(&notes(&ids[..3]));
+        outcome.record_scrubbed(&notes(&ids[1..4]));
+        assert_eq!(outcome.scrubbed_stand_ins, ids[..4]);
+        outcome.record_scrubbed(&notes(&ids));
+        assert_eq!(outcome.scrubbed_stand_ins, ids[..MAX_UNSWAPPED_STAND_INS]);
+        assert!(outcome.refused.is_none());
     }
 }

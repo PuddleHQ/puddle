@@ -11162,3 +11162,80 @@ async fn a_disk_that_cannot_be_read_makes_no_entry() {
     assert!(rig.runtime.list().await.unwrap().is_empty());
     host.shutdown().await;
 }
+
+// ---- the terminal ------------------------------------------------------------------------
+
+async fn terminal_output_until(
+    link: &mut puddle_api::TerminalLink,
+    text: &str,
+) -> puddle_api::TerminalEnd {
+    let mut seen = String::new();
+    loop {
+        let item = tokio::time::timeout(Duration::from_secs(10), link.output.recv())
+            .await
+            .unwrap();
+        // A link that closes without an end fails the caller's assertion on the reason.
+        let Some(item) = item else {
+            return puddle_api::TerminalEnd::of(puddle_api::EndReason::Quitting);
+        };
+        match item {
+            puddle_api::TerminalOutput::Bytes(b) => {
+                seen.push_str(&String::from_utf8_lossy(&b));
+                if seen.contains(text) {
+                    return puddle_api::TerminalEnd::of(puddle_api::EndReason::Exited);
+                }
+            }
+            puddle_api::TerminalOutput::Ended(end) => return end,
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped_reason() {
+    let rig = Rig::new();
+    rig.runtime.serve_terminals();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let user = api.get("/api/workspaces/acme").await.json()["session_user"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id = WorkspaceId::new("acme").unwrap();
+    let size = puddle_api::TerminalSize::new(80, 24).unwrap();
+
+    let service = host.workspaces();
+    puddle_api::TerminalService::check(service, &id)
+        .await
+        .unwrap();
+    let mut link = puddle_api::TerminalService::open(service, &id, size)
+        .await
+        .unwrap();
+    link.input
+        .send(puddle_api::TerminalInput::Bytes(b"whoami\r".to_vec()))
+        .await
+        .unwrap();
+    let reached = terminal_output_until(&mut link, &format!("{user}\r\n")).await;
+    assert_eq!(reached.reason, puddle_api::EndReason::Exited, "{reached:?}");
+
+    let stop = api.post("/api/workspaces/acme/stop", "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = terminal_output_until(&mut link, "never printed").await;
+    assert_eq!(end.reason, puddle_api::EndReason::Stopped, "{end:?}");
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+
+    // A stopped workspace has no terminal to open.
+    let refused = puddle_api::TerminalService::open(service, &id, size)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, puddle_api::TerminalError::NotRunning(_)),
+        "{refused:?}"
+    );
+    assert!(matches!(
+        puddle_api::TerminalService::check(service, &id).await,
+        Err(puddle_api::TerminalError::NotRunning(_))
+    ));
+    host.shutdown().await;
+}

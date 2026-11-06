@@ -89,6 +89,13 @@ impl SshSetup {
         self.login.as_ref().ok().map(LoginKey::public_line)
     }
 
+    /// The login key as the host's own SSH client signs in with it (the terminal). The private
+    /// file is read into memory for the session and never logged or shown.
+    pub(crate) fn identity(&self) -> Result<crate::terminals::Identity, String> {
+        let key = self.login.as_ref().map_err(Clone::clone)?;
+        crate::terminals::Identity::load(key.private_path())
+    }
+
     /// Puddle's own ssh config file.
     pub(crate) fn config_path(&self) -> PathBuf {
         self.dir.join(CONFIG_FILE)

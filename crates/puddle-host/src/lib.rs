@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 mod agent_reports;
+mod backup;
 mod boot;
 mod changes;
 mod config;
@@ -60,6 +61,9 @@ mod vault;
 mod vscode;
 mod workspaces;
 
+pub use backup::{
+    BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupError, BackupReport, backup,
+};
 pub use config::{
     AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, FreeSpaceTiming, GuestSettings, HostConfig,
     UpstreamSettings,

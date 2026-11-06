@@ -15,6 +15,8 @@ pub enum Command {
     },
     /// Check this machine's prerequisites, see [`crate::cmd::doctor`].
     Doctor(crate::cmd::doctor::DoctorArgs),
+    /// Copy the data folder's database, settings and workspace list, see [`crate::cmd::backup`].
+    Backup(crate::cmd::backup::BackupArgs),
     /// Run the host process until asked to stop, see [`crate::cmd::serve`].
     Serve(crate::cmd::serve::ServeArgs),
 }
@@ -34,7 +36,7 @@ pub enum UsageError {
 }
 
 /// Usage text for `--help` and for usage errors.
-pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] | serve [--port <n>] [--connection-file <path>] | ssh-bridge <endpoint>]";
+pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] | serve [--port <n>] [--connection-file <path>] | backup [--data-dir <path>] <dest> | ssh-bridge <endpoint>]";
 
 /// Parse the arguments after the program name.
 ///
@@ -55,6 +57,7 @@ where
             "ssh-bridge" => return crate::cmd::ssh_bridge::parse(args),
             "doctor" => return crate::cmd::doctor::parse(args),
             "serve" => return crate::cmd::serve::parse(args),
+            "backup" => return crate::cmd::backup::parse(args),
             other => return Err(UsageError::UnknownArgument(other.to_owned())),
         },
     };

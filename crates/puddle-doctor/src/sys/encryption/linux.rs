@@ -511,6 +511,17 @@ mod tests {
     }
 
     #[test]
+    fn wsl_leaves_a_missing_folder_and_a_missing_swap_alone() {
+        let mut facts = DiskEncryptionFacts {
+            data: DataEncryption::NoFolder,
+            swap: SwapFacts::None,
+        };
+        wsl_unknown(&mut facts);
+        assert_eq!(facts.data, DataEncryption::NoFolder);
+        assert_eq!(facts.swap, SwapFacts::None);
+    }
+
+    #[test]
     fn the_probe_reads_this_machine_without_panicking() {
         let dir = tempfile::tempdir().unwrap();
         let _facts = disk_encryption(Some(dir.path()));

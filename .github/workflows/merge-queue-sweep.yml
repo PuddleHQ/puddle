@@ -3,7 +3,8 @@
 # always hand an armed pull request to a ruleset queue (seen on a Dependabot PR armed with the workflow token, which sat
 # green for 2 h until it was disarmed and armed again). Every 10 minutes ci/merge-queue-sweep.sh asks GitHub to merge
 # each such PR's head commit, which adds it to the queue. Reads PR metadata only and never checks out or runs PR code.
-# A scheduled run executes the copy on the default branch (develop).
+# The same run also cancels the runs of merge groups the queue dissolved (ci/cancel-dissolved-groups.sh), which
+# ci/cancel-group.sh cannot do because no job failed. A scheduled run executes the copy on the default branch (develop).
 name: merge-queue-sweep
 
 on:
@@ -14,6 +15,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 concurrency:
   group: merge-queue-sweep
@@ -28,9 +30,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: develop
-          sparse-checkout: ci/merge-queue-sweep.sh
+          sparse-checkout: |
+            ci/merge-queue-sweep.sh
+            ci/cancel-dissolved-groups.sh
           persist-credentials: false
       - name: add armed, green PRs that are not queued
         env:
           GH_TOKEN: ${{ github.token }}
         run: ci/merge-queue-sweep.sh
+      - name: cancel the runs of dissolved merge groups
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/cancel-dissolved-groups.sh

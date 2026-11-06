@@ -21,8 +21,8 @@
 #   defer_linux_webkit
 #             the same for the WebKit half of the Linux UI end-to-end tests: the `ui` job runs on
 #             Chromium alone and `full-steps` accepts that; nothing skips, so the verdict is untouched
-#   light     the light pull request mode (below): the Windows and VM jobs skip, and so do the
-#             Linux steps marked for it; true only in that mode, so a lost output runs everything
+#   light     the light pull request mode (below): the Windows clippy and UI jobs and the VM jobs skip, and so do the
+#             Linux steps marked for it (the Windows tests job does not: it follows win_rust); true only in that mode, so a lost output runs everything
 #   class     full | docs | ui | rust | mixed (a label for the log and the tests)
 #
 # Nightly tier: with the repository variable PUDDLE_TIER set to `on`, a merge queue run skips the
@@ -43,9 +43,11 @@
 # it tests (the GitHub compare API), which covers every pull request in the group.
 #
 # Light mode: with the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop
-# runs only the Linux jobs (without the slow `git-env` and `notices` gates, and with the UI
-# end-to-end tests on Chromium only); the merge queue then runs the full set on the commit that
-# lands. Any other value, an unset variable, any other event and a pull request to another branch
+# runs the Linux jobs (without the slow `git-env` and `notices` gates, and with the UI
+# end-to-end tests on Chromium only) and, when `win_rust` is true, the Windows tests job; the
+# merge queue then runs the full set on the commit that lands. A Windows-only test failure shows
+# on the pull request, and a pull request that changes no Rust or fixture path (`win_rust=false`)
+# skips the job, which the verdict accepts as any scoped skip. Any other value, an unset variable, any other event and a pull request to another branch
 # run the full set. The verdict and `full-steps` work the mode out again from the event, never
 # from the scope job's output, so a wrong `light=true` fails the result.
 #
@@ -68,7 +70,8 @@
 # dispatch, where scope prints every output true); a failed, cancelled or otherwise skipped job
 # fails the verdict, so an infrastructure failure can never pass as a scoped skip. Four more
 # skips are accepted, each only where its own condition holds:
-#   ,queue           the job skips in light mode (a pull request to develop with PUDDLE_QUEUE=on)
+#   ,queue           the job skips in light mode (a pull request to develop with PUDDLE_QUEUE=on); the
+#                    Windows tests job has no such mark, so it is skipped only by `win_rust=false`
 #   ,pushskip        a develop push run whose commit a green merge queue run already tested
 #                    (PUDDLE_QUEUE_SKIP_PUSH=on and the `queue-tested` job said so; ci/should-run.sh)
 #   ,defer:<output>  a merge queue run with PUDDLE_TIER=on where scope's `<output>` is `true`: the job
@@ -82,7 +85,7 @@ set -uo pipefail
 
 # Crates that no VM test depends on (cargo metadata, all dependency kinds; checked by
 # `SCOPE_TEST_METADATA=1 ci/scope-test.sh`).
-NO_VM=" puddle puddle-app xtask "
+NO_VM=" puddle puddle-app puddle-no-dump xtask "
 # Crates outside the closure of puddle-e2e and puddle-app, which the UI jobs build.
 NO_UI=" puddle xtask "
 MAX_FILES=300

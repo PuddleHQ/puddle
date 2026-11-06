@@ -142,6 +142,8 @@ pub fn run(args: &ServeArgs) -> ExitCode {
         }
     };
     init_stderr(filter, false);
+    // Before the first credential is read; `PUDDLE_ALLOW_DUMPS=1` keeps native dumps for diagnosis.
+    puddle_no_dump::harden_from_env().log();
     // Everything up to the async runtime happens while this is the only thread.
     let prepared = match std::env::current_exe()
         .map_err(|e| puddle_host::HostError::DataDir(e.to_string()))

@@ -20,6 +20,7 @@ puddle-fs = { workspace = true }
 puddle-host = { workspace = true }
 puddle-lifecycle = { workspace = true }
 puddle-log = { workspace = true }
+puddle-no-dump = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-ssh = { workspace = true }
 puddle-types = { workspace = true }
@@ -36,6 +37,7 @@ puddle-compute = { workspace = true }
 puddle-compute-msb = { workspace = true }
 puddle-vm-tests = { workspace = true }
 puddle-ipc = { workspace = true }
+puddle-store = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
 

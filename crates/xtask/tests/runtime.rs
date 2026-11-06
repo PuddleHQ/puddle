@@ -130,6 +130,7 @@ fn fixture(dir: &Path, embedded: &str) -> PathBuf {
             kernel_version: "6.12.109".into(),
             repo_url: "https://github.com/superradcompany/libkrunfw".into(),
             commit: "d".repeat(40),
+            fork_tag: None,
         },
     };
     std::fs::write(
@@ -580,9 +581,114 @@ fn the_options_of_the_other_os_are_refused() {
     assert!(!out.exists());
 }
 
+/// The fixture with a release of the libkrunfw fork pinned for the tag: its own firmware, checksum
+/// list and firmware facts. Returns the fork firmware's bytes.
+fn with_fork_firmware(src: &Path) -> Vec<u8> {
+    let bytes = b"fork firmware bytes".to_vec();
+    let dir = src.join("firmware");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(LIBKRUNFW_LINUX_ASSET), &bytes).unwrap();
+    std::fs::write(
+        dir.join(CHECKSUMS_ASSET),
+        format!(
+            "{}  {LIBKRUNFW_LINUX_ASSET}\n{}  built-config-x86_64\n",
+            sha256_file(&dir.join(LIBKRUNFW_LINUX_ASSET)).unwrap(),
+            "0".repeat(64)
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("pins.sha256"),
+        format!(
+            "v{VERSION} libkrunfw-linux-version {FW_VERSION}\nv{VERSION} libkrunfw-linux-tag v5.6.1-puddle.1\n"
+        ),
+    )
+    .unwrap();
+    let mut facts: ForkFacts = serde_json::from_str(&read(&src.join("facts.json"))).unwrap();
+    facts.firmware = Firmware {
+        libkrunfw_version: FW_VERSION.into(),
+        kernel_version: "6.12.113".into(),
+        repo_url: "https://github.com/PuddleHQ/libkrunfw".into(),
+        commit: "e".repeat(40),
+        fork_tag: Some("v5.6.1-puddle.1".into()),
+    };
+    std::fs::write(
+        src.join("facts.json"),
+        serde_json::to_string(&facts).unwrap(),
+    )
+    .unwrap();
+    bytes
+}
+
+#[test]
+fn a_pinned_libkrunfw_fork_release_is_the_linux_firmware_and_the_notice_says_so() {
+    let dir = TempDir::new("forkfw");
+    let src = fixture(&dir.0, VERSION);
+    let firmware = with_fork_firmware(&src);
+    let out = dir.0.join("runtime");
+    run_linux(&src, &out).unwrap();
+    assert_eq!(names(&out), linux_files(FW_VERSION));
+    for name in [LINUX.libkrunfw, "libkrunfw.so.5.6.1"] {
+        assert_eq!(std::fs::read(out.join(name)).unwrap(), firmware, "{name}");
+    }
+    let manifest: serde_json::Value =
+        serde_json::from_str(&read(&out.join("runtime.json"))).unwrap();
+    assert_eq!(manifest["libkrunfw_fork_tag"], "v5.6.1-puddle.1");
+    assert_eq!(
+        manifest["libkrunfw_sha256"],
+        sha256_file(&out.join(LINUX.libkrunfw)).unwrap()
+    );
+    let notice = read(&out.join("licenses/NOTICE.txt"));
+    assert!(
+        notice.contains(
+            "built by Puddle from https://github.com/PuddleHQ/libkrunfw at tag v5.6.1-puddle.1"
+        ) && notice.contains("no /dev/mem"),
+        "{notice}"
+    );
+    assert!(!notice.contains("unchanged"), "{notice}");
+    assert!(notice.contains(&format!(
+        "https://github.com/PuddleHQ/libkrunfw/tree/{}",
+        "e".repeat(40)
+    )));
+}
+
+#[test]
+fn a_corrupted_libkrunfw_fork_firmware_is_refused() {
+    let dir = TempDir::new("forkbad");
+    let src = fixture(&dir.0, VERSION);
+    with_fork_firmware(&src);
+    std::fs::write(
+        src.join("firmware").join(LIBKRUNFW_LINUX_ASSET),
+        b"tampered",
+    )
+    .unwrap();
+    let out = dir.0.join("runtime");
+    let err = run_linux(&src, &out).unwrap_err().to_string();
+    assert!(
+        err.contains(&format!("checksum mismatch for {LIBKRUNFW_LINUX_ASSET}"))
+            && err.contains("PuddleHQ/libkrunfw v5.6.1-puddle.1"),
+        "{err}"
+    );
+    assert!(!out.exists() && !dir.0.join("runtime.partial").exists());
+}
+
+#[test]
+fn a_pinned_fork_release_the_facts_do_not_describe_is_refused() {
+    let dir = TempDir::new("forkfacts");
+    let src = fixture(&dir.0, VERSION);
+    with_fork_firmware(&src);
+    // Back to facts about upstream's firmware, while the pin still names the fork release.
+    let fresh = fixture(&dir.0.join("fresh"), VERSION);
+    std::fs::copy(fresh.join("facts.json"), src.join("facts.json")).unwrap();
+    let out = dir.0.join("runtime");
+    let err = run_linux(&src, &out).unwrap_err().to_string();
+    assert!(err.contains("v5.6.1-puddle.1"), "{err}");
+    assert!(!out.exists());
+}
+
 #[test]
 fn the_windows_firmware_is_the_fork_releases_dll_and_the_notice_says_so() {
-    let dir = TempDir::new("forkfw");
+    let dir = TempDir::new("winfw");
     let src = fixture(&dir.0, VERSION);
     // A different dll under upstream's release must never be the one shipped.
     std::fs::write(src.join("upstream").join(LIBKRUNFW_ASSET), b"upstream dll").unwrap();

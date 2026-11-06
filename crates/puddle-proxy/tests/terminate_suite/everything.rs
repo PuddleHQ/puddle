@@ -445,6 +445,32 @@ async fn a_server_whose_certificate_puddle_does_not_accept_is_passed_through_for
 }
 
 #[tokio::test]
+async fn a_server_that_does_not_speak_tls_is_passed_through_for_the_tool_to_judge() {
+    let pki = Pki::new();
+    // The server answers the handshake in plain text, so the handshake fails without a
+    // certificate to judge.
+    let server = FakeServer::plain(Arc::new(|_| Reply::ok("hello"))).await;
+    let rig = RigBuilder::new(&pki)
+        .name("plain.test", server.addr)
+        .allow(vec!["bound.test", "plain.test"])
+        .injector(adds_nothing())
+        .decrypting_all(true, &[])
+        .build();
+    let mut guest = rig.guest();
+    let (code, reader) = guest.connect_to("plain.test:443").await;
+    assert_eq!(code, 200);
+    // The tool's own handshake runs over the tunnel and fails against the plain server.
+    let tool = tokio_rustls::TlsConnector::from(Arc::new(terminate_support::trusting_anything()))
+        .connect(ServerName::try_from("plain.test").unwrap(), reader)
+        .await;
+    assert!(tool.is_err());
+    assert_eq!(
+        rig.events(1).await[0].reason.to_string(),
+        "pass_through:server_tls"
+    );
+}
+
+#[tokio::test]
 async fn a_client_that_asks_for_another_name_is_passed_through_not_refused() {
     let pki = Pki::new();
     let server = free_server(&pki, "free.test").await;

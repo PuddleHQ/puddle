@@ -173,14 +173,75 @@ grep -q '^::error title=fetch-msb download failed::3 tries failed for .*curl exi
 }
 echo "fetch-msb-test: ok (a failing download is retried, then named in an annotation)"
 
+# A tag that pins a release of the libkrunfw fork (libkrunfw-linux-tag) takes its Linux firmware
+# from there, checked against that release's line, and never the msb release's firmware.
+fork_fw_sum=$(printf 'fork-fw' | sha256sum | cut -d' ' -f1)
+MSB_BODY='#!/bin/sh
+echo "msb 1.0.0-puddle.3"'
+msb3_sum=$(printf '%s\n' "$MSB_BODY" | sha256sum | cut -d' ' -f1)
+{
+    echo "v1.0.0-puddle.3 msb-linux-x86_64 $msb3_sum"
+    echo "v1.0.0-puddle.3 libkrunfw-linux-x86_64.so $fw_sum"
+    echo "v1.0.0-puddle.3 libkrunfw-linux-tag v9.9.9-puddle.1"
+    echo "v1.0.0-puddle.3 libkrunfw-linux-version 5.6.1"
+    echo "v9.9.9-puddle.1 libkrunfw-linux-x86_64.so $fork_fw_sum"
+} >"$tmp/ci/msb-runtime.sha256"
+cat >"$tmp/bin/curl" <<'STUB'
+#!/bin/sh
+out= url=
+while [ "$#" -gt 0 ]; do
+    case "$1" in -o) out=$2 ;; http*) url=$1 ;; esac
+    shift
+done
+echo "$url" >>"$FAKE_URLS"
+case "$url" in
+*/msb-linux-x86_64) printf '%s\n' "$MSB_BODY" >"$out" ;;
+https://github.com/PuddleHQ/libkrunfw/releases/download/v9.9.9-puddle.1/libkrunfw-linux-x86_64.so) printf 'fork-fw' >"$out" ;;
+*/libkrunfw-linux-x86_64.so) printf 'fw' >"$out" ;;
+*) exit 1 ;;
+esac
+STUB
+chmod +x "$tmp/bin/curl"
+export FAKE_URLS="$tmp/urls"
+: >"$FAKE_URLS"
+PATH="$tmp/bin:$PATH" "$tmp/ci/fetch-msb.sh" v1.0.0-puddle.3 "$tmp/forkfw" >"$tmp/out6" 2>&1 || {
+    cat "$tmp/out6" >&2
+    echo "fetch-msb-test: the libkrunfw fork's firmware was not installed" >&2
+    exit 1
+}
+[ "$(cat "$tmp/forkfw/libkrunfw.so.5")" = fork-fw ] && [ "$(cat "$tmp/forkfw/libkrunfw.so.5.6.1")" = fork-fw ] || {
+    echo "fetch-msb-test: the firmware is not the libkrunfw fork's under both names" >&2
+    exit 1
+}
+if grep -q 'microsandbox/releases/.*libkrunfw' "$FAKE_URLS"; then
+    echo "fetch-msb-test: the msb release's firmware was downloaded although the tag pins the fork's" >&2
+    exit 1
+fi
+sed -i "s/^v9.9.9-puddle.1 libkrunfw-linux-x86_64.so .*/v9.9.9-puddle.1 libkrunfw-linux-x86_64.so $fw_sum/" "$tmp/ci/msb-runtime.sha256"
+if PATH="$tmp/bin:$PATH" "$tmp/ci/fetch-msb.sh" v1.0.0-puddle.3 "$tmp/forkbad" >"$tmp/out7" 2>&1; then
+    echo "fetch-msb-test: a libkrunfw fork firmware with a wrong checksum was accepted" >&2
+    exit 1
+fi
+grep -q 'checksum mismatch for v9.9.9-puddle.1 libkrunfw-linux-x86_64.so' "$tmp/out7" || {
+    cat "$tmp/out7" >&2
+    echo "fetch-msb-test: no checksum mismatch message for the fork's firmware" >&2
+    exit 1
+}
+echo "fetch-msb-test: ok (a pinned libkrunfw fork release is the Linux firmware, checked)"
+
 # The tag the build is on must pin its release's Linux msb and firmware. Without the msb line
 # fetch-msb.sh falls back to a ten-minute build from source, in the build job and in each of the
-# four test partitions, and only a warning annotation says so.
+# four test partitions, and only a warning annotation says so. It must also pin a release of the
+# libkrunfw fork: without that line the Linux guests boot upstream's kernel, which has /dev/mem.
 tag=$("$here/msb-tag.sh")
-for asset in msb-linux-x86_64 libkrunfw-linux-x86_64.so; do
+for asset in msb-linux-x86_64 libkrunfw-linux-x86_64.so libkrunfw-linux-tag; do
     awk -v t="$tag" -v a="$asset" '$1 == t && $2 == a { found = 1 } END { exit !found }' "$here/msb-runtime.sha256" || {
-        echo "fetch-msb-test: $tag has no $asset line in ci/msb-runtime.sha256: every VM job would build msb from source (about 10 minutes); pin the release's asset" >&2
+        case $asset in
+        libkrunfw-linux-tag) why="the Linux guests would boot upstream's kernel, which has /dev/mem; pin the libkrunfw fork's release" ;;
+        *) why="every VM job would build msb from source (about 10 minutes); pin the release's asset" ;;
+        esac
+        echo "fetch-msb-test: $tag has no $asset line in ci/msb-runtime.sha256: $why" >&2
         exit 1
     }
 done
-echo "fetch-msb-test: ok ($tag pins its Linux msb and firmware)"
+echo "fetch-msb-test: ok ($tag pins its Linux msb, its firmware and the libkrunfw fork's release)"

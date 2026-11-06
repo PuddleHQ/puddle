@@ -419,6 +419,58 @@ async fn audit_filters_run_on_the_server() {
 }
 
 #[tokio::test]
+async fn the_audit_search_box_matches_text_columns_and_combines_with_the_filters() {
+    use puddle_types::{
+        ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, HttpRequestLine,
+    };
+    let api = start().await;
+    let request = EgressRequest::new(
+        WorkspaceId::new("box").unwrap(),
+        Host::parse_normalised("example.com").unwrap(),
+        443,
+    );
+    let mut event = ConnectionEvent::new(
+        &request,
+        ConnectionDecision::Deny,
+        ConnectionReason::RequestRule,
+    );
+    event.http = Some(HttpRequestLine::new("DELETE", "/Admin/Users"));
+    api.store.record(&event);
+    api.request("other", "api.github.com");
+    let hits = |reply: crate::common::Reply| reply.json()["entries"].as_array().unwrap().len();
+    for found in ["example.com", "delete", "admin/users", "REQUEST_RULE"] {
+        assert_eq!(
+            hits(api.get(&format!("/api/audit?q={found}")).await),
+            1,
+            "{found}"
+        );
+    }
+    assert_eq!(hits(api.get("/api/audit?q=github").await), 1);
+    assert_eq!(hits(api.get("/api/audit?q=nothing-like-it").await), 0);
+    // It narrows the other filters and is narrowed by them.
+    assert_eq!(hits(api.get("/api/audit?q=example&workspace=box").await), 1);
+    assert_eq!(
+        hits(api.get("/api/audit?q=example&workspace=other").await),
+        0
+    );
+    assert_eq!(hits(api.get("/api/audit?q=example&outcome=allow").await), 0);
+    assert_eq!(
+        hits(api.get("/api/audit?q=example&type=connection").await),
+        1
+    );
+    // An empty `q` is no filter, as with the other text filters.
+    assert_eq!(
+        hits(api.get("/api/audit?q=").await),
+        hits(api.get("/api/audit").await)
+    );
+    // Too long, or holding a control character (a line break would match across two fields).
+    let long = "a".repeat(201);
+    assert_eq!(api.get(&format!("/api/audit?q={long}")).await.status, 422);
+    assert_eq!(api.get("/api/audit?q=a%0Ab").await.status, 422);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn audit_records_are_typed_including_the_upstream_hop() {
     use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason};
     let api = start().await;

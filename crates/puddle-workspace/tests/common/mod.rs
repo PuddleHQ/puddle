@@ -63,7 +63,7 @@ pub(crate) fn assert_hook_env_leaves_the_repository_alone(skip: &str) {
     let before = std::fs::read_to_string(&config).unwrap();
 
     let out = Command::new(std::env::current_exe().unwrap())
-        .args(["--test-threads=1", "--skip", skip])
+        .args(["--test-threads=4", "--skip", skip])
         .env(CHILD_MARKER, "1")
         .env("GIT_DIR", outer_git.join(".git"))
         .env("GIT_INDEX_FILE", outer_git.join(".git/index"))

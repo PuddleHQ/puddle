@@ -185,7 +185,12 @@ mod tests {
     }
 
     fn claude_key() -> &'static Field {
-        &CLAUDE.endpoints[1].fields[0]
+        &CLAUDE
+            .endpoints
+            .iter()
+            .find(|e| e.host == "api.anthropic.com")
+            .unwrap()
+            .fields[0]
     }
 
     fn counting() -> impl FnMut(&mut [u8]) -> bool {

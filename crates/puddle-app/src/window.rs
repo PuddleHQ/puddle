@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::navigation::{Navigation, OriginPolicy};
 
-/// The main window's label. Puddle's one capability file names this label and grants it nothing;
+/// The main window's label. Puddle's one capability file names this label and grants it the folder dialog only;
 /// workspace windows get labels of their own (`vs-<workspace>`), never this one.
 pub const MAIN_LABEL: &str = "main";
 

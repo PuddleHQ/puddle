@@ -117,6 +117,7 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
             };
             let window = Target {
                 workspace: workspace.id.clone(),
+                display_name: workspace.label().to_owned(),
                 origin,
                 data_folder: sandbox_window::data_folder(&self.webview_root, &workspace.id),
                 settings: WindowSettings::from(&target.settings),

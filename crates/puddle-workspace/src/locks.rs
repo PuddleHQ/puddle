@@ -5,7 +5,8 @@
 //! A VMM kill leaves `index.lock`, `HEAD.lock`, `refs/**.lock` and friends behind, and git then
 //! refuses to work ("Another git process seems to be running"). Right after a boot no git
 //! process of the user's exists, so a lock is stale; the script still checks for a running `git`
-//! and removes nothing if it finds one. Its output is parsed as hostile input: bounded, unknown
+//! and removes nothing if it finds one. The same script then repairs a zero-filled `HEAD` and a
+//! zero-filled or corrupt index (what a host power cut leaves) and reports what it did. Its output is parsed as hostile input: bounded, unknown
 //! records refused, end marker required.
 
 use std::time::Duration;
@@ -38,6 +39,11 @@ pub struct LockReport {
     pub more: u64,
     /// Locks (or checkouts) that could not be handled, as `path: why`.
     pub errors: Vec<String>,
+    /// Zero-filled or corrupt git files that were repaired, as `path: what was done` (at most
+    /// [`MAX_LOCKS`]).
+    pub repaired: Vec<String>,
+    /// Damaged git files that were found and left alone, as `path: why` (at most [`MAX_LOCKS`]).
+    pub damaged: Vec<String>,
 }
 
 impl LockReport {
@@ -92,6 +98,13 @@ pub(crate) async fn run<S: Sandbox>(
     parse(&out.stdout_text()).map_err(fail)
 }
 
+/// Adds `path: note` to `list` unless it is full.
+fn push_bounded(list: &mut Vec<String>, path: &str, note: &str) {
+    if list.len() < MAX_LOCKS {
+        list.push(format!("{path}: {note}").chars().take(MAX_LINE).collect());
+    }
+}
+
 /// Parses the script's output.
 pub(crate) fn parse(stdout: &str) -> Result<LockReport, String> {
     let mut report = LockReport::default();
@@ -121,6 +134,8 @@ pub(crate) fn parse(stdout: &str) -> Result<LockReport, String> {
                         .push(format!("{path}: {why}").chars().take(MAX_LINE).collect());
                 }
             }
+            ("R", Some(path), Some(what)) => push_bounded(&mut report.repaired, path, what),
+            ("P", Some(path), Some(why)) => push_bounded(&mut report.damaged, path, why),
             _ => {
                 let shown: String = line.chars().take(80).collect();
                 return Err(format!("unexpected output line {shown:?}"));
@@ -151,6 +166,37 @@ mod tests {
         );
         assert_eq!(r.errors, ["web/.git/x.lock: cannot remove"]);
         assert_eq!(r.removed_count(), 2);
+    }
+
+    #[test]
+    fn repairs_and_left_alone_damage_are_collected() {
+        let r = parse(
+            "R\tapi/.git/HEAD\tHEAD was zero-filled, rewritten: branch main\nP\tweb/.git/index\tthe index is damaged and a merge is in progress\nD\n",
+        )
+        .unwrap();
+        assert_eq!(
+            r.repaired,
+            ["api/.git/HEAD: HEAD was zero-filled, rewritten: branch main"]
+        );
+        assert_eq!(
+            r.damaged,
+            ["web/.git/index: the index is damaged and a merge is in progress"]
+        );
+        assert_eq!(r.removed_count(), 0);
+    }
+
+    #[test]
+    fn repair_lists_are_bounded() {
+        let mut out = String::new();
+        for i in 0..MAX_LOCKS + 3 {
+            writeln!(out, "R\ta{i}/.git/HEAD\tx").unwrap();
+            writeln!(out, "P\ta{i}/.git/index\ty").unwrap();
+        }
+        out.push_str("D\n");
+        let r = parse(&out).unwrap();
+        assert_eq!(r.repaired.len(), MAX_LOCKS);
+        assert_eq!(r.damaged.len(), MAX_LOCKS);
+        assert_eq!(r.repaired[0], "a0/.git/HEAD: x");
     }
 
     #[test]
@@ -186,6 +232,8 @@ mod tests {
             "L\n",
             "D\textra\n",
             "B\tx\nD\n",
+            "R\tonly-a-path\nD\n",
+            "P\tonly-a-path\nD\n",
         ] {
             assert!(parse(bad).is_err(), "{bad:?} accepted");
         }

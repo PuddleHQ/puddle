@@ -26,7 +26,7 @@ use tokio::sync::broadcast::error::RecvError;
 use url::Url;
 
 use crate::autostart::{self, LoginEntry};
-use crate::backend::Backend;
+use crate::backend::{Backend, WorkspaceLabel};
 use crate::badge::{self, OpenRequests};
 use crate::icon::{self, Wanted};
 use crate::notify::{self, Notice, Notifier, REQUEST_EXTRA};
@@ -371,6 +371,8 @@ struct Loop {
     settings: Arc<dyn SettingsRepo>,
     open: OpenRequests,
     notifier: Notifier,
+    /// What the user calls a workspace, asked before its event is turned into a notice.
+    labels: WorkspaceLabel,
     prefs: UiPrefs,
     /// The badge as last shown, so only a change reaches the outputs.
     shown: (usize, bool),
@@ -446,6 +448,11 @@ impl Loop {
         self.reload_icon().await;
         if self.open.apply(event) {
             self.refresh_badge();
+        }
+        if let Some(workspace) = notify::workspace_of(event)
+            && let Some(label) = (self.labels)(workspace.clone()).await
+        {
+            self.notifier.name(workspace, &label);
         }
         let front = (self.out.in_front)();
         let notices = self
@@ -592,6 +599,7 @@ fn attach_with<R: Runtime>(
         settings,
         open,
         notifier: Notifier::default(),
+        labels: backend.label(),
         prefs,
         shown,
         icon,
@@ -984,6 +992,17 @@ mod behaviour_tests {
 
     /// A loop over `hub`'s events with the rig's recorder as outputs, started as the app starts it.
     fn start_loop(rig: &Rig, hub: &Arc<puddle_api::EventHub>, notifier: Notifier, poll: Duration) {
+        start_loop_naming(rig, hub, notifier, poll, rig.backend.label());
+    }
+
+    /// `start_loop` with `labels` as the way to name a workspace.
+    fn start_loop_naming(
+        rig: &Rig,
+        hub: &Arc<puddle_api::EventHub>,
+        notifier: Notifier,
+        poll: Duration,
+        labels: WorkspaceLabel,
+    ) {
         let stream = hub.subscribe();
         let settings = rig.backend.settings().clone();
         let prefs = prefs_or_default(settings.as_ref());
@@ -997,6 +1016,7 @@ mod behaviour_tests {
             settings,
             open,
             notifier,
+            labels,
             prefs,
             shown,
             icon,
@@ -1021,6 +1041,7 @@ mod behaviour_tests {
             settings: rig.backend.settings().clone(),
             open: OpenRequests::default(),
             notifier: Notifier::default(),
+            labels: rig.backend.label(),
             prefs: UiPrefs::default(),
             shown: (0, true),
             icon: Wanted::read(rig.backend.settings().as_ref(), &UiPrefs::default()),
@@ -1054,6 +1075,25 @@ mod behaviour_tests {
         assert_eq!(notices[0].0.request, Some(910));
         assert_eq!(notices[1].0.title, "demo is asking for 1 more");
         assert_eq!(notices[1].0.request, Some(911));
+    }
+
+    #[test]
+    fn a_notice_names_the_workspace_by_the_label_the_backend_finds() {
+        let rig = rig(TrayState::Shown);
+        let hub = Arc::new(puddle_api::EventHub::default());
+        start_loop_naming(
+            &rig,
+            &hub,
+            Notifier::default(),
+            Duration::from_secs(60),
+            Arc::new(|_| Box::pin(async { Some("Demo project".to_owned()) })),
+        );
+        hub.emit(opened(920));
+        eventually_blocking("the notice", Duration::from_secs(5), || {
+            !rig.recorded.notices().is_empty()
+        });
+        let title = rig.recorded.notices()[0].0.title.clone();
+        assert!(title.contains("Demo project"), "{title}");
     }
 
     #[test]
@@ -1197,6 +1237,7 @@ mod behaviour_tests {
             store: rig.backend.store().clone(),
             open: open_requests(rig.backend.store()),
             notifier: Notifier::default(),
+            labels: rig.backend.label(),
             shown: (1, prefs.badge()),
             icon: Wanted::read(settings.as_ref(), &prefs),
             login: Some(prefs.start_at_login()),

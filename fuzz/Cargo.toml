@@ -19,6 +19,7 @@ libfuzzer-sys = "0.4"
 puddle-agent = { path = "../crates/puddle-agent" }
 puddle-agent-proto = { path = "../crates/puddle-agent-proto", features = ["fuzzing"] }
 puddle-proxy = { path = "../crates/puddle-proxy", features = ["fuzzing"] }
+tokio = { version = "1.52", default-features = false, features = ["io-util", "net", "rt", "time"] }
 
 [workspace]
 
@@ -74,6 +75,27 @@ bench = false
 [[bin]]
 name = "resolve_line_grammar"
 path = "fuzz_targets/resolve_line_grammar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resolve_ask"
+path = "fuzz_targets/resolve_ask.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_tcp_stream"
+path = "fuzz_targets/dns_tcp_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_udp_datagram"
+path = "fuzz_targets/dns_udp_datagram.rs"
 test = false
 doc = false
 bench = false

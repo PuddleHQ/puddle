@@ -543,9 +543,9 @@ fn scrub_speed() {
         // Every byte starts a form: the worst case for the held tail.
         ("all-s", vec![b's'; 16 * MIB]),
     ];
-    for secrets in [1_usize, 8, 50] {
+    for count in [1_usize, 8, 50] {
         let registry = StandIns::new();
-        for n in 0..secrets {
+        for n in 0..count {
             let name = format!("S{n}");
             registry
                 .insert(entry(
@@ -560,7 +560,7 @@ fn scrub_speed() {
         let started = Instant::now();
         let scrubber = registry.answer_scrubber(&host("api.github.com")).unwrap();
         eprintln!(
-            "M build secrets={secrets} {:.0} us (once per host until the registry changes)",
+            "M build registered={count} {:.0} us (once per host until the registry changes)",
             started.elapsed().as_secs_f64() * 1e6
         );
         for (kind, body) in &bodies {
@@ -570,7 +570,7 @@ fn scrub_speed() {
             let took = started.elapsed();
             assert_eq!(out.len(), body.len());
             eprintln!(
-                "M body secrets={secrets} patterns={} kind={kind} {:.0} MiB/s",
+                "M body registered={count} patterns={} kind={kind} {:.0} MiB/s",
                 scrubber.patterns.len(),
                 16.0 / took.as_secs_f64()
             );
@@ -594,7 +594,7 @@ fn scrub_speed() {
             scrubber.scrub_headers(&mut copy, &ScrubNotes::default());
         }
         eprintln!(
-            "M headers secrets={secrets} {:.1} us per answer (scrubber made already, 18 headers, a 3 KB cookie)",
+            "M headers registered={count} {:.1} us per answer (scrubber made already, 18 headers, a 3 KB cookie)",
             started.elapsed().as_secs_f64() * 1e6 / f64::from(rounds)
         );
     }

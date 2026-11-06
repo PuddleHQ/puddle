@@ -8,7 +8,8 @@
 //! helper) and never holds a real token. The tools are the user's own installs: a test skips when
 //! its tool is not found, unless `PUDDLE_REQUIRE_LOGIN_TOOLS` is set. `claude` and `gh` come from
 //! the path, Copilot CLI from `PUDDLE_COPILOT_BIN` (its VS Code shim installs the real program on
-//! first use, so the path alone is not enough). Unix only.
+//! first use, so the path alone is not enough). Claude Code 2.1.5 (its login is a screen, driven on a
+//! terminal made by `script`) comes from `PUDDLE_CLAUDE_OLD_BIN`. Unix only.
 #![cfg(unix)]
 #![expect(
     clippy::print_stderr,
@@ -49,8 +50,9 @@ const GITHUB: &str = "gho_CANARYrealgithub0123456789abcdefgh";
 const SHA: &str = "1111111111111111111111111111111111111111";
 const REALS: [&str; 6] = [ACCESS, REFRESH, ACCESS_2, REFRESH_2, API_KEY, GITHUB];
 
-const HOSTS: [&str; 7] = [
+const HOSTS: [&str; 8] = [
     "platform.claude.com",
+    "console.anthropic.com",
     "api.anthropic.com",
     "claude.ai",
     "github.com",
@@ -113,6 +115,9 @@ fn pkt(text: &str) -> String {
 
 /// Claude Code's token endpoint: the code exchange, then one refresh.
 fn claude_token(request: &Recorded, console: bool) -> Reply {
+    if path_of(request) == "/v1/oauth/hello" {
+        return json_reply(&json!({}));
+    }
     let body: Value = serde_json::from_slice(&request.body).unwrap_or_default();
     let tokens = |access: &str, refresh: &str| {
         json_reply(&json!({
@@ -155,6 +160,8 @@ fn claude_api(request: &Recorded) -> Reply {
         "/api/oauth/claude_cli/roles" => {
             json_reply(&json!({"organization_role": "admin", "workspace_role": null}))
         }
+        // The connectivity check of the older tool (2.1.x) before its login screen.
+        "/api/hello" => json_reply(&json!({})),
         "/api/oauth/claude_cli/create_api_key" => json_reply(&json!({"raw_key": API_KEY})),
         _ => not_found(),
     }
@@ -277,7 +284,9 @@ impl Tools {
         let mut bound = Vec::new();
         for host in HOSTS {
             let handler: Handler = match host {
-                "platform.claude.com" => Arc::new(move |r: &Recorded| claude_token(r, console)),
+                "platform.claude.com" | "console.anthropic.com" => {
+                    Arc::new(move |r: &Recorded| claude_token(r, console))
+                }
                 "api.anthropic.com" => Arc::new(|r: &Recorded| claude_api(r)),
                 "github.com" => {
                     let pending = Arc::clone(&pending);
@@ -564,6 +573,140 @@ async fn claude_code_console_login_keeps_the_api_key_it_creates_and_sends_it_onl
         0
     );
     tools.assert_no_real_token_in_the_workspace();
+}
+
+/// Claude Code 2.1.5 has no `auth login`: its login is a screen of the interactive program, so it
+/// runs on a terminal made by `script`, and the keys are sent as each screen shows up.
+struct Screen {
+    seen: Arc<Mutex<String>>,
+    keys: tokio::process::ChildStdin,
+    _child: tokio::process::Child,
+}
+
+impl Screen {
+    fn start(tools: &Tools, program: &Path) -> Self {
+        let mut command = tools.command(Path::new("script"));
+        command
+            .arg("-qec")
+            .arg(program)
+            .arg("/dev/null")
+            .env("COLUMNS", "120")
+            .env("LINES", "40");
+        let mut child = command.spawn().unwrap();
+        let keys = child.stdin.take().unwrap();
+        let mut output = child.stdout.take().unwrap();
+        let seen = Arc::new(Mutex::new(String::new()));
+        let sink = Arc::clone(&seen);
+        tokio::spawn(async move {
+            let mut buf = vec![0_u8; 16 * 1024];
+            while let Ok(n) = tokio::io::AsyncReadExt::read(&mut output, &mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                sink.lock()
+                    .unwrap()
+                    .push_str(&String::from_utf8_lossy(buf.get(..n).unwrap_or_default()));
+            }
+        });
+        Self {
+            seen,
+            keys,
+            _child: child,
+        }
+    }
+
+    /// Waits for `text` to appear on the screen after the last key, then sends `keys`.
+    async fn wait_then_send(&mut self, text: &str, keys: &str) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            if self.seen.lock().unwrap().contains(text) {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "never saw {text:?} on the screen:\n{}",
+                self.seen.lock().unwrap()
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        self.seen.lock().unwrap().clear();
+        // A paste and the Enter after it must arrive apart, or the Enter is part of the paste.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if !keys.is_empty() {
+            self.keys.write_all(keys.as_bytes()).await.unwrap();
+            self.keys.flush().await.unwrap();
+        }
+    }
+}
+
+/// The real Claude Code 2.1.5 (`PUDDLE_CLAUDE_OLD_BIN`, from `npm i @anthropic-ai/claude-code@2.1.5`)
+/// logs in on the console host, which the newer tool no longer uses, and the real tokens stay out
+/// of its credentials file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claude_code_2_1_5_logs_in_on_the_console_host_with_stand_ins_only() {
+    let Some(old) = std::env::var_os("PUDDLE_CLAUDE_OLD_BIN").map(PathBuf::from) else {
+        tool_missing("PUDDLE_CLAUDE_OLD_BIN (Claude Code 2.1.5)");
+        return;
+    };
+    if on_path("script").is_none() {
+        tool_missing("script");
+        return;
+    }
+    let tools = Tools::new(false).await;
+    let mut screen = Screen::start(&tools, &old);
+    screen.wait_then_send("Choose the text style", "\r").await;
+    screen.wait_then_send("Select login method", "\r").await;
+    screen
+        .wait_then_send("Paste code here", "fakecode#fakestate")
+        .await;
+    screen.wait_then_send("fakecode#fakestate", "\r").await;
+    screen.wait_then_send("Login successful", "").await;
+
+    // The exchange is the one the profile assumes: a JSON `POST /v1/oauth/token` on the console host.
+    let exchanges: Vec<Recorded> = tools
+        .server("console.anthropic.com")
+        .recorded()
+        .into_iter()
+        .filter(|r| r.method == "POST")
+        .collect();
+    assert_eq!(exchanges.len(), 1, "{exchanges:?}");
+    assert_eq!(path_of(&exchanges[0]), "/v1/oauth/token");
+    assert!(
+        exchanges[0]
+            .header("content-type")
+            .is_some_and(|c| c.starts_with("application/json"))
+    );
+    let sent: Value = serde_json::from_slice(&exchanges[0].body).unwrap();
+    assert_eq!(sent["grant_type"], "authorization_code");
+    assert_eq!(sent["code"], "fakecode");
+    assert!(
+        tools
+            .server("platform.claude.com")
+            .recorded()
+            .iter()
+            .all(|r| path_of(r) != "/v1/oauth/token"),
+        "the tool used the new host"
+    );
+
+    let credentials = tools.home.path().join(".claude/.credentials.json");
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(&credentials).unwrap()).unwrap();
+    let oauth = &saved["claudeAiOauth"];
+    let access = oauth["accessToken"].as_str().unwrap();
+    let refresh = oauth["refreshToken"].as_str().unwrap();
+    assert!(
+        access.starts_with("sk-ant-oat01-") && access != ACCESS,
+        "{access}"
+    );
+    assert!(
+        refresh.starts_with("sk-ant-ort01-") && refresh != REFRESH,
+        "{refresh}"
+    );
+    tools.assert_no_real_token_in_the_workspace();
+    assert_eq!(*tools.notices.0.lock().unwrap(), []);
+
+    let _ = &tools.store;
+    let _ = &tools.rig;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

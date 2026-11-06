@@ -4,7 +4,7 @@
 //!
 //! The key pair is made once, in the data folder, in the OpenSSH formats `ssh` reads. The host
 //! hands the runtime only the public line. The private file is written owner-only and is never
-//! read back, logged or shown: whether a pair exists is decided by its public half. A private
+//! logged or shown (the host reads it into memory only to sign in for a terminal): whether a pair exists is decided by its public half. A private
 //! file that is already there is made owner-only again if it was loosened (`ssh` refuses a key
 //! file others can read), and one that cannot be is replaced by a new pair.
 

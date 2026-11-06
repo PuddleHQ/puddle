@@ -19,6 +19,7 @@ use crate::network_health::NetworkHealthService;
 use crate::ports::PortsService;
 use crate::repos::RepoService;
 use crate::settings::SettingsRepo;
+use crate::terminals::{Registry, TerminalService};
 use crate::workspaces::WorkspaceService;
 
 mod app_icon;
@@ -45,6 +46,7 @@ mod rules;
 pub(crate) mod settings;
 mod shell_init;
 mod start_folder;
+mod terminals;
 mod workspaces;
 
 /// Writes a `workspace_op` record for a change a request made (all of them reach Puddle through
@@ -87,6 +89,9 @@ pub(crate) struct AppState {
     pub(crate) dev_cert: Arc<dyn DevCertService>,
     pub(crate) ports: Arc<dyn PortsService>,
     pub(crate) learned: Arc<dyn LearnedService>,
+    pub(crate) terminal_service: Arc<dyn TerminalService>,
+    /// The tickets handed out and the terminals open.
+    pub(crate) terminals: Arc<Registry>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -162,6 +167,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .merge(environment_router())
         .routes(routes!(ports::list_ports))
         .routes(routes!(ports::forward_port, ports::release_port))
+        .merge(terminals_router())
         .routes(routes!(repos::credential_profile))
         .routes(routes!(repos::list_repos))
         .routes(routes!(repos::refresh_repos))
@@ -177,6 +183,14 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             identities::set_git_repo,
             identities::remove_git_repo
         ))
+}
+
+/// The terminals, in a router of their own like the rules.
+#[inline(never)]
+fn terminals_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(terminals::create_terminal))
+        .routes(routes!(terminals::terminal_socket))
 }
 
 /// The rules: allow and deny rules, rules on method and path, and rule sets. A router of their own

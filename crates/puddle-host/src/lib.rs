@@ -55,6 +55,7 @@ mod space_watch;
 mod ssh_config;
 mod ssh_login;
 mod ssh_target;
+mod terminals;
 mod vault;
 mod vscode;
 mod workspaces;

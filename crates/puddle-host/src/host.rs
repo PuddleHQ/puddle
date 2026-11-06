@@ -651,6 +651,7 @@ impl<R: Runtime + Clone> Host<R> {
         ))
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
+        .with_terminals(Arc::new(service.clone()))
         .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
         .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;

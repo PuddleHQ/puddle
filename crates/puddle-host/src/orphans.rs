@@ -127,11 +127,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Whether the list now names `id` or a workspace called `name`.
-    fn claimed(
-        state: &State,
-        id: &WorkspaceId,
-        name: &WorkspaceName,
-    ) -> Result<(), WorkspaceError> {
+    fn claimed(state: &State, id: &WorkspaceId, name: &DisplayName) -> Result<(), WorkspaceError> {
         if state.slots.contains_key(id)
             || puddle_api::label_taken(state.slots.values().map(|s| &s.record), name.as_str(), None)
                 .is_some()
@@ -149,7 +145,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         asked: Option<RepoUrl>,
         git: &dyn GitSetup,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
-        let name = WorkspaceName::new(id.as_str())
+        let name = DisplayName::parse(id.as_str())
             .map_err(|e| WorkspaceError::Invalid(format!("this name can't be a workspace: {e}")))?;
         let volume = id.volume_name();
         let info = self

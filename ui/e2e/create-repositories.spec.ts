@@ -550,7 +550,7 @@ test.describe("a checkout on this computer", () => {
     });
     await choose.click();
     await expect(folder).toHaveValue("/home/you/Shop");
-    await expect(dialog.getByLabel("Name")).toHaveValue("shop");
+    await expect(dialog.getByLabel("Name")).toHaveValue("Shop");
     await expect
       .poll(() =>
         page.evaluate(

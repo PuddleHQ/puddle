@@ -89,27 +89,20 @@ describe("renaming", () => {
 
   it("sends the trimmed name, shows it everywhere and says so", async () => {
     expect(await actions.submitRename(w("up"), "  Web shop ")).toBeNull();
-    expect(api.bodies.at(-1)).toEqual({ display_name: "Web shop" });
-    expect(w("up").display_name).toBe("Web shop");
+    expect(api.bodies.at(-1)).toEqual({ name: "Web shop" });
+    expect(w("up").name).toBe("Web shop");
     expect(messages()).toEqual(["Renamed to Web shop."]);
     // The words that follow use the new name.
     await actions.openDesktop(w("trusted"));
     expect(
       settledMessage({
         id: "w-up",
-        label: w("up").display_name,
+        label: w("up").name,
         operation: "stopping",
         failed: false,
         detail: null,
       }),
     ).toBe("Stopped Web shop.");
-  });
-
-  it("typing the workspace's own name again goes back to it", async () => {
-    await actions.submitRename(w("up"), "Web shop");
-    expect(await actions.submitRename(w("up"), "up")).toBeNull();
-    expect(api.bodies.at(-1)).toEqual({ display_name: null });
-    expect(w("up").display_name).toBe("up");
   });
 
   it("changes nothing, and asks nothing, when the name is the same", async () => {
@@ -123,7 +116,7 @@ describe("renaming", () => {
     const message = await actions.submitRename(w("up"), "DOWN");
     expect(message).toContain("already called down");
     expect(messages()).toEqual([]);
-    expect(w("up").display_name).toBe("up");
+    expect(w("up").name).toBe("up");
   });
 });
 

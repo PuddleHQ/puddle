@@ -148,18 +148,15 @@ export class WorkspaceActions {
   };
 
   /**
-   * Renames to what the user typed; a name equal to the workspace's own name goes back to it.
-   * Returns the refusal as text for the dialog, or `null` when it went through.
+   * Renames to what the user typed; the same name again changes nothing. Returns the refusal as
+   * text for the dialog, or `null` when it went through.
    */
   submitRename = async (w: Workspace, text: string): Promise<string | null> => {
     const shown = text.trim();
-    if (shown === w.display_name) return null;
-    const result = await this.#store.rename(
-      w.id,
-      shown === w.name ? null : shown,
-    );
+    if (shown === w.name) return null;
+    const result = await this.#store.rename(w.id, shown);
     if (!result.ok) return result.message;
-    this.#toasts.push(`Renamed to ${result.value.display_name}.`);
+    this.#toasts.push(`Renamed to ${result.value.name}.`);
     return null;
   };
 
@@ -209,8 +206,8 @@ export class WorkspaceActions {
     }
     this.#toasts.push(
       on
-        ? `Direct SSH is on for ${w.display_name}: it is trusted now.`
-        : `Direct SSH is off for ${w.display_name}.`,
+        ? `Direct SSH is on for ${w.name}: it is trusted now.`
+        : `Direct SSH is off for ${w.name}.`,
     );
   }
 
@@ -233,10 +230,10 @@ export class WorkspaceActions {
     }
     const { opened, message } = result.value;
     if (opened) {
-      this.#toasts.push(`Opening ${w.display_name} in ${words.where}.`);
+      this.#toasts.push(`Opening ${w.name} in ${words.where}.`);
     } else {
       this.#fail(
-        message ?? `Puddle couldn't open ${words.what} for ${w.display_name}.`,
+        message ?? `Puddle couldn't open ${words.what} for ${w.name}.`,
       );
     }
   }
@@ -272,7 +269,7 @@ export class WorkspaceActions {
     );
     if (result.ok) {
       this.deleteOpen = false;
-      this.#toasts.push(`Deleting ${state.workspace.display_name}.`);
+      this.#toasts.push(`Deleting ${state.workspace.name}.`);
       return;
     }
     if (result.reason === "gone") {

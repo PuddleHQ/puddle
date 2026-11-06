@@ -475,17 +475,17 @@ describe("renaming", () => {
     await store.refresh();
     const result = await store.rename("w-a-shop", "Zed");
     expect(result.ok).toBe(true);
-    expect(api.bodies.at(-1)).toEqual({ display_name: "Zed" });
-    expect(store.list.map((w) => w.display_name)).toEqual(["b-site", "Zed"]);
+    expect(api.bodies.at(-1)).toEqual({ name: "Zed" });
+    expect(store.list.map((w) => w.name)).toEqual(["b-site", "Zed"]);
     // Looked up by its name: a rename never changes what events and settings call it.
-    expect(store.byId("w-a-shop")?.display_name).toBe("Zed");
+    expect(store.byId("w-a-shop")?.name).toBe("Zed");
   });
 
   it("a clash is a conflict the form can show, and the list is read again", async () => {
     await store.refresh();
     const result = await store.rename("w-b-site", "A-SHOP");
     expect(result).toMatchObject({ ok: false, reason: "conflict" });
-    expect(store.byId("w-b-site")?.display_name).toBe("b-site");
+    expect(store.byId("w-b-site")?.name).toBe("b-site");
   });
 
   it("a workspace deleted meanwhile is gone, and a dead service says so", async () => {

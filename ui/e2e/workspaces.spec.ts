@@ -22,7 +22,6 @@ const auth = (backend: Backend) => ({
 interface Ws {
   id: string;
   name: string;
-  display_name: string;
   status: string;
   busy: string | null;
   direct_ssh: boolean;
@@ -193,13 +192,13 @@ test.describe("creating", () => {
     await dialog
       .getByLabel("Git repository (HTTPS)")
       .fill("https://github.com/acme/Ledger_Service.git");
-    await expect(dialog.getByLabel("Name")).toHaveValue("ledger-service");
+    await expect(dialog.getByLabel("Name")).toHaveValue("Ledger_Service");
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog).toHaveCount(0);
-    const created = card(page, "ledger-service");
+    const created = card(page, "Ledger_Service");
     await expect(created).toContainText("Creating");
     await expect(
-      created.getByRole("button", { name: "Start ledger-service" }),
+      created.getByRole("button", { name: "Start Ledger_Service" }),
     ).toBeDisabled();
     // The service reports where it is.
     await backend.control.emit({
@@ -211,13 +210,15 @@ test.describe("creating", () => {
     await expect(created).toContainText("Cloning the repository");
     await expect(created).toContainText("step 3 of 3");
     await backend.control.step({ do: "release_workspaces" });
-    await expect(toast(page, "Created ledger-service.")).toBeVisible();
+    await expect(toast(page, "Created Ledger_Service.")).toBeVisible();
     await expect(created).toContainText("Not started");
     await expect(created).not.toContainText("Cloning");
     const made = (await workspaceList(request, backend)).find(
-      (w) => w.name === "ledger-service",
+      (w) => w.name === "Ledger_Service",
     );
     expect(made?.busy).toBeNull();
+    // The events above named it by its id; the name is only what is shown.
+    expect(made?.id).toBe("ledger-service");
   });
 
   test("a typed name is kept; memory and image go to the API", async ({
@@ -257,7 +258,7 @@ test.describe("creating", () => {
     await dialog
       .getByLabel("Git repository (HTTPS)")
       .fill("git@github.com:acme/web-shop.git");
-    await dialog.getByLabel("Name").fill("Bad Name");
+    await dialog.getByLabel("Name").fill("x".repeat(61));
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog.getByRole("alert").first()).toContainText(
       "SSH remotes are not supported yet; use the repository's HTTPS URL instead.",
@@ -267,12 +268,12 @@ test.describe("creating", () => {
       "true",
     );
     await expect(dialog.getByRole("alert").nth(1)).toContainText(
-      "lowercase letters",
+      "Use at most 60 characters.",
     );
     expect((await workspaceList(request, backend)).length).toBe(before);
   });
 
-  test("a name that is taken is refused by the service and shown at the name", async ({
+  test("a name another workspace has is refused at the name, ignoring case", async ({
     page,
     request,
     backend,
@@ -288,8 +289,13 @@ test.describe("creating", () => {
       "aria-invalid",
       "true",
     );
-    await expect(dialog.getByRole("alert")).toContainText("already exists");
+    await expect(dialog.getByRole("alert")).toContainText(
+      'Another workspace is already called "web-shop"',
+    );
     await expect(dialog.getByLabel("Name")).toBeFocused();
+    await dialog.getByLabel("Name").fill("WEB-SHOP");
+    await dialog.getByRole("button", { name: "Create workspace" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("already called");
     expect((await workspaceList(request, backend)).length).toBe(before);
   });
 
@@ -909,7 +915,7 @@ test.describe("renaming", () => {
     await rename(page).click();
     const form = dialog(page);
     await expect(form.getByLabel("Name")).toHaveValue("web-shop");
-    await expect(form).toContainText("Identifier: web-shop");
+    await expect(form).toContainText("workspace id, web-shop");
     await form.getByLabel("Name").fill("  Web shop (prod) ");
     await form.getByRole("button", { name: "Save" }).click();
     await expect(form).toHaveCount(0);
@@ -917,22 +923,21 @@ test.describe("renaming", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: "Web shop (prod)" }),
     ).toBeVisible();
-    // Still running, still the same address, and the identifier is kept on the overview.
+    // Still running, still the same address, and the id is on the overview.
     await expect(page).toHaveURL(/\/workspaces\/web-shop$/);
     await expect(page.getByText("Running").first()).toBeVisible();
-    await expect(page.getByText("Identifier")).toBeVisible();
+    await expect(page.getByText("Workspace id")).toBeVisible();
     await expect(page.getByText("ws-web-shop")).toBeVisible();
     const found = (await workspaceList(request, backend)).find(
       (w) => w.id === "web-shop",
     );
     expect(found).toMatchObject({
       id: "web-shop",
-      name: "web-shop",
-      display_name: "Web shop (prod)",
+      name: "Web shop (prod)",
       status: "running",
       busy: null,
     });
-    // The list shows it too, and finds the workspace by its name still.
+    // The list shows it too.
     await page
       .locator("#main")
       .getByRole("link", { name: "Workspaces", exact: true })
@@ -979,7 +984,7 @@ test.describe("renaming", () => {
     // the dialog, and the page then reads the list again.
     const raced = await request.patch("/api/workspaces/data-tools", {
       headers: auth(backend),
-      data: { display_name: "Racing" },
+      data: { name: "Racing" },
     });
     expect(raced.status()).toBe(200);
     await form.getByLabel("Name").fill("racing");
@@ -995,27 +1000,60 @@ test.describe("renaming", () => {
     await expect(form.getByRole("alert")).toHaveCount(0);
   });
 
-  test("typing the identifier again goes back to it, and nothing is sent for an unchanged name", async ({
+  test("a name of spaces, capitals and other scripts is created, shown and renamed, and every address keeps the id", async ({
     page,
     backend,
     request,
   }) => {
-    await openDetail(page, backend, "web-shop");
-    await rename(page).click();
-    await dialog(page).getByLabel("Name").fill("Shop");
-    await dialog(page).getByRole("button", { name: "Save" }).click();
-    await expect(toast(page, "Renamed to Shop.")).toBeVisible();
-    await rename(page).click();
-    await dialog(page).getByLabel("Name").fill("web-shop");
-    await dialog(page).getByRole("button", { name: "Save" }).click();
-    await expect(
-      page.getByRole("heading", { level: 1, name: "web-shop", exact: true }),
-    ).toBeVisible();
-    await expect(page.getByText("Identifier")).toHaveCount(0);
-    const found = (await workspaceList(request, backend)).find(
-      (w) => w.id === "web-shop",
+    await openList(page, backend);
+    await page.getByRole("button", { name: "New workspace" }).first().click();
+    const create = page.getByRole("dialog", { name: "New workspace" });
+    await create
+      .getByLabel("Git repository (HTTPS)")
+      .fill("https://github.com/acme/shop.git");
+    await create.getByLabel("Name").fill("Shop API \u00fc");
+    await create.getByRole("button", { name: "Create workspace" }).click();
+    await expect(create).toHaveCount(0);
+    await expect(toast(page, "Created Shop API \u00fc.")).toBeVisible();
+    await expect(card(page, "Shop API \u00fc")).toBeVisible();
+    const made = (await workspaceList(request, backend)).find(
+      (w) => w.name === "Shop API \u00fc",
     );
-    expect(found?.display_name).toBe("web-shop");
+    expect(made?.id).toBe("shop-api");
+    // The page's address and the overview use the id; the heading uses the name.
+    await card(page, "Shop API \u00fc")
+      .getByRole("link", { name: "Shop API \u00fc", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/workspaces\/shop-api$/);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Shop API \u00fc" }),
+    ).toBeVisible();
+    await expect(page.getByText("Workspace id")).toBeVisible();
+    await expect(
+      page.getByText("shop-api", { exact: true }).first(),
+    ).toBeVisible();
+    // Renaming changes the name and nothing else, and the address survives.
+    await rename(page).click();
+    const form = dialog(page);
+    await expect(form.getByLabel("Name")).toHaveValue("Shop API \u00fc");
+    await form.getByLabel("Name").fill("  Kiosk \u00c4pp 2  ");
+    await form.getByRole("button", { name: "Save" }).click();
+    await expect(toast(page, "Renamed to Kiosk \u00c4pp 2.")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Kiosk \u00c4pp 2" }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(/\/workspaces\/shop-api$/);
+    const renamed = (await workspaceList(request, backend)).find(
+      (w) => w.id === "shop-api",
+    );
+    expect(renamed).toMatchObject({ id: "shop-api", name: "Kiosk \u00c4pp 2" });
+    expect(renamed).not.toHaveProperty("display_name");
+    // The old name is free at once, and the same name in other case is a clash.
+    await rename(page).click();
+    await dialog(page).getByLabel("Name").fill("DOCS-SITE");
+    await expect(dialog(page).getByRole("alert")).toContainText(
+      'Another workspace is already called "docs-site".',
+    );
   });
 
   test("a rename is not offered while a workspace is being created", async ({

@@ -143,7 +143,10 @@ jobs:
           guard=$!
           trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
           mkdir -p "$RUNNER_TEMP/bundle"
-          cargo nextest archive $VM_CRATES --profile vm --locked --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
+          # Only the `vm_*` test binaries: the profile runs nothing else, and each binary links the whole SDK (about 45 MB
+          # compressed), so the other 22 made the bundle 2.1 GB against the Windows bundle's 0.7. ci/vm-partition-test.sh
+          # fails when a `vm_*` test lives in a binary this leaves out.
+          cargo nextest archive $VM_CRATES --profile vm --locked --test 'vm_*' --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
       - name: disk after the archive build (evidence, never a gate)
         if: ${{ always() && steps.changed.outputs.run == 'true' }}
         timeout-minutes: 3
@@ -154,7 +157,7 @@ jobs:
       - name: list the VM tests for the partition jobs
         if: steps.changed.outputs.run == 'true'
         run: |
-          cargo nextest list $VM_CRATES --profile vm --locked -E "$(ci/vm-filter.sh)" \
+          cargo nextest list $VM_CRATES --profile vm --locked --color never -E "$(ci/vm-filter.sh)" \
             --message-format oneline > "$RUNNER_TEMP/bundle/vm-tests.list"
           wc -l < "$RUNNER_TEMP/bundle/vm-tests.list"
       - name: share the archive and the test list with the test jobs
@@ -335,21 +338,23 @@ jobs:
         id: browser
         if: steps.kvm.outputs.ok == 'true'
         run: |
-          mkdir -p "$RUNNER_TEMP/vmx"
+          # From the partition's filterset alone, with no archive extracted (the test step extracts it once): it names the
+          # partition's tests as `test(=<name>)`. The hash split (no `test(=`) cannot be read, so the partition is
+          # assumed to need the browser: installing it never hurts.
           sel=$(ci/vm-partition.sh args "${{ matrix.partition }}" "${{ strategy.job-total }}" \
             "$RUNNER_TEMP/bundle/vm-tests.list" ci/vm-test-timings-linux.tsv 'test(/(^|::)vm_browser_/)') || exit 1
-          mapfile -t part <<<"$sel"
-          listed=$(cargo-nextest nextest list --profile vm \
-            --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst" \
-            --extract-to "$RUNNER_TEMP/vmx" --extract-overwrite --workspace-remap . \
-            "${part[@]}" --message-format oneline)
-          echo "$listed"
-          if [ -n "$listed" ]; then echo "needed=true" >> "$GITHUB_OUTPUT"; else echo "needed=false" >> "$GITHUB_OUTPUT"; fi
-      - name: disk after the archive download and extract (evidence, never a gate)
+          if ! grep -q 'test(=' <<<"$sel"; then
+            echo "hash split: browser assumed"; echo "needed=true" >> "$GITHUB_OUTPUT"
+          elif grep -Eq 'test\(=([A-Za-z0-9_]+::)*vm_browser_' <<<"$sel"; then
+            echo "browser tests in this partition"; echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no browser test in this partition"; echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: disk after the archive download (evidence, never a gate)
         if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
         timeout-minutes: 3
         continue-on-error: true
-        run: ci/disk-watch.sh snap "partition ${{ matrix.partition }}, after the archive download and extract"
+        run: ci/disk-watch.sh snap "partition ${{ matrix.partition }}, after the archive download"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.browser.outputs.needed == 'true'
         with:

@@ -35,7 +35,7 @@ use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroizing;
 
 use crate::marker::Marker;
-use crate::profile::{Endpoint, Field, Method, Profile, Role, Scope, Slot, path_matches};
+use crate::profile::{Audience, Endpoint, Field, Method, Profile, Role, Scope, Slot, path_matches};
 use crate::shape;
 use crate::vault::{STORE_TIMEOUT, Vault, VaultError};
 
@@ -630,6 +630,12 @@ impl Logins {
             // A pending device code, an error, a refusal: nothing to keep.
             return Ok(None);
         }
+        let found = by_audience(found, &parsed);
+        if found.is_empty() {
+            // The answer has a token that no field of the profile takes: it must not pass as if
+            // it were kept.
+            return Err(Problem::UnusableToken);
+        }
         if parsed
             .text("token_type")
             .is_some_and(|kind| kind.eq_ignore_ascii_case("dpop"))
@@ -697,6 +703,48 @@ impl Logins {
         }
         Ok(Some(Bytes::copy_from_slice(&parsed.render())))
     }
+}
+
+/// The fields among `found` that this answer is for: the ones with no condition, the first
+/// [`Audience::Named`] field of each path whose resource the answer names, and the
+/// [`Audience::Unnamed`] ones of a path no named field took.
+fn by_audience<'f>(
+    found: Vec<(&'f Field, Zeroizing<String>)>,
+    parsed: &TokenBody,
+) -> Vec<(&'f Field, Zeroizing<String>)> {
+    let answer_hints = {
+        let mut text = String::new();
+        for name in ["scope", "resource"] {
+            if let Some(value) = parsed.text(name) {
+                text.push_str(&value);
+                text.push(' ');
+            }
+        }
+        text
+    };
+    let mut named: BTreeSet<&str> = BTreeSet::new();
+    let mut taken = Vec::new();
+    let mut unnamed = Vec::new();
+    for (field, real) in found {
+        match field.audience {
+            Audience::Any => taken.push((field, real)),
+            Audience::Named(needles) => {
+                if named.contains(field.path) {
+                    continue;
+                }
+                let mut hints = answer_hints.clone();
+                hints.push_str(&shape::audience_of(&real).unwrap_or_default());
+                let hints = hints.to_ascii_lowercase();
+                if needles.iter().any(|needle| hints.contains(needle)) {
+                    named.insert(field.path);
+                    taken.push((field, real));
+                }
+            }
+            Audience::Unnamed => unnamed.push((field, real)),
+        }
+    }
+    taken.extend(unnamed.into_iter().filter(|(f, _)| !named.contains(f.path)));
+    taken
 }
 
 /// Why a login could not be forgotten completely.
@@ -937,6 +985,7 @@ mod refusal_tests {
             keep_last: 0,
             stand_in: crate::profile::StandInKind::Shaped,
             scope: Scope::Api,
+            audience: Audience::Any,
         }];
         let mut endpoint = CLAUDE.endpoints[0];
         endpoint.fields = &NESTED;

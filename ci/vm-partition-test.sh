@@ -3,9 +3,11 @@
 # Self-test of ci/vm-partition.sh, ci/vm-timings-refresh.sh and ci/vm-filter.sh on small fixtures: the split is balanced
 # by time, deterministic and independent of the list's order, names every test exactly once, treats new tests as the
 # median, and falls back to the hash split (with a warning) on a missing list, a missing or stale timing file and a
-# name the filterset cannot carry; the refresh takes the median of passing tests only. Prints ok only when every case passes.
+# name the filterset cannot carry; reads a list with ANSI colour codes; fails a merge-group run instead of falling back; the refresh takes the median of passing tests only. Prints ok only when every case passes.
 set -uo pipefail
 
+# a merge-group or strict environment must not change the cases below: each case sets what it needs
+unset GITHUB_EVENT_NAME VM_PARTITION_STRICT GITHUB_STEP_SUMMARY
 here=$(cd "$(dirname "$0")" && pwd)
 part="$here/vm-partition.sh"
 refresh="$here/vm-timings-refresh.sh"
@@ -73,6 +75,26 @@ expect_hash "stale timing file" "$tmp/list" "$tmp/stale" "under half"
 printf 'crate-a::vm_one case_1\ncrate-a::vm_one bad)name\n' >"$tmp/oddlist"
 expect_hash "unsafe name" "$tmp/oddlist" "$tmp/timings" "cannot carry"
 
+# 5b. a list coloured by CARGO_TERM_COLOR=always (the 2026-11-06 fallback) is read like the plain one, with a notice naming the cause
+esc=$(printf '\033')
+awk -v e="$esc" '{ printf "%s[35m%s%s[0m %s[36m%s%s[0m\n", e, $1, e, e, $2, e }' "$tmp/list" >"$tmp/colour.list"
+grep -q "$esc" "$tmp/colour.list" || bad "the coloured fixture has no escape code"
+: >"$sum"
+GITHUB_STEP_SUMMARY=$sum "$part" args 1 3 "$tmp/colour.list" "$tmp/timings" "$FILTER" >"$tmp/c1" 2>"$tmp/err" || bad "args failed on a coloured list"
+cmp -s "$tmp/a1" "$tmp/c1" || bad "a coloured list gives another partition than the plain one: $(cat "$tmp/c1")"
+grep -q '^::notice title=vm partition::the test list had ANSI colour codes' "$tmp/err" || bad "no notice naming the colour codes: $(cat "$tmp/err")"
+grep -q 'falling back' "$tmp/err" && bad "a coloured list still falls back"
+"$part" check 3 "$tmp/colour.list" "$tmp/timings" >/dev/null 2>&1 || bad "check failed on a coloured list"
+
+# 5c. a merge-group run fails instead of falling back; so does VM_PARTITION_STRICT=1; VM_PARTITION_STRICT=0 turns it off
+GITHUB_EVENT_NAME=merge_group GITHUB_STEP_SUMMARY=$sum "$part" args 2 3 "$tmp/list" "$tmp/none.tsv" "$FILTER" >"$tmp/fb" 2>"$tmp/err"
+[ $? = 1 ] || bad "a merge-group fallback did not fail"
+[ ! -s "$tmp/fb" ] || bad "a failed merge-group fallback still printed arguments: $(cat "$tmp/fb")"
+grep -q '^::error title=vm partition::.*no timing file' "$tmp/err" || bad "no error naming the cause: $(cat "$tmp/err")"
+VM_PARTITION_STRICT=1 "$part" args 2 3 "$tmp/none.list" "$tmp/timings" "$FILTER" >/dev/null 2>&1; [ $? = 1 ] || bad "VM_PARTITION_STRICT=1 did not fail on a fallback"
+GITHUB_EVENT_NAME=merge_group VM_PARTITION_STRICT=0 "$part" args 2 3 "$tmp/list" "$tmp/none.tsv" "$FILTER" >/dev/null 2>&1 || bad "VM_PARTITION_STRICT=0 did not allow the fallback"
+GITHUB_EVENT_NAME=merge_group "$part" args 1 3 "$tmp/list" "$tmp/timings" "$FILTER" >/dev/null 2>&1 || bad "a merge group failed with good data"
+
 # 6. more partitions than tests: an empty one matches nothing
 printf 'crate-a::vm_one case_1\n' >"$tmp/one"
 "$part" args 2 2 "$tmp/one" "$tmp/timings" "$FILTER" 2>/dev/null | grep -q 'none()' || bad "an empty partition does not select nothing"
@@ -109,6 +131,14 @@ for os in linux windows; do
     badlines=$(grep -v '^#' "$f" | awk -F'\t' 'NF != 3 || $3 + 0 <= 0' | wc -l | tr -d ' ')
     [ "$badlines" = 0 ] || bad "$f has $badlines unparsable lines"
 done
+
+# 10. the Linux build job archives only the `vm_*` integration test binaries (`--test 'vm_*'`, the bundle is 3 times the size
+# of the Windows one otherwise). A VM test anywhere else would be left out of the archive without a word, so none may exist:
+# a test function or module named `vm_*` goes in `crates/<crate>/tests/vm_<name>.rs` (or a `tests/vm_<name>/main.rs`)
+root=$(cd "$here/.." && pwd)
+grep -q "nextest archive .* --test 'vm_\*'" "$root/.github/workflows/vm-linux.yml" || bad "vm-linux.yml does not archive only --test 'vm_*'"
+stray=$(cd "$root" && grep -rnE '^[[:space:]]*(pub(\([a-z]+\))? )?(async )?(fn|mod) vm_' crates --include='*.rs' | grep -Ev '^crates/[^/]+/tests/vm_' || true)
+[ -z "$stray" ] || bad "a vm_* test outside a tests/vm_* file would not be in the Linux archive; move it into crates/<crate>/tests/vm_<name>.rs: $stray"
 
 [ "$fail" = 0 ] && echo ok
 exit "$fail"

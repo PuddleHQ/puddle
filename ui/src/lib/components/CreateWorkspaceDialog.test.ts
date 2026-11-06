@@ -15,7 +15,10 @@ import {
 } from "#lib/testing/fake-identities.ts";
 import { FakeRepos, repoSource, repoView } from "#lib/testing/fake-repos.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
-import type { ActionResult } from "#lib/stores/workspaces.svelte.ts";
+import {
+  workspaces,
+  type ActionResult,
+} from "#lib/stores/workspaces.svelte.ts";
 import type { Identity } from "#lib/identities/model.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
 import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
@@ -120,12 +123,12 @@ describe("CreateWorkspaceDialog", () => {
       ),
     ).toBeInTheDocument();
     await type("Folder of the checkout", "/home/you/Shop/");
-    expect(field("Name").value).toBe("shop");
+    expect(field("Name").value).toBe("Shop");
     expect(field("Directory").placeholder).toBe("Shop");
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalled());
     expect(create).toHaveBeenCalledWith({
-      name: "shop",
+      name: "Shop",
       repositories: [{ url: "", local_path: "/home/you/Shop/" }],
     });
   });
@@ -153,7 +156,7 @@ describe("CreateWorkspaceDialog", () => {
       await vi.waitFor(() =>
         expect(field("Folder of the checkout").value).toBe("/home/you/Shop"),
       );
-      expect(field("Name").value).toBe("shop");
+      expect(field("Name").value).toBe("Shop");
       expect(h.pick).toHaveBeenCalledTimes(1);
     });
 
@@ -261,6 +264,38 @@ describe("CreateWorkspaceDialog", () => {
     );
   });
 
+  it("takes any text as the name: spaces, capitals and other scripts go as typed", async () => {
+    const { create } = mount();
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/shop.git");
+    await type("Name", "  Shop API \u00fc (prod)  ");
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      name: "  Shop API \u00fc (prod)  ",
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("checks the name only for empty, too long, a control character and another workspace's name", async () => {
+    workspaces.list = [workspace("a", { name: "Web shop" })];
+    const { create } = mount();
+    await screen.findByRole("dialog");
+    await type("Git repository (HTTPS)", "https://github.com/acme/shop.git");
+    for (const [text, problem] of [
+      ["", "Give the workspace a name."],
+      ["x".repeat(61), "Use at most 60 characters."],
+      ["web SHOP", 'Another workspace is already called "Web shop".'],
+    ] as const) {
+      await type("Name", text);
+      await fireEvent.click(submit());
+      expect(await screen.findByRole("alert")).toHaveTextContent(problem);
+      expect(field("Name")).toHaveFocus();
+    }
+    expect(create).not.toHaveBeenCalled();
+    workspaces.list = [];
+  });
+
   it("names the workspace after the repository until a name is typed", async () => {
     mount();
     await screen.findByRole("dialog");
@@ -268,7 +303,7 @@ describe("CreateWorkspaceDialog", () => {
       "Git repository (HTTPS)",
       "https://github.com/acme/Ledger_Service.git",
     );
-    expect(field("Name").value).toBe("ledger-service");
+    expect(field("Name").value).toBe("Ledger_Service");
     await type("Name", "mine");
     await type("Git repository (HTTPS)", "https://github.com/acme/other.git");
     expect(field("Name").value).toBe("mine");

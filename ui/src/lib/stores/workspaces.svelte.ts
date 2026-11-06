@@ -123,7 +123,7 @@ export class WorkspaceStore {
 
   /** The words for a workspace: its display name, or the id when it is not listed (deleted). */
   labelOf(id: string): string {
-    return this.byId(id)?.display_name ?? id;
+    return this.byId(id)?.name ?? id;
   }
 
   /** Reads the list; never throws. Calls that overlap share one run, and one more follows. */
@@ -229,7 +229,7 @@ export class WorkspaceStore {
           void this.refresh();
           this.onSettled?.({
             id,
-            label: w?.display_name ?? id,
+            label: w?.name ?? id,
             operation,
             failed,
             detail: event.detail,
@@ -380,18 +380,14 @@ export class WorkspaceStore {
   }
 
   /**
-   * Gives the workspace a display name (`null`: back to its name). Only the label changes, so it
-   * works on a running workspace. A 409 means another workspace has that name, or this one is
-   * being created or deleted.
+   * Gives the workspace a new name. Only the name changes, so it works on a running workspace.
+   * A 409 means another workspace has that name, or this one is being created or deleted.
    */
-  async rename(
-    id: string,
-    displayName: string | null,
-  ): Promise<ActionResult<Workspace>> {
+  async rename(id: string, name: string): Promise<ActionResult<Workspace>> {
     const result = await this.#post(() =>
       this.#api.PATCH("/api/workspaces/{id}", {
         params: { path: { id } },
-        body: { display_name: displayName },
+        body: { name },
       }),
     );
     if (result.ok) this.#put(result.value);

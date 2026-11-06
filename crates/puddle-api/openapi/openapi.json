@@ -9609,6 +9609,8 @@
               "rule_set",
               "refused_address",
               "refused_reason",
+              "category",
+              "signal",
               "pending_id",
               "binding_id",
               "injected",
@@ -9641,6 +9643,13 @@
                 "format": "int64",
                 "description": "Bytes from the guest.",
                 "minimum": 0
+              },
+              "category": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "`company_network` when the destination is in the company-network category, allowed or\nrefused; `null` otherwise and in records written before it existed."
               },
               "count": {
                 "type": [
@@ -9777,6 +9786,13 @@
                   "type": "string"
                 },
                 "description": "The ids of the stand-ins whose real values an answer from one of their hosts held, put back as\nthe stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),\neach once, at most 16. Records written\nbefore it existed read as empty."
+              },
+              "signal": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The signal that put the destination in the company network: `pac_direct`,\n`dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`."
               },
               "ts": {
                 "type": "integer",
@@ -11625,9 +11641,14 @@
           "private",
           "link_local",
           "metadata",
-          "special"
+          "special",
+          "company_network"
         ],
         "properties": {
+          "company_network": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "The company network."
+          },
           "link_local": {
             "$ref": "#/components/schemas/ResolvedBool",
             "description": "Link-local."
@@ -13547,13 +13568,14 @@
       },
       "LocalCategory": {
         "type": "string",
-        "description": "A class of local destination with its own toggle. Everything outside these is public.\n\nA toggle only *permits* its category; each destination still needs an allow rule or an\napproval. Puddle's own endpoints are not a category: no toggle reaches them.\n\nNon-exhaustive: a \"company network\" category may follow.",
+        "description": "A class of local destination with its own toggle. Everything outside these is public.\n\nA toggle only *permits* its category; each destination still needs an allow rule or an\napproval. Puddle's own endpoints are not a category: no toggle reaches them.\n\nNon-exhaustive: more categories may follow.",
         "enum": [
           "loopback",
           "private",
           "link_local",
           "metadata",
-          "special"
+          "special",
+          "company_network"
         ]
       },
       "LocalToggles": {
@@ -13564,9 +13586,17 @@
           "private",
           "link_local",
           "metadata",
-          "special"
+          "special",
+          "company_network"
         ],
         "properties": {
+          "company_network": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The company network. Off by default; on only makes those destinations approvable."
+          },
           "link_local": {
             "type": [
               "boolean",

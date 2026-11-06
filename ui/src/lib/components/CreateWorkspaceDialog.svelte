@@ -17,6 +17,7 @@
     type IdentitiesStore,
   } from "#lib/stores/identities.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
+  import { inDesktopApp, pickFolder } from "#lib/desktop/folder-picker.ts";
   import {
     workspaces,
     type Field,
@@ -184,6 +185,26 @@
     rows = [...rows, row];
     await tick();
     focus(rowId(row, "url"));
+  }
+
+  // The folder dialog exists only in the desktop app; a cancel leaves the field as it was.
+  const desktop = inDesktopApp();
+  let choosing = $state(false);
+  async function chooseFolder(row: RowDraft) {
+    choosing = true;
+    try {
+      const folder = await pickFolder("Folder of the checkout");
+      if (folder !== null) {
+        row.localPath = folder;
+        rowErrors = { ...rowErrors, [row.key]: {} };
+      }
+    } catch {
+      toasts.push("The folder dialog could not open. Type the path instead.", {
+        tone: "error",
+      });
+    } finally {
+      choosing = false;
+    }
   }
 
   async function removeRow(at: number) {
@@ -392,21 +413,32 @@
           {@const localError = problem(row, "localPath")}
           <div class="field">
             <label for={rowId(row, "localPath")}>Folder of the checkout</label>
-            <input
-              id={rowId(row, "localPath")}
-              type="text"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="/home/you/project or C:\Users\you\project"
-              bind:value={row.localPath}
-              oninput={() => {
-                rowErrors = { ...rowErrors, [row.key]: {} };
-              }}
-              aria-invalid={localError ? "true" : undefined}
-              aria-describedby={localError
-                ? rowId(row, "localPath-error")
-                : rowId(row, "localPath-hint")}
-            />
+            <div class="with-action">
+              <input
+                id={rowId(row, "localPath")}
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="/home/you/project or C:\Users\you\project"
+                bind:value={row.localPath}
+                oninput={() => {
+                  rowErrors = { ...rowErrors, [row.key]: {} };
+                }}
+                aria-invalid={localError ? "true" : undefined}
+                aria-describedby={localError
+                  ? rowId(row, "localPath-error")
+                  : rowId(row, "localPath-hint")}
+              />
+              {#if desktop}
+                <button
+                  type="button"
+                  class="btn"
+                  data-testid="choose-folder"
+                  disabled={choosing}
+                  onclick={() => chooseFolder(row)}>Choose folder</button
+                >
+              {/if}
+            </div>
             {#if localError}
               <p class="error" id={rowId(row, "localPath-error")} role="alert">
                 {localError}
@@ -739,6 +771,15 @@
     align-items: center;
     gap: var(--space-2);
     min-height: var(--control-size);
+  }
+  .with-action {
+    display: flex;
+    gap: var(--space-2);
+    align-items: stretch;
+  }
+  .with-action input {
+    flex: 1;
+    min-width: 0;
   }
   .boxes .choice {
     min-height: var(--control-size);

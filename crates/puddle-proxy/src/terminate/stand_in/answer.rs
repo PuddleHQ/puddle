@@ -119,7 +119,7 @@ pub(crate) struct ScrubNotes {
 }
 
 impl ScrubNotes {
-    fn note(&self, id: &str) {
+    pub(crate) fn note(&self, id: &str) {
         let mut ids = self.ids.lock().unwrap_or_else(PoisonError::into_inner);
         if !ids.iter().any(|known| known == id) {
             ids.push(id.to_owned());

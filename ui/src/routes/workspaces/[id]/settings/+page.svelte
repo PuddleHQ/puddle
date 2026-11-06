@@ -193,8 +193,8 @@
     {@const effective = settings.effective}
     {@const global = settings.global}
     <p class="intro">
-      These settings belong to <b>{workspace.display_name}</b>. Each one can
-      follow the global setting or be set here.
+      These settings belong to <b>{workspace.name}</b>. Each one can follow the
+      global setting or be set here.
     </p>
 
     <UnknownFields fields={settings.unknownFields} />
@@ -353,7 +353,7 @@
       <KeptLoginsList
         store={kept}
         workspaceId={workspace.id}
-        workspaceLabel={workspace.display_name}
+        workspaceLabel={workspace.name}
         reload={() => void kept.load(workspace.id)}
       />
     </section>

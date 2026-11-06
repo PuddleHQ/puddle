@@ -23,6 +23,7 @@ use crate::routes::AppState;
 use crate::wire::{
     AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceIdentity,
     NewWorkspaceRequest, RenameWorkspaceRequest, SessionUserRequest, Workspace, WorkspaceList,
+    WorkspaceLookupConflict, WorkspaceMatch,
 };
 use crate::workspaces::{GitSetup, LocalSource, NewRepository};
 
@@ -150,6 +151,66 @@ pub(crate) async fn list_workspaces(
     }))
 }
 
+/// What `GET /api/workspaces/lookup` takes.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LookupQuery {
+    q: String,
+}
+
+/// Finds a workspace by text a person typed: its id exactly, or its name ignoring case. For a
+/// command line or a script; every other route takes the id.
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/lookup",
+    tag = "workspaces",
+    params(("q" = String, Query, description = "an id, or a name ignoring case")),
+    responses(
+        (status = OK, description = "the one workspace it names", body = WorkspaceMatch),
+        (status = NOT_FOUND, description = "no workspace has that id or name", body = ApiErrorBody),
+        (status = CONFLICT, description = "the text is one workspace's id and another's name; ask for the id", body = WorkspaceLookupConflict),
+        (status = UNPROCESSABLE_ENTITY, description = "`q` is empty", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn lookup_workspace(
+    State(state): State<AppState>,
+    crate::extract::Query(query): crate::extract::Query<LookupQuery>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    if query.q.trim().is_empty() {
+        return Err(ApiError::invalid("q must not be empty"));
+    }
+    let records = state.workspaces.list().await?;
+    let found = crate::workspaces::lookup(&records, &query.q);
+    let matches: Vec<WorkspaceMatch> = found
+        .iter()
+        .map(|r| WorkspaceMatch {
+            id: r.id.to_string(),
+            name: r.name.to_string(),
+        })
+        .collect();
+    match matches.as_slice() {
+        [] => Err(ApiError::not_found(format!(
+            "no workspace has the id or name {:?}",
+            query.q
+        ))),
+        [one] => Ok(Json(one.clone()).into_response()),
+        _ => {
+            let both = matches
+                .iter()
+                .map(|m| format!("{} (id {})", m.name, m.id))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            let body = WorkspaceLookupConflict {
+                error: crate::ErrorCode::Conflict,
+                message: format!("{:?} names two workspaces: {both}; use the id", query.q),
+                matches,
+            };
+            Ok((StatusCode::CONFLICT, Json(body)).into_response())
+        }
+    }
+}
+
 /// What the store asks of one repository's Git settings; `None` when its address names no
 /// repository the table can hold.
 pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> {
@@ -257,7 +318,7 @@ impl GitSetup for StoreGitSetup {
     request_body = NewWorkspaceRequest,
     responses(
         (status = ACCEPTED, description = "creation started", body = Workspace),
-        (status = CONFLICT, description = "the name is taken, or two identities of the list cover the same place (`identity_collision`)", body = ApiErrorBody),
+        (status = CONFLICT, description = "another workspace has that name (ignoring case), or the id it would get is taken, or two identities of the list cover the same place (`identity_collision`)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "invalid name, repository (address, SSH remote, directory clash, the same repository twice, unknown identity, more than 100), start folder, image or memory, or `repo_url` sent", body = ApiErrorBody),
         (status = SERVICE_UNAVAILABLE, description = "workspaces are not available", body = ApiErrorBody)
     )
@@ -288,8 +349,15 @@ pub(crate) async fn create_workspace(
     })
     .await?;
     let new = body.into_new(|id| known.contains(&id), &locals)?;
+    let existing: BTreeSet<WorkspaceId> = state
+        .workspaces
+        .list()
+        .await?
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
     let planned = new
-        .id()
+        .id(|id| existing.contains(id))
         .map_err(|e| ApiError::invalid(format!("this name can't be a workspace: {e}")))?;
     let store = state.store.clone();
     let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
@@ -323,8 +391,8 @@ pub(crate) async fn get_workspace(
     Ok(Json(view(&state, record).await))
 }
 
-/// Renames a workspace: sets the display name the UI shows. Only the label changes (the id, the
-/// name, the volume and the sandbox stay), so it works on a running workspace and restarts
+/// Renames a workspace: sets the name the UI shows. Only the name changes (the id, the volume
+/// and the sandbox stay), so it works on a running workspace and restarts
 /// nothing. A name another workspace already goes by (ignoring case) is refused with 409, and so
 /// is a rename while the workspace is being created or deleted.
 #[utoipa::path(
@@ -346,8 +414,7 @@ pub(crate) async fn rename_workspace(
     crate::extract::Json(body): crate::extract::Json<RenameWorkspaceRequest>,
 ) -> Result<Json<Workspace>, ApiError> {
     let id = workspace_id(&id)?;
-    let display_name = body.into_display_name()?;
-    let record = state.workspaces.rename(&id, display_name).await?;
+    let record = state.workspaces.rename(&id, body.into_name()?).await?;
     Ok(Json(view(&state, record).await))
 }
 

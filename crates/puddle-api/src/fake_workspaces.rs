@@ -699,33 +699,33 @@ impl WorkspaceService for FakeWorkspaces {
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let id = new.id().map_err(|e| {
-                WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
-            })?;
-            let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
-            record.start_folder.clone_from(&new.start_folder);
-            record.image = new
-                .image
-                .as_ref()
-                .map_or_else(|| DEFAULT_IMAGE.to_owned(), |i| i.as_str().to_owned());
-            if let Some(memory) = new.memory {
-                record.memory = memory;
-            }
-            record.created_at = self.inner.clock.now_ms();
-            record.disk_size_mib = DEFAULT_DISK_MIB;
-            record.disk_used_mib = Some(0);
-            record.root_disk_size_mib = Some(DEFAULT_ROOT_DISK_MIB);
-            record.root_disk_used_mib = Some(0);
-            record.busy = Some(Operation::Creating);
-            {
+            let record = {
+                // The id is picked under the lock, so two creates cannot take the same one.
                 let mut state = lock(&self.inner.state);
-                if state.entries.contains_key(&id)
-                    || crate::label_taken(
-                        state.entries.values().map(|e| &e.record),
-                        new.name.as_str(),
-                        None,
-                    )
-                    .is_some()
+                let id = new.id(|id| state.entries.contains_key(id)).map_err(|e| {
+                    WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
+                })?;
+                let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
+                record.start_folder.clone_from(&new.start_folder);
+                record.image = new
+                    .image
+                    .as_ref()
+                    .map_or_else(|| DEFAULT_IMAGE.to_owned(), |i| i.as_str().to_owned());
+                if let Some(memory) = new.memory {
+                    record.memory = memory;
+                }
+                record.created_at = self.inner.clock.now_ms();
+                record.disk_size_mib = DEFAULT_DISK_MIB;
+                record.disk_used_mib = Some(0);
+                record.root_disk_size_mib = Some(DEFAULT_ROOT_DISK_MIB);
+                record.root_disk_used_mib = Some(0);
+                record.busy = Some(Operation::Creating);
+                if crate::label_taken(
+                    state.entries.values().map(|e| &e.record),
+                    new.name.as_str(),
+                    None,
+                )
+                .is_some()
                 {
                     return Err(WorkspaceError::Conflict(format!(
                         "a workspace named {} already exists",
@@ -739,7 +739,8 @@ impl WorkspaceService for FakeWorkspaces {
                         unsaved: Unsaved::default(),
                     },
                 );
-            }
+                record
+            };
             git.set_up(&record.id, &new.repositories).await;
             self.emit_status(&record);
             self.run(
@@ -947,17 +948,13 @@ impl WorkspaceService for FakeWorkspaces {
     fn rename<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        display_name: Option<DisplayName>,
+        name: DisplayName,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
             let mut state = lock(&self.inner.state);
-            crate::check_rename(
-                state.entries.values().map(|e| &e.record),
-                id,
-                display_name.as_ref(),
-            )?;
+            crate::check_rename(state.entries.values().map(|e| &e.record), id, &name)?;
             let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
-            entry.record.display_name = display_name;
+            entry.record.name = name;
             Ok(entry.record.clone())
         })
     }
@@ -994,7 +991,7 @@ impl WorkspaceService for FakeWorkspaces {
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let name = puddle_types::WorkspaceName::new(id.as_str()).map_err(|e| {
+            let name = DisplayName::parse(id.as_str()).map_err(|e| {
                 WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
             })?;
             let (record, new) = {
@@ -1354,7 +1351,7 @@ mod tests {
         assert!(err.contains("has no .git"), "{err}");
     }
     use puddle_store::ManualClock;
-    use puddle_types::{CollectingSink, WorkspaceName};
+    use puddle_types::CollectingSink;
 
     use super::*;
     use crate::workspaces::{NewRepository, NoGitSetup, RepoUrl, Repository};
@@ -1371,7 +1368,7 @@ mod tests {
 
     fn new_ws(name: &str) -> NewWorkspace {
         NewWorkspace::new(
-            WorkspaceName::new(name).unwrap(),
+            DisplayName::parse(name).unwrap(),
             vec![NewRepository {
                 repository: Repository::at_default_directory(
                     RepoUrl::parse("https://example.com/a/b").unwrap(),
@@ -1386,7 +1383,7 @@ mod tests {
 
     fn seeded(fake: &FakeWorkspaces, name: &str, status: WorkspaceStatus) {
         let mut record =
-            WorkspaceRecord::new(id(name), WorkspaceName::new(name).unwrap(), Vec::new());
+            WorkspaceRecord::new(id(name), DisplayName::parse(name).unwrap(), Vec::new());
         record.status = status;
         fake.seed(record, Unsaved::default());
     }
@@ -1406,17 +1403,18 @@ mod tests {
         let (fake, sink) = fake();
         seeded(&fake, "w", WorkspaceStatus::Running);
         let shown = DisplayName::parse("Web shop").unwrap();
-        let renamed = fake.rename(&id("w"), Some(shown.clone())).await.unwrap();
+        let renamed = fake.rename(&id("w"), shown.clone()).await.unwrap();
         assert_eq!(renamed.label(), "Web shop");
-        assert_eq!((renamed.id.as_str(), renamed.name.as_str()), ("w", "w"));
+        assert_eq!(
+            (renamed.id.as_str(), renamed.name.as_str()),
+            ("w", "Web shop")
+        );
         assert_eq!(renamed.status, WorkspaceStatus::Running);
-        assert_eq!(fake.get(&id("w")).await.unwrap().display_name, Some(shown));
+        assert_eq!(fake.get(&id("w")).await.unwrap().name, shown);
         assert!(
             sink.events().is_empty(),
             "a rename restarts and announces nothing"
         );
-        let reset = fake.rename(&id("w"), None).await.unwrap();
-        assert_eq!(reset.label(), "w");
     }
 
     #[tokio::test]
@@ -1424,19 +1422,20 @@ mod tests {
         let (fake, _) = fake();
         seeded(&fake, "a", WorkspaceStatus::Stopped);
         seeded(&fake, "b", WorkspaceStatus::Stopped);
-        fake.rename(&id("a"), Some(DisplayName::parse("Shop").unwrap()))
+        fake.rename(&id("a"), DisplayName::parse("Shop").unwrap())
             .await
             .unwrap();
         let clash = fake
-            .rename(&id("b"), Some(DisplayName::parse("shop").unwrap()))
+            .rename(&id("b"), DisplayName::parse("shop").unwrap())
             .await;
         assert!(matches!(clash, Err(WorkspaceError::Conflict(_))));
-        assert_eq!(fake.get(&id("b")).await.unwrap().display_name, None);
+        assert_eq!(fake.get(&id("b")).await.unwrap().name.as_str(), "b");
         // `a` now answers to "Shop", so a new workspace named "shop" is not free.
         let taken = fake.create(new_ws("shop"), &NoGitSetup).await;
         assert!(matches!(taken, Err(WorkspaceError::Conflict(_))));
         assert!(matches!(
-            fake.rename(&id("nope"), None).await,
+            fake.rename(&id("nope"), DisplayName::parse("x").unwrap())
+                .await,
             Err(WorkspaceError::NotFound(_))
         ));
     }
@@ -1492,11 +1491,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_long_name_cannot_be_a_workspace() {
+    async fn a_name_of_the_longest_length_still_makes_a_workspace() {
         let (fake, _) = fake();
-        let long = "n".repeat(WorkspaceId::MAX_LEN + 1);
-        let err = fake.create(new_ws(&long), &NoGitSetup).await.unwrap_err();
-        assert!(matches!(err, WorkspaceError::Invalid(_)), "{err}");
+        let long = "n".repeat(DisplayName::MAX_CHARS);
+        let made = fake.create(new_ws(&long), &NoGitSetup).await.unwrap();
+        assert_eq!(made.name.as_str(), long);
+        assert!(made.id.as_str().len() <= WorkspaceId::MAX_LEN);
     }
 
     #[tokio::test]
@@ -1588,7 +1588,7 @@ mod tests {
     #[tokio::test]
     async fn the_launcher_records_what_it_opened() {
         let launcher = FakeLauncher::new();
-        let record = WorkspaceRecord::new(id("w"), WorkspaceName::new("w").unwrap(), Vec::new());
+        let record = WorkspaceRecord::new(id("w"), DisplayName::parse("w").unwrap(), Vec::new());
         let target = DesktopTarget {
             ssh_host: "puddle-w".into(),
             path: "/workspaces/w".into(),
@@ -1611,7 +1611,7 @@ mod tests {
     #[tokio::test]
     async fn the_launcher_records_the_browser_windows_it_opened_and_can_fail_one() {
         let launcher = FakeLauncher::new();
-        let record = WorkspaceRecord::new(id("w"), WorkspaceName::new("w").unwrap(), Vec::new());
+        let record = WorkspaceRecord::new(id("w"), DisplayName::parse("w").unwrap(), Vec::new());
         let target = BrowserTarget {
             origin: "http://w.localhost:18080".into(),
             front: SocketAddr::from(([127, 0, 0, 1], 18080)),
@@ -1671,7 +1671,7 @@ mod tests {
         );
         let mut record = WorkspaceRecord::new(
             id("k7m2x9qa"),
-            WorkspaceName::new("shop").unwrap(),
+            DisplayName::parse("shop").unwrap(),
             Vec::new(),
         );
         record.status = WorkspaceStatus::Running;

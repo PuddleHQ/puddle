@@ -1066,6 +1066,50 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Remembers `name` as the current name of `workspace`; audit records written from now on
+    /// carry it as `workspace_name`. Call it when a workspace is created or renamed, and for
+    /// every workspace at start.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the database can't be written.
+    pub fn set_workspace_name(
+        &self,
+        workspace: &WorkspaceId,
+        name: &str,
+    ) -> Result<(), StoreError> {
+        let conn = lock(&self.conn);
+        conn.execute(
+            "INSERT INTO workspace_names (workspace_id, name) VALUES (?1, ?2)
+             ON CONFLICT (workspace_id) DO UPDATE SET name = excluded.name",
+            params![workspace.as_str(), name],
+        )?;
+        Ok(())
+    }
+
+    /// The `workspace_name` each of the audit records `ids` was written with; a record written
+    /// before the column existed, or with no workspace, has none and is left out.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the database can't be read.
+    pub fn audit_workspace_names(&self, ids: &[i64]) -> Result<HashMap<i64, String>, StoreError> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare_cached(
+            "SELECT workspace_name FROM audit WHERE id = ?1 AND workspace_name IS NOT NULL",
+        )?;
+        let mut names = HashMap::new();
+        for id in ids {
+            if let Some(name) = stmt
+                .query_row([id], |row| row.get::<_, String>(0))
+                .optional()?
+            {
+                names.insert(*id, name);
+            }
+        }
+        Ok(names)
+    }
+
     /// SQLite's query plan for [`Store::audit_query`] with these arguments, one line per step.
     /// Lets a test check that a filter combination uses an index instead of timing it.
     ///
@@ -1193,8 +1237,9 @@ fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
 fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
-        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, workspace_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                 (SELECT name FROM workspace_names WHERE workspace_id = ?3))",
         params![
             sql_ts(record.ts()),
             record.kind(),

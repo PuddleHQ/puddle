@@ -48,8 +48,7 @@ use puddle_ssh::SshEndpoint;
 use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
     CheckoutDir, CpuCount, DiskKind, Event, EventSink, GuestEnv, GuestFile, GuestPath, ImageRef,
-    MemoryMib, Problem, Problems, SessionUser, WorkspaceId, WorkspaceName, WorkspaceStatus,
-    WorkspaceStep,
+    MemoryMib, Problem, Problems, SessionUser, WorkspaceId, WorkspaceStatus, WorkspaceStep,
 };
 
 use crate::ssh_config::{SshSetup, ssh_host};
@@ -526,7 +525,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             let (id, name) = (stored.id, stored.name);
             let mut record = WorkspaceRecord::new(id.clone(), name.clone(), stored.repositories);
-            record.display_name = stored.display_name;
             record.start_folder = stored.start_folder;
             record.session_user = stored.session_user;
             record.image = stored.image;
@@ -581,6 +579,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 disk_warned: Mutex::new(BTreeSet::new()),
             }),
         };
+        service.note_names(&service.state());
         if interrupted && let Err(e) = service.persist(&service.state()) {
             // Harmless: the entries still say "being created", so the next start drops them
             // again, and every later save writes the list without them.
@@ -605,7 +604,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map(|slot| Stored {
                 id: slot.record.id.clone(),
                 name: slot.record.name.clone(),
-                display_name: slot.record.display_name.clone(),
                 repositories: slot.record.repositories.clone(),
                 start_folder: slot.record.start_folder.clone(),
                 session_user: slot.record.session_user,
@@ -616,7 +614,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 creating: slot.creating,
             })
             .collect();
-        self.inner.book.save(stored)
+        self.inner.book.save(stored)?;
+        self.note_names(state);
+        Ok(())
+    }
+
+    /// Tells the store each workspace's name, so the audit records written from now on carry it
+    /// (a record of a renamed or deleted workspace then still reads as the user knew it). Best
+    /// effort: a name that cannot be written leaves the id to be shown for new records.
+    fn note_names(&self, state: &State) {
+        for slot in state.slots.values().filter(|slot| !slot.deleting) {
+            if let Err(e) = self
+                .inner
+                .store
+                .set_workspace_name(&slot.record.id, slot.record.name.as_str())
+            {
+                tracing::warn!(workspace = %slot.record.id, error = %e, "the workspace's name was not written to the store");
+            }
+        }
     }
 
     /// The create of `id` finished: saves its entry as complete. Until this succeeds the list
@@ -2926,7 +2941,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     async fn clear_left_over_browser_state(
         &self,
         id: &WorkspaceId,
-        name: &WorkspaceName,
+        name: &DisplayName,
     ) -> Result<(), WorkspaceError> {
         let failed = self.clear_browser_state(id).await;
         if failed.is_empty() {
@@ -3053,9 +3068,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let id = new.id().map_err(|e| {
-                WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
-            })?;
+            let id = {
+                let state = self.state();
+                new.id(|id| state.slots.contains_key(id))
+            }
+            .map_err(|e| WorkspaceError::Invalid(format!("this name can't be a workspace: {e}")))?;
             let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
             record.start_folder.clone_from(&new.start_folder);
             record.image = new
@@ -3396,7 +3413,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn rename<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        display_name: Option<DisplayName>,
+        name: DisplayName,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
             let mut state = self.state();
@@ -3405,18 +3422,14 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     "Puddle is shutting down".to_owned(),
                 ));
             }
-            puddle_api::check_rename(
-                state.slots.values().map(|s| &s.record),
-                id,
-                display_name.as_ref(),
-            )?;
+            puddle_api::check_rename(state.slots.values().map(|s| &s.record), id, &name)?;
             let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
-            let before = std::mem::replace(&mut slot.record.display_name, display_name);
+            let before = std::mem::replace(&mut slot.record.name, name);
             if let Err(e) = self.persist(&state) {
                 // Nothing changes when the list can't be saved, so a restart doesn't undo a
                 // rename the user was told about.
                 if let Some(slot) = state.slots.get_mut(id) {
-                    slot.record.display_name = before;
+                    slot.record.name = before;
                 }
                 let name = state.slots.get(id).map(|s| s.record.id.clone());
                 drop(state);
@@ -3437,10 +3450,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 .map(|s| s.record.clone())
                 .ok_or_else(|| not_found(id))?;
             drop(state);
-            let detail = match &record.display_name {
-                Some(label) => format!("renamed to {label}"),
-                None => "went back to its short name".to_owned(),
-            };
+            let detail = format!("renamed to {}", record.name);
             self.record_op(
                 WorkspaceOpKind::Rename,
                 &record.id,

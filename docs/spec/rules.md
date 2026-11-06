@@ -9,7 +9,10 @@ Defaults marked *(default)* are reversible choices.
 
 ## 1. Model
 
-A **request** is what the proxy asks about: `(workspace_id, host, port)`. The workspace id comes from
+A **request** is what the proxy asks about: `(workspace_id, host, port)`. Every `workspace_id` in
+this document, and every workspace scope of a rule, is the workspace's id, which never changes; the
+name the user gave the workspace is display text and keys nothing (a rename changes no rule). The
+workspace id comes from
 the route the connection arrived on, never from anything the guest says. `host` is a
 normalised name (lowercase, IDNA to ASCII, LDH labels, no trailing dot, at most 253 characters) or
 a canonical IP literal (IPv4 dotted quad, IPv6 per RFC 5952). The proxy normalises; the engine only
@@ -189,7 +192,10 @@ readable as JSONL (one record per line).
   every line parses with `jq`. Lines are never rewritten: records written before the rename of
   sandbox to workspace carry `sandbox_id`, a rule scope `sandbox`, an origin `sandbox` and a
   reason `sandbox_deleted`, and read as `workspace_id`, `workspace`, `workspace` and
-  `workspace_deleted`.
+  `workspace_deleted`. The API adds `workspace_name` to each entry of the audit page: the name the
+  workspace had when the record was written (`null` for a record written before names were kept, and
+  for one about no workspace; a reader then shows the id), so a record of a renamed or deleted
+  workspace still reads as the user knew it. The line itself is unchanged.
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `category` (`company_network` for a destination in that category, `null` otherwise and in older records), `signal` (`pac_direct`, `dns_suffix`, `private_access_cgnat` or `vpn_route`: the signal that put it there, `null` when none is known), `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `company_network_off`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,

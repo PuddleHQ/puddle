@@ -108,8 +108,8 @@
     </p>
     {#if !store.running}
       <p class="warn" role="status">
-        {workspace.display_name} is not running, so nothing listens and a port can't
-        be forwarded yet. Forwards you keep are listed and open again when it starts.
+        {workspace.name} is not running, so nothing listens and a port can't be forwarded
+        yet. Forwards you keep are listed and open again when it starts.
       </p>
     {/if}
 
@@ -121,7 +121,7 @@
       </p>
     {:else}
       <div class="wrap">
-        <table aria-label="Ports of {workspace.display_name}">
+        <table aria-label="Ports of {workspace.name}">
           <thead>
             <tr>
               <th scope="col">Port</th>

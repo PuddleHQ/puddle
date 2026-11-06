@@ -75,7 +75,7 @@ describe("WorkspaceDialogs", () => {
   it("renames from the dialog: starts from the current name, refuses a clash before asking, then saves and says so", async () => {
     api.list = [
       workspace("demo", { status: "running" }),
-      workspace("docs", { display_name: "Handbook" }),
+      workspace("docs", { name: "Handbook" }),
     ];
     await workspaces.refresh();
     render(WorkspaceDialogs);
@@ -85,7 +85,7 @@ describe("WorkspaceDialogs", () => {
     });
     const field = within(dialog).getByRole("textbox", { name: "Name" });
     expect(field).toHaveValue("demo");
-    expect(dialog).toHaveTextContent("Identifier: w-demo");
+    expect(dialog).toHaveTextContent("workspace id, w-demo");
     await fireEvent.input(field, { target: { value: "handbook" } });
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       'Another workspace is already called "Handbook".',
@@ -107,7 +107,7 @@ describe("WorkspaceDialogs", () => {
       expect(api.calls).toContain("PATCH /api/workspaces/{id}"),
     );
     await vi.waitFor(() => expect(actions.renameOpen).toBe(false));
-    expect(workspaces.byId("w-demo")?.display_name).toBe("Web shop");
+    expect(workspaces.byId("w-demo")?.name).toBe("Web shop");
     expect(toasts.items.map((t) => t.message)).toEqual([
       "Renamed to Web shop.",
     ]);

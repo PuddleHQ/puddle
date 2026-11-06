@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.26.0"
+    "version": "0.27.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -5308,7 +5308,7 @@
             }
           },
           "409": {
-            "description": "the name is taken, or two identities of the list cover the same place (`identity_collision`)",
+            "description": "another workspace has that name (ignoring case), or the id it would get is taken, or two identities of the list cover the same place (`identity_collision`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5349,6 +5349,108 @@
           },
           "503": {
             "description": "workspaces are not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/lookup": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Finds a workspace by text a person typed: its id exactly, or its name ignoring case. For a\ncommand line or a script; every other route takes the id.",
+        "operationId": "lookup_workspace",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "an id, or a name ignoring case",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the one workspace it names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceMatch"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no workspace has that id or name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the text is one workspace's id and another's name; ask for the id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceLookupConflict"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`q` is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5555,7 +5657,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Renames a workspace: sets the display name the UI shows. Only the label changes (the id, the\nname, the volume and the sandbox stay), so it works on a running workspace and restarts\nnothing. A name another workspace already goes by (ignoring case) is refused with 409, and so\nis a rename while the workspace is being created or deleted.",
+        "summary": "Renames a workspace: sets the name the UI shows. Only the name changes (the id, the volume\nand the sandbox stay), so it works on a running workspace and restarts\nnothing. A name another workspace already goes by (ignoring case) is refused with 409, and so\nis a rename while the workspace is being created or deleted.",
         "operationId": "rename_workspace",
         "parameters": [
           {
@@ -9438,6 +9540,7 @@
         "description": "One audit record with its position in the log.",
         "required": [
           "id",
+          "workspace_name",
           "record"
         ],
         "properties": {
@@ -9449,6 +9552,13 @@
           "record": {
             "$ref": "#/components/schemas/AuditRecord",
             "description": "The record."
+          },
+          "workspace_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name the record's workspace had when the record was written; `null` for a record\nwritten before names were kept, and for one about no workspace. Show the id then."
           }
         }
       },
@@ -13895,8 +14005,10 @@
             "minimum": 256
           },
           "name": {
-            "$ref": "#/components/schemas/WorkspaceName",
-            "description": "The workspace's name, which is also its workspace's name."
+            "type": "string",
+            "description": "What the user calls the workspace: display text of 1 to 60 characters, spaces at the\nends dropped, no line breaks or control characters. Another live workspace's name (ignoring\ncase) is `409`. The answer carries the new workspace's `id`.",
+            "maxLength": 60,
+            "minLength": 1
           },
           "repositories": {
             "type": "array",
@@ -14493,15 +14605,14 @@
         "type": "object",
         "description": "`PATCH /api/workspaces/{id}`.",
         "required": [
-          "display_name"
+          "name"
         ],
         "properties": {
-          "display_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The new display name: 1 to 60 characters, spaces at the ends dropped, no line breaks.\n`null` goes back to the workspace's name. Required, so an empty body never resets it."
+          "name": {
+            "type": "string",
+            "description": "The new name: 1 to 60 characters, spaces at the ends dropped, no line breaks or control\ncharacters. Required.",
+            "maxLength": 60,
+            "minLength": 1
           }
         },
         "additionalProperties": false
@@ -16505,7 +16616,6 @@
         "required": [
           "id",
           "name",
-          "display_name",
           "repositories",
           "start_folder",
           "session_user",
@@ -16568,10 +16678,6 @@
             },
             "description": "Which disks are at or over the warning threshold (`ui.disk_warning_percent` in the global\nsettings): `root`, `volume`, both or neither."
           },
-          "display_name": {
-            "type": "string",
-            "description": "What the user calls the workspace: the name until they rename it (`PATCH\n/api/workspaces/{id}`). Show this one; `name` and `id` never change."
-          },
           "first_connect_notice_due": {
             "type": "boolean",
             "description": "Deprecated and always `false`: the first-connect notice is the \"Allow direct SSH\"\nconfirmation now. Read `direct_ssh` instead.",
@@ -16579,7 +16685,7 @@
           },
           "id": {
             "type": "string",
-            "description": "The id used in paths. Today it is the workspace's name."
+            "description": "The id every path, query parameter, event and rule scope uses. It never changes; a\nrename changes `name` only."
           },
           "identities": {
             "type": "array",
@@ -16599,8 +16705,10 @@
             "minimum": 0
           },
           "name": {
-            "$ref": "#/components/schemas/WorkspaceName",
-            "description": "The name of the workspace that runs it; events and per-workspace settings use this name."
+            "type": "string",
+            "description": "What the user calls the workspace: display text of 1 to 60 characters, renamed with\n`PATCH /api/workspaces/{id}`. It names nothing else; use `id` for that.",
+            "maxLength": 60,
+            "minLength": 1
           },
           "repositories": {
             "type": "array",
@@ -16762,13 +16870,49 @@
           }
         }
       },
-      "WorkspaceName": {
-        "type": "string",
-        "description": "A workspace's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`), not `tauri`, `ipc` or `asset`.",
-        "example": "my-project",
-        "maxLength": 63,
-        "minLength": 1,
-        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+      "WorkspaceLookupConflict": {
+        "type": "object",
+        "description": "The answer when a lookup text names two workspaces: one's id is the other's name.",
+        "required": [
+          "error",
+          "message",
+          "matches"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorCode",
+            "description": "Always `conflict`."
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceMatch"
+            },
+            "description": "Every workspace the text names, with its id."
+          },
+          "message": {
+            "type": "string",
+            "description": "Names both workspaces and asks for the id."
+          }
+        }
+      },
+      "WorkspaceMatch": {
+        "type": "object",
+        "description": "One workspace a lookup found.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The workspace's id."
+          },
+          "name": {
+            "type": "string",
+            "description": "The workspace's name."
+          }
+        }
       },
       "WorkspaceOpKind": {
         "type": "string",

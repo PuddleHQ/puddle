@@ -10,6 +10,7 @@
   import StatusChip from "#lib/components/StatusChip.svelte";
   import VolumeMissingNotice from "#lib/components/VolumeMissingNotice.svelte";
   import { api } from "#lib/api/client.ts";
+  import { copyText } from "#lib/welcome/doctor.ts";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
   import { isExpired, workspaceOf } from "#lib/rules/model.ts";
   import { editorProblems } from "#lib/stores/editor-problems.svelte.ts";
@@ -48,6 +49,11 @@
   let resetOpen = $state(false);
   function openReset() {
     resetOpen = true;
+  }
+  let copied = $state<"yes" | "no" | null>(null);
+  async function copyId() {
+    if (!workspace) return;
+    copied = (await copyText(workspace.id)) ? "yes" : "no";
   }
   let memorySource = $state<"workspace" | "global" | "default" | null>(null);
 
@@ -161,10 +167,21 @@
     <section class="card" aria-labelledby="status-h">
       <h2 id="status-h">Status</h2>
       <dl>
-        {#if workspace.display_name !== workspace.name}
-          <dt>Identifier</dt>
-          <dd class="mono">{workspace.id}</dd>
-        {/if}
+        <dt>Workspace id</dt>
+        <dd class="id-row">
+          <span class="mono">{workspace.id}</span>
+          <button
+            type="button"
+            class="btn"
+            aria-label="Copy the workspace id"
+            onclick={() => void copyId()}
+            >{copied === "yes"
+              ? "Copied"
+              : copied === "no"
+                ? "Could not copy"
+                : "Copy"}</button
+          >
+        </dd>
         <dt>State</dt>
         <dd><StatusChip status={workspace.status} busy={workspace.busy} /></dd>
         <dt>Created</dt>
@@ -300,7 +317,7 @@
   </div>
   <ConfirmDialog
     bind:open={resetOpen}
-    title="Reset the root disk of {workspace.display_name}?"
+    title="Reset the root disk of {workspace.name}?"
     summary="Everything installed or cached outside the volume is removed."
     detail="Packages and tools installed outside the volume, the home directory and tool caches are lost, including any file kept there that is not in a repository on the volume; packages reinstall and caches rebuild on the next start. The volume, with your repositories and files, is untouched."
     confirmLabel="Reset root disk"
@@ -310,6 +327,12 @@
 {/if}
 
 <style>
+  .id-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr));

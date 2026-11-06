@@ -64,6 +64,7 @@ import { report } from "#lib/testing/fake-network.ts";
 import { firstRun } from "#lib/stores/first-run.svelte.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
+import { workspaces as workspaceStore } from "#lib/stores/workspaces.svelte.ts";
 import { density } from "#lib/theme/density.svelte.ts";
 import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
@@ -95,6 +96,8 @@ beforeEach(() => {
   };
   h.prefs.reset();
   h.workspaces.list = [];
+  // The create form checks a name against the store's list, which an earlier test filled.
+  workspaceStore.list = [];
   h.workspaces.calls = [];
   h.workspaces.bodies = [];
   h.workspaces.refuse.clear();

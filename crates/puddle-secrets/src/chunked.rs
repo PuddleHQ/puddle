@@ -478,4 +478,16 @@ mod tests {
         assert_eq!(store.keep_local(&long_id), Err(StoreError));
         store.delete(&long_id).unwrap();
     }
+
+    #[test]
+    fn keeping_a_short_or_missing_entry_local_touches_only_that_id() {
+        let store = ChunkedStore::new(MemoryStore::new());
+        let short = StoredId::new("short").unwrap();
+        store.set(&short, &Secret::new("v".to_owned())).unwrap();
+        store.keep_local(&short).unwrap();
+        store
+            .keep_local(&StoredId::new("missing").unwrap())
+            .unwrap();
+        assert_eq!(store.inner.kept_local(), ["short", "missing"]);
+    }
 }

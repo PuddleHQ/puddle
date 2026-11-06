@@ -10,7 +10,7 @@
 
 use zeroize::Zeroizing;
 
-use crate::profile::Field;
+use crate::profile::{Field, StandInKind};
 
 /// The shortest and longest token a stand-in can copy the length of: the registry's own limits.
 const MIN_LEN: usize = 16;
@@ -89,6 +89,19 @@ pub(crate) fn usable(real: &str) -> bool {
     (MIN_LEN..=MAX_LEN).contains(&real.len()) && real.bytes().all(|b| b.is_ascii_graphic())
 }
 
+/// Whether the token of `field` can be copied: [`usable`], and for a token whose fields are kept
+/// the longer limit.
+pub(crate) fn usable_for(field: &Field, real: &str) -> bool {
+    match field.role.stand_in() {
+        StandInKind::Shaped => usable(real),
+        StandInKind::Fields => fields_copyable(real),
+    }
+}
+
+fn fields_copyable(real: &str) -> bool {
+    (MIN_LEN..=MAX_FIELDS_LEN).contains(&real.len()) && real.bytes().all(|b| b.is_ascii_graphic())
+}
+
 /// A stand-in for `real`, a token of the kind `field` describes: the same length, the prefix it
 /// has among `field.prefixes`, the same alphabet and its last `field.keep_last` characters (when
 /// the token is long enough to keep them and still leave random characters in between).
@@ -97,7 +110,34 @@ pub(crate) fn usable(real: &str) -> bool {
 /// [`ShapeError::Unusable`] for a token that cannot be copied; [`ShapeError::Random`] when the
 /// system has no randomness.
 pub fn stand_in_for(real: &str, field: &Field) -> Result<String, ShapeError> {
-    stand_in_with(real, field, &mut |bytes| getrandom::fill(bytes).is_ok())
+    let mut fill = |bytes: &mut [u8]| getrandom::fill(bytes).is_ok();
+    match field.role.stand_in() {
+        StandInKind::Shaped => stand_in_with(real, field, &mut fill),
+        StandInKind::Fields => fields_stand_in_with(real, &mut fill),
+    }
+}
+
+/// The longest token whose fields are kept: a Copilot session token is a few hundred characters.
+const MAX_FIELDS_LEN: usize = 1024;
+
+/// A stand-in for a token of `key=value;` fields and a MAC after the first colon: the fields as
+/// they are, the MAC replaced by random characters of its alphabet and length. The client reads
+/// the fields and checks no signature; the MAC is what the service checks, so it is the one part
+/// that must never reach the workspace.
+pub(crate) fn fields_stand_in_with(
+    real: &str,
+    fill: &mut dyn FnMut(&mut [u8]) -> bool,
+) -> Result<String, ShapeError> {
+    let (fields, mac) = real.split_once(':').ok_or(ShapeError::Unusable)?;
+    if !fields_copyable(real) || !fields.contains('=') || mac.len() < MIN_RANDOM {
+        return Err(ShapeError::Unusable);
+    }
+    let random = Zeroizing::new(random_text(alphabet_of(mac), mac.len(), fill)?);
+    let stand_in = format!("{fields}:{}", *random);
+    if stand_in == real {
+        return Err(ShapeError::Random);
+    }
+    Ok(stand_in)
 }
 
 pub(crate) fn stand_in_with(
@@ -241,6 +281,100 @@ mod tests {
         }
         assert!(stand_in_for(&"x".repeat(256), github_access()).is_ok());
         assert!(stand_in_for(&"x".repeat(16), github_access()).is_ok());
+    }
+
+    const SESSION_MAC: &str = "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0";
+
+    fn session_token() -> String {
+        format!(
+            "tid=7a1b;exp=1790000000;sku=free_limited_copilot;proxy-ep=proxy.individual.githubcopilot.com;st=dotcom;chat=1:{SESSION_MAC}"
+        )
+    }
+
+    fn copilot_session() -> &'static Field {
+        GITHUB
+            .fields()
+            .find(|(_, f)| f.role == crate::profile::Role::Copilot)
+            .map(|(_, f)| f)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_session_token_keeps_its_fields_and_only_its_mac_is_random() {
+        let real = session_token();
+        let stand_in = stand_in_for(&real, copilot_session()).unwrap();
+        let (fields, mac) = stand_in.split_once(':').unwrap();
+        assert_eq!(Some(fields), real.split_once(':').map(|(f, _)| f));
+        assert_eq!(mac.len(), SESSION_MAC.len());
+        assert_ne!(mac, SESSION_MAC);
+        assert!(mac.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
+        assert!(!stand_in.contains(&SESSION_MAC[..12]));
+        // A client that reads the fields as the extension does finds the same ones.
+        let fields_read = |t: &str| -> Vec<(String, String)> {
+            t.split(':')
+                .next()
+                .unwrap()
+                .split(';')
+                .map(|f| {
+                    let (k, v) = f.split_once('=').unwrap();
+                    (k.to_owned(), v.to_owned())
+                })
+                .collect()
+        };
+        assert_eq!(fields_read(&stand_in), fields_read(&real));
+        assert_ne!(stand_in, stand_in_for(&real, copilot_session()).unwrap());
+    }
+
+    #[test]
+    fn a_session_token_may_be_longer_than_an_ordinary_token() {
+        let long = format!("tid=1;pad={}:{SESSION_MAC}", "x".repeat(700));
+        assert!(stand_in_for(&long, copilot_session()).is_ok());
+        assert!(usable_for(copilot_session(), &long));
+        assert!(!usable_for(github_access(), &long));
+        let too_long = format!("tid=1;pad={}:{SESSION_MAC}", "x".repeat(1100));
+        assert_eq!(
+            stand_in_for(&too_long, copilot_session()),
+            Err(ShapeError::Unusable)
+        );
+    }
+
+    #[test]
+    fn a_session_token_without_fields_or_mac_is_refused() {
+        for real in [
+            "no-colon-at-all-in-this-token-0123456789".to_owned(),
+            format!("no-equals-sign-in-fields:{SESSION_MAC}"),
+            "tid=1;exp=2;sku=x;proxy-ep=y;st=dotcom:abc".to_owned(),
+            format!("tid=1 ;exp=2:{SESSION_MAC}"),
+        ] {
+            assert_eq!(
+                stand_in_for(&real, copilot_session()),
+                Err(ShapeError::Unusable),
+                "{real:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_session_token_stand_in_needs_randomness_and_is_never_the_real_token() {
+        let real = session_token();
+        assert_eq!(
+            fields_stand_in_with(&real, &mut |_| false),
+            Err(ShapeError::Random)
+        );
+        let mac = SESSION_MAC.as_bytes().to_vec();
+        let mut at = 0;
+        let mut fill = |bytes: &mut [u8]| {
+            for b in bytes {
+                let want = mac[at % mac.len()];
+                *b = u8::try_from(HEX.iter().position(|c| *c == want).unwrap()).unwrap();
+                at += 1;
+            }
+            true
+        };
+        assert_eq!(
+            fields_stand_in_with(&real, &mut fill),
+            Err(ShapeError::Random)
+        );
     }
 
     #[test]

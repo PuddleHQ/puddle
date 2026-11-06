@@ -61,8 +61,8 @@ pub(crate) use answer::{
 /// it.
 const MIN_STAND_IN_LEN: usize = 16;
 
-/// The longest stand-in or name accepted.
-const MAX_LEN: usize = 256;
+/// The longest stand-in accepted: a Copilot session token is a few hundred characters.
+const MAX_LEN: usize = 1024;
 
 /// Most random bytes of a generated stand-in: 128 bits.
 const RANDOM_BYTES: usize = 16;
@@ -1172,7 +1172,7 @@ mod tests {
             "short",
             "has a space in it, long enough",
             "tab\tin-it-and-long-enough",
-            &"x".repeat(257),
+            &"x".repeat(MAX_LEN + 1),
         ] {
             assert_eq!(
                 new("N", text, "r", hosts()).unwrap_err(),
@@ -1180,6 +1180,8 @@ mod tests {
                 "{text:?}"
             );
         }
+        // A Copilot session token is a few hundred characters: the longest stand-in is accepted.
+        assert!(new("N", &"x".repeat(MAX_LEN), "r", hosts()).is_ok());
         assert_eq!(
             new("N", GH, "r", TerminationSet::new()).unwrap_err(),
             StandInError::NoHosts

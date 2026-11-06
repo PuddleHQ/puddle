@@ -23,7 +23,8 @@ const MIN_RANDOM: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ShapeError {
-    /// The token is shorter than 16 or longer than 256 characters, or has a character that is not
+    /// The token is shorter than 16 or longer than its kind takes (256 for a shaped token, 8192
+    /// for the other kinds), or has a character that is not
     /// visible ASCII (a space, a control character, anything outside ASCII): a header could not
     /// carry it as it is, or the registry would not accept its stand-in.
     #[error("the token has a length or characters a stand-in cannot copy")]
@@ -94,7 +95,7 @@ pub(crate) fn usable(real: &str) -> bool {
 pub(crate) fn usable_for(field: &Field, real: &str) -> bool {
     match field.stand_in {
         StandInKind::Shaped => usable(real),
-        StandInKind::Fields | StandInKind::Jwt => long_copyable(real),
+        StandInKind::Fields | StandInKind::Jwt | StandInKind::ShapedLong => long_copyable(real),
     }
 }
 
@@ -113,7 +114,7 @@ fn long_copyable(real: &str) -> bool {
 pub fn stand_in_for(real: &str, field: &Field) -> Result<String, ShapeError> {
     let mut fill = |bytes: &mut [u8]| getrandom::fill(bytes).is_ok();
     match field.stand_in {
-        StandInKind::Shaped => stand_in_with(real, field, &mut fill),
+        StandInKind::Shaped | StandInKind::ShapedLong => stand_in_with(real, field, &mut fill),
         StandInKind::Fields => fields_stand_in_with(real, &mut fill),
         StandInKind::Jwt => match jwt_parts(real) {
             Some(_) => jwt_stand_in_with(real, &mut fill),
@@ -139,12 +140,35 @@ fn jwt_parts(real: &str) -> Option<(&str, &str)> {
     is_jwt.then_some((signed, signature))
 }
 
+/// The `aud` claim of `real` when it is a JWT whose payload is a JSON object: the resource the token
+/// is for, joined with spaces when the claim is a list. Read to tell which resource a token is for;
+/// nothing is verified.
+pub(crate) fn audience_of(real: &str) -> Option<String> {
+    use base64::Engine as _;
+    let (signed, _) = jwt_parts(real)?;
+    let payload = signed.split_once('.')?.1;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    match claims.get("aud")? {
+        serde_json::Value::String(one) => Some(one.clone()),
+        serde_json::Value::Array(many) => Some(
+            many.iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        _ => None,
+    }
+}
+
 /// Whether a refresh of `field`'s token needs a new stand-in: a session token's fields and a JWT's
 /// payload change with each token (the expiry), and the client reads them, so the stand-in changes
 /// with them. Any other token keeps its stand-in.
 pub(crate) fn renews(real: &str, field: &Field) -> bool {
     match field.stand_in {
-        StandInKind::Shaped => false,
+        StandInKind::Shaped | StandInKind::ShapedLong => false,
         StandInKind::Fields => true,
         StandInKind::Jwt => jwt_parts(real).is_some(),
     }
@@ -169,9 +193,10 @@ pub(crate) fn jwt_stand_in_with(
     Ok(stand_in)
 }
 
-/// The longest token of fields or a JWT: a Copilot session token is a few hundred characters, a JWT
-/// longer. The registry's own limit.
-const MAX_FIELDS_LEN: usize = 4096;
+/// The longest token of fields, a JWT or a long shaped token: a Copilot session token is a few
+/// hundred characters, a Microsoft access token one to three thousand, a refresh token about
+/// fifteen hundred. The registry's own limit.
+const MAX_FIELDS_LEN: usize = 8192;
 
 /// A stand-in for a token of `key=value;` fields and a MAC after the first colon: the fields as
 /// they are, the MAC replaced by random characters of its alphabet and length. The client reads
@@ -198,7 +223,7 @@ pub(crate) fn stand_in_with(
     field: &Field,
     fill: &mut dyn FnMut(&mut [u8]) -> bool,
 ) -> Result<String, ShapeError> {
-    if !usable(real) {
+    if !usable_for(field, real) {
         return Err(ShapeError::Unusable);
     }
     let prefix = field
@@ -384,7 +409,7 @@ mod tests {
         assert!(stand_in_for(&long, copilot_session()).is_ok());
         assert!(usable_for(copilot_session(), &long));
         assert!(!usable_for(github_access(), &long));
-        let too_long = format!("tid=1;pad={}:{SESSION_MAC}", "x".repeat(4100));
+        let too_long = format!("tid=1;pad={}:{SESSION_MAC}", "x".repeat(8200));
         assert_eq!(
             stand_in_for(&too_long, copilot_session()),
             Err(ShapeError::Unusable)
@@ -593,10 +618,10 @@ mod tests {
     }
 
     #[test]
-    fn a_jwt_field_takes_up_to_4096_characters_and_a_shaped_one_256() {
-        let long = jwt(r#"{"exp":1}"#, 4096 - jwt(r#"{"exp":1}"#, 0).len());
-        assert_eq!(long.len(), 4096);
-        assert_eq!(stand_in_for(&long, &jwt_field()).unwrap().len(), 4096);
+    fn a_jwt_field_takes_up_to_the_registry_limit_and_a_shaped_one_256() {
+        let long = jwt(r#"{"exp":1}"#, 8192 - jwt(r#"{"exp":1}"#, 0).len());
+        assert_eq!(long.len(), 8192);
+        assert_eq!(stand_in_for(&long, &jwt_field()).unwrap().len(), 8192);
         assert_eq!(
             stand_in_for(&format!("{long}x"), &jwt_field()),
             Err(ShapeError::Unusable)
@@ -605,6 +630,45 @@ mod tests {
             stand_in_for(&long, github_access()),
             Err(ShapeError::Unusable)
         );
+    }
+
+    #[test]
+    fn a_long_shaped_field_copies_a_token_of_fifteen_hundred_characters() {
+        let field = Field {
+            stand_in: StandInKind::ShapedLong,
+            prefixes: &["1."],
+            ..*github_access()
+        };
+        let real = format!("1.A{}", "r".repeat(1500));
+        let stand_in = stand_in_for(&real, &field).unwrap();
+        assert_eq!(stand_in.len(), real.len());
+        assert!(stand_in.starts_with("1."));
+        assert_ne!(stand_in, real);
+        assert!(!renews(&real, &field));
+        // A plain shaped field still stops at 256.
+        assert_eq!(
+            stand_in_for(&real, github_access()),
+            Err(ShapeError::Unusable)
+        );
+        assert_eq!(
+            stand_in_for(&"r".repeat(8193), &field),
+            Err(ShapeError::Unusable)
+        );
+    }
+
+    #[test]
+    fn the_audience_of_a_jwt_is_its_aud_claim_and_nothing_else_has_one() {
+        assert_eq!(
+            audience_of(&jwt(r#"{"aud":"https://graph.microsoft.com","exp":1}"#, 43)).as_deref(),
+            Some("https://graph.microsoft.com")
+        );
+        assert_eq!(
+            audience_of(&jwt(r#"{"aud":["a","b"],"exp":1}"#, 43)).as_deref(),
+            Some("a b")
+        );
+        assert_eq!(audience_of(&jwt(r#"{"exp":1}"#, 43)), None);
+        assert_eq!(audience_of(&jwt(r#"{"aud":7}"#, 43)), None);
+        assert_eq!(audience_of("EwB-not-a-jwt-0123456789abcdef"), None);
     }
 
     proptest! {

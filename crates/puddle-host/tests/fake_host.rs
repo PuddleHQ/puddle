@@ -2262,7 +2262,7 @@ async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_rename_saves_version_2()
+async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_rename_saves_version_3()
  {
     let rig = Rig::new();
     let data = rig.dir.path().join("data");
@@ -2289,20 +2289,21 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
         "a start never writes the list"
     );
     let renamed = api
-        .patch(
-            "/api/workspaces/acme",
-            &json!({"display_name": "Shop"}).to_string(),
-        )
+        .patch("/api/workspaces/acme", &json!({"name": "Shop"}).to_string())
         .await;
     assert_eq!(renamed.status, 200, "{}", renamed.body);
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(saved["version"], 2);
+    assert_eq!(saved["version"], 3);
     assert_eq!(
         saved["workspaces"][0]["repositories"],
         json!([{"url": "https://example.org/acme/shop.git", "directory": "shop"}])
     );
     assert_eq!(saved["workspaces"][0]["start_folder"], "shop");
-    assert_eq!(saved["workspaces"][0]["display_name"], "Shop");
+    assert_eq!(saved["workspaces"][0]["name"], "Shop");
+    assert!(
+        saved["workspaces"][0].get("display_name").is_none(),
+        "{saved}"
+    );
     assert!(saved["workspaces"][0].get("repo_url").is_none(), "{saved}");
     host.shutdown().await;
 }
@@ -3977,8 +3978,8 @@ async fn a_workspace_whose_id_differs_from_its_name_is_found_everywhere_by_the_i
     let data = rig.dir.path().join("data");
     std::fs::create_dir_all(data.join("front")).unwrap();
     // Built by hand: a create still derives the id from the name.
-    let book = json!({"version": 2, "workspaces": [{
-        "id": ID, "name": "shop", "display_name": "Shop API \u{fc}", "repositories": [],
+    let book = json!({"version": 3, "workspaces": [{
+        "id": ID, "name": "Shop API \u{fc}", "repositories": [],
         "start_folder": null, "image": FakeRuntime::DEBIAN, "memory_mib": 1024,
         "created_at": 1, "disk_size_mib": 1024
     }]});
@@ -4301,8 +4302,8 @@ async fn a_create_whose_last_save_fails_is_undone_and_says_why() {
     host.shutdown().await;
 }
 
-fn display_name_body(shown: &str) -> String {
-    json!({"display_name": shown}).to_string()
+fn name_body(shown: &str) -> String {
+    json!({"name": shown}).to_string()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4316,20 +4317,15 @@ async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
     after_boot_listing(&rig).await;
     let calls_before = rig.runtime.calls().len();
     let renamed = api1
-        .patch("/api/workspaces/acme", &display_name_body("Acme shop"))
+        .patch("/api/workspaces/acme", &name_body("Acme shop"))
         .await;
     assert_eq!(renamed.status, 200, "{}", renamed.body);
     let ws = renamed.json();
     assert_eq!(
-        (&ws["id"], &ws["name"], &ws["display_name"], &ws["status"]),
-        (
-            &json!("acme"),
-            &json!("acme"),
-            &json!("Acme shop"),
-            &json!("running")
-        )
+        (&ws["id"], &ws["name"], &ws["status"]),
+        (&json!("acme"), &json!("Acme shop"), &json!("running"))
     );
-    // The workspace is running and nothing in the runtime was touched: a label only.
+    // The workspace is running and nothing in the runtime was touched: a name only.
     assert_eq!(rig.runtime.calls().len(), calls_before);
     assert_eq!(volume_names(&rig).await, ["ws-acme"]);
     host.shutdown().await;
@@ -4340,19 +4336,13 @@ async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
     let api2 = api(&again);
     let ws = api2.get("/api/workspaces/acme").await.json();
     assert_eq!(
-        (&ws["name"], &ws["display_name"]),
+        (&ws["id"], &ws["name"]),
         (&json!("acme"), &json!("Acme shop"))
     );
-    // Going back to the name is saved too.
-    let reset = api2
-        .patch(
-            "/api/workspaces/acme",
-            &json!({"display_name": null}).to_string(),
-        )
-        .await;
-    assert_eq!(reset.json()["display_name"], "acme");
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(list_path(&rig)).unwrap()).unwrap();
+    assert_eq!(saved["version"], 3);
+    assert_eq!(saved["workspaces"][0]["name"], "Acme shop");
     assert!(
         saved["workspaces"][0].get("display_name").is_none(),
         "{saved}"
@@ -4369,13 +4359,13 @@ async fn two_workspaces_never_share_a_label_and_a_create_cannot_take_one_in_use(
     create(&api, &mut events, "acme").await;
     create(&api, &mut events, "docs").await;
     assert_eq!(
-        api.patch("/api/workspaces/acme", &display_name_body("Handbook"))
+        api.patch("/api/workspaces/acme", &name_body("Handbook"))
             .await
             .status,
         200
     );
     let clash = api
-        .patch("/api/workspaces/docs", &display_name_body("handbook"))
+        .patch("/api/workspaces/docs", &name_body("handbook"))
         .await;
     assert_eq!(clash.status, 409, "{}", clash.body);
     let taken = api
@@ -4383,9 +4373,9 @@ async fn two_workspaces_never_share_a_label_and_a_create_cannot_take_one_in_use(
         .await;
     assert_eq!(taken.status, 409, "{}", taken.body);
     assert_eq!(volume_names(&rig).await, ["ws-acme", "ws-docs"]);
-    // A workspace's own name is free for it only while nobody else answers to it.
+    // Another workspace's name is not free for this one.
     assert_eq!(
-        api.patch("/api/workspaces/acme", &display_name_body("docs"))
+        api.patch("/api/workspaces/acme", &name_body("DOCS"))
             .await
             .status,
         409
@@ -4405,15 +4395,13 @@ async fn a_rename_is_allowed_while_a_start_runs() {
     let started = api.post("/api/workspaces/acme/start", "").await;
     assert_eq!(started.status, 202, "{}", started.body);
     // The start is in flight: only the label changes, so the rename goes through.
-    let during = api
-        .patch("/api/workspaces/acme", &display_name_body("Acme"))
-        .await;
+    let during = api.patch("/api/workspaces/acme", &name_body("Acme")).await;
     assert_eq!(during.status, 200, "{}", during.body);
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "done", "{end}");
     let ws = api.get("/api/workspaces/acme").await.json();
     assert_eq!(
-        (&ws["status"], &ws["display_name"]),
+        (&ws["status"], &ws["name"]),
         (&json!("running"), &json!("Acme"))
     );
     host.shutdown().await;
@@ -4428,14 +4416,11 @@ async fn a_rename_is_refused_once_shutdown_has_begun() {
     create(&api, &mut events, "acme").await;
     host.workspaces().close();
     let refused = api
-        .patch("/api/workspaces/acme", &display_name_body("Acme shop"))
+        .patch("/api/workspaces/acme", &name_body("Acme shop"))
         .await;
     assert_eq!(refused.status, 503, "{}", refused.body);
     assert!(refused.body.contains("shutting down"), "{}", refused.body);
-    assert_eq!(
-        api.get("/api/workspaces/acme").await.json()["display_name"],
-        "acme"
-    );
+    assert_eq!(api.get("/api/workspaces/acme").await.json()["name"], "acme");
     host.shutdown().await;
 }
 
@@ -4448,7 +4433,7 @@ async fn a_rename_is_undone_when_the_workspace_list_cannot_be_saved() {
     create(&api, &mut events, "acme").await;
     make_unwritable(&list_path(&rig));
     let refused = api
-        .patch("/api/workspaces/acme", &display_name_body("Acme shop"))
+        .patch("/api/workspaces/acme", &name_body("Acme shop"))
         .await;
     assert_eq!(refused.status, 503, "{}", refused.body);
     let message = refused.json()["message"].as_str().unwrap().to_owned();
@@ -4457,10 +4442,7 @@ async fn a_rename_is_undone_when_the_workspace_list_cannot_be_saved() {
         "{message}"
     );
     // The user is not told a name that a restart would undo.
-    assert_eq!(
-        api.get("/api/workspaces/acme").await.json()["display_name"],
-        "acme"
-    );
+    assert_eq!(api.get("/api/workspaces/acme").await.json()["name"], "acme");
     host.shutdown().await;
 }
 
@@ -4627,12 +4609,12 @@ async fn a_rename_is_in_the_activity_log_and_so_is_one_that_could_not_be_saved()
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
     let renamed = api
-        .patch("/api/workspaces/acme", &display_name_body("Acme shop"))
+        .patch("/api/workspaces/acme", &name_body("Acme shop"))
         .await;
     assert_eq!(renamed.status, 200, "{}", renamed.body);
     make_unwritable(&list_path(&rig));
     let refused = api
-        .patch("/api/workspaces/acme", &display_name_body("Acme store"))
+        .patch("/api/workspaces/acme", &name_body("Acme store"))
         .await;
     assert_eq!(refused.status, 503, "{}", refused.body);
 
@@ -4656,12 +4638,90 @@ async fn a_rename_is_in_the_activity_log_and_so_is_one_that_could_not_be_saved()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_workspace_list_with_a_bad_display_name_stops_the_start() {
+async fn a_version_2_list_of_the_previous_release_starts_with_the_display_name_as_the_name() {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let path = data.join("workspaces.json");
+    let old = include_str!("../tests/fixtures/workspaces-v2.json");
+    std::fs::write(&path, old).unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+    let list = api.get("/api/workspaces").await.json();
+    let shown: Vec<(&str, &str)> = list["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| (w["id"].as_str().unwrap(), w["name"].as_str().unwrap()))
+        .collect();
+    assert_eq!(shown, [("shop", "Shop API \u{fc}"), ("tools", "tools")]);
+    assert!(
+        list["workspaces"][0].get("display_name").is_none(),
+        "{list}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        old,
+        "a start never writes the list"
+    );
+    // Renaming saves version 3; the id and everything keyed by it stay.
+    let renamed = api
+        .patch("/api/workspaces/shop", &name_body("Web shop"))
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["version"], 3);
+    assert_eq!(
+        (
+            saved["workspaces"][0]["id"].as_str(),
+            saved["workspaces"][0]["name"].as_str()
+        ),
+        (Some("shop"), Some("Web shop"))
+    );
+    assert_eq!(saved["workspaces"][1]["name"], "tools");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_activity_record_keeps_the_name_the_workspace_had_when_it_was_written() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let renamed = api
+        .patch("/api/workspaces/acme", &name_body("Acme shop"))
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    let page = api.get("/api/audit?type=workspace_op&after=0").await.json();
+    let rows: Vec<(String, String)> = page["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["record"]["op"].as_str().unwrap().to_owned(),
+                e["workspace_name"].as_str().unwrap_or("<none>").to_owned(),
+            )
+        })
+        .collect();
+    // The create was written under the name it had; the rename, under the new one.
+    assert_eq!(rows.first().map(|r| r.1.as_str()), Some("acme"), "{rows:?}");
+    assert_eq!(
+        rows.last().map(|r| r.1.as_str()),
+        Some("Acme shop"),
+        "{rows:?}"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_list_with_a_bad_name_stops_the_start() {
     let rig = Rig::new();
     let data = rig.dir.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
     let book = json!({"version": 1, "workspaces": [{
-        "id": "acme", "name": "acme", "display_name": "two\nlines", "repo_url": REPO,
+        "id": "acme", "name": "two\nlines", "display_name": "two\nlines", "repo_url": REPO,
         "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
     }]});
     std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
@@ -4674,7 +4734,7 @@ async fn a_workspace_list_with_a_bad_display_name_stops_the_start() {
     .await
     .unwrap_err();
     assert!(matches!(err, HostError::State { .. }), "{err}");
-    assert!(err.to_string().contains("display name"), "{err}");
+    assert!(err.to_string().contains("bad name"), "{err}");
     // The workspace's volume is safe: nothing was reconciled.
     assert!(rig.runtime.calls().is_empty());
 }

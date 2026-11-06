@@ -225,7 +225,7 @@
 
   function check() {
     const found: Partial<Record<FormField, string>> = {};
-    const label = nameProblem(name);
+    const label = nameProblem(name, null, workspaces.list);
     if (label) found.name = label;
     const folder = startFolderProblem(startFolder);
     if (folder) found.start_folder = folder;
@@ -644,9 +644,7 @@
         <p class="error" id="new-ws-name-error" role="alert">{errors.name}</p>
       {:else}
         <p class="hint" id="new-ws-name-hint">
-          Lowercase letters, digits and hyphens. It names the disk and can't be
-          changed; you can rename the workspace later and keep this as its
-          identifier.
+          What Puddle shows for this workspace; you can change it later.
         </p>
       {/if}
     </div>

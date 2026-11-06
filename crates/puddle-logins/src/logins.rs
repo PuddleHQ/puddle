@@ -33,7 +33,7 @@ use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroizing;
 
 use crate::marker::Marker;
-use crate::profile::{Endpoint, Field, Method, Profile, Role, Scope, Slot, path_matches};
+use crate::profile::{Audience, Endpoint, Field, Method, Profile, Role, Scope, Slot, path_matches};
 use crate::shape;
 use crate::vault::{STORE_TIMEOUT, Vault, VaultError};
 
@@ -613,8 +613,13 @@ impl Logins {
             TokenBody::parse(content_type, body).map_err(|_| Problem::UnexpectedAnswer)?;
         let mut found: Vec<(&'static Field, Zeroizing<String>)> = Vec::new();
         for field in endpoint.fields {
-            // The first field that takes the token is the one used for its answer field.
-            if found.iter().any(|(taken, _)| taken.path == field.path) {
+            // The first field that takes the token is the one used for its answer field. Fields
+            // with an audience share a path on purpose (one per resource): `by_audience` picks.
+            if field.audience == Audience::Any
+                && found
+                    .iter()
+                    .any(|(taken, _)| taken.path == field.path && taken.audience == Audience::Any)
+            {
                 continue;
             }
             let Some(text) = parsed.text_at(field.path).filter(|text| !text.is_empty()) else {
@@ -628,6 +633,12 @@ impl Logins {
         if found.is_empty() {
             // A pending device code, an error, a refusal: nothing to keep.
             return Ok(None);
+        }
+        let found = by_audience(found, &parsed);
+        if found.is_empty() {
+            // The answer has a token that no field of the profile takes: it must not pass as if
+            // it were kept.
+            return Err(Problem::UnusableToken);
         }
         if parsed
             .text("token_type")
@@ -696,6 +707,48 @@ impl Logins {
         }
         Ok(Some(Bytes::copy_from_slice(&parsed.render())))
     }
+}
+
+/// The fields among `found` that this answer is for: the ones with no condition, the first
+/// [`Audience::Named`] field of each path whose resource the answer names, and the
+/// [`Audience::Unnamed`] ones of a path no named field took.
+fn by_audience<'f>(
+    found: Vec<(&'f Field, Zeroizing<String>)>,
+    parsed: &TokenBody,
+) -> Vec<(&'f Field, Zeroizing<String>)> {
+    let answer_hints = {
+        let mut text = String::new();
+        for name in ["scope", "resource"] {
+            if let Some(value) = parsed.text(name) {
+                text.push_str(&value);
+                text.push(' ');
+            }
+        }
+        text
+    };
+    let mut named: BTreeSet<&str> = BTreeSet::new();
+    let mut taken = Vec::new();
+    let mut unnamed = Vec::new();
+    for (field, real) in found {
+        match field.audience {
+            Audience::Any => taken.push((field, real)),
+            Audience::Named(needles) => {
+                if named.contains(field.path) {
+                    continue;
+                }
+                let mut hints = answer_hints.clone();
+                hints.push_str(&shape::audience_of(&real).unwrap_or_default());
+                let hints = hints.to_ascii_lowercase();
+                if needles.iter().any(|needle| hints.contains(needle)) {
+                    named.insert(field.path);
+                    taken.push((field, real));
+                }
+            }
+            Audience::Unnamed => unnamed.push((field, real)),
+        }
+    }
+    taken.extend(unnamed.into_iter().filter(|(f, _)| !named.contains(f.path)));
+    taken
 }
 
 /// Why a login could not be forgotten completely.

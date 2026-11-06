@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Backstop for pull requests that are armed for auto-merge and green but never enter the merge queue: GitHub does not
 # always hand an armed pull request to a ruleset queue (seen on a Dependabot PR armed with the workflow token, which sat
-# green for 2 h until it was disarmed and armed again). Every 10 minutes ci/merge-queue-sweep.sh asks GitHub to merge
-# each such PR's head commit, which adds it to the queue. Reads PR metadata only and never checks out or runs PR code.
+# green for 2 h until it was disarmed and armed again). ci/merge-queue-sweep.sh adds each such PR's head commit to the
+# queue and checks that it got there. GitHub drops scheduled runs under load (two of the six hourly runs in 17 h fired), so
+# the sweep also runs when a required workflow finishes: a PR goes green at that moment, and the run waits out the
+# settle time first. Reads PR metadata only and never checks out or runs PR code.
 # The same run also cancels the runs of merge groups the queue dissolved (ci/cancel-dissolved-groups.sh), which
 # ci/cancel-group.sh cannot do because no job failed. A scheduled run executes the copy on the default branch (develop).
 name: merge-queue-sweep
@@ -10,6 +12,9 @@ name: merge-queue-sweep
 on:
   schedule:
     - cron: '7,17,27,37,47,57 * * * *'
+  workflow_run:
+    workflows: [ci, windows, vm-linux, vm-windows]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -34,9 +39,14 @@ jobs:
             ci/merge-queue-sweep.sh
             ci/cancel-dissolved-groups.sh
           persist-credentials: false
+      - name: wait until a PR that just went green counts as settled
+        if: github.event_name == 'workflow_run'
+        run: sleep 150
       - name: add armed, green PRs that are not queued
         env:
           GH_TOKEN: ${{ github.token }}
+          # a run started by a finished workflow has waited 2.5 minutes, so a 2 minute settle time suffices
+          SWEEP_MIN: ${{ github.event_name == 'workflow_run' && '2' || '10' }}
         run: ci/merge-queue-sweep.sh
       - name: cancel the runs of dissolved merge groups
         if: always()

@@ -12,8 +12,9 @@
 # repository variable PUDDLE_QUEUE set to `on`, a pull request to develop skips them too (the light
 # mode) and the merge queue runs them on the commit that lands.
 # The test binaries are built once (`cargo nextest archive`) and the tests run in four partitions
-# on four runners at once; `vm-linux (KVM, msb microVMs)` is the one result of all of them. The partitions are
-# balanced by measured test time (ci/vm-partition.sh, ci/vm-test-timings-linux.tsv), not by nextest's name hash.
+# on four runners at once; the guest agent and the runtime layout check are built in a job beside the archive build.
+# `vm-linux (KVM, msb microVMs)` is the one result of all of them. The partitions are balanced by measured test time
+# (ci/vm-partition.sh, ci/vm-test-timings-linux.tsv), not by nextest's name hash.
 name: vm-linux
 
 on:
@@ -88,7 +89,7 @@ jobs:
         uses: ./.github/actions/cancel-group
 
   build:
-    name: vm-linux build (test archive, guest agent)
+    name: vm-linux build (test archive)
     needs: scope
     if: ${{ !cancelled() && needs.scope.outputs.vm != 'false' && needs.scope.outputs.light != 'true' }}
     # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
@@ -134,27 +135,6 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
-      # The runtime is the fork release's prebuilt Linux msb, downloaded and checked against
-      # ci/msb-runtime.sha256 (a few seconds). Only a tag with no Linux msb pinned is built from
-      # source (about 10 minutes, with a warning annotation).
-      # The runtime folder the Linux packages will ship (msb, both firmware names, runtime.json),
-      # built by `cargo xtask runtime --msb` from this msb. The test jobs run on the msb folder, not
-      # on it; this only keeps the layout honest (ci/check-runtime-layout.sh).
-      - name: runtime folder layout (cargo xtask runtime --msb)
-        if: steps.changed.outputs.run == 'true'
-        run: |
-          ci/fetch-msb.sh "$RUNNER_TEMP/msb"
-          ci/check-runtime-layout.sh "$RUNNER_TEMP/msb" "$RUNNER_TEMP/runtime-layout"
-      - name: guest agent (static musl build)
-        if: steps.changed.outputs.run == 'true'
-        run: |
-          mkdir -p "$RUNNER_TEMP/bundle"
-          cp "$(ci/build-agent.sh --locked)" "$RUNNER_TEMP/bundle/puddle-agent"
-      - name: disk after the musl agent build (evidence, never a gate)
-        if: ${{ always() && steps.changed.outputs.run == 'true' }}
-        timeout-minutes: 3
-        continue-on-error: true
-        run: ci/disk-watch.sh snap "build, after the guest agent"
       - name: build the VM tests once (nextest archive)
         if: steps.changed.outputs.run == 'true'
         run: |
@@ -162,6 +142,7 @@ jobs:
           DISK_WATCH_KILL='cargo|rustc' ci/disk-watch.sh guard build &
           guard=$!
           trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
+          mkdir -p "$RUNNER_TEMP/bundle"
           cargo nextest archive $VM_CRATES --profile vm --locked --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
       - name: disk after the archive build (evidence, never a gate)
         if: ${{ always() && steps.changed.outputs.run == 'true' }}
@@ -176,7 +157,7 @@ jobs:
           cargo nextest list $VM_CRATES --profile vm --locked -E "$(ci/vm-filter.sh)" \
             --message-format oneline > "$RUNNER_TEMP/bundle/vm-tests.list"
           wc -l < "$RUNNER_TEMP/bundle/vm-tests.list"
-      - name: share the archive and the agent with the test jobs
+      - name: share the archive and the test list with the test jobs
         if: steps.changed.outputs.run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -189,9 +170,60 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
+  # The guest agent and the runtime layout check, built beside the archive build (the archive is the longest
+  # step of `build`; these two took 191 s of its serial path). The runtime folder check is not a test input: the
+  # test jobs run on the downloaded msb, this only keeps the layout honest (ci/check-runtime-layout.sh).
+  # It asks should-run.sh itself, so a nightly on a green commit builds nothing here either.
+  agent:
+    name: vm-linux guest agent (musl build, runtime layout)
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.vm != 'false' && needs.scope.outputs.light != 'true' }}
+    permissions:
+      contents: read
+      actions: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: anything new since the last green run?
+        id: changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/should-run.sh vm-linux.yml --events schedule,workflow_dispatch
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.changed.outputs.run == 'true'
+        run: rustup toolchain install && rustc --version
+      - name: guest agent (static musl build)
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent"
+          cp "$(ci/build-agent.sh --locked)" "$RUNNER_TEMP/agent/puddle-agent"
+      - name: share the agent with the test jobs
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-linux-agent
+          path: ${{ runner.temp }}/agent
+          retention-days: 1
+      # The runtime is the fork release's prebuilt Linux msb, downloaded and checked against
+      # ci/msb-runtime.sha256 (a few seconds). Only a tag with no Linux msb pinned is built from
+      # source (about 10 minutes, with a warning annotation). The runtime folder the Linux packages
+      # will ship (msb, both firmware names, runtime.json) is built by `cargo xtask runtime --msb` from it.
+      # Last, so a failure here cannot delay the agent upload that the test jobs wait for.
+      - name: runtime folder layout (cargo xtask runtime --msb)
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+          ci/check-runtime-layout.sh "$RUNNER_TEMP/msb" "$RUNNER_TEMP/runtime-layout"
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
   tests:
     name: vm-linux tests (partition ${{ matrix.partition }} of 4)
-    needs: build
+    needs: [build, agent]
     if: needs.build.outputs.run == 'true'
     permissions:
       contents: read
@@ -284,11 +316,17 @@ jobs:
         run: |
           mkdir -p "$HOME/vm-tools-cache"
           echo "PUDDLE_VM_TOOLS_CACHE=$HOME/vm-tools-cache" >> "$GITHUB_ENV"
-      - name: the test archive and the guest agent from the build job
+      - name: the test archive from the build job
         if: steps.kvm.outputs.ok == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-linux-build
+          path: ${{ runner.temp }}/bundle
+      - name: the guest agent from the agent job
+        if: steps.kvm.outputs.ok == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-linux-agent
           path: ${{ runner.temp }}/bundle
       # The browser client (node and Chromium, crates/puddle-vm-tests/src/browser.rs) is installed only on a
       # partition that runs a `vm_browser_*` test: listing the partition's share tells. Chromium is the build the UI jobs use (ui/package-lock.json pins
@@ -475,14 +513,14 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
-  # One stable result for the build and every partition.
+  # One stable result for the build, the agent job and every partition.
   # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.
   # A pull request or a merge queue run may skip them all only when `scope` said so, or in the light
   # mode (`queue`), and a nightly when the commit already has a green run (ci/scope.sh verdict); the
   # KVM/WHP infrastructure skip is a skipped step inside a passing job, not a skipped job.
   vm-linux:
     name: vm-linux (KVM, msb microVMs)
-    needs: [scope, build, tests]
+    needs: [scope, build, agent, tests]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -507,4 +545,4 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh verdict --nightly-skips build=vm,queue tests=vm,queue
+        run: ci/scope.sh verdict --nightly-skips build=vm,queue agent=vm,queue tests=vm,queue

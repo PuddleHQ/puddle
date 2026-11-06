@@ -26,10 +26,10 @@ use puddle_api::wire::{DevCertificate, FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DevCertService,
     DoctorService, EventHub, FakeCredentials, FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned,
-    FakeNetworkHealth, FakePorts, FakeWorkspaces, Found, FoundList, Launcher, LearnedService,
-    Listing, MemorySettings, NetworkHealthService, Operation, PortsService, RemoteNote,
-    RepoFindings, RepoService, RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck,
-    StartFolder, Unsaved, WorkspaceRecord, check_repositories,
+    FakeNetworkHealth, FakePorts, FakeTerminals, FakeWorkspaces, Found, FoundList, Launcher,
+    LearnedService, Listing, MemorySettings, NetworkHealthService, Operation, PortsService,
+    RemoteNote, RepoFindings, RepoService, RepositoryDraft, RunningApi, Services, SettingsRepo,
+    ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord, check_repositories,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -287,7 +287,8 @@ impl Fixture {
             .with_dev_cert(state.dev_cert.clone() as Arc<dyn DevCertService>)
             .with_problems(state.problems.clone())
             .with_ports(state.ports.clone() as Arc<dyn PortsService>)
-            .with_learned(state.learned.clone() as Arc<dyn LearnedService>);
+            .with_learned(state.learned.clone() as Arc<dyn LearnedService>)
+            .with_terminals(Arc::new(FakeTerminals::new()));
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
                 self.token.clone(),

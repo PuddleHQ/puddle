@@ -327,6 +327,84 @@ pub enum DataPathFacts {
     NoFolder,
 }
 
+/// How the SSH agent Puddle would ask answered a request for its key list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SshAgentFacts {
+    /// No agent is named: the settings name none and (not Windows) `SSH_AUTH_SOCK` is not set.
+    NoEndpoint,
+    /// Nothing can be opened at the endpoint.
+    Unreachable {
+        /// The pipe or socket asked.
+        endpoint: String,
+        /// The OS error.
+        detail: String,
+        /// The OpenSSH Authentication Agent service (Windows); `None` elsewhere.
+        service: Option<AgentService>,
+        /// The endpoint is the Windows default pipe, which nobody named: an agent that is not
+        /// there is a normal state, not a problem.
+        by_default: bool,
+    },
+    /// The agent refused the request, as a locked agent does.
+    Locked {
+        /// The pipe or socket asked.
+        endpoint: String,
+    },
+    /// The agent did not answer in time.
+    TimedOut {
+        /// The pipe or socket asked.
+        endpoint: String,
+        /// The time limit.
+        limit: Duration,
+    },
+    /// The endpoint answered something that is not the SSH agent protocol, or the connection
+    /// broke.
+    Unusable {
+        /// The pipe or socket asked.
+        endpoint: String,
+        /// What was wrong.
+        detail: String,
+    },
+    /// The agent answered with its keys; only each key's family is kept (`ed25519`, `rsa`), never
+    /// a key, a comment or a fingerprint.
+    Keys {
+        /// The pipe or socket asked.
+        endpoint: String,
+        /// The family of each key, in the agent's order.
+        families: Vec<String>,
+    },
+}
+
+/// The state of the Windows OpenSSH Authentication Agent service (`ssh-agent`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentService {
+    /// The service is not installed.
+    Missing,
+    /// It is installed and its start type is disabled.
+    Disabled,
+    /// It is installed, enabled and not running.
+    Stopped,
+    /// It runs.
+    Running,
+    /// Its state could not be read.
+    Unreadable,
+}
+
+impl AgentService {
+    /// The state of an installed service from its start type and whether it runs. A running
+    /// service counts as running even when its start type is disabled (it was started by hand
+    /// before the type changed).
+    #[must_use]
+    pub fn installed(start_disabled: bool, running: bool) -> Self {
+        if running {
+            Self::Running
+        } else if start_disabled {
+            Self::Disabled
+        } else {
+            Self::Stopped
+        }
+    }
+}
+
 /// The Windows job object this process runs in, when there is one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobFacts {
@@ -470,6 +548,14 @@ mod tests {
     }
 
     #[test]
+    fn an_installed_agent_service_is_running_disabled_or_stopped() {
+        assert_eq!(AgentService::installed(false, true), AgentService::Running);
+        assert_eq!(AgentService::installed(true, true), AgentService::Running);
+        assert_eq!(AgentService::installed(true, false), AgentService::Disabled);
+        assert_eq!(AgentService::installed(false, false), AgentService::Stopped);
+    }
+
+    #[test]
     fn only_a_missing_service_reads_as_not_installed() {
         assert_eq!(ServiceState::from_open_error(1060), Missing);
         // Access denied, a shutting-down service manager, an invalid name: all unproven.
@@ -505,4 +591,84 @@ mod tests {
             "{facts:?}"
         );
     }
+}
+
+/// Whether what holds data is encrypted at rest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Protection {
+    /// An encryption layer covers it.
+    Encrypted {
+        /// Which: `BitLocker`, `FileVault`, `LUKS2`, `dm-crypt`, `eCryptfs`.
+        by: String,
+    },
+    /// It is on a drive with no encryption layer the probe knows.
+    NotEncrypted,
+    /// It never reaches a disk (swap in compressed memory, for example).
+    NotOnDisk {
+        /// What it is instead.
+        what: String,
+    },
+    /// The probe could not tell, or the question does not apply here.
+    Unknown {
+        /// Why.
+        why: String,
+    },
+}
+
+/// One place the OS pages memory out to: a swap partition or file, or a Windows page file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwapArea {
+    /// Its device or file.
+    pub name: String,
+    /// Whether it is encrypted.
+    pub protection: Protection,
+}
+
+/// Swap: where the OS pages memory out to, which is where a secret in Puddle's memory can end up
+/// on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SwapFacts {
+    /// The machine has no swap or page file.
+    None,
+    /// The swap areas in use.
+    Areas(Vec<SwapArea>),
+    /// The list of swap areas could not be read.
+    Unreadable {
+        /// Why.
+        why: String,
+    },
+}
+
+impl SwapFacts {
+    /// The swap areas in use; empty when there are none or the list was unreadable.
+    #[must_use]
+    pub fn areas(&self) -> &[SwapArea] {
+        match self {
+            Self::Areas(areas) => areas,
+            Self::None | Self::Unreadable { .. } => &[],
+        }
+    }
+}
+
+/// Whether the drive that holds Puddle's data folder is encrypted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataEncryption {
+    /// Where Puddle keeps its data could not be worked out.
+    NoFolder,
+    /// The drive that holds `dir`.
+    Volume {
+        /// The data folder.
+        dir: PathBuf,
+        /// Its drive's state.
+        protection: Protection,
+    },
+}
+
+/// Disk encryption: the data folder's drive and the swap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskEncryptionFacts {
+    /// Puddle's data folder.
+    pub data: DataEncryption,
+    /// The swap.
+    pub swap: SwapFacts,
 }

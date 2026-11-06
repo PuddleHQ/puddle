@@ -239,6 +239,43 @@ mod tests {
         assert!(!gate.ssh_seen());
     }
 
+    /// A writer that notes that it was flushed and shut down (a duplex stream does neither visibly).
+    #[derive(Default)]
+    struct Sink {
+        flushed: bool,
+        shut: bool,
+    }
+
+    impl AsyncWrite for Sink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.flushed = true;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.shut = true;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flush_and_a_shutdown_reach_the_stream_under_the_gate() {
+        let mut gate = Gate::new(Sink::default(), false);
+        gate.write_all(b"x").await.unwrap();
+        gate.flush().await.unwrap();
+        assert!(gate.inner.flushed && !gate.inner.shut);
+        gate.shutdown().await.unwrap();
+        assert!(gate.inner.shut);
+    }
+
     #[tokio::test]
     async fn the_end_of_the_stream_before_any_byte_is_not_ssh() {
         let (near, mut far) = tokio::io::duplex(256);
@@ -247,5 +284,35 @@ mod tests {
         let mut buf = [0u8; 8];
         assert_eq!(gate.read(&mut buf).await.unwrap(), 0);
         assert!(!gate.ssh_seen());
+    }
+
+    /// A reader that first reads nothing, then yields what it was given.
+    struct EmptyThen(Option<&'static [u8]>, bool);
+
+    impl AsyncRead for EmptyThen {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            if self.1 {
+                if let Some(data) = self.0.take() {
+                    buf.put_slice(data);
+                }
+            } else {
+                self.1 = true;
+            }
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_read_that_brings_no_bytes_does_not_end_the_watch_for_the_banner() {
+        let mut gate = Gate::new(EmptyThen(Some(b"SSH-2.0-x\r\n"), false), true);
+        let mut buf = [0_u8; 32];
+        assert_eq!(gate.read(&mut buf).await.unwrap(), 0);
+        let err = gate.read(&mut buf).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(gate.ssh_seen());
     }
 }

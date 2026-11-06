@@ -652,7 +652,7 @@ impl Rig {
         guest.install(&runtime);
         Self {
             dev_cert: Arc::new(TestDevCert::new()),
-            dir: tempfile::tempdir().unwrap(),
+            dir: support::scratch_dir(),
             log: Log::default(),
             runtime,
             guest,
@@ -753,6 +753,26 @@ fn make_unwritable(path: &std::path::Path) {
 
 fn status_of(reply: &support::Reply) -> String {
     reply.json()["status"].as_str().unwrap().to_owned()
+}
+
+// ---- where a test keeps its data ------------------------------------------------------------
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_tests_data_folder_is_in_memory_where_the_machine_has_a_memory_mount() {
+    let dir = support::scratch_dir();
+    let in_ram = std::env::var_os("TMPDIR").is_none() && support::is_ram_mount("/dev/shm");
+    assert_eq!(
+        dir.path().starts_with("/dev/shm"),
+        in_ram,
+        "{:?}",
+        dir.path()
+    );
+    assert!(!support::is_ram_mount("/"), "the root is no memory mount");
+    assert!(!support::is_ram_mount("/no/such/mount"));
+    // Whatever the folder is, a host can write and sync a file in it.
+    let file = std::fs::File::create(dir.path().join("probe")).unwrap();
+    file.sync_all().unwrap();
 }
 
 // ---- the start-up order -------------------------------------------------------------------
@@ -2487,7 +2507,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
             });
         }
     });
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::scratch_dir();
     let password_file = dir.path().join("editor-password");
     std::fs::write(&password_file, "0".repeat(64)).unwrap();
     // Its port is taken, so the agent starts no server of its own and the stand-in answers.
@@ -3947,6 +3967,114 @@ async fn a_workspace_saved_before_session_users_keeps_root() {
     let host = rig.start().await;
     let got = api(&host).get("/api/workspaces/old").await.json();
     assert_eq!(got["session_user"], "root", "{got}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_whose_id_differs_from_its_name_is_found_everywhere_by_the_id() {
+    const ID: &str = "k7m2x9qa";
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(data.join("front")).unwrap();
+    // Built by hand: a create still derives the id from the name.
+    let book = json!({"version": 2, "workspaces": [{
+        "id": ID, "name": "shop", "display_name": "Shop API \u{fc}", "repositories": [],
+        "start_folder": null, "image": FakeRuntime::DEBIAN, "memory_mib": 1024,
+        "created_at": 1, "disk_size_mib": 1024
+    }]});
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    let id = WorkspaceId::new(ID).unwrap();
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: id.volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    // Leftovers of the editor under the id (to be deleted) and under the name (never touched).
+    std::fs::write(data.join("front").join(format!("{ID}.key")), b"half").unwrap();
+    std::fs::write(data.join("front").join("shop.key"), b"other").unwrap();
+
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let got = api.get(&format!("/api/workspaces/{ID}")).await;
+    assert_eq!(got.status, 200, "{}", got.body);
+    assert_eq!(api.get("/api/workspaces/shop").await.status, 404);
+
+    // The settings file: written under the id.
+    allow_direct_ssh(&api, ID, true).await;
+    let settings = data.join("settings").join("workspaces");
+    assert!(settings.join(format!("{ID}.json")).is_file());
+    assert!(!settings.join("shop.json").exists());
+
+    let start = api.post(&format!("/api/workspaces/{ID}/start"), "").await;
+    assert_eq!(start.status, 202, "{}", start.body);
+    events
+        .until(ended("k7m2x9qa"), Duration::from_secs(20))
+        .await;
+    assert_eq!(
+        status_of(&api.get(&format!("/api/workspaces/{ID}")).await),
+        "running"
+    );
+
+    // The sandbox and the volume are named by the id.
+    let calls = rig.runtime.calls();
+    let created = calls.iter().find(|c| matches!(c.op, Op::Create)).unwrap();
+    assert_eq!(created.target.as_deref(), Some(id.sandbox_name().as_str()));
+    assert!(
+        calls
+            .iter()
+            .filter_map(|c| c.target.as_deref())
+            .all(|t| !t.contains("shop")),
+        "{calls:?}"
+    );
+    let volumes: Vec<String> = rig
+        .runtime
+        .list_volumes()
+        .await
+        .unwrap()
+        .iter()
+        .map(|v| v.name.clone())
+        .collect();
+    assert_eq!(volumes, [id.volume_name().to_string()]);
+
+    // The ssh alias is the id's.
+    let ssh = std::fs::read_to_string(rig.puddle_ssh_config()).unwrap();
+    assert!(ssh.contains(&format!("Host puddle-{ID}")), "{ssh}");
+    assert!(!ssh.contains("shop"), "{ssh}");
+
+    // The editor window's origin is the id's, and the window is told what to call the workspace.
+    let browser = api
+        .post(
+            &format!("/api/workspaces/{ID}/attach"),
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(browser.json()["opened"], true, "{}", browser.body);
+    let origin = rig.launcher.browser.lock().unwrap()[0].origin.clone();
+    assert!(
+        origin.starts_with(&format!("http://{ID}.localhost:")),
+        "{origin}"
+    );
+
+    // Delete: the browser data, the key half and the problem key are the id's.
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("held open".to_owned());
+    stop_and_wait(&api, &mut events, "k7m2x9qa").await;
+    delete_and_wait(&api, &mut events, "k7m2x9qa").await;
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), [ID]);
+    assert!(!data.join("front").join(format!("{ID}.key")).exists());
+    assert!(data.join("front").join("shop.key").exists());
+    assert!(!settings.join(format!("{ID}.json")).exists());
+    assert!(has_problem(&host, &format!("browser-data:{ID}")));
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .all(|p| !p.key.contains("shop")),
+        "{:?}",
+        host.problems().list()
+    );
     host.shutdown().await;
 }
 
@@ -5444,6 +5572,24 @@ async fn host_with_listed_workspace_whose_volume_is_gone() -> (Rig, Host<FakeRun
         .unwrap();
     let again = rig.start().await;
     (rig, again)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_host_has_closed_its_database_so_a_restart_never_waits_on_it() {
+    // SQLite deletes the write-ahead log when the last connection closes; a close still
+    // running (a checkpoint that fsyncs) is what made a quick restart hit "database is locked"
+    // when the disk stalled.
+    let rig = Rig::new();
+    let wal = rig.dir.path().join("data").join("puddle.db-wal");
+    for _ in 0..20 {
+        let host = rig.start().await;
+        host.shutdown().await;
+        drop(host);
+        assert!(
+            !wal.exists(),
+            "the database was still open after the host was dropped"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -8379,6 +8525,82 @@ async fn locks_that_could_not_be_removed_one_by_one_are_listed_in_the_problem() 
     host.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn git_files_repaired_at_boot_are_audited_and_told_in_plain_words() {
+    let rig = Rig::new();
+    *rig.guest.locks_answer.lock().unwrap() = Some((
+        0,
+        "R\tapi/.git/HEAD\tHEAD was zero-filled, rewritten: branch main\n\
+         R\tapi/.git/index\tindex was damaged, rebuilt from HEAD (staged changes are not kept)\n\
+         P\tweb/.git/HEAD\tHEAD is damaged and the last commit in logs/HEAD (abc) is not in the repository\nD\n",
+    ));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let (key, workspace, title, detail) = &problems[0];
+    assert_eq!(key, "git-repair:acme");
+    assert_eq!(workspace.as_deref(), Some("acme"));
+    assert!(title.contains("could not repair"), "{title}");
+    assert!(
+        detail.contains("api/.git/HEAD: HEAD was zero-filled"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("web/.git/HEAD: HEAD is damaged"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("add it again"),
+        "the staged-changes notice: {detail}"
+    );
+    assert!(detail.contains("fixed by hand"), "{detail}");
+
+    let ops = workspace_ops("workspace=acme", &api).await;
+    let repaired: Vec<_> = ops.iter().filter(|r| r["op"] == "git_repaired").collect();
+    assert_eq!(repaired.len(), 2, "one audit line per repair: {ops:?}");
+    assert_eq!(repaired[0]["actor"], "system", "{ops:?}");
+    assert_eq!(repaired[0]["workspace_id"], "acme", "{ops:?}");
+    assert!(
+        repaired[0]["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("api/.git/HEAD:"),
+        "{ops:?}"
+    );
+
+    // A boot that repaired something and left nothing damaged says only what was repaired.
+    *rig.guest.locks_answer.lock().unwrap() = Some((
+        0,
+        "R\tapi/.git/HEAD\tHEAD was zero-filled, rewritten: branch main\nD\n",
+    ));
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let (_, _, title, detail) = &problems[0];
+    assert!(title.contains("repaired git files in acme"), "{title}");
+    assert!(!detail.contains("fixed by hand"), "{detail}");
+
+    // A boot that finds nothing withdraws the notice and writes no new audit line.
+    *rig.guest.locks_answer.lock().unwrap() = None;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(problems_of(&api).await, []);
+    let again = workspace_ops("workspace=acme", &api).await;
+    assert_eq!(
+        again.iter().filter(|r| r["op"] == "git_repaired").count(),
+        3
+    );
+    host.shutdown().await;
+}
+
 /// Waits until the host has read its stored proxy sign-ins (it does so off the start-up path).
 async fn proxy_sign_ins_loaded(host: &Host<FakeRuntime>, count: usize) {
     eventually(
@@ -8434,6 +8656,78 @@ async fn a_stored_proxy_sign_in_answers_the_proxy_and_is_there_after_a_restart()
         .collect::<String>();
     fixture::assert_absent("the settings files", &settings, &stored);
     again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_proxy_sign_in_entered_through_the_api_answers_the_proxy_shows_in_the_report_and_goes_when_removed()
+ {
+    use puddle_upstream::{Behaviour, FakeProxy};
+    let rig = Rig::new();
+    let stored = fixture::password("entered");
+    let proxy = FakeProxy::start(Behaviour::Basic {
+        user: "svc".into(),
+        password: stored.clone(),
+    })
+    .await;
+    let host = host_behind_proxy_without_a_configured_password(&rig, &proxy).await;
+    proxy_sign_ins_loaded(&host, 0).await;
+    let api = api(&host);
+    let address = proxy.proxy_addr().to_string();
+
+    let put = api
+        .put(
+            "/api/proxy-sign-ins",
+            &json!({"proxy": address, "user": "svc", "password": stored}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    fixture::assert_absent("the sign-in reply", &put.body, &stored);
+    assert_eq!(
+        put.json()["sign_ins"],
+        json!([{"proxy": address, "user": "svc"}])
+    );
+
+    add_github_identity(&api, "ghp_unused_token").await;
+    let _ = api.get("/api/repos").await;
+    let expected = format!("Basic {}", base64(format!("svc:{stored}").as_bytes()));
+    assert!(
+        proxy
+            .seen()
+            .iter()
+            .any(|request| request.method == "CONNECT"
+                && request.proxy_authorization.as_deref() == Some(expected.as_str())),
+        "the proxy never saw the entered sign-in"
+    );
+    let report = api.get("/api/network-health").await;
+    fixture::assert_absent("the network-health reply", &report.body, &stored);
+    assert_eq!(
+        report.json()["sign_in"]["stored"],
+        json!([{"proxy": address, "user": "svc"}])
+    );
+    assert_eq!(
+        report.json()["sign_in"]["attempts"][0]["result"],
+        "signed_in"
+    );
+
+    // A removal stops the answers at once.
+    let gone = api
+        .delete(&format!("/api/proxy-sign-ins/{address}"), None)
+        .await;
+    assert_eq!(gone.status, 204, "{}", gone.body);
+    assert!(host.proxy_passwords().proxies().is_empty());
+    let before = proxy.seen().len();
+    let _ = api.post("/api/repos/refresh", "{}").await;
+    let after = proxy.seen();
+    assert!(after.len() > before, "the listing made no new request");
+    assert!(
+        after[before..]
+            .iter()
+            .all(|request| request.proxy_authorization.as_deref() != Some(expected.as_str())),
+        "the removed sign-in was still sent"
+    );
+    let report = api.get("/api/network-health").await.json();
+    assert_eq!(report["sign_in"]["stored"], json!([]));
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -10422,7 +10716,7 @@ async fn a_workspace_starts_from_a_checkout_on_this_computer_and_the_checkout_is
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::scratch_dir();
     let base = std::fs::canonicalize(tmp.path()).unwrap();
     let work = local_checkout(&base, "shop");
     let before = files_of(&base);
@@ -10495,7 +10789,7 @@ async fn a_folder_that_cannot_be_started_from_is_refused_before_anything_exists(
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::scratch_dir();
     let base = std::fs::canonicalize(tmp.path()).unwrap();
     let plain = base.join("plain");
     std::fs::create_dir_all(&plain).unwrap();
@@ -10549,7 +10843,7 @@ async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_imp
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::scratch_dir();
     let base = std::fs::canonicalize(tmp.path()).unwrap();
     let work = local_checkout(&base, "shop");
     let body = |name: &str| {

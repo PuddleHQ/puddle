@@ -9,6 +9,8 @@ pub enum Tool {
     Gh,
     /// Git (and through it, Git Credential Manager).
     Git,
+    /// The Azure CLI.
+    Az,
 }
 
 impl Tool {
@@ -18,6 +20,7 @@ impl Tool {
         match self {
             Self::Gh => "gh",
             Self::Git => "git",
+            Self::Az => "az",
         }
     }
 }
@@ -30,6 +33,17 @@ pub enum SourceError {
     /// Puddle; a request never does it.
     #[error("not signed in")]
     NotSignedIn,
+    /// The Azure CLI is signed in, but not to the tenant the source names (or the account is not a
+    /// member of it).
+    #[error(
+        "the Azure CLI account is not signed in to the tenant this source names; run `az login --tenant <tenant>` with an account in that tenant"
+    )]
+    WrongTenant,
+    /// The Azure CLI is signed in to the tenant, but the account may not use Azure DevOps there.
+    #[error(
+        "the Azure CLI account has no access to Azure DevOps in this tenant; ask an organisation administrator to add it"
+    )]
+    NoAccess,
     /// The tool is not installed or not on `PATH`.
     #[error("{} is not installed or not on PATH", .0.name())]
     ToolMissing(Tool),
@@ -77,6 +91,9 @@ mod tests {
 
     #[test]
     fn a_tool_is_named_the_way_the_user_knows_it() {
-        assert_eq!((Tool::Gh.name(), Tool::Git.name()), ("gh", "git"));
+        assert_eq!(
+            (Tool::Gh.name(), Tool::Git.name(), Tool::Az.name()),
+            ("gh", "git", "az")
+        );
     }
 }

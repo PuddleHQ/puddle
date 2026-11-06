@@ -85,6 +85,12 @@ fn path_chars(s: &str) -> bool {
             .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
 }
 
+fn tenant_chars(s: &str) -> bool {
+    s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.'))
+        && !s.starts_with('.')
+}
+
 fn id_chars(s: &str) -> bool {
     s.len() <= 64
         && s.chars()
@@ -103,6 +109,12 @@ name_type!(
     /// The path of a repository URL without the host (`org`, `org/project/_git/repo`): it selects
     /// the credential, so it is never empty.
     UrlPath, "URL path", path_chars
+);
+name_type!(
+    /// An Entra tenant: a GUID or a domain name. Letters, digits, `.` and `-` only, so it is no
+    /// option and carries nothing a Windows `az.cmd` batch file would re-read (`%`, `^`, `&`, `"`,
+    /// space).
+    TenantId, "tenant", tenant_chars
 );
 name_type!(
     /// The id a pasted token is stored under (`puddle:credential:<id>`).
@@ -141,6 +153,19 @@ mod tests {
         }
         assert!(StoredId::new("a".repeat(65)).is_err());
         assert!(StoredId::new("a:b").is_err());
+    }
+
+    #[test]
+    fn tenant_id_refuses_options_lines_and_batch_metacharacters() {
+        assert!(TenantId::new("72f988bf-86f1-41af-91ab-2d7cd011db47").is_ok());
+        assert!(TenantId::new("contoso.onmicrosoft.com").is_ok());
+        for bad in [
+            "", "-x", "--tenant", ".x", "a b", "a\nb", "a\0b", "a%b", "a^b", "a&b", "a\"b", "a|b",
+            "a<b", "a>b", "a;b", "a$b", "a:b", "a_b", "a@b", "a/b", "a\\b", "a(b", "a!b",
+        ] {
+            assert!(TenantId::new(bad).is_err(), "{bad:?}");
+        }
+        assert!(TenantId::new("a".repeat(257)).is_err());
     }
 
     #[test]

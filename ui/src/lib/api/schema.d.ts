@@ -694,6 +694,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/proxy-sign-ins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The proxies Puddle holds a sign-in for, with the user name of each. Never a password. */
+        get: operations["list_proxy_sign_ins"];
+        /**
+         * Stores a user name and password for a proxy, replacing an earlier one. The password is kept in
+         *     the operating system's credential store under Puddle's own name; the next connection that
+         *     asks for Basic uses it, after the Windows sign-in.
+         */
+        put: operations["put_proxy_sign_in"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/proxy-sign-ins/{proxy}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Forgets the sign-in for a proxy. One that is not stored is fine. */
+        delete: operations["delete_proxy_sign_in"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/repos": {
         parameters: {
             query?: never;
@@ -1801,6 +1840,11 @@ export interface components {
              */
             bytes_up: number;
             /**
+             * @description `company_network` when the destination is in the company-network category, allowed or
+             *     refused; `null` otherwise and in records written before it existed.
+             */
+            category: string | null;
+            /**
              * Format: int64
              * @description Records summarised, on a `suppressed` summary.
              */
@@ -1856,6 +1900,11 @@ export interface components {
             rule_id: number | null;
             /** @description The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`). */
             rule_set: string | null;
+            /**
+             * @description The signal that put the destination in the company network: `pac_direct`,
+             *     `dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`.
+             */
+            signal: string | null;
             /**
              * Format: int64
              * @description Epoch ms.
@@ -2607,6 +2656,8 @@ export interface components {
         };
         /** @description The effective local toggles. */
         EffectiveToggles: {
+            /** @description The company network. */
+            company_network: components["schemas"]["ResolvedBool"];
             /** @description Link-local. */
             link_local: components["schemas"]["ResolvedBool"];
             /** @description Loopback. */
@@ -3349,12 +3400,14 @@ export interface components {
          *     A toggle only *permits* its category; each destination still needs an allow rule or an
          *     approval. Puddle's own endpoints are not a category: no toggle reaches them.
          *
-         *     Non-exhaustive: a "company network" category may follow.
+         *     Non-exhaustive: more categories may follow.
          * @enum {string}
          */
-        LocalCategory: "loopback" | "private" | "link_local" | "metadata" | "special";
+        LocalCategory: "loopback" | "private" | "link_local" | "metadata" | "special" | "company_network";
         /** @description Local destination categories a workspace may approve. `null` inherits. */
         LocalToggles: {
+            /** @description The company network. Off by default; on only makes those destinations approvable. */
+            company_network: boolean | null;
             /** @description Link-local addresses. */
             link_local: boolean | null;
             /** @description The host's loopback addresses. */
@@ -3778,6 +3831,27 @@ export interface components {
             problems: components["schemas"]["ProxyProblem"][];
             /** @description Why the system settings, or a part of them, could not be read; `null` when they could. */
             settings_error: string | null;
+        };
+        /** @description The proxies Puddle holds a sign-in for. */
+        ProxySignInList: {
+            /** @description Sorted by proxy. */
+            sign_ins: components["schemas"]["StoredSignIn"][];
+        };
+        /** @description Stores or replaces the sign-in for one proxy. */
+        ProxySignInRequest: {
+            /**
+             * Format: password
+             * @description The password: not empty, no line break. Written once to the operating system's credential
+             *     store and never shown again.
+             */
+            password: string;
+            /** @description The proxy as `host:port`, or `http://host:port`; a missing port is 80. */
+            proxy: string;
+            /**
+             * @description The user name: not empty, at most 256 bytes, no colon or line break (Basic cannot carry
+             *     them).
+             */
+            user: string;
         };
         /** @description Image pulls and the pull proxy. */
         PullProxyReport: {
@@ -4430,6 +4504,11 @@ export interface components {
              *     Empty: Puddle can not sign in to a proxy on this system.
              */
             methods: string[];
+            /**
+             * @description The proxies Puddle holds a stored user name and password for (Basic), sorted by proxy.
+             *     Names only: the password is never in a report.
+             */
+            stored: components["schemas"]["StoredSignIn"][];
         };
         /** @description A sign-in to start. */
         SignInRequest: {
@@ -4495,6 +4574,13 @@ export interface components {
              * @description The token. Write-only.
              */
             token: string;
+        };
+        /** @description A stored proxy sign-in. Names only. */
+        StoredSignIn: {
+            /** @description `host:port` of the proxy, lower case. */
+            proxy: string;
+            /** @description The user name the proxy is signed in to with. */
+            user: string;
         };
         /** @description Where a stored token went: the source to put in a credential. */
         StoredToken: {
@@ -4769,7 +4855,7 @@ export interface components {
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired";
         /**
          * @description How a workspace operation ended.
          * @enum {string}
@@ -5080,6 +5166,8 @@ export interface operations {
                 origin?: components["schemas"]["ConnectionOrigin"];
                 /** @description records whose host (a rule's pattern) contains this text, case-insensitive */
                 host_contains?: string;
+                /** @description records whose host (a rule's pattern), method, path or reason contains this text, case-insensitive; combines with the other filters */
+                q?: string;
                 /** @description records at or after this epoch ms */
                 from?: number;
                 /** @description records before this epoch ms */
@@ -7877,6 +7965,215 @@ export interface operations {
             };
             /** @description Puddle failed; see its log */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_proxy_sign_ins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the stored sign-ins */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxySignInList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_proxy_sign_in: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProxySignInRequest"];
+            };
+        };
+        responses: {
+            /** @description stored; the sign-ins now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxySignInList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the proxy, user name or password is not usable */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the credential store did not answer, or this build has no proxy sign-in */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_proxy_sign_in: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the proxy as host:port */
+                proxy: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description no sign-in is stored for the proxy now */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not a proxy address */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the credential store did not answer */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

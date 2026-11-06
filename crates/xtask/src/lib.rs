@@ -2,8 +2,9 @@
 //! Developer and release tasks, run as `cargo xtask <command>` (alias in `.cargo/config.toml`).
 //!
 //! - `runtime`: assembles the bundled msb runtime folder of this OS ([`assemble`]): on Windows the
-//!   fork's `msb.exe` and the fork release's `libkrunfw.dll` (the one the VM tests run); on Linux a given msb (the fork releases none)
-//!   and upstream's firmware under `libkrunfw.so.5` and the versioned name msb looks for. Downloads
+//!   fork's `msb.exe` and the fork release's `libkrunfw.dll` (the one the VM tests run); on Linux the
+//!   fork's msb (or a given one) and the firmware of the pinned libkrunfw fork release (upstream's
+//!   when none is pinned) under `libkrunfw.so.5` and the versioned name msb looks for. Downloads
 //!   are checksum verified, the embedded msb version is checked against the tag, and `licenses/`
 //!   holds the licence texts, the NOTICE (fork commits, written offer) and the third-party notices
 //!   of msb's and Puddle's dependency trees.
@@ -55,7 +56,8 @@ commands:
                                    msb-linux-x86_64 (for a tag whose release has none:
                                    ci/fetch-msb.sh builds one from the tag's source)
             --pins <file>          runtime pin list (default: ci/msb-runtime.sha256), where the Linux
-                                   firmware version comes from
+                                   firmware version and the libkrunfw fork release it comes from
+                                   (PuddleHQ/libkrunfw, upstream's firmware when none) are read
             --tag <tag>            fork tag (default: v<BUILT_FOR>, the version this Puddle runs)
             --upstream-tag <tag>   upstream base tag (default: derived from a -puddle.N tag)
             --fork <owner/name>    fork repository (default: PuddleHQ/microsandbox)
@@ -325,6 +327,10 @@ fn runtime(opts: &Options) -> Result<String> {
                 .to_owned(),
             tag,
             upstream_tag,
+            firmware_tag: match &target {
+                assemble::Target::Linux { firmware_tag, .. } => firmware_tag.clone(),
+                assemble::Target::Windows => None,
+            },
             work: target_dir().join("xtask-runtime-src"),
             about_config: workspace_root().join("crates/xtask/about/msb.toml"),
             cargo: cargo.clone(),
@@ -366,6 +372,7 @@ fn runtime_target(opts: &Options, tag: &str) -> Result<assemble::Target> {
             Ok(assemble::Target::Linux {
                 msb: opts.value("--msb").map(PathBuf::from),
                 libkrunfw_version: pin::libkrunfw_linux_version(&pins, tag)?,
+                firmware_tag: pin::libkrunfw_linux_tag(&pins, tag),
             })
         }
         Some(HostOs::MacOs) | None => Err(XtaskError::Usage(

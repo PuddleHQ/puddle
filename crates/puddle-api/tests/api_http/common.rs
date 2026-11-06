@@ -9,9 +9,11 @@ use std::time::Duration;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, CredentialService, DevCertService, DoctorService, EventHub,
-    FakeCredentials, FakeLauncher, FakeLearned, FakePorts, FakeRepos, FakeWorkspaces, Launcher,
-    MemorySettings, NetworkHealthService, RepoService, RunningApi, Services, SettingsRepo,
+    FakeCredentials, FakeLauncher, FakeLearned, FakePorts, FakeProxySignIns, FakeRepos,
+    FakeWorkspaces, Launcher, MemorySettings, NetworkHealthService, RepoService, RunningApi,
+    Services, SettingsRepo,
 };
+use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
 use puddle_store::{Limits, ManualClock, Store};
 use puddle_types::{EgressRequest, Host, PendingId, SuffixAllows, WorkspaceId};
@@ -45,6 +47,8 @@ pub(crate) struct Api {
     pub(crate) ports: Arc<FakePorts>,
     /// The learned pass-through hosts the API serves.
     pub(crate) learned: Arc<FakeLearned>,
+    /// The proxy sign-ins the API serves.
+    pub(crate) proxy_sign_ins: Arc<FakeProxySignIns>,
 }
 
 pub(crate) async fn start() -> Api {
@@ -129,6 +133,21 @@ pub(crate) async fn start_without_repos() -> Api {
     start_inner(ApiConfig::default(), true, None, None, None, false, None).await
 }
 
+/// An API whose host reads the company network through `signals`.
+pub(crate) async fn start_with_company_signals(signals: Arc<dyn CompanySignals>) -> Api {
+    start_inner_with(
+        ApiConfig::default(),
+        true,
+        None,
+        None,
+        None,
+        true,
+        None,
+        Some(signals),
+    )
+    .await
+}
+
 async fn start_inner(
     config: ApiConfig,
     with_workspaces: bool,
@@ -137,6 +156,30 @@ async fn start_inner(
     doctor: Option<Arc<dyn DoctorService>>,
     with_repos: bool,
     dev_cert: Option<Arc<dyn DevCertService>>,
+) -> Api {
+    start_inner_with(
+        config,
+        with_workspaces,
+        network,
+        own_credentials,
+        doctor,
+        with_repos,
+        dev_cert,
+        None,
+    )
+    .await
+}
+
+#[expect(clippy::too_many_arguments, reason = "a test fixture's switches")]
+async fn start_inner_with(
+    config: ApiConfig,
+    with_workspaces: bool,
+    network: Option<Arc<dyn NetworkHealthService>>,
+    own_credentials: Option<Arc<dyn CredentialService>>,
+    doctor: Option<Arc<dyn DoctorService>>,
+    with_repos: bool,
+    dev_cert: Option<Arc<dyn DevCertService>>,
+    company_signals: Option<Arc<dyn CompanySignals>>,
 ) -> Api {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
@@ -193,6 +236,12 @@ async fn start_inner(
     let services = services.with_ports(ports.clone());
     let learned = Arc::new(FakeLearned::new());
     let services = services.with_learned(learned.clone());
+    let proxy_sign_ins = Arc::new(FakeProxySignIns::new());
+    let services = services.with_proxy_sign_ins(proxy_sign_ins.clone());
+    let services = match company_signals {
+        Some(signals) => services.with_company_signals(signals),
+        None => services,
+    };
     let server = ApiServer::bind(config, token.clone(), services)
         .await
         .unwrap();
@@ -213,6 +262,7 @@ async fn start_inner(
         repos,
         ports,
         learned,
+        proxy_sign_ins,
     }
 }
 

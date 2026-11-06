@@ -26,10 +26,11 @@ use puddle_api::wire::{DevCertificate, FoundAccount, FoundVia};
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, ConnectionInfo, CredentialService, DevCertService,
     DoctorService, EventHub, FakeCredentials, FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned,
-    FakeNetworkHealth, FakePorts, FakeWorkspaces, Found, FoundList, Launcher, LearnedService,
-    Listing, MemorySettings, NetworkHealthService, Operation, PortsService, RemoteNote,
-    RepoFindings, RepoService, RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck,
-    StartFolder, Unsaved, WorkspaceRecord, check_repositories,
+    FakeNetworkHealth, FakePorts, FakeProxySignIns, FakeWorkspaces, Found, FoundList, Launcher,
+    LearnedService, Listing, MemorySettings, NetworkHealthService, Operation, PortsService,
+    ProxySignInService, RemoteNote, RepoFindings, RepoService, RepositoryDraft, RunningApi,
+    Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord,
+    check_repositories,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -173,6 +174,8 @@ struct State {
     settings: Arc<MemorySettings>,
     workspaces: FakeWorkspaces,
     network: Arc<FakeNetworkHealth>,
+    /// The proxy sign-ins the Settings screen stores; they show in the network report too.
+    proxy_sign_ins: Arc<FakeProxySignIns>,
     credentials: Arc<FakeCredentials>,
     /// Where the values of environment secrets are kept: in memory, so the screens can set one and
     /// the tests can see that it never comes back.
@@ -238,7 +241,11 @@ impl Fixture {
             Arc::new(FakeLauncher::new()) as Arc<dyn Launcher>,
             Duration::from_millis(scenario.workspace_step_delay_ms),
         );
-        let network = Arc::new(FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>));
+        let proxy_sign_ins = Arc::new(FakeProxySignIns::new());
+        let network = Arc::new(
+            FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>)
+                .with_sign_ins(proxy_sign_ins.clone()),
+        );
         let credentials = Arc::new(FakeCredentials::new());
         let repos = Arc::new(repos::HeldRepos::new(credentials.clone()));
         let doctor = Arc::new(FakeDoctor::new());
@@ -251,6 +258,7 @@ impl Fixture {
             settings,
             workspaces,
             network,
+            proxy_sign_ins,
             credentials,
             secrets: Arc::new(puddle_secrets::MemoryStore::new()),
             repos,
@@ -287,7 +295,8 @@ impl Fixture {
             .with_dev_cert(state.dev_cert.clone() as Arc<dyn DevCertService>)
             .with_problems(state.problems.clone())
             .with_ports(state.ports.clone() as Arc<dyn PortsService>)
-            .with_learned(state.learned.clone() as Arc<dyn LearnedService>);
+            .with_learned(state.learned.clone() as Arc<dyn LearnedService>)
+            .with_proxy_sign_ins(state.proxy_sign_ins.clone() as Arc<dyn ProxySignInService>);
             match ApiServer::bind(
                 ApiConfig::with_port(self.port.load(Ordering::SeqCst)),
                 self.token.clone(),

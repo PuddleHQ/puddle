@@ -14,10 +14,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use puddle_doctor::{
-    AccessDenied, BlockedBy, BlockedFolder, BootFacts, CheckId, CodeIntegrity, CodeIntegrityFacts,
-    DataPathFacts, DiskFacts, Finding, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts,
-    KeptLogs, Options, Os, Probe, ProcessOutcome, Report, RuntimeFacts, RuntimeState, Status,
-    WritableFolder, diagnose,
+    AccessDenied, AgentService, BlockedBy, BlockedFolder, BootFacts, CheckId, CodeIntegrity,
+    CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, Finding,
+    GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe,
+    ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState, SshAgentFacts, Status,
+    SwapArea, SwapFacts, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -27,6 +28,8 @@ const MSB: &str = r"C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe";
 const DATA: &str = "/home/dev/.local/share/puddle";
 const UNIX_DIR: &str = "/opt/puddle/runtime";
 const UNIX_MSB: &str = "/opt/puddle/runtime/msb";
+const WIN_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+const SOCK: &str = "/run/user/1000/agent.sock";
 const EXPECTED: &str = "0.7.7-puddle.2";
 
 /// A machine described by its facts; counts the calls that cost time.
@@ -42,6 +45,8 @@ struct Fake {
     gsa: Option<GsaFacts>,
     disk: DiskFacts,
     data_path: Option<DataPathFacts>,
+    enc: DiskEncryptionFacts,
+    ssh: SshAgentFacts,
     launches: Cell<u32>,
     boots: Cell<u32>,
 }
@@ -78,6 +83,24 @@ fn disk_with_bytes(free_bytes: u64) -> DiskFacts {
     }
 }
 
+fn encrypted(by: &str) -> DiskEncryptionFacts {
+    let p = Protection::Encrypted { by: by.into() };
+    encryption(p.clone(), p)
+}
+
+fn encryption(data: Protection, swap: Protection) -> DiskEncryptionFacts {
+    DiskEncryptionFacts {
+        data: DataEncryption::Volume {
+            dir: PathBuf::from(DATA),
+            protection: data,
+        },
+        swap: SwapFacts::Areas(vec![SwapArea {
+            name: "/dev/dm-1".into(),
+            protection: swap,
+        }]),
+    }
+}
+
 /// A healthy Windows workstation.
 fn windows() -> Fake {
     Fake {
@@ -103,6 +126,11 @@ fn windows() -> Fake {
         gsa: Some(GsaFacts::NotInstalled),
         disk: disk_with_gb(120),
         data_path: None,
+        enc: encrypted("BitLocker"),
+        ssh: SshAgentFacts::Keys {
+            endpoint: WIN_PIPE.into(),
+            families: vec!["ed25519".into(), "rsa".into()],
+        },
         launches: Cell::new(0),
         boots: Cell::new(0),
     }
@@ -118,6 +146,10 @@ fn linux() -> Fake {
         },
         ci: None,
         gsa: None,
+        ssh: SshAgentFacts::Keys {
+            endpoint: SOCK.into(),
+            families: vec!["ed25519".into()],
+        },
         ..windows()
     }
 }
@@ -169,6 +201,13 @@ impl Probe for Fake {
     }
     fn data_path(&self) -> Option<DataPathFacts> {
         self.data_path.clone()
+    }
+    fn disk_encryption(&self) -> DiskEncryptionFacts {
+        self.enc.clone()
+    }
+    fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
+        assert_eq!(limit, Duration::from_secs(2), "the agent gets 2 s");
+        self.ssh.clone()
     }
 }
 
@@ -1141,8 +1180,25 @@ fn json_schema_is_versioned_and_stable() {
             "launch",
             "test_boot",
             "disk_space",
+            "guest_kernel",
+            "disk_encryption",
+            "ssh_agent",
             "global_secure_access"
         ]
+    );
+}
+
+#[test]
+fn the_windows_report_names_the_guest_kernels_dev_mem_and_the_linux_one_does_not() {
+    let r = run(&windows(), &Options::default());
+    let line = r.check(CheckId::GuestKernel).unwrap();
+    assert_eq!(line.status, Status::Info);
+    assert_eq!(line.finding, Some(Finding::GuestDevMemPresent));
+    assert!(r.ok, "an info line must not fail the report");
+    assert!(
+        run(&linux(), &Options::default())
+            .check(CheckId::GuestKernel)
+            .is_none()
     );
 }
 
@@ -1409,4 +1465,347 @@ fn linux_data_path_world_writable_only() {
     let c = r.check(CheckId::DataPath).unwrap();
     assert!(c.summary.contains("writable by everyone"), "{}", c.summary);
     assert!(c.fix.as_deref().unwrap().contains("\n  chmod go-w /data"));
+}
+
+// ---- SSH agent ----
+
+fn ssh_check(name: &str, fake: &Fake, expected: Option<Finding>) -> Report {
+    let r = check(name, fake, CheckId::SshAgent, expected);
+    assert!(r.ok, "the SSH agent never fails the report");
+    r
+}
+
+fn windows_with(ssh: SshAgentFacts) -> Fake {
+    Fake { ssh, ..windows() }
+}
+
+fn linux_with(ssh: SshAgentFacts) -> Fake {
+    Fake { ssh, ..linux() }
+}
+
+fn unreachable(endpoint: &str, service: Option<AgentService>) -> SshAgentFacts {
+    SshAgentFacts::Unreachable {
+        endpoint: endpoint.into(),
+        detail: "The system cannot find the file specified. (os error 2)".into(),
+        service,
+        by_default: endpoint == WIN_PIPE,
+    }
+}
+
+#[test]
+fn ssh_agent_with_keys_is_ok_and_names_only_the_families() {
+    let r = ssh_check("ssh_agent_keys", &windows(), None);
+    let c = r.check(CheckId::SshAgent).unwrap();
+    assert_eq!(c.status, Status::Ok);
+    assert!(
+        c.summary.contains("2 keys (ed25519: 1, rsa: 1)"),
+        "{}",
+        c.summary
+    );
+}
+
+#[test]
+fn ssh_agent_counts_a_single_key_and_repeated_families() {
+    let keys = |families: &[&str]| {
+        let fake = linux_with(SshAgentFacts::Keys {
+            endpoint: SOCK.into(),
+            families: families.iter().map(|f| (*f).to_owned()).collect(),
+        });
+        run(&fake, &Options::default())
+            .check(CheckId::SshAgent)
+            .unwrap()
+            .summary
+            .clone()
+    };
+    assert!(keys(&["rsa"]).contains("holds 1 key (rsa: 1)"));
+    assert!(keys(&["rsa", "ecdsa", "rsa", "rsa"]).contains("4 keys (ecdsa: 1, rsa: 3)"));
+}
+
+#[test]
+fn ssh_agent_missing_on_windows_names_the_pipe_and_both_fixes() {
+    let r = ssh_check(
+        "ssh_agent_missing_windows",
+        &windows_with(unreachable(WIN_PIPE, None)),
+        Some(Finding::SshAgentMissing),
+    );
+    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Info);
+}
+
+#[test]
+fn ssh_agent_service_disabled_stopped_or_missing_says_what_to_do() {
+    for (name, service) in [
+        ("ssh_agent_service_disabled", AgentService::Disabled),
+        ("ssh_agent_service_stopped", AgentService::Stopped),
+        ("ssh_agent_service_missing", AgentService::Missing),
+    ] {
+        let fake = windows_with(unreachable(WIN_PIPE, Some(service)));
+        ssh_check(name, &fake, Some(Finding::SshAgentMissing));
+    }
+}
+
+#[test]
+fn ssh_agent_missing_on_linux_says_to_set_the_socket() {
+    ssh_check(
+        "ssh_agent_missing_linux",
+        &linux_with(unreachable(SOCK, None)),
+        Some(Finding::SshAgentMissing),
+    );
+    ssh_check(
+        "ssh_agent_no_socket_variable",
+        &linux_with(SshAgentFacts::NoEndpoint),
+        Some(Finding::SshAgentMissing),
+    );
+}
+
+/// An absent agent nobody asked for is a normal state (the CI VMs have none), so it is info and
+/// the report stays all ok or info; an agent the user named that does not answer is a warning.
+#[test]
+fn ssh_agent_absent_by_default_is_info_and_a_named_one_that_fails_is_a_warning() {
+    let status_of = |fake: &Fake| {
+        run(fake, &Options::default())
+            .check(CheckId::SshAgent)
+            .unwrap()
+            .status
+    };
+    assert_eq!(
+        status_of(&linux_with(SshAgentFacts::NoEndpoint)),
+        Status::Info
+    );
+    for service in [None, Some(AgentService::Stopped)] {
+        assert_eq!(
+            status_of(&windows_with(unreachable(WIN_PIPE, service))),
+            Status::Info
+        );
+    }
+    assert_eq!(
+        status_of(&linux_with(unreachable(SOCK, None))),
+        Status::Warn
+    );
+    assert_eq!(
+        status_of(&windows_with(unreachable(r"\\.\pipe\pageant.alice", None))),
+        Status::Warn
+    );
+}
+
+#[test]
+fn ssh_agent_locked_warns() {
+    let r = ssh_check(
+        "ssh_agent_locked",
+        &windows_with(SshAgentFacts::Locked {
+            endpoint: WIN_PIPE.into(),
+        }),
+        Some(Finding::SshAgentLocked),
+    );
+    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Warn);
+}
+
+#[test]
+fn ssh_agent_without_keys_is_info() {
+    let r = ssh_check(
+        "ssh_agent_empty",
+        &windows_with(SshAgentFacts::Keys {
+            endpoint: WIN_PIPE.into(),
+            families: vec![],
+        }),
+        Some(Finding::SshAgentEmpty),
+    );
+    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Info);
+}
+
+#[test]
+fn ssh_agent_that_waits_for_the_user_says_so_instead_of_waiting() {
+    let r = ssh_check(
+        "ssh_agent_slow",
+        &windows_with(SshAgentFacts::TimedOut {
+            endpoint: WIN_PIPE.into(),
+            limit: Duration::from_secs(2),
+        }),
+        Some(Finding::SshAgentSlow),
+    );
+    let c = r.check(CheckId::SshAgent).unwrap();
+    assert_eq!(c.status, Status::Info);
+    assert!(
+        c.summary
+            .contains("did not answer within 2 s; it may be waiting for you to unlock it")
+    );
+}
+
+#[test]
+fn ssh_agent_that_is_not_one_is_info_with_the_detail() {
+    let r = ssh_check(
+        "ssh_agent_unusable",
+        &linux_with(SshAgentFacts::Unusable {
+            endpoint: SOCK.into(),
+            detail: "the agent's answer is not valid: not an identities answer".into(),
+        }),
+        Some(Finding::SshAgentUnusable),
+    );
+    assert_eq!(r.check(CheckId::SshAgent).unwrap().status, Status::Info);
+}
+
+#[test]
+fn no_ssh_agent_result_is_ever_a_failure() {
+    for ssh in [
+        SshAgentFacts::NoEndpoint,
+        unreachable(WIN_PIPE, Some(AgentService::Disabled)),
+        SshAgentFacts::Locked {
+            endpoint: WIN_PIPE.into(),
+        },
+        SshAgentFacts::Keys {
+            endpoint: WIN_PIPE.into(),
+            families: vec![],
+        },
+    ] {
+        let r = run(&windows_with(ssh), &Options::default());
+        assert_ne!(r.check(CheckId::SshAgent).unwrap().status, Status::Fail);
+        assert!(r.ok);
+    }
+}
+
+#[test]
+fn encryption_is_ok_on_an_encrypted_machine_and_with_no_swap() {
+    let r = check("encryption_ok", &linux(), CheckId::DiskEncryption, None);
+    assert_eq!(r.check(CheckId::DiskEncryption).unwrap().status, Status::Ok);
+    let fake = Fake {
+        enc: DiskEncryptionFacts {
+            data: DataEncryption::Volume {
+                dir: PathBuf::from(DATA),
+                protection: Protection::Encrypted { by: "LUKS2".into() },
+            },
+            swap: SwapFacts::None,
+        },
+        ..linux()
+    };
+    check("encryption_no_swap", &fake, CheckId::DiskEncryption, None);
+}
+
+#[test]
+fn an_unencrypted_drive_warns_and_names_what_it_means_for_secrets() {
+    let fake = Fake {
+        enc: encryption(
+            Protection::NotEncrypted,
+            Protection::Encrypted { by: "LUKS2".into() },
+        ),
+        ..linux()
+    };
+    let r = check(
+        "encryption_drive_not_encrypted",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskNotEncrypted),
+    );
+    let c = r.check(CheckId::DiskEncryption).unwrap();
+    assert_eq!(c.status, Status::Warn);
+    assert!(c.fix.as_deref().unwrap().contains("secrets"));
+    assert!(r.ok, "a warning never fails the report");
+}
+
+#[test]
+fn an_unencrypted_swap_warns_on_every_os() {
+    for (name, fake) in [
+        ("encryption_swap_not_encrypted_linux", linux()),
+        ("encryption_swap_not_encrypted_windows", windows()),
+        (
+            "encryption_swap_not_encrypted_macos",
+            Fake {
+                os: Os::MacOs,
+                ..linux()
+            },
+        ),
+    ] {
+        let fake = Fake {
+            enc: encryption(
+                Protection::Encrypted { by: "x".into() },
+                Protection::NotEncrypted,
+            ),
+            ..fake
+        };
+        check(
+            name,
+            &fake,
+            CheckId::DiskEncryption,
+            Some(Finding::SwapNotEncrypted),
+        );
+    }
+}
+
+#[test]
+fn an_unreadable_state_is_info_and_swap_in_memory_is_fine() {
+    let fake = Fake {
+        enc: DiskEncryptionFacts {
+            data: DataEncryption::Volume {
+                dir: PathBuf::from(DATA),
+                protection: Protection::Unknown {
+                    why: "PowerShell did not answer within 8s".into(),
+                },
+            },
+            swap: SwapFacts::Areas(vec![SwapArea {
+                name: "/dev/zram0".into(),
+                protection: Protection::NotOnDisk {
+                    what: "compressed memory (zram)".into(),
+                },
+            }]),
+        },
+        ..windows()
+    };
+    let r = check(
+        "encryption_unknown",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskEncryptionUnknown),
+    );
+    assert_eq!(
+        r.check(CheckId::DiskEncryption).unwrap().status,
+        Status::Info
+    );
+}
+
+#[test]
+fn an_unreadable_swap_list_with_an_unencrypted_drive_still_warns_and_keeps_the_reason() {
+    let fake = Fake {
+        enc: DiskEncryptionFacts {
+            data: DataEncryption::Volume {
+                dir: PathBuf::from(DATA),
+                protection: Protection::NotEncrypted,
+            },
+            swap: SwapFacts::Unreadable {
+                why: "/proc/swaps: permission denied".into(),
+            },
+        },
+        ..linux()
+    };
+    let r = check(
+        "encryption_swap_list_unreadable",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskNotEncrypted),
+    );
+    let c = r.check(CheckId::DiskEncryption).unwrap();
+    assert!(c.detail.as_deref().unwrap().contains("/proc/swaps"));
+    assert_eq!(SwapFacts::None.areas().len(), 0);
+}
+
+#[test]
+fn drive_and_swap_both_unencrypted_on_an_unknown_os_gets_generic_advice() {
+    let fake = Fake {
+        os: Os::Other,
+        enc: encryption(Protection::NotEncrypted, Protection::NotEncrypted),
+        ..linux()
+    };
+    let r = check(
+        "encryption_both_not_encrypted_other_os",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskNotEncrypted),
+    );
+    let fix = r
+        .check(CheckId::DiskEncryption)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(
+        fix.starts_with("The drive and the swap are not encrypted"),
+        "{fix}"
+    );
 }

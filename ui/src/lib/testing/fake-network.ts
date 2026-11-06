@@ -20,7 +20,7 @@ export function report(over: Partial<NetworkHealth> = {}): NetworkHealth {
       last_change_at: null,
       dead_proxies: [],
     },
-    sign_in: { methods: ["negotiate", "ntlm"], attempts: [] },
+    sign_in: { methods: ["negotiate", "ntlm"], attempts: [], stored: [] },
     roots: {
       synced: true,
       synced_at: 900,

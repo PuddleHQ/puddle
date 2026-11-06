@@ -20,14 +20,15 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, HostCredentials, HostNetworkHealth, Launcher,
-    RunningApi, Services, SettingsRepo, forward_network_changes, forward_proxy_sign_in_failures,
+    ProxySignInService, RunningApi, Services, SettingsRepo, forward_network_changes,
+    forward_proxy_sign_in_failures,
 };
 use puddle_certs::CorporateRoots;
 use puddle_compute::{Runtime, SandboxInfo};
 use puddle_front::Front;
 use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
-use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
+use puddle_netpolicy::{CompanySignals, LocalAccess, NetPolicy, NoSignals, PuddleEndpoints};
 use puddle_ports::Ports;
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Resolver, Terminations, Upstream};
 use puddle_repos::{HostApi, Repos};
@@ -52,6 +53,7 @@ use crate::injection::{
 };
 use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
+use crate::proxy_sign_ins::HostProxySignIns;
 use crate::ssh_config::SshSetup;
 use crate::workspaces::{Parts, RewriteGate, known_ids};
 use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords, VsCodeLauncher};
@@ -300,6 +302,10 @@ pub struct HostOptions {
     /// one, the operating system's resolver. Tests give a double, so a name only a fake company
     /// proxy knows is never a question for the machine's real DNS.
     pub resolver: Option<Arc<dyn Resolver>>,
+    /// What the host reads of the company network (proxy script, DNS suffixes, private-access
+    /// clients, routes), shared by the sandbox proxy's guard and the API. Without one the host
+    /// reads none, so no destination is ever in the company-network category.
+    pub company_signals: Option<Arc<dyn CompanySignals>>,
     /// Holds an author rewrite back when it starts (tests, to make the rewrites of one workspace
     /// run out of order). Without one, no rewrite waits.
     pub rewrite_gate: Option<RewriteGate>,
@@ -314,6 +320,7 @@ impl Default for HostOptions {
             secret_store: None,
             dev_cert: None,
             resolver: None,
+            company_signals: None,
             rewrite_gate: None,
         }
     }
@@ -338,23 +345,25 @@ pub struct HostShutdown {
 
 struct Background {
     sweeper: Sweeper,
+    // Holds the store; awaited at shutdown so the database is closed when the host is.
+    vault_sweep: tokio::task::JoinHandle<()>,
     pull: PullRoute,
     front: Front,
     // Dropped (stopped) with the rest; `None` where the OS cannot watch.
     _watching: Option<Watching>,
     // Tells the API's event stream about each new network epoch; ended with the rest.
-    _network_events: AbortOnDrop,
-    _sign_in_failures: AbortOnDrop,
+    network_events: AbortOnDrop,
+    sign_in_failures: AbortOnDrop,
     // Applies a change of a running workspace's identities to what it decrypts and its authors.
-    _git_changes: AbortOnDrop,
+    git_changes: AbortOnDrop,
     // Turns a read that needs a sign-in into the user's notice.
-    _sign_in_notices: AbortOnDrop,
+    sign_in_notices: AbortOnDrop,
     // Asks Microsoft's editor server to switch to a staged build when no window is on it.
-    _editor_updates: AbortOnDrop,
+    editor_updates: AbortOnDrop,
     // Says when the free space on the drive that holds the data folder crosses a line.
-    _space_watch: AbortOnDrop,
+    space_watch: AbortOnDrop,
     // Reads the disks' use now and then and warns when one reaches the threshold.
-    _disk_watch: AbortOnDrop,
+    disk_watch: AbortOnDrop,
 }
 
 /// Aborts its task when dropped, so a forwarder never outlives the host.
@@ -377,6 +386,15 @@ impl AbortOnDrop {
             chain,
             events.clone() as Arc<dyn EventSink>,
         ))
+    }
+}
+
+impl AbortOnDrop {
+    /// Aborts the task and waits until it is gone: an abort only takes effect when the runtime
+    /// next polls the task, and what the task holds (a store handle) is released then.
+    async fn stop(&mut self) {
+        self.0.abort();
+        let _ = (&mut self.0).await;
     }
 }
 
@@ -487,7 +505,8 @@ impl<R: Runtime + Clone> Host<R> {
             .secret_store
             .clone()
             .unwrap_or_else(crate::vault::os_vault);
-        crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
+        let vault_sweep =
+            crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
         let marks = config.paths.login_markers();
         let injecting = Injecting::build(&options, &vault, &store, &events, &roots, marks)?;
         let proxy_passwords = ProxyPasswords::new(vault.clone());
@@ -512,7 +531,12 @@ impl<R: Runtime + Clone> Host<R> {
             EgressParts::new(injecting.termination(), &proxy_passwords, &reports, &ports),
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
-        let network_health = network_health_of(&egress.chain, &discovery, &clock, &roots);
+        let sign_ins: Arc<dyn ProxySignInService> = Arc::new(HostProxySignIns::new(
+            proxy_passwords.clone(),
+            egress.chain.clone(),
+        ));
+        let network_health =
+            network_health_of(&egress.chain, &discovery, &clock, &roots, sign_ins.clone());
         network_health.set_tls_left_out(injecting.tls.rejected_roots(), &roots);
         let pull_url = pull.proxy_url();
         // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
@@ -586,6 +610,7 @@ impl<R: Runtime + Clone> Host<R> {
         let front_addr = front.local_addr();
         steps.push(Step::BackgroundStarted);
 
+        let signals = company_signals(&options);
         let lifecycle = Arc::new(Lifecycle::new(runtime.clone(), config.shutdown.clone()));
         let service = HostWorkspaces::new(
             Parts {
@@ -652,6 +677,8 @@ impl<R: Runtime + Clone> Host<R> {
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
         .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
+        .with_proxy_sign_ins(sign_ins)
+        .with_company_signals(signals)
         .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         steps.push(Step::ApiServing);
@@ -673,16 +700,17 @@ impl<R: Runtime + Clone> Host<R> {
             api: AsyncMutex::new(Some(served.api)),
             background: AsyncMutex::new(Some(Background {
                 sweeper,
+                vault_sweep,
                 pull,
                 front,
                 _watching: watching,
-                _network_events: network_events,
-                _sign_in_failures: sign_in_failures,
-                _git_changes: git_changes,
-                _sign_in_notices: sign_in_notices,
-                _editor_updates: editor_updates,
-                _space_watch: space_watch,
-                _disk_watch: disk_watch,
+                network_events,
+                sign_in_failures,
+                git_changes,
+                sign_in_notices,
+                editor_updates,
+                space_watch,
+                disk_watch,
             })),
             steps: Mutex::new(steps),
             reconcile: report,
@@ -801,10 +829,23 @@ impl<R: Runtime + Clone> Host<R> {
                     api.shutdown().await;
                 }
                 self.step(Step::ApiStopped);
-                if let Some(background) = self.background.lock().await.take() {
+                if let Some(mut background) = self.background.lock().await.take() {
                     background.sweeper.shutdown().await;
                     background.pull.shutdown().await;
                     background.front.close().await;
+                    // A panic in the sweep was reported by the sweep; nothing more to do here.
+                    let _ = background.vault_sweep.await;
+                    for task in [
+                        &mut background.network_events,
+                        &mut background.sign_in_failures,
+                        &mut background.git_changes,
+                        &mut background.sign_in_notices,
+                        &mut background.editor_updates,
+                        &mut background.space_watch,
+                        &mut background.disk_watch,
+                    ] {
+                        task.stop().await;
+                    }
                 }
                 self.step(Step::BackgroundStopped);
                 let steps = self
@@ -874,9 +915,12 @@ fn network_health_of(
     discovery: &Arc<Discovery>,
     clock: &Arc<SystemClock>,
     roots: &CorporateRoots,
+    sign_ins: Arc<dyn ProxySignInService>,
 ) -> Arc<HostNetworkHealth> {
     let health = Arc::new(
-        HostNetworkHealth::new(discovery.clone(), clock.clone()).with_chain(chain.clone()),
+        HostNetworkHealth::new(discovery.clone(), clock.clone())
+            .with_chain(chain.clone())
+            .with_sign_ins(sign_ins),
     );
     health.set_roots(Arc::new(roots.clone()));
     health
@@ -1029,6 +1073,14 @@ impl EgressParts {
     }
 }
 
+/// The company-network signals the host was given, or none (the category is then empty).
+fn company_signals(options: &HostOptions) -> Arc<dyn CompanySignals> {
+    options
+        .company_signals
+        .clone()
+        .unwrap_or_else(|| Arc::new(NoSignals))
+}
+
 /// The way out through the company network, shared by the sandbox proxy and the pull proxy.
 struct Egress {
     proxy: Arc<Proxy>,
@@ -1072,7 +1124,8 @@ impl Egress {
         let guard = NetPolicy::new(Arc::new(move |workspace: &WorkspaceId| {
             local_access(access_settings.as_ref(), workspace)
         }))
-        .with_endpoints(endpoints.clone());
+        .with_endpoints(endpoints.clone())
+        .with_company_signals(company_signals(options));
         let mut proxy = Proxy::new(
             connections.store().clone(),
             events.clone() as Arc<dyn EventSink>,

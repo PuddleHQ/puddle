@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use puddle_secrets::{ChunkedStore, IndexedStore, KeyringStore, SecretStore, Sweep};
+use puddle_secrets::{ChunkedStore, IndexedStore, KeyringStore, SecretStore, StoredId, Sweep};
 use puddle_store::Store;
 use puddle_types::{Problem, Problems};
 
@@ -25,12 +25,31 @@ fn sweep(vault: &dyn SecretStore, store: &Store) -> Result<Sweep, &'static str> 
         tracing::warn!(%err, "credential store sweep skipped: the rows could not be read");
         "Puddle could not read which tokens and secrets it still uses"
     })?;
+    keep_local(vault, in_use.iter());
     vault
         .sweep_orphans(&|id| in_use.contains(id) || id.as_str().starts_with(ID_PREFIX))
         .map_err(|_| {
             tracing::warn!("credential store sweep skipped: the store did not answer");
             "the operating system's credential store did not answer"
         })
+}
+
+/// Rewrites the values an earlier version stored so that they stay on this computer (a Windows
+/// roaming profile would copy them otherwise): everything the store lists, plus what a row
+/// names, which covers values written before the store kept a list. Nothing here is the user's
+/// to act on, so a failure is only logged; the next start tries again.
+fn keep_local<'a>(vault: &dyn SecretStore, in_use: impl Iterator<Item = &'a StoredId>) {
+    let mut failed = vault.keep_all_local().unwrap_or_else(|_| {
+        tracing::warn!("could not list the credential store entries to keep on this computer");
+        0
+    });
+    failed += in_use.filter(|id| vault.keep_local(id).is_err()).count();
+    if failed > 0 {
+        tracing::warn!(
+            failed,
+            "credential store entries could not be kept on this computer"
+        );
+    }
 }
 
 /// Tells the user what the sweep found: nothing when it removed what it should, a problem when a
@@ -72,12 +91,15 @@ fn report(outcome: Result<Sweep, &'static str>, problems: &Problems) {
 
 /// Runs [`sweep`] off the async threads: a locked keyring may take a long time to answer, and
 /// starting must not wait for it. Values this run writes meanwhile are never swept.
+///
+/// The sweep holds the store, so the host awaits the returned handle at shutdown: a restart on
+/// the same folder must not open the database while this run's connection is still closing.
 pub(crate) fn sweep_in_background(
     vault: Arc<dyn SecretStore>,
     store: Arc<Store>,
     problems: Arc<Problems>,
-) {
-    tokio::task::spawn_blocking(move || report(sweep(vault.as_ref(), &store), &problems));
+) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || report(sweep(vault.as_ref(), &store), &problems))
 }
 
 #[cfg(test)]
@@ -109,6 +131,9 @@ mod tests {
         }
         fn delete(&self, id: &StoredId) -> Result<(), puddle_secrets::StoreError> {
             self.0.delete(id)
+        }
+        fn keep_local(&self, id: &StoredId) -> Result<(), puddle_secrets::StoreError> {
+            self.0.keep_local(id)
         }
     }
 
@@ -185,6 +210,41 @@ mod tests {
         assert!(disk.get(&id("tok-a")).unwrap().is_some());
     }
 
+    #[test]
+    fn a_sweep_also_keeps_listed_and_named_values_on_this_computer() {
+        let store =
+            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+        store
+            .set_env(
+                &EnvScope::Global,
+                &EnvName::new("TOKEN").unwrap(),
+                EnvDraft::secret(
+                    id("env-named"),
+                    vec![SecretHost::new("a.example.com").unwrap()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let disk = Arc::new(MemoryStore::new());
+        put(&IndexedStore::new(Shared(disk.clone())), "env-listed");
+        let later = IndexedStore::new(Shared(disk.clone()));
+        sweep(&later, &store).unwrap();
+        let kept = disk.kept_local();
+        assert!(kept.contains(&"env-listed".to_owned()));
+        assert!(kept.contains(&"env-named".to_owned()));
+        assert!(kept.contains(&"puddle-index".to_owned()));
+    }
+
+    #[test]
+    fn a_store_that_cannot_be_rewritten_does_not_stop_the_sweep() {
+        let store =
+            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+        let broken = MemoryStore::new();
+        broken.break_it();
+        keep_local(&broken, [id("a")].iter());
+        assert_eq!(sweep(&broken, &store), Ok(Sweep::default()));
+    }
+
     #[tokio::test]
     async fn the_background_sweep_runs_off_the_async_threads() {
         let store = Arc::new(
@@ -192,11 +252,12 @@ mod tests {
         );
         let disk = Arc::new(MemoryStore::new());
         put(&IndexedStore::new(Shared(disk.clone())), "tok-a");
-        sweep_in_background(
+        let sweep = sweep_in_background(
             Arc::new(IndexedStore::new(Shared(disk.clone()))),
             store,
             Arc::new(Problems::new(Arc::new(puddle_types::NullSink))),
         );
+        sweep.await.unwrap();
         puddle_test_kit::eventually("the sweep ran", std::time::Duration::from_secs(5), || {
             disk.get(&id("tok-a")).unwrap().is_none()
         })

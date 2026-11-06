@@ -162,6 +162,7 @@ describe("connecting", () => {
         metadata: null,
         private: null,
         special: null,
+        company_network: null,
       },
       memory: 4096,
       cpus: null,

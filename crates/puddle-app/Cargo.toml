@@ -33,6 +33,7 @@ puddle-compute = { workspace = true }
 puddle-host = { workspace = true, features = ["embedded-ui"] }
 puddle-lifecycle = { workspace = true }
 puddle-log = { workspace = true }
+puddle-no-dump = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-store = { workspace = true }
@@ -46,6 +47,7 @@ hyper-util = { workspace = true }
 serde_json = { workspace = true }
 tauri = { workspace = true }
 tauri-plugin-notification = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
 tauri-plugin-opener = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
 tauri-plugin-window-state = { workspace = true }

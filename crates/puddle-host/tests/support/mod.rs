@@ -19,6 +19,49 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+/// A fresh folder for one test's data (the host's store, keys and settings).
+///
+/// The host fsyncs about fifteen files to create a workspace, so on a disk shared with heavy
+/// writers (a build machine running several test runs at once) a test can sit in `fsync` for
+/// minutes, longer than any wait of its own and than the runner's kill time. On Linux the
+/// folder is therefore made in `/dev/shm` when that is its own RAM-backed, executable mount;
+/// the test checks the host's logic, not the disk's durability, which the VM tests cover.
+/// A `TMPDIR` the runner set is respected, and everywhere else this is `tempfile::tempdir()`.
+pub(crate) fn scratch_dir() -> tempfile::TempDir {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("TMPDIR").is_none()
+        && is_ram_mount("/dev/shm")
+        && let Ok(dir) = tempfile::Builder::new()
+            .prefix("puddle-test-")
+            .tempdir_in("/dev/shm")
+    {
+        return dir;
+    }
+    tempfile::tempdir().unwrap()
+}
+
+/// Whether `mount_point` is a mount of its own with file system type `tmpfs` that is writable
+/// and allows running programs, read from the kernel's mount table.
+#[cfg(target_os = "linux")]
+pub(crate) fn is_ram_mount(mount_point: &str) -> bool {
+    let Ok(table) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        return false;
+    };
+    table.lines().any(|line| {
+        // `id parent major:minor root mount-point options [optional...] - type source super`
+        let (head, tail) = line.split_once(" - ").unwrap_or_default();
+        let mut head = head.split(' ').skip(4);
+        let (Some(at), Some(options)) = (head.next(), head.next()) else {
+            return false;
+        };
+        let options: Vec<&str> = options.split(',').collect();
+        at == mount_point
+            && tail.split(' ').next() == Some("tmpfs")
+            && options.contains(&"rw")
+            && !options.contains(&"noexec")
+    })
+}
+
 /// A client of one host's API.
 pub(crate) struct Api {
     addr: SocketAddr,
@@ -311,7 +354,7 @@ pub(crate) struct TestDevCert {
 
 impl TestDevCert {
     pub(crate) fn new() -> Self {
-        let folder = tempfile::tempdir().unwrap();
+        let folder = scratch_dir();
         let manager = DevCertManager::new(folder.path(), Unsupported);
         Self {
             folder,

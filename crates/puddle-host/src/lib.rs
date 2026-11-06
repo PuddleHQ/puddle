@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 mod agent_reports;
+mod backup;
 mod boot;
 mod changes;
 mod config;
@@ -49,6 +50,7 @@ mod paths;
 mod platform;
 mod ports;
 mod proxy_passwords;
+mod proxy_sign_ins;
 mod settings_read;
 mod shell_init;
 mod space_watch;
@@ -59,12 +61,15 @@ mod vault;
 mod vscode;
 mod workspaces;
 
+pub use backup::{
+    BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupError, BackupReport, backup,
+};
 pub use config::{
     AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, FreeSpaceTiming, GuestSettings, HostConfig,
     UpstreamSettings,
 };
 pub use dev_cert::{DevCertSource, GuestCertSource};
-pub use doctor::disk_limits;
+pub use doctor::{disk_limits, ssh_agent_pipe};
 pub use error::HostError;
 pub use files::FileSettings;
 pub use host::{

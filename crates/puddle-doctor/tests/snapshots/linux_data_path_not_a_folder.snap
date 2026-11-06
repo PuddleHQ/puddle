@@ -11,6 +11,8 @@ FAIL  Data folder path    /home/dev/.local is not a folder, so msb will not open
             below a folder. Rename or remove it (for example `mv /home/dev/.local
             /home/dev/.local.old`), or point XDG_DATA_HOME at a folder you own.
       from: /home/dev/.local not a folder
+ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
+ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -59,6 +61,16 @@ FAIL  Data folder path    /home/dev/.local is not a folder, so msb will not open
       "finding": "data_path_blocked",
       "fix": "/home/dev/.local is a file or another kind of entry, but Puddle's data has to live below a folder. Rename or remove it (for example `mv /home/dev/.local /home/dev/.local.old`), or point XDG_DATA_HOME at a folder you own.",
       "detail": "/home/dev/.local not a folder"
+    },
+    {
+      "id": "disk_encryption",
+      "status": "ok",
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+    },
+    {
+      "id": "ssh_agent",
+      "status": "ok",
+      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
     }
   ],
   "elapsed_ms": 1234

@@ -16,6 +16,8 @@ FAIL  Data folder path    /srv/team belongs to another user (id 1001); /srv/team
               sudo chmod g-w /srv/team
       from: /srv/team owner id 1001
             /srv/team mode 0775
+ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
+ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -64,6 +66,16 @@ FAIL  Data folder path    /srv/team belongs to another user (id 1001); /srv/team
       "finding": "data_path_blocked",
       "fix": "msb trusts only folders you or root own. If /srv/team is yours, run `sudo chown \"$USER\" /srv/team`; otherwise point XDG_DATA_HOME at a folder you own.\nmsb opens its catalog only below folders where other accounts cannot rename entries, so every sandbox start fails until the write permission is gone. A user created with a private group and umask 0002 (the Ubuntu default) often leaves ~/.local at 0775. Run:\n  sudo chmod g-w /srv/team",
       "detail": "/srv/team owner id 1001\n/srv/team mode 0775"
+    },
+    {
+      "id": "disk_encryption",
+      "status": "ok",
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+    },
+    {
+      "id": "ssh_agent",
+      "status": "ok",
+      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
     }
   ],
   "elapsed_ms": 1234

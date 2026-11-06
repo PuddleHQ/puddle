@@ -21,12 +21,16 @@ pub fn render(facts: &ForkFacts, os: HostOs, firmware_files: &str) -> String {
         HostOs::Windows => "config-libkrunfw-windows_x86_64",
         HostOs::Linux | HostOs::MacOs => "the kernel configuration of its Linux build",
     };
-    let provenance = match os {
-        HostOs::Windows => format!(
+    let provenance = match (os, &fw.fork_tag) {
+        (HostOs::Windows, _) => format!(
             "built from the source below by the release {} of {} (the Windows firmware msb loads)",
             facts.tag, facts.fork_repo
         ),
-        HostOs::Linux | HostOs::MacOs => format!(
+        (HostOs::Linux | HostOs::MacOs, Some(fork_tag)) => format!(
+            "built by Puddle from {} at tag {fork_tag}: upstream's libkrunfw with a changed kernel configuration (no /dev/mem). Puddle's changes are the commits of that repository on top of upstream's",
+            fw.repo_url
+        ),
+        (HostOs::Linux | HostOs::MacOs, None) => format!(
             "as published by microsandbox's release {}, unchanged",
             facts.upstream_tag
         ),
@@ -121,6 +125,7 @@ mod tests {
                 kernel_version: "6.12.109".into(),
                 repo_url: "https://github.com/superradcompany/libkrunfw".into(),
                 commit: "21f169f7e94798c8916315f8ac6f5999d5b88566".into(),
+                fork_tag: None,
             },
         }
     }

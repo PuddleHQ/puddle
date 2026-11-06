@@ -247,12 +247,16 @@ async fn handle(
     let chosen = state.options.responder.as_ref().and_then(|ask| ask(&seen));
     let answer = if let Some(chosen) = chosen {
         seen.status = chosen.status;
-        Response::builder()
+        let mut reply = Response::builder()
             .status(chosen.status)
             .header("content-type", chosen.content_type)
-            .header("x-lab-web-host", "answered")
-            .body(Full::new(Bytes::from(chosen.body)))
-            .unwrap()
+            .header("x-lab-web-host", "answered");
+        if chosen.status == 401 {
+            // A server that refuses with 401 says how to authenticate: Maven and NuGet send
+            // credentials only after that challenge.
+            reply = reply.header("www-authenticate", "Basic realm=\"lab\"");
+        }
+        reply.body(Full::new(Bytes::from(chosen.body))).unwrap()
     } else {
         answer
             .body(Full::new(Bytes::from(format!(

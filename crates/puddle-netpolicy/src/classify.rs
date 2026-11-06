@@ -8,9 +8,10 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use puddle_types::LocalCategory;
+use puddle_types::{CompanySignal, Host, LocalCategory};
 
-use crate::EndpointKind;
+use crate::company::company_signal;
+use crate::{CompanySignals, EndpointKind};
 
 /// Which class a destination address is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,6 +26,10 @@ pub enum AddressClass {
         /// Why, for the audit (`rfc1918`, `nat64`, `metadata`, ...).
         rule: &'static str,
     },
+    /// A private address the host's signals put in the company network (a
+    /// [`LocalCategory::CompanyNetwork`] destination). Only [`crate::NetPolicy::classify_named`]
+    /// gives it, since it needs the host's signals.
+    Company(CompanySignal),
     /// One of Puddle's own listeners. Not host loopback: no toggle reaches it, and
     /// a later per-workspace unblock would key on this class. Only
     /// [`crate::NetPolicy::classify`] gives it, since it needs the port and the registry.
@@ -37,16 +42,19 @@ impl AddressClass {
     pub fn category(self) -> Option<LocalCategory> {
         match self {
             Self::Local { category, .. } => Some(category),
+            Self::Company(_) => Some(LocalCategory::CompanyNetwork),
             Self::Public | Self::PuddleEndpoint(_) => None,
         }
     }
 
-    /// The audit `rule` for this class: `public`, the local rule, or `puddle_endpoint`.
+    /// The audit `rule` for this class: `public`, the local rule, the company-network signal, or
+    /// `puddle_endpoint`.
     #[must_use]
     pub fn rule(self) -> &'static str {
         match self {
             Self::Public => "public",
             Self::Local { rule, .. } => rule,
+            Self::Company(signal) => signal.code(),
             Self::PuddleEndpoint(_) => "puddle_endpoint",
         }
     }
@@ -99,6 +107,28 @@ pub fn classify_ip(ip: IpAddr) -> AddressClass {
     match ip {
         IpAddr::V4(a) => classify_v4(a),
         IpAddr::V6(a) => classify_v6(a),
+    }
+}
+
+/// The class of `ip` by address and the host's company-network signals (never
+/// [`AddressClass::PuddleEndpoint`]): [`classify_ip`], except that a private address the signals
+/// put in the company network is [`AddressClass::Company`]. `name` is the host name the address
+/// was reached by, if any (an IP literal has none).
+#[must_use]
+pub fn classify_with_signals(
+    ip: IpAddr,
+    name: Option<&Host>,
+    signals: &dyn CompanySignals,
+) -> AddressClass {
+    let class = classify_ip(ip);
+    let name = match name {
+        Some(Host::Name(name)) => Some(name.as_str()),
+        _ => None,
+    };
+    let private = class.category() == Some(LocalCategory::Private);
+    match company_signal(private, ip, name, signals) {
+        Some(signal) => AddressClass::Company(signal),
+        None => class,
     }
 }
 
@@ -227,6 +257,13 @@ mod tests {
         for i in inputs {
             assert_eq!(cat(i), want, "{i}");
         }
+    }
+
+    #[test]
+    fn a_company_class_audits_under_its_signal_code_and_the_company_category() {
+        let class = AddressClass::Company(CompanySignal::DnsSuffix);
+        assert_eq!(class.rule(), CompanySignal::DnsSuffix.code());
+        assert_eq!(class.category(), Some(LocalCategory::CompanyNetwork));
     }
 
     // The reserved-range table, one case per row, with the local-destination categories.

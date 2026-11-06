@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use puddle_netpolicy::CompanySignals;
 use puddle_secrets::SecretStore;
 use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
 use tokio::sync::{Mutex, watch};
@@ -17,6 +18,7 @@ use crate::events::EventHub;
 use crate::learned::LearnedService;
 use crate::network_health::NetworkHealthService;
 use crate::ports::PortsService;
+use crate::proxy_sign_in::ProxySignInService;
 use crate::repos::RepoService;
 use crate::settings::SettingsRepo;
 use crate::workspaces::WorkspaceService;
@@ -37,6 +39,7 @@ mod orphan_volumes;
 mod pending;
 mod ports;
 mod problems;
+mod proxy_sign_in;
 mod repos;
 mod repositories;
 mod request_rules;
@@ -87,6 +90,9 @@ pub(crate) struct AppState {
     pub(crate) dev_cert: Arc<dyn DevCertService>,
     pub(crate) ports: Arc<dyn PortsService>,
     pub(crate) learned: Arc<dyn LearnedService>,
+    pub(crate) proxy_sign_ins: Arc<dyn ProxySignInService>,
+    /// What the host reads of the company network, for the `blocked_by` of a pending request.
+    pub(crate) company_signals: Arc<dyn CompanySignals>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -98,6 +104,11 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(problems::list_problems))
         .routes(routes!(events::events))
         .routes(routes!(network_health::network_health))
+        .routes(routes!(
+            proxy_sign_in::list_proxy_sign_ins,
+            proxy_sign_in::put_proxy_sign_in
+        ))
+        .routes(routes!(proxy_sign_in::delete_proxy_sign_in))
         .routes(routes!(pending::list_pending))
         .routes(routes!(pending::inbox))
         .routes(routes!(pending::get_pending))

@@ -5,7 +5,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::facts::{CodeIntegrityFacts, GsaFacts, JobFacts};
+use crate::facts::{AgentService, CodeIntegrityFacts, GsaFacts, JobFacts};
 
 /// Hypervisor facts for a Unix that is neither Linux nor macOS: no API is known.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -27,6 +27,11 @@ pub(crate) fn job() -> Option<JobFacts> {
 }
 
 pub(crate) fn global_secure_access() -> Option<GsaFacts> {
+    None
+}
+
+/// The Windows agent service does not exist here.
+pub(crate) fn ssh_agent_service() -> Option<AgentService> {
     None
 }
 
@@ -68,5 +73,6 @@ mod tests {
         assert_eq!(code_integrity(), None);
         assert_eq!(job(), None);
         assert_eq!(global_secure_access(), None);
+        assert_eq!(ssh_agent_service(), None);
     }
 }

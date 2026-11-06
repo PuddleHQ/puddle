@@ -16,6 +16,7 @@ const noLayer = (): S["SettingsLayer"] => ({
     metadata: null,
     private: null,
     special: null,
+    company_network: null,
   },
   memory: null,
   cpus: null,
@@ -68,6 +69,12 @@ export class FakeSettings {
   consent: S["Consent"] = { state: "not_asked" };
   /** The names no workspace decrypts. */
   neverDecrypt: string[] = [];
+  /** The proxy sign-ins stored (names only; the password is kept apart). */
+  proxySignIns: S["StoredSignIn"][] = [];
+  /** The network report the proxy field offers proxies from; none answers 503. */
+  health: S["NetworkHealth"] | null = null;
+  /** The passwords PUT, by proxy, for a test that checks what was sent. */
+  proxyPasswords = new Map<string, string>();
   /** How long and how many learned hosts are passed through. */
   learnedLimits: S["LearnedLimits"] = { ttl_secs: 43_200, cap: 1024 };
   calls: string[] = [];
@@ -91,6 +98,9 @@ export class FakeSettings {
     this.consent = fresh.consent;
     this.neverDecrypt = [];
     this.learnedLimits = { ttl_secs: 43_200, cap: 1024 };
+    this.proxySignIns = [];
+    this.proxyPasswords = new Map();
+    this.health = null;
     this.calls = [];
     this.bodies = [];
     this.down = false;
@@ -146,6 +156,7 @@ export class FakeSettings {
           link_local: this.pick(l.local_toggles.link_local),
           metadata: this.pick(l.local_toggles.metadata),
           special: this.pick(l.local_toggles.special),
+          company_network: this.pick(l.local_toggles.company_network),
         },
         wildcards_reach_local: this.pick(l.wildcards_reach_local),
         reconnection_grace: {
@@ -185,6 +196,13 @@ export class FakeSettings {
         return this.reply(200, { never_decrypt: this.neverDecrypt });
       case "/api/interception/learned-limits":
         return this.reply(200, this.learnedLimits);
+      case "/api/proxy-sign-ins":
+        return this.reply(200, { sign_ins: this.proxySignIns });
+      case "/api/network-health":
+        // The proxy field's suggestions: a report only when a test gives one.
+        return this.health
+          ? this.reply(200, this.health)
+          : this.reply(503, undefined, "unavailable", "no report");
       case "/api/app-icons":
         return this.reply(200, {
           built_in: (
@@ -210,6 +228,15 @@ export class FakeSettings {
     if (path === "/api/interception/learned-limits") {
       this.learnedLimits = init.body as S["LearnedLimits"];
       return this.reply(200, this.learnedLimits);
+    }
+    if (path === "/api/proxy-sign-ins") {
+      const b = init.body as S["ProxySignInRequest"];
+      this.proxyPasswords.set(b.proxy, b.password);
+      this.proxySignIns = [
+        ...this.proxySignIns.filter((s) => s.proxy !== b.proxy),
+        { proxy: b.proxy, user: b.user },
+      ].sort((a, c) => a.proxy.localeCompare(c.proxy));
+      return this.reply(200, { sign_ins: this.proxySignIns });
     }
     if (path === "/api/interception/never-decrypt") {
       this.neverDecrypt = [
@@ -279,11 +306,20 @@ export class FakeSettings {
     return this.reply(200, this.view());
   };
 
-  DELETE = async (path: string) => {
+  DELETE = async (
+    path: string,
+    init?: { params?: { path?: { proxy?: string } } },
+  ) => {
     this.calls.push(`DELETE ${path}`);
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`DELETE ${path}`);
     if (refused) return refused;
+    if (path === "/api/proxy-sign-ins/{proxy}") {
+      const proxy = init?.params?.path?.proxy;
+      this.proxySignIns = this.proxySignIns.filter((s) => s.proxy !== proxy);
+      this.proxyPasswords.delete(proxy ?? "");
+      return { response: { status: 204, ok: true } as Response };
+    }
     if (this.ui.app_icon === "custom") {
       return this.reply(
         409,

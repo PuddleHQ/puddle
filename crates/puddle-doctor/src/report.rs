@@ -62,6 +62,12 @@ pub enum CheckId {
     DiskSpace,
     /// The folders above Puddle's data: can other accounts write in them.
     DataPath,
+    /// Whether the data drive and the swap are encrypted.
+    DiskEncryption,
+    /// The SSH agent on this machine.
+    SshAgent,
+    /// What the runtime's guest kernel lets guest root reach.
+    GuestKernel,
 }
 
 impl CheckId {
@@ -79,6 +85,9 @@ impl CheckId {
             Self::GlobalSecureAccess => "Global Secure Access",
             Self::DiskSpace => "Disk space",
             Self::DataPath => "Data folder path",
+            Self::DiskEncryption => "Disk encryption",
+            Self::SshAgent => "SSH agent",
+            Self::GuestKernel => "Guest kernel",
         }
     }
 }
@@ -160,6 +169,24 @@ pub enum Finding {
     DataPathBlocked,
     /// The folders above Puddle's data couldn't be read.
     DataPathUnreadable,
+    /// The drive that holds Puddle's data is not encrypted.
+    DiskNotEncrypted,
+    /// The swap is not encrypted.
+    SwapNotEncrypted,
+    /// Whether the disk and swap are encrypted could not be told.
+    DiskEncryptionUnknown,
+    /// No SSH agent answers where Puddle asks.
+    SshAgentMissing,
+    /// The SSH agent is locked.
+    SshAgentLocked,
+    /// The SSH agent holds no keys.
+    SshAgentEmpty,
+    /// The SSH agent did not answer in time.
+    SshAgentSlow,
+    /// What answers where Puddle asks for the SSH agent is not one.
+    SshAgentUnusable,
+    /// The runtime's guest kernel has `/dev/mem`, so guest root can map device registers.
+    GuestDevMemPresent,
 }
 
 /// One line of the report.

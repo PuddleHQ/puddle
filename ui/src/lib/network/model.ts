@@ -46,6 +46,16 @@ export const PAC_STATE_LABEL: Record<S["PacState"], string> = {
   unknown: "A setup this version of Puddle doesn't recognise",
 };
 
+const SIGN_IN_SETTING = "Settings, Network, Proxy sign-in";
+
+/** What to do about a sign-in a proxy turned down or cannot be given, by whether one is stored. */
+function storedHint(report: NetworkHealth, proxy: string): string {
+  const stored = report.sign_in.stored.find((s) => s.proxy === proxy);
+  return stored
+    ? ` If the proxy wants a different password for ${stored.user}, change it in ${SIGN_IN_SETTING}.`
+    : ` If the proxy asks for a user name and password, enter them in ${SIGN_IN_SETTING}.`;
+}
+
 export const SIGN_IN_LABEL: Record<S["SignInResult"], string> = {
   signed_in: "Signed in",
   not_required: "No sign-in needed",
@@ -168,7 +178,9 @@ export function findings(report: NetworkHealth): Finding[] {
         id: `sign-in-${attempt.proxy}`,
         level: "problem",
         title: `Signing in to ${attempt.proxy} failed${attempt.scheme ? ` (${attempt.scheme})` : ""}${attempt.detail ? `: ${attempt.detail}` : "."}`,
-        fix: "Puddle signs in as the person who is logged in to this computer. Check you are signed in to the company account (lock and unlock the computer, or sign in again) and on the company network. Puddle tries again at the next connection.",
+        fix:
+          "Puddle signs in as the person who is logged in to this computer. Check you are signed in to the company account (lock and unlock the computer, or sign in again) and on the company network. Puddle tries again at the next connection." +
+          storedHint(report, attempt.proxy),
       });
     } else if (attempt.result === "unsupported") {
       out.push({
@@ -178,7 +190,8 @@ export function findings(report: NetworkHealth): Finding[] {
         fix:
           sign_in.methods.length === 0
             ? "Puddle has no way to sign in to a proxy on this system yet. Ask for this destination to be let through without sign-in, or use a proxy that doesn't ask."
-            : `Puddle can answer ${sign_in.methods.map(methodLabel).join(", ")}. Ask IT whether the proxy can accept one of these.`,
+            : `Puddle can answer ${sign_in.methods.map(methodLabel).join(", ")}. Ask IT whether the proxy can accept one of these.` +
+              storedHint(report, attempt.proxy),
       });
     }
   }

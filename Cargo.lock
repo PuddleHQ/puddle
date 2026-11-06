@@ -5978,8 +5978,10 @@ dependencies = [
  "puddle-ipc",
  "puddle-lifecycle",
  "puddle-log",
+ "puddle-no-dump",
  "puddle-settings",
  "puddle-ssh",
+ "puddle-store",
  "puddle-test-kit",
  "puddle-types",
  "puddle-vm-tests",
@@ -6104,6 +6106,7 @@ dependencies = [
  "puddle-host",
  "puddle-lifecycle",
  "puddle-log",
+ "puddle-no-dump",
  "puddle-runtime",
  "puddle-secrets",
  "puddle-settings",
@@ -6114,6 +6117,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-dialog",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
@@ -6244,6 +6248,7 @@ dependencies = [
  "object",
  "puddle-fs",
  "puddle-runtime",
+ "puddle-ssh-agent",
  "rustix",
  "serde",
  "serde_json",
@@ -6502,6 +6507,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-no-dump"
+version = "0.0.0"
+dependencies = [
+ "rustix",
+ "tempfile",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "puddle-ports"
 version = "0.0.0"
 dependencies = [
@@ -6614,6 +6629,7 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "keyring",
+ "keyring-core",
  "puddle-test-kit",
  "serde",
  "serde_json",
@@ -6649,6 +6665,16 @@ dependencies = [
  "tokio",
  "tracing",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "puddle-ssh-agent"
+version = "0.0.0"
+dependencies = [
+ "puddle-ipc",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -7127,6 +7153,32 @@ checksum = "b4a459cddafb3fe76b31fd8f1108007566c40301feb64dc7b54656eb7388172b"
 dependencies = [
  "crypto-bigint",
  "hmac",
+]
+
+[[package]]
+name = "rfd"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20dafead71c16a34e1ff357ddefc8afc11e7d51d6d2b9fbd07eaa48e3e540220"
+dependencies = [
+ "block2",
+ "dispatch2",
+ "glib-sys",
+ "gobject-sys",
+ "gtk-sys",
+ "js-sys",
+ "libc",
+ "log",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "percent-encoding",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8983,6 +9035,48 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-dialog"
+version = "2.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce0fb9c2b6d34a9720627ed930ebc8af26f61e648695aecaeb03d5c33c5896f5"
+dependencies = [
+ "log",
+ "raw-window-handle",
+ "rfd",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "tauri-plugin-fs",
+ "thiserror 2.0.21",
+ "url",
+]
+
+[[package]]
+name = "tauri-plugin-fs"
+version = "2.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d58eb1d4984e535f47a642ffec09a2da6f5c18a12b5902d12126cb7626d628b"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "glob",
+ "log",
+ "objc2-foundation",
+ "percent-encoding",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "tauri",
+ "tauri-plugin",
+ "tauri-utils",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+ "url",
 ]
 
 [[package]]

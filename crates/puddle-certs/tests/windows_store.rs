@@ -814,46 +814,55 @@ fn the_answerer_names_a_dialog_that_never_appears() {
 
 // ---- a hung call fails fast and names itself ---------------------------------------------------
 
-/// A child that outlives its parent: `cmd.exe` runs a long `ping`. A kill of `cmd.exe` alone leaves
-/// the `ping`, which is what a killed `powershell.exe` does to its own children.
-fn hung_command(marker: u32) -> Command {
+/// A child that outlives its parent: `cmd.exe` runs a long `ping` whose output goes to `held`.
+/// A kill of `cmd.exe` alone leaves the `ping`, which is what a killed `powershell.exe` does to
+/// its own children, and the `ping` keeps `held` open until it ends.
+fn hung_command(held: &Path) -> Command {
     use std::os::windows::process::CommandExt;
     let mut command = Command::new("cmd.exe");
-    command.raw_arg(format!("/c ping -n {marker} 127.0.0.1 >nul"));
+    command.raw_arg(format!("/c ping -n 3000 127.0.0.1 >\"{}\"", held.display()));
     command
 }
 
-fn pings_running(marker: u32) -> usize {
-    let listing = powershell(&format!(
-        "@(Get-CimInstance Win32_Process -Filter \"Name='PING.EXE'\" | \
-         Where-Object {{ $_.CommandLine -like '*-n {marker} *' }}).Count"
-    ))
-    .unwrap();
-    listing.trim().parse().unwrap()
+/// Whether some process still holds `held` open: Windows refuses to delete a file that a process
+/// has open without delete sharing, and `cmd.exe` and `ping` open it that way. No PowerShell or
+/// WMI query is involved, so a slow runner cannot make the check itself time out.
+fn is_held(held: &Path) -> bool {
+    std::fs::remove_file(held).is_err()
 }
 
 #[test]
 fn a_hung_call_is_killed_with_its_children_and_named() {
-    let marker = 3000 + std::process::id() % 5000;
+    let dir = tempfile::tempdir().unwrap();
+    let held = dir.path().join("ping.out");
     let Err(Failure::TimedOut(message)) = run_bounded(
-        hung_command(marker),
+        hung_command(&held),
         "Remove-Item the-hung-call",
         Duration::from_secs(2),
     ) else {
         panic!("a call that outlives its limit must be reported as hung");
     };
-    // No time bar: the child pings for 3000 s or more, so a kill that waited for it never returns
-    // here, and the test fails by nextest's own timeout instead of passing slowly.
+    // No time bar: the child pings for 3000 s, so a kill that waited for it never returns here,
+    // and the test fails by nextest's own timeout instead of passing slowly.
     assert!(message.contains("Remove-Item the-hung-call"), "{message}");
     assert!(
         message.contains("between two 100 ms polls"),
         "a timeout says how long this process itself was away: {message}"
     );
-    assert_eq!(
-        pings_running(marker),
-        0,
-        "the child of the killed call is still running"
-    );
+    assert!(held.exists(), "the call never started its child: {message}");
+    // The kill ends the processes a moment after `taskkill` returns, so the file is let go
+    // shortly after; a child that survived holds it for 3000 s. The deadline is checked after a
+    // try, so a stall that eats the whole wait still gets one look after it.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    // flake-ok: waits for the killed processes to release a file with a deadline; the last try comes after the deadline and its result is the assertion
+    while is_held(&held) {
+        assert!(
+            Instant::now() < deadline,
+            "the child of the killed call still holds {} after 30 s",
+            held.display()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[test]

@@ -78,6 +78,8 @@ sha2 = "0.11"
 # The OS credential store (Credential Manager, Keychain, Secret Service over D-Bus in pure Rust),
 # used only for tokens the user pastes into Puddle.
 keyring = "4.2"
+# The `keyring` wrapper hides the entry modifiers Windows needs (credential persistence).
+keyring-core = "1"
 zeroize = "1.9"
 rust-embed = { version = "8.12", default-features = false, features = ["mime-guess"] }
 hickory-resolver = { version = "0.26.3", default-features = true }

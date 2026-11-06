@@ -59,6 +59,18 @@ pub fn clean(text: &str) -> String {
     out
 }
 
+/// The workspace an event's notice would name, if it has one.
+#[must_use]
+pub fn workspace_of(event: &Event) -> Option<&WorkspaceId> {
+    match event {
+        Event::PendingOpened { request } => Some(&request.workspace),
+        Event::OomKill { workspace, .. }
+        | Event::DiskNearlyFull { workspace, .. }
+        | Event::StatusChanged { workspace, .. } => Some(workspace),
+        _ => None,
+    }
+}
+
 /// What a held request is remembered by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Held {
@@ -79,6 +91,9 @@ struct Group {
 pub struct Notifier {
     window: Duration,
     groups: HashMap<WorkspaceId, Group>,
+    /// What the user calls each workspace, as last told ([`Notifier::name`]); a workspace not
+    /// in it is shown by its id.
+    labels: HashMap<WorkspaceId, String>,
     /// The free-space level the last event named, so tighter space notifies and recovery does not.
     disk: DiskSpaceLevel,
 }
@@ -102,8 +117,25 @@ impl Notifier {
         Self {
             window,
             groups: HashMap::new(),
+            labels: HashMap::new(),
             disk: DiskSpaceLevel::Ok,
         }
+    }
+
+    /// Tells the notifier what the user calls `workspace`; its notices show that, not the id.
+    pub fn name(&mut self, workspace: &WorkspaceId, label: &str) {
+        if self.labels.get(workspace).map(String::as_str) != Some(label) {
+            self.labels.insert(workspace.clone(), label.to_owned());
+        }
+    }
+
+    /// What to call `workspace` in a notice, made safe to show.
+    fn shown(&self, workspace: &WorkspaceId) -> String {
+        clean(
+            self.labels
+                .get(workspace)
+                .map_or(workspace.as_str(), String::as_str),
+        )
     }
 
     /// What to show for `event`, given the preferences and whether Puddle's window is in front.
@@ -125,7 +157,7 @@ impl Notifier {
             Event::OomKill {
                 workspace, process, ..
             } if allowed(prefs, prefs.notify_oom(), in_front) => vec![Notice {
-                title: format!("{} ran out of memory", clean(workspace.as_str())),
+                title: format!("{} ran out of memory", self.shown(workspace)),
                 body: format!(
                     "{} was ended. Give the workspace more memory in its settings; it applies \
                      the next time it starts.",
@@ -140,7 +172,7 @@ impl Notifier {
             } if allowed(prefs, prefs.notify_disk_full(), in_front) => vec![Notice {
                 title: format!(
                     "{} {} is {percent} % full",
-                    clean(workspace.as_str()),
+                    self.shown(workspace),
                     match disk {
                         DiskKind::Root => "root disk",
                         DiskKind::Volume => "volume",
@@ -161,7 +193,7 @@ impl Notifier {
                 workspace,
                 status: WorkspaceStatus::Crashed,
             } if allowed(prefs, prefs.notify_unexpected_stop(), in_front) => vec![Notice {
-                title: format!("{} stopped", clean(workspace.as_str())),
+                title: format!("{} stopped", self.shown(workspace)),
                 body: "It stopped or crashed without you or Puddle asking it to. Start it again \
                        from Puddle."
                     .to_owned(),
@@ -217,7 +249,7 @@ impl Notifier {
             },
         );
         Some(Notice {
-            title: format!("{} is asking for access", clean(request.workspace.as_str())),
+            title: format!("{} is asking for access", self.shown(&request.workspace)),
             body: format!(
                 "{}:{} is waiting for your decision.",
                 clean(&held.host),
@@ -240,7 +272,7 @@ impl Notifier {
                 continue;
             }
             if show {
-                notices.push(summary(&name, &group.held));
+                notices.push(summary(&self.shown(&name), &group.held));
                 self.groups.insert(
                     name,
                     Group {
@@ -281,7 +313,7 @@ fn low_disk_space(level: DiskSpaceLevel, free_mib: u64) -> Notice {
 }
 
 /// One notice for the requests a workspace made while its window was running.
-fn summary(workspace: &WorkspaceId, held: &[Held]) -> Notice {
+fn summary(workspace: &str, held: &[Held]) -> Notice {
     let named: Vec<String> = held
         .iter()
         .take(NAMED_IN_SUMMARY)
@@ -294,11 +326,7 @@ fn summary(workspace: &WorkspaceId, held: &[Held]) -> Notice {
         format!("{} and {more} more", named.join(", "))
     };
     Notice {
-        title: format!(
-            "{} is asking for {} more",
-            clean(workspace.as_str()),
-            held.len()
-        ),
+        title: format!("{} is asking for {} more", workspace, held.len()),
         body: format!(
             "{list} {} waiting for your decision.",
             if held.len() == 1 { "is" } else { "are" }
@@ -519,6 +547,54 @@ mod tests {
             NONE
         );
         assert_eq!(n.deadline(), None, "nothing was held");
+    }
+
+    #[test]
+    fn every_notice_shows_the_display_name_never_the_id() {
+        let (mut n, t0) = (Notifier::default(), Instant::now());
+        n.name(&name("a1b2c3"), "Shop API ü");
+        let kill = Event::oom_kill(name("a1b2c3"), 7, "node");
+        let crashed = Event::StatusChanged {
+            workspace: name("a1b2c3"),
+            status: WorkspaceStatus::Crashed,
+        };
+        let full = Event::DiskNearlyFull {
+            workspace: name("a1b2c3"),
+            disk: DiskKind::Volume,
+            percent: 91,
+        };
+        let titles = |events: [Event; 3], n: &mut Notifier| -> Vec<String> {
+            events
+                .iter()
+                .flat_map(|e| n.handle(t0, &prefs(), false, e))
+                .map(|notice| notice.title)
+                .collect()
+        };
+        assert_eq!(
+            titles([kill, crashed, full], &mut n),
+            [
+                "Shop API ü ran out of memory",
+                "Shop API ü stopped",
+                "Shop API ü volume is 91 % full"
+            ]
+        );
+        let first = n.handle(t0, &prefs(), false, &open(1, "a1b2c3", "a.example"));
+        assert_eq!(first[0].title, "Shop API ü is asking for access");
+        n.handle(
+            t0 + secs(1),
+            &prefs(),
+            false,
+            &open(2, "a1b2c3", "b.example"),
+        );
+        let summary = n.flush(t0 + GROUP_WINDOW, &prefs(), false);
+        assert_eq!(summary[0].title, "Shop API ü is asking for 1 more");
+        let before_naming = Notifier::default().handle(
+            t0,
+            &prefs(),
+            false,
+            &Event::oom_kill(name("a1b2c3"), 7, "node"),
+        );
+        assert_eq!(before_naming[0].title, "a1b2c3 ran out of memory");
     }
 
     #[test]

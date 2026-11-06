@@ -2683,10 +2683,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Why a terminal's connection that ended without an exit status did: the workspace crashed,
     /// or it stopped (or went away).
     fn terminal_gone(&self, name: &WorkspaceId) -> EndReason {
-        match self.state().slots.get(name).map(|s| s.record.status) {
-            Some(WorkspaceStatus::Crashed) => EndReason::Crashed,
-            _ => EndReason::Stopped,
-        }
+        crate::terminals::reason_for(self.state().slots.get(name).map(|s| s.record.status))
     }
 
     /// The running guest's sandbox and the user its sessions run as, once the workspace is

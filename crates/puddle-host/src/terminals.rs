@@ -207,11 +207,8 @@ async fn start<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let config = Arc::new(client::Config {
-        // An idle shell is normal: no timeout.
-        inactivity_timeout: None,
-        ..client::Config::default()
-    });
+    // An idle shell is normal: russh's default has no inactivity timeout, and this keeps it so.
+    let config = Arc::new(client::Config::default());
     let mut handle = client::connect_stream(config, stream, InMemory)
         .await
         .map_err(|e| Failure::Broke(format!("the SSH connection failed: {e}")))?;
@@ -249,6 +246,14 @@ where
         .map_err(|e| Failure::Broke(e.to_string()))?;
     expect_success(&mut channel, "a shell").await?;
     Ok((handle, channel))
+}
+
+/// The reason a connection that ended without an exit status gives, from the workspace's status.
+pub(crate) fn reason_for(status: Option<puddle_types::WorkspaceStatus>) -> EndReason {
+    match status {
+        Some(puddle_types::WorkspaceStatus::Crashed) => EndReason::Crashed,
+        _ => EndReason::Stopped,
+    }
 }
 
 /// Looks with `probe` every `every` until it finds something, an error ends the wait, and

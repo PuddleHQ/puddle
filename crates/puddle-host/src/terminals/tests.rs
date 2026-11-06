@@ -294,6 +294,20 @@ async fn a_server_that_refuses_the_login_the_pty_or_the_shell_or_hangs_up_says_w
 }
 
 #[test]
+fn a_connection_that_ends_for_a_crashed_workspace_says_crashed_and_otherwise_stopped() {
+    use puddle_types::WorkspaceStatus;
+    assert_eq!(
+        reason_for(Some(WorkspaceStatus::Crashed)),
+        EndReason::Crashed
+    );
+    assert_eq!(
+        reason_for(Some(WorkspaceStatus::Running)),
+        EndReason::Stopped
+    );
+    assert_eq!(reason_for(None), EndReason::Stopped);
+}
+
+#[test]
 fn the_hub_forgets_sessions_whose_end_nobody_listens_to_any_more() {
     let hub = Hub::default();
     let _kept = hub.register(&workspace());

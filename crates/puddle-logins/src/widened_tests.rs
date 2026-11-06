@@ -313,6 +313,19 @@ fn the_shipped_profiles_read_exactly_the_requests_they_read_before_the_model_wid
         );
         assert!(!is_exchange(h, "POST", "/"), "{h}/");
     }
+    // The Copilot session token's endpoint takes any method, and only at its exact path.
+    for method in ["GET", "POST"] {
+        assert!(is_exchange(
+            "api.github.com",
+            method,
+            "/copilot_internal/v2/token"
+        ));
+    }
+    assert!(!is_exchange(
+        "api.github.com",
+        "GET",
+        "/copilot_internal/v2/token/x"
+    ));
     // The paths do not cross hosts, and the hosts that only take tokens are not exchanges.
     assert!(!is_exchange("github.com", "POST", "/v1/oauth/token"));
     assert!(!is_exchange(
@@ -355,7 +368,11 @@ fn the_shipped_profiles_keep_their_slots_names_scopes_and_entry_names() {
     );
     assert_eq!(
         scopes(&GITHUB),
-        [("access", Scope::Api), ("refresh", Scope::TokenEndpoint)]
+        [
+            ("access", Scope::Api),
+            ("refresh", Scope::TokenEndpoint),
+            ("copilot", Scope::Api)
+        ]
     );
     assert_eq!(
         CLAUDE.slot_name_of(Slot::of(Role::Refresh)),
@@ -365,6 +382,12 @@ fn the_shipped_profiles_keep_their_slots_names_scopes_and_entry_names() {
         slot_id("alpha", "github", Role::Access),
         slot_id("alpha", "github", Slot::of(Role::Access))
     );
+    assert_eq!(
+        GITHUB.slot_name_of(Slot::of(Role::Copilot)),
+        "github-copilot"
+    );
+    let id = slot_id("alpha", "github", Role::Copilot).unwrap();
+    assert!(id.as_str().ends_with("-github-copilot"), "{}", id.as_str());
     let id = slot_id("alpha", "github", Role::Refresh).unwrap();
     assert!(id.as_str().ends_with("-github-refresh"), "{}", id.as_str());
     // Each field's path is the flat name it always had.

@@ -189,6 +189,10 @@ exclude_re = [
     # The same for `head`: its `clean` check of the parsed head is an oracle that never fires on the
     # real parser (it refuses control characters first), so a weaker oracle fails no input.
     'fuzzing\.rs:\d+:\d+: replace \|\| with && in head',
+    # `Scrubber::run` looks for a new frontier after a replacement only when the old one lies inside the
+    # form just replaced (`frontier < copied`). With `<=` it also looks when the frontier sits exactly at
+    # the end of the replaced form; the search from there finds that same place, so the output is the same.
+    'answer\.rs:\d+:\d+: replace < with <= in Scrubber::run',
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

@@ -254,6 +254,8 @@ struct State {
     boots: u64,
     /// Sandboxes whose next stop times out gracefully and is ended by force.
     force_stop: BTreeSet<String>,
+    /// [`FakeRuntime::serve_terminals`]: `serve_ssh` runs the pseudo-terminal stand-in.
+    terminals: bool,
 }
 
 impl State {
@@ -427,6 +429,12 @@ impl FakeRuntime {
     #[must_use]
     pub fn calls(&self) -> Vec<Call> {
         self.lock().calls.clone()
+    }
+
+    /// Makes every sandbox's `serve_ssh` an SSH server with a pseudo-terminal stand-in (see
+    /// [`pty`]) instead of the banner-only fake.
+    pub fn serve_terminals(&self) {
+        self.lock().terminals = true;
     }
 
     /// Adds a command handler, tried before earlier handlers and before the built-ins.
@@ -1021,6 +1029,14 @@ impl Sandbox for FakeSandbox {
             op: "serve ssh",
             message: e.to_string(),
         };
+        if self.runtime.lock().terminals {
+            return pty::serve(stream)
+                .await
+                .map_err(|message| ComputeError::Runtime {
+                    op: "serve ssh",
+                    message,
+                });
+        }
         stream.write_all(SSH_BANNER.as_bytes()).await.map_err(io)?;
         stream.flush().await.map_err(io)?;
         let mut sink = [0_u8; 4096];
@@ -1045,6 +1061,8 @@ impl Drop for FakeSandbox {
         }
     }
 }
+
+pub mod pty;
 
 #[cfg(test)]
 mod tests;

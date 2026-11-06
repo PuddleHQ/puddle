@@ -36,5 +36,6 @@ mod rule_sets;
 mod second_user;
 mod settings;
 mod shell_init;
+mod terminals;
 mod ui;
 mod workspaces;

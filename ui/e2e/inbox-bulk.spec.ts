@@ -13,8 +13,8 @@ import { expect, test, type Backend } from "./fixture";
 const SLOWDOWN = slowdown();
 const ALL_ROWS_BAR_MS = 2000;
 // A load also draws 501 rows on that slow page (7 to 20 s on a fast host under the stress, 0.6 s
-// idle), so the 30 s a test gets and the wait for the rows grow by the same factor.
-const TEST_TIMEOUT_MS = 30_000 * SLOWDOWN;
+// idle), so the 90 s a test gets and the wait for the rows grow by the same factor.
+const TEST_TIMEOUT_MS = 90_000 * SLOWDOWN;
 test.describe.configure({ timeout: TEST_TIMEOUT_MS });
 
 /** Data arrival to first paint, and to the last row painted, in the page just loaded. */

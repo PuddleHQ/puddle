@@ -22,6 +22,7 @@ mod image_pull_resume;
 mod ip_deny;
 mod name_proxy;
 mod node_fetch;
+mod private_access;
 mod proxy_agent_store;
 mod squid_upstream;
 mod stall_meter;

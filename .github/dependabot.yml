@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Weekly, grouped into one PR per ecosystem to save CI minutes. PRs go to develop, labelled by ecosystem.
+# Weekly, grouped to save CI minutes. PRs go to develop, labelled by ecosystem. A release waits 3 days
+# (cooldown) before it is proposed; security updates skip the wait. cargo, ui and openapi-codegen split
+# into an `auto` group (patch and minor: the dependabot-auto-merge workflow arms auto-merge, so the PR lands
+# once the normal checks and the merge queue pass) and a `major` group (manual). github-actions, login-tools
+# and the lab's uv entry stay manual. The workflow keys on the `auto` group's branch names.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -8,9 +12,15 @@ updates:
     labels: ["dependencies", "rust"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     groups:
-      cargo:
+      auto:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+      major:
+        patterns: ["*"]
+        update-types: ["major"]
     ignore:
       # The microsandbox crates are our fork (PuddleHQ/microsandbox), released by hand as
       # `v<upstream>-puddle.<n>` tags. Dependabot sorts those tags and proposed .3 over .5.
@@ -21,6 +31,8 @@ updates:
     labels: ["dependencies", "github_actions"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     groups:
       actions:
         patterns: ["*"]
@@ -30,9 +42,15 @@ updates:
     labels: ["dependencies", "javascript"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     groups:
-      npm:
+      auto:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+      major:
+        patterns: ["*"]
+        update-types: ["major"]
     ignore:
       # CI and engines pin Node 24; @types/node majors above it describe APIs the runtime lacks.
       - dependency-name: "@types/node"
@@ -48,15 +66,23 @@ updates:
     labels: ["dependencies", "javascript"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     groups:
-      openapi-codegen:
+      openapi-codegen-auto:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+      openapi-codegen-major:
+        patterns: ["*"]
+        update-types: ["major"]
   - package-ecosystem: npm
     directory: /ci/login-tools
     target-branch: develop
     labels: ["dependencies", "javascript"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     groups:
       login-tools:
         patterns: ["*"]
@@ -69,6 +95,8 @@ updates:
     labels: ["dependencies", "python"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     groups:
       lab-proxies:
         patterns: ["*"]

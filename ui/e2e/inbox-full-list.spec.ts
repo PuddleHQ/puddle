@@ -25,9 +25,9 @@ test.describe("a workspace with a full list of waiting requests", () => {
     backend,
   }) => {
     // 14 waits over a 1000-row page: 1.5 s idle, 15 to 35 s under the nightly stress (Chromium at a
-    // quarter speed on two shared cores; 3 of 3 runs hit the 30 s there), so the test's time grows
+    // quarter speed on two shared cores; 3 of 3 runs hit the old 30 s there), so the test's time grows
     // by the slowdown that run declares.
-    test.setTimeout(30_000 * slowdown());
+    test.setTimeout(90_000 * slowdown());
     // One more than the limit: the last host asks while the list is full.
     await backend.control.step({
       do: "bulk",

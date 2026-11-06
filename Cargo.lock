@@ -6513,6 +6513,7 @@ dependencies = [
 name = "puddle-logins"
 version = "0.0.0"
 dependencies = [
+ "base64 0.23.1",
  "bytes",
  "getrandom 0.4.3",
  "proptest",

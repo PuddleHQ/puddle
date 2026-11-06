@@ -30,6 +30,7 @@ mod widened_tests;
 pub use logins::{ForgetError, Kept, KeptList, KeptLogin, LoginNotices, Logins, Problem};
 pub use marker::Marker;
 pub use profile::{
-    CLAUDE, Endpoint, Field, GITHUB, Method, Profile, Role, Scope, Slot, builtin, path_matches,
+    CLAUDE, Endpoint, Field, GITHUB, Method, Profile, Role, Scope, Slot, StandInKind, builtin,
+    path_matches,
 };
 pub use shape::{ShapeError, stand_in_for};

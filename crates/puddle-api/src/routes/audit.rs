@@ -19,6 +19,8 @@ const DEFAULT_LIMIT: u32 = 100;
 const MAX_LIMIT: u32 = 500;
 /// Longest `host_contains`, in bytes (a host name is at most 253).
 const MAX_HOST_NEEDLE: usize = 253;
+/// Longest `q`, in bytes.
+const MAX_SEARCH: usize = 200;
 
 /// Which records to read.
 #[derive(Debug, Deserialize)]
@@ -33,6 +35,7 @@ pub(crate) struct AuditQuery {
     outcome: Option<AuditOutcome>,
     origin: Option<ConnectionOrigin>,
     host_contains: Option<String>,
+    q: Option<String>,
     from: Option<u64>,
     to: Option<u64>,
 }
@@ -69,6 +72,17 @@ impl AuditQuery {
                 "host_contains is at most {MAX_HOST_NEEDLE} bytes"
             )));
         }
+        let q = self.q.filter(|q| !q.is_empty());
+        if q.as_ref().is_some_and(|q| q.len() > MAX_SEARCH) {
+            return Err(ApiError::invalid(format!(
+                "q is at most {MAX_SEARCH} bytes"
+            )));
+        }
+        // A line break is the stored text's separator: a needle holding one could match across
+        // two fields.
+        if q.as_ref().is_some_and(|q| q.chars().any(char::is_control)) {
+            return Err(ApiError::invalid("q has no control characters"));
+        }
         if let (Some(from), Some(to)) = (self.from, self.to)
             && from >= to
         {
@@ -80,6 +94,7 @@ impl AuditQuery {
             outcome: self.outcome.map(Into::into),
             origin: self.origin.map(Into::into),
             host_contains,
+            q,
             from: self.from,
             to: self.to,
         };
@@ -103,6 +118,7 @@ impl AuditQuery {
         ("outcome" = Option<AuditOutcome>, Query, description = "records with this outcome; types that have none never match"),
         ("origin" = Option<ConnectionOrigin>, Query, description = "`connection` records of this origin (`workspace` or `puddle`); other types have none and never match"),
         ("host_contains" = Option<String>, Query, description = "records whose host (a rule's pattern) contains this text, case-insensitive"),
+        ("q" = Option<String>, Query, description = "records whose host (a rule's pattern), method, path or reason contains this text, case-insensitive; combines with the other filters"),
         ("from" = Option<u64>, Query, description = "records at or after this epoch ms"),
         ("to" = Option<u64>, Query, description = "records before this epoch ms")
     ),

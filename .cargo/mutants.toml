@@ -153,6 +153,20 @@ exclude_re = [
     # told apart by a test (the same reason as the drop of a `SecretValue`).
     'token_body\.rs:\d+:\d+: replace wipe with \(\)',
     'token_body\.rs:\d+:\d+: replace <impl Drop for TokenBody>::drop with \(\)',
+    # `SecretValue::drop` only zeroizes the string just before it is freed; no safe code can read the
+    # buffer after the drop, so a test cannot tell the zeroed buffer from the untouched one.
+    'replace <impl Drop for SecretValue>::drop with \(\)',
+    # `PassThrough::set_limits` keeps a host while its age is under the time; `<=` differs only for an
+    # age equal to the time to the nanosecond, which a clock that moves cannot be made to show.
+    'intercept\.rs:\d+:\d+: replace < with <= in PassThrough::set_limits',
+    # In the same function, `excess > 0` guards a `take(excess)`: with `>=` a zero excess takes none.
+    'intercept\.rs:\d+:\d+: replace > with >= in PassThrough::set_limits',
+    # `collect` counts the records it leaves out (`truncated`, `skipped`) only to say so in a log
+    # line, and `skipped + truncated > 0` only decides whether the line is written; the answer is the
+    # same whatever the count. Matched by line: the byte counter beside them (`txt_bytes +=`) is
+    # real and a test covers it.
+    'records\.rs:(124|153):\d+: replace \+= with \*= in collect',
+    'records\.rs:156:\d+: replace .* in collect',
 ]
 
 # The first failing test decides a mutant: stop the rest. Without it, a mutant that makes a test

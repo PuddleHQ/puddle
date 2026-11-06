@@ -210,12 +210,30 @@ fn github_com(request: &Recorded, pending: &Mutex<bool>) -> Reply {
                 .and_then(|d| d.split_once(':').map(|(_, password)| password.to_owned()));
             if password.as_deref() != Some(GITHUB) {
                 let diag = format!(
-                    "www-authenticate: Basic realm=\"GitHub\"\r\nx-diag: pwlen={:?} gho={:?} real={:?} stand_in_like={:?} authlen={:?}\r\n",
-                    password.as_ref().map(String::len),
-                    password.as_ref().map(|p| p.starts_with("gho_")),
-                    password.as_ref().map(|p| p == GITHUB),
-                    password.as_ref().map(|p| p.len() == GITHUB.len()),
-                    request.header("authorization").map(str::len),
+                    "www-authenticate: Basic realm=\"GitHub\"\r\nx-diag: head={:?} dec={:?}\r\n",
+                    request
+                        .header("authorization")
+                        .map(|a| a.chars().take(11).collect::<String>()),
+                    request
+                        .header("authorization")
+                        .and_then(|a| a.split_once(' ').map(|(_, b)| {
+                            use base64::Engine as _;
+                            base64::engine::general_purpose::STANDARD
+                                .decode(b.trim())
+                                .map(|d| {
+                                    let s = String::from_utf8_lossy(&d).into_owned();
+                                    let colon = s.find(':');
+                                    (
+                                        d.len(),
+                                        colon,
+                                        s.chars()
+                                            .filter(|c| !c.is_ascii_alphanumeric() && *c != '_')
+                                            .count(),
+                                        s.chars().take(2).collect::<String>(),
+                                    )
+                                })
+                                .map_err(|e| e.to_string())
+                        })),
                 );
                 return Reply::status(401, &diag, "no");
             }

@@ -16,6 +16,7 @@
 //! | Data folder path (Linux) | the mode of every folder from `/` down to Puddle's data folder, by msb's own rule | a group- or world-writable folder that is not sticky: names it and the `chmod g-w` that fixes it |
 //! | SSH agent | one key-list request to the agent's pipe or socket ([`puddle_ssh_agent`]), 2 s limit; on Windows also the OpenSSH Authentication Agent service | no agent, locked, no keys, slow to answer (info or warning, never a failure) |
 //! | Global Secure Access | its client's services | installed: explains the VM limitation; service manager unreadable: an info line with the OS error |
+//! | Guest kernel (Windows) | none: a fact of the Windows runtime | its guest kernel has `/dev/mem` (info): guest root can map device registers |
 //!
 //! [`diagnose`] runs the checks against a [`Probe`]: [`SystemProbe`] for the real machine, a fake
 //! in tests. The [`Report`] renders as text or as JSON with a [`SCHEMA_VERSION`] (it may be

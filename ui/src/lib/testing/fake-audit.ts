@@ -55,6 +55,18 @@ function hostOf(record: AuditRecord): string {
   return "";
 }
 
+/** What the server's search box matches: host (a rule's pattern), method, path, reason. */
+function searchTextOf(record: AuditRecord): string {
+  const parts =
+    record.type === "connection"
+      ? [record.host, record.method, record.path, record.reason]
+      : record.type === "request_rule_created" ||
+          record.type === "request_rule_deleted"
+        ? [record.rule.host, record.rule.path]
+        : [hostOf(record)];
+  return parts.filter(Boolean).join("\n").toLowerCase();
+}
+
 function workspaceOf(record: AuditRecord): string | null {
   if (record.type === "connection") return record.workspace_id;
   if (record.type === "pending_suppressed") return record.workspace_id;
@@ -73,7 +85,7 @@ export interface AuditQuery {
   workspace?: string;
   type?: string;
   outcome?: string;
-  host_contains?: string;
+  q?: string;
   from?: number;
   to?: number;
   before?: number;
@@ -136,10 +148,8 @@ export class FakeAudit {
           workspaceOf(record) === query.workspace) &&
         (query.type === undefined || record.type === query.type) &&
         (query.outcome === undefined || outcomeOf(record) === query.outcome) &&
-        (query.host_contains === undefined ||
-          hostOf(record)
-            .toLowerCase()
-            .includes(query.host_contains.toLowerCase())) &&
+        (query.q === undefined ||
+          searchTextOf(record).includes(query.q.toLowerCase())) &&
         (query.from === undefined || record.ts >= query.from) &&
         (query.to === undefined || record.ts < query.to),
     );

@@ -107,19 +107,19 @@ describe("the activity page", () => {
     window.history.replaceState(
       {},
       "",
-      "/activity?workspace=w-shop&type=connection&outcome=allow&host=git&range=all",
+      "/activity?workspace=w-shop&type=connection&outcome=allow&q=git&range=all",
     );
     await open();
     expect(api.queries[0]).toMatchObject({
       workspace: "w-shop",
       type: "connection",
       outcome: "allow",
-      host_contains: "git",
+      q: "git",
       limit: 200,
     });
     expect(api.queries[0]?.from).toBeUndefined();
     expect(hosts()).toEqual(["github.com:443"]);
-    expect(screen.getByLabelText("Host contains")).toHaveValue("git");
+    expect(screen.getByLabelText("Search")).toHaveValue("git");
     expect(screen.getByLabelText("Workspace")).toHaveValue("w-shop");
     expect(screen.getByLabelText("Time range")).toHaveValue("all");
   });
@@ -155,20 +155,39 @@ describe("the activity page", () => {
       ),
     );
   });
-  it("waits for a pause in typing before it reads the host filter", async () => {
+  it("waits for a pause in typing before it reads the search", async () => {
     await open();
     const asked = api.queries.length;
-    const host = screen.getByLabelText("Host contains");
+    const host = screen.getByLabelText("Search");
     await fireEvent.input(host, { target: { value: "c" } });
     await fireEvent.input(host, { target: { value: "crates" } });
     expect(api.queries).toHaveLength(asked);
     await waitFor(() => expect(hosts()).toEqual(["crates.io:443"]));
     expect(api.queries).toHaveLength(asked + 1);
-    expect(replaceState).toHaveBeenLastCalledWith("/activity?host=crates", {});
+    expect(replaceState).toHaveBeenLastCalledWith("/activity?q=crates", {});
   });
-  it("reads at once on Enter in the host field", async () => {
+  it("finds a record by its method, path or reason as well as its host", async () => {
+    api.entries.push(
+      connection(4, {
+        workspace_id: "w-api",
+        host: "files.test",
+        method: "POST",
+        path: "/Upload/Report",
+        reason: "request_rule",
+        ts: Date.now(),
+      }),
+    );
     await open();
-    const host = screen.getByLabelText("Host contains");
+    const search = screen.getByLabelText("Search");
+    for (const text of ["post", "upload/report", "REQUEST_RULE"]) {
+      await fireEvent.input(search, { target: { value: text } });
+      await fireEvent.submit(screen.getByRole("search"));
+      await waitFor(() => expect(hosts()).toEqual(["files.test:443"]));
+    }
+  });
+  it("reads at once on Enter in the search field", async () => {
+    await open();
+    const host = screen.getByLabelText("Search");
     await fireEvent.input(host, { target: { value: "evil" } });
     await fireEvent.submit(screen.getByRole("search"));
     await waitFor(() => expect(hosts()).toEqual(["evil.test:443"]));
@@ -197,7 +216,7 @@ describe("the activity page", () => {
 
   describe("when there is nothing to show", () => {
     it("says what a filter found", async () => {
-      window.history.replaceState({}, "", "/activity?host=nothing-like-it");
+      window.history.replaceState({}, "", "/activity?q=nothing-like-it");
       render(ActivityPage);
       await screen.findByText("No records match");
       expect(screen.getByText(/in last 24 hours matches/)).toBeInTheDocument();

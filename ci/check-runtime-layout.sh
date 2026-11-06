@@ -40,14 +40,21 @@ cd "$here/.."
 tag=$("$here/msb-tag.sh")
 version=$("$here/fetch-msb.sh" --pinned "$tag" libkrunfw-linux-version)
 
+# The firmware comes from the libkrunfw fork's release when the tag pins one (the xtask reads the
+# same pin and refuses facts that name another release), else from upstream's.
+if fork_tag=$("$here/fetch-msb.sh" --pinned "$tag" libkrunfw-linux-tag 2>/dev/null); then
+    fw_dir=firmware fork_field=", \"fork_tag\": \"$fork_tag\""
+else
+    fw_dir=upstream fork_field=
+fi
 parts=$scratch/parts
-mkdir -p "$parts/upstream"
-cp "$msb_dir/libkrunfw.so.5" "$parts/upstream/libkrunfw-linux-x86_64.so"
-(cd "$parts/upstream" && sha256sum libkrunfw-linux-x86_64.so >checksums.sha256)
+mkdir -p "$parts/$fw_dir"
+cp "$msb_dir/libkrunfw.so.5" "$parts/$fw_dir/libkrunfw-linux-x86_64.so"
+(cd "$parts/$fw_dir" && sha256sum libkrunfw-linux-x86_64.so >checksums.sha256)
 cat >"$parts/facts.json" <<JSON
 {"fork_repo": "fixture/fork", "upstream_repo": "fixture/upstream", "tag": "$tag",
  "upstream_tag": "${tag%%-puddle.*}", "commits": [],
- "firmware": {"libkrunfw_version": "$version", "kernel_version": "0", "repo_url": "fixture", "commit": "0"}}
+ "firmware": {"libkrunfw_version": "$version", "kernel_version": "0", "repo_url": "fixture", "commit": "0"$fork_field}}
 JSON
 for tree in msb puddle; do
     printf 'root v0.0.0 (/fixture)\nfixture-crate v1.0.0\n' >"$parts/$tree-tree.txt"

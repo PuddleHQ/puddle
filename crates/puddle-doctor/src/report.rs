@@ -64,6 +64,8 @@ pub enum CheckId {
     DataPath,
     /// The SSH agent on this machine.
     SshAgent,
+    /// What the runtime's guest kernel lets guest root reach.
+    GuestKernel,
 }
 
 impl CheckId {
@@ -82,6 +84,7 @@ impl CheckId {
             Self::DiskSpace => "Disk space",
             Self::DataPath => "Data folder path",
             Self::SshAgent => "SSH agent",
+            Self::GuestKernel => "Guest kernel",
         }
     }
 }
@@ -173,6 +176,8 @@ pub enum Finding {
     SshAgentSlow,
     /// What answers where Puddle asks for the SSH agent is not one.
     SshAgentUnusable,
+    /// The runtime's guest kernel has `/dev/mem`, so guest root can map device registers.
+    GuestDevMemPresent,
 }
 
 /// One line of the report.

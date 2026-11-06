@@ -7,6 +7,10 @@ ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Progr
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot             a test VM booted and ran a program in 1.1 s
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
+      note: Puddle works. Root in a sandbox can map the virtual devices' registers through
+            /dev/mem, so the runtime's own checks on every register access are the only line
+            there. The Linux runtime's guest kernel is built without /dev/mem.
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
 info  Global Secure Access  could not check whether the client is installed
       note: Puddle works without it. If company resources reached through Microsoft Entra Global
@@ -58,6 +62,13 @@ No problems found. (1.2 s)
       "id": "disk_space",
       "status": "ok",
       "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+    },
+    {
+      "id": "guest_kernel",
+      "status": "info",
+      "summary": "the guest kernel of the Windows runtime has /dev/mem",
+      "finding": "guest_dev_mem_present",
+      "fix": "Puddle works. Root in a sandbox can map the virtual devices' registers through /dev/mem, so the runtime's own checks on every register access are the only line there. The Linux runtime's guest kernel is built without /dev/mem."
     },
     {
       "id": "ssh_agent",

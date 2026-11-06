@@ -7,6 +7,10 @@ ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Progr
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot             a test VM booted and ran a program in 1.1 s
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
+      note: Puddle works. Root in a sandbox can map the virtual devices' registers through
+            /dev/mem, so the runtime's own checks on every register access are the only line
+            there. The Linux runtime's guest kernel is built without /dev/mem.
 info  SSH agent             the agent on \\.\pipe\openssh-ssh-agent did not answer within 2 s; it may be waiting for you to unlock it
       note: Agents that ask you before they answer (1Password, Bitwarden) do this while they are
             locked. Unlock the agent and run the check again. Git hosts need no agent.
@@ -56,6 +60,13 @@ No problems found. (1.2 s)
       "id": "disk_space",
       "status": "ok",
       "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+    },
+    {
+      "id": "guest_kernel",
+      "status": "info",
+      "summary": "the guest kernel of the Windows runtime has /dev/mem",
+      "finding": "guest_dev_mem_present",
+      "fix": "Puddle works. Root in a sandbox can map the virtual devices' registers through /dev/mem, so the runtime's own checks on every register access are the only line there. The Linux runtime's guest kernel is built without /dev/mem."
     },
     {
       "id": "ssh_agent",

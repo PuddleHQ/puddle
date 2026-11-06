@@ -1156,9 +1156,24 @@ fn json_schema_is_versioned_and_stable() {
             "launch",
             "test_boot",
             "disk_space",
+            "guest_kernel",
             "ssh_agent",
             "global_secure_access"
         ]
+    );
+}
+
+#[test]
+fn the_windows_report_names_the_guest_kernels_dev_mem_and_the_linux_one_does_not() {
+    let r = run(&windows(), &Options::default());
+    let line = r.check(CheckId::GuestKernel).unwrap();
+    assert_eq!(line.status, Status::Info);
+    assert_eq!(line.finding, Some(Finding::GuestDevMemPresent));
+    assert!(r.ok, "an info line must not fail the report");
+    assert!(
+        run(&linux(), &Options::default())
+            .check(CheckId::GuestKernel)
+            .is_none()
     );
 }
 

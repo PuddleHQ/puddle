@@ -9,6 +9,10 @@ FAIL  Test boot             couldn't prepare the test VM's files
       fix:  Check that your temp folder (TEMP) exists, is writable and has free space.
       from: temp dir: Access is denied. (os error 5)
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
+      note: Puddle works. Root in a sandbox can map the virtual devices' registers through
+            /dev/mem, so the runtime's own checks on every register access are the only line
+            there. The Linux runtime's guest kernel is built without /dev/mem.
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
 ok    Global Secure Access  client not installed
 
@@ -59,6 +63,13 @@ ok    Global Secure Access  client not installed
       "id": "disk_space",
       "status": "ok",
       "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+    },
+    {
+      "id": "guest_kernel",
+      "status": "info",
+      "summary": "the guest kernel of the Windows runtime has /dev/mem",
+      "finding": "guest_dev_mem_present",
+      "fix": "Puddle works. Root in a sandbox can map the virtual devices' registers through /dev/mem, so the runtime's own checks on every register access are the only line there. The Linux runtime's guest kernel is built without /dev/mem."
     },
     {
       "id": "ssh_agent",

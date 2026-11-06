@@ -507,7 +507,9 @@ fn bootstrap_roots_in(parent: &Path) -> Vec<PathBuf> {
 /// folder and goes with the sandbox: while the sandbox runs, the one root is
 /// `<home>/sandboxes/<name>/.bootstrap-rootfs/<id>`, and nothing of the kind sits in the system's
 /// temp folder (where msb used to put it, shared by every sandbox of the host). After the stop the
-/// root is gone, and removing the sandbox removes its folder.
+/// root is gone, and removing the sandbox removes its folder. On Windows msb keeps this root in
+/// memory (`AgentBootstrapFs`), so there is no folder at all: the same run shows that no root
+/// appears below the sandbox folder or in the temp folder.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_bootstrap_root_lives_in_the_sandbox_folder_and_goes_with_it() {
     let settings = support::settings();
@@ -526,6 +528,7 @@ async fn vm_bootstrap_root_lives_in_the_sandbox_folder_and_goes_with_it() {
     let sb = rt.create(s).await.expect("create");
 
     let running_in_folder = bootstrap_roots_in(&holder);
+    let holder_exists = holder.exists();
     let added_in_temp: Vec<PathBuf> = bootstrap_roots_in(&temp)
         .into_iter()
         .filter(|dir| !temp_before.contains(dir))
@@ -547,11 +550,18 @@ async fn vm_bootstrap_root_lives_in_the_sandbox_folder_and_goes_with_it() {
     cleanup(&rt, &[&n]).await;
 
     assert!(guest_ok, "the guest runs on that root");
-    assert_eq!(
-        running_in_folder.len(),
-        1,
-        "one bootstrap root below {holder:?} while the sandbox runs"
-    );
+    if cfg!(unix) {
+        assert_eq!(
+            running_in_folder.len(),
+            1,
+            "one bootstrap root below {holder:?} while the sandbox runs"
+        );
+    } else {
+        assert!(
+            !holder_exists && running_in_folder.is_empty(),
+            "Windows keeps the bootstrap root in memory: no {holder:?} folder, found {running_in_folder:?}"
+        );
+    }
     assert!(
         added_in_temp.is_empty(),
         "the sandbox put bootstrap roots in the temp folder: {added_in_temp:?}"

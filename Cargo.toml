@@ -118,7 +118,7 @@ windows-sys = "0.61"
 dns-lookup = "4.0.2"
 # Per-sandbox CA and leaf certificates. ring, not aws-lc-rs: aws-lc-sys carries the
 # OpenSSL licence, which deny.toml does not allow; ring is Apache-2.0 AND ISC.
-rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring", "zeroize"] }
 # tls12: real upstream servers still negotiate TLS 1.2, and nothing may fail because of the sandbox.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }

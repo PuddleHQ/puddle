@@ -94,7 +94,15 @@ fn platform(allow: bool) -> Outcome {
     if allow {
         return Outcome::Allowed;
     }
-    match rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable) {
+    outcome_of(rustix::process::set_dumpable_behavior(
+        rustix::process::DumpableBehavior::NotDumpable,
+    ))
+}
+
+/// The outcome of the system call that made the process non-dumpable.
+#[cfg(target_os = "linux")]
+fn outcome_of(result: Result<(), impl fmt::Display>) -> Outcome {
+    match result {
         Ok(()) => Outcome::Protected,
         Err(e) => Outcome::Failed(e.to_string()),
     }
@@ -130,5 +138,29 @@ mod tests {
         ] {
             assert!(!allows_dumps(no), "{no:?}");
         }
+    }
+
+    #[test]
+    fn every_outcome_reads_plainly_and_logs_without_panicking() {
+        let shown = [
+            (Outcome::Protected, "protected"),
+            (Outcome::Allowed, "allowed by the user"),
+            (Outcome::Unsupported, "unsupported on this OS"),
+            (Outcome::Failed("EPERM".into()), "failed: EPERM"),
+        ];
+        for (outcome, text) in shown {
+            assert_eq!(outcome.to_string(), text);
+            outcome.log();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_refusing_system_call_leaves_the_process_dumpable_and_says_why() {
+        assert_eq!(outcome_of(Ok::<(), String>(())), Outcome::Protected);
+        assert_eq!(
+            outcome_of(Err("operation not permitted")),
+            Outcome::Failed("operation not permitted".into())
+        );
     }
 }

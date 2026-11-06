@@ -10,6 +10,10 @@ FAIL  Runtime starts        msb didn't answer within 10.0 s
             msb.
 skip  Test boot             not checked: the runtime doesn't start
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
+      note: Puddle works. Root in a sandbox can map the virtual devices' registers through
+            /dev/mem, so the runtime's own checks on every register access are the only line
+            there. The Linux runtime's guest kernel is built without /dev/mem.
 ok    Global Secure Access  client not installed
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
@@ -58,6 +62,13 @@ ok    Global Secure Access  client not installed
       "id": "disk_space",
       "status": "ok",
       "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+    },
+    {
+      "id": "guest_kernel",
+      "status": "info",
+      "summary": "the guest kernel of the Windows runtime has /dev/mem",
+      "finding": "guest_dev_mem_present",
+      "fix": "Puddle works. Root in a sandbox can map the virtual devices' registers through /dev/mem, so the runtime's own checks on every register access are the only line there. The Linux runtime's guest kernel is built without /dev/mem."
     },
     {
       "id": "global_secure_access",

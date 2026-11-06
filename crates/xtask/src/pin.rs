@@ -12,6 +12,10 @@ pub const PIN_FILE: &str = "ci/msb-runtime.sha256";
 /// The pin naming the firmware version a tag's Linux msb looks for beside itself.
 pub const LIBKRUNFW_LINUX_VERSION: &str = "libkrunfw-linux-version";
 
+/// The pin naming the release of Puddle's libkrunfw fork ([`crate::source::FIRMWARE_FORK`]) a
+/// tag's Linux firmware comes from, instead of upstream's.
+pub const LIBKRUNFW_LINUX_TAG: &str = "libkrunfw-linux-tag";
+
 /// The value of the first line `<tag> <name> <value>`: whitespace-separated fields, so comment
 /// lines (first field `#`) never match.
 #[must_use]
@@ -51,6 +55,12 @@ pub fn libkrunfw_linux_version(pins: &str, tag: &str) -> Result<String> {
     Ok(version.to_owned())
 }
 
+/// The libkrunfw fork release `tag`'s Linux firmware comes from, if the tag pins one.
+#[must_use]
+pub fn libkrunfw_linux_tag(pins: &str, tag: &str) -> Option<String> {
+    pinned(pins, tag, LIBKRUNFW_LINUX_TAG).map(ToOwned::to_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,7 +71,17 @@ mod tests {
         v2\tlibkrunfw-linux-version   5.7.0  \n\
         v3 libkrunfw-linux-version 5.7/../x\n\
         v4 libkrunfw-linux-version\n\
-        v5 libkrunfw-linux-version 5..1\n";
+        v5 libkrunfw-linux-version 5..1\n\
+        v1 libkrunfw-linux-tag v5.6.1-puddle.1\n";
+
+    #[test]
+    fn reads_the_firmware_fork_release_of_a_tag() {
+        assert_eq!(
+            libkrunfw_linux_tag(PINS, "v1").as_deref(),
+            Some("v5.6.1-puddle.1")
+        );
+        assert_eq!(libkrunfw_linux_tag(PINS, "v2"), None);
+    }
 
     #[test]
     fn reads_the_value_of_the_matching_line() {

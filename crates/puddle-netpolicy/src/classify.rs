@@ -259,6 +259,13 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_company_class_audits_under_its_signal_code_and_the_company_category() {
+        let class = AddressClass::Company(CompanySignal::DnsSuffix);
+        assert_eq!(class.rule(), CompanySignal::DnsSuffix.code());
+        assert_eq!(class.category(), Some(LocalCategory::CompanyNetwork));
+    }
+
     // The reserved-range table, one case per row, with the local-destination categories.
 
     #[test]

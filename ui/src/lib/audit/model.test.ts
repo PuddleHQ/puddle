@@ -60,25 +60,25 @@ describe("filters and the API query", () => {
       workspace: "shop",
       type: "connection",
       outcome: "deny",
-      host: "  github  ",
+      q: "  github  ",
       range: "1h",
     };
     expect(toQuery(filter, 10_000_000)).toEqual({
       workspace: "shop",
       type: "connection",
       outcome: "deny",
-      host_contains: "github",
+      q: "github",
       from: 10_000_000 - 3_600_000,
     });
   });
   it("knows when a filter is not the default view", () => {
     expect(isFiltered(NO_FILTER)).toBe(false);
-    expect(isFiltered({ ...NO_FILTER, host: "  " })).toBe(false);
+    expect(isFiltered({ ...NO_FILTER, q: "  " })).toBe(false);
     for (const change of [
       { workspace: "a" },
       { type: "connection" },
       { outcome: "allow" },
-      { host: "x" },
+      { q: "x" },
       { range: "7d" },
     ] as Partial<Filter>[]) {
       expect(isFiltered({ ...NO_FILTER, ...change })).toBe(true);
@@ -90,12 +90,12 @@ describe("isNarrowed", () => {
   it("is false only when nothing is left out of the log", () => {
     expect(isNarrowed({ ...NO_FILTER, range: "all" })).toBe(false);
     expect(isNarrowed(NO_FILTER)).toBe(true);
-    expect(isNarrowed({ ...NO_FILTER, range: "all", host: "  " })).toBe(false);
+    expect(isNarrowed({ ...NO_FILTER, range: "all", q: "  " })).toBe(false);
     for (const change of [
       { workspace: "a" },
       { type: "connection" },
       { outcome: "allow" },
-      { host: "x" },
+      { q: "x" },
     ] as Partial<Filter>[]) {
       expect(isNarrowed({ ...NO_FILTER, range: "all", ...change })).toBe(true);
     }
@@ -107,12 +107,20 @@ describe("the page address", () => {
     expect(toSearch(NO_FILTER)).toBe("");
     expect(fromSearch("")).toEqual(NO_FILTER);
   });
+  it("keeps the search in `q` and still reads the `host` of an older address", () => {
+    expect(toSearch({ ...NO_FILTER, q: " /v1/items " })).toBe(
+      "?q=%2Fv1%2Fitems",
+    );
+    expect(fromSearch("?q=post").q).toBe("post");
+    expect(fromSearch("?host=github.com").q).toBe("github.com");
+    expect(fromSearch("?q=a&host=b").q).toBe("a");
+  });
   it("round-trips every filter, whatever the host holds", () => {
     const filter: Filter = {
       workspace: "shop",
       type: "rule_created",
       outcome: "blocked",
-      host: "a&b=c d",
+      q: "a&b=c d",
       range: "all",
     };
     expect(fromSearch(toSearch(filter))).toEqual(filter);

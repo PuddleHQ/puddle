@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The real `guest/delete-check.sh` under dash and bash, against real git repositories in a
+//! The real `guest/delete-check.sh` under dash, bash and `busybox sh` (the Alpine guest's shell), against real git repositories in a
 //! temp dir that plays the volume root, driven through [`Workspaces::check_delete`] on the fake
 //! (its exec handler runs the script on the host). Needs `git` on the host.
 #![cfg(unix)]
@@ -16,7 +16,59 @@ use puddle_types::WorkspaceId;
 use puddle_workspace::{DELETE_CHECK_SH, DeleteReport, Workspaces};
 
 use crate::common;
-use common::{command, git, shells, volume};
+use common::{command, git, volume};
+
+/// The `shells()` entry that runs the script as `busybox sh`.
+const BUSYBOX: &str = "busybox sh";
+
+/// A `busybox` on the path, or none.
+fn busybox_found() -> bool {
+    command("busybox")
+        .arg("true")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Dash and bash where present, plus `busybox sh` when a `busybox` binary exists.
+fn shells() -> Vec<&'static str> {
+    let mut shells = common::shells();
+    if busybox_found() {
+        shells.push(BUSYBOX);
+    }
+    shells
+}
+
+/// A directory whose `awk`, `tr` and `cut` are busybox applets, put first on the script's `PATH`:
+/// the script then runs on the Alpine guest's userland, not the host's coreutils.
+fn busybox_applets() -> &'static Path {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = tempfile::tempdir().unwrap();
+        let which = command("sh")
+            .args(["-c", "command -v busybox"])
+            .output()
+            .unwrap();
+        let busybox = String::from_utf8(which.stdout).unwrap();
+        for applet in ["awk", "tr", "cut"] {
+            std::os::unix::fs::symlink(busybox.trim(), dir.path().join(applet)).unwrap();
+        }
+        dir
+    })
+    .path()
+}
+
+/// The shell command line: `busybox sh` is a program and an applet name, the others one program.
+fn shell_command(shell: &str) -> std::process::Command {
+    let Some(applet) = shell.strip_prefix("busybox ") else {
+        return command(shell);
+    };
+    let mut c = command("busybox");
+    c.arg(applet);
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = std::iter::once(busybox_applets().to_path_buf()).chain(std::env::split_paths(&path));
+    c.env("PATH", std::env::join_paths(dirs).unwrap());
+    c
+}
 
 /// Runs the check script with `shell` on `host_root` whenever the fake is asked to.
 fn run_on_host(rt: &FakeRuntime, shell: &'static str, host_root: PathBuf) {
@@ -26,7 +78,7 @@ fn run_on_host(rt: &FakeRuntime, shell: &'static str, host_root: PathBuf) {
         }
         assert_eq!(r.args.get(3).map(String::as_str), Some("/workspaces/acme"));
         // A blocking call in the fake's handler: fine for a test, the script takes milliseconds.
-        let out = command(shell)
+        let out = shell_command(shell)
             .args(["-c", DELETE_CHECK_SH, "puddle-delete-check"])
             .arg(&host_root)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -54,10 +106,26 @@ async fn check(shell: &'static str, root: &Path) -> DeleteReport {
     Workspaces::default().check_delete(&rt, &id).await.unwrap()
 }
 
+/// The Alpine guest has no dash or bash, only busybox's `sh`, so a missing `busybox` is no pass:
+/// CI sets `PUDDLE_REQUIRE_BUSYBOX` and installs it; elsewhere the skip is printed with its reason.
+#[test]
+fn busybox_sh_is_there_to_run_the_script_under() {
+    if busybox_found() {
+        return;
+    }
+    assert!(
+        std::env::var_os("PUDDLE_REQUIRE_BUSYBOX").is_none(),
+        "PUDDLE_REQUIRE_BUSYBOX is set but no busybox is on the path"
+    );
+    eprintln!(
+        "skipped: no busybox on the path; the delete-check tests ran under dash and bash only"
+    );
+}
+
 #[tokio::test]
 async fn the_script_finds_every_kind_of_unsaved_work() {
     let shells = shells();
-    assert!(!shells.is_empty(), "neither dash nor bash found");
+    assert!(!shells.is_empty(), "no shell found");
     for shell in shells {
         let tmp = tempfile::tempdir().unwrap();
         let vol = volume(tmp.path());

@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# First half of the notices refresh on a Dependabot npm PR (second half: dependabot-notices.yml). A bump of a bundled
+# package makes ui/THIRD-PARTY-NOTICES.txt stale, and the `ui-licences` gate then fails. This half builds the PR the
+# way the gate does and uploads the regenerated file. It runs the PR's code (npm, vite), so it is an ordinary
+# `pull_request` job: read-only token, no repository secrets, nothing is pushed from here.
+name: dependabot-notices-build
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - ui/package.json
+      - ui/package-lock.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-notices-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: regenerate UI notices
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/npm_and_yarn/ui/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Node for the UI
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build the bundle and regenerate the notices
+        working-directory: ui
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm run licences
+      - name: Keep the file only when it changed
+        run: |
+          mkdir notices-out
+          if git diff --quiet -- ui/THIRD-PARTY-NOTICES.txt; then
+            echo "ui/THIRD-PARTY-NOTICES.txt is already current"
+          else
+            git diff --stat -- ui/THIRD-PARTY-NOTICES.txt
+            cp ui/THIRD-PARTY-NOTICES.txt notices-out/THIRD-PARTY-NOTICES.txt
+          fi
+      - name: Hand the file to dependabot-notices.yml
+        if: ${{ hashFiles('notices-out/THIRD-PARTY-NOTICES.txt') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-notices
+          path: notices-out/THIRD-PARTY-NOTICES.txt
+          if-no-files-found: error
+          retention-days: 1

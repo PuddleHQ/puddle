@@ -107,6 +107,9 @@ pub struct AuditFilter {
     pub origin: Option<ConnectionOrigin>,
     /// Records whose host (or a rule's pattern) contains this text, compared case-folded.
     pub host_contains: Option<String>,
+    /// Records whose search text (host or a rule's pattern, method, path, reason; see
+    /// [`AuditRecord::search_text`]) contains this text, compared case-folded (ASCII).
+    pub q: Option<String>,
     /// Records at or after this epoch ms.
     pub from: Option<u64>,
     /// Records before this epoch ms.
@@ -1044,7 +1047,7 @@ impl Store {
     /// first for [`AuditCursor::After`], newest first for [`AuditCursor::Before`].
     ///
     /// Filters run on indexed columns (`workspace_id`, `type`, `outcome`, `ts`) and the stored
-    /// `host`; no JSON is parsed. Values are bound, never spliced into the SQL.
+    /// `host` and `search` text; no JSON is parsed. Values are bound, never spliced into the SQL.
     ///
     /// # Errors
     /// A database error.
@@ -1134,6 +1137,12 @@ fn audit_query_sql(
             Some(Value::Text(needle.to_lowercase())),
         );
     }
+    if let Some(needle) = &filter.q {
+        clause(
+            "instr(search, ?) > 0",
+            Some(Value::Text(needle.to_ascii_lowercase())),
+        );
+    }
     sql.push_str(match cursor {
         AuditCursor::After(_) => " ORDER BY id LIMIT ?",
         AuditCursor::Before(_) => " ORDER BY id DESC LIMIT ?",
@@ -1184,15 +1193,16 @@ fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
 fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
-        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             sql_ts(record.ts()),
             record.kind(),
             record.workspace_id(),
             record.host(),
             record.outcome().map(AuditOutcome::as_str),
-            line
+            line,
+            record.search_text()
         ],
     )?;
     Ok(())

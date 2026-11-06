@@ -5080,6 +5080,8 @@ export interface operations {
                 origin?: components["schemas"]["ConnectionOrigin"];
                 /** @description records whose host (a rule's pattern) contains this text, case-insensitive */
                 host_contains?: string;
+                /** @description records whose host (a rule's pattern), method, path or reason contains this text, case-insensitive; combines with the other filters */
+                q?: string;
                 /** @description records at or after this epoch ms */
                 from?: number;
                 /** @description records before this epoch ms */

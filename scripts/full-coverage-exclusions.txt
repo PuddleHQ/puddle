@@ -3,4 +3,3 @@
 # line in the file) | [xN |] reason. Only code no test can reach belongs here (a fallback arm of an enum another
 # crate marked non-exhaustive); a line that merely lacks a test gets the test. An entry that matches
 # nothing fails the gate, so this list never keeps a stale reason.
-crates/puddle-compute/src/fake/pty.rs | while handle.data(channel, chunk.clone()).await.is_ok() {}\n})); | the end of the stand-in's flood task, which is aborted when the shell is dropped, so the loop's exit by a failed send is only a race with that abort

@@ -204,7 +204,11 @@ impl Shell {
                 let handle = session.handle();
                 self.flood = Some(tokio::spawn(async move {
                     let chunk = vec![b'y'; 32 * 1024];
-                    while handle.data(channel, chunk.clone()).await.is_ok() {}
+                    // Ends only when the shell is dropped, which aborts this task.
+                    loop {
+                        let _ = handle.data(channel, chunk.clone()).await;
+                        tokio::task::yield_now().await;
+                    }
                 }));
                 return Ok(true);
             }

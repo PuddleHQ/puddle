@@ -202,6 +202,40 @@ mod tests {
         }
     }
 
+    /// A writer that notes flushes and shutdowns.
+    #[derive(Default)]
+    struct Marks {
+        flushed: bool,
+        closed: bool,
+    }
+
+    impl AsyncWrite for Marks {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+        fn poll_flush(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.flushed = true;
+            Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.closed = true;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn flush_and_shutdown_reach_the_stream_underneath() {
+        let mut tap = RequestTap::new(Marks::default(), b"");
+        tap.flush().await.unwrap();
+        assert!(tap.inner.flushed && !tap.inner.closed);
+        tap.shutdown().await.unwrap();
+        assert!(tap.inner.closed);
+    }
+
     #[test]
     fn a_line_of_a_few_thousand_bytes_is_still_recorded() {
         // Literal sizes: a test built from `MAX_TAPPED` would follow a changed limit.

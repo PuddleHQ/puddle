@@ -935,6 +935,7 @@ mod refusal_tests {
             resource: None,
             prefixes: &[],
             keep_last: 0,
+            stand_in: crate::profile::StandInKind::Shaped,
             scope: Scope::Api,
         }];
         let mut endpoint = CLAUDE.endpoints[0];

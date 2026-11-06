@@ -8,9 +8,10 @@
 //!   `embedded-ui` of `puddle-api`), so the page and the API share one origin: no CORS, SSE works,
 //!   and a browser tab runs the same code as the window.
 //! * The main window (label `main`, [`window::MAIN_LABEL`]) gets the API token from a start-up
-//!   script ([`window::init_script`]) and has **no Tauri permissions at all**: the SPA calls no
-//!   Tauri API. `capabilities/main.json` names the label with an empty permission list, never
-//!   `remote` and never `windows: ["*"]`, and `build.rs` ships an app ACL manifest, so an app
+//!   script ([`window::init_script`]) and has **one Tauri permission**: `dialog:allow-open`, for the
+//!   create form's "Choose folder" button. The SPA is a remote page to Tauri, so `capabilities/main.json`
+//!   names the API's loopback origin (`http://127.0.0.1:*`) under `remote`; no other window gets
+//!   it, and the file never uses `windows: ["*"]`. `build.rs` ships an app ACL manifest, so an app
 //!   command is refused to everyone until a capability names it. The ACL tests in `tests/acl.rs`
 //!   enforce all of this.
 //! * The window stays on the API's origin ([`navigation::OriginPolicy`]). Web addresses elsewhere

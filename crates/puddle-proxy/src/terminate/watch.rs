@@ -324,6 +324,40 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_header_split_across_reads_is_completed_without_eating_the_payload() {
+        let now = Instant::now();
+        let mut frames = Frames::new();
+        frames.observe(&start(), now).unwrap();
+        let first = frame(HEADERS, 0, 1, b"abc");
+        // Four bytes of the header, then the rest of it with the payload and the next frame.
+        frames.observe(&first[..4], now).unwrap();
+        let mut rest = first[4..].to_vec();
+        rest.extend(frame(CONTINUATION, END_HEADERS, 1, b"def"));
+        frames.observe(&rest, now).unwrap();
+        assert_eq!(
+            frames.block_open_since(),
+            None,
+            "the continuation that ends the block was read as a frame of its own"
+        );
+    }
+
+    #[test]
+    fn a_frame_length_uses_all_three_length_bytes() {
+        let now = Instant::now();
+        let mut frames = Frames::new();
+        frames.observe(&start(), now).unwrap();
+        // 0x010203 bytes: every byte of the length is nonzero and differs from the others.
+        let mut wire = frame(DATA, END_STREAM, 1, &vec![0; 0x01_0203]);
+        wire.extend(frame(HEADERS, 0, 3, b"abc"));
+        frames.observe(&wire, now).unwrap();
+        assert_eq!(
+            frames.block_open_since(),
+            Some(now),
+            "the headers frame after the long frame was not read at its boundary"
+        );
+    }
+
+    #[test]
     fn a_block_that_ends_in_the_same_frame_stays_open_until_its_payload_is_in() {
         let mut frames = Frames::new();
         let now = Instant::now();
@@ -387,6 +421,44 @@ mod tests {
         );
     }
 
+    fn flood_fails_at_the_cap(kind: u8, flags: u8, payload: &[u8]) {
+        let mut frames = Frames::new();
+        let now = Instant::now();
+        frames.observe(&start(), now).unwrap();
+        for _ in 0..MAX_CONTROL_FRAMES {
+            frames
+                .observe(&frame(kind, flags, 1, payload), now)
+                .unwrap();
+        }
+        assert!(
+            frames
+                .observe(&frame(kind, flags, 1, payload), now)
+                .is_err(),
+            "frame kind {kind} was not counted"
+        );
+    }
+
+    #[test]
+    fn a_flood_of_settings_or_of_empty_data_frames_is_a_violation() {
+        flood_fails_at_the_cap(SETTINGS, 0, b"");
+        flood_fails_at_the_cap(DATA, 0, b"");
+    }
+
+    #[test]
+    fn a_frame_exactly_one_window_after_the_first_still_counts_with_it() {
+        let mut frames = Frames::new();
+        let t0 = Instant::now();
+        frames.observe(&start(), t0).unwrap();
+        for _ in 0..MAX_CONTROL_FRAMES {
+            frames.observe(&frame(PING, 0, 0, &[0; 8]), t0).unwrap();
+        }
+        assert!(
+            frames
+                .observe(&frame(PING, 0, 0, &[0; 8]), t0 + WINDOW)
+                .is_err()
+        );
+    }
+
     /// A connection whose reads fail.
     struct Broken;
 
@@ -406,5 +478,76 @@ mod tests {
         let mut watched = Watch::new(Broken, Duration::from_secs(1), LimitHit::default());
         let err = watched.read(&mut [0_u8; 16]).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_header_deadline_ends_with_the_block_it_was_set_for() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let (mut guest, proxy_side) = tokio::io::duplex(4096);
+        let timeout = Duration::from_secs(5);
+        let mut watched = Watch::new(proxy_side, timeout, LimitHit::default());
+        let mut buf = [0_u8; 4096];
+        let mut open = start();
+        open.extend(frame(HEADERS, 0, 1, b"abc"));
+        guest.write_all(&open).await.unwrap();
+        watched.read(&mut buf).await.unwrap();
+        guest
+            .write_all(&frame(CONTINUATION, END_HEADERS, 1, b"def"))
+            .await
+            .unwrap();
+        watched.read(&mut buf).await.unwrap();
+        tokio::time::advance(timeout * 2).await;
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), watched.read(&mut buf))
+                .await
+                .is_err(),
+            "the finished block's deadline went off"
+        );
+    }
+
+    /// A writer that notes that it was flushed and shut down.
+    #[derive(Default)]
+    struct Sink {
+        flushed: bool,
+        shut: bool,
+    }
+
+    impl AsyncWrite for Sink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.flushed = true;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.shut = true;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl AsyncRead for Sink {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flush_and_a_shutdown_reach_the_guest_stream() {
+        use tokio::io::AsyncWriteExt as _;
+        let mut watched = Watch::new(Sink::default(), Duration::from_secs(1), LimitHit::default());
+        watched.flush().await.unwrap();
+        watched.shutdown().await.unwrap();
+        assert!(watched.inner.flushed && watched.inner.shut);
     }
 }

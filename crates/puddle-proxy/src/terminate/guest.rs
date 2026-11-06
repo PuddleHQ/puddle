@@ -464,4 +464,59 @@ mod tests {
         s.read_to_string(&mut out).await.unwrap();
         assert_eq!(out, "head-tail");
     }
+
+    fn record(kind: u8, major: u8, len: usize) -> Vec<u8> {
+        let [hi, lo] = u16::try_from(len).unwrap().to_be_bytes();
+        let mut out = vec![kind, major, 3, hi, lo, 1];
+        out.resize(5 + len, 0);
+        out
+    }
+
+    #[tokio::test]
+    async fn only_a_handshake_record_of_at_most_sixteen_kib_is_a_tls_start() {
+        let whole = record(0x16, 3, 16 * 1024);
+        assert_eq!(capture(whole.clone(), &[]).await, FirstBytes::Tls(whole));
+        let over = record(0x16, 3, 16 * 1024 + 1);
+        assert!(matches!(capture(over, &[]).await, FirstBytes::Other(_)));
+        let data = record(0x17, 3, 16);
+        assert_eq!(capture(data.clone(), &[]).await, FirstBytes::Other(data));
+        let old = record(0x16, 2, 16);
+        assert_eq!(capture(old.clone(), &[]).await, FirstBytes::Other(old));
+    }
+
+    /// A writer that notes that it was flushed and shut down.
+    #[derive(Default)]
+    struct Sink {
+        flushed: bool,
+        shut: bool,
+    }
+
+    impl AsyncWrite for Sink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.flushed = true;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.shut = true;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flush_and_a_shutdown_reach_the_stream_under_the_prefix() {
+        use tokio::io::AsyncWriteExt as _;
+        let mut prefixed = Prefixed::new(Sink::default(), b"x".to_vec());
+        prefixed.flush().await.unwrap();
+        prefixed.shutdown().await.unwrap();
+        assert!(prefixed.inner.flushed && prefixed.inner.shut);
+    }
 }

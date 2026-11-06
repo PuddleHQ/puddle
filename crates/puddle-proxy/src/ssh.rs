@@ -248,4 +248,34 @@ mod tests {
         assert_eq!(gate.read(&mut buf).await.unwrap(), 0);
         assert!(!gate.ssh_seen());
     }
+
+    /// A reader that first reads nothing, then yields what it was given.
+    struct EmptyThen(Option<&'static [u8]>, bool);
+
+    impl AsyncRead for EmptyThen {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            if self.1 {
+                if let Some(data) = self.0.take() {
+                    buf.put_slice(data);
+                }
+            } else {
+                self.1 = true;
+            }
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_read_that_brings_no_bytes_does_not_end_the_watch_for_the_banner() {
+        let mut gate = Gate::new(EmptyThen(Some(b"SSH-2.0-x\r\n"), false), true);
+        let mut buf = [0_u8; 32];
+        assert_eq!(gate.read(&mut buf).await.unwrap(), 0);
+        let err = gate.read(&mut buf).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(gate.ssh_seen());
+    }
 }

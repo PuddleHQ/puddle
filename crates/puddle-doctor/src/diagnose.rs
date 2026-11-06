@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 use puddle_runtime::RuntimeError;
 
 use crate::facts::{
-    BlockedBy, BlockedFolder, BootFacts, CodeIntegrity, CodeIntegrityFacts, DataPathFacts,
-    DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
-    RuntimeFacts, RuntimeState, WritableFolder,
+    AgentService, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity, CodeIntegrityFacts,
+    DataPathFacts, DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os,
+    ProcessOutcome, RuntimeFacts, RuntimeState, SshAgentFacts, WritableFolder,
 };
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -42,6 +42,8 @@ pub trait Probe {
     fn disk_space(&self) -> DiskFacts;
     /// The folders above Puddle's data folder; `None` where msb has no such rule (not Linux).
     fn data_path(&self) -> Option<DataPathFacts>;
+    /// Asks the SSH agent Puddle would ask for its key list, waiting at most `limit`.
+    fn ssh_agent(&self, limit: Duration) -> SshAgentFacts;
 }
 
 /// What to run and how long it may take.
@@ -57,6 +59,8 @@ pub struct Options {
     pub disk_warn_below: u64,
     /// Free space, in bytes, under which the disk check fails.
     pub disk_fail_below: u64,
+    /// Time limit for the SSH agent's answer to a key-list request.
+    pub ssh_agent_limit: Duration,
 }
 
 impl Default for Options {
@@ -67,6 +71,7 @@ impl Default for Options {
             budget: Duration::from_secs(28),
             disk_warn_below: DEFAULT_DISK_WARN_BELOW,
             disk_fail_below: DEFAULT_DISK_FAIL_BELOW,
+            ssh_agent_limit: SSH_AGENT_LIMIT,
         }
     }
 }
@@ -76,6 +81,10 @@ pub const DEFAULT_DISK_WARN_BELOW: u64 = 20 * GIB;
 
 /// Puddle's default failure line for free disk space: 5 GB (the settings default is the same).
 pub const DEFAULT_DISK_FAIL_BELOW: u64 = 5 * GIB;
+
+/// How long the SSH agent gets to answer: an agent that asks the user first (1Password, Bitwarden)
+/// is not waited for.
+pub const SSH_AGENT_LIMIT: Duration = Duration::from_secs(2);
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
@@ -133,6 +142,11 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     if let Some(path) = probe.data_path() {
         checks.push(data_path(&path));
     }
+    if os == Os::Windows {
+        checks.push(windows_guest_kernel());
+    }
+
+    checks.push(ssh_agent(os, &probe.ssh_agent(options.ssh_agent_limit)));
 
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
@@ -1038,7 +1052,163 @@ const BOOT_FIX: &str = "msb starts but can't boot a VM. If endpoint security run
 it must be allowed to start virtual machines through the hypervisor. Otherwise restart the PC \
 and run puddle doctor again, and include the lines below when you report it.";
 
+// ---- SSH agent ----
+
+const SSH_AGENT_LIMITS: &str = "SSH to servers other than Git hosts gets no key from Puddle";
+
+/// `n` keys of `families` as `ed25519: 1, rsa: 1`: families in alphabetical order, never a key.
+fn family_counts(families: &[String]) -> String {
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    for family in families {
+        *counts.entry(family.as_str()).or_default() += 1;
+    }
+    counts
+        .iter()
+        .map(|(family, n)| format!("{family}: {n}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn ssh_agent_missing_fix(os: Os, service: Option<AgentService>) -> String {
+    let start = match service {
+        Some(AgentService::Disabled) => {
+            "The OpenSSH Authentication Agent service is disabled: set its startup type to Manual or Automatic \
+in Services (services.msc), then start it."
+        }
+        Some(AgentService::Stopped) => {
+            "The OpenSSH Authentication Agent service is not running: start it in Services (services.msc), or in \
+PowerShell as administrator: Start-Service ssh-agent."
+        }
+        Some(AgentService::Missing) => {
+            "The OpenSSH Authentication Agent service is not installed: add it under Settings > System > Optional \
+features > OpenSSH Client, or use 1Password or Bitwarden, which serve the same pipe."
+        }
+        _ if os == Os::Windows => {
+            "Start your agent (the OpenSSH Authentication Agent service, 1Password or Bitwarden) or name its pipe \
+in the settings (`ui.ssh_agent_pipe`; for Pageant its OpenSSH pipe)."
+        }
+        _ => {
+            "Start your agent (ssh-agent, gpg-agent, 1Password or Bitwarden) in the session that starts Puddle so \
+that SSH_AUTH_SOCK is set, or name its socket in the settings (`ui.ssh_agent_pipe`)."
+        }
+    };
+    format!(
+        "{SSH_AGENT_LIMITS}. {start} Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is not \
+affected."
+    )
+}
+
+fn ssh_agent(os: Os, facts: &SshAgentFacts) -> Check {
+    let id = CheckId::SshAgent;
+    match facts {
+        SshAgentFacts::NoEndpoint => Check::new(
+            id,
+            Status::Info,
+            "no agent is named: SSH_AUTH_SOCK is not set in Puddle's session",
+        )
+        .finding(Finding::SshAgentMissing)
+        .fix(ssh_agent_missing_fix(os, None)),
+        SshAgentFacts::Unreachable {
+            endpoint,
+            detail,
+            service,
+            by_default,
+        } => Check::new(
+            id,
+            if *by_default {
+                Status::Info
+            } else {
+                Status::Warn
+            },
+            format!(
+                "no agent answers on {endpoint}: {SSH_AGENT_LIMITS}; start your agent or name its {} in the settings",
+                if os == Os::Windows { "pipe" } else { "socket" }
+            ),
+        )
+        .finding(Finding::SshAgentMissing)
+        .fix(ssh_agent_missing_fix(os, *service))
+        .detail(detail.clone()),
+        SshAgentFacts::Locked { endpoint } => Check::new(
+            id,
+            Status::Warn,
+            format!("the agent on {endpoint} is locked"),
+        )
+        .finding(Finding::SshAgentLocked)
+        .fix(format!(
+            "{SSH_AGENT_LIMITS} while the agent is locked. Unlock it (1Password, Bitwarden) or run ssh-add to \
+add a key. Git hosts need no agent."
+        )),
+        SshAgentFacts::TimedOut { endpoint, limit } => Check::new(
+            id,
+            Status::Info,
+            format!(
+                "the agent on {endpoint} did not answer within {} s; it may be waiting for you to unlock it",
+                limit.as_secs()
+            ),
+        )
+        .finding(Finding::SshAgentSlow)
+        .fix(
+            "Agents that ask you before they answer (1Password, Bitwarden) do this while they are locked. Unlock the agent \
+and run the check again. Git hosts need no agent.",
+        ),
+        SshAgentFacts::Unusable { endpoint, detail } => Check::new(
+            id,
+            Status::Info,
+            format!("what answers on {endpoint} does not speak the SSH agent protocol"),
+        )
+        .finding(Finding::SshAgentUnusable)
+        .fix(format!(
+            "{SSH_AGENT_LIMITS}. Check that the setting `ui.ssh_agent_pipe` (or SSH_AUTH_SOCK) names an SSH agent. \
+Git hosts need no agent."
+        ))
+        .detail(detail.clone()),
+        SshAgentFacts::Keys {
+            endpoint,
+            families,
+        } if families.is_empty() => Check::new(
+            id,
+            Status::Info,
+            format!("the agent on {endpoint} holds no keys"),
+        )
+        .finding(Finding::SshAgentEmpty)
+        .fix(format!(
+            "{SSH_AGENT_LIMITS}. Add a key to the agent (ssh-add, or in 1Password or Bitwarden). Git hosts need no agent."
+        )),
+        SshAgentFacts::Keys {
+            endpoint,
+            families,
+        } => Check::new(
+            id,
+            Status::Ok,
+            format!(
+                "the agent on {endpoint} holds {} ({})",
+                match families.len() {
+                    1 => "1 key".to_owned(),
+                    n => format!("{n} keys"),
+                },
+                family_counts(families)
+            ),
+        ),
+    }
+}
+
 // ---- Global Secure Access ----
+
+/// The Windows runtime's guest kernel is built with `/dev/mem` (the Linux runtime's is not), so a
+/// root process in a sandbox can map the virtual devices' registers past the guest kernel.
+fn windows_guest_kernel() -> Check {
+    Check::new(
+        CheckId::GuestKernel,
+        Status::Info,
+        "the guest kernel of the Windows runtime has /dev/mem",
+    )
+    .finding(Finding::GuestDevMemPresent)
+    .fix(
+        "Puddle works. Root in a sandbox can map the virtual devices' registers through /dev/mem, \
+so the runtime's own checks on every register access are the only line there. The Linux runtime's \
+guest kernel is built without /dev/mem.",
+    )
+}
 
 fn global_secure_access(gsa: &GsaFacts) -> Check {
     let id = CheckId::GlobalSecureAccess;

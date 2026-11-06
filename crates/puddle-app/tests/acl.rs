@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The main window has no Tauri permissions.
+//! The main window has one Tauri permission: the folder dialog.
 //!
 //! Two layers: the capability files say it (static), and Tauri's own authority enforces it
-//! (an IPC call from the main window's origin is refused). A change that grants `main` anything
-//! fails here, on purpose: it needs a decision, not a drive-by.
+//! (an IPC call that is not the folder dialog, or that comes from another window or another
+//! origin, is refused). A change that grants `main` anything else, or any other window the
+//! dialog, fails here, on purpose: it needs a decision, not a drive-by.
 
 #![expect(
     clippy::unwrap_used,
@@ -21,6 +22,14 @@ use tauri::test::MockRuntime;
 use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder};
 use tauri::webview::InvokeRequest;
 use url::Url;
+
+/// The one permission the main window holds: the native folder dialog the create form's
+/// "Choose folder" button opens.
+const MAIN_PERMISSIONS: [&str; 1] = ["dialog:allow-open"];
+
+/// The page is served from the API on a loopback port picked at start-up, so the capability
+/// names loopback with any port. The window itself never leaves the API's origin.
+const MAIN_REMOTE_URLS: [&str; 1] = ["http://127.0.0.1:*"];
 
 #[tauri::command]
 fn ping() -> &'static str {
@@ -67,14 +76,10 @@ fn only_json_capability_files_exist() {
 }
 
 #[test]
-fn no_capability_grants_the_main_window_a_permission_or_reaches_a_remote_origin() {
+fn no_capability_grants_the_main_window_more_than_the_folder_dialog_or_reaches_another_origin() {
     for file in capability_files() {
         let capability = json(&file);
         let name = file.display();
-        assert!(
-            capability.get("remote").is_none(),
-            "{name}: `remote` is never allowed"
-        );
         let windows = strings(&capability["windows"]);
         let webviews = strings(&capability["webviews"]);
         for label in windows.iter().chain(webviews.iter()) {
@@ -82,10 +87,22 @@ fn no_capability_grants_the_main_window_a_permission_or_reaches_a_remote_origin(
         }
         let covers_main = windows.contains(&MAIN_LABEL) || webviews.contains(&MAIN_LABEL);
         if covers_main {
-            let permissions = capability["permissions"].as_array().unwrap();
+            assert_eq!(
+                strings(&capability["permissions"]),
+                MAIN_PERMISSIONS,
+                "{name}: the main window gets the folder dialog and nothing else"
+            );
+            // The SPA is a remote page to Tauri, so the permission needs a `remote` entry; it is
+            // limited to the API's loopback origin.
+            assert_eq!(
+                strings(&capability["remote"]["urls"]),
+                MAIN_REMOTE_URLS,
+                "{name}: the main window's remote origin"
+            );
+        } else {
             assert!(
-                permissions.is_empty(),
-                "{name}: the main window gets no permission: {permissions:?}"
+                capability.get("remote").is_none(),
+                "{name}: `remote` is only for the main window's folder dialog"
             );
         }
         // Every capability, whatever it covers, is limited to named windows.
@@ -179,11 +196,54 @@ fn plugin_commands_are_refused_to_the_main_window() {
         "plugin:path|resolve_directory",
         "plugin:fs|read_file",
         "plugin:shell|execute",
+        "plugin:dialog|save",
+        "plugin:dialog|message",
+        "plugin:dialog|ask",
+        "plugin:dialog|confirm",
         "no_such_command",
     ] {
         let message = refusal(get_ipc_response(&window, invoke(cmd, api)));
         assert!(message.contains("not allowed"), "{cmd}: {message}");
     }
+}
+
+#[test]
+fn the_folder_dialog_is_allowed_to_the_main_window_on_the_api_origin_only() {
+    let (_app, window) = app_with_main();
+    // Arguments are missing on purpose: an allowed call fails on them before any dialog opens,
+    // so what the test sees is "not allowed" (refused) or something else (let through).
+    let allowed = refusal(get_ipc_response(
+        &window,
+        invoke("plugin:dialog|open", "http://127.0.0.1:4711/"),
+    ));
+    assert!(!allowed.contains("not allowed"), "{allowed}");
+    // Not listed: `tauri://localhost`, the app's own asset origin. Tauri treats a capability
+    // with `remote` as covering local origins too; the window never navigates there (its
+    // navigation stays on the API's origin) and the app serves no page from it.
+    for origin in [
+        "http://127.0.0.2:4711/",
+        "http://localhost:4711/",
+        "https://example.org/",
+        "https://127.0.0.1:4711/",
+    ] {
+        let message = refusal(get_ipc_response(
+            &window,
+            invoke("plugin:dialog|open", origin),
+        ));
+        assert!(message.contains("not allowed"), "{origin}: {message}");
+    }
+    // `http://tauri.localhost` is the app's own asset origin on Windows, the same local origin as
+    // `tauri://localhost` elsewhere: Tauri lets the capability cover it on Windows only. The
+    // window never navigates there, so the test pins what Tauri does instead of hiding the case.
+    let message = refusal(get_ipc_response(
+        &window,
+        invoke("plugin:dialog|open", "http://tauri.localhost/"),
+    ));
+    assert_eq!(
+        message.contains("not allowed"),
+        !cfg!(windows),
+        "http://tauri.localhost/: {message}"
+    );
 }
 
 mod sandbox_windows {
@@ -213,6 +273,7 @@ mod sandbox_windows {
         });
         let target = Target {
             workspace: workspace.clone(),
+            display_name: name.to_owned(),
             origin: origin.clone(),
             data_folder: data.join(name),
             settings: WindowSettings {
@@ -250,6 +311,7 @@ mod sandbox_windows {
                 "plugin:event|emit",
                 "plugin:path|resolve_directory",
                 "plugin:window-state|save_window_state",
+                "plugin:dialog|open",
                 "no_such_command",
             ] {
                 let message = refusal(get_ipc_response(&window, invoke(cmd, from)));

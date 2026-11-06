@@ -1801,6 +1801,11 @@ export interface components {
              */
             bytes_up: number;
             /**
+             * @description `company_network` when the destination is in the company-network category, allowed or
+             *     refused; `null` otherwise and in records written before it existed.
+             */
+            category: string | null;
+            /**
              * Format: int64
              * @description Records summarised, on a `suppressed` summary.
              */
@@ -1856,6 +1861,11 @@ export interface components {
             rule_id: number | null;
             /** @description The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`). */
             rule_set: string | null;
+            /**
+             * @description The signal that put the destination in the company network: `pac_direct`,
+             *     `dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`.
+             */
+            signal: string | null;
             /**
              * Format: int64
              * @description Epoch ms.
@@ -2607,6 +2617,8 @@ export interface components {
         };
         /** @description The effective local toggles. */
         EffectiveToggles: {
+            /** @description The company network. */
+            company_network: components["schemas"]["ResolvedBool"];
             /** @description Link-local. */
             link_local: components["schemas"]["ResolvedBool"];
             /** @description Loopback. */
@@ -3349,12 +3361,14 @@ export interface components {
          *     A toggle only *permits* its category; each destination still needs an allow rule or an
          *     approval. Puddle's own endpoints are not a category: no toggle reaches them.
          *
-         *     Non-exhaustive: a "company network" category may follow.
+         *     Non-exhaustive: more categories may follow.
          * @enum {string}
          */
-        LocalCategory: "loopback" | "private" | "link_local" | "metadata" | "special";
+        LocalCategory: "loopback" | "private" | "link_local" | "metadata" | "special" | "company_network";
         /** @description Local destination categories a workspace may approve. `null` inherits. */
         LocalToggles: {
+            /** @description The company network. Off by default; on only makes those destinations approvable. */
+            company_network: boolean | null;
             /** @description Link-local addresses. */
             link_local: boolean | null;
             /** @description The host's loopback addresses. */
@@ -4769,7 +4783,7 @@ export interface components {
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired";
         /**
          * @description How a workspace operation ended.
          * @enum {string}
@@ -5080,6 +5094,8 @@ export interface operations {
                 origin?: components["schemas"]["ConnectionOrigin"];
                 /** @description records whose host (a rule's pattern) contains this text, case-insensitive */
                 host_contains?: string;
+                /** @description records whose host (a rule's pattern), method, path or reason contains this text, case-insensitive; combines with the other filters */
+                q?: string;
                 /** @description records at or after this epoch ms */
                 from?: number;
                 /** @description records before this epoch ms */

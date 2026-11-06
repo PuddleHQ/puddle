@@ -5,13 +5,13 @@
 //! signal-killed command as a failure.
 mod support;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use microsandbox::Sandbox as SdkSandbox;
 use puddle_compute::{DiskSize, FileMount, OwnedDisk, Runtime, Sandbox, VolumeMount, VsockRoute};
 use puddle_ipc::IpcRoot;
-use puddle_test_kit::eventually_async;
+use puddle_test_kit::{eventually, eventually_async};
 use puddle_types::{MemoryMib, SandboxName, VolumeName};
 use puddle_vm_tests::VmEnv;
 use support::{cleanup, collect_lines, path, sh, spec, vsock_sweep};
@@ -475,3 +475,100 @@ const GROW_AHEAD_CAP_MIB: u64 = 256;
 /// How far the runtime's growth may be from the guest's growth, in MiB: measured 0 at 128 and 512
 /// without grow-ahead, 3 at both with it.
 const GROWTH_BOUND_MIB: u64 = 16;
+
+/// The mount points msb's bootstrap root holds (the folder it shares with the guest while the
+/// image's root is assembled).
+const BOOTSTRAP_ROOT_ENTRIES: [&str; 5] = [".msb", "dev", "newroot", "proc", "sys"];
+
+/// The bootstrap roots found directly in `parent`: the folders that hold exactly the mount points
+/// above.
+fn bootstrap_roots_in(parent: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|dir| {
+            let mut names: Vec<String> = std::fs::read_dir(dir)
+                .map(|it| {
+                    it.filter_map(Result::ok)
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            names.sort();
+            names == BOOTSTRAP_ROOT_ENTRIES
+        })
+        .collect()
+}
+
+/// msb's bootstrap root (an OCI root it shares with the guest) lives below the sandbox's own
+/// folder and goes with the sandbox: while the sandbox runs, the one root is
+/// `<home>/sandboxes/<name>/.bootstrap-rootfs/<id>`, and nothing of the kind sits in the system's
+/// temp folder (where msb used to put it, shared by every sandbox of the host). After the stop the
+/// root is gone, and removing the sandbox removes its folder. On Windows msb keeps this root in
+/// memory (`AgentBootstrapFs`), so there is no folder at all: the same run shows that no root
+/// appears below the sandbox folder or in the temp folder.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_bootstrap_root_lives_in_the_sandbox_folder_and_goes_with_it() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let s = spec(&settings, "bsroot");
+    let n = s.name.clone();
+    let folder = settings.home().join("sandboxes").join(n.as_str());
+    let holder = folder.join(".bootstrap-rootfs");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "looks at the folder msb's runner uses for its temp files, not one of ours"
+    )]
+    let temp = std::env::temp_dir();
+    // Roots older runs left in the temp folder do not count: only the ones this sandbox adds.
+    let temp_before = bootstrap_roots_in(&temp);
+    let sb = rt.create(s).await.expect("create");
+
+    let running_in_folder = bootstrap_roots_in(&holder);
+    let holder_exists = holder.exists();
+    let added_in_temp: Vec<PathBuf> = bootstrap_roots_in(&temp)
+        .into_iter()
+        .filter(|dir| !temp_before.contains(dir))
+        .collect();
+    let guest_ok = sh(&sb, "echo up").await.status.success();
+    sb.stop().await.unwrap();
+    eventually(
+        "the bootstrap root is removed after the stop",
+        Duration::from_secs(30),
+        || {
+            let left = bootstrap_roots_in(&holder);
+            left.is_empty().then_some(left)
+        },
+    )
+    .await;
+    let folder_kept_by_stop = folder.is_dir();
+    rt.remove(&n).await.expect("remove");
+    let folder_after_remove = folder.exists();
+    cleanup(&rt, &[&n]).await;
+
+    assert!(guest_ok, "the guest runs on that root");
+    if cfg!(unix) {
+        assert_eq!(
+            running_in_folder.len(),
+            1,
+            "one bootstrap root below {holder:?} while the sandbox runs"
+        );
+    } else {
+        assert!(
+            !holder_exists && running_in_folder.is_empty(),
+            "Windows keeps the bootstrap root in memory: no {holder:?} folder, found {running_in_folder:?}"
+        );
+    }
+    assert!(
+        added_in_temp.is_empty(),
+        "the sandbox put bootstrap roots in the temp folder: {added_in_temp:?}"
+    );
+    assert!(folder_kept_by_stop, "a stop keeps the sandbox folder");
+    assert!(
+        !folder_after_remove,
+        "removing the sandbox removes its folder with the root's parent"
+    );
+}

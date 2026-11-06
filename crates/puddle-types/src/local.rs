@@ -18,7 +18,7 @@ use crate::ValidationError;
 /// A toggle only *permits* its category; each destination still needs an allow rule or an
 /// approval. Puddle's own endpoints are not a category: no toggle reaches them.
 ///
-/// Non-exhaustive: a "company network" category may follow.
+/// Non-exhaustive: more categories may follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -38,16 +38,22 @@ pub enum LocalCategory {
     /// documentation, benchmarking, "this network", IPv6 outside `2000::/3`, and transition
     /// prefixes (6to4, Teredo, IPv4-compatible) that embed a public address.
     Special,
+    /// The company's own network as this host sees it: names the proxy script sends direct or
+    /// that sit under the machine's DNS suffixes, a private-access client's `100.64.0.0/10`,
+    /// private ranges routed through a VPN. Never loopback, link-local, metadata or special-use
+    /// addresses, and never an address on the physical LAN's own subnet. Off by default.
+    CompanyNetwork,
 }
 
 impl LocalCategory {
     /// Every category, in a fixed order (the order block messages list them in).
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Loopback,
         Self::Private,
         Self::LinkLocal,
         Self::Metadata,
         Self::Special,
+        Self::CompanyNetwork,
     ];
 
     /// The toggle's key: in settings documents, the API, and the audit's `toggle:<key>`.
@@ -65,6 +71,7 @@ impl LocalCategory {
             Self::LinkLocal => "link_local",
             Self::Metadata => "metadata",
             Self::Special => "special",
+            Self::CompanyNetwork => "company_network",
         }
     }
 
@@ -77,10 +84,12 @@ impl LocalCategory {
             Self::LinkLocal => "link-local",
             Self::Metadata => "cloud metadata",
             Self::Special => "special-use address",
+            Self::CompanyNetwork => "company network",
         }
     }
 
-    /// The audit `reason` for a request this category's toggle blocked (R-24).
+    /// The audit `reason` for a request this category's toggle blocked (R-24): `toggle:<key>`,
+    /// and `company_network_off` for the company network.
     #[must_use]
     pub const fn audit_reason(self) -> &'static str {
         match self {
@@ -89,7 +98,64 @@ impl LocalCategory {
             Self::LinkLocal => "toggle:link_local",
             Self::Metadata => "toggle:metadata",
             Self::Special => "toggle:special",
+            Self::CompanyNetwork => "company_network_off",
         }
+    }
+}
+
+/// Which host signal put an address in [`LocalCategory::CompanyNetwork`]. The `code` is stored
+/// in the audit's `signal` field, so the codes are stored format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[non_exhaustive]
+pub enum CompanySignal {
+    /// The proxy script answers `DIRECT` for the name while it names proxies for other URLs.
+    PacDirect,
+    /// The name is under the machine's primary or connection-specific DNS suffix, its suffix
+    /// search list or a name-resolution-policy namespace.
+    DnsSuffix,
+    /// The address is in `100.64.0.0/10` and a known private-access client is installed.
+    PrivateAccessCgnat,
+    /// The address is in a private range that is routed through a VPN interface.
+    VpnRoute,
+}
+
+impl CompanySignal {
+    /// Every signal, in the order they are tried.
+    pub const ALL: [Self; 4] = [
+        Self::PacDirect,
+        Self::DnsSuffix,
+        Self::PrivateAccessCgnat,
+        Self::VpnRoute,
+    ];
+
+    /// The audit `signal` code.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::PacDirect => "pac_direct",
+            Self::DnsSuffix => "dns_suffix",
+            Self::PrivateAccessCgnat => "private_access_cgnat",
+            Self::VpnRoute => "vpn_route",
+        }
+    }
+
+    /// How the destination was found, as the end of "reached through ...", for messages.
+    #[must_use]
+    pub const fn describe(self) -> &'static str {
+        match self {
+            Self::PacDirect => "your company's proxy settings, which send it direct",
+            Self::DnsSuffix => "your company's DNS suffix",
+            Self::PrivateAccessCgnat => "a private-access client",
+            Self::VpnRoute => "your VPN",
+        }
+    }
+}
+
+impl fmt::Display for CompanySignal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code())
     }
 }
 
@@ -119,7 +185,14 @@ mod tests {
         let keys: Vec<_> = LocalCategory::ALL.iter().map(|c| c.key()).collect();
         assert_eq!(
             keys,
-            ["loopback", "private", "link_local", "metadata", "special"]
+            [
+                "loopback",
+                "private",
+                "link_local",
+                "metadata",
+                "special",
+                "company_network"
+            ]
         );
     }
 
@@ -136,9 +209,45 @@ mod tests {
             );
             assert_eq!(c.to_string(), c.key());
             assert_eq!(c.key().parse::<LocalCategory>().unwrap(), c);
-            assert_eq!(c.audit_reason(), format!("toggle:{}", c.key()));
+            let reason = if c == LocalCategory::CompanyNetwork {
+                "company_network_off".to_owned()
+            } else {
+                format!("toggle:{}", c.key())
+            };
+            assert_eq!(c.audit_reason(), reason);
             assert_ne!(c.describe(), "");
         }
+    }
+
+    #[test]
+    fn signal_codes_are_the_stored_names() {
+        let codes: Vec<_> = CompanySignal::ALL.iter().map(|s| s.code()).collect();
+        assert_eq!(
+            codes,
+            [
+                "pac_direct",
+                "dns_suffix",
+                "private_access_cgnat",
+                "vpn_route"
+            ]
+        );
+        for s in CompanySignal::ALL {
+            assert_eq!(
+                serde_json::to_string(&s).unwrap(),
+                format!("\"{}\"", s.code())
+            );
+            assert_eq!(s.to_string(), s.code());
+        }
+        let described: Vec<_> = CompanySignal::ALL.iter().map(|s| s.describe()).collect();
+        assert_eq!(
+            described,
+            [
+                "your company's proxy settings, which send it direct",
+                "your company's DNS suffix",
+                "a private-access client",
+                "your VPN"
+            ]
+        );
     }
 
     #[test]

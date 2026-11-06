@@ -11,7 +11,7 @@ use super::{Responder, WebAnswer};
 const VERSION: &str = "1.0.0";
 
 /// The wheel's file name.
-fn wheel_name(project: &str) -> String {
+pub(super) fn wheel_name(project: &str) -> String {
     format!("{}-{VERSION}-py3-none-any.whl", project.replace('-', "_"))
 }
 
@@ -28,7 +28,7 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 /// A zip archive holding `files` stored uncompressed (a wheel is one).
-fn zip_stored(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+pub(super) fn zip_stored(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut directory = Vec::new();
     for (name, data) in files {
@@ -82,7 +82,7 @@ fn zip_stored(files: &[(String, Vec<u8>)]) -> Vec<u8> {
 }
 
 /// The wheel of `project`: a package of that name with one module, and the metadata `pip` reads.
-fn wheel(project: &str) -> Vec<u8> {
+pub(super) fn wheel(project: &str) -> Vec<u8> {
     let module = project.replace('-', "_");
     let dist_info = format!("{module}-{VERSION}.dist-info");
     zip_stored(&[

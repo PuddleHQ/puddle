@@ -7,9 +7,14 @@
 // shared servers from playwright.config.ts instead (see support.ts).
 import { test as base, type Page } from "@playwright/test";
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  OutputTail,
+  START_TIMEOUT_MS,
+  waitForBackend,
+} from "../scripts/backend-start.ts";
 import { throttleCpu } from "./cpu-throttle.ts";
 import { FIXTURE_BIN_ENV } from "./fixture-build.ts";
 import { WARM_UP_TIMEOUT_MS } from "./warm-up.ts";
@@ -135,15 +140,20 @@ async function startBackend(scenario: string): Promise<Started> {
   const child: ChildProcess = spawn(
     executable,
     ["--scenario", scenario, "--connection-file", file],
-    { stdio: ["ignore", "ignore", "inherit"] },
+    { stdio: ["ignore", "pipe", "pipe"] },
   );
-  // The fixture renames `.control` into place whole, so once it exists it parses.
-  for (let i = 0; i < 400 && !existsSync(`${file}.control`); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
+  // The tail names what the backend said when it fails to start; the log still gets all of it.
+  const output = new OutputTail();
+  for (const stream of [child.stdout, child.stderr]) {
+    stream?.on("data", (chunk: Buffer) => output.push(chunk));
   }
-  if (!existsSync(`${file}.control`)) {
+  child.stderr?.pipe(process.stderr);
+  try {
+    await waitForBackend(child, file, output, { executable });
+  } catch (error) {
     child.kill();
-    throw new Error("the fixture backend did not start");
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
   }
   return {
     backend: backendFromFile(file),
@@ -182,7 +192,9 @@ export const test = base.extend<
       await use(started.backend);
       started.stop();
     },
-    { scope: "worker" },
+    // The start has its own limit (START_TIMEOUT_MS) and says why when it is hit; without this
+    // the test's 30 s ended the setup first, with a message that names nothing.
+    { scope: "worker", timeout: START_TIMEOUT_MS + 15_000 },
   ],
   backend: async ({ workerBackend }, use) => {
     await workerBackend.control.reset("default");

@@ -148,3 +148,25 @@ fn backup_without_a_workspace_list_says_it_is_absent() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     assert!(stdout.contains("workspace list absent"), "{stdout}");
 }
+
+#[test]
+fn backup_to_a_relative_destination_lands_in_the_working_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    drop(
+        puddle_store::Store::open(
+            &data.join("puddle.db"),
+            std::sync::Arc::new(puddle_store::SystemClock),
+            puddle_store::Limits::default(),
+        )
+        .unwrap(),
+    );
+    let result = Command::new(env!("CARGO_BIN_EXE_puddle"))
+        .current_dir(root.path())
+        .args(["backup", "--data-dir", data.to_str().unwrap(), "out"])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert!(root.path().join("out").join("puddle.db").is_file());
+}

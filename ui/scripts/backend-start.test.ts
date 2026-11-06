@@ -74,6 +74,25 @@ describe("waiting for the fixture backend", () => {
     expect(message).toContain(process.execPath);
   });
 
+  it("names an executable that could not be spawned", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "backend-start-"));
+    dirs.push(dir);
+    const missing = join(dir, "no-such-backend");
+    const child = spawn(missing, [], { stdio: ["ignore", "pipe", "pipe"] });
+    children.push(child);
+    const failure = await waitForBackend(
+      child,
+      join(dir, "connection.json"),
+      new OutputTail(),
+      { timeoutMs: 30_000, executable: missing },
+    ).catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toContain("the process ended (spawn error:");
+    expect(message).toContain("ENOENT");
+    expect(message).toContain(`${missing} (missing)`);
+  });
+
   it("does not take a half-written control file for a started backend", async () => {
     const { file, output, child } = start(`setTimeout(() => {}, 60000)`);
     writeFileSync(`${file}.control`, '{"url":');

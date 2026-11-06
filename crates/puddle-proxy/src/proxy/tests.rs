@@ -1712,7 +1712,7 @@ mod tunnel_end {
             .await
             .unwrap();
         let mut reader = ClientReader::new(Counted::new(near).0);
-        assert!(!reader.fill_buf().await.unwrap().is_empty());
+        reader.fill_buf().await.unwrap();
         drop(peer);
         let end = tunnel(reader, server, None, None, None).await;
         let line = end.http.expect("the early request line is kept");

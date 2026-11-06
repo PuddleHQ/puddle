@@ -95,7 +95,6 @@ impl<S: AsyncRead + Unpin> AsyncRead for TokenGate<S> {
         let before = buf.filled().len();
         let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
         if let Poll::Ready(Ok(())) = polled
-            && buf.filled().len() > before
             && self.termination.is_some()
         {
             let chunk = buf.filled().get(before..).unwrap_or_default().to_vec();
@@ -252,6 +251,63 @@ mod tests {
         assert_eq!(long, passed);
     }
 
+    #[test]
+    fn a_record_that_is_still_open_is_watched_up_to_the_cap_and_no_further() {
+        let (_guest, tunnel) = tokio::io::duplex(64);
+        let mut gate = TokenGate::new(tunnel, Some(termination(true)), &[]);
+        // A handshake record that claims 16383 bytes and never ends.
+        let mut open = vec![0x16, 3, 3, 0x3f, 0xff, 1];
+        open.resize(MAX_SEEN - 1, 0);
+        gate.look(&open);
+        assert!(
+            gate.termination.is_some(),
+            "one byte under the cap: watched"
+        );
+        gate.look(&[0]);
+        assert!(gate.termination.is_none(), "at the cap: given up");
+        assert_eq!(MAX_SEEN, 16 * 1024);
+    }
+
+    /// A stream that counts the flushes it is asked for.
+    #[derive(Default)]
+    struct Flushes(usize);
+
+    impl AsyncRead for Flushes {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            _: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl AsyncWrite for Flushes {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            b: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(b.len()))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.0 += 1;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flush_reaches_the_stream_under_the_gate() {
+        let mut gate = TokenGate::new(Flushes::default(), None, &[]);
+        gate.flush().await.unwrap();
+        assert_eq!(gate.inner().0, 1);
+    }
+
     #[tokio::test]
     async fn a_hello_sent_with_the_request_is_checked_at_once() {
         let (_guest, tunnel) = tokio::io::duplex(64);
@@ -269,7 +325,13 @@ mod tests {
         gate.write_all(b"answer").await.unwrap();
         gate.flush().await.unwrap();
         let mut got = [0_u8; 6];
-        guest.read_exact(&mut got).await.unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            guest.read_exact(&mut got),
+        )
+        .await
+        .expect("the bytes arrive")
+        .unwrap();
         assert_eq!(&got, b"answer");
     }
 }

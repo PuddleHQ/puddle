@@ -296,6 +296,21 @@ pub(crate) async fn read_answer(
 
 #[cfg(test)]
 mod tests {
+    #[derive(Debug)]
+    struct NoOverride;
+
+    impl ExchangeRewriter for NoOverride {
+        fn begin(&self, _: &Host, _: &str, _: &str) -> Option<Exchange> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_rewriter_names_no_token_endpoint_unless_it_says_so() {
+        let host = Host::parse_normalised("tokens.test").unwrap();
+        assert!(!NoOverride.is_token_endpoint(&host));
+    }
+
     use super::*;
 
     struct Plain;

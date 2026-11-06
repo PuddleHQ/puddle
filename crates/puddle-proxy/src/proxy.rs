@@ -1560,10 +1560,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     if let Err(err) = opened.await {
         tracing::debug!(error = %err, "tunnel failed before the splice");
         abort(&server);
-        return TunnelEnd {
-            http: guest.inner().inner().request_line(),
-            ..TunnelEnd::default()
-        };
+        return seen_only(&guest);
     }
     // A tunnel can outlive the network it was made on. When the route to its destination changes
     // so that the hop it uses is no longer on it, both ends are reset (the same ending as any
@@ -1571,10 +1568,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     let spliced = splice_watched(&mut server, &mut guest, watch.as_mut()).await;
     let Some(spliced) = spliced else {
         abort(&server);
-        return TunnelEnd {
-            http: guest.inner().inner().request_line(),
-            ..TunnelEnd::default()
-        };
+        return seen_only(&guest);
     };
     match spliced {
         Ok((up, down)) => tracing::debug!(
@@ -1603,6 +1597,11 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
             tracing::debug!(error = %err, "tunnel aborted");
         }
     }
+    seen_only(&guest)
+}
+
+/// What a tunnel that ended without a refusal saw: its first request line, if it carried plain HTTP.
+fn seen_only<S>(guest: &ssh::Gate<TokenGate<RequestTap<S>>>) -> TunnelEnd {
     TunnelEnd {
         http: guest.inner().inner().request_line(),
         ..TunnelEnd::default()

@@ -881,3 +881,38 @@ async fn end(channel: &Channel<Msg>, finish: Finish) {
     let _ = channel.eof().await;
     let _ = channel.close().await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_git_protocol_value_is_a_list_of_the_three_versions_and_nothing_else() {
+        assert_eq!(protocol_versions("version=2"), Some(vec![2]));
+        assert_eq!(protocol_versions("version=1:version=2"), Some(vec![1, 2]));
+        assert_eq!(protocol_versions("version=0"), Some(vec![0]));
+        for bad in [
+            "",
+            "version=3",
+            "version=2:",
+            "version=2:foo",
+            "VERSION=2",
+            "version=2 ",
+            "version=0:version=1:version=2:version=2",
+            "version=2\nx=1",
+        ] {
+            assert_eq!(protocol_versions(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn version_0_is_the_absence_of_a_git_protocol() {
+        assert_eq!(git_protocol(&[]), None);
+        assert_eq!(git_protocol(&[0]), None);
+        assert_eq!(git_protocol(&[2]).as_deref(), Some("version=2"));
+        assert_eq!(
+            git_protocol(&[0, 1, 2]).as_deref(),
+            Some("version=1:version=2")
+        );
+    }
+}

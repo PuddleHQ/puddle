@@ -179,22 +179,20 @@ pub(crate) async fn run_with(
         // A tool that exits before reading its input is not an error here: its status says so.
         let _ = pipe.write_all(bytes).await;
     }
-    let Some(mut stdout) = child.stdout.take() else {
-        return Err(SourceError::CouldNotRun(tool));
-    };
+    let mut stdout = child.stdout.take().ok_or(SourceError::CouldNotRun(tool))?;
     let read = async {
         let bytes = read_wiping(&mut stdout).await?;
         let status = child.wait().await?;
         Ok::<_, std::io::Error>((status, bytes))
     };
-    match tokio::time::timeout(timeout, read).await {
-        Ok(Ok((status, stdout))) => Ok(Output {
-            success: status.success(),
-            stdout,
-        }),
-        Ok(Err(_)) => Err(SourceError::CouldNotRun(tool)),
-        Err(_) => Err(SourceError::Timeout(tool)),
-    }
+    let answered = tokio::time::timeout(timeout, read).await;
+    let (status, stdout) = answered
+        .map_err(|_| SourceError::Timeout(tool))?
+        .map_err(|_| SourceError::CouldNotRun(tool))?;
+    Ok(Output {
+        success: status.success(),
+        stdout,
+    })
 }
 
 /// First size of the buffer a tool's output is read into; a token answer fits in it.

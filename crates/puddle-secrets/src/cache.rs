@@ -571,4 +571,17 @@ mod tests {
         tokio::time::advance(2 * MIN).await;
         handle.await.unwrap();
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_value_being_read_right_now_is_left_alone_by_the_sweep() {
+        let script = Script::new(vec![Ok(None)]);
+        let cache = SecretCache::new(&script);
+        cache.get(&stored()).await.unwrap();
+        tokio::time::advance(40 * MIN).await;
+        let slot = Arc::clone(cache.slots.lock().unwrap().get(&stored()).unwrap());
+        let reading = slot.lock().await;
+        assert_eq!(cache.evict_expired(), 0, "a slot in use is skipped");
+        drop(reading);
+        assert_eq!(cache.evict_expired(), 1);
+    }
 }

@@ -309,6 +309,7 @@ mod tests {
     fn a_rewriter_names_no_token_endpoint_unless_it_says_so() {
         let host = Host::parse_normalised("tokens.test").unwrap();
         assert!(!NoOverride.is_token_endpoint(&host));
+        assert!(NoOverride.begin(&host, "POST", "/").is_none());
     }
 
     use super::*;

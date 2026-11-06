@@ -1695,8 +1695,14 @@ mod company_network {
 mod tunnel_end {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
+    use puddle_ca::CaBuilder;
+    use puddle_types::Host;
+
     use super::*;
     use crate::counted::Counted;
+    use crate::terminate::{
+        Exchange, ExchangeRewriter, NoInjection, Termination, TerminationSet, test_client_hello,
+    };
 
     /// A tunnel whose guest is gone before the `200` can be written still reports the request
     /// line the guest sent with its `CONNECT`.
@@ -1718,5 +1724,49 @@ mod tunnel_end {
         let line = end.http.expect("the early request line is kept");
         assert_eq!((line.method(), line.path()), ("GET", "/early"));
         assert!(!end.ssh && !end.token_endpoint);
+    }
+
+    /// A hello that came with the `CONNECT` and asks for a token endpoint is refused before the
+    /// `200`: nothing is passed on and the guest gets an alert.
+    #[tokio::test]
+    async fn a_hello_sent_with_the_connect_that_asks_for_a_token_endpoint_is_refused() {
+        #[derive(Debug)]
+        struct Tokens;
+        impl ExchangeRewriter for Tokens {
+            fn begin(&self, _: &Host, _: &str, _: &str) -> Option<Exchange> {
+                None
+            }
+            fn is_token_endpoint(&self, host: &Host) -> bool {
+                host.to_string() == "tokens.test"
+            }
+        }
+        let ca = Arc::new(CaBuilder::new("test").build().unwrap());
+        let termination = Arc::new(
+            Termination::new(TerminationSet::new(), ca, Arc::new(NoInjection))
+                .with_exchanges(Arc::new(Tokens)),
+        );
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let server = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut accepted, _) = listener.accept().await.unwrap();
+        let (mut peer, near) = tokio::io::duplex(4096);
+        peer.write_all(&test_client_hello("tokens.test", &[]))
+            .await
+            .unwrap();
+        let mut reader = ClientReader::new(Counted::new(near).0);
+        reader.fill_buf().await.unwrap();
+        let end = tunnel(reader, server, None, None, Some(termination)).await;
+        assert!(end.token_endpoint);
+        let mut alert = [0_u8; 7];
+        tokio::io::AsyncReadExt::read_exact(&mut peer, &mut alert)
+            .await
+            .unwrap();
+        assert_eq!(alert, token_gate::ALERT);
+        let mut nothing = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut accepted, &mut nothing)
+            .await
+            .ok();
+        assert!(nothing.is_empty(), "the server never got the hello");
     }
 }

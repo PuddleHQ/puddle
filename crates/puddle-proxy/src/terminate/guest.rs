@@ -211,12 +211,15 @@ pub(crate) enum Scan {
 
 /// Reads `captured` as the start of a `ClientHello` without a connection.
 pub(crate) fn scan_hello(captured: &[u8]) -> Scan {
+    scan(captured).unwrap_or(Scan::Other)
+}
+
+/// [`scan_hello`], `None` when the bytes cannot be fed to the reader at all.
+fn scan(captured: &[u8]) -> Option<Scan> {
     let mut acceptor = rustls::server::Acceptor::default();
     let mut rest = captured;
     while !rest.is_empty() {
-        if acceptor.read_tls(&mut rest).is_err() {
-            return Scan::Other;
-        }
+        acceptor.read_tls(&mut rest).ok()?;
         match acceptor.accept() {
             Ok(Some(accepted)) => {
                 let name = accepted
@@ -224,13 +227,13 @@ pub(crate) fn scan_hello(captured: &[u8]) -> Scan {
                     .server_name()
                     .and_then(|name| normalise_host(name).ok())
                     .map(puddle_netpolicy::Target::into_host);
-                return Scan::Name(name);
+                return Some(Scan::Name(name));
             }
             Ok(None) => {}
-            Err(_) => return Scan::Other,
+            Err(_) => return Some(Scan::Other),
         }
     }
-    Scan::More
+    Some(Scan::More)
 }
 
 #[cfg(test)]

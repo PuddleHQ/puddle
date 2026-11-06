@@ -306,6 +306,20 @@ mod tests {
         let mut gate = TokenGate::new(Flushes::default(), None, &[]);
         gate.flush().await.unwrap();
         assert_eq!(gate.inner().0, 1);
+        gate.write_all(b"x").await.unwrap();
+        gate.shutdown().await.unwrap();
+        assert_eq!(gate.read(&mut [0_u8; 1]).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn once_refused_every_read_fails() {
+        let (_guest, tunnel) = tokio::io::duplex(64);
+        let hello = test_client_hello("tokens.test", &[]);
+        let mut gate = TokenGate::new(tunnel, Some(termination(true)), &hello);
+        let host = Host::parse_normalised("tokens.test").unwrap();
+        assert!(Endpoints.begin(&host, "POST", "/").is_none());
+        let err = gate.read(&mut [0_u8; 8]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }
 
     #[tokio::test]

@@ -144,7 +144,9 @@ impl SignIns {
                 self.git_credential(spec, host, path, username.as_ref())
                     .await
             }
-            SourceSpec::Stored { .. } => Err(SignInError::NothingToSignIn),
+            SourceSpec::Stored { .. } | SourceSpec::AzCli { .. } => {
+                Err(SignInError::NothingToSignIn)
+            }
         }
     }
 

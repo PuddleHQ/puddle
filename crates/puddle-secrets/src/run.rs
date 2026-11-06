@@ -15,35 +15,48 @@ use crate::error::{SourceError, Tool};
 /// How long a tool may take before it counts as stuck (most likely on a sign-in window).
 pub(crate) const TOOL_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Where `gh` and `git` are, resolved once. A missing one stays `None` and every source that needs
-/// it answers [`SourceError::ToolMissing`].
+/// How long the Azure CLI may take: a cold start of its Python runtime is slow, notably on Windows.
+pub(crate) const AZ_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Where `gh`, `git` and `az` are, resolved once. A missing one stays `None` and every source that
+/// needs it answers [`SourceError::ToolMissing`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ToolPaths {
     gh: Option<PathBuf>,
     git: Option<PathBuf>,
+    az: Option<PathBuf>,
 }
 
 impl ToolPaths {
     /// Paths given directly (tests, or a setting).
     #[must_use]
     pub fn new(gh: Option<PathBuf>, git: Option<PathBuf>) -> Self {
-        Self { gh, git }
+        Self { gh, git, az: None }
     }
 
-    /// Looks `gh` and `git` up in the process's `PATH`.
+    /// The same paths with `az` at `az` (tests, or a setting).
+    #[must_use]
+    pub fn with_az(mut self, az: Option<PathBuf>) -> Self {
+        self.az = az;
+        self
+    }
+
+    /// Looks `gh`, `git` and `az` up in the process's `PATH`.
     #[must_use]
     pub fn resolve() -> Self {
         Self::from_search_path(std::env::var_os("PATH").as_deref().unwrap_or_default())
     }
 
-    /// Looks `gh` and `git` up in `search_path` (a `PATH`-style list). Relative entries are skipped,
-    /// so the working directory is never searched; on Windows only `.exe` files count, never a
-    /// `.cmd` or `.bat` script.
+    /// Looks `gh`, `git` and `az` up in `search_path` (a `PATH`-style list). Relative entries are
+    /// skipped, so the working directory is never searched; on Windows only `.exe` files count for
+    /// `gh` and `git`, never a `.cmd` or `.bat` script. `az` is the exception: it ships as `az.cmd`,
+    /// and its one validated argument has no character a batch file would re-read.
     #[must_use]
     pub fn from_search_path(search_path: &OsStr) -> Self {
         Self {
             gh: find("gh", search_path),
             git: find("git", search_path),
+            az: find_file(if cfg!(windows) { "az.cmd" } else { "az" }, search_path),
         }
     }
 
@@ -51,6 +64,7 @@ impl ToolPaths {
         let path = match tool {
             Tool::Gh => &self.gh,
             Tool::Git => &self.git,
+            Tool::Az => &self.az,
         };
         path.as_deref().ok_or(SourceError::ToolMissing(tool))
     }
@@ -62,9 +76,13 @@ fn find(name: &str, search_path: &OsStr) -> Option<PathBuf> {
     } else {
         name.to_owned()
     };
+    find_file(&file, search_path)
+}
+
+fn find_file(file: &str, search_path: &OsStr) -> Option<PathBuf> {
     std::env::split_paths(search_path)
         .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join(&file))
+        .map(|dir| dir.join(file))
         .find(|candidate| is_executable(candidate))
 }
 
@@ -85,6 +103,8 @@ pub(crate) struct Output {
     pub(crate) success: bool,
     /// Standard output; wiped on drop because it may hold a token.
     pub(crate) stdout: Zeroizing<Vec<u8>>,
+    /// Standard error, only when the caller asked for it ([`run_capturing`]); empty otherwise.
+    pub(crate) stderr: Zeroizing<Vec<u8>>,
 }
 
 /// Whether the user is at the screen to answer what a tool opens.
@@ -122,6 +142,8 @@ pub(crate) fn command(program: &Path, prompts: Prompts) -> Command {
         // gh: no prompt, and a token in the environment must not stand in for the named account.
         .env("GH_PROMPT_DISABLED", "1")
         .env("GH_NO_UPDATE_NOTIFIER", "1")
+        // az: plain text, so its error lines can be told apart.
+        .env("AZURE_CORE_NO_COLOR", "1")
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .env_remove("GH_ENTERPRISE_TOKEN")
@@ -165,6 +187,29 @@ pub(crate) async fn run_with(
     stdin: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<Output, SourceError> {
+    run_inner(prompts, false, tool, program, args, stdin, timeout).await
+}
+
+/// [`run`], keeping standard error for the caller to classify a failure by. The caller reads it
+/// and drops it: it never goes to a log or an event.
+pub(crate) async fn run_capturing(
+    tool: Tool,
+    program: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Output, SourceError> {
+    run_inner(Prompts::Never, true, tool, program, args, None, timeout).await
+}
+
+async fn run_inner(
+    prompts: Prompts,
+    capture_stderr: bool,
+    tool: Tool,
+    program: &Path,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<Output, SourceError> {
     let mut cmd = command(program, prompts);
     cmd.args(args)
         .stdin(if stdin.is_some() {
@@ -173,25 +218,37 @@ pub(crate) async fn run_with(
             Stdio::null()
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(if capture_stderr {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
     let mut child = cmd.spawn().map_err(|err| spawn_error(tool, &err))?;
     if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
         // A tool that exits before reading its input is not an error here: its status says so.
         let _ = pipe.write_all(bytes).await;
     }
     let mut stdout = child.stdout.take().ok_or(SourceError::CouldNotRun(tool))?;
+    let mut stderr_pipe = child.stderr.take();
     let read = async {
-        let bytes = read_wiping(&mut stdout).await?;
+        // Both pipes are drained together so a tool that fills one while we wait on the other cannot stall.
+        let (bytes, errors) = tokio::join!(read_wiping(&mut stdout), async {
+            match stderr_pipe.as_mut() {
+                Some(pipe) => read_wiping(pipe).await,
+                None => Ok(Zeroizing::new(Vec::new())),
+            }
+        });
         let status = child.wait().await?;
-        Ok::<_, std::io::Error>((status, bytes))
+        Ok::<_, std::io::Error>((status, bytes?, errors?))
     };
     let answered = tokio::time::timeout(timeout, read).await;
-    let (status, stdout) = answered
+    let (status, stdout, stderr) = answered
         .map_err(|_| SourceError::Timeout(tool))?
         .map_err(|_| SourceError::CouldNotRun(tool))?;
     Ok(Output {
         success: status.success(),
         stdout,
+        stderr,
     })
 }
 

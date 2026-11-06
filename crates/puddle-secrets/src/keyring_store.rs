@@ -34,12 +34,27 @@ impl KeyringStore {
         }
     }
 
-    fn entry(&self, id: &StoredId) -> Result<keyring::Entry, StoreError> {
-        keyring::Entry::new(
-            self.service.as_deref().unwrap_or(SERVICE),
-            &format!("credential:{id}"),
-        )
-        .map_err(|_| StoreError)
+    fn entry(&self, id: &StoredId) -> Result<keyring_core::Entry, StoreError> {
+        let service = self.service.as_deref().unwrap_or(SERVICE);
+        let user = format!("credential:{id}");
+        #[cfg(windows)]
+        {
+            // Credential Manager's default, "enterprise", lets Windows copy the entry to the
+            // user's other computers when the account has a roaming profile.
+            let modifiers = std::collections::HashMap::from([("persistence", "local")]);
+            // The wrapper's constructor sets the default store up and takes no modifiers.
+            keyring::Entry::store_status()
+                .as_ref()
+                .map_err(|_| StoreError)?;
+            keyring_core::Entry::new_with_modifiers(service, &user, &modifiers)
+                .map_err(|_| StoreError)
+        }
+        #[cfg(not(windows))]
+        {
+            keyring::Entry::new(service, &user)
+                .map(|entry| entry.inner)
+                .map_err(|_| StoreError)
+        }
     }
 }
 
@@ -69,6 +84,35 @@ impl SecretStore for KeyringStore {
             Err(_) => Err(StoreError),
         }
     }
+
+    /// Windows only: an entry an earlier version wrote as "enterprise" is written again as
+    /// "local machine". Other platforms have no such setting.
+    fn keep_local(&self, id: &StoredId) -> Result<(), StoreError> {
+        #[cfg(windows)]
+        {
+            let entry = self.entry(id)?;
+            match entry.get_attributes() {
+                Ok(attributes) if is_kept_local(&attributes) => {}
+                Ok(_) => {
+                    let value = entry.get_password().map_err(|_| StoreError)?;
+                    entry.set_password(&value).map_err(|_| StoreError)?;
+                }
+                Err(keyring::Error::NoEntry) => {}
+                Err(_) => return Err(StoreError),
+            }
+        }
+        let _ = id;
+        Ok(())
+    }
+}
+
+/// Whether the attributes Credential Manager reports for an entry say it stays on this computer.
+#[cfg_attr(
+    not(any(windows, test)),
+    expect(dead_code, reason = "only the Windows keep_local rewrite calls it")
+)]
+fn is_kept_local(attributes: &std::collections::HashMap<String, String>) -> bool {
+    attributes.get("persistence").is_some_and(|p| p == "Local")
 }
 
 /// Whether the platform store can be used at all (a Linux host with no Secret Service cannot).
@@ -92,6 +136,16 @@ mod tests {
             KeyringStore::named("puddle-test-x").service.as_deref(),
             Some("puddle-test-x")
         );
+    }
+
+    #[test]
+    fn only_an_entry_reported_as_local_is_kept_local() {
+        let with = |value: &str| {
+            std::collections::HashMap::from([("persistence".to_owned(), value.to_owned())])
+        };
+        assert!(is_kept_local(&with("Local")));
+        assert!(!is_kept_local(&with("Enterprise")));
+        assert!(!is_kept_local(&std::collections::HashMap::new()));
     }
 
     #[test]

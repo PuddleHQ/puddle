@@ -67,20 +67,27 @@ fn is_wsl(proc_version: &str) -> bool {
 /// Under WSL the disk is a virtual disk file on a Windows drive: nothing below it says whether
 /// that drive is encrypted, so "not encrypted" would be a claim the probe cannot back.
 fn wsl_unknown(facts: &mut DiskEncryptionFacts) {
-    let why =
-        "this is WSL: its disk is a file on a Windows drive, so BitLocker on Windows decides; \
+    let relabel = |p: &Protection| {
+        match p {
+        Protection::NotEncrypted => Protection::Unknown {
+            why: "this is WSL: its disk is a file on a Windows drive, so BitLocker on Windows decides; \
 run puddle doctor in Windows"
-            .to_owned();
-    let to_unknown = |p: &mut Protection| {
-        if *p == Protection::NotEncrypted {
-            *p = Protection::Unknown { why: why.clone() };
-        }
+                .to_owned(),
+        },
+        other => other.clone(),
+    }
     };
     if let DataEncryption::Volume { protection, .. } = &mut facts.data {
-        to_unknown(protection);
+        *protection = relabel(protection);
     }
     if let SwapFacts::Areas(areas) = &mut facts.swap {
-        areas.iter_mut().for_each(|a| to_unknown(&mut a.protection));
+        *areas = areas
+            .iter()
+            .map(|a| SwapArea {
+                name: a.name.clone(),
+                protection: relabel(&a.protection),
+            })
+            .collect();
     }
 }
 

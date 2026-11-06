@@ -13,8 +13,8 @@ use std::time::Duration;
 use object::write::{Object, StandardSection};
 use object::{Architecture, BinaryFormat, Endianness, SectionKind};
 use puddle_doctor::{
-    CheckId, DiskFacts, Finding, Options, Probe, ProcessOutcome, RuntimeState, Status, SystemProbe,
-    diagnose,
+    CheckId, DataEncryption, DiskFacts, Finding, Options, Probe, ProcessOutcome, RuntimeState,
+    Status, SystemProbe, diagnose,
 };
 use puddle_runtime::{
     DevOverride, LIBKRUNFW_FILE_NAME, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeError, RuntimeVersion,
@@ -259,4 +259,25 @@ fn a_data_folder_the_os_cannot_measure_is_unreadable_not_a_failure() {
         panic!("an empty path has no drive");
     };
     assert!(detail.contains("do not exist"), "{detail}");
+}
+
+#[test]
+fn the_real_probe_reports_encryption_for_the_data_folder_without_failing() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("not-yet").join("puddle");
+    let probe = SystemProbe::new(root.path().join("runtime"), expected(), DevOverride::none())
+        .with_data_dir(&data);
+    let DataEncryption::Volume { dir, .. } = probe.disk_encryption().data else {
+        panic!("a folder was named");
+    };
+    assert_eq!(dir, data);
+    let report = diagnose(&probe, &no_boot(), "0.1.0");
+    let check = report.check(CheckId::DiskEncryption).unwrap();
+    assert_ne!(check.status, Status::Fail, "{check:?}");
+    assert_eq!(
+        SystemProbe::new("runtime".into(), expected(), DevOverride::none())
+            .disk_encryption()
+            .data,
+        DataEncryption::NoFolder
+    );
 }

@@ -1,0 +1,98 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on (the hypervisor uses it)
+ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot             a test VM booted and ran a program in 1.1 s
+ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
+      note: Puddle works. Root in a sandbox can map the virtual devices' registers through
+            /dev/mem, so the runtime's own checks on every register access are the only line
+            there. The Linux runtime's guest kernel is built without /dev/mem.
+warn  Disk encryption       data drive encrypted (x); swap /dev/dm-1 NOT encrypted
+      note: The swap is not encrypted. Puddle keeps secrets in memory while it runs (the real
+            values behind the stand-ins a workspace holds), and memory can be paged out to swap
+            or written to disk in a crash dump. On a drive that is not encrypted, anyone who
+            gets the disk (a lost or stolen computer, a disk taken out) can read those pages and
+            the data folder; on an encrypted one they cannot. Turn on BitLocker or Device
+            encryption for the drive (Settings, Privacy & security, Device encryption; Pro
+            editions: Control Panel, BitLocker Drive Encryption). A page file on a drive you
+            leave unencrypted is encrypted by `fsutil behavior set encryptpagingfile 1` (run as
+            administrator, then restart).
+ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
+ok    Global Secure Access  client not installed
+
+No problems found; 1 warning to know about. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": true,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe)"
+    },
+    {
+      "id": "launch",
+      "status": "ok",
+      "summary": "msb 0.7.7-puddle.2 (0.0 s)"
+    },
+    {
+      "id": "test_boot",
+      "status": "ok",
+      "summary": "a test VM booted and ran a program in 1.1 s"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+    },
+    {
+      "id": "guest_kernel",
+      "status": "info",
+      "summary": "the guest kernel of the Windows runtime has /dev/mem",
+      "finding": "guest_dev_mem_present",
+      "fix": "Puddle works. Root in a sandbox can map the virtual devices' registers through /dev/mem, so the runtime's own checks on every register access are the only line there. The Linux runtime's guest kernel is built without /dev/mem."
+    },
+    {
+      "id": "disk_encryption",
+      "status": "warn",
+      "summary": "data drive encrypted (x); swap /dev/dm-1 NOT encrypted",
+      "finding": "swap_not_encrypted",
+      "fix": "The swap is not encrypted. Puddle keeps secrets in memory while it runs (the real values behind the stand-ins a workspace holds), and memory can be paged out to swap or written to disk in a crash dump. On a drive that is not encrypted, anyone who gets the disk (a lost or stolen computer, a disk taken out) can read those pages and the data folder; on an encrypted one they cannot. Turn on BitLocker or Device encryption for the drive (Settings, Privacy & security, Device encryption; Pro editions: Control Panel, BitLocker Drive Encryption). A page file on a drive you leave unencrypted is encrypted by `fsutil behavior set encryptpagingfile 1` (run as administrator, then restart)."
+    },
+    {
+      "id": "ssh_agent",
+      "status": "ok",
+      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

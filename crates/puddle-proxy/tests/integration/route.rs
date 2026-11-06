@@ -1078,9 +1078,12 @@ async fn a_server_answering_before_the_upload_ends_reaches_the_guest() {
 }
 
 /// Plain HTTP: a server that resets mid-request makes the guest stream fail, not end
-/// cleanly as if the response were complete.
+/// cleanly as if the response were complete. The server resets only once the guest has the
+/// head and part of the body: a reset that overtakes unread data (Windows discards it) is
+/// before any response, and a 502 is the right answer to that.
 #[tokio::test]
 async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_error() {
+    let (seen_tx, seen_rx) = tokio::sync::oneshot::channel::<()>();
     let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -1090,6 +1093,7 @@ async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_erro
         conn.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\npart")
             .await
             .unwrap();
+        let _ = seen_rx.await;
         conn.set_zero_linger().unwrap();
         drop(conn);
     });
@@ -1101,6 +1105,20 @@ async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_erro
         .write_all(format!("GET http://127.0.0.1:{port}/ HTTP/1.1\r\n\r\n").as_bytes())
         .await
         .unwrap();
+    let mut seen = Vec::new();
+    let mut chunk = [0u8; 256];
+    while !seen.ends_with(b"part") {
+        let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            n, 0,
+            "the guest's answer ended before the body began: {seen:?}"
+        );
+        seen.extend_from_slice(&chunk[..n]);
+    }
+    seen_tx.send(()).unwrap();
     let got = tokio::time::timeout(Duration::from_secs(5), read_all(&mut stream))
         .await
         .unwrap();

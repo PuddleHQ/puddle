@@ -722,7 +722,7 @@ fn json_styles_that_escape_one_thing_are_matched() {
 
 #[test]
 fn base64_cores_need_twelve_bytes_and_sit_at_every_alignment() {
-    assert!(base64_cores("12345678901").is_empty());
+    assert_eq!(base64_cores("12345678901").len(), 0);
     assert_eq!(base64_cores("123456789012").len(), 6);
     let real = "puddle-real-value-1234";
     let cores = base64_cores(real);

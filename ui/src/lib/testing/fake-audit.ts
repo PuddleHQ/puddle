@@ -14,6 +14,7 @@ export function connection(
 ): AuditEntry {
   return {
     id,
+    workspace_name: null,
     record: {
       type: "connection",
       ts: 1_000_000 + id * 1000,
@@ -129,7 +130,6 @@ export class FakeAudit {
       return this.reply(200, {
         workspaces: this.workspaces.map((name) => ({
           name,
-          display_name: name,
           id: "w-" + name,
         })),
       } satisfies {

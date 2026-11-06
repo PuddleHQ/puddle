@@ -93,7 +93,8 @@ pub use start_folder::{StartFolderRequest, StartFolderSet};
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
     NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest, RepoFindings,
-    SessionUserRequest, Workspace, WorkspaceList, WorkspaceOperation, WorkspaceRepository,
+    SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
+    WorkspaceOperation, WorkspaceRepository,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -1543,6 +1544,10 @@ pub struct AuditEntry {
     /// Position in the log: pass the newest one as `after` to read on, or the oldest as `before`
     /// to read back.
     pub id: i64,
+    /// The name the record's workspace had when the record was written; `null` for a record
+    /// written before names were kept, and for one about no workspace. Show the id then.
+    #[schema(required = true)]
+    pub workspace_name: Option<String>,
     /// The record.
     pub record: AuditRecord,
 }

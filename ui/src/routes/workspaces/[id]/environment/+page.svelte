@@ -42,8 +42,8 @@
     </p>
     <EnvironmentTable
       {store}
-      label="Environment of {workspace.display_name}"
-      workspace={workspace.display_name}
+      label="Environment of {workspace.name}"
+      workspace={workspace.name}
       running={!isDown(workspace.status)}
     />
   </section>

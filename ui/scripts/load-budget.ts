@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // How much longer a UI test may take because the machine is busy. Chromium and the test runner
-// share their cores with whatever else runs; at a load of 15 times the core count a one-second
-// settings test took 15 to 30 s, and a test of 20 steps went over its 30 s with nothing wrong
-// with the page. The test's own limit grows by the factor the load calls for, read when the test
-// starts; an idle machine keeps the plain limit.
+// share their cores with whatever else runs: with 300 busy loops on 16 cores a one-second settings
+// test took 15 to 30 s, and with 600 three of 23 went over their 30 s with nothing wrong with the
+// page. The test's own limit grows by the factor the load calls for, read when the test starts;
+// an idle machine keeps the plain limit.
 
 /** The most a test's limit grows: past this a hang is a hang, however busy the host. */
 export const MAX_LOAD_FACTOR = 4;

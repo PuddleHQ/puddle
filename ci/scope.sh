@@ -14,7 +14,9 @@
 #   ci_rust   the full Rust and repository gates of ci.yml (false: only the light lint job)
 #   win_rust  windows clippy and tests
 #   ui        the UI gates on both systems
-#   vm        the VM build and test jobs of vm-linux and vm-windows
+#   vm        the VM build and test jobs of vm-linux and vm-windows (false: no changed path can reach a VM
+#             test, which includes a change to only other workflows or only non-VM test files of a crate;
+#             `vm_unrelated` below, and every other event prints true, so a nightly or a develop push runs them in full)
 #   defer_vm_windows, defer_win_ui, defer_win_clippy
 #             the nightly tier (below): true only on a merge queue run with PUDDLE_TIER=on whose diff
 #             did not escalate that job; the job then skips and the result job accepts the skip
@@ -111,6 +113,29 @@ path_class() {
     esac
 }
 
+# Paths that cannot change what a VM test does, though their class says otherwise (`always` for a
+# workflow, `crate` for a test file): a workflow other than the two that run the VM tests (neither
+# calls another workflow; ci/scope-test.sh checks that), and a top-level integration test file of a
+# crate that no `vm_*` binary shares (a `vm_*` file, a shared module `support`, `common` or
+# `vm_support`, and anything in a subfolder all still count). Errs on running: any other path counts.
+vm_unrelated() {
+    local rest
+    case $1 in
+    .github/workflows/vm-linux.yml | .github/workflows/vm-windows.yml) return 1 ;;
+    .github/workflows/*.yml | .github/workflows/*.yaml)
+        rest=${1#.github/workflows/}
+        [[ $rest != */* ]]
+        return ;;
+    crates/puddle-vm-tests/*) return 1 ;;
+    crates/*/tests/*.rs)
+        rest=${1#crates/*/tests/}
+        [[ $rest != */* ]] || return 1
+        case $rest in vm_*.rs | support.rs | common.rs | mod.rs) return 1 ;; esac
+        return 0 ;;
+    esac
+    return 1
+}
+
 full_outputs() {
     printf 'ci_rust=true\nwin_rust=true\nui=true\nvm=true\ndefer_vm_windows=false\ndefer_win_ui=false\ndefer_win_clippy=false\ndefer_linux_webkit=false\nlight=false\nclass=full\n'
 }
@@ -155,7 +180,7 @@ classify() {
         c=$(path_class "$p")
         for j in $(escalates "$p"); do esc="$esc$j "; done
         case $c in
-        always | unknown) always=1 ;;
+        always | unknown) always=1; vm_unrelated "$p" || vm=1 ;;
         gate) gate=1 ;;
         fixture) fixture=1 ;;
         ui) ui=1 ;;
@@ -163,13 +188,18 @@ classify() {
         crate:*)
             name=${c#crate:}
             crates=1
-            case "$NO_VM" in *" $name "*) ;; *) vm=1 ;; esac
+            case "$NO_VM" in *" $name "*) ;; *) vm_unrelated "$p" || vm=1 ;; esac
             case "$NO_UI" in *" $name "*) ;; *) e2e=1 ;; esac
             ;;
         esac
     done
-    if [ "$n" -eq 0 ] || [ "$n" -ge "$MAX_FILES" ] || [ "$always" = 1 ]; then
+    if [ "$n" -eq 0 ] || [ "$n" -ge "$MAX_FILES" ]; then
         full_outputs
+        return
+    fi
+    if [ "$always" = 1 ]; then
+        # Everything runs, except the VM jobs when every always-run path is a workflow they do not use.
+        if [ "$vm" = 1 ]; then full_outputs; else full_outputs | sed 's/^vm=true$/vm=false/'; fi
         return
     fi
     local ci_rust=false win_rust=false uib=false vmb=false class d_vm=false d_ui=false d_clip=false d_wk=false

@@ -107,9 +107,9 @@ docs/STANDARDS.md
 @13 full true true true true
 .github/workflows/windows.yml
 ci/cache-gc.sh
-@15 rust true true true true
+@15 rust true true true false
 crates/puddle-agent/tests/ssh_refusal.rs
-@16 rust true true true true
+@16 rust true true true false
 crates/puddle-upstream/tests/windows_pac.rs
 @17 full true true true true
 .github/workflows/vm-linux.yml
@@ -177,7 +177,7 @@ ui/src/lib/stores/global-settings.svelte.ts
 ui/src/lib/stores/global-settings.test.ts
 ui/src/routes/settings/+page.svelte
 ui/src/routes/settings/settings.test.ts
-@25 rust true true true true
+@25 rust true true true false
 crates/puddle-host/tests/fake_host.rs
 @26 full true true true true
 crates/puddle-doctor/src/boot.rs
@@ -198,7 +198,7 @@ crates/puddle-doctor/tests/snapshots/windows_gsa_unknown.snap
 crates/puddle-doctor/tests/system_probe.rs
 crates/puddle-vm-tests/tests/vm_doctor.rs
 crates/puddle/src/cmd/doctor.rs
-@27 rust true true true true
+@27 rust true true true false
 crates/puddle-upstream/tests/windows_pac.rs
 @28 rust true true true true
 crates/puddle-ipc/src/windows/mod.rs
@@ -450,13 +450,13 @@ crates/puddle-store/src/recorder.rs
 ui/e2e/warm-up.ts
 ui/tools/first-start.test.ts
 ui/tools/first-start.ts
-@61 full true true true true
+@61 full true true true false
 .github/workflows/cache-gc.yml
 .github/workflows/ci.yml
-@62 full true true true true
+@62 full true true true false
 .github/workflows/windows.yml
 docs/STANDARDS.md
-@63 rust true true true true
+@63 rust true true true false
 crates/puddle-e2e/tests/ip_deny.rs
 @64 ui false false true false
 ui/src/lib/audit/model.test.ts
@@ -517,7 +517,7 @@ crates/puddle-proxy/tests/terminate_h2.rs
 crates/puddle-proxy/tests/terminate_hostile.rs
 ui/src/lib/audit/model.test.ts
 ui/src/lib/audit/model.ts
-@71 rust true true true true
+@71 rust true true true false
 crates/puddle-proxy/tests/terminate_perf.rs
 @72 ui false false true false
 ui/e2e/density.spec.ts

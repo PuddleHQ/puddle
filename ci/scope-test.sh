@@ -29,6 +29,15 @@ want() { # want <label> <expected> <paths...>
     [ "$got" = "$exp" ] || bad "$label: got '$got', want '$exp'"
 }
 FULL="full true true true true"
+# Every always-run path of the list is a workflow the VM jobs do not use (the one way a full run skips the VM jobs).
+vm_unrelated_only() {
+    local p
+    for p in "$@"; do
+        if grep -Eq "$always_re" <<<"$p" && ! grep -Eq "$data_re" <<<"$p"; then
+            grep -Eq '^\.github/workflows/[^/]+\.ya?ml$' <<<"$p" && ! grep -Eq 'workflows/vm-(linux|windows)\.yml$' <<<"$p" || return 1
+        fi
+    done
+}
 
 # 1. Replay of the merged pull requests: class and outputs as recorded, and an independent check
 # that any pull request with an always-run path got a full run.
@@ -45,7 +54,9 @@ flush() {
     for p in "${paths[@]}"; do
         if grep -Eq "$always_re" <<<"$p" && ! grep -Eq "$data_re" <<<"$p"; then always=1; fi
     done
-    if [ "$always" = 1 ] && [ "$got" != "$FULL" ]; then bad "pr $pr has an always-run path but got '$got'"; fi
+    if [ "$always" = 1 ] && [ "$got" != "$FULL" ] && ! { [ "$got" = "full true true true false" ] && vm_unrelated_only "${paths[@]}"; }; then
+        bad "pr $pr has an always-run path but got '$got'"
+    fi
     seen_class[${got%% *}]=1
     replayed=$((replayed + 1))
 }
@@ -70,8 +81,8 @@ done
 
 # 2. Every always-run path alone, and added to a docs-only and to a UI-only change, runs everything.
 for p in Cargo.lock Cargo.toml rust-toolchain.toml .cargo/config.toml .config/nextest.toml .githooks/pre-push \
-    .github/workflows/ci.yml ci/scope.sh ci/msb-runtime.sha256 scripts/check.sh scripts/gate-sched.sh \
-    crates/puddle-vm-tests/src/lib.rs crates/puddle-vm-tests/tests/x.rs crates/puddle-api/openapi/openapi.json \
+    .github/workflows/vm-linux.yml .github/workflows/vm-windows.yml ci/scope.sh ci/msb-runtime.sha256 scripts/check.sh scripts/gate-sched.sh \
+    crates/puddle-vm-tests/src/lib.rs crates/puddle-vm-tests/tests/x.rs crates/puddle-vm-tests/tests/vm_x.rs crates/puddle-api/openapi/openapi.json \
     crates/puddle-agent/Cargo.toml ui/package-lock.json ui/src/lib/api/schema.d.ts ui/THIRD-PARTY-NOTICES.txt \
     crates/puddle-store/tests/data/repo-urls.json .github/actions/x/action.yml ui/scripts/diff-coverage.ts ui/scripts/coverage-ratchet.ts deny.toml about.toml clippy.toml rustfmt.toml _typos.toml \
     .gitleaks.toml .gitattributes; do
@@ -104,6 +115,30 @@ want "crate outside the VM set, in the UI closure" "rust true true true false" c
 want "crate in neither" "rust true true false false" crates/xtask/src/main.rs
 want "crate with a README only" "rust true true true true" crates/puddle-host/README.md
 want "rename out of an always-run path" "$FULL" ui/src/a.ts ci/old.sh
+
+# 4a. Diffs the VM jobs skip although the paths are not docs: other workflows and non-VM test files.
+# Each case also has its other direction: a path that can reach a VM test keeps `vm` true, and any
+# mix with such a path runs the VM jobs.
+want "another workflow only" "full true true true false" .github/workflows/ci.yml
+want "several other workflows" "full true true true false" .github/workflows/windows.yml .github/workflows/cache-gc.yml docs/x.md
+want "vm-linux workflow" "$FULL" .github/workflows/vm-linux.yml
+want "vm-windows workflow" "$FULL" .github/workflows/vm-windows.yml
+want "other workflow with the vm-linux workflow" "$FULL" .github/workflows/ci.yml .github/workflows/vm-linux.yml
+want "other workflow with a shared action" "$FULL" .github/workflows/ci.yml .github/actions/cancel-group/action.yml
+want "other workflow with a ci script" "$FULL" .github/workflows/ci.yml ci/vm-partition.sh
+want "other workflow with a scripts file" "$FULL" .github/workflows/ci.yml scripts/check.sh
+want "other workflow with an unknown path" "$FULL" .github/workflows/ci.yml mystery/file.txt
+want "other workflow with a vm crate" "full true true true true" .github/workflows/ci.yml crates/puddle-host/src/lib.rs
+want "a nested path under workflows" "$FULL" .github/workflows/sub/x.yml
+want "a non-VM test file" "rust true true true false" crates/puddle-host/tests/fake_host.rs
+want "a non-VM test file with a source file" "rust true true true true" crates/puddle-host/tests/fake_host.rs crates/puddle-host/src/lib.rs
+want "a vm_ test file" "rust true true true true" crates/puddle-host/tests/vm_git.rs
+want "a shared test module file" "rust true true true true" crates/puddle-host/tests/support.rs
+want "a shared test module folder" "rust true true true true" crates/puddle-compute-msb/tests/support/mod.rs
+want "a data file under tests" "rust true true true true" crates/puddle-host/tests/data/x.json
+want "a test file nested in a folder" "rust true true true true" crates/puddle-host/tests/integration/x.rs
+want "a non-VM test file of the VM test crate" "$FULL" crates/puddle-vm-tests/tests/x.rs
+want "a test file in a crate outside the VM set" "rust true true true false" crates/puddle-app/tests/x.rs
 
 # 4b. The nightly tier: which jobs a merge queue run defers (PUDDLE_TIER=on) and which paths pull a
 # job back into the queue. defers <event> <PUDDLE_TIER> <paths...> -> "vm ui clippy webkit", each true
@@ -211,8 +246,17 @@ main_case() { # main_case <label> <want class> <args of run_main>
     [ "$(grep -c . "$tmp/out")" = 10 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the ten outputs"
     grep -q "^light=${WANT_LIGHT:-false}$" "$tmp/out" || bad "main: $label: want light=${WANT_LIGHT:-false}, got: $(tr '\n' ' ' <"$tmp/out")"
 }
+printf '.github/workflows/ci.yml\ncrates/puddle-host/tests/fake_host.rs\n' >"$tmp/other-workflow.txt"
+want_out() { grep -q "^$1\$" "$tmp/out" || bad "main: $2: want $1, got: $(tr '\n' ' ' <"$tmp/out")"; }
 main_case "ui-only pull request to develop" ui pull_request develop ok "$tmp/ui.txt"
 main_case "push" full push develop ok "$tmp/ui.txt"
+for ev in push schedule workflow_dispatch; do
+    : >"$tmp/out"
+    MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1)
+    run_main "$ev" develop ok "$tmp/other-workflow.txt" >/dev/null
+    grep -q '^vm=true$' "$tmp/out" || bad "main: a $ev run of a diff no VM test can see must still run the VM jobs in full"
+done
+MAIN_ENV=()
 main_case "schedule" full schedule develop ok "$tmp/ui.txt"
 main_case "workflow_dispatch" full workflow_dispatch develop ok "$tmp/ui.txt"
 main_case "pull request to main" full pull_request main ok "$tmp/ui.txt"
@@ -233,6 +277,8 @@ out=$(env PATH="$tmp/nothing" GITHUB_EVENT_NAME=pull_request PR_BASE_REF=develop
 # anything doubtful runs everything. Never the light mode, whatever PUDDLE_QUEUE says.
 MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 PUDDLE_QUEUE=on)
 main_case "merge group, ui-only diff" ui merge_group "" ok "$tmp/ui.txt"
+main_case "merge group, another workflow and a non-VM test file" full merge_group "" ok "$tmp/other-workflow.txt"
+want_out vm=false "merge group: a diff no VM test can see skips the VM jobs"
 main_case "merge group, always-run path" full merge_group "" ok "$tmp/rename.txt"
 main_case "merge group, compare fails" full merge_group "" error "$tmp/ui.txt"
 main_case "merge group, empty diff" full merge_group "" ok "$tmp/empty.txt"
@@ -272,7 +318,6 @@ main_case "light: PUDDLE_QUEUE unset" ui pull_request develop ok "$tmp/ui.txt"
 printf 'crates/puddle-fs/src/lib.rs\n' >"$tmp/rust.txt"
 printf 'docs/STANDARDS.md\nREADME.md\n' >"$tmp/docs.txt"
 printf 'ui/e2e/fixtures/data.json\n' >"$tmp/fixture.txt"
-want_out() { grep -q "^$1\$" "$tmp/out" || bad "main: $2: want $1, got: $(tr '\n' ' ' <"$tmp/out")"; }
 MAIN_ENV=(PUDDLE_QUEUE=on)
 WANT_LIGHT=true main_case "light: rust-only pull request" rust pull_request develop ok "$tmp/rust.txt"
 want_out win_rust=true "light: a rust-only pull request keeps the Windows tests"
@@ -863,6 +908,26 @@ PY
 else
     echo "note: PyYAML missing, workflow wiring not checked" >&2
 fi
+
+# 7b. What `vm_unrelated` (ci/scope.sh) assumes about the real tree, so a later change cannot make it wrong silently:
+# the VM workflows call no other workflow, and no top-level non-VM test file of a crate holds a `vm_`
+# test or is a module of a `vm_*` test file (`mod <name>;` or `#[path]`).
+root="$here/.."
+if grep -Ehn "uses: *\./\.github/workflows/|workflow_call|workflow_run" "$root/.github/workflows/vm-linux.yml" "$root/.github/workflows/vm-windows.yml" >&2; then
+    bad "a VM workflow calls another workflow: vm_unrelated in ci/scope.sh would skip them for it"
+fi
+for f in "$root"/crates/*/tests/*.rs; do
+    [ -e "$f" ] || continue
+    case ${f##*/} in vm_*.rs | support.rs | common.rs | mod.rs) continue ;; esac
+    [ "${f#"$root"/crates/puddle-vm-tests/}" != "$f" ] && continue
+    stem=${f##*/}
+    stem=${stem%.rs}
+    if grep -Eq 'fn vm_[a-z0-9_]*' "$f"; then bad "$f holds a vm_ test, but vm_unrelated treats it as a non-VM file"; fi
+    for v in "${f%/*}"/vm_*.rs; do
+        [ -e "$v" ] || continue
+        if grep -Eq "^[[:space:]]*(pub +)?mod +$stem *;|#\[path *= *\"$stem\.rs\"" "$v"; then bad "$v includes $f, but vm_unrelated treats it as a non-VM file"; fi
+    done
+done
 
 # 8. The crate sets against the real graph (opt in: needs cargo; CI's Rust job turns it on).
 if [ "${SCOPE_TEST_METADATA:-0}" = 1 ]; then

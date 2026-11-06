@@ -566,7 +566,9 @@ starts with a short `scope` job that reads the PR's file list from the GitHub AP
 and `vm`; the heavy jobs skip on an explicit `false`. A docs-only or UI-only PR runs the light `ci` job (typos, spdx,
 shellcheck, standalone, secrets) instead of the Rust gates; a UI-only PR also skips the Windows Rust jobs and both VM
 workflows and keeps the UI gates on both systems; a Rust-only PR skips the UI jobs when every changed crate is outside
-the closure of `puddle-e2e` and `puddle-app`, and the VM jobs when none is in the VM set. Everything runs for a push, the
+the closure of `puddle-e2e` and `puddle-app`, and the VM jobs when none is in the VM set. The VM jobs also skip when the only
+changes are workflows other than `vm-linux.yml` and `vm-windows.yml` (neither calls another workflow) or top-level test files of a crate
+that no `vm_*` test shares (`vm_unrelated`; the rest of the always-run list still runs them). Everything runs for a push, the
 nightly, a manual run, a PR to `main`, a failed or empty file list, 300 or more files, a path no rule names, and any path
 in the always-run list (`Cargo.lock` and every manifest, `rust-toolchain.toml`, tool config, `.github/workflows/`, `ci/`,
 `scripts/` except the three gate-data files, `crates/puddle-vm-tests/`, the API contract and its TypeScript types, the

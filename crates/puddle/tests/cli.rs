@@ -59,3 +59,62 @@ fn serve_rejects_a_bad_port_with_exit_2() {
     let out = puddle(&["serve", "--port", "nope"]);
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn backup_copies_a_live_database_and_names_what_it_leaves_out() {
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    // The store stays open, as it is while a host runs.
+    let live = puddle_store::Store::open(
+        &data.join("puddle.db"),
+        Arc::new(puddle_store::SystemClock),
+        puddle_store::Limits::default(),
+    )
+    .unwrap();
+    let out = root.path().join("out");
+    let result = puddle(&[
+        "backup",
+        "--data-dir",
+        data.to_str().unwrap(),
+        out.to_str().unwrap(),
+    ]);
+    assert!(result.status.success(), "{result:?}");
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    assert!(
+        stdout.contains("not included: stored logins and secrets"),
+        "{stdout}"
+    );
+    let restored = puddle_store::Store::open(
+        &out.join("puddle.db"),
+        Arc::new(puddle_store::SystemClock),
+        puddle_store::Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(restored.rules(), live.rules());
+}
+
+#[test]
+fn backup_without_a_database_exits_1_and_creates_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let out = root.path().join("out");
+    let result = puddle(&[
+        "backup",
+        "--data-dir",
+        root.path().join("empty").to_str().unwrap(),
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(
+        String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("no database at")
+    );
+    assert!(!out.exists());
+}
+
+#[test]
+fn backup_without_a_destination_exits_2() {
+    assert_eq!(puddle(&["backup"]).status.code(), Some(2));
+}

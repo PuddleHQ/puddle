@@ -1349,6 +1349,12 @@ fn the_hook_adds_the_session_user_at_the_first_free_uid_and_keeps_it_after() {
             "{stdout}"
         );
         assert!(stdout.contains("no sudo in this image"), "{stdout}");
+        assert!(
+            stdout
+                .lines()
+                .any(|l| l == "puddle-boot: session user cannot become root: no sudo"),
+            "{stdout}"
+        );
 
         let user_rows = fr.read("/etc/passwd");
         assert!(
@@ -1427,6 +1433,7 @@ fn the_session_user_gets_uid_1000_when_it_is_free_and_bash_and_sudo_when_the_ima
         stdout.contains("session user agent (uid 1000), sudo at /usr/bin/sudo"),
         "{stdout}"
     );
+    assert!(!stdout.contains("cannot become root"), "{stdout}");
     assert!(
         fr.read("/etc/passwd")
             .ends_with("agent:x:1000:1000::/home/agent:/bin/bash\n")

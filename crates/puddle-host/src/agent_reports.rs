@@ -58,6 +58,33 @@ fn stub_dns_key(name: &WorkspaceId) -> String {
     format!("stub-dns:{name}")
 }
 
+/// The key of the problem about an image with no `sudo` for `name`'s session user.
+fn no_sudo_key(name: &WorkspaceId) -> String {
+    format!("no-sudo:{name}")
+}
+
+/// The problem for a workspace whose session user (not root) cannot become root because the image
+/// has no `sudo`. The boot hook sees it on every boot, so the next boot that finds `sudo` (or a
+/// root session user) clears it ([`clear_no_sudo`]).
+pub(crate) fn no_sudo_problem(name: &WorkspaceId) -> Problem {
+    Problem::new(
+        no_sudo_key(name),
+        format!("{name} has no sudo, so its user cannot become root"),
+        "Puddle runs the workspace as the session user `agent`, and `agent` becomes root with \
+         `sudo`. This image has none, so `sudo` and `sudo -i` fail in a terminal, and so does \
+         anything that installs system packages. To fix it, use an image that has `sudo`, or \
+         switch the session user to root on the workspace's Settings tab and start the workspace \
+         again. This ends at the next start that finds `sudo`."
+            .to_owned(),
+    )
+    .about(name.clone())
+}
+
+/// A boot found `sudo`, or no session user that needs it: the problem of an earlier boot ends.
+pub(crate) fn clear_no_sudo(problems: &Problems, name: &WorkspaceId) {
+    problems.clear(&no_sudo_key(name));
+}
+
 /// The problem for an entrypoint that exited with a failure. `failure` is `<status>: <end of its
 /// output>`, from the boot hook's watch or the agent's report, which say it the same way, so both
 /// raise the same problem.
@@ -342,6 +369,7 @@ impl ReportDesk {
     pub(crate) fn forget(&self, name: &WorkspaceId) {
         self.end(name);
         self.problems.clear(&entrypoint_key(name));
+        clear_no_sudo(&self.problems, name);
     }
 }
 

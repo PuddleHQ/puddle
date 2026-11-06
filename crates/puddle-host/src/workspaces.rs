@@ -19,7 +19,7 @@
 //! a create whose final save fails is undone before anyone works in it, and a delete is refused
 //! when the entry can't be taken out first (principle 7, "your work is never lost by accident").
 
-use crate::agent_reports::{ReportDesk, entrypoint_problem};
+use crate::agent_reports::{ReportDesk, clear_no_sudo, entrypoint_problem, no_sudo_problem};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -1842,6 +1842,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// After a boot: an image with no `sudo` for a session user that is not root becomes a problem
+    /// on the workspace (the start goes on: everything but `sudo` works); a boot that finds `sudo`,
+    /// or a root session user, ends the problem of an earlier boot.
+    fn settle_no_sudo(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
+        if report.session_user_has_no_sudo() {
+            tracing::warn!(workspace = %name, "the image has no sudo for the session user");
+            self.inner.problems.raise(no_sudo_problem(name));
+        } else {
+            clear_no_sudo(&self.inner.problems, name);
+        }
+    }
+
     /// After a boot: tell the user when something inside the workspace had changed its shell init
     /// (the folder, or the file that loads it), and check that the saved script still parses and
     /// prints nothing. A script that fails the check does not stop the start: it is a problem on
@@ -2041,6 +2053,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.report_locks(name, locks);
         self.settle_shell_init(name, &gated).await;
         self.settle_entrypoint(name, gated.boot_report());
+        self.settle_no_sudo(name, gated.boot_report());
         self.settle_kubernetes(name, gated.boot_report());
         self.settle_merge_notices(name, gated.boot_report());
         let authors = inner

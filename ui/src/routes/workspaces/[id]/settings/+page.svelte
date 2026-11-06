@@ -333,7 +333,10 @@
             capture works nothing running in the workspace can copy your login.
             A change takes effect when the workspace next starts; turning it off
             leaves the logins Puddle already kept unused, so sign in again in
-            the workspace.
+            the workspace. A token the workspace prints, such as the one of
+            <code>claude setup-token</code>, is a stand-in as well and works
+            only inside this workspace; copy it elsewhere and it is refused.
+            With capture off, a login keeps its real token in the workspace.
             <span class="chip"
               >{sourceLabel(effective.capture_logins.source)}</span
             >

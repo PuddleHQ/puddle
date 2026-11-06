@@ -152,6 +152,12 @@ pub trait ExchangeRewriter: Send + Sync + fmt::Debug {
     /// exchange. Asked after the upstream certificate is verified and the injector has decided,
     /// for every request on a decrypted host, so it answers from memory and never waits.
     fn begin(&self, host: &Host, method: &str, path: &str) -> Option<Exchange>;
+
+    /// Whether `host` is the host of a token endpoint this rewriter reads. Asked of the name in
+    /// the `ClientHello` of a connection that is not decrypted, which is refused when it is.
+    fn is_token_endpoint(&self, _host: &Host) -> bool {
+        false
+    }
 }
 
 /// The request body of an exchange with its stand-ins swapped: `Some` with the new body when
@@ -290,6 +296,22 @@ pub(crate) async fn read_answer(
 
 #[cfg(test)]
 mod tests {
+    #[derive(Debug)]
+    struct NoOverride;
+
+    impl ExchangeRewriter for NoOverride {
+        fn begin(&self, _: &Host, _: &str, _: &str) -> Option<Exchange> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_rewriter_names_no_token_endpoint_unless_it_says_so() {
+        let host = Host::parse_normalised("tokens.test").unwrap();
+        assert!(!NoOverride.is_token_endpoint(&host));
+        assert!(NoOverride.begin(&host, "POST", "/").is_none());
+    }
+
     use super::*;
 
     struct Plain;

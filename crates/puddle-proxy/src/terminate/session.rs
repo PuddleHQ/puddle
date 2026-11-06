@@ -17,8 +17,8 @@ use zeroize::Zeroizing;
 use super::body::{Abort, BodyReader, ChannelBody, pump};
 use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
 use super::guest::{
-    ALPN_HTTP11, FirstBytes, Hello, Prefixed, Proto, capture_first_record, parse_hello, read_hello,
-    server_config,
+    ALPN_HTTP11, FirstBytes, Hello, Prefixed, Proto, Scan, capture_first_record, parse_hello,
+    read_hello, scan_hello, server_config,
 };
 use super::inject::{
     Forwarding, InjectContext, InjectRefusal, Injection, RequestView, Unauthorized, body_too_large,
@@ -356,6 +356,17 @@ where
     // No credential is at stake on this host, so a client that asks for another name (or hides
     // it, as encrypted ClientHello does) is passed through rather than refused.
     if !hello.name_matches {
+        // Another name is passed through, unless it is a token endpoint: that one goes only
+        // through a decrypted connection, where its refresh token is swapped.
+        if let Scan::Name(Some(name)) = scan_hello(&captured)
+            && cx.termination.is_token_endpoint(&name)
+        {
+            tracing::info!(workspace = %cx.workspace, "connection refused: the TLS hello asks for a token endpoint");
+            let _ = stream.write_all(&crate::token_gate::ALERT).await;
+            let _ = stream.shutdown().await;
+            outcome.refused = Some(crate::token_gate::CODE);
+            return None;
+        }
         pass_through(cx, stream, captured, "sni_mismatch", outcome).await;
         return None;
     }

@@ -745,7 +745,10 @@
               workspace gets a stand-in that works only through Puddle. On by
               default. A workspace can set its own switch; a change takes effect
               when a workspace next starts, and turning it off leaves the logins
-              Puddle already kept unused.
+              Puddle already kept unused. A token the workspace prints, such as
+              the one of <code>claude setup-token</code>, is a stand-in as well
+              and works only inside that workspace. With capture off, a login
+              keeps its real token in the workspace.
             </p>
           </div>
           <input

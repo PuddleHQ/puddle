@@ -1958,7 +1958,8 @@ mod tests {
         let ws = workspace("alpha");
         injection.begin(&ws, true).await.unwrap();
         let sent = events.0.lock().unwrap().clone();
-        assert_eq!(sent.len(), 2, "{sent:?}");
+        // One notice per service Puddle can keep a login for.
+        assert_eq!(sent.len(), puddle_logins::builtin().len(), "{sent:?}");
         assert!(sent.iter().all(|event| matches!(
             event,
             Event::LoginProblem {

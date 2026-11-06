@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A login whose access token is a JWT, through the real proxy: the tool reads the claims of the
-//! stand-in it is given, and every stand-in it was given since the workspace started is swapped for
-//! the newest real token toward the service's API host. A fake server stands in for the service.
+//! stand-in it is given, and the stand-ins it was given in the last few exchanges are each swapped for
+//! the real token of their own exchange toward the service's API host. A fake server stands in for the service.
 use crate::terminate_support;
 
 use std::sync::{Arc, Mutex, PoisonError};
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_logins::{
-    Endpoint, Field, Generator, LoginNotices, Logins, Method, Problem, Profile, Role, Scope,
+    Endpoint, Field, LoginNotices, Logins, Method, Problem, Profile, Role, Scope, StandInKind,
 };
 use puddle_proxy::{InjectDecision, StandIns};
 use puddle_secrets::{MemoryStore, SecretStore};
@@ -36,7 +36,7 @@ static PROFILE: [Profile; 1] = [Profile {
             resource: None,
             prefixes: &[],
             keep_last: 0,
-            generator: Generator::Jwt,
+            stand_in: StandInKind::Jwt,
             scope: Scope::Api,
         }],
     }],
@@ -78,7 +78,7 @@ fn request(method: &str, host: &str, path: &str, extra: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn every_jwt_stand_in_given_so_far_reaches_the_api_as_the_newest_real_token() {
+async fn every_jwt_stand_in_given_so_far_reaches_the_api_as_the_real_token_of_its_own_exchange() {
     let pki = Pki::new();
     let reals = [
         jwt(1_000_000_001, 'A'),
@@ -149,7 +149,7 @@ async fn every_jwt_stand_in_given_so_far_reaches_the_api_as_the_newest_real_toke
 
     // An older stand-in, used by a process that has not stored the new one, still works.
     let mut client = guest.tls(&format!("{API_HOST}:443"), None).await.unwrap();
-    for stand_in in &given {
+    for (stand_in, real) in given.iter().zip(&reals) {
         client
             .send(&request(
                 "GET",
@@ -162,7 +162,7 @@ async fn every_jwt_stand_in_given_so_far_reaches_the_api_as_the_newest_real_toke
         let seen = api.recorded();
         assert_eq!(
             seen.last().unwrap().header("authorization"),
-            Some(format!("Bearer {}", reals[2]).as_str()),
+            Some(format!("Bearer {real}").as_str()),
             "{stand_in}"
         );
     }

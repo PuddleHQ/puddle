@@ -9,8 +9,9 @@ use puddle_runtime::RuntimeError;
 
 use crate::facts::{
     AgentService, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity, CodeIntegrityFacts,
-    DataPathFacts, DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os,
-    ProcessOutcome, RuntimeFacts, RuntimeState, SshAgentFacts, WritableFolder,
+    DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorApi,
+    HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, Protection, RuntimeFacts,
+    RuntimeState, SshAgentFacts, SwapFacts, WritableFolder,
 };
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -42,6 +43,8 @@ pub trait Probe {
     fn disk_space(&self) -> DiskFacts;
     /// The folders above Puddle's data folder; `None` where msb has no such rule (not Linux).
     fn data_path(&self) -> Option<DataPathFacts>;
+    /// Whether the drive that holds Puddle's data and the swap are encrypted.
+    fn disk_encryption(&self) -> DiskEncryptionFacts;
     /// Asks the SSH agent Puddle would ask for its key list, waiting at most `limit`.
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts;
 }
@@ -145,6 +148,8 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     if os == Os::Windows {
         checks.push(windows_guest_kernel());
     }
+
+    checks.push(disk_encryption(os, &probe.disk_encryption()));
 
     checks.push(ssh_agent(os, &probe.ssh_agent(options.ssh_agent_limit)));
 
@@ -457,6 +462,118 @@ The line is the setting \"Warn when free space is under\" in Settings."
                 Check::new(id, Status::Ok, format!("{free} GB free {place}"))
             }
         }
+    }
+}
+
+// ---- disk encryption ----
+
+const ENCRYPTION_WHY: &str = "Puddle keeps secrets in memory while it runs (the real values behind the stand-ins a workspace holds), \
+and memory can be paged out to swap or written to disk in a crash dump. On a drive that is not encrypted, anyone who gets the disk \
+(a lost or stolen computer, a disk taken out) can read those pages and the data folder; on an encrypted one they cannot.";
+
+fn encryption_fix(os: Os, data_bad: bool, swap_bad: bool) -> String {
+    let how = match os {
+        Os::Windows => {
+            "Turn on BitLocker or Device encryption for the drive (Settings, Privacy & security, Device encryption; Pro editions: \
+Control Panel, BitLocker Drive Encryption). A page file on a drive you leave unencrypted is encrypted by \
+`fsutil behavior set encryptpagingfile 1` (run as administrator, then restart)."
+        }
+        Os::MacOs => {
+            "Turn on FileVault (System Settings, Privacy & Security, FileVault). macOS encrypts its swap by default."
+        }
+        Os::Linux => {
+            "Put the drive under LUKS (the installer's \"encrypt the disk\" option; an existing drive needs a backup and a reinstall or \
+`cryptsetup reencrypt`). For swap alone, give it a random key each boot: in /etc/crypttab, `swap /dev/<swap partition> /dev/urandom \
+swap,cipher=aes-xts-plain64,size=512`, and use /dev/mapper/swap in /etc/fstab; or turn swap off with `sudo swapoff -a` if the machine has the memory."
+        }
+        Os::Other => "Encrypt the drive and the swap with the tools your OS provides.",
+    };
+    let what = match (data_bad, swap_bad) {
+        (true, true) => "The drive and the swap are",
+        (true, false) => "The drive is",
+        _ => "The swap is",
+    };
+    format!("{what} not encrypted. {ENCRYPTION_WHY} {how}")
+}
+
+fn protection_text(p: &Protection) -> String {
+    match p {
+        Protection::Encrypted { by } => format!("encrypted ({by})"),
+        Protection::NotEncrypted => "NOT encrypted".to_owned(),
+        Protection::NotOnDisk { what } => format!("not on disk ({what})"),
+        Protection::Unknown { .. } => "unknown".to_owned(),
+    }
+}
+
+fn unknown_why(p: &Protection) -> Option<&str> {
+    match p {
+        Protection::Unknown { why } => Some(why),
+        _ => None,
+    }
+}
+
+fn disk_encryption(os: Os, facts: &DiskEncryptionFacts) -> Check {
+    let id = CheckId::DiskEncryption;
+    let mut parts = Vec::new();
+    let mut protections: Vec<(&str, &Protection)> = Vec::new();
+    match &facts.data {
+        DataEncryption::NoFolder => parts.push("data folder not found".to_owned()),
+        DataEncryption::Volume { protection, .. } => {
+            parts.push(format!("data drive {}", protection_text(protection)));
+            protections.push(("data", protection));
+        }
+    }
+    match &facts.swap {
+        SwapFacts::None => parts.push("no swap".to_owned()),
+        SwapFacts::Unreadable { .. } => parts.push("swap unknown".to_owned()),
+        SwapFacts::Areas(areas) => {
+            for a in areas {
+                parts.push(format!(
+                    "swap {} {}",
+                    a.name,
+                    protection_text(&a.protection)
+                ));
+                protections.push(("swap", &a.protection));
+            }
+        }
+    }
+    let summary = parts.join("; ");
+    let data_bad = protections
+        .iter()
+        .any(|(k, p)| *k == "data" && **p == Protection::NotEncrypted);
+    let swap_bad = protections
+        .iter()
+        .any(|(k, p)| *k == "swap" && **p == Protection::NotEncrypted);
+    let unknowns: Vec<String> = protections
+        .iter()
+        .filter_map(|(_, p)| unknown_why(p).map(str::to_owned))
+        .chain(match &facts.swap {
+            SwapFacts::Unreadable { why } => Some(why.clone()),
+            _ => None,
+        })
+        .collect();
+    let mut unknowns = unknowns;
+    unknowns.dedup();
+    if data_bad || swap_bad {
+        let finding = if data_bad {
+            Finding::DiskNotEncrypted
+        } else {
+            Finding::SwapNotEncrypted
+        };
+        let mut check = Check::new(id, Status::Warn, summary)
+            .finding(finding)
+            .fix(encryption_fix(os, data_bad, swap_bad));
+        if !unknowns.is_empty() {
+            check = check.detail(unknowns.join("; "));
+        }
+        check
+    } else if !unknowns.is_empty() {
+        Check::new(id, Status::Info, summary)
+            .finding(Finding::DiskEncryptionUnknown)
+            .fix("Puddle works; this only means it could not say whether the drive and swap are encrypted.")
+            .detail(unknowns.join("; "))
+    } else {
+        Check::new(id, Status::Ok, summary)
     }
 }
 

@@ -17,7 +17,7 @@
 //! a key, the credential store is not there) the answer goes to the tool as it is, so the tool
 //! keeps working, and the user is told that this login is not protected.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -122,18 +122,17 @@ struct Inner {
     capture: tokio::sync::Mutex<()>,
     /// How long a call on the credential store may take, in milliseconds.
     store_timeout_ms: AtomicU64,
-    /// The stand-ins of each slot that has any.
-    slots: Mutex<BTreeMap<(&'static str, Slot), Held>>,
+    /// The stand-in of each slot that has one.
+    slots: Mutex<BTreeMap<(&'static str, Slot), String>>,
+    /// The earlier stand-ins of a slot whose stand-in is made again at every exchange, newest
+    /// last. The tool may still hold one of them when the next exchange answers, so each stays
+    /// swapped, with the real token of its own exchange, until [`RETIRED_KEPT`] newer ones exist.
+    retired: Mutex<BTreeMap<(&'static str, Slot), VecDeque<String>>>,
 }
 
-/// What a workspace holds for one slot: the stand-in it was last given, and the earlier ones of a
-/// slot whose stand-in changes with each token (a JWT's, [`crate::Generator::Jwt`]), which the tool may
-/// still send until it has stored the new one, or from a second process. All are swapped for the
-/// newest real token, until the workspace stops.
-struct Held {
-    current: String,
-    older: Vec<String>,
-}
+/// How many earlier stand-ins of a slot stay swapped. A session token lasts about half an hour
+/// and is exchanged again before it ends, so the tool never holds more than the last two.
+const RETIRED_KEPT: usize = 3;
 
 /// One workspace's captured logins. Cheap to clone.
 #[derive(Clone)]
@@ -233,6 +232,7 @@ impl Logins {
                     u64::try_from(STORE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
                 ),
                 slots: Mutex::new(BTreeMap::new()),
+                retired: Mutex::new(BTreeMap::new()),
             }),
         }
     }
@@ -260,7 +260,7 @@ impl Logins {
         set
     }
 
-    fn slots(&self) -> std::sync::MutexGuard<'_, BTreeMap<(&'static str, Slot), Held>> {
+    fn slots(&self) -> std::sync::MutexGuard<'_, BTreeMap<(&'static str, Slot), String>> {
         self.inner
             .slots
             .lock()
@@ -296,16 +296,13 @@ impl Logins {
     /// Puts a pair into the registry and the slots: the stand-in the workspace holds and the real
     /// token behind it, swapped toward the hosts `scope` names. The registry is the one place
     /// that checks a stand-in and a real value; what it refuses is the error.
-    ///
-    /// With `keep_older` the slot's earlier stand-ins stay registered, now for `real`; without it
-    /// they are removed.
     fn install(
         &self,
         profile: &'static Profile,
         (slot, scope): (Slot, Scope),
         stand_in: &str,
         real: &str,
-        keep_older: bool,
+        retire: bool,
     ) -> Result<(), StandInError> {
         let entry = StandIn::new(
             StandInOrigin::CapturedLogin,
@@ -314,31 +311,32 @@ impl Logins {
             SecretValue::new(real),
             profile.hosts_for(scope),
         )?;
-        let mut slots = self.slots();
-        let old = slots.remove(&(profile.id, slot));
-        let mut older = Vec::new();
-        for gone in old.into_iter().flat_map(|held| {
-            let Held { current, mut older } = held;
-            older.push(current);
-            older
-        }) {
-            if keep_older {
-                // The tool may send either until it has stored the new one.
-                let _ = self.inner.registry.set_real(&gone, SecretValue::new(real));
-                older.push(gone);
+        let old = self.slots().insert((profile.id, slot), stand_in.to_owned());
+        if let Some(old) = old {
+            if retire {
+                self.retire(profile, slot, old);
             } else {
-                self.inner.registry.remove(&gone);
+                self.inner.registry.remove(&old);
             }
         }
-        slots.insert(
-            (profile.id, slot),
-            Held {
-                current: stand_in.to_owned(),
-                older,
-            },
-        );
-        drop(slots);
         self.inner.registry.insert(entry)
+    }
+
+    /// Keeps `old` swapped as an earlier stand-in of the slot, and stops swapping the oldest ones
+    /// beyond [`RETIRED_KEPT`].
+    fn retire(&self, profile: &Profile, slot: Slot, old: String) {
+        let mut retired = self
+            .inner
+            .retired
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let queue = retired.entry((profile.id, slot)).or_default();
+        queue.push_back(old);
+        while queue.len() > RETIRED_KEPT {
+            if let Some(oldest) = queue.pop_front() {
+                self.inner.registry.remove(&oldest);
+            }
+        }
     }
 
     /// Reads the logins kept for the workspace and registers their stand-ins, at the workspace's
@@ -556,11 +554,17 @@ impl Logins {
         };
         let mut failed = false;
         for (slot, _) in profile.slots() {
-            if let Some(held) = self.slots().remove(&(profile.id, slot)) {
-                self.inner.registry.remove(&held.current);
-                for stand_in in &held.older {
-                    self.inner.registry.remove(stand_in);
-                }
+            if let Some(stand_in) = self.slots().remove(&(profile.id, slot)) {
+                self.inner.registry.remove(&stand_in);
+            }
+            let earlier = self
+                .inner
+                .retired
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&(profile.id, slot));
+            for stand_in in earlier.into_iter().flatten() {
+                self.inner.registry.remove(&stand_in);
             }
             failed |= self
                 .store(move |vault| vault.delete(profile, slot))
@@ -627,22 +631,25 @@ impl Logins {
         }
         if found
             .iter()
-            .any(|(field, real)| !shape::usable(real, field))
+            .any(|(field, real)| !shape::usable_for(field, real))
         {
             return Err(Problem::UnusableToken);
         }
         let _one_at_a_time = self.inner.capture.lock().await;
         let mut planned: Vec<(&'static Field, Zeroizing<String>, String, bool)> = Vec::new();
         for (field, real) in found {
+            // A session token's fields and a JWT's claims hold its expiry, so a new token gets a
+            // new stand-in; any other token keeps the slot's.
             let existing = self
                 .slots()
                 .get(&(profile.id, field.slot()))
-                .map(|held| held.current.clone());
+                .cloned()
+                .filter(|_| !shape::renews(&real, field));
             let planned_stand_in = match existing {
-                Some(stand_in) if !shape::renews(&real, field) => (stand_in, false),
+                Some(stand_in) => (stand_in, false),
                 // The system had no random numbers, or the token cannot be copied: either way
                 // there is no stand-in to give.
-                _ => (
+                None => (
                     shape::stand_in_for(&real, field).map_err(|_| Problem::UnusableToken)?,
                     true,
                 ),

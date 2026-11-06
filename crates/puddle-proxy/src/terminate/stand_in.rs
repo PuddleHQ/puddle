@@ -54,7 +54,7 @@ mod target;
 /// it.
 const MIN_STAND_IN_LEN: usize = 16;
 
-/// The longest stand-in accepted (a login's JWT stand-in is as long as the JWT) and the name.
+/// The longest stand-in accepted: a Copilot session token is a few hundred characters.
 const MAX_LEN: usize = 1024;
 
 /// Most random bytes of a generated stand-in: 128 bits.
@@ -1134,7 +1134,6 @@ mod tests {
                 hosts,
             )
         };
-        assert!(new("N", &"x".repeat(1024), "r", hosts()).is_ok());
         assert!(matches!(
             new("", GH, "r", hosts()),
             Err(StandInError::Name(_))
@@ -1151,7 +1150,7 @@ mod tests {
             "short",
             "has a space in it, long enough",
             "tab\tin-it-and-long-enough",
-            &"x".repeat(1025),
+            &"x".repeat(MAX_LEN + 1),
         ] {
             assert_eq!(
                 new("N", text, "r", hosts()).unwrap_err(),
@@ -1159,6 +1158,8 @@ mod tests {
                 "{text:?}"
             );
         }
+        // A Copilot session token is a few hundred characters: the longest stand-in is accepted.
+        assert!(new("N", &"x".repeat(MAX_LEN), "r", hosts()).is_ok());
         assert_eq!(
             new("N", GH, "r", TerminationSet::new()).unwrap_err(),
             StandInError::NoHosts

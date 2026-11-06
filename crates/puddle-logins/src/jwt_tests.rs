@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Tests of a field whose stand-in is a JWT ([`Generator::Jwt`]): a refresh makes a new stand-in, and
+//! Tests of a field whose stand-in is a JWT ([`StandInKind::Jwt`]): a refresh makes a new stand-in, and
 //! the slot keeps the older ones registered until the workspace stops.
 
 use base64::Engine as _;
@@ -7,7 +7,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
-use crate::profile::{Endpoint, Field, Generator, Method, Profile, Role, Scope};
+use crate::profile::{Endpoint, Field, Method, Profile, Role, Scope, StandInKind};
 use crate::vault::Vault;
 use crate::widened_tests::{Rig, answered, rig_for};
 
@@ -26,7 +26,7 @@ static JWT_PROFILE: [Profile; 1] = [Profile {
                 resource: None,
                 prefixes: &[],
                 keep_last: 0,
-                generator: Generator::Jwt,
+                stand_in: StandInKind::Jwt,
                 scope: Scope::Api,
             },
             Field {
@@ -35,7 +35,7 @@ static JWT_PROFILE: [Profile; 1] = [Profile {
                 resource: None,
                 prefixes: &["rt_"],
                 keep_last: 0,
-                generator: Generator::Shaped,
+                stand_in: StandInKind::Shaped,
                 scope: Scope::TokenEndpoint,
             },
         ],
@@ -101,34 +101,36 @@ async fn a_jwt_login_gives_the_tool_a_token_whose_claims_read_the_same() {
 }
 
 #[tokio::test]
-async fn a_refresh_makes_a_new_stand_in_and_the_older_ones_stay_registered() {
+async fn a_refresh_makes_a_new_stand_in_and_a_few_older_ones_stay_registered() {
     let rig = rig_for(&JWT_PROFILE);
-    let first = token(&rig, &jwt(1_000_000_001, &"A".repeat(86)), REFRESH).await;
-    let second_real = jwt(1_000_003_601, &"B".repeat(86));
-    let second = token(&rig, &second_real, REFRESH).await;
-    let third_real = jwt(1_000_007_201, &"C".repeat(86));
-    let third = token(&rig, &third_real, REFRESH).await;
-    let stand_ins: Vec<&str> = [&first, &second, &third]
-        .iter()
-        .map(|v| v["access_token"].as_str().unwrap())
-        .collect();
-    assert_ne!(stand_ins[0], stand_ins[1]);
-    assert_ne!(stand_ins[1], stand_ins[2]);
-    assert_ne!(stand_ins[0], stand_ins[2]);
-    assert_eq!(claims_of(stand_ins[2])["exp"], 1_000_007_201);
-    // Three access stand-ins and the one refresh stand-in, which a refresh keeps.
-    assert_eq!(rig.registry.len(), 4);
-    assert_eq!(first["refresh_token"], third["refresh_token"]);
-    for stand_in in &stand_ins {
-        // Each is still registered: setting its real value is a hit.
-        assert_eq!(
-            rig.registry.set_real(
-                stand_in,
-                puddle_proxy::SecretValue::new(third_real.as_str())
-            ),
-            Ok(true),
-            "{stand_in}"
+    let mut given = Vec::new();
+    let mut last_real = String::new();
+    for (n, letter) in (0_u64..).zip(["A", "B", "C", "D", "E"]) {
+        last_real = jwt(1_000_000_001 + 3600 * n, &letter.repeat(86));
+        given.push(
+            token(&rig, &last_real, REFRESH).await["access_token"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
         );
+    }
+    for (a, stand_in) in given.iter().enumerate() {
+        assert_eq!(
+            claims_of(stand_in)["exp"],
+            1_000_000_001 + 3600 * u64::try_from(a).unwrap()
+        );
+        assert!(given[..a].iter().all(|earlier| earlier != stand_in));
+    }
+    // The newest and the three before it, and the one refresh stand-in, which a refresh keeps.
+    assert_eq!(rig.registry.len(), 5);
+    let registered = |stand_in: &str| {
+        rig.registry
+            .set_real(stand_in, puddle_proxy::SecretValue::new(last_real.as_str()))
+            == Ok(true)
+    };
+    assert!(!registered(&given[0]), "the oldest is no longer swapped");
+    for stand_in in &given[1..] {
+        assert!(registered(stand_in), "{stand_in}");
     }
     // The store holds the newest pair only.
     let kept = Vault::new(
@@ -140,7 +142,7 @@ async fn a_refresh_makes_a_new_stand_in_and_the_older_ones_stay_registered() {
     .unwrap();
     assert_eq!(
         (kept.stand_in.as_str(), kept.real.as_str()),
-        (stand_ins[2], third_real.as_str())
+        (given[4].as_str(), last_real.as_str())
     );
 }
 

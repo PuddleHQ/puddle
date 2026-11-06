@@ -13,6 +13,11 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use puddle_doctor::{
+    BootFacts, CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts,
+    GsaFacts, HypervisorFacts, JobFacts, Os, Probe, ProcessOutcome, Protection, RuntimeFacts,
+    SshAgentFacts, SwapArea, SwapFacts,
+};
 use puddle_doctor::{CheckId, Finding, Options, Report, Status, SystemProbe, diagnose};
 use puddle_runtime::{
     DevOverride, HostOs, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeLayout, RuntimeVersion,
@@ -29,6 +34,71 @@ fn settings() -> Settings {
 /// The runtime pair CI installed (`PUDDLE_VM_RUNTIME_DIR`).
 fn ci_runtime() -> RuntimePair {
     RuntimePair::find_in(&settings().runtime_dir).expect("runtime pair")
+}
+
+/// The real probe with one fact fixed: the disk encryption of the machine the test runs on.
+/// Whether a CI runner's disk and swap are encrypted says nothing about the runtime, the
+/// test boot or the paths this test checks, and the hosted runners are not encrypted, so the
+/// "every check ok or info" bar below would depend on the runner image. The probe's own
+/// answer on the real machine is tested in `puddle-doctor`'s `system_probe` tests.
+struct EncryptedHost(SystemProbe);
+
+impl Probe for EncryptedHost {
+    fn os(&self) -> Os {
+        self.0.os()
+    }
+    fn arch(&self) -> String {
+        self.0.arch()
+    }
+    fn hypervisor(&self) -> HypervisorFacts {
+        self.0.hypervisor()
+    }
+    fn code_integrity(&self) -> Option<CodeIntegrityFacts> {
+        self.0.code_integrity()
+    }
+    fn runtime(&self) -> RuntimeFacts {
+        self.0.runtime()
+    }
+    fn launch(&self, limit: Duration) -> ProcessOutcome {
+        self.0.launch(limit)
+    }
+    fn boot(&self, limit: Duration) -> BootFacts {
+        self.0.boot(limit)
+    }
+    fn job(&self) -> Option<JobFacts> {
+        self.0.job()
+    }
+    fn global_secure_access(&self) -> Option<GsaFacts> {
+        self.0.global_secure_access()
+    }
+    fn disk_space(&self) -> DiskFacts {
+        self.0.disk_space()
+    }
+    fn data_path(&self) -> Option<DataPathFacts> {
+        self.0.data_path()
+    }
+    fn disk_encryption(&self) -> DiskEncryptionFacts {
+        let real = self.0.disk_encryption();
+        let DataEncryption::Volume { dir, .. } = real.data else {
+            return real;
+        };
+        let encrypted = Protection::Encrypted {
+            by: "fixed for this test".into(),
+        };
+        DiskEncryptionFacts {
+            data: DataEncryption::Volume {
+                dir,
+                protection: encrypted.clone(),
+            },
+            swap: SwapFacts::Areas(vec![SwapArea {
+                name: "fixed for this test".into(),
+                protection: encrypted,
+            }]),
+        }
+    }
+    fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
+        self.0.ssh_agent(limit)
+    }
 }
 
 /// A puddle-style runtime folder in `root` with a copy (never a link: the permission test
@@ -98,9 +168,11 @@ fn run(dir: PathBuf, expected: RuntimeVersion, options: &Options) -> Report {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let probe = SystemProbe::new(dir, expected, DevOverride::none())
-        .with_data_dir(data)
-        .with_keep_boot_logs(settings().kept_logs());
+    let probe = EncryptedHost(
+        SystemProbe::new(dir, expected, DevOverride::none())
+            .with_data_dir(data)
+            .with_keep_boot_logs(settings().kept_logs()),
+    );
     let report = diagnose(&probe, options, "vm-test");
     eprintln!("{}", report.to_text());
     report
@@ -156,8 +228,8 @@ fn vm_test_boot_passes_20_in_a_row_without_a_retry() {
         let facts = puddle_doctor::boot::test_boot(&dir, "x86_64", BAR, Some(&kept));
         let ok = matches!(
             &facts,
-            puddle_doctor::BootFacts::Ran {
-                outcome: puddle_doctor::ProcessOutcome::Exited {
+            BootFacts::Ran {
+                outcome: ProcessOutcome::Exited {
                     code: Some(puddle_doctor::PROBE_EXIT_CODE),
                     ..
                 },

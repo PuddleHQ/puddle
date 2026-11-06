@@ -5978,8 +5978,10 @@ dependencies = [
  "puddle-ipc",
  "puddle-lifecycle",
  "puddle-log",
+ "puddle-no-dump",
  "puddle-settings",
  "puddle-ssh",
+ "puddle-store",
  "puddle-test-kit",
  "puddle-types",
  "puddle-vm-tests",
@@ -6104,6 +6106,7 @@ dependencies = [
  "puddle-host",
  "puddle-lifecycle",
  "puddle-log",
+ "puddle-no-dump",
  "puddle-runtime",
  "puddle-secrets",
  "puddle-settings",
@@ -6502,6 +6505,16 @@ dependencies = [
  "puddle-settings",
  "puddle-types",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "puddle-no-dump"
+version = "0.0.0"
+dependencies = [
+ "rustix",
+ "tempfile",
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

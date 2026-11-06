@@ -315,9 +315,11 @@ mod tests {
             })
         };
         // Wait until writes are flowing, then copy repeatedly while they continue.
-        while live.rules().len() < 20 {
-            std::thread::yield_now();
-        }
+        puddle_test_kit::eventually_blocking(
+            "the writer has committed 20 rules",
+            std::time::Duration::from_secs(10),
+            || live.rules().len() >= 20,
+        );
         let mut copies = Vec::new();
         for i in 0..5 {
             let dest = root.path().join(format!("out{i}"));

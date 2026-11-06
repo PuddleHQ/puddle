@@ -656,3 +656,272 @@ fn a_held_answer_that_does_not_arrive_whole_is_a_bad_gateway() {
     assert_eq!(refusal.status, "502 Bad Gateway");
     assert_eq!(refusal.message, "api.github.com did not finish its answer");
 }
+
+/// A scrubber for one host from `(name, stand-in, real)` rows, all secrets.
+fn scrubber_of(rows: &[(&str, &str, &str)]) -> Arc<Scrubber> {
+    let registry = StandIns::new();
+    for (name, stand_in, real) in rows {
+        registry
+            .insert(entry(
+                StandInOrigin::Secret,
+                name,
+                stand_in,
+                real,
+                &["api.github.com"],
+            ))
+            .unwrap();
+    }
+    registry.answer_scrubber(&host("api.github.com")).unwrap()
+}
+
+#[test]
+fn a_scrubber_made_once_is_kept_while_the_cache_has_room() {
+    let registry = registry();
+    let first = registry.answer_scrubber(&host("api.github.com")).unwrap();
+    let _other = registry.answer_scrubber(&host("odd.example.com")).unwrap();
+    let again = registry.answer_scrubber(&host("api.github.com")).unwrap();
+    assert!(Arc::ptr_eq(&first, &again));
+}
+
+#[test]
+fn the_first_stand_in_keeps_a_form_two_values_share() {
+    let form = || Zeroizing::new(b"shared".to_vec());
+    let mut patterns = Vec::new();
+    add(&mut patterns, form(), Some(b"one".to_vec()), 0);
+    add(&mut patterns, form(), Some(b"two".to_vec()), 1);
+    assert_eq!((patterns.len(), patterns[0].id), (1, 0));
+    assert_eq!(patterns[0].put.as_deref(), Some(&b"one"[..]));
+
+    let mut cut = Vec::new();
+    add(&mut cut, form(), None, 0);
+    add(&mut cut, form(), None, 1);
+    assert_eq!(cut[0].id, 0);
+    // A replaceable form wins over the same bytes that cannot be replaced.
+    add(&mut cut, form(), Some(b"two".to_vec()), 1);
+    assert_eq!((cut[0].id, cut[0].put.as_deref()), (1, Some(&b"two"[..])));
+}
+
+#[test]
+fn json_styles_that_escape_one_thing_are_matched() {
+    // Python's default: only what is outside ASCII is written as \uXXXX.
+    let accent = scrubber_of(&[("A", GH, "na\u{ef}ve/token-1234567")]);
+    assert_eq!(
+        text(&whole(&accent, b"x na\\u00efve/token-1234567 y")),
+        format!("x {GH} y")
+    );
+    // Go's default: <, > and & as \uXXXX, but not "/". A "/" tells each style from the one that escapes everything.
+    let angle = scrubber_of(&[("A", GH, "a<b>&c/token-1234567")]);
+    assert_eq!(
+        text(&whole(
+            &angle,
+            b"x a\\u003cb\\u003e\\u0026c/token-1234567 y"
+        )),
+        format!("x {GH} y")
+    );
+}
+
+#[test]
+fn base64_cores_need_twelve_bytes_and_sit_at_every_alignment() {
+    assert!(base64_cores("12345678901").is_empty());
+    assert_eq!(base64_cores("123456789012").len(), 6);
+    let real = "puddle-real-value-1234";
+    let cores = base64_cores(real);
+    for (which, engine) in [&STANDARD_NO_PAD, &URL_SAFE_NO_PAD].into_iter().enumerate() {
+        for lead in 0..3_usize {
+            // Bytes around the value that are not zero, as in a real document.
+            let mut input = vec![0xff_u8; lead];
+            input.extend_from_slice(real.as_bytes());
+            input.extend_from_slice(&[0xff, 0xff]);
+            let encoded = engine.encode(&input).into_bytes();
+            let core = &cores[which * 3 + lead];
+            // Exactly the characters the value alone decides.
+            assert_eq!(
+                core.len(),
+                8 * (lead + real.len()) / 6 - (8 * lead).div_ceil(6)
+            );
+            assert!(
+                encoded.windows(core.len()).any(|at| at == &core[..]),
+                "the core at lead {lead} is not inside the encoding"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_body_is_held_whole_up_to_the_cap_and_refused_over_it() {
+    let mut exact = AnswerBody::Buffered(Some(Bytes::from(vec![b'x'; 65_536])));
+    let held = hold(&mut exact, Duration::from_secs(5)).await.unwrap();
+    assert_eq!(held.len(), 65_536);
+    let mut over = AnswerBody::Buffered(Some(Bytes::from(vec![b'x'; 65_537])));
+    assert!(hold(&mut over, Duration::from_secs(5)).await.is_err());
+}
+
+#[test]
+fn a_form_that_is_complete_at_the_end_of_a_piece_is_replaced_at_once() {
+    let one = scrubber_of(&[("A", GH, "abc")]);
+    let notes = ScrubNotes::default();
+    let mut out = Vec::new();
+    let used = one.run(b"xxabc", false, &mut out, &notes).unwrap();
+    assert_eq!((text(&out), used), (format!("xx{GH}"), 5));
+}
+
+#[test]
+fn what_follows_a_replaced_form_is_not_held_for_a_form_that_began_inside_it() {
+    // "bcd" is the start of "bcde" and sits inside "abc"+"d": after "abc" is replaced,
+    // the "d" cannot start a form, so it goes out now.
+    let two = scrubber_of(&[("A", GH, "abc"), ("B", ODD, "bcde")]);
+    let notes = ScrubNotes::default();
+    let mut out = Vec::new();
+    let used = two.run(b"abcd", false, &mut out, &notes).unwrap();
+    assert_eq!((text(&out), used), (format!("{GH}d"), 4));
+}
+
+#[test]
+fn nothing_replaced_in_a_whole_input_is_none() {
+    let notes = ScrubNotes::default();
+    assert!(
+        scrubber()
+            .scrub_whole(b"nothing here", &notes)
+            .unwrap()
+            .is_none()
+    );
+    let changed = scrubber()
+        .scrub_whole(REAL_GH.as_bytes(), &notes)
+        .unwrap()
+        .unwrap();
+    assert_eq!(text(&changed), GH);
+}
+
+#[tokio::test]
+async fn a_raw_deflate_answer_is_not_mistaken_for_zlib_by_half_a_header() {
+    // Stored blocks written by hand. First: the low nibble of byte 0 is 8 (a zlib method) but
+    // the header check fails. Second: the check passes (0x0117 % 31 == 0) but the nibble is 1.
+    let mut nibble = vec![0x08, 0x05, 0x00, 0xfa, 0xff];
+    nibble.extend_from_slice(b"hello");
+    nibble.extend_from_slice(&[0x01, 0x00, 0x00, 0xff, 0xff]);
+    let mut check = vec![0x01, 0x17, 0x00, 0xe8, 0xff];
+    check.extend_from_slice(b"abcdefghijklmnopqrstuvw");
+    for (body, plain) in [(nibble, &b"hello"[..]), (check, b"abcdefghijklmnopqrstuvw")] {
+        let (_, got) = answer(Some("deflate"), body, false).await.unwrap();
+        assert_eq!(got.unwrap(), plain);
+    }
+}
+
+/// An answer with `status` from `registry`'s host, the body buffered.
+async fn answered(
+    registry: &StandIns,
+    status: u16,
+    encoding: Option<&str>,
+    body: Vec<u8>,
+) -> Response<AnswerBody> {
+    let mut builder = Response::builder()
+        .status(status)
+        .header("content-length", body.len());
+    if let Some(encoding) = encoding {
+        builder = builder.header("content-encoding", encoding);
+    }
+    let response = builder
+        .body(AnswerBody::Buffered(Some(Bytes::from(body))))
+        .unwrap();
+    scrub_answer(
+        registry,
+        response,
+        &host("api.github.com"),
+        false,
+        &Arc::new(ScrubNotes::default()),
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("not scrubbed"))
+}
+
+#[tokio::test]
+async fn an_answer_that_has_no_body_by_its_status_is_passed_on_as_it_is() {
+    for status in [100, 204, 304] {
+        let (_, body) = answered(&registry(), status, None, REAL_GH.as_bytes().to_vec())
+            .await
+            .into_parts();
+        let got = body.collect().await.unwrap().to_bytes();
+        assert_eq!(&got[..], REAL_GH.as_bytes(), "status {status}");
+    }
+}
+
+/// A body that holds a real value inside longer base64, which cannot be replaced: the answer is
+/// cut off and goes the streaming way.
+fn withheld_body() -> Vec<u8> {
+    let mut input = vec![0xff_u8];
+    input.extend_from_slice(REAL_LOGIN.as_bytes());
+    input.push(0xff);
+    STANDARD_NO_PAD.encode(&input).into_bytes()
+}
+
+fn same_length_registry() -> StandIns {
+    let registry = StandIns::new();
+    registry
+        .insert(entry(
+            StandInOrigin::CapturedLogin,
+            "github-access",
+            LOGIN,
+            REAL_LOGIN,
+            &["api.github.com"],
+        ))
+        .unwrap();
+    registry
+}
+
+#[tokio::test]
+async fn an_answer_that_streams_keeps_a_length_only_when_it_stays_the_same() {
+    for (registry, kept) in [(same_length_registry(), true), (registry(), false)] {
+        let body = if kept {
+            withheld_body()
+        } else {
+            {
+                let mut input = vec![0xff_u8];
+                input.extend_from_slice(REAL_GH.as_bytes());
+                input.push(0xff);
+                STANDARD_NO_PAD.encode(&input).into_bytes()
+            }
+        };
+        let (parts, _) = answered(&registry, 200, None, body).await.into_parts();
+        assert_eq!(parts.headers.contains_key("content-length"), kept);
+    }
+    // A decoded answer never keeps the length of the encoded one.
+    let (parts, _) = answered(&same_length_registry(), 200, Some("gzip"), gzip(b"{}"))
+        .await
+        .into_parts();
+    assert!(!parts.headers.contains_key("content-length"));
+    assert!(!parts.headers.contains_key("content-encoding"));
+}
+
+#[tokio::test]
+async fn a_scrubbed_body_says_what_it_knows_of_its_end_and_size() {
+    use http_body_util::BodyExt as _;
+    // Not decoded and the same length: the size of what is inside.
+    let cut = withheld_body();
+    let length = cut.len() as u64;
+    let (_, body) = answered(&same_length_registry(), 200, None, cut)
+        .await
+        .into_parts();
+    assert_eq!(body.size_hint().exact(), Some(length));
+    // Decoded: nothing is known of the size, even when the lengths are the same.
+    let (_, mut body) = answered(
+        &same_length_registry(),
+        200,
+        Some("gzip"),
+        gzip(b"{\"a\":1}"),
+    )
+    .await
+    .into_parts();
+    assert_eq!(body.size_hint().upper(), None);
+    assert!(!body.is_end_stream());
+    let mut data = 0;
+    while let Some(frame) = body.frame().await {
+        let frame = frame.unwrap();
+        if let Some(bytes) = frame.data_ref() {
+            assert!(!bytes.is_empty(), "no empty frame between the pieces");
+            data += 1;
+        }
+    }
+    assert_eq!(data, 1);
+    assert!(body.is_end_stream());
+}

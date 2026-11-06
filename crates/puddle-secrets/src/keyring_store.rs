@@ -101,11 +101,8 @@ impl SecretStore for KeyringStore {
 
 /// Whether the attributes Credential Manager reports for an entry say it stays on this computer.
 #[cfg_attr(
-    not(windows),
-    allow(
-        dead_code,
-        reason = "only the Windows keep_local rewrite calls it; a Linux build runs it in tests"
-    )
+    not(any(windows, test)),
+    expect(dead_code, reason = "only the Windows keep_local rewrite calls it")
 )]
 fn is_kept_local(attributes: &std::collections::HashMap<String, String>) -> bool {
     attributes.get("persistence").is_some_and(|p| p == "Local")

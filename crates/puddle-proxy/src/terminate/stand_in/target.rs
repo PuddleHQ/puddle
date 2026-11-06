@@ -10,9 +10,6 @@ use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 
-use ::http::{HeaderMap, HeaderValue};
-use memchr::memmem::Finder;
-
 use puddle_types::Host;
 use zeroize::Zeroizing;
 
@@ -124,69 +121,6 @@ impl StandIns {
         out.push_str(target.get(copied..).unwrap_or_default());
         Cow::Owned(out)
     }
-
-    /// Puts the stand-in back wherever the headers of an answer from `host` repeat the real value
-    /// of a secret placed in the path or a query parameter for that host, as sent or as Puddle
-    /// encoded it: servers echo the URL they got, in a redirect's `Location` above all, and the
-    /// guest must not read the real value there. A header secret is not looked for (a server
-    /// rarely echoes one; see the accepted risk of echoes in the credentials spec), and neither is
-    /// the body.
-    pub(crate) fn hide_in_answer(&self, headers: &mut HeaderMap, host: &Host) {
-        let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
-        let mut forms: Vec<(Zeroizing<Vec<u8>>, &str)> = Vec::new();
-        for entry in guard.iter() {
-            if entry.placement == Placement::Header || !entry.hosts.contains(host) {
-                continue;
-            }
-            // A real value is never empty (`is_header_safe`), so no form is.
-            let real = entry.real.expose();
-            for form in [
-                Zeroizing::new(real.as_bytes().to_vec()),
-                encoded(real, keeps_in_path),
-                encoded(real, keeps_in_query),
-            ] {
-                if !forms.iter().any(|(known, _)| *known == form) {
-                    forms.push((form, &entry.text));
-                }
-            }
-        }
-        if forms.is_empty() {
-            return;
-        }
-        // The longest form first, so a value that holds another is put back whole.
-        forms.sort_by_key(|(form, _)| Reverse(form.len()));
-        for value in headers.values_mut() {
-            let mut text = Zeroizing::new(value.as_bytes().to_vec());
-            let mut changed = false;
-            for (form, stand_in) in &forms {
-                if let Some(new) = replace_all(&text, form, stand_in.as_bytes()) {
-                    text = new;
-                    changed = true;
-                }
-            }
-            if changed {
-                // The stand-in is visible ASCII, so the value stays a valid header value; were it
-                // not, the header would go empty rather than carry the real value.
-                *value = HeaderValue::from_bytes(&text).unwrap_or(HeaderValue::from_static(""));
-            }
-        }
-    }
-}
-
-/// `input` with every `needle` replaced by `with`, or `None` when it has none.
-fn replace_all(input: &[u8], needle: &[u8], with: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
-    let finder = Finder::new(needle);
-    let mut out: Option<Zeroizing<Vec<u8>>> = None;
-    let mut copied = 0;
-    while let Some(found) = input.get(copied..).and_then(|rest| finder.find(rest)) {
-        let out = out.get_or_insert_with(|| Zeroizing::new(Vec::with_capacity(input.len())));
-        out.extend_from_slice(input.get(copied..copied + found)?);
-        out.extend_from_slice(with);
-        copied += found + needle.len();
-    }
-    let mut out = out?;
-    out.extend_from_slice(input.get(copied..)?);
-    Some(out)
 }
 
 /// The byte a `%XX` escape at `at` stands for, or `None` when there is no escape there.
@@ -281,20 +215,20 @@ fn decoded(text: &str) -> Cow<'_, [u8]> {
 
 /// A path character that needs no escape: RFC 3986 `pchar` and `/` (a value may span segments,
 /// as some webhook secrets do), less `%` and `;` (some servers cut a segment at `;`).
-fn keeps_in_path(byte: u8) -> bool {
+pub(super) fn keeps_in_path(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,=:@/".contains(&byte)
 }
 
 /// A query value character that needs no escape and that no server reads as a separator or a
 /// space (so not `&`, `=`, `+`, `#`, nor `;`, which some servers split on too).
-fn keeps_in_query(byte: u8) -> bool {
+pub(super) fn keeps_in_query(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"-._~!$'()*,:@/?".contains(&byte)
 }
 
 /// `real` with every byte `keeps` refuses percent-encoded, except a `%` that already starts an
 /// escape (`%2B`): a value copied from a URL is often encoded already, and encoding it again
 /// would change it.
-fn encoded(real: &str, keeps: fn(u8) -> bool) -> Zeroizing<Vec<u8>> {
+pub(super) fn encoded(real: &str, keeps: fn(u8) -> bool) -> Zeroizing<Vec<u8>> {
     let bytes = real.as_bytes();
     let mut out = Zeroizing::new(Vec::with_capacity(bytes.len()));
     for (at, &byte) in bytes.iter().enumerate() {
@@ -702,20 +636,25 @@ mod tests {
         headers.insert("x-plain", "nothing".parse().unwrap());
         let mut elsewhere = headers.clone();
 
-        registry.hide_in_answer(&mut headers, &host("q.example.com"));
+        let hide = |registry: &StandIns, headers: &mut ::http::HeaderMap, to: &str| {
+            if let Some(scrubber) = registry.answer_scrubber(&host(to)) {
+                scrubber.scrub_headers(headers, &super::super::ScrubNotes::default());
+            }
+        };
+        hide(&registry, &mut headers, "q.example.com");
         assert_eq!(
             headers["location"],
             format!("https://q.example.com/{BOT}/x?sig={KEY}/")
         );
         assert_eq!(headers["x-raw"], format!("{BOT} and {KEY} and {KEY}"));
-        assert_eq!(headers["x-header-secret"], REAL_HDR, "not looked for");
+        assert_eq!(headers["x-header-secret"], HDR, "a header secret too");
         assert_eq!(headers["x-plain"], "nothing");
 
         // Toward another host the secrets were never sent, so nothing is changed.
         let before = elsewhere.clone();
-        registry.hide_in_answer(&mut elsewhere, &host("other.example.com"));
+        hide(&registry, &mut elsewhere, "other.example.com");
         assert_eq!(elsewhere, before);
-        StandIns::new().hide_in_answer(&mut elsewhere, &host("q.example.com"));
+        hide(&StandIns::new(), &mut elsewhere, "q.example.com");
         assert_eq!(elsewhere, before);
     }
 

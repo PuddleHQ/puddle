@@ -10058,6 +10058,7 @@
               "binding_id",
               "injected",
               "unswapped_stand_ins",
+              "scrubbed_stand_ins",
               "method",
               "path",
               "path_truncated",
@@ -10221,6 +10222,13 @@
                   "null"
                 ],
                 "description": "The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`)."
+              },
+              "scrubbed_stand_ins": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The ids of the stand-ins whose real values an answer from one of their hosts held, put back as\nthe stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),\neach once, at most 16. Records written\nbefore it existed read as empty."
               },
               "signal": {
                 "type": [

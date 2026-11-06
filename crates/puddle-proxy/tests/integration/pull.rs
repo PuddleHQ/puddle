@@ -459,3 +459,69 @@ async fn a_pull_whose_name_has_no_address_or_does_not_resolve_is_a_connect_failu
         "{events:?}"
     );
 }
+
+#[tokio::test]
+async fn localhost_on_another_port_is_tunnelled_while_loopback_is_on() {
+    let endpoints = PuddleEndpoints::new();
+    let server = echo().await;
+    let proxy = PullProxy::bind(&endpoints)
+        .unwrap()
+        .with_resolver(Arc::new(StaticResolver::new().with("localhost", &[LOCAL])));
+    let good = BASE64.encode(format!("puddle:{}", proxy.token().expose()));
+    let route = proxy.serve().unwrap();
+    let target = format!("localhost:{}", server.addr.port());
+    let (head, _) = send(
+        route.local_addr(),
+        &connect(&target, Some(&format!("Basic {good}"))),
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 200 "), "{head}");
+    assert_eq!(server.accepted.load(Ordering::SeqCst), 1);
+}
+
+/// A connection that is open when the route stops: once the proxy's task is gone the socket is
+/// closed, so a read ends with end of file or a reset instead of waiting.
+async fn open_connection(route: &puddle_proxy::PullRoute, good: &str) -> tokio::net::TcpStream {
+    let server = echo().await;
+    let target = format!("registry.test:{}", server.addr.port());
+    let (head, s) = send(
+        route.local_addr(),
+        &connect(&target, Some(&format!("Basic {good}"))),
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 200 "), "{head}");
+    s
+}
+
+#[tokio::test]
+async fn shutdown_returns_only_when_the_listener_and_its_connections_are_gone() {
+    let endpoints = PuddleEndpoints::new();
+    let (route, good) = pull_proxy(&endpoints, Some(LOCAL));
+    let addr = route.local_addr();
+    let open = open_connection(&route, &good).await;
+    route.shutdown().await;
+    // Nothing below yields to the runtime, so a task that is only marked for abort is still alive.
+    let mut buf = [0u8; 1];
+    assert!(
+        matches!(open.try_read(&mut buf), Ok(0) | Err(_)),
+        "the open connection is closed"
+    );
+    assert!(
+        std::net::TcpStream::connect(addr).is_err(),
+        "the listener is closed"
+    );
+}
+
+#[tokio::test]
+async fn dropping_the_route_stops_the_proxy_and_closes_its_connections() {
+    let endpoints = PuddleEndpoints::new();
+    let (route, good) = pull_proxy(&endpoints, Some(LOCAL));
+    let mut open = open_connection(&route, &good).await;
+    drop(route);
+    let mut buf = [0u8; 1];
+    // The bound only keeps a failing run from hanging: the read ends when the task is aborted.
+    let read = tokio::time::timeout(Duration::from_secs(30), open.read(&mut buf))
+        .await
+        .expect("a dropped route closes its connections");
+    assert!(matches!(read, Ok(0) | Err(_)));
+}

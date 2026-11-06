@@ -7,6 +7,7 @@ ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot           a test VM booted and ran a program in 1.1 s
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Data folder path    every folder above /home/dev/.local/share/puddle is a folder only you or root own, and other accounts can't change it
+ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 
 No problems found. (1.2 s)
 
@@ -52,6 +53,11 @@ No problems found. (1.2 s)
       "id": "data_path",
       "status": "ok",
       "summary": "every folder above /home/dev/.local/share/puddle is a folder only you or root own, and other accounts can't change it"
+    },
+    {
+      "id": "ssh_agent",
+      "status": "ok",
+      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
     }
   ],
   "elapsed_ms": 1234

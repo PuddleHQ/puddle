@@ -6249,6 +6249,7 @@ dependencies = [
  "object",
  "puddle-fs",
  "puddle-runtime",
+ "puddle-ssh-agent",
  "rustix",
  "serde",
  "serde_json",
@@ -6655,6 +6656,16 @@ dependencies = [
  "tokio",
  "tracing",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "puddle-ssh-agent"
+version = "0.0.0"
+dependencies = [
+ "puddle-ipc",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

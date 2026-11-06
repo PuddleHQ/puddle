@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Self-test of ci/disk-watch.sh with a free-space file in place of df, so each level is set by hand. Cases: a snapshot
-# lists the dirs and writes the job summary; a snapshot under the warning level annotates and goes deep; a guard with
+# with room prints df and inodes and walks no directory (a `du` that records its calls proves it); the sizes mode,
+# DISK_WATCH_SIZES=1 and a guard's marker each bring the size walk back; a snapshot under the warning level annotates and goes deep; a guard with
 # room to spare stops no process and logs its samples; a guard under the floor annotates an error, writes the sizes
 # and stops the processes of the step it was started for, grandchildren included (and nothing outside that tree, though the pattern matches it). Not seen: a real full disk or the runner's annotations.
 set -uo pipefail
@@ -28,15 +29,35 @@ echo 80 >"$tmp/free"
 : >"$tmp/sum"
 "$script" snap "after the download" >"$tmp/out" 2>&1 || bad "snap exited non-zero"
 has "$tmp/sum" '### disk: after the download' "snap summary"
-has "$tmp/sum" 'rt/vmx' "snap lists the dirs over 50 MiB"
+has "$tmp/sum" 'Filesystem' "snap prints df"
+has "$tmp/sum" 'Inodes' "snap prints inodes"
+lacks "$tmp/sum" 'rt/vmx' "snap with room skips the size walk"
+lacks "$tmp/sum" 'MiB' "snap with room lists no sizes"
 lacks "$tmp/out" '::warning' "snap with room"
 lacks "$tmp/sum" 'top level of' "snap with room stays shallow"
+
+# No directory walk at all: a fake du on PATH records every call.
+mkdir -p "$tmp/bin"
+printf '#!/bin/sh\necho called >>"%s/du-calls"\nexec /usr/bin/du "$@"\n' "$tmp" >"$tmp/bin/du"
+chmod +x "$tmp/bin/du"
+: >"$tmp/sum"
+PATH="$tmp/bin:$PATH" "$script" snap "no walk" >/dev/null 2>&1
+[ ! -e "$tmp/du-calls" ] || bad "snap with room called du"
+
+: >"$tmp/sum"
+"$script" sizes "walk" >/dev/null 2>&1
+has "$tmp/sum" 'rt/vmx' "the sizes mode lists the dirs over 50 MiB"
+lacks "$tmp/sum" 'top level of' "the sizes mode with room stays shallow"
+: >"$tmp/sum"
+DISK_WATCH_SIZES=1 "$script" snap "forced" >/dev/null 2>&1
+has "$tmp/sum" 'rt/vmx' "DISK_WATCH_SIZES=1 lists the dirs over 50 MiB"
 
 echo 12 >"$tmp/free"
 : >"$tmp/sum"
 "$script" snap "low" >"$tmp/out" 2>&1
 has "$tmp/out" '::warning title=runner disk low::low: 12 GB free' "low snap annotates"
 has "$tmp/sum" 'top level of' "low snap goes deep"
+has "$tmp/sum" 'rt/vmx' "low snap lists the dirs over 50 MiB"
 
 echo 80 >"$tmp/free"
 : >"$tmp/sum"
@@ -55,6 +76,7 @@ kill "$victim" 2>/dev/null; wait "$victim" 2>/dev/null
 has "$tmp/rt/disk-watch-roomy.log" 'free=80GB' "guard samples"
 has "$tmp/sum" 'disk guard roomy: free 80 GB now, lowest 80 GB' "guard end line"
 lacks "$tmp/out" '::error' "guard with room"
+[ ! -e "$tmp/rt/disk-watch-low" ] || bad "a guard with room left the low-disk marker"
 
 # The step is a shell that starts the guard and the heavy processes (its children). A foreign process outside that
 # tree (`setsid sleep`, as another job on a shared host or a pre-commit hook would run) carries an argv the pattern
@@ -84,6 +106,13 @@ kill "$foreign" 2>/dev/null
 has "$tmp/out" '::error title=runner disk full::full: 2 GB free' "floor annotation"
 has "$tmp/sum" 'under the floor' "floor snapshot in the summary"
 has "$tmp/sum" 'lowest 2 GB' "floor end line"
+
+# The guard that saw the floor left its marker: a later snapshot walks the sizes though the free space is back.
+[ -e "$tmp/rt/disk-watch-low" ] || bad "the guard under the floor left no low-disk marker"
+echo 80 >"$tmp/free"
+: >"$tmp/sum"
+"$script" snap "after the low guard" >/dev/null 2>&1
+has "$tmp/sum" 'rt/vmx' "a snapshot after a low guard walks the sizes"
 
 [ "$fail" = 0 ] && echo "disk-watch-test: ok"
 exit "$fail"

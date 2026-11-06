@@ -239,6 +239,42 @@ mod tests {
         assert!(!gate.ssh_seen());
     }
 
+    /// A writer that notes that it was flushed and shut down (a duplex stream does neither visibly).
+    #[derive(Default)]
+    struct Sink {
+        flushed: bool,
+        shut: bool,
+    }
+
+    impl AsyncWrite for Sink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.flushed = true;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.shut = true;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flush_and_a_shutdown_reach_the_stream_under_the_gate() {
+        let mut gate = Gate::new(Sink::default(), false);
+        gate.flush().await.unwrap();
+        assert!(gate.inner.flushed && !gate.inner.shut);
+        gate.shutdown().await.unwrap();
+        assert!(gate.inner.shut);
+    }
+
     #[tokio::test]
     async fn the_end_of_the_stream_before_any_byte_is_not_ssh() {
         let (near, mut far) = tokio::io::duplex(256);

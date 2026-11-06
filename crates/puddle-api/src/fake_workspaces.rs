@@ -1154,7 +1154,7 @@ impl WorkspaceService for FakeWorkspaces {
                     let target = BrowserTarget {
                         origin: format!(
                             "http://{}.localhost:{}",
-                            record.name,
+                            record.id,
                             self.inner.front.port()
                         ),
                         front: self.inner.front,
@@ -1179,7 +1179,7 @@ impl WorkspaceService for FakeWorkspaces {
                     .open_desktop(
                         &record,
                         &DesktopTarget {
-                            ssh_host: format!("puddle-{}", record.name),
+                            ssh_host: format!("puddle-{}", record.id),
                             path: format!("/workspaces/{}", record.id),
                             is_workspace_file: false,
                         },
@@ -1634,5 +1634,59 @@ mod tests {
         launcher.open_browser(&record, &target).await.unwrap();
         assert_eq!(launcher.browsers_opened(), [id("w")]);
         assert_eq!(launcher.opened(), []);
+    }
+
+    #[tokio::test]
+    async fn an_attach_names_the_origin_and_the_ssh_alias_by_the_id() {
+        #[derive(Default)]
+        struct Seen(Mutex<Vec<String>>);
+        impl Launcher for Seen {
+            fn open_desktop<'a>(
+                &'a self,
+                _workspace: &'a WorkspaceRecord,
+                target: &'a DesktopTarget,
+            ) -> BoxFuture<'a, Result<(), LaunchError>> {
+                Box::pin(async move {
+                    self.0.lock().unwrap().push(target.ssh_host.clone());
+                    Ok(())
+                })
+            }
+            fn open_browser<'a>(
+                &'a self,
+                _workspace: &'a WorkspaceRecord,
+                target: &'a BrowserTarget,
+            ) -> BoxFuture<'a, Result<(), LaunchError>> {
+                Box::pin(async move {
+                    self.0.lock().unwrap().push(target.origin.clone());
+                    Ok(())
+                })
+            }
+        }
+        let seen = Arc::new(Seen::default());
+        let fake = FakeWorkspaces::with_options(
+            Arc::new(CollectingSink::default()),
+            Arc::new(ManualClock::new(7)),
+            seen.clone(),
+            Duration::ZERO,
+        );
+        let mut record = WorkspaceRecord::new(
+            id("k7m2x9qa"),
+            WorkspaceName::new("shop").unwrap(),
+            Vec::new(),
+        );
+        record.status = WorkspaceStatus::Running;
+        fake.seed(record, Unsaved::default());
+        fake.attach(&id("k7m2x9qa"), AttachMode::Browser)
+            .await
+            .unwrap();
+        fake.attach(&id("k7m2x9qa"), AttachMode::Desktop)
+            .await
+            .unwrap();
+        let seen = seen.0.lock().unwrap().clone();
+        assert!(
+            seen[0].starts_with("http://k7m2x9qa.localhost:"),
+            "{seen:?}"
+        );
+        assert_eq!(seen[1], "puddle-k7m2x9qa");
     }
 }

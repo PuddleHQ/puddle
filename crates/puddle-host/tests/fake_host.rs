@@ -3951,6 +3951,114 @@ async fn a_workspace_saved_before_session_users_keeps_root() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_whose_id_differs_from_its_name_is_found_everywhere_by_the_id() {
+    const ID: &str = "k7m2x9qa";
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(data.join("front")).unwrap();
+    // Built by hand: a create still derives the id from the name.
+    let book = json!({"version": 2, "workspaces": [{
+        "id": ID, "name": "shop", "display_name": "Shop API \u{fc}", "repositories": [],
+        "start_folder": null, "image": FakeRuntime::DEBIAN, "memory_mib": 1024,
+        "created_at": 1, "disk_size_mib": 1024
+    }]});
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    let id = WorkspaceId::new(ID).unwrap();
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: id.volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    // Leftovers of the editor under the id (to be deleted) and under the name (never touched).
+    std::fs::write(data.join("front").join(format!("{ID}.key")), b"half").unwrap();
+    std::fs::write(data.join("front").join("shop.key"), b"other").unwrap();
+
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let got = api.get(&format!("/api/workspaces/{ID}")).await;
+    assert_eq!(got.status, 200, "{}", got.body);
+    assert_eq!(api.get("/api/workspaces/shop").await.status, 404);
+
+    // The settings file: written under the id.
+    allow_direct_ssh(&api, ID, true).await;
+    let settings = data.join("settings").join("workspaces");
+    assert!(settings.join(format!("{ID}.json")).is_file());
+    assert!(!settings.join("shop.json").exists());
+
+    let start = api.post(&format!("/api/workspaces/{ID}/start"), "").await;
+    assert_eq!(start.status, 202, "{}", start.body);
+    events
+        .until(ended("k7m2x9qa"), Duration::from_secs(20))
+        .await;
+    assert_eq!(
+        status_of(&api.get(&format!("/api/workspaces/{ID}")).await),
+        "running"
+    );
+
+    // The sandbox and the volume are named by the id.
+    let calls = rig.runtime.calls();
+    let created = calls.iter().find(|c| matches!(c.op, Op::Create)).unwrap();
+    assert_eq!(created.target.as_deref(), Some(id.sandbox_name().as_str()));
+    assert!(
+        calls
+            .iter()
+            .filter_map(|c| c.target.as_deref())
+            .all(|t| !t.contains("shop")),
+        "{calls:?}"
+    );
+    let volumes: Vec<String> = rig
+        .runtime
+        .list_volumes()
+        .await
+        .unwrap()
+        .iter()
+        .map(|v| v.name.clone())
+        .collect();
+    assert_eq!(volumes, [id.volume_name().to_string()]);
+
+    // The ssh alias is the id's.
+    let ssh = std::fs::read_to_string(rig.puddle_ssh_config()).unwrap();
+    assert!(ssh.contains(&format!("Host puddle-{ID}")), "{ssh}");
+    assert!(!ssh.contains("shop"), "{ssh}");
+
+    // The editor window's origin is the id's, and the window is told what to call the workspace.
+    let browser = api
+        .post(
+            &format!("/api/workspaces/{ID}/attach"),
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(browser.json()["opened"], true, "{}", browser.body);
+    let origin = rig.launcher.browser.lock().unwrap()[0].origin.clone();
+    assert!(
+        origin.starts_with(&format!("http://{ID}.localhost:")),
+        "{origin}"
+    );
+
+    // Delete: the browser data, the key half and the problem key are the id's.
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("held open".to_owned());
+    stop_and_wait(&api, &mut events, "k7m2x9qa").await;
+    delete_and_wait(&api, &mut events, "k7m2x9qa").await;
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), [ID]);
+    assert!(!data.join("front").join(format!("{ID}.key")).exists());
+    assert!(data.join("front").join("shop.key").exists());
+    assert!(!settings.join(format!("{ID}.json")).exists());
+    assert!(has_problem(&host, &format!("browser-data:{ID}")));
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .all(|p| !p.key.contains("shop")),
+        "{:?}",
+        host.problems().list()
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_interrupted_create_is_dropped_and_its_volume_removed() {
     let rig = Rig::new();
     let data = rig.dir.path().join("data");

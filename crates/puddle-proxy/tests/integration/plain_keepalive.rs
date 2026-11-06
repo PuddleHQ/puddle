@@ -286,8 +286,14 @@ async fn requests_on_a_kept_connection_share_one_upstream_connection_and_are_eac
         assert!(event.bytes_down > 0, "{event:?}");
         down += event.bytes_down;
     }
+    // the three responses have the same size, so a running total in any record would show here
+    let first_down = events[0].bytes_down;
+    assert!(
+        events.iter().all(|e| e.bytes_down == first_down),
+        "{events:?}"
+    );
+    assert_eq!(down, 3 * first_down);
     drop(reader);
-    assert!(down > 0);
 }
 
 #[tokio::test]

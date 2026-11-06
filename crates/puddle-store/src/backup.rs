@@ -36,10 +36,7 @@ pub struct BackupInfo {
 /// [`StoreError::Database`] when `source` is missing or not a database, `dest` exists or cannot
 /// be written, the wait for a writer runs out, or the copy fails its integrity check.
 pub fn backup_database(source: &Path, dest: &Path) -> Result<BackupInfo, StoreError> {
-    let conn = Connection::open_with_flags(
-        source,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
+    let conn = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.busy_timeout(BUSY_TIMEOUT)?;
     // The target is a bound value, so a path with a quote in it needs no escaping.
     conn.execute("VACUUM INTO ?1", [dest.to_string_lossy().as_ref()])?;

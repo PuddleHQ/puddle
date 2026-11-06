@@ -1129,7 +1129,7 @@ async fn a_long_text_in_a_field_named_like_an_address_or_a_kind_is_not_a_token()
     )
     .await;
     assert!(body.is_some());
-    assert!(rig.notices.seen().is_empty());
+    assert_eq!(rig.notices.seen(), []);
 }
 
 #[tokio::test]

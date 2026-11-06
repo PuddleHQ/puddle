@@ -517,6 +517,40 @@ mod tests {
     }
 
     #[test]
+    fn unix_now_is_the_real_clock() {
+        let real = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let got = unix_now();
+        assert!(got >= 1_700_000_000, "{got}");
+        assert!(got.abs_diff(real) <= 5, "{got} vs {real}");
+    }
+
+    #[test]
+    fn guid_needs_five_hex_parts_of_the_right_lengths() {
+        assert!(is_guid("11111111-2222-3333-4444-555555555555"));
+        assert!(is_guid("abcdef01-ABCD-ef01-2345-6789abcdef01"));
+        for bad in [
+            // Right length and dash count, but not hexadecimal.
+            "gggggggg-2222-3333-4444-555555555555",
+            "11111111-2222-3333-4444-55555555555z",
+            // Right characters and part lengths, but too few or too many parts.
+            "11111111-2222-3333-4444",
+            "11111111-2222-3333-4444-555555555555-6666",
+            // Dashes in the wrong places (hex only, same length).
+            "1111111-12222-3333-4444-555555555555",
+            "11111111-2222-333-34444-555555555555",
+            "11111111-2222-3333-4444-55555555555-5",
+            // A domain name, and the empty string.
+            "contoso.onmicrosoft.com",
+            "",
+        ] {
+            assert!(!is_guid(bad), "{bad}");
+        }
+    }
+
+    #[test]
     fn az_answer_for_another_tenant_or_unreadable_is_refused() {
         let other = r#"{"accessToken":"a","expires_on":9999999999,"tenant":"11111111-2222-3333-4444-555555555555"}"#;
         assert_eq!(

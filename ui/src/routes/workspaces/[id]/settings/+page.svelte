@@ -331,9 +331,11 @@
             workspace, Puddle keeps the real token on this computer. The
             workspace gets a stand-in that works only through Puddle, so while
             capture works nothing running in the workspace can copy your login.
-            A change takes effect when the workspace next starts; turning it off
-            leaves the logins Puddle already kept unused, so sign in again in
-            the workspace.
+            When Puddle cannot keep a token it stops the sign-in. Turn capture
+            off and a sign-in keeps its real token in this workspace. A change
+            takes effect when the workspace next starts; turning it off leaves
+            the logins Puddle already kept unused, so sign in again in the
+            workspace.
             <span class="chip"
               >{sourceLabel(effective.capture_logins.source)}</span
             >

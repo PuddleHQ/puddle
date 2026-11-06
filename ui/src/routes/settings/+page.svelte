@@ -742,9 +742,12 @@
               When you sign in to Claude Code, GitHub or Copilot inside a
               workspace, Puddle keeps the real token on this computer and the
               workspace gets a stand-in that works only through Puddle. On by
-              default. A workspace can set its own switch; a change takes effect
-              when a workspace next starts, and turning it off leaves the logins
-              Puddle already kept unused.
+              default. When Puddle cannot keep a token, it stops the sign-in
+              instead of letting the real token into the workspace. Turn it off
+              and a sign-in keeps its real token in the workspace. A workspace
+              can set its own switch; a change takes effect when a workspace
+              next starts, and turning it off leaves the logins Puddle already
+              kept unused.
             </p>
           </div>
           <input

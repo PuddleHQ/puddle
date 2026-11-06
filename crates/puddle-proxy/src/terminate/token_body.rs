@@ -23,6 +23,30 @@ pub enum BodyFormat {
     Form,
 }
 
+/// What a field of a body holds, without the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    /// A text value (a JSON string, a form value) of this many characters.
+    Text(usize),
+    /// A JSON `null` or an empty text.
+    Empty,
+    /// A JSON object or array (its own fields are listed after it, one level deeper).
+    Structured,
+    /// A number or a boolean.
+    Other,
+}
+
+/// One field of a body, as [`TokenBody::fields`] lists it: a name and a kind, never the value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyField {
+    /// The field's name; an element of an array has its array's name.
+    pub name: String,
+    /// 0 for a top-level field.
+    pub depth: usize,
+    /// What the field holds.
+    pub kind: FieldKind,
+}
+
 /// Why a body could not be read as a token message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -148,6 +172,64 @@ impl TokenBody {
         }
     }
 
+    /// Every field of the body, nested ones included, in order and with repeats: what a reader
+    /// that took the first, the last or the deepest one would find. No value is returned.
+    #[must_use]
+    pub fn fields(&self) -> Vec<BodyField> {
+        fn kind_of(value: &Value) -> FieldKind {
+            match value {
+                Value::Null => FieldKind::Empty,
+                Value::String(text) if text.is_empty() => FieldKind::Empty,
+                Value::String(text) => FieldKind::Text(text.chars().count()),
+                Value::Object(_) | Value::Array(_) => FieldKind::Structured,
+                Value::Bool(_) | Value::Number(_) => FieldKind::Other,
+            }
+        }
+        fn walk(name: &str, value: &Value, depth: usize, out: &mut Vec<BodyField>) {
+            out.push(BodyField {
+                name: name.to_owned(),
+                depth,
+                kind: kind_of(value),
+            });
+            match value {
+                Value::Object(map) => {
+                    for (key, inner) in map {
+                        walk(key, inner, depth + 1, out);
+                    }
+                }
+                Value::Array(items) => {
+                    for inner in items {
+                        walk(name, inner, depth + 1, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        match &self.parsed {
+            Parsed::Json(map) => {
+                for (key, value) in map {
+                    walk(key, value, 0, &mut out);
+                }
+            }
+            Parsed::Form(pairs) => {
+                for pair in pairs {
+                    let kind = if pair.value.is_empty() {
+                        FieldKind::Empty
+                    } else {
+                        FieldKind::Text(pair.value.chars().count())
+                    };
+                    out.push(BodyField {
+                        name: pair.key.clone(),
+                        depth: 0,
+                        kind,
+                    });
+                }
+            }
+        }
+        out
+    }
+
     /// Replaces the text of the field `name` with `value`; `false` (nothing changed) when
     /// [`Self::text`] would not have found it.
     pub fn set_text(&mut self, name: &str, value: &str) -> bool {
@@ -222,6 +304,44 @@ mod tests {
 
     fn json(text: &str) -> TokenBody {
         TokenBody::parse(Some("application/json; charset=utf-8"), text.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn the_fields_of_a_body_are_listed_with_kinds_and_depth_and_never_a_value() {
+        let body = json(r#"{"a":"abc","b":"","c":null,"d":7,"e":{"f":"xy"},"g":[{"h":"z"}]}"#);
+        let listed: Vec<(String, usize, FieldKind)> = body
+            .fields()
+            .into_iter()
+            .map(|f| (f.name, f.depth, f.kind))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("a".to_owned(), 0, FieldKind::Text(3)),
+                ("b".to_owned(), 0, FieldKind::Empty),
+                ("c".to_owned(), 0, FieldKind::Empty),
+                ("d".to_owned(), 0, FieldKind::Other),
+                ("e".to_owned(), 0, FieldKind::Structured),
+                ("f".to_owned(), 1, FieldKind::Text(2)),
+                ("g".to_owned(), 0, FieldKind::Structured),
+                ("g".to_owned(), 1, FieldKind::Structured),
+                ("h".to_owned(), 2, FieldKind::Text(1)),
+            ]
+        );
+        let repeated = form("a=1&a=2&b=");
+        let names: Vec<(String, FieldKind)> = repeated
+            .fields()
+            .into_iter()
+            .map(|f| (f.name, f.kind))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("a".to_owned(), FieldKind::Text(1)),
+                ("a".to_owned(), FieldKind::Text(1)),
+                ("b".to_owned(), FieldKind::Empty),
+            ]
+        );
     }
 
     fn form(text: &str) -> TokenBody {

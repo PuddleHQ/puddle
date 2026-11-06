@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use puddle_logins::{LoginNotices, Logins, Problem, Profile, builtin};
-use puddle_proxy::{InjectDecision, StandIns};
+use puddle_proxy::{InjectDecision, MAX_EXCHANGE_BODY, StandIns};
 use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
@@ -142,7 +142,16 @@ fn logins_on(
 }
 
 pub(crate) async fn claude_login(pki: &Pki, enabled: bool, store: Arc<MemoryStore>) -> Login {
-    let token = server(pki, TOKEN_HOST, claude_token_server()).await;
+    claude_login_answering(pki, enabled, store, claude_token_server()).await
+}
+
+async fn claude_login_answering(
+    pki: &Pki,
+    enabled: bool,
+    store: Arc<MemoryStore>,
+    token_handler: Handler,
+) -> Login {
+    let token = server(pki, TOKEN_HOST, token_handler).await;
     let api = server(pki, API_HOST, Arc::new(|_| Reply::ok("hello"))).await;
     let registry = Arc::new(StandIns::new());
     let (logins, notices) = logins_on(&registry, &store, enabled);
@@ -418,12 +427,8 @@ async fn hostile_hg34_a_captured_stand_in_means_nothing_in_another_workspace() {
     assert_no_real_token(&captured_logs());
 }
 
-#[tokio::test]
-async fn a_login_that_cannot_be_captured_still_works_and_the_user_is_told() {
-    let pki = Pki::new();
-    let login = claude_login(&pki, true, Arc::new(MemoryStore::new())).await;
-    // The credential store goes away after the workspace started.
-    login.store.break_it();
+/// Signs in through the proxy and returns what the tool gets.
+async fn sign_in(login: &Login) -> terminate_support::Response {
     let mut guest = login.rig.guest();
     let mut client = guest.tls(&format!("{TOKEN_HOST}:443"), None).await.unwrap();
     client
@@ -435,21 +440,190 @@ async fn a_login_that_cannot_be_captured_still_works_and_the_user_is_told() {
             &authorization_code(),
         ))
         .await;
-    let response = client.response("POST").await;
-    assert_eq!(response.status, 200);
-    let given: Value = serde_json::from_slice(&response.body).unwrap();
-    assert_eq!(given["access_token"], ACCESS_1, "the real token passes");
-    assert_eq!(given["refresh_token"], REFRESH_1);
-    assert_eq!(
-        *login.notices.0.lock().unwrap(),
-        [Problem::StoreUnavailable]
+    client.response("POST").await
+}
+
+/// What a refused login looks like to the tool and to the user: a `502` that names the reason
+/// and carries nothing of the real answer, one notice, nothing kept and nothing swapped.
+fn assert_refused(login: &Login, response: &terminate_support::Response, problem: Problem) {
+    assert_eq!(response.status, 502);
+    assert_eq!(response.header("x-puddle-blocked"), Some("login_not_kept"));
+    let all = format!("{response:?}{}", String::from_utf8_lossy(&response.body));
+    assert_no_real_token(&all);
+    assert!(
+        String::from_utf8_lossy(&response.body).contains("Claude Code sign-in"),
+        "the tool is told which sign-in: {all}"
     );
+    assert_eq!(*login.notices.0.lock().unwrap(), [problem]);
     assert_eq!(login.registry.len(), 0);
-    // The tool uses its real token as it would without Puddle.
-    assert_eq!(
-        api_call(&login, ACCESS_1).await.as_deref(),
-        Some(format!("Bearer {ACCESS_1}").as_str())
+}
+
+#[tokio::test]
+async fn a_login_whose_token_cannot_be_kept_fails_with_a_notice_and_the_real_token_never_arrives() {
+    let pki = Pki::new();
+    let login = claude_login(&pki, true, Arc::new(MemoryStore::new())).await;
+    // The credential store goes away after the workspace started.
+    login.store.break_it();
+    let response = sign_in(&login).await;
+    assert_refused(&login, &response, Problem::StoreUnavailable);
+    assert!(
+        String::from_utf8_lossy(&response.body).contains("credential store"),
+        "the reason is named"
     );
+    // The tool has nothing to use: its real token never left the host.
+    assert_eq!(login.registry.len(), 0);
+}
+
+/// One token answer from the service, as raw HTTP/1.1.
+type Answer = Box<dyn Fn() -> Reply + Send + Sync>;
+
+fn answering(answer: Answer) -> Handler {
+    Arc::new(move |_: &Recorded| answer())
+}
+
+fn raw_answer(head: &str, body: &str) -> Reply {
+    Reply::raw(format!(
+        "HTTP/1.1 200 OK\r\n{head}content-length: {}\r\n\r\n{body}",
+        body.len()
+    ))
+}
+
+#[tokio::test]
+async fn every_answer_capture_cannot_read_fails_the_login_instead_of_passing_the_real_token() {
+    let real = tokens(ACCESS_1, REFRESH_1).to_string();
+    let json = "content-type: application/json\r\n";
+    let padded = format!(
+        r#"{{"access_token":"{ACCESS_1}","refresh_token":"{REFRESH_1}","pad":"{}"}}"#,
+        "x".repeat(MAX_EXCHANGE_BODY)
+    );
+    let cases: Vec<(&str, Answer, Problem)> = vec![
+        (
+            "compressed",
+            Box::new({
+                let real = real.clone();
+                move || raw_answer(&format!("{json}content-encoding: gzip\r\n"), &real)
+            }),
+            Problem::UnexpectedAnswer,
+        ),
+        (
+            "larger than a token answer, with a length",
+            Box::new(move || raw_answer(json, &padded)),
+            Problem::UnexpectedAnswer,
+        ),
+        (
+            "another content type",
+            Box::new({
+                let real = real.clone();
+                move || raw_answer("content-type: text/html\r\n", &real)
+            }),
+            Problem::UnexpectedAnswer,
+        ),
+        (
+            "not JSON though it says so",
+            Box::new(move || raw_answer(json, "not json at all")),
+            Problem::UnexpectedAnswer,
+        ),
+        (
+            "bound to a key",
+            Box::new(move || {
+                let mut body = tokens(ACCESS_1, REFRESH_1);
+                body["token_type"] = json!("DPoP");
+                raw_answer(json, &body.to_string())
+            }),
+            Problem::BoundToken,
+        ),
+        (
+            "a token a stand-in cannot copy",
+            Box::new(move || {
+                raw_answer(
+                    json,
+                    &tokens("sk-ant-oat01-CANARY with spaces in it", REFRESH_1).to_string(),
+                )
+            }),
+            Problem::UnusableToken,
+        ),
+        (
+            "a new token in a field the profile does not name",
+            Box::new(move || {
+                let mut body = tokens(ACCESS_1, REFRESH_1);
+                body["id_token"] =
+                    json!("eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.CANARYsignaturesignature");
+                raw_answer(json, &body.to_string())
+            }),
+            Problem::UnnamedToken,
+        ),
+        (
+            "a token nested in an object",
+            Box::new(move || {
+                let mut body = tokens(ACCESS_1, REFRESH_1);
+                body["data"] = json!({"session_token": "CANARY-nested-session-token-0123456789"});
+                raw_answer(json, &body.to_string())
+            }),
+            Problem::UnnamedToken,
+        ),
+        (
+            "a named field the answer repeats",
+            Box::new(move || {
+                let body = format!(
+                    "access_token={ACCESS_1}&access_token={ACCESS_2}&refresh_token={REFRESH_1}"
+                );
+                raw_answer("content-type: application/x-www-form-urlencoded\r\n", &body)
+            }),
+            Problem::UnnamedToken,
+        ),
+    ];
+    for (name, answer, problem) in cases {
+        let pki = Pki::new();
+        let login =
+            claude_login_answering(&pki, true, Arc::new(MemoryStore::new()), answering(answer))
+                .await;
+        let response = sign_in(&login).await;
+        eprintln!("case: {name}");
+        assert_refused(&login, &response, problem);
+    }
+}
+
+#[tokio::test]
+async fn an_answer_without_a_length_that_turns_out_too_large_fails_the_login() {
+    let pki = Pki::new();
+    let big = format!(
+        r#"{{"access_token":"{ACCESS_1}","refresh_token":"{REFRESH_1}","pad":"{}"}}"#,
+        "x".repeat(MAX_EXCHANGE_BODY)
+    );
+    let chunked = Reply::raw(format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ntransfer-encoding: chunked\r\n\r\n{:x}\r\n{big}\r\n0\r\n\r\n",
+        big.len()
+    ));
+    let login = claude_login_answering(
+        &pki,
+        true,
+        Arc::new(MemoryStore::new()),
+        Arc::new(move |_: &Recorded| chunked.clone()),
+    )
+    .await;
+    let response = sign_in(&login).await;
+    assert_refused(&login, &response, Problem::UnexpectedAnswer);
+}
+
+#[tokio::test]
+async fn an_answer_with_lifetimes_in_token_named_fields_still_passes_capture() {
+    let pki = Pki::new();
+    let login = claude_login_answering(
+        &pki,
+        true,
+        Arc::new(MemoryStore::new()),
+        answering(Box::new(|| {
+            let mut body = tokens(ACCESS_1, REFRESH_1);
+            body["refresh_token_expires_in"] = json!(15_897_600);
+            body["token_type"] = json!("Bearer");
+            raw_answer("content-type: application/json\r\n", &body.to_string())
+        })),
+    )
+    .await;
+    let response = sign_in(&login).await;
+    assert_eq!(response.status, 200);
+    assert_no_real_token(&String::from_utf8_lossy(&response.body));
+    assert!(login.notices.0.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -860,4 +1034,85 @@ async fn over_http2_a_claude_login_is_captured_and_swapped_the_same_way() {
     );
     assert!(notices.0.lock().unwrap().is_empty());
     assert_no_real_token(&captured_logs());
+}
+
+#[tokio::test]
+async fn over_http2_a_login_capture_cannot_keep_fails_the_same_way() {
+    let cases: [(&str, Option<&str>, Value, Problem); 3] = [
+        (
+            "store down",
+            None,
+            tokens(ACCESS_1, REFRESH_1),
+            Problem::StoreUnavailable,
+        ),
+        (
+            "compressed",
+            Some("gzip"),
+            tokens(ACCESS_1, REFRESH_1),
+            Problem::UnexpectedAnswer,
+        ),
+        (
+            "unnamed token",
+            None,
+            {
+                let mut body = tokens(ACCESS_1, REFRESH_1);
+                body["id_token"] = json!("CANARY-id-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                body
+            },
+            Problem::UnnamedToken,
+        ),
+    ];
+    for (name, encoding, body, problem) in cases {
+        let pki = Pki::new();
+        let token_script: Script = Arc::new(move |_| {
+            let mut builder = http::Response::builder()
+                .status(200)
+                .header("content-type", "application/json");
+            if let Some(encoding) = encoding {
+                builder = builder.header("content-encoding", encoding);
+            }
+            let reply: H2Reply = builder
+                .body(
+                    http_body_util::Full::new(Bytes::from(body.to_string()))
+                        .map_err(|never| match never {})
+                        .boxed_unsync(),
+                )
+                .unwrap();
+            reply
+        });
+        let token = H2Server::recording(&pki, TOKEN_HOST, token_script).await;
+        let registry = Arc::new(StandIns::new());
+        let store = Arc::new(MemoryStore::new());
+        let (logins, notices) = logins_on(&registry, &store, true);
+        if name == "store down" {
+            store.break_it();
+        }
+        let rig = RigBuilder::new(&pki)
+            .bound(vec![TOKEN_HOST])
+            .allow(vec![TOKEN_HOST])
+            .name(TOKEN_HOST, token.addr)
+            .injector(TestInjector::new(|_| InjectDecision::PassThrough))
+            .stand_ins(&registry)
+            .exchanges(Arc::new(logins))
+            .build();
+        let mut guest = rig.guest();
+        let mut client = guest
+            .h2(&format!("{TOKEN_HOST}:443"), &[b"h2", b"http/1.1"])
+            .await;
+        let got = client
+            .request(
+                "POST",
+                TOKEN_HOST,
+                "/v1/oauth/token",
+                &[("content-type", "application/json")],
+                full(Bytes::from(authorization_code())),
+            )
+            .await;
+        eprintln!("case: {name}");
+        assert_eq!(got.status, 502);
+        assert_eq!(got.header("x-puddle-blocked"), Some("login_not_kept"));
+        assert_no_real_token(&got.text());
+        assert_eq!(*notices.0.lock().unwrap(), [problem]);
+        assert_eq!(registry.len(), 0);
+    }
 }

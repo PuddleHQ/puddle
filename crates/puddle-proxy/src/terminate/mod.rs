@@ -91,7 +91,7 @@ pub use request_rules::{RequestRule, RequestRules};
 pub(crate) use session::{Context, Outcome, run};
 pub use set::{PatternError, TerminationSet};
 pub use stand_in::{Placement, StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
-pub use token_body::{BodyFormat, TokenBody, TokenBodyError};
+pub use token_body::{BodyField, BodyFormat, FieldKind, TokenBody, TokenBodyError};
 
 /// Hosts Puddle decrypts by default: GitHub and Azure DevOps, for git and Git LFS. Not
 /// `api.github.com` (the `gh` CLI and gists would become an exfiltration channel with a

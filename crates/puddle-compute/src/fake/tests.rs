@@ -628,7 +628,7 @@ async fn the_terminal_stand_in_runs_an_unknown_line_and_ends_cleanly_when_the_cl
     while !seen.contains("yyyy") {
         match channel.wait().await {
             Some(russh::ChannelMsg::Data { data }) => {
-                seen.push_str(&String::from_utf8_lossy(&data))
+                seen.push_str(&String::from_utf8_lossy(&data));
             }
             Some(_) => {}
             None => break,

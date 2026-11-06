@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use zeroize::Zeroizing;
+use zeroize::{Zeroize as _, Zeroizing};
 
 /// A private key, PKCS#8 DER. It is wiped from memory on drop, never printed (`Debug` shows no
 /// bytes) and has no `Clone`, `Display` or serde impls, so the only way to see it is
@@ -26,7 +26,11 @@ impl PrivateKey {
     /// The key as a `PRIVATE KEY` PEM block (what Vite, Angular and Next.js read).
     #[must_use]
     pub fn to_pem(&self) -> Zeroizing<String> {
-        Zeroizing::new(pem::encode(&pem::Pem::new("PRIVATE KEY", self.0.to_vec())))
+        let block = pem::Pem::new("PRIVATE KEY", self.0.to_vec());
+        let text = Zeroizing::new(pem::encode(&block));
+        // `Pem` has no `Drop` that wipes: take its copy of the key back and overwrite it.
+        block.into_contents().zeroize();
+        text
     }
 }
 

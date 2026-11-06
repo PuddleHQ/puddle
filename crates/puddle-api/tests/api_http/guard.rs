@@ -48,7 +48,8 @@ fn operations() -> Vec<(String, String)> {
         let path = path
             .replace("{id}", "1")
             .replace("{workspace}", "box")
-            .replace("{kind}", "telemetry");
+            .replace("{kind}", "telemetry")
+            .replace("{terminal}", "1");
         for method in item.as_object().unwrap().keys() {
             out.push((method.to_uppercase(), path.clone()));
         }
@@ -84,6 +85,11 @@ async fn every_route_refuses_a_missing_token() {
     let api = start().await;
     let host = api.host();
     for (method, path) in operations() {
+        // The terminal socket takes a single-use ticket in place of the token (a browser cannot
+        // send a header on a WebSocket); the terminal tests cover its refusals.
+        if method == "GET" && path.contains("/terminals/") {
+            continue;
+        }
         let reply = send(&api, &method, &path, &[("Host", &host)]).await;
         assert_refused(&reply, 401, "unauthorized", &api.token);
         assert_eq!(

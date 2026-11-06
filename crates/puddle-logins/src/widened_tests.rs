@@ -279,3 +279,127 @@ fn every_built_in_slot_resource_fits_an_entry_name() {
         }
     }
 }
+
+fn builtin_rig() -> Logins {
+    Logins::new(
+        WorkspaceId::new("alpha").unwrap(),
+        true,
+        crate::builtin(),
+        Arc::new(StandIns::new()),
+        Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
+        Arc::new(Quiet),
+        Marker::none(),
+    )
+}
+
+#[test]
+fn the_shipped_profiles_read_exactly_the_requests_they_read_before_the_model_widened() {
+    let logins = builtin_rig();
+    let is_exchange = |h: &str, m: &str, p: &str| logins.begin(&host(h), m, p).is_some();
+    // Every token endpoint takes a POST to its exact path and nothing else.
+    for (h, p) in [
+        ("platform.claude.com", "/v1/oauth/token"),
+        ("console.anthropic.com", "/v1/oauth/token"),
+        ("api.anthropic.com", "/api/oauth/claude_cli/create_api_key"),
+        ("github.com", "/login/oauth/access_token"),
+    ] {
+        assert!(is_exchange(h, "POST", p), "{h}{p}");
+        for method in ["GET", "PUT", "PATCH", "DELETE", "HEAD", "post"] {
+            assert!(!is_exchange(h, method, p), "{method} {h}{p}");
+        }
+        assert!(
+            !is_exchange(h, "POST", &format!("{p}/extra")),
+            "{h}{p}/extra"
+        );
+        assert!(!is_exchange(h, "POST", "/"), "{h}/");
+    }
+    // The Copilot session token's endpoint takes any method, and only at its exact path.
+    for method in ["GET", "POST"] {
+        assert!(is_exchange(
+            "api.github.com",
+            method,
+            "/copilot_internal/v2/token"
+        ));
+    }
+    assert!(!is_exchange(
+        "api.github.com",
+        "GET",
+        "/copilot_internal/v2/token/x"
+    ));
+    // The paths do not cross hosts, and the hosts that only take tokens are not exchanges.
+    assert!(!is_exchange("github.com", "POST", "/v1/oauth/token"));
+    assert!(!is_exchange(
+        "platform.claude.com",
+        "POST",
+        "/login/oauth/access_token"
+    ));
+    for (h, p) in [
+        ("api.github.com", "/user"),
+        ("github.com", "/acme/web.git/info/refs"),
+        ("claude.ai", "/v1/oauth/token"),
+    ] {
+        for method in ["GET", "POST"] {
+            assert!(!is_exchange(h, method, p), "{method} {h}{p}");
+        }
+    }
+}
+
+#[test]
+fn the_shipped_profiles_keep_their_slots_names_scopes_and_entry_names() {
+    use crate::profile::{CLAUDE, GITHUB};
+    for profile in [&CLAUDE, &GITHUB] {
+        for (slot, _) in profile.slots() {
+            assert_eq!(slot.resource, None, "{}", profile.id);
+        }
+    }
+    let scopes = |p: &Profile| -> Vec<(&'static str, Scope)> {
+        p.slots()
+            .into_iter()
+            .map(|(slot, scope)| (slot.role.key(), scope))
+            .collect()
+    };
+    assert_eq!(
+        scopes(&CLAUDE),
+        [
+            ("access", Scope::Api),
+            ("refresh", Scope::TokenEndpoint),
+            ("api-key", Scope::Api)
+        ]
+    );
+    assert_eq!(
+        scopes(&GITHUB),
+        [
+            ("access", Scope::Api),
+            ("refresh", Scope::TokenEndpoint),
+            ("copilot", Scope::Api)
+        ]
+    );
+    assert_eq!(
+        CLAUDE.slot_name_of(Slot::of(Role::Refresh)),
+        "claude-refresh"
+    );
+    assert_eq!(
+        slot_id("alpha", "github", Role::Access),
+        slot_id("alpha", "github", Slot::of(Role::Access))
+    );
+    assert_eq!(
+        GITHUB.slot_name_of(Slot::of(Role::Copilot)),
+        "github-copilot"
+    );
+    let id = slot_id("alpha", "github", Role::Copilot).unwrap();
+    assert!(id.as_str().ends_with("-github-copilot"), "{}", id.as_str());
+    let id = slot_id("alpha", "github", Role::Refresh).unwrap();
+    assert!(id.as_str().ends_with("-github-refresh"), "{}", id.as_str());
+    // Each field's path is the flat name it always had.
+    let paths: Vec<&str> = CLAUDE.fields().map(|(_, f)| f.path).collect();
+    assert_eq!(
+        paths,
+        [
+            "access_token",
+            "refresh_token",
+            "access_token",
+            "refresh_token",
+            "raw_key"
+        ]
+    );
+}

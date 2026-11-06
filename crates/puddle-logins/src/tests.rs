@@ -228,6 +228,19 @@ async fn a_refresh_gives_the_tool_the_same_stand_ins_with_new_tokens_behind_them
 }
 
 #[tokio::test]
+async fn a_token_endpoint_host_is_known_by_name_and_only_while_capture_is_on() {
+    let on = rig();
+    for name in ["platform.claude.com", "console.anthropic.com", "github.com"] {
+        assert!(on.logins.is_token_endpoint(&host(name)), "{name}");
+    }
+    for name in ["example.com", "evil.platform.claude.com"] {
+        assert!(!on.logins.is_token_endpoint(&host(name)), "{name}");
+    }
+    let off = rig_on(&Arc::new(MemoryStore::new()), false);
+    assert!(!off.logins.is_token_endpoint(&host("platform.claude.com")));
+}
+
+#[tokio::test]
 async fn the_token_endpoint_asks_for_the_refresh_swap_and_other_requests_are_not_exchanges() {
     let rig = rig();
     let mut exchange = rig

@@ -676,6 +676,7 @@ impl<R: Runtime + Clone> Host<R> {
         ))
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
+        .with_terminals(Arc::new(service.clone()))
         .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
         .with_proxy_sign_ins(sign_ins)
         .with_company_signals(signals)
@@ -998,6 +999,10 @@ impl Injecting {
             SecretCache::new(Sources::new(ToolPaths::resolve(), Arc::clone(vault)))
                 .with_read_log(Arc::clone(&reads)),
         );
+        // Values nobody asks for any more leave memory on their own.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            drop(secrets.spawn_sweeper());
+        }
         // The proxy asks this registry, once per connection, what the workspace decrypts.
         let terminations = Arc::new(Terminations::new());
         let injection = Arc::new(

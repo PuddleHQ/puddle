@@ -445,4 +445,37 @@ mod tests {
             Ok(0)
         );
     }
+
+    /// A store that can rewrite whole entries but not the pieces of a long one.
+    #[derive(Default)]
+    struct PiecesStuck(MemoryStore);
+
+    impl SecretStore for PiecesStuck {
+        fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
+            self.0.get(id)
+        }
+        fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), StoreError> {
+            self.0.set(id, secret)
+        }
+        fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
+            self.0.delete(id)
+        }
+        fn keep_local(&self, id: &StoredId) -> Result<(), StoreError> {
+            if id.as_str().contains('-') {
+                return Err(StoreError);
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_piece_that_cannot_be_rewritten_is_an_error_for_its_entry() {
+        let store = ChunkedStore::new(PiecesStuck::default());
+        let long_id = StoredId::new("long").unwrap();
+        store
+            .set(&long_id, &Secret::new("x".repeat(CHUNK_UNITS + 1)))
+            .unwrap();
+        assert_eq!(store.keep_local(&long_id), Err(StoreError));
+        store.delete(&long_id).unwrap();
+    }
 }

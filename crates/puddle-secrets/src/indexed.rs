@@ -424,5 +424,6 @@ mod tests {
         store.set(&id("tok-a"), &secret("a")).unwrap();
         // The listed id and the index itself.
         assert_eq!(store.keep_all_local(), Ok(2));
+        store.delete(&id("tok-a")).unwrap();
     }
 }

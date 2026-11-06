@@ -33,7 +33,7 @@ export const WARM_UP_TIMEOUT_MS = 45_000;
 const engines = { chromium, firefox, webkit } as const;
 
 /** `newPage` takes no timeout of its own: without this a stalled browser would hold the run forever. */
-async function within<T>(
+export async function within<T>(
   ms: number,
   work: Promise<T>,
   what: string,

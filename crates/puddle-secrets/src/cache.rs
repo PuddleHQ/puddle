@@ -64,6 +64,7 @@ impl Default for Ttls {
             az_cli: Ttl {
                 fresh: Some(Duration::from_mins(55)),
                 grace,
+                idle: None,
             },
         }
     }

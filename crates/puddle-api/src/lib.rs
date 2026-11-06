@@ -63,6 +63,7 @@ mod routes;
 mod server;
 mod settings;
 mod system_managed;
+mod terminals;
 mod token;
 mod ui;
 pub mod wire;
@@ -92,6 +93,11 @@ pub use proxy_sign_in::{FakeProxySignIns, NoProxySignIns, ProxySignInError, Prox
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
+pub use terminals::{
+    EndReason, FakeTerminals, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals,
+    SUBPROTOCOL, TICKET_LIFETIME, TerminalEnd, TerminalError, TerminalInput, TerminalLink,
+    TerminalOutput, TerminalService, TerminalSize, WINDOW_BYTES,
+};
 pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};
 #[cfg(feature = "embedded-ui")]
 pub use ui::EmbeddedUi;

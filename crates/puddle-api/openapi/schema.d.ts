@@ -1610,6 +1610,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/terminals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Asks for a terminal in a running or starting workspace. The session opens when the socket
+         *     connects, so a ticket that is never used leaves nothing behind.
+         */
+        post: operations["create_terminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/terminals/{terminal}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Opens the terminal's socket. A browser cannot send `Authorization` on a WebSocket, so on this
+         *     one path the single-use ticket stands in for the token; the `Host` and `Origin` checks run
+         *     before it is read.
+         */
+        get: operations["terminal_socket"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1900,6 +1941,13 @@ export interface components {
             rule_id: number | null;
             /** @description The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`). */
             rule_set: string | null;
+            /**
+             * @description The ids of the stand-ins whose real values an answer from one of their hosts held, put back as
+             *     the stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),
+             *     each once, at most 16. Records written
+             *     before it existed read as empty.
+             */
+            scrubbed_stand_ins: string[];
             /**
              * @description The signal that put the destination in the company network: `pac_direct`,
              *     `dns_suffix`, `private_access_cgnat` or `vpn_route`; `null` with `category`.
@@ -4625,6 +4673,32 @@ export interface components {
          * @enum {string}
          */
         SystemReason: "microsoft_server" | "code_server" | "direct_ssh" | "direct_ssh_cursor" | "direct_ssh_jetbrains" | "direct_ssh_zed";
+        /** @description The size a new terminal starts with. */
+        TerminalRequest: {
+            /**
+             * Format: int32
+             * @description Columns, 2 to 500.
+             */
+            cols: number;
+            /**
+             * Format: int32
+             * @description Rows, 1 to 300.
+             */
+            rows: number;
+        };
+        /** @description A terminal that is asked for and not open yet. */
+        TerminalTicket: {
+            /**
+             * Format: int64
+             * @description The terminal's id in the socket's path.
+             */
+            terminal: number;
+            /**
+             * @description 64 hex characters: use it once, within 30 s, as `ticket.<hex>` after `puddle-terminal.v1`
+             *     in `Sec-WebSocket-Protocol`.
+             */
+            ticket: string;
+        };
         /**
          * @description The colour theme of Puddle's window.
          * @enum {string}
@@ -12684,6 +12758,173 @@ export interface operations {
             };
             /** @description not running or busy */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_terminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TerminalRequest"];
+            };
+        };
+        responses: {
+            /** @description the terminal and its ticket */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminalTicket"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the workspace is not running or starting, or the limit of 8 terminals for it or 32 in all is reached (the message says which) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a size outside 2 to 500 columns and 1 to 300 rows */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description terminals are not available in this build */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    terminal_socket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the terminal id from the ticket */
+                terminal: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the socket: binary messages carry the terminal's bytes (at most 64 KiB), text messages are JSON (`resize`, `ack` from the page; `ended` from the host) */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description a wrong, used or late ticket */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

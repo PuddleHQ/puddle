@@ -406,6 +406,8 @@ pub enum WorkspaceOpKind {
     RepoSwitched,
     /// A repository removed from a workspace's list.
     RepoRemoved,
+    /// A zero-filled or corrupt git file (`HEAD`, the index) of a checkout rebuilt at boot.
+    GitRepaired,
 }
 
 /// How a workspace operation ended.

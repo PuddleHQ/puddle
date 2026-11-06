@@ -191,7 +191,7 @@ async fn the_network_report_names_stored_sign_ins_without_a_password() {
 async fn a_build_without_the_service_lists_nothing_and_refuses_a_change() {
     use puddle_api::NoProxySignIns;
     let none = NoProxySignIns;
-    assert!(none.list().is_empty());
+    assert_eq!(none.list().len(), 0);
     assert!(none.set(&proxy(), "a", "b").is_err());
     assert!(none.remove(&proxy()).is_err());
 }

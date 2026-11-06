@@ -13,7 +13,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{ConnectionFileError, ConnectionInfo, EventHub, ServeError, SettingsRepo};
+use puddle_api::{
+    ConnectionFileError, ConnectionInfo, EventHub, ServeError, SettingsRepo, WorkspaceService,
+};
 use puddle_host::{
     Host, HostConfig, HostError, HostOptions, HostShutdown, MsbFactory, Platform, Prepared,
     RuntimeFactory, prepare,
@@ -146,6 +148,11 @@ type Stop = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = HostShutdown> + Send
 pub type EndExtensionHosts =
     Arc<dyn Fn(WorkspaceId) -> BoxFuture<'static, Result<(), String>> + Send + Sync>;
 
+/// What the user calls a workspace (its display name, else its name), for a notice; `None` when
+/// this backend has no such workspace.
+pub type WorkspaceLabel =
+    Arc<dyn Fn(WorkspaceId) -> BoxFuture<'static, Option<String>> + Send + Sync>;
+
 /// A running in-process backend.
 pub struct Backend {
     info: ConnectionInfo,
@@ -155,6 +162,7 @@ pub struct Backend {
     store: Arc<Store>,
     settings: Arc<dyn SettingsRepo>,
     extension_hosts: EndExtensionHosts,
+    label: WorkspaceLabel,
     stop: Mutex<Option<Stop>>,
 }
 
@@ -185,8 +193,16 @@ impl Backend {
             extension_hosts: Arc::new(|_| {
                 Box::pin(async { Err("this backend runs no workspaces".to_owned()) })
             }),
+            label: Arc::new(|_| Box::pin(async { None })),
             stop: Mutex::new(Some(stop)),
         })
+    }
+
+    /// The same backend with `label` as its way to name a workspace in a notice.
+    #[must_use]
+    pub(crate) fn with_label(mut self, label: WorkspaceLabel) -> Self {
+        self.label = label;
+        self
     }
 
     /// The same backend with `ends` as its way to end a guest's extension hosts.
@@ -225,6 +241,15 @@ impl Backend {
                     .map_err(|e| e.to_string())
             })
         });
+        let named = Arc::downgrade(&host);
+        let label: WorkspaceLabel = Arc::new(move |workspace| {
+            let named = named.clone();
+            Box::pin(async move {
+                let host = named.upgrade()?;
+                let record = host.workspaces().get(&workspace).await.ok()?;
+                Some(record.label().to_owned())
+            })
+        });
         Self::new(
             info,
             events,
@@ -233,7 +258,7 @@ impl Backend {
             settings,
             Box::new(move || Box::pin(async move { host.shutdown().await })),
         )
-        .map(|backend| backend.with_extension_hosts(ends))
+        .map(|backend| backend.with_extension_hosts(ends).with_label(label))
     }
 
     /// The way to ask a workspace's guest to end its editor's extension hosts, for the windows'
@@ -241,6 +266,12 @@ impl Backend {
     #[must_use]
     pub fn extension_hosts(&self) -> EndExtensionHosts {
         Arc::clone(&self.extension_hosts)
+    }
+
+    /// The way to ask what the user calls a workspace, for notices.
+    #[must_use]
+    pub fn label(&self) -> WorkspaceLabel {
+        Arc::clone(&self.label)
     }
 
     /// The API's origin, `http://127.0.0.1:<port>/`: the address of the main window.

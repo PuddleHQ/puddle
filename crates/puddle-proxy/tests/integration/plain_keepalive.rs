@@ -107,6 +107,7 @@ async fn serve_one(reader: &mut BufReader<tokio::net::TcpStream>, seen: &Seen) -
     match path.as_str() {
         "/drop" => return Some(true),
         "/silent" => {
+            // simulated server that accepts the request and never answers; the test cuts it off first
             tokio::time::sleep(Duration::from_secs(10)).await;
             return Some(true);
         }
@@ -611,6 +612,7 @@ async fn a_head_split_across_reads_on_a_kept_connection_is_read_whole() {
         .unwrap();
     assert_eq!(answer(&mut reader, "GET").await.code, 200);
     let second = get("web.test", web, "/split");
+    // flake-ok: paces the pieces so the proxy reads each one separately; nothing signals that a read happened.
     for piece in [&second[..2], &second[2..15], &second[15..40], &second[40..]] {
         reader.get_mut().write_all(piece.as_bytes()).await.unwrap();
         tokio::time::sleep(Duration::from_millis(30)).await;

@@ -112,7 +112,7 @@ exclude_re = [
     # Not measured: the `#[cfg(not(unix))]` `is_executable` (the Windows one: a file counts when it
     # exists) is never compiled on Linux. The Unix one has the same name and is measured and caught, so
     # the entry holds the Windows body's position; the `mutants-exclusions` gate fails it when it moves.
-    'run\.rs:80:5: replace is_executable -> bool',
+    'run\.rs:98:5: replace is_executable -> bool',
     # Not measured: the Windows `allocated_bytes` is `#[cfg(windows)]`, so a Linux run never compiles it
     # and every change to it passes. The mutation run covers Linux only; this function is tested by the
     # Windows test job and is not part of the clean claim. The Unix one has the same name and is

@@ -10,6 +10,7 @@ info  Data folder path    could not be read; whether other accounts can write ab
       note: Puddle may still work; this only means the doctor cannot rule out the folder
             permissions msb refuses.
       from: Permission denied (os error 13)
+ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 
 No problems found. (1.2 s)
@@ -59,6 +60,11 @@ No problems found. (1.2 s)
       "finding": "data_path_unreadable",
       "fix": "Puddle may still work; this only means the doctor cannot rule out the folder permissions msb refuses.",
       "detail": "Permission denied (os error 13)"
+    },
+    {
+      "id": "disk_encryption",
+      "status": "ok",
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
     },
     {
       "id": "ssh_agent",

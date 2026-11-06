@@ -246,6 +246,7 @@ export class PendingStore {
                 link_local: t.link_local.value,
                 metadata: t.metadata.value,
                 special: t.special.value,
+                company_network: t.company_network.value,
               }
             : null;
         } catch {

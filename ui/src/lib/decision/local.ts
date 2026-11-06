@@ -4,7 +4,12 @@
 // the UI. Hosts that are names return `null`: they are checked after resolving, in the proxy.
 
 export type LocalCategory =
-  "loopback" | "private" | "link_local" | "metadata" | "special";
+  | "loopback"
+  | "private"
+  | "link_local"
+  | "metadata"
+  | "special"
+  | "company_network";
 
 export const LOCAL_LABELS: Record<LocalCategory, string> = {
   loopback: "This computer (loopback)",
@@ -12,6 +17,7 @@ export const LOCAL_LABELS: Record<LocalCategory, string> = {
   link_local: "Link-local",
   metadata: "Cloud metadata",
   special: "Other special ranges",
+  company_network: "Company network",
 };
 
 function ipv4(host: string): [number, number, number, number] | null {

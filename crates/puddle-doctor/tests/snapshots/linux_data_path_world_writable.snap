@@ -13,6 +13,7 @@ FAIL  Data folder path    /data is writable by everyone and not sticky, so msb w
             Run:
               chmod go-w /data
       from: /data mode 0757
+ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -61,6 +62,11 @@ FAIL  Data folder path    /data is writable by everyone and not sticky, so msb w
       "finding": "data_path_writable",
       "fix": "msb opens its catalog only below folders where other accounts cannot rename entries, so every sandbox start fails until the write permission is gone. A user created with a private group and umask 0002 (the Ubuntu default) often leaves ~/.local at 0775. Run:\n  chmod go-w /data",
       "detail": "/data mode 0757"
+    },
+    {
+      "id": "ssh_agent",
+      "status": "ok",
+      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
     }
   ],
   "elapsed_ms": 1234

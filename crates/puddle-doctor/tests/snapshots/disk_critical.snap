@@ -12,6 +12,7 @@ FAIL  Disk space          only 3 GB free on the drive that holds Puddle's data (
             start or build anything in a workspace: delete workspaces you no longer use and
             files you do not need. The line is the setting "Fail when free space is under" in
             Settings.
+ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -54,6 +55,11 @@ FAIL  Disk space          only 3 GB free on the drive that holds Puddle's data (
       "summary": "only 3 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle), under the 5 GB line",
       "finding": "disk_space_critical",
       "fix": "Workspace volumes and root disks, package caches and builds inside a workspace all grow on this drive, and a full drive stops them with errors that do not name the cause (a build that dies halfway, a tool that cannot write). Free space before you start or build anything in a workspace: delete workspaces you no longer use and files you do not need. The line is the setting \"Fail when free space is under\" in Settings."
+    },
+    {
+      "id": "ssh_agent",
+      "status": "ok",
+      "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
     }
   ],
   "elapsed_ms": 1234

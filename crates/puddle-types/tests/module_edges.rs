@@ -43,7 +43,8 @@ fn every_local_category_has_its_own_description() {
             "local/private network",
             "link-local",
             "cloud metadata",
-            "special-use address"
+            "special-use address",
+            "company network"
         ]
     );
 }

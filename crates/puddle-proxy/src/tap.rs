@@ -194,11 +194,61 @@ mod tests {
             b"GET /\xc3\xa9t\xc3\xa9 HTTP/1.1\r\n",
             b"GET ftp://h/ HTTP/1.1\r\n",
             b"GET / HTTP/2\r\n",
+            b"G@T / HTTP/1.1\r\n",   // a method with a character no token holds
+            b" / HTTP/1.1\r\n",      // no method
+            b"GET foo HTTP/1.1\r\n", // right method and version, target that is no path
             b"ping",
             b"\r\n\r\n",
         ] {
             assert_eq!(line(bytes), None, "{}", String::from_utf8_lossy(bytes));
         }
+    }
+
+    /// A writer that notes flushes and shutdowns.
+    #[derive(Default)]
+    struct Marks {
+        flushed: bool,
+        closed: bool,
+    }
+
+    impl AsyncWrite for Marks {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+        fn poll_flush(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.flushed = true;
+            Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.closed = true;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn flush_and_shutdown_reach_the_stream_underneath() {
+        let mut tap = RequestTap::new(Marks::default(), b"");
+        tap.write_all(b"x").await.unwrap();
+        tap.flush().await.unwrap();
+        assert!(tap.inner.flushed && !tap.inner.closed);
+        tap.shutdown().await.unwrap();
+        assert!(tap.inner.closed);
+    }
+
+    #[test]
+    fn a_line_of_a_few_thousand_bytes_is_still_recorded() {
+        // Literal sizes: a test built from `MAX_TAPPED` would follow a changed limit.
+        assert_eq!(MAX_TAPPED, 8192);
+        let mut early = b"GET /".to_vec();
+        early.extend(vec![b'a'; 3000]);
+        early.extend_from_slice(b" HTTP/1.1\r\n");
+        let tap = RequestTap::new(tokio::io::empty(), &early);
+        let line = tap.request_line().expect("a 3 KB line is within the limit");
+        assert_eq!(line.path().len(), 3001);
     }
 
     #[tokio::test]

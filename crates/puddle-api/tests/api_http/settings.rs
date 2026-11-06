@@ -14,7 +14,7 @@ fn null_layer() -> Value {
     json!({
         "memory": null,
         "cpus": null,
-        "local_toggles": {"loopback": null, "private": null, "link_local": null, "metadata": null, "special": null},
+        "local_toggles": {"loopback": null, "private": null, "link_local": null, "metadata": null, "special": null, "company_network": null},
         "wildcards_reach_local": null,
         "reconnection_grace": null,
         "zoom_hotkeys": null,
@@ -49,6 +49,11 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     assert_eq!(e["reconnection_grace"]["value"], 300);
     assert_eq!(e["clipboard_read"]["value"], "ask");
     assert_eq!(e["local_toggles"]["metadata"]["value"], false);
+    assert_eq!(
+        e["local_toggles"]["company_network"],
+        json!({"value": false, "source": "default"}),
+        "the company network is off until someone turns it on"
+    );
     assert_eq!(
         e["direct_ssh"],
         json!({"value": false, "source": "default"})

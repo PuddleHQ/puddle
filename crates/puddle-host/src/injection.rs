@@ -1958,28 +1958,18 @@ mod tests {
         let ws = workspace("alpha");
         injection.begin(&ws, true).await.unwrap();
         let sent = events.0.lock().unwrap().clone();
-        let mut services: Vec<&str> = sent
+        let expected: Vec<Event> = puddle_logins::builtin()
             .iter()
-            .filter_map(|event| match event {
-                Event::LoginProblem { service, .. } => Some(service.as_str()),
-                _ => None,
+            .map(|profile| Event::LoginProblem {
+                workspace: ws.clone(),
+                service: profile.name.to_owned(),
+                kind: puddle_types::LoginProblemKind::StoreUnavailable,
             })
             .collect();
-        services.sort_unstable();
-        let mut shipped: Vec<&str> = puddle_logins::builtin().iter().map(|p| p.name).collect();
-        shipped.sort_unstable();
-        assert_eq!(
-            services, shipped,
-            "one notice per shipped service: {sent:?}"
-        );
-        assert_eq!(sent.len(), shipped.len(), "{sent:?}");
-        assert!(sent.iter().all(|event| matches!(
-            event,
-            Event::LoginProblem {
-                kind: puddle_types::LoginProblemKind::StoreUnavailable,
-                ..
-            }
-        )));
+        assert_eq!(sent.len(), expected.len(), "{sent:?}");
+        for event in &expected {
+            assert!(sent.contains(event), "no notice {event:?} in {sent:?}");
+        }
         // The login still works, as it would without Puddle: nothing was captured.
         assert!(claude_answer(&terminations, &ws).await.is_none());
     }

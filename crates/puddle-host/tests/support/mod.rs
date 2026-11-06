@@ -206,21 +206,41 @@ pub(crate) struct Events {
 }
 
 impl Events {
-    async fn fill_until(&mut self, done: impl Fn(&str) -> bool, within: Duration) {
+    /// Events read from an already connected stream.
+    pub(crate) fn over(stream: TcpStream) -> Self {
+        Self {
+            stream,
+            buf: String::new(),
+            seen: Vec::new(),
+        }
+    }
+
+    /// Reads until `done` holds for the buffer; false when the deadline passed first. A read
+    /// is tried even with no time left (`timeout` polls the read first), so what a stalled
+    /// test thread finds already in the socket is not dropped.
+    async fn try_fill_until(&mut self, done: impl Fn(&str) -> bool, within: Duration) -> bool {
         let deadline = Instant::now() + within;
         let mut chunk = [0_u8; 4096];
         while !done(&self.buf) {
             let left = deadline.saturating_duration_since(Instant::now());
-            assert!(!left.is_zero(), "timed out; buffer: {:?}", self.buf);
             match tokio::time::timeout(left, self.stream.read(&mut chunk)).await {
                 Ok(Ok(0)) => panic!("the event stream ended; buffer: {:?}", self.buf),
                 Ok(Ok(n)) => self
                     .buf
                     .push_str(&String::from_utf8_lossy(chunk.get(..n).unwrap())),
                 Ok(Err(e)) => panic!("event stream: {e}"),
-                Err(_) => {}
+                Err(_) => return false,
             }
         }
+        true
+    }
+
+    async fn fill_until(&mut self, done: impl Fn(&str) -> bool, within: Duration) {
+        assert!(
+            self.try_fill_until(done, within).await,
+            "timed out; buffer: {:?}",
+            self.buf
+        );
     }
 
     /// Reads events until one satisfies `pred`; returns it. Every event read is kept in `seen`.
@@ -245,14 +265,15 @@ impl Events {
                 }
             }
             let left = deadline.saturating_duration_since(Instant::now());
+            let before = self.buf.len();
+            let filled = self
+                .try_fill_until(|b| b.len() > before && b.contains("\n\n"), left)
+                .await;
             assert!(
-                !left.is_zero(),
+                filled,
                 "no matching event in {within:?}; saw {:#?}",
                 self.seen
             );
-            let before = self.buf.len();
-            self.fill_until(|b| b.len() > before && b.contains("\n\n"), left)
-                .await;
         }
     }
 

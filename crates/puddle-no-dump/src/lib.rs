@@ -42,11 +42,11 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Logs the outcome once: `info` for the two intended states, `warn` when the system refused
-    /// or this OS is not covered.
+    /// Logs the outcome once: `debug` for the normal protected state (a quiet start), `warn` when
+    /// the user opted out, the system refused or this OS is not covered.
     pub fn log(&self) {
         match self {
-            Self::Protected => tracing::info!("process is excluded from core and crash dumps"),
+            Self::Protected => tracing::debug!("process is excluded from core and crash dumps"),
             Self::Allowed => {
                 tracing::warn!(
                     "{ALLOW_VAR}=1: core and crash dumps of this process may hold credentials"

@@ -809,3 +809,28 @@ impl ExchangeRewriter for Logins {
         })))
     }
 }
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+    use crate::profile::CLAUDE;
+
+    #[test]
+    fn every_problem_a_tool_can_be_refused_for_says_its_own_reason() {
+        for (problem, reason) in [
+            (
+                Problem::StoreUnavailable,
+                "credential store is not available",
+            ),
+            (Problem::UnexpectedAnswer, "in a form Puddle does not read"),
+            (Problem::UnusableToken, "cannot give a stand-in for"),
+            (Problem::BoundToken, "ties its token to a key"),
+            (Problem::UnnamedToken, "field Puddle does not know"),
+            (Problem::Unreadable, "could not keep it"),
+        ] {
+            let refusal = refusal_for(&CLAUDE, problem);
+            assert_eq!(refusal.status(), 502);
+            assert!(refusal.message().contains(reason), "{problem:?}");
+        }
+    }
+}

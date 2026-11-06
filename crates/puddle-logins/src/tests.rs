@@ -1111,3 +1111,45 @@ async fn a_saved_entry_that_is_not_one_of_ours_is_reported_as_unreadable_and_the
         [("claude".to_owned(), Problem::Unreadable)]
     );
 }
+
+#[tokio::test]
+async fn a_long_text_in_a_field_named_like_an_address_or_a_kind_is_not_a_token() {
+    let rig = rig();
+    let mut answer: Value =
+        serde_json::from_slice(&claude_answer(REAL_ACCESS, REAL_REFRESH)).unwrap();
+    answer["token_endpoint"] = json!("https://example.invalid/a/long/address/for/the/token");
+    let exchange = rig
+        .logins
+        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+    let body = answered(
+        exchange,
+        200,
+        Some("application/json"),
+        answer.to_string().as_bytes(),
+    )
+    .await;
+    assert!(body.is_some());
+    assert!(rig.notices.seen().is_empty());
+}
+
+#[tokio::test]
+async fn a_long_token_in_a_field_the_profile_does_not_name_is_refused() {
+    let rig = rig();
+    let mut answer: Value =
+        serde_json::from_slice(&claude_answer(REAL_ACCESS, REAL_REFRESH)).unwrap();
+    answer["id_token"] = json!("abcdefghijklmnopqrstuvwxyz0123456789");
+    let exchange = rig
+        .logins
+        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+    let _ = answered(
+        exchange,
+        200,
+        Some("application/json"),
+        answer.to_string().as_bytes(),
+    )
+    .await;
+    assert_eq!(
+        rig.notices.seen(),
+        [("claude".to_owned(), Problem::UnnamedToken)]
+    );
+}

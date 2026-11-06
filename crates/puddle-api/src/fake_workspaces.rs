@@ -1491,6 +1491,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn names_that_make_the_same_id_get_numbers_until_the_numbers_run_out() {
+        let (fake, _) = fake();
+        // 100 different names, one label: "w" and two marks.
+        let marks: Vec<char> = "!#$%&*+,.:".chars().collect();
+        let names: Vec<String> = marks
+            .iter()
+            .flat_map(|a| marks.iter().map(move |b| format!("w{a}{b}")))
+            .collect();
+        for name in &names[..99] {
+            fake.create(new_ws(name), &NoGitSetup).await.unwrap();
+        }
+        let err = fake
+            .create(new_ws(&names[99]), &NoGitSetup)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, WorkspaceError::Invalid(_)), "{err}");
+    }
+
+    #[tokio::test]
     async fn a_name_of_the_longest_length_still_makes_a_workspace() {
         let (fake, _) = fake();
         let long = "n".repeat(DisplayName::MAX_CHARS);

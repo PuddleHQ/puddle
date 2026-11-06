@@ -1087,6 +1087,17 @@ impl Store {
         Ok(())
     }
 
+    /// [`Store::set_workspace_name`] for a caller that cannot act on a failure: it is logged and
+    /// dropped, and the records written meanwhile carry no name (a reader shows the id). Returns
+    /// whether the name was written.
+    pub fn note_workspace_name(&self, workspace: &WorkspaceId, name: &str) -> bool {
+        let written = self.set_workspace_name(workspace, name);
+        if let Err(err) = &written {
+            tracing::warn!(%workspace, error = %err, "the workspace's name was not written to the store");
+        }
+        written.is_ok()
+    }
+
     /// The `workspace_name` each of the audit records `ids` was written with; a record written
     /// before the column existed, or with no workspace, has none and is left out.
     ///
@@ -1618,6 +1629,20 @@ mod tests {
         let clock = Arc::new(ManualClock::new(1_000_000));
         let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
         (clock, store)
+    }
+
+    #[test]
+    fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name() {
+        let (_, store) = store();
+        let ws = WorkspaceId::new("acme").unwrap();
+        assert!(store.note_workspace_name(&ws, "Acme shop"));
+        assert!(
+            store.note_workspace_name(&ws, "Acme"),
+            "a rename replaces it"
+        );
+        store.break_database("DROP TABLE workspace_names");
+        assert!(!store.note_workspace_name(&ws, "Lost"));
+        assert!(store.set_workspace_name(&ws, "Lost").is_err());
     }
 
     #[test]

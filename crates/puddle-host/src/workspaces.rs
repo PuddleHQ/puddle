@@ -624,13 +624,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// effort: a name that cannot be written leaves the id to be shown for new records.
     fn note_names(&self, state: &State) {
         for slot in state.slots.values().filter(|slot| !slot.deleting) {
-            if let Err(e) = self
-                .inner
+            self.inner
                 .store
-                .set_workspace_name(&slot.record.id, slot.record.name.as_str())
-            {
-                tracing::warn!(workspace = %slot.record.id, error = %e, "the workspace's name was not written to the store");
-            }
+                .note_workspace_name(&slot.record.id, slot.record.name.as_str());
         }
     }
 

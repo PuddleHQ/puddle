@@ -313,7 +313,9 @@ fn the_hub_forgets_sessions_whose_end_nobody_listens_to_any_more() {
     let _kept = hub.register(&workspace());
     drop(hub.register(&workspace()));
     let _newest = hub.register(&workspace());
-    assert_eq!(hub.open.lock().unwrap().len(), 2);
+    let open = hub.open.lock().unwrap();
+    assert_eq!(open.len(), 2);
+    assert!(open.iter().all(|(_, sender)| !sender.is_closed()));
 }
 
 #[tokio::test]

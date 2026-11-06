@@ -468,49 +468,74 @@ pub const GITHUB: Profile = Profile {
     ],
 };
 
-/// One Entra access token field: the answer's `access_token` when it is for the resource whose
-/// names are `names`, kept in the slot `resource`. Every resource has its own slot because a
-/// tool holds tokens for several at once (`az` has one for Azure Resource Manager and one for
-/// Graph), and a refresh of one must not replace the other.
-const fn entra_access(resource: &'static str, audience: Audience) -> Field {
+/// The token fields Microsoft Entra answers with, the same at the v1 and v2 endpoints.
+const ENTRA_TOKEN_FIELDS: &[Field] = &[
+    // One access token field per resource: a tool holds tokens for several at once (`az` has one for
+    // Azure Resource Manager and one for Graph), and a refresh of one must not replace the other.
     Field {
         path: "access_token",
-        resource: Some(resource),
+        resource: Some("arm"),
         role: Role::Access,
         // A token that is not a JWT (a personal account's) starts with `Ew`.
         prefixes: &["Ew"],
         keep_last: 0,
         stand_in: StandInKind::Jwt,
         scope: Scope::Api,
-        audience,
-    }
-}
-
-/// The token fields Microsoft Entra answers with, the same at the v1 and v2 endpoints.
-const ENTRA_TOKEN_FIELDS: &[Field] = &[
-    entra_access(
-        "arm",
-        Audience::Named(&["management.azure.com", "management.core.windows.net"]),
-    ),
-    entra_access(
-        "graph",
-        Audience::Named(&[
+        audience: Audience::Named(&["management.azure.com", "management.core.windows.net"]),
+    },
+    Field {
+        path: "access_token",
+        resource: Some("graph"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::Api,
+        audience: Audience::Named(&[
             "graph.microsoft.com",
             "00000003-0000-0000-c000-000000000000",
         ]),
-    ),
-    entra_access(
-        "devops",
-        Audience::Named(&[
+    },
+    Field {
+        path: "access_token",
+        resource: Some("devops"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::Api,
+        audience: Audience::Named(&[
             "499b84ac-1321-427f-aa17-267ca6975798",
             "dev.azure.com",
             "visualstudio.com",
         ]),
-    ),
-    entra_access("vault", Audience::Named(&["vault.azure.net"])),
+    },
+    Field {
+        path: "access_token",
+        resource: Some("vault"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::Api,
+        audience: Audience::Named(&["vault.azure.net"]),
+    },
     // A resource none of the above names (Storage, Azure SQL, Azure Data Explorer, an app's own
     // API): they share one slot, which keeps the last few stand-ins.
-    entra_access("other", Audience::Unnamed),
+    Field {
+        path: "access_token",
+        resource: Some("other"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        scope: Scope::Api,
+        audience: Audience::Unnamed,
+    },
     Field {
         path: "refresh_token",
         resource: None,

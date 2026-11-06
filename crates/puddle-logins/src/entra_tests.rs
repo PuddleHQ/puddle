@@ -12,7 +12,7 @@ use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
-use crate::profile::{ENTRA, Role, Scope, Slot};
+use crate::profile::{Audience, ENTRA, Endpoint, Field, Method, Role, Scope, Slot, StandInKind};
 use crate::vault::{Vault, slot_id};
 use crate::widened_tests::host;
 use crate::{LoginNotices, Logins, Marker, Problem, Profile, builtin};
@@ -446,4 +446,57 @@ fn the_entra_profile_pins_its_requests_slots_scopes_and_entry_names() {
     }
     assert!(!api.contains(&host("evil.azure.net")));
     assert!(!api.contains(&host("azure.com")));
+}
+
+static NAMED_ONLY: [Profile; 1] = [Profile {
+    id: "named",
+    name: "Named",
+    endpoints: &[Endpoint {
+        host: "login.named.test",
+        method: Method::Post,
+        path: "/token",
+        refresh_field: None,
+        fields: &[Field {
+            path: "access_token",
+            resource: Some("arm"),
+            role: Role::Access,
+            prefixes: &[],
+            keep_last: 0,
+            stand_in: StandInKind::Jwt,
+            scope: Scope::Api,
+            audience: Audience::Named(&["management.azure.com"]),
+        }],
+    }],
+    api_hosts: &["management.azure.com"],
+}];
+
+#[tokio::test]
+async fn a_token_that_no_field_of_the_profile_takes_fails_closed_and_is_not_kept() {
+    let registry = Arc::new(StandIns::new());
+    let notices = Arc::new(Notices::default());
+    let logins = Logins::new(
+        WorkspaceId::new("alpha").unwrap(),
+        true,
+        &NAMED_ONLY,
+        Arc::clone(&registry),
+        Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
+        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        Marker::none(),
+    );
+    let real = jwt("https://graph.microsoft.com", 1_893_456_000, 1500, 'G');
+    let body = serde_json::to_vec(&json!({"access_token": real})).unwrap();
+    let mut exchange = logins
+        .begin(&host("login.named.test"), "POST", "/token")
+        .unwrap();
+    let head = AnswerHead {
+        status: 200,
+        content_type: Some("application/json"),
+        content_encoding: None,
+        content_length: Some(body.len() as u64),
+    };
+    let answer = exchange.answer_mut().unwrap();
+    assert!(answer.wants(&head));
+    assert!(answer.rewrite(&head, &body).await.is_none());
+    assert_eq!(*notices.0.lock().unwrap(), [Problem::UnusableToken]);
+    assert_eq!(registry.len(), 0);
 }

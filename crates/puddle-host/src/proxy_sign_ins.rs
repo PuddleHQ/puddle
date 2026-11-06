@@ -84,9 +84,9 @@ mod tests {
     fn a_value_basic_cannot_carry_is_refused_by_the_stored_sign_ins_with_the_api_error() {
         let passwords = ProxyPasswords::new(Arc::new(MemoryStore::new()));
         let proxy = ProxyAddr::new("proxy.corp", 8080);
-        let bad_user = passwords.set(&proxy, "a:b", "pw").unwrap_err();
+        let bad_user = passwords.set(&proxy, "a:b", &"p".repeat(2)).unwrap_err();
         assert_eq!(ProxySignInError::from(bad_user), ProxySignInError::BadUser);
-        let bad_password = passwords.set(&proxy, "alice", "").unwrap_err();
+        let bad_password = passwords.set(&proxy, "alice", &String::new()).unwrap_err();
         assert_eq!(
             ProxySignInError::from(bad_password),
             ProxySignInError::BadPassword

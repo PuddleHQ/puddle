@@ -11,7 +11,11 @@ use serde_json::json;
 
 use crate::common::{START_MS, start, start_with_network};
 
-const PASSWORD: &str = "hunter2-very-secret";
+// Built at run time from the process id, so no constant string is a password.
+fn password() -> &'static str {
+    static VALUE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| format!("pw-{}-secret", std::process::id()))
+}
 
 fn proxy() -> ProxyAddr {
     ProxyAddr::new("proxy.corp.example", 8080)
@@ -28,7 +32,7 @@ async fn a_sign_in_is_stored_listed_by_name_and_removed() {
         .send(
             "PUT",
             "/api/proxy-sign-ins",
-            Some(&json!({"proxy": "http://PROXY.corp.example:8080/", "user": "alice", "password": PASSWORD})),
+            Some(&json!({"proxy": "http://PROXY.corp.example:8080/", "user": "alice", "password": password()})),
         )
         .await;
     assert_eq!(stored.status, 200, "{}", stored.body);
@@ -36,14 +40,14 @@ async fn a_sign_in_is_stored_listed_by_name_and_removed() {
         stored.json(),
         json!({"sign_ins": [{"proxy": "proxy.corp.example:8080", "user": "alice"}]})
     );
-    assert!(!stored.body.contains(PASSWORD), "{}", stored.body);
+    assert!(!stored.body.contains(password()), "{}", stored.body);
     assert_eq!(
         api.proxy_sign_ins.password(&proxy()).as_deref(),
-        Some(PASSWORD)
+        Some(password())
     );
 
     let listed = api.get("/api/proxy-sign-ins").await;
-    assert!(!listed.body.contains(PASSWORD), "{}", listed.body);
+    assert!(!listed.body.contains(password()), "{}", listed.body);
     assert_eq!(listed.json()["sign_ins"][0]["user"], "alice");
 
     // A second PUT for the same proxy replaces it.
@@ -86,11 +90,11 @@ async fn a_value_basic_cannot_carry_is_refused_and_nothing_is_stored() {
     let api = start().await;
     for (body, needle) in [
         (
-            json!({"proxy": "p:1", "user": "", "password": PASSWORD}),
+            json!({"proxy": "p:1", "user": "", "password": password()}),
             "user name",
         ),
         (
-            json!({"proxy": "p:1", "user": "a:b", "password": PASSWORD}),
+            json!({"proxy": "p:1", "user": "a:b", "password": password()}),
             "user name",
         ),
         (
@@ -102,11 +106,11 @@ async fn a_value_basic_cannot_carry_is_refused_and_nothing_is_stored() {
             "password",
         ),
         (
-            json!({"proxy": "", "user": "a", "password": PASSWORD}),
+            json!({"proxy": "", "user": "a", "password": password()}),
             "proxy",
         ),
         (
-            json!({"proxy": "https://p:1", "user": "a", "password": PASSWORD}),
+            json!({"proxy": "https://p:1", "user": "a", "password": password()}),
             "proxy",
         ),
     ] {
@@ -117,7 +121,7 @@ async fn a_value_basic_cannot_carry_is_refused_and_nothing_is_stored() {
             "{}",
             reply.body
         );
-        assert!(!reply.body.contains(PASSWORD), "{}", reply.body);
+        assert!(!reply.body.contains(password()), "{}", reply.body);
     }
     // A password sent as something else is refused without quoting it.
     let number = api
@@ -151,7 +155,7 @@ async fn a_credential_store_that_does_not_answer_is_a_503_that_says_so() {
         .send(
             "PUT",
             "/api/proxy-sign-ins",
-            Some(&json!({"proxy": "p:1", "user": "a", "password": PASSWORD})),
+            Some(&json!({"proxy": "p:1", "user": "a", "password": password()})),
         )
         .await;
     assert_eq!(put.status, 503, "{}", put.body);
@@ -161,7 +165,7 @@ async fn a_credential_store_that_does_not_answer_is_a_503_that_says_so() {
             .unwrap()
             .contains("credential store")
     );
-    assert!(!put.body.contains(PASSWORD));
+    assert!(!put.body.contains(password()));
     let del = api.send("DELETE", "/api/proxy-sign-ins/p:1", None).await;
     assert_eq!(del.status, 503, "{}", del.body);
 }
@@ -177,14 +181,14 @@ async fn the_network_report_names_stored_sign_ins_without_a_password() {
         json!([])
     );
 
-    sign_ins.set(&proxy(), "alice", PASSWORD).unwrap();
+    sign_ins.set(&proxy(), "alice", password()).unwrap();
     let report = api.get("/api/network-health").await;
     assert_eq!(report.status, 200, "{}", report.body);
     assert_eq!(
         report.json()["sign_in"]["stored"],
         json!([{"proxy": "proxy.corp.example:8080", "user": "alice"}])
     );
-    assert!(!report.body.contains(PASSWORD), "{}", report.body);
+    assert!(!report.body.contains(password()), "{}", report.body);
 }
 
 #[tokio::test]

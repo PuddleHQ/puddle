@@ -9,7 +9,9 @@
 //! slot a deadline frees goes to the next stream, which then gets a `408` of its own. A loaded
 //! machine can take longer than the deadline just to open 10 000 streams (a CI run cut off 1489),
 //! so tokio's clock stands still until the proxy has refused all 9000 over the cap, and the test
-//! then moves it on by the deadline.
+//! then moves it on by the deadline. That wait gives up only when the refusals stop coming for
+//! [`STALL_LIMIT`], not after a fixed total time, since a machine slowed by other work takes as
+//! long as it takes to refuse 9000 streams but keeps counting.
 
 use crate::hostile_support;
 
@@ -30,8 +32,11 @@ const CAP: usize = 1000;
 const SESSIONS: usize = 100;
 const PER_SESSION: usize = 100;
 const DEADLINE: Duration = Duration::from_secs(3);
-/// Wall-clock time the proxy gets to take every stream before the clock runs again by itself.
-const TAKE_ALL_WITHIN: Duration = Duration::from_secs(60);
+/// Wall-clock time without one more refusal after which the proxy is taken to be stuck and the
+/// clock runs again by itself. Progress resets it, so the time all 9000 take does not count.
+const STALL_LIMIT: Duration = Duration::from_secs(30);
+/// How often the frozen-clock task looks at the refusal count.
+const STALL_POLL: Duration = Duration::from_millis(200);
 
 #[tokio::test]
 async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and_over_the_cap_refused()
@@ -51,10 +56,7 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
     }
     // A paused clock still jumps to the next timer whenever the runtime waits on I/O, unless a
     // blocking task is running; this one runs until the test drops `thaw`.
-    let (thaw, thawed) = std::sync::mpsc::channel::<()>();
-    let mut frozen = tokio::task::spawn_blocking(move || {
-        thawed.recv_timeout(TAKE_ALL_WITHIN) != Err(RecvTimeoutError::Timeout)
-    });
+    let (thaw, mut frozen) = hold_thread(&refusals);
     tokio::time::pause();
     let started = Instant::now();
     let mut tasks = Vec::new();
@@ -80,7 +82,7 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
     tokio::select! {
         () = refusals.reach(over_cap) => {}
         _ = &mut frozen => panic!(
-            "the proxy refused {} of the {over_cap} streams over the cap within {TAKE_ALL_WITHIN:?}",
+            "the proxy refused {} of the {over_cap} streams over the cap, then none for {STALL_LIMIT:?}",
             refusals.count.load(Ordering::SeqCst)
         ),
     }
@@ -130,6 +132,32 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
         answered.iter().max()
     );
     assert_unharmed(bystander_took, quiet, "while the streams are held");
+}
+
+/// Starts a blocking task that runs until the returned sender is dropped, which keeps a paused
+/// clock from jumping ahead. Its result is `true` when it was released and `false` when it gave
+/// up after [`STALL_LIMIT`] without one more refusal.
+fn hold_thread(
+    refusals: &Arc<Refusals>,
+) -> (std::sync::mpsc::Sender<()>, tokio::task::JoinHandle<bool>) {
+    let (thaw, thawed) = std::sync::mpsc::channel::<()>();
+    let watched = Arc::clone(refusals);
+    let held = tokio::task::spawn_blocking(move || {
+        let (mut seen, mut since) = (0, std::time::Instant::now());
+        loop {
+            match thawed.recv_timeout(STALL_POLL) {
+                Err(RecvTimeoutError::Timeout) => {}
+                _ => return true,
+            }
+            let now = watched.count.load(Ordering::SeqCst);
+            if now != seen {
+                (seen, since) = (now, std::time::Instant::now());
+            } else if since.elapsed() >= STALL_LIMIT {
+                return false;
+            }
+        }
+    });
+    (thaw, held)
 }
 
 /// How many streams the proxy has refused at the cap, counted from the warning it logs as it

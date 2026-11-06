@@ -84,6 +84,14 @@ pub(crate) fn parse(head: &Head, target: &Target) -> Result<Parsed, Refusal> {
         }
         _ => return Err(bad("more than one Host header")),
     }
+    framed(head, path)
+}
+
+/// The checks every HTTP/1.x request gets, wherever it came from, with `path` as its origin-form
+/// target: unambiguous body framing, no chunked body from HTTP/1.0, `Expect` only for
+/// `100-continue`, and what the head says about the connection.
+pub(crate) fn framed(head: &Head, path: String) -> Result<Parsed, Refusal> {
+    let http11 = head.version == "HTTP/1.1";
     let body = http::body_framing(&head.headers).map_err(bad)?;
     if !http11 && body == Body::Chunked {
         return Err(bad("Transfer-Encoding in an HTTP/1.0 request"));
@@ -218,7 +226,7 @@ pub(crate) fn upstream_headers(
         if is_proxy_owned(&name) || named_in_connection.iter().any(|t| t == name.as_str()) {
             continue;
         }
-        let value = HeaderValue::from_str(http::header_value(line))
+        let value = HeaderValue::from_bytes(http::header_value(line).as_bytes())
             .map_err(|_| bad("malformed header value"))?;
         map.append(name, value);
     }

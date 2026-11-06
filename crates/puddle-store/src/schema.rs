@@ -9,10 +9,12 @@ use rusqlite::Connection;
 use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14];
+const MIGRATIONS: &[&str] = &[
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
+];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 14;
+pub const SCHEMA_VERSION: u32 = 15;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -415,6 +417,30 @@ const V14: &str = r"
 -- Where in a request a secret's stand-in is swapped: NULL for header values, `path`, or
 -- `query:<name>`. Only a secret has a place.
 ALTER TABLE env_vars ADD COLUMN place TEXT CHECK (place IS NULL OR kind = 'secret');
+";
+
+/// The audit search box: one column with the text a person would type to find a record, lower
+/// case (ASCII), one part per line: host (a rule's pattern), method, path and reason of a
+/// connection, host and path of a rule on method and path. Existing rows are backfilled from
+/// their lines; `AuditRecord::search_text` must give the same values (tested).
+const V15: &str = r"
+ALTER TABLE audit ADD COLUMN search TEXT;
+UPDATE audit SET search = nullif(lower(
+    CASE type
+        WHEN 'connection' THEN
+            ifnull(char(10) || nullif(json_extract(line, '$.host'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.method'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.path'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.reason'), ''), '')
+        WHEN 'request_rule_created' THEN
+            ifnull(char(10) || nullif(json_extract(line, '$.rule.host'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.rule.path'), ''), '')
+        WHEN 'request_rule_deleted' THEN
+            ifnull(char(10) || nullif(json_extract(line, '$.rule.host'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.rule.path'), ''), '')
+        ELSE ifnull(char(10) || nullif(host, ''), '')
+    END), '');
+UPDATE audit SET search = substr(search, 2) WHERE search IS NOT NULL;
 ";
 
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.

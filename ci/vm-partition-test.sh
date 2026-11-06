@@ -110,5 +110,13 @@ for os in linux windows; do
     [ "$badlines" = 0 ] || bad "$f has $badlines unparsable lines"
 done
 
+# 10. the Linux build job archives only the `vm_*` integration test binaries (`--test 'vm_*'`, the bundle is 3 times the size
+# of the Windows one otherwise). A VM test anywhere else would be left out of the archive without a word, so none may exist:
+# a test function or module named `vm_*` goes in `crates/<crate>/tests/vm_<name>.rs` (or a `tests/vm_<name>/main.rs`)
+root=$(cd "$here/.." && pwd)
+grep -q "nextest archive .* --test 'vm_\*'" "$root/.github/workflows/vm-linux.yml" || bad "vm-linux.yml does not archive only --test 'vm_*'"
+stray=$(cd "$root" && grep -rnE '^[[:space:]]*(pub(\([a-z]+\))? )?(async )?(fn|mod) vm_' crates --include='*.rs' | grep -Ev '^crates/[^/]+/tests/vm_' || true)
+[ -z "$stray" ] || bad "a vm_* test outside a tests/vm_* file would not be in the Linux archive; move it into crates/<crate>/tests/vm_<name>.rs: $stray"
+
 [ "$fail" = 0 ] && echo ok
 exit "$fail"

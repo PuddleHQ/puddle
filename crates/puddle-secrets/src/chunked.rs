@@ -166,6 +166,20 @@ impl<S: SecretStore> SecretStore for ChunkedStore<S> {
         Ok(())
     }
 
+    fn keep_local(&self, id: &StoredId) -> Result<(), StoreError> {
+        self.inner.keep_local(id)?;
+        if let Some(head) = self.head(id)? {
+            for index in 0..head.pieces {
+                self.inner.keep_local(&head.piece(id, index)?)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn keep_all_local(&self) -> Result<usize, StoreError> {
+        self.inner.keep_all_local()
+    }
+
     fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
         let before = self.head(id)?;
         self.inner.delete(id)?;
@@ -409,5 +423,82 @@ mod tests {
         assert!(store.get(&id("a")).is_err());
         assert!(store.set(&id("a"), &Secret::new("v".into())).is_err());
         assert!(store.delete(&id("a")).is_err());
+    }
+
+    #[test]
+    fn keeping_an_entry_local_reaches_its_head_and_every_piece() {
+        let store = ChunkedStore::new(MemoryStore::new());
+        let long = "x".repeat(CHUNK_UNITS * 2 + 1);
+        let long_id = StoredId::new("long").unwrap();
+        store.set(&long_id, &Secret::new(long)).unwrap();
+        store.keep_local(&long_id).unwrap();
+        let kept = store.inner.kept_local();
+        assert_eq!(kept.len(), 4);
+        assert_eq!(kept[0], "long");
+        assert!(kept[1..].iter().all(|piece| piece.starts_with("long-")));
+    }
+
+    #[test]
+    fn keeping_all_local_asks_the_store_underneath() {
+        assert_eq!(
+            ChunkedStore::new(MemoryStore::new()).keep_all_local(),
+            Ok(0)
+        );
+    }
+
+    /// A store that can rewrite whole entries but not the pieces of a long one.
+    #[derive(Default)]
+    struct PiecesStuck(MemoryStore);
+
+    impl SecretStore for PiecesStuck {
+        fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
+            self.0.get(id)
+        }
+        fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), StoreError> {
+            self.0.set(id, secret)
+        }
+        fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
+            self.0.delete(id)
+        }
+        fn keep_local(&self, id: &StoredId) -> Result<(), StoreError> {
+            if id.as_str().contains('-') {
+                return Err(StoreError);
+            }
+            Ok(())
+        }
+        fn keep_all_local(&self) -> Result<usize, StoreError> {
+            Ok(3)
+        }
+    }
+
+    #[test]
+    fn keeping_all_local_passes_on_the_count_of_failures() {
+        assert_eq!(
+            ChunkedStore::new(PiecesStuck::default()).keep_all_local(),
+            Ok(3)
+        );
+    }
+
+    #[test]
+    fn a_piece_that_cannot_be_rewritten_is_an_error_for_its_entry() {
+        let store = ChunkedStore::new(PiecesStuck::default());
+        let long_id = StoredId::new("long").unwrap();
+        store
+            .set(&long_id, &Secret::new("x".repeat(CHUNK_UNITS + 1)))
+            .unwrap();
+        assert_eq!(store.keep_local(&long_id), Err(StoreError));
+        store.delete(&long_id).unwrap();
+    }
+
+    #[test]
+    fn keeping_a_short_or_missing_entry_local_touches_only_that_id() {
+        let store = ChunkedStore::new(MemoryStore::new());
+        let short = StoredId::new("short").unwrap();
+        store.set(&short, &Secret::new("v".to_owned())).unwrap();
+        store.keep_local(&short).unwrap();
+        store
+            .keep_local(&StoredId::new("missing").unwrap())
+            .unwrap();
+        assert_eq!(store.inner.kept_local(), ["short", "missing"]);
     }
 }

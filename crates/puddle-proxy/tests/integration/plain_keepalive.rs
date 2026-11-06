@@ -994,8 +994,10 @@ async fn hostile_a_kept_connection_to_an_address_now_refused_is_not_reused() {
         refuse: AtomicBool::new(false),
     });
     let rig = Rig::with_checks(
+        // Windows reports a refused loopback connect only after its own retries (about 2 s), so
+        // the connect timeout must be well above that or the outcome is Timeout, not ConnectFailed.
         &ProxyConfig::default()
-            .with_network_timeouts(Duration::from_secs(5), Duration::from_secs(2)),
+            .with_network_timeouts(Duration::from_secs(5), Duration::from_secs(15)),
         StaticResolver::new().with("web.test", &[LOCAL, elsewhere]),
         check.clone(),
     );

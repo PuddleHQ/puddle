@@ -11163,6 +11163,25 @@ async fn a_disk_that_cannot_be_read_makes_no_entry() {
     host.shutdown().await;
 }
 
+/// An event already in the socket when the deadline has passed is read, not reported as a timeout.
+#[tokio::test]
+async fn event_reader_sees_an_event_queued_past_the_deadline() {
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stream = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+        .await
+        .unwrap();
+    let (mut server, _) = listener.accept().await.unwrap();
+    server
+        .write_all(b"data: {\"type\":\"ping\"}\n\n")
+        .await
+        .unwrap();
+    stream.readable().await.unwrap();
+    let mut events = support::Events::over(stream);
+    let found = events.until(|e| e["type"] == "ping", Duration::ZERO).await;
+    assert_eq!(found["type"], "ping");
+}
+
 // ---- the terminal ------------------------------------------------------------------------
 
 async fn terminal_output_until(

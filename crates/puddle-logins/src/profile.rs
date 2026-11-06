@@ -40,15 +40,6 @@ impl Role {
             Self::Copilot => "copilot",
         }
     }
-
-    /// How a stand-in for a token of this role is made.
-    #[must_use]
-    pub const fn stand_in(self) -> StandInKind {
-        match self {
-            Self::Copilot => StandInKind::Fields,
-            Self::Access | Self::Refresh | Self::ApiKey => StandInKind::Shaped,
-        }
-    }
 }
 
 /// How the stand-in for a token is made.
@@ -62,6 +53,10 @@ pub enum StandInKind {
     /// client reads them (expiry, endpoints), and only the MAC is random. The fields are claims,
     /// not the credential.
     Fields,
+    /// A JWT keeps its header and payload, because the client reads the claims (who it is for,
+    /// when it expires), and gets a random signature of the real length. The claims are not the
+    /// credential. A token that is not a JWT is shaped.
+    Jwt,
 }
 
 /// What a stand-in is kept under: a role, and for a service that hands out one token per resource
@@ -157,6 +152,10 @@ pub struct Field {
     /// How many of the token's last characters the stand-in keeps. A client may record the end
     /// of a key it was given and compare with it later; no profile needs more than 20.
     pub keep_last: usize,
+    /// How the stand-in is made. A [`StandInKind::Fields`] token, and a [`StandInKind::Jwt`] one
+    /// that is a JWT, is made again at every exchange (its expiry is in what the client reads),
+    /// so the slot's earlier stand-ins stay swapped for a few exchanges.
+    pub stand_in: StandInKind,
     /// Where the stand-in is swapped for the real token.
     pub scope: Scope,
 }
@@ -314,6 +313,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         role: Role::Access,
         prefixes: &["sk-ant-oat01-"],
         keep_last: 0,
+        stand_in: StandInKind::Shaped,
         scope: Scope::Api,
     },
     Field {
@@ -322,6 +322,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         role: Role::Refresh,
         prefixes: &["sk-ant-ort01-"],
         keep_last: 0,
+        stand_in: StandInKind::Shaped,
         scope: Scope::TokenEndpoint,
     },
 ];
@@ -359,6 +360,7 @@ pub const CLAUDE: Profile = Profile {
                 prefixes: &["sk-ant-api03-"],
                 // The CLI keeps the last 20 characters of the key it was given.
                 keep_last: 20,
+                stand_in: StandInKind::Shaped,
                 scope: Scope::Api,
             }],
         },
@@ -392,6 +394,7 @@ pub const GITHUB: Profile = Profile {
                     role: Role::Access,
                     prefixes: &["gho_", "ghu_"],
                     keep_last: 0,
+                    stand_in: StandInKind::Shaped,
                     scope: Scope::Api,
                 },
                 Field {
@@ -400,6 +403,7 @@ pub const GITHUB: Profile = Profile {
                     role: Role::Refresh,
                     prefixes: &["ghr_"],
                     keep_last: 0,
+                    stand_in: StandInKind::Shaped,
                     scope: Scope::TokenEndpoint,
                 },
             ],
@@ -417,6 +421,7 @@ pub const GITHUB: Profile = Profile {
                 role: Role::Copilot,
                 prefixes: &[],
                 keep_last: 0,
+                stand_in: StandInKind::Fields,
                 scope: Scope::Api,
             }],
         },

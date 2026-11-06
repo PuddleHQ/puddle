@@ -776,3 +776,18 @@ crates/xtask/src/source.rs | fn msb_inventory(&self, os: HostOs) -> Result<Inven
 crates/xtask/src/source.rs | let tree =\nrun(git_command() | the line only changed from Command::new("git") to the env-stripping helper (or a rustfmt re-wrap of that call); the code runs git against GitHub and no unit test does
 crates/xtask/src/source.rs | run(git_command()\n.arg("-C") | the line only changed from Command::new("git") to the env-stripping helper (or a rustfmt re-wrap of that call); the code runs git against GitHub and no unit test does
 ui/src/lib/stores/rule-sets.svelte.ts | onDecidedElsewhere: () => void live.refresh(), | the app-wide instance's badge hook; tests build their own store and check the hook with a counter (rule-sets.test.ts)
+crates/puddle-proxy/src/terminate/exchange.rs | fn boxed(err: hyper::Error) -> BoxError { | reached only when an upstream body fails after its head; the guest then sees a cut connection, which the body tests check, not this mapping
+crates/puddle-proxy/src/terminate/exchange.rs | fn boxed(err: hyper::Error) -> BoxError {\nBox::new(err) | same: only an upstream body error reaches it
+crates/puddle-proxy/src/terminate/h2.rs | NotScrubbed::Encoding => answer_encoding_refusal(&cx.target.host), | the HTTP/2 side of the refusal that `stand_ins_answer::an_answer_in_an_encoding_puddle_cannot_read_is_refused_with_its_reason` checks over HTTP/1.1
+crates/puddle-proxy/src/terminate/h2.rs | NotScrubbed::Failed => answer_failed_refusal(&cx.target.host), | a held body that stalls past the idle timeout or overruns its own Content-Length; hyper refuses an overrun before it gets here
+crates/puddle-proxy/src/terminate/h2.rs | NotScrubbed::Failed => answer_failed_refusal(&cx.target.host),\n}) | closing line of the refusal mapping above
+crates/puddle-proxy/src/terminate/session.rs | NotScrubbed::Failed => answer_failed_refusal(&self.cx.target.host), | a held body that stalls past the idle timeout or overruns its own Content-Length; hyper refuses an overrun before it gets here
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | return Err(NotScrubbed::Failed); | a held body larger than the Content-Length it declared; hyper refuses such a body first
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | return Err(NotScrubbed::Failed);\n} | closing line of the overrun check above
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | if find.is_empty() {\nreturn; | a form of a value is never empty (values are never empty); kept so an empty pattern can never match everywhere
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | if known.put.is_none() && put.is_some() {\nknown.put = put; | a core equal to a replaceable form of another secret; no realistic pair of values produces one
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | known.put = put;\nknown.id = id; | same case as the line above
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | let Some(pattern) = self.patterns.get(found.pattern().as_usize()) else {\nbreak; | the automaton is built from these patterns, so the index always exists; written without indexing
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | frontier = self.frontier(buf, copied); | a form that ends inside a held tail that starts another form; the split-anywhere proptest checks equivalence but its inputs do not reach it
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | Self::DeflateStart(held) => held, | x2 | the writer and output of a deflate decoder before its first two bytes; `push` switches it before it writes
+crates/puddle-proxy/src/terminate/stand_in/answer.rs | Some(Err(err)) => return Poll::Ready(Some(Err(err))), | an upstream body error passed on; the guest sees a cut connection, as the body tests check

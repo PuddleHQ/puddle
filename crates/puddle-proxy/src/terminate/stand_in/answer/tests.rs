@@ -599,3 +599,60 @@ fn scrub_speed() {
         );
     }
 }
+
+#[test]
+fn a_scrubber_shows_names_never_values_and_the_cache_stays_bounded() {
+    let registry = StandIns::new();
+    registry
+        .insert(entry(
+            StandInOrigin::Secret,
+            "GH_TOKEN",
+            GH,
+            REAL_GH,
+            &["*.example.com"],
+        ))
+        .unwrap();
+    let shown = format!(
+        "{:?}",
+        registry.answer_scrubber(&host("a.example.com")).unwrap()
+    );
+    assert!(
+        shown.contains("stand-in:secret:GH_TOKEN") && !shown.contains(REAL_GH),
+        "{shown}"
+    );
+    // More hosts than the cache keeps: it starts over and still answers right.
+    for n in 0..=MAX_CACHED_SCRUBBERS {
+        let to = host(&format!("h{n}.example.com"));
+        assert!(registry.answer_scrubber(&to).is_some());
+    }
+    // The headers of an answer whose body is not read (a WebSocket upgrade).
+    let mut headers = HeaderMap::new();
+    headers.insert("x-echo", REAL_GH.parse().unwrap());
+    let notes = ScrubNotes::default();
+    registry.scrub_answer_headers(&mut headers, &host("a.example.com"), &notes);
+    assert_eq!(headers["x-echo"], GH);
+    assert_eq!(notes.ids(), ["stand-in:secret:GH_TOKEN"]);
+}
+
+#[test]
+fn json_escapes_control_characters_as_an_encoder_writes_them() {
+    assert_eq!(
+        text(&json("a\n\r\tb\u{1}", Json::default())),
+        "a\\n\\r\\tb\\u0001"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_deflate_body_is_empty_and_a_cut_one_is_an_error() {
+    let (_, body) = answer(Some("deflate"), Vec::new(), false).await.unwrap();
+    assert_eq!(body.unwrap(), b"");
+    let (_, body) = answer(Some("deflate"), vec![0x78], false).await.unwrap();
+    assert!(body.unwrap_err().contains("could not be decoded"));
+}
+
+#[test]
+fn a_held_answer_that_does_not_arrive_whole_is_a_bad_gateway() {
+    let refusal = answer_failed_refusal(&host("api.github.com"));
+    assert_eq!(refusal.status, "502 Bad Gateway");
+    assert_eq!(refusal.message, "api.github.com did not finish its answer");
+}

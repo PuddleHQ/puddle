@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use puddle_netpolicy::CompanySignals;
 use puddle_secrets::SecretStore;
 use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
 use tokio::sync::{Mutex, watch};
@@ -90,6 +91,8 @@ pub(crate) struct AppState {
     pub(crate) ports: Arc<dyn PortsService>,
     pub(crate) learned: Arc<dyn LearnedService>,
     pub(crate) proxy_sign_ins: Arc<dyn ProxySignInService>,
+    /// What the host reads of the company network, for the `blocked_by` of a pending request.
+    pub(crate) company_signals: Arc<dyn CompanySignals>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }

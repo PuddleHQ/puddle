@@ -249,4 +249,59 @@ mod tests {
         headers.append(name.clone(), "superchat".parse().unwrap());
         assert_eq!(single(&headers, &name), None);
     }
+
+    /// A writer that notes that it was flushed.
+    #[derive(Default)]
+    struct Sink {
+        flushed: bool,
+    }
+
+    impl AsyncWrite for Sink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut TaskContext<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+            self.flushed = true;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flush_reaches_the_stream_it_wraps() {
+        use tokio::io::AsyncWriteExt as _;
+        let activity = Arc::new(Activity::new(Duration::from_secs(5), Arc::default()));
+        let mut moving = Moving::new(Sink::default(), &activity);
+        moving.write_all(b"x").await.unwrap();
+        moving.flush().await.unwrap();
+        moving.shutdown().await.unwrap();
+        assert!(moving.inner.flushed);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_a_read_that_brought_bytes_counts_as_movement() {
+        use tokio::io::AsyncReadExt as _;
+        let activity = Arc::new(Activity::new(Duration::from_secs(60), Arc::default()));
+        let quiet = Duration::from_secs(5);
+        tokio::time::advance(quiet).await;
+        let mut buf = [0_u8; 8];
+        let mut end = Moving::new(&b""[..], &activity);
+        assert_eq!(end.read(&mut buf).await.unwrap(), 0);
+        assert_eq!(
+            activity.quiet_for(),
+            quiet,
+            "the end of the stream is no movement"
+        );
+        let mut data = Moving::new(&b"x"[..], &activity);
+        assert_eq!(data.read(&mut buf).await.unwrap(), 1);
+        assert_eq!(activity.quiet_for(), Duration::ZERO);
+    }
 }

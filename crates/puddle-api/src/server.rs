@@ -15,7 +15,7 @@ use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
-use puddle_netpolicy::{EndpointKind, PuddleEndpoints, Registration};
+use puddle_netpolicy::{CompanySignals, EndpointKind, NoSignals, PuddleEndpoints, Registration};
 use puddle_secrets::SecretStore;
 use puddle_store::{Clock, Store};
 use puddle_types::Problems;
@@ -157,6 +157,9 @@ pub struct Services {
     /// [`Services::new`] starts with [`NoProxySignIns`] (nothing stored, a change answers 503);
     /// set the real one with [`Services::with_proxy_sign_ins`].
     pub proxy_sign_ins: Arc<dyn ProxySignInService>,
+    /// What the host reads of the company network; [`NoSignals`] until the host sets it with
+    /// [`Services::with_company_signals`], so no pending request is marked `company_network`.
+    pub company_signals: Arc<dyn CompanySignals>,
     /// The registry of Puddle's own listeners that the workspace proxy's guard consults. The API
     /// registers its address here when it binds, so a workspace can't reach it even with the
     /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
@@ -189,6 +192,7 @@ impl Services {
             ports: Arc::new(NoPorts),
             learned: Arc::new(NoLearned),
             proxy_sign_ins: Arc::new(NoProxySignIns),
+            company_signals: Arc::new(NoSignals),
             endpoints: PuddleEndpoints::new(),
         }
     }
@@ -260,6 +264,15 @@ impl Services {
     #[must_use]
     pub fn with_proxy_sign_ins(mut self, proxy_sign_ins: Arc<dyn ProxySignInService>) -> Self {
         self.proxy_sign_ins = proxy_sign_ins;
+        self
+    }
+
+    /// These services reading the company network through `signals`, the same the workspace
+    /// proxy's guard reads, so a pending request is marked `company_network` when the guard would
+    /// refuse it for that reason.
+    #[must_use]
+    pub fn with_company_signals(mut self, signals: Arc<dyn CompanySignals>) -> Self {
+        self.company_signals = signals;
         self
     }
 
@@ -347,6 +360,7 @@ impl ApiServer {
             ports: services.ports,
             learned: services.learned,
             proxy_sign_ins: services.proxy_sign_ins,
+            company_signals: services.company_signals,
             shutdown,
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).

@@ -65,7 +65,7 @@ pub use config::{
     UpstreamSettings,
 };
 pub use dev_cert::{DevCertSource, GuestCertSource};
-pub use doctor::disk_limits;
+pub use doctor::{disk_limits, ssh_agent_pipe};
 pub use error::HostError;
 pub use files::FileSettings;
 pub use host::{

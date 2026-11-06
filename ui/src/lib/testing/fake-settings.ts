@@ -16,6 +16,7 @@ const noLayer = (): S["SettingsLayer"] => ({
     metadata: null,
     private: null,
     special: null,
+    company_network: null,
   },
   memory: null,
   cpus: null,
@@ -155,6 +156,7 @@ export class FakeSettings {
           link_local: this.pick(l.local_toggles.link_local),
           metadata: this.pick(l.local_toggles.metadata),
           special: this.pick(l.local_toggles.special),
+          company_network: this.pick(l.local_toggles.company_network),
         },
         wildcards_reach_local: this.pick(l.wildcards_reach_local),
         reconnection_grace: {

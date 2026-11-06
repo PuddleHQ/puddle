@@ -9,7 +9,7 @@ use puddle_api::{HostDoctor, SettingsRepo};
 use puddle_doctor::boot::boot_logs_dir;
 use puddle_doctor::{Options, SystemProbe, diagnose};
 use puddle_runtime::{DevOverride, RuntimeLayout, RuntimeVersion};
-use puddle_settings::{DiskSpaceLimits, GlobalSettings};
+use puddle_settings::{DiskSpaceLimits, GlobalSettings, UiPrefs};
 
 use crate::HostPaths;
 
@@ -28,7 +28,8 @@ pub(crate) fn system_doctor(
     let data = paths.data().to_path_buf();
     let expected = *expected;
     Arc::new(HostDoctor::new(Arc::new(move |boot| {
-        let probe = probe(&dir, expected, &data);
+        let probe =
+            probe(&dir, expected, &data).with_ssh_agent_pipe(ssh_agent_pipe(settings.as_ref()));
         let limits = disk_limits(settings.as_ref());
         let options = Options {
             boot,
@@ -48,26 +49,37 @@ fn probe(runtime_dir: &Path, expected: RuntimeVersion, data: &Path) -> SystemPro
         .with_data_dir(data)
 }
 
-/// The free-space lines the user's settings set. Settings that cannot be read or are not valid
-/// give Puddle's own lines (with a warning in the log): a check that warns about free space must
-/// not stop because the settings are damaged.
-#[must_use]
-pub fn disk_limits(settings: &dyn SettingsRepo) -> DiskSpaceLimits {
+/// The window preferences the user's settings hold. Settings that cannot be read or are not valid
+/// give Puddle's own (with a warning in the log): a check must not stop because the settings are
+/// damaged.
+fn ui_prefs(settings: &dyn SettingsRepo) -> UiPrefs {
     let document = match settings.load_global() {
         Ok(Some(document)) => document,
-        Ok(None) => return DiskSpaceLimits::default(),
+        Ok(None) => return UiPrefs::default(),
         Err(reason) => {
-            tracing::warn!(%reason, "using Puddle's own free-space lines: the settings cannot be read");
-            return DiskSpaceLimits::default();
+            tracing::warn!(%reason, "using Puddle's own settings for the doctor: the settings cannot be read");
+            return UiPrefs::default();
         }
     };
     match GlobalSettings::from_document(document) {
-        Ok(loaded) => loaded.settings.ui.disk_limits(),
+        Ok(loaded) => loaded.settings.ui,
         Err(reason) => {
-            tracing::warn!(%reason, "using Puddle's own free-space lines: the settings are not valid");
-            DiskSpaceLimits::default()
+            tracing::warn!(%reason, "using Puddle's own settings for the doctor: the settings are not valid");
+            UiPrefs::default()
         }
     }
+}
+
+/// The free-space lines the user's settings set, or Puddle's own when they cannot be used.
+#[must_use]
+pub fn disk_limits(settings: &dyn SettingsRepo) -> DiskSpaceLimits {
+    ui_prefs(settings).disk_limits()
+}
+
+/// The pipe or socket of the SSH agent the user's settings name, if they name one.
+#[must_use]
+pub fn ssh_agent_pipe(settings: &dyn SettingsRepo) -> Option<String> {
+    ui_prefs(settings).ssh_agent_pipe().map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -117,6 +129,19 @@ mod tests {
             own,
             "damaged settings give the defaults"
         );
+    }
+
+    #[test]
+    fn the_ssh_agent_pipe_follows_the_settings() {
+        use puddle_api::SettingsRepo as _;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = crate::FileSettings::new(dir.path());
+        assert_eq!(ssh_agent_pipe(&repo), None, "nothing saved");
+        repo.save_global(serde_json::json!({"ui": {"ssh_agent_pipe": " /run/agent.sock "}}))
+            .unwrap();
+        assert_eq!(ssh_agent_pipe(&repo).as_deref(), Some("/run/agent.sock"));
+        repo.save_global(serde_json::json!("not settings")).unwrap();
+        assert_eq!(ssh_agent_pipe(&repo), None, "damaged settings name none");
     }
 
     #[test]

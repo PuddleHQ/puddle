@@ -8,6 +8,9 @@ use std::fmt::Write as _;
 
 use futures_util::FutureExt;
 
+mod ask;
+pub use ask::{AskExchange, resolve_ask};
+
 use crate::resolve::{
     MAX_ANSWER_LINE, MAX_QUERY_LINE, Record, RecordType, ResolveAnswer, ResolveError, ResolveQuery,
     StandInReason, read_query,

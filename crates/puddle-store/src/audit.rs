@@ -10,7 +10,7 @@ use std::io;
 
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionOutcome, ConnectionReason,
-    WorkspaceId, request_path,
+    LocalCategory, WorkspaceId, request_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -86,6 +86,14 @@ pub struct ConnectionRecord {
     /// Why `refused_address` was refused (a reason code such as `ip_rule` or `toggle:private`).
     #[serde(default)]
     pub refused_reason: Option<String>,
+    /// `company_network` when the destination is in that category (allowed or refused); absent
+    /// otherwise and in records written before it existed.
+    #[serde(default)]
+    pub category: Option<String>,
+    /// The signal that put the destination in the company network (`pac_direct`, `dns_suffix`,
+    /// `private_access_cgnat`, `vpn_route`); absent with `category`.
+    #[serde(default)]
+    pub signal: Option<String>,
     /// The pending row.
     pub pending_id: Option<i64>,
     /// The credential binding, by id.
@@ -128,6 +136,10 @@ impl ConnectionRecord {
             reason: event.reason.to_string(),
             refused_address: event.refused_address.map(|(ip, _)| ip.to_string()),
             refused_reason: event.refused_address.map(|(_, why)| why.code().to_owned()),
+            category: event
+                .company_network
+                .map(|_| LocalCategory::CompanyNetwork.key().to_owned()),
+            signal: event.company_network.map(|s| s.code().to_owned()),
             rule_id: event.rule_id.map(|id| id.0),
             rule_set: event.rule_set.map(|set| set.to_string()),
             request_rule: event.request_rule.map(|id| id.0),
@@ -178,6 +190,8 @@ impl ConnectionRecord {
             reason: reason.to_string(),
             refused_address: None,
             refused_reason: None,
+            category: None,
+            signal: None,
             rule_id: None,
             rule_set: None,
             request_rule: None,
@@ -1062,7 +1076,8 @@ mod tests {
     use crate::pending::PendingState;
     use proptest::prelude::*;
     use puddle_types::{
-        BlockReason, EgressRequest, Host, HttpRequestLine, LocalCategory, RefusedReason, RuleId,
+        BlockReason, CompanySignal, EgressRequest, Host, HttpRequestLine, LocalCategory,
+        RefusedReason, RuleId,
     };
     use serde_json::json;
 
@@ -1400,6 +1415,8 @@ mod tests {
             "unswapped_stand_ins",
             "refused_address",
             "refused_reason",
+            "category",
+            "signal",
             "method",
             "path",
             "path_truncated",
@@ -1411,6 +1428,24 @@ mod tests {
         }
         assert_eq!(value["decision"], "allow");
         assert_eq!(value["path"], "/v1/items");
+    }
+
+    #[test]
+    fn a_company_network_destination_is_recorded_with_its_category_and_signal() {
+        let mut e = event();
+        e.decision = ConnectionDecision::Blocked;
+        e.reason = ConnectionReason::Blocked(BlockReason::CompanyNetwork(CompanySignal::VpnRoute));
+        e.company_network = Some(CompanySignal::VpnRoute);
+        let line = AuditRecord::Connection(ConnectionRecord::from_event(1, &e))
+            .to_line()
+            .unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["reason"], "company_network_off");
+        assert_eq!(value["category"], "company_network");
+        assert_eq!(value["signal"], "vpn_route");
+        // Any other connection has neither field set.
+        let plain = ConnectionRecord::from_event(1, &event());
+        assert_eq!((plain.category, plain.signal), (None, None));
     }
 
     #[test]

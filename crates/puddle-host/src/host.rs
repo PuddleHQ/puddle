@@ -28,7 +28,7 @@ use puddle_compute::{Runtime, SandboxInfo};
 use puddle_front::Front;
 use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
-use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
+use puddle_netpolicy::{CompanySignals, LocalAccess, NetPolicy, NoSignals, PuddleEndpoints};
 use puddle_ports::Ports;
 use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Resolver, Terminations, Upstream};
 use puddle_repos::{HostApi, Repos};
@@ -302,6 +302,10 @@ pub struct HostOptions {
     /// one, the operating system's resolver. Tests give a double, so a name only a fake company
     /// proxy knows is never a question for the machine's real DNS.
     pub resolver: Option<Arc<dyn Resolver>>,
+    /// What the host reads of the company network (proxy script, DNS suffixes, private-access
+    /// clients, routes), shared by the sandbox proxy's guard and the API. Without one the host
+    /// reads none, so no destination is ever in the company-network category.
+    pub company_signals: Option<Arc<dyn CompanySignals>>,
     /// Holds an author rewrite back when it starts (tests, to make the rewrites of one workspace
     /// run out of order). Without one, no rewrite waits.
     pub rewrite_gate: Option<RewriteGate>,
@@ -316,6 +320,7 @@ impl Default for HostOptions {
             secret_store: None,
             dev_cert: None,
             resolver: None,
+            company_signals: None,
             rewrite_gate: None,
         }
     }
@@ -593,6 +598,7 @@ impl<R: Runtime + Clone> Host<R> {
         let front_addr = front.local_addr();
         steps.push(Step::BackgroundStarted);
 
+        let signals = company_signals(&options);
         let lifecycle = Arc::new(Lifecycle::new(runtime.clone(), config.shutdown.clone()));
         let service = HostWorkspaces::new(
             Parts {
@@ -660,6 +666,7 @@ impl<R: Runtime + Clone> Host<R> {
         .with_ports(Arc::new(HostPorts::new(ports)))
         .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
         .with_proxy_sign_ins(sign_ins)
+        .with_company_signals(signals)
         .with_endpoints(endpoints.clone());
         let served = serve_api(&config, services).await?;
         steps.push(Step::ApiServing);
@@ -1040,6 +1047,14 @@ impl EgressParts {
     }
 }
 
+/// The company-network signals the host was given, or none (the category is then empty).
+fn company_signals(options: &HostOptions) -> Arc<dyn CompanySignals> {
+    options
+        .company_signals
+        .clone()
+        .unwrap_or_else(|| Arc::new(NoSignals))
+}
+
 /// The way out through the company network, shared by the sandbox proxy and the pull proxy.
 struct Egress {
     proxy: Arc<Proxy>,
@@ -1083,7 +1098,8 @@ impl Egress {
         let guard = NetPolicy::new(Arc::new(move |workspace: &WorkspaceId| {
             local_access(access_settings.as_ref(), workspace)
         }))
-        .with_endpoints(endpoints.clone());
+        .with_endpoints(endpoints.clone())
+        .with_company_signals(company_signals(options));
         let mut proxy = Proxy::new(
             connections.store().clone(),
             events.clone() as Arc<dyn EventSink>,

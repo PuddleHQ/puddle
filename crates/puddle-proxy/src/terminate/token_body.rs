@@ -195,26 +195,25 @@ impl TokenBody {
     /// Replaces the text at `path` (see [`Self::text_at`]) with `value`; `false` (nothing changed)
     /// when [`Self::text_at`] would not have found it.
     pub fn set_text_at(&mut self, path: &str, value: &str) -> bool {
-        if self.text_at(path).is_none() {
-            return false;
-        }
-        let Parsed::Json(map) = &mut self.parsed else {
-            return self.set_text(path, value);
-        };
-        let Some((last, parents)) = split_path(path) else {
-            return false;
-        };
-        let mut object = map;
-        for step in parents {
-            match object.get_mut(step).and_then(Value::as_object_mut) {
-                Some(inner) => object = inner,
-                None => return false,
+        match &mut self.parsed {
+            Parsed::Json(map) => {
+                let Some(slot) = split_path(path).and_then(|(last, parents)| {
+                    let mut object = map;
+                    for step in parents {
+                        object = object.get_mut(step)?.as_object_mut()?;
+                    }
+                    object.get_mut(last)
+                }) else {
+                    return false;
+                };
+                if !slot.is_string() {
+                    return false;
+                }
+                *slot = Value::String(value.to_owned());
+                true
             }
+            Parsed::Form(_) => self.set_text(path, value),
         }
-        object
-            .get_mut(last)
-            .map(|slot| *slot = Value::String(value.to_owned()))
-            .is_some()
     }
 
     /// The body as bytes: JSON compact, a form with each untouched field as it was sent. The

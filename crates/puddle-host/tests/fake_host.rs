@@ -652,7 +652,7 @@ impl Rig {
         guest.install(&runtime);
         Self {
             dev_cert: Arc::new(TestDevCert::new()),
-            dir: tempfile::tempdir().unwrap(),
+            dir: support::scratch_dir(),
             log: Log::default(),
             runtime,
             guest,
@@ -753,6 +753,26 @@ fn make_unwritable(path: &std::path::Path) {
 
 fn status_of(reply: &support::Reply) -> String {
     reply.json()["status"].as_str().unwrap().to_owned()
+}
+
+// ---- where a test keeps its data ------------------------------------------------------------
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_tests_data_folder_is_in_memory_where_the_machine_has_a_memory_mount() {
+    let dir = support::scratch_dir();
+    let in_ram = std::env::var_os("TMPDIR").is_none() && support::is_ram_mount("/dev/shm");
+    assert_eq!(
+        dir.path().starts_with("/dev/shm"),
+        in_ram,
+        "{:?}",
+        dir.path()
+    );
+    assert!(!support::is_ram_mount("/"), "the root is no memory mount");
+    assert!(!support::is_ram_mount("/no/such/mount"));
+    // Whatever the folder is, a host can write and sync a file in it.
+    let file = std::fs::File::create(dir.path().join("probe")).unwrap();
+    file.sync_all().unwrap();
 }
 
 // ---- the start-up order -------------------------------------------------------------------
@@ -2487,7 +2507,7 @@ async fn editor_stand_in(rig: &Rig, name: &str) -> EditorStandIn {
             });
         }
     });
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::scratch_dir();
     let password_file = dir.path().join("editor-password");
     std::fs::write(&password_file, "0".repeat(64)).unwrap();
     // Its port is taken, so the agent starts no server of its own and the stand-in answers.
@@ -5552,6 +5572,24 @@ async fn host_with_listed_workspace_whose_volume_is_gone() -> (Rig, Host<FakeRun
         .unwrap();
     let again = rig.start().await;
     (rig, again)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_host_has_closed_its_database_so_a_restart_never_waits_on_it() {
+    // SQLite deletes the write-ahead log when the last connection closes; a close still
+    // running (a checkpoint that fsyncs) is what made a quick restart hit "database is locked"
+    // when the disk stalled.
+    let rig = Rig::new();
+    let wal = rig.dir.path().join("data").join("puddle.db-wal");
+    for _ in 0..20 {
+        let host = rig.start().await;
+        host.shutdown().await;
+        drop(host);
+        assert!(
+            !wal.exists(),
+            "the database was still open after the host was dropped"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -10606,7 +10644,7 @@ async fn a_workspace_starts_from_a_checkout_on_this_computer_and_the_checkout_is
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::scratch_dir();
     let base = std::fs::canonicalize(tmp.path()).unwrap();
     let work = local_checkout(&base, "shop");
     let before = files_of(&base);
@@ -10679,7 +10717,7 @@ async fn a_folder_that_cannot_be_started_from_is_refused_before_anything_exists(
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::scratch_dir();
     let base = std::fs::canonicalize(tmp.path()).unwrap();
     let plain = base.join("plain");
     std::fs::create_dir_all(&plain).unwrap();
@@ -10733,7 +10771,7 @@ async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_imp
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = support::scratch_dir();
     let base = std::fs::canonicalize(tmp.path()).unwrap();
     let work = local_checkout(&base, "shop");
     let body = |name: &str| {

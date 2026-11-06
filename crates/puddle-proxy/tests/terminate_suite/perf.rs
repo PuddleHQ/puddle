@@ -224,6 +224,61 @@ async fn terminating_costs_little_next_to_splicing() {
     let _ = Arc::strong_count(&rig.ca);
 }
 
+/// Scrubbed over plain wall time for the same HTTP/1.1 transfer from a host a secret is for (the
+/// answer is searched for the real value in every form, and streams without a length).
+const MAX_SCRUBBED_TO_PLAIN: f64 = 2.0;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "a 256 MiB transfer, meaningful only in a release build; run by the nightly perf workflow or by hand"]
+async fn scrubbing_answers_costs_little_next_to_not_scrubbing() {
+    silence_logs();
+    let pki = Pki::new();
+    let server = bulk_server(&pki, "bound.test").await;
+    let plain = RigBuilder::new(&pki).name("bound.test", server).build();
+    let stand_ins = Arc::new(puddle_proxy::StandIns::new());
+    for n in 0..8 {
+        let name = format!("SECRET_{n}");
+        stand_ins
+            .insert(
+                puddle_proxy::StandIn::new(
+                    puddle_proxy::StandInOrigin::Secret,
+                    &name,
+                    &puddle_proxy::secret_stand_in(&name).unwrap(),
+                    puddle_proxy::SecretValue::new(format!("sk-live-{n}-5c1d9e0a47b2a9f0e1d2c3b4")),
+                    puddle_proxy::TerminationSet::parse(["bound.test"]).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let scrubbed = RigBuilder::new(&pki)
+        .name("bound.test", server)
+        .stand_ins(&stand_ins)
+        .build();
+    let mut plain_guest = plain.guest();
+    let mut scrubbed_guest = scrubbed.guest();
+    let mut without = plain_guest.tls("bound.test:443", None).await.unwrap();
+    let mut with = scrubbed_guest.tls("bound.test:443", None).await.unwrap();
+    transfer(&mut without, "bound.test", 16).await;
+    transfer(&mut with, "bound.test", 16).await;
+    let mut best_plain = Duration::MAX;
+    let mut best_scrubbed = Duration::MAX;
+    for _ in 0..3 {
+        best_plain =
+            best_plain.min(measured("unscrubbed", transfer(&mut without, "bound.test", 256)).await);
+        best_scrubbed =
+            best_scrubbed.min(measured("scrubbed", transfer(&mut with, "bound.test", 256)).await);
+    }
+    let ratio = best_scrubbed.as_secs_f64() / best_plain.as_secs_f64();
+    eprintln!(
+        "256 MiB up and 256 MiB down, 8 secrets for the host: scrubbed {best_scrubbed:.2?}, not scrubbed {best_plain:.2?}, ratio {ratio:.2}"
+    );
+    assert!(
+        ratio <= MAX_SCRUBBED_TO_PLAIN,
+        "scrubbing cost {ratio:.2} times not scrubbing, above {MAX_SCRUBBED_TO_PLAIN}"
+    );
+}
+
 /// A response bigger than a yamux stream window has to arrive although the guest sends nothing
 /// while it waits: the proxy's writer stalled on a full window until its guest side was read.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

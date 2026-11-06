@@ -17,6 +17,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+mod jwt_tests;
 mod logins;
 mod marker;
 mod profile;

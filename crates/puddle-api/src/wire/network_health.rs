@@ -9,6 +9,8 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::proxy_sign_in::StoredSignIn;
+
 /// Where Puddle gets its proxy setting from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -172,6 +174,9 @@ pub struct SignInReport {
     pub methods: Vec<String>,
     /// The latest attempt per proxy, newest first.
     pub attempts: Vec<SignInAttempt>,
+    /// The proxies Puddle holds a stored user name and password for (Basic), sorted by proxy.
+    /// Names only: the password is never in a report.
+    pub stored: Vec<StoredSignIn>,
 }
 
 /// A certificate kind.
@@ -336,6 +341,7 @@ impl NetworkHealth {
             sign_in: SignInReport {
                 methods: Vec::new(),
                 attempts: Vec::new(),
+                stored: Vec::new(),
             },
             roots: RootsReport {
                 synced: false,

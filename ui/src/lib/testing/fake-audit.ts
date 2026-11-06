@@ -35,6 +35,7 @@ export function connection(
       count: null,
       injected: false,
       unswapped_stand_ins: [],
+      scrubbed_stand_ins: [],
       refused_address: null,
       refused_reason: null,
       category: null,

@@ -57,11 +57,13 @@ mod learned;
 mod network_health;
 mod openapi;
 mod ports;
+mod proxy_sign_in;
 mod repos;
 mod routes;
 mod server;
 mod settings;
 mod system_managed;
+mod terminals;
 mod token;
 mod ui;
 pub mod wire;
@@ -87,9 +89,15 @@ pub use network_health::{
 };
 pub use openapi::{API_VERSION, openapi, openapi_json};
 pub use ports::{FakePorts, NoPorts, PortsService, PortsServiceError};
+pub use proxy_sign_in::{FakeProxySignIns, NoProxySignIns, ProxySignInError, ProxySignInService};
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
+pub use terminals::{
+    EndReason, FakeTerminals, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals,
+    SUBPROTOCOL, TICKET_LIFETIME, TerminalEnd, TerminalError, TerminalInput, TerminalLink,
+    TerminalOutput, TerminalService, TerminalSize, WINDOW_BYTES,
+};
 pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};
 #[cfg(feature = "embedded-ui")]
 pub use ui::EmbeddedUi;

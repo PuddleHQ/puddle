@@ -17,6 +17,7 @@ rcgen = { workspace = true }
 rustls = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

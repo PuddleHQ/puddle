@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Random bytes in a token (256 bits).
 const TOKEN_BYTES: usize = 32;
@@ -22,7 +23,8 @@ const FILE_VERSION: u32 = 1;
 /// The API's bearer token: 32 random bytes as 64 lower-case hex characters.
 ///
 /// `Debug` never shows the value and there is no `Display`; [`ApiToken::expose`] is the one way
-/// to read it, for the connection file and for clients that send it.
+/// to read it, for the connection file and for clients that send it. The text is overwritten when
+/// the value drops.
 #[derive(Clone)]
 pub struct ApiToken(String);
 
@@ -33,9 +35,9 @@ impl ApiToken {
     ///
     /// [`ConnectionFileError::Random`] if the OS has no randomness to give.
     pub fn generate() -> Result<Self, ConnectionFileError> {
-        let mut bytes = [0u8; TOKEN_BYTES];
-        getrandom::fill(&mut bytes).map_err(|err| ConnectionFileError::Random(err.to_string()))?;
-        Ok(Self(hex(&bytes)))
+        let mut bytes = Zeroizing::new([0u8; TOKEN_BYTES]);
+        getrandom::fill(&mut *bytes).map_err(|err| ConnectionFileError::Random(err.to_string()))?;
+        Ok(Self(hex(&*bytes)))
     }
 
     /// Whether `presented` is this token, compared in constant time. A different length is
@@ -52,15 +54,23 @@ impl ApiToken {
     }
 
     fn parse(text: String) -> Result<Self, String> {
+        // A malformed text is dropped on the error path; this wipes it there too.
+        let mut text = Zeroizing::new(text);
         let well_formed = text.len() == TOKEN_BYTES * 2
             && text
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
         if well_formed {
-            Ok(Self(text))
+            Ok(Self(std::mem::take(&mut *text)))
         } else {
             Err("token is not 64 lower-case hex characters".to_owned())
         }
+    }
+}
+
+impl Drop for ApiToken {
+    fn drop(&mut self) {
+        self.0.zeroize();
     }
 }
 
@@ -106,13 +116,28 @@ impl fmt::Debug for ConnectionInfo {
     }
 }
 
-/// The file's JSON shape.
-#[derive(Serialize, Deserialize)]
+/// The file's JSON shape. The token is overwritten when this drops.
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileFormat {
     version: u32,
     url: String,
     token: String,
+}
+
+impl Drop for FileFormat {
+    fn drop(&mut self) {
+        self.token.zeroize();
+    }
+}
+
+/// What [`ConnectionInfo::write`] serialises: the same fields as [`FileFormat`], borrowed, so the
+/// token is not copied on its way out.
+#[derive(Serialize)]
+struct FileOut<'a> {
+    version: u32,
+    url: &'a str,
+    token: &'a str,
 }
 
 impl ConnectionInfo {
@@ -127,11 +152,18 @@ impl ConnectionInfo {
             path: path.to_owned(),
             source,
         };
-        let body = serde_json::to_vec(&FileFormat {
-            version: FILE_VERSION,
-            url: self.url.clone(),
-            token: self.token.expose().to_owned(),
-        })
+        // Sized for a real file, so the buffer that holds the token is not reallocated as it fills.
+        let mut body = Zeroizing::new(Vec::with_capacity(
+            usize::try_from(MAX_FILE_BYTES).unwrap_or(4096),
+        ));
+        serde_json::to_writer(
+            &mut *body,
+            &FileOut {
+                version: FILE_VERSION,
+                url: &self.url,
+                token: self.token.expose(),
+            },
+        )
         .map_err(|err| io_err(io::Error::other(err)))?;
         puddle_fs::private::write_atomic(path, &body).map_err(io_err)?;
         Ok(())
@@ -157,7 +189,9 @@ impl ConnectionInfo {
                 exposed,
             },
         })?;
-        let mut text = String::new();
+        let mut text = Zeroizing::new(String::with_capacity(
+            usize::try_from(MAX_FILE_BYTES + 1).unwrap_or(4097),
+        ));
         file.take(MAX_FILE_BYTES + 1)
             .read_to_string(&mut text)
             .map_err(io_err)?;
@@ -168,7 +202,7 @@ impl ConnectionInfo {
         if text.len() > usize::try_from(MAX_FILE_BYTES).unwrap_or(usize::MAX) {
             return Err(format_err("file is too large".to_owned()));
         }
-        let parsed: FileFormat = serde_json::from_str(&text).map_err(|err| {
+        let mut parsed: FileFormat = serde_json::from_str(&text).map_err(|err| {
             // serde_json's message can quote the input; keep only where it failed.
             format_err(format!(
                 "not a connection file (line {}, column {})",
@@ -183,8 +217,8 @@ impl ConnectionInfo {
             )));
         }
         Ok(Self {
-            url: parsed.url,
-            token: ApiToken::parse(parsed.token).map_err(format_err)?,
+            url: std::mem::take(&mut parsed.url),
+            token: ApiToken::parse(std::mem::take(&mut parsed.token)).map_err(format_err)?,
         })
     }
 }

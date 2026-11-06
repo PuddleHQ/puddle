@@ -3608,6 +3608,241 @@
         }
       }
     },
+    "/api/proxy-sign-ins": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "The proxies Puddle holds a sign-in for, with the user name of each. Never a password.",
+        "operationId": "list_proxy_sign_ins",
+        "responses": {
+          "200": {
+            "description": "the stored sign-ins",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxySignInList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Stores a user name and password for a proxy, replacing an earlier one. The password is kept in\nthe operating system's credential store under Puddle's own name; the next connection that\nasks for Basic uses it, after the Windows sign-in.",
+        "operationId": "put_proxy_sign_in",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProxySignInRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "stored; the sign-ins now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxySignInList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the proxy, user name or password is not usable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the credential store did not answer, or this build has no proxy sign-in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/proxy-sign-ins/{proxy}": {
+      "delete": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Forgets the sign-in for a proxy. One that is not stored is fine.",
+        "operationId": "delete_proxy_sign_in",
+        "parameters": [
+          {
+            "name": "proxy",
+            "in": "path",
+            "description": "the proxy as host:port",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "no sign-in is stored for the proxy now"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not a proxy address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the credential store did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/repos": {
       "get": {
         "tags": [
@@ -9226,6 +9461,214 @@
           }
         }
       }
+    },
+    "/api/workspaces/{id}/terminals": {
+      "post": {
+        "tags": [
+          "terminals"
+        ],
+        "summary": "Asks for a terminal in a running or starting workspace. The session opens when the socket\nconnects, so a ticket that is never used leaves nothing behind.",
+        "operationId": "create_terminal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the terminal and its ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalTicket"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the workspace is not running or starting, or the limit of 8 terminals for it or 32 in all is reached (the message says which)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a size outside 2 to 500 columns and 1 to 300 rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "terminals are not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/terminals/{terminal}": {
+      "get": {
+        "tags": [
+          "terminals"
+        ],
+        "summary": "Opens the terminal's socket. A browser cannot send `Authorization` on a WebSocket, so on this\none path the single-use ticket stands in for the token; the `Host` and `Origin` checks run\nbefore it is read.",
+        "operationId": "terminal_socket",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "terminal",
+            "in": "path",
+            "description": "the terminal id from the ticket",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "the socket: binary messages carry the terminal's bytes (at most 64 KiB), text messages are JSON (`resize`, `ack` from the page; `ended` from the host)"
+          },
+          "401": {
+            "description": "a wrong, used or late ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -9725,6 +10168,7 @@
               "binding_id",
               "injected",
               "unswapped_stand_ins",
+              "scrubbed_stand_ins",
               "method",
               "path",
               "path_truncated",
@@ -9888,6 +10332,13 @@
                   "null"
                 ],
                 "description": "The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`)."
+              },
+              "scrubbed_stand_ins": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The ids of the stand-ins whose real values an answer from one of their hosts held, put back as\nthe stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),\neach once, at most 16. Records written\nbefore it existed read as empty."
               },
               "signal": {
                 "type": [
@@ -14572,6 +15023,48 @@
         },
         "additionalProperties": false
       },
+      "ProxySignInList": {
+        "type": "object",
+        "description": "The proxies Puddle holds a sign-in for.",
+        "required": [
+          "sign_ins"
+        ],
+        "properties": {
+          "sign_ins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoredSignIn"
+            },
+            "description": "Sorted by proxy."
+          }
+        }
+      },
+      "ProxySignInRequest": {
+        "type": "object",
+        "description": "Stores or replaces the sign-in for one proxy.",
+        "required": [
+          "proxy",
+          "user",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "format": "password",
+            "description": "The password: not empty, no line break. Written once to the operating system's credential\nstore and never shown again.",
+            "writeOnly": true
+          },
+          "proxy": {
+            "type": "string",
+            "description": "The proxy as `host:port`, or `http://host:port`; a missing port is 80."
+          },
+          "user": {
+            "type": "string",
+            "description": "The user name: not empty, at most 256 bytes, no colon or line break (Basic cannot carry\nthem)."
+          }
+        },
+        "additionalProperties": false
+      },
       "PullProxyReport": {
         "type": "object",
         "description": "Image pulls and the pull proxy.",
@@ -16025,7 +16518,8 @@
         "description": "How Puddle signs in to the company proxy.",
         "required": [
           "methods",
-          "attempts"
+          "attempts",
+          "stored"
         ],
         "properties": {
           "attempts": {
@@ -16041,6 +16535,13 @@
               "type": "string"
             },
             "description": "The schemes Puddle can answer a proxy with, lower case (`negotiate`, `ntlm`, `basic`).\nEmpty: Puddle can not sign in to a proxy on this system."
+          },
+          "stored": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoredSignIn"
+            },
+            "description": "The proxies Puddle holds a stored user name and password for (Basic), sorted by proxy.\nNames only: the password is never in a report."
           }
         },
         "additionalProperties": false
@@ -16190,6 +16691,25 @@
         },
         "additionalProperties": false
       },
+      "StoredSignIn": {
+        "type": "object",
+        "description": "A stored proxy sign-in. Names only.",
+        "required": [
+          "proxy",
+          "user"
+        ],
+        "properties": {
+          "proxy": {
+            "type": "string",
+            "description": "`host:port` of the proxy, lower case."
+          },
+          "user": {
+            "type": "string",
+            "description": "The user name the proxy is signed in to with."
+          }
+        },
+        "additionalProperties": false
+      },
       "StoredToken": {
         "type": "object",
         "description": "Where a stored token went: the source to put in a credential.",
@@ -16303,6 +16823,49 @@
           "direct_ssh_jetbrains",
           "direct_ssh_zed"
         ]
+      },
+      "TerminalRequest": {
+        "type": "object",
+        "description": "The size a new terminal starts with.",
+        "required": [
+          "cols",
+          "rows"
+        ],
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Columns, 2 to 500.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Rows, 1 to 300.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "TerminalTicket": {
+        "type": "object",
+        "description": "A terminal that is asked for and not open yet.",
+        "required": [
+          "terminal",
+          "ticket"
+        ],
+        "properties": {
+          "terminal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The terminal's id in the socket's path.",
+            "minimum": 0
+          },
+          "ticket": {
+            "type": "string",
+            "description": "64 hex characters: use it once, within 30 s, as `ticket.<hex>` after `puddle-terminal.v1`\nin `Sec-WebSocket-Protocol`."
+          }
+        }
       },
       "ThemeChoice": {
         "type": "string",

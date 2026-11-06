@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
 
-use zeroize::Zeroizing;
+use zeroize::{Zeroize as _, Zeroizing};
 
 use super::leaf::{self, RENEW_WITHIN, check_trust_shape, unix_secs};
 use super::material::{DevCertMaterial, Origin, PrivateKey};
@@ -241,18 +241,25 @@ impl<T: DevCertTrust> DevCertManager<T> {
         // A key file others can read is a leaked key: replace it, never use it.
         puddle_fs::private::check(&file).ok()?;
         let text = Zeroizing::new(io::read_to_string(&file).ok()?);
-        let blocks = pem::parse_many(text.as_bytes()).ok()?;
-        let cert = blocks.iter().find(|b| b.tag() == "CERTIFICATE")?;
-        let key = blocks.iter().find(|b| b.tag() == "PRIVATE KEY")?;
-        let info = check_trust_shape(cert.contents()).ok()?;
+        // The key leaves its parsed block without a copy, and every other block is overwritten
+        // before it drops, since `Pem` does not do that itself.
+        let mut cert = None;
+        let mut key = None;
+        for block in pem::parse_many(text.as_bytes()).ok()? {
+            let tag = block.tag().to_owned();
+            if tag == "CERTIFICATE" && cert.is_none() {
+                cert = Some(block.into_contents());
+            } else if tag == "PRIVATE KEY" && key.is_none() {
+                key = Some(PrivateKey::from_pkcs8_der(block.into_contents()));
+            } else {
+                block.into_contents().zeroize();
+            }
+        }
+        let (key, cert) = (key?, cert?);
+        let info = check_trust_shape(&cert).ok()?;
         let now = unix_secs(now);
         let renew = i64::try_from(RENEW_WITHIN.as_secs()).ok()?;
         let good = info.not_before <= now && info.not_after - now >= renew;
-        good.then(|| {
-            (
-                cert.contents().to_vec(),
-                PrivateKey::from_pkcs8_der(key.contents().to_vec()),
-            )
-        })
+        good.then_some((cert, key))
     }
 }

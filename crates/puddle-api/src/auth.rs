@@ -107,7 +107,12 @@ impl Guard {
         headers: &HeaderMap,
     ) -> Result<(), Refusal> {
         let is_read = method == Method::GET || method == Method::HEAD;
-        if self.inner.serves_ui && is_read && !is_api_path(uri.path()) {
+        if method == Method::GET && is_terminal_socket(uri.path()) {
+            // The ticket in `Sec-WebSocket-Protocol` stands in for the token (a browser cannot
+            // send it on a WebSocket); the route checks it, after these two.
+            self.check_host(uri, headers)?;
+            self.check_origin(headers)
+        } else if self.inner.serves_ui && is_read && !is_api_path(uri.path()) {
             self.check_host(uri, headers)?;
             self.check_origin(headers)
         } else {
@@ -181,6 +186,16 @@ fn single<'a>(
     let mut values = headers.get_all(name).iter();
     let first = values.next()?;
     values.next().is_none().then_some(first)
+}
+
+/// `/api/workspaces/{id}/terminals/{terminal}`, the one path that takes a ticket in place of the
+/// token.
+fn is_terminal_socket(path: &str) -> bool {
+    let parts: Vec<&str> = path.split('/').collect();
+    matches!(
+        parts.as_slice(),
+        ["", "api", "workspaces", id, "terminals", n] if !id.is_empty() && !n.is_empty()
+    )
 }
 
 /// Whether `path` is the API (`/api` or below), whose every route needs the token.

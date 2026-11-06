@@ -13,7 +13,6 @@ use axum::http::{Method, StatusCode, Uri};
 use axum::response::IntoResponse;
 use hyper::server::conn::http1;
 use hyper_util::rt::{TokioIo, TokioTimer};
-use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
 use puddle_netpolicy::{CompanySignals, EndpointKind, NoSignals, PuddleEndpoints, Registration};
 use puddle_secrets::SecretStore;
@@ -37,6 +36,7 @@ use crate::proxy_sign_in::{NoProxySignIns, ProxySignInService};
 use crate::repos::{NoRepos, RepoService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
+use crate::terminals::{NoTerminals, Registry, TerminalService};
 use crate::token::{ApiToken, ConnectionInfo};
 use crate::ui::{UiAssets, UiService};
 use crate::workspaces::{NoWorkspaces, WorkspaceService};
@@ -153,6 +153,9 @@ pub struct Services {
     /// The hosts a workspace's tools refused Puddle's certificate for. [`Services::new`] starts
     /// with [`NoLearned`] (an empty list); set the real one with [`Services::with_learned`].
     pub learned: Arc<dyn LearnedService>,
+    /// Terminals: a shell in a running workspace. Starts with [`NoTerminals`]; set the real one with
+    /// [`Services::with_terminals`].
+    pub terminals: Arc<dyn TerminalService>,
     /// The sign-ins for company proxies that ask for a user name and password.
     /// [`Services::new`] starts with [`NoProxySignIns`] (nothing stored, a change answers 503);
     /// set the real one with [`Services::with_proxy_sign_ins`].
@@ -191,6 +194,7 @@ impl Services {
             dev_cert: Arc::new(NoDevCert),
             ports: Arc::new(NoPorts),
             learned: Arc::new(NoLearned),
+            terminals: Arc::new(NoTerminals),
             proxy_sign_ins: Arc::new(NoProxySignIns),
             company_signals: Arc::new(NoSignals),
             endpoints: PuddleEndpoints::new(),
@@ -257,6 +261,13 @@ impl Services {
     #[must_use]
     pub fn with_learned(mut self, learned: Arc<dyn LearnedService>) -> Self {
         self.learned = learned;
+        self
+    }
+
+    /// These services with the terminals service.
+    #[must_use]
+    pub fn with_terminals(mut self, terminals: Arc<dyn TerminalService>) -> Self {
+        self.terminals = terminals;
         self
     }
 
@@ -359,6 +370,8 @@ impl ApiServer {
             dev_cert: services.dev_cert,
             ports: services.ports,
             learned: services.learned,
+            terminal_service: services.terminals,
+            terminals: Arc::new(Registry::default()),
             proxy_sign_ins: services.proxy_sign_ins,
             company_signals: services.company_signals,
             shutdown,
@@ -500,7 +513,6 @@ async fn serve(
     max_connections: usize,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let graceful = GracefulShutdown::new();
     let mut connections = JoinSet::new();
     loop {
         // Reap finished connections so the cap counts open ones only.
@@ -523,22 +535,32 @@ async fn serve(
             continue;
         }
         let service = TowerToHyperService::new(router.clone());
-        let connection = http1::Builder::new()
-            .timer(TokioTimer::new())
-            .header_read_timeout(HEADER_READ_TIMEOUT)
-            .serve_connection(TokioIo::new(stream), service);
-        let connection = graceful.watch(connection);
+        // `with_upgrades` lets a terminal's WebSocket take the connection over.
+        let mut connection = Box::pin(
+            http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(HEADER_READ_TIMEOUT)
+                .serve_connection(TokioIo::new(stream), service)
+                .with_upgrades(),
+        );
+        let mut stop = shutdown.clone();
         connections.spawn(async move {
-            if let Err(err) = connection.await {
+            let ended = tokio::select! {
+                ended = connection.as_mut() => ended,
+                () = async { let _ = stop.wait_for(|stop| *stop).await; } => {
+                    // Finishes the request in flight, then closes.
+                    connection.as_mut().graceful_shutdown();
+                    connection.await
+                }
+            };
+            if let Err(err) = ended {
                 tracing::debug!(error = %err, "api connection ended with an error");
             }
         });
     }
     drop(listener);
-    if tokio::time::timeout(SHUTDOWN_GRACE, graceful.shutdown())
-        .await
-        .is_err()
-    {
+    let drained = async { while connections.join_next().await.is_some() {} };
+    if tokio::time::timeout(SHUTDOWN_GRACE, drained).await.is_err() {
         tracing::warn!("api connections still open after the grace period; closing them");
     }
     connections.shutdown().await;

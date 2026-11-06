@@ -133,11 +133,15 @@ pem = { version = "4", default-features = false, features = ["std"] }
 # OpenAPI schemas for the API's wire types (ADR 0004).
 utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
 # Local HTTP API: axum on loopback; utoipa-axum registers routes and spec together.
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "query", "tokio", "tracing"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "query", "tokio", "tracing", "ws"] }
 # Served through hyper directly (not `axum::serve`) for a header-read timeout and owned connection tasks.
 hyper = { version = "1.11", default-features = false, features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.21", default-features = false, features = ["http1", "server", "server-graceful", "service", "tokio"] }
 utoipa-axum = "0.3.0"
+# The host's own SSH client for the terminal (the runtime's SSH server stack, already in the tree through msb) and the fake runtime's PTY stand-in.
+russh = "0.65.0"
+# WebSocket client of the terminal route's tests (the same crate axum's `ws` feature serves with).
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
 tower-http = { version = "0.7.1", default-features = false, features = ["timeout"] }
 subtle = { version = "2.6.1", default-features = false, features = ["std"] }
 # Basic credentials of the image-pull proxy; already in the tree through reqwest.

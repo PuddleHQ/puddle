@@ -9,7 +9,9 @@ use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::{Host, WorkspaceId};
 use serde_json::{Value, json};
 
-use crate::profile::{Endpoint, Field, Method, Profile, Role, Scope, Slot, path_matches};
+use crate::profile::{
+    Endpoint, Field, Method, Profile, Role, Scope, Slot, StandInKind, path_matches,
+};
 use crate::vault::{Vault, slot_id};
 use crate::{LoginNotices, Logins, Marker, Problem};
 
@@ -24,6 +26,7 @@ const fn field(path: &'static str, role: Role, resource: Option<&'static str>) -
         resource,
         prefixes: &["ey", "npm_"],
         keep_last: 0,
+        stand_in: StandInKind::Shaped,
         scope: Scope::Api,
     }
 }
@@ -53,35 +56,51 @@ static WIDE: [Profile; 1] = [Profile {
     api_hosts: &["api.wide.test"],
 }];
 
-struct Quiet;
+pub(crate) struct Quiet;
 impl LoginNotices for Quiet {
     fn problem(&self, _: &WorkspaceId, _: &Profile, _: Problem) {}
 }
 
-struct Rig {
-    logins: Logins,
-    store: Arc<MemoryStore>,
+pub(crate) struct Rig {
+    pub(crate) logins: Logins,
+    pub(crate) store: Arc<MemoryStore>,
+    pub(crate) registry: Arc<StandIns>,
 }
 
 fn rig() -> Rig {
+    rig_for(&WIDE)
+}
+
+pub(crate) fn rig_for(profiles: &'static [Profile]) -> Rig {
+    let registry = Arc::new(StandIns::new());
     let store = Arc::new(MemoryStore::new());
     let logins = Logins::new(
         WorkspaceId::new("alpha").unwrap(),
         true,
-        &WIDE,
-        Arc::new(StandIns::new()),
+        profiles,
+        Arc::clone(&registry),
         Arc::clone(&store) as Arc<dyn SecretStore>,
         Arc::new(Quiet),
         Marker::none(),
     );
-    Rig { logins, store }
+    Rig {
+        logins,
+        store,
+        registry,
+    }
 }
 
-fn host(name: &str) -> Host {
+pub(crate) fn host(name: &str) -> Host {
     Host::parse_normalised(name).unwrap()
 }
 
-async fn answered(rig: &Rig, host_name: &str, method: &str, path: &str, body: &Value) -> Value {
+pub(crate) async fn answered(
+    rig: &Rig,
+    host_name: &str,
+    method: &str,
+    path: &str,
+    body: &Value,
+) -> Value {
     let mut exchange = rig
         .logins
         .begin(&host(host_name), method, path)

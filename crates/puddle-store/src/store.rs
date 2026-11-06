@@ -1593,6 +1593,8 @@ mod tests {
         let holder = Connection::open(&path).unwrap();
         holder.execute_batch("BEGIN IMMEDIATE").unwrap();
         let release = std::thread::spawn(move || {
+            // The write below blocks inside the call under test, so no signal can mark the moment to
+            // release: the lock is held for a fixed window that the write has to wait out.
             std::thread::sleep(Duration::from_millis(300));
             holder.execute_batch("COMMIT").unwrap();
         });

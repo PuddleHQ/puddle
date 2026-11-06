@@ -112,4 +112,18 @@ mod tests {
         assert_eq!(back, b"abc");
         assert_eq!((counts.read(), counts.written()), (5, 3));
     }
+
+    #[tokio::test]
+    async fn a_flush_reaches_the_stream_underneath() {
+        let (near, mut far) = tokio::io::duplex(64);
+        let (mut stream, _) = Counted::new(tokio::io::BufWriter::new(near));
+        stream.write_all(b"abc").await.unwrap();
+        stream.flush().await.unwrap();
+        let mut got = [0; 3];
+        tokio::time::timeout(std::time::Duration::from_secs(5), far.read_exact(&mut got))
+            .await
+            .expect("the flush pushed the buffered bytes out")
+            .unwrap();
+        assert_eq!(&got, b"abc");
+    }
 }

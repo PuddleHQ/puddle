@@ -138,13 +138,14 @@ impl StandIns {
             if entry.placement == Placement::Header || !entry.hosts.contains(host) {
                 continue;
             }
+            // A real value is never empty (`is_header_safe`), so no form is.
             let real = entry.real.expose();
             for form in [
                 Zeroizing::new(real.as_bytes().to_vec()),
                 encoded(real, keeps_in_path),
                 encoded(real, keeps_in_query),
             ] {
-                if !form.is_empty() && !forms.iter().any(|(known, _)| *known == form) {
+                if !forms.iter().any(|(known, _)| *known == form) {
                     forms.push((form, &entry.text));
                 }
             }

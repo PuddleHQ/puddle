@@ -724,3 +724,31 @@ async fn a_plain_request_over_http2_to_an_http11_server_is_judged_without_upgrad
     assert_eq!(client.get("bound.test", "/plain").await.text(), "plain");
     assert_eq!(*lines.lock().unwrap(), [(None, None)]);
 }
+
+#[tokio::test]
+async fn an_h2_answer_with_a_large_header_list_reaches_the_guest() {
+    let pki = Pki::new();
+    let big = "c".repeat(4096);
+    let script: Script = Arc::new(move |_| {
+        let mut answer = reply(200, "fine");
+        answer
+            .headers_mut()
+            .insert("set-cookie", big.parse().unwrap());
+        answer
+    });
+    let server = H2Server::recording(&pki, "bound.test", script).await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let got = client
+        .request("GET", "bound.test", "/", &[], full(bytes::Bytes::new()))
+        .await;
+    assert_eq!(
+        got.status, 200,
+        "a header list over a kilobyte is within the limit"
+    );
+    assert_eq!(got.header("set-cookie").map(str::len), Some(4096));
+    client.close().await;
+}

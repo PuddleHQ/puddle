@@ -28,6 +28,11 @@ export default defineConfig({
     // in a long-lived worker thread, so the worker, jsdom and the Node modules load once, not per file.
     // vitest.globals.ts adds the Node globals a bare jsdom context lacks.
     pool: "vmThreads",
+    // Vitest times a test on the wall clock, so a worker that the host does not schedule for seconds
+    // fails a test that needs 50 to 270 ms of CPU (a lane at load 80 to 135 on 40 cores did, four
+    // times, with a 5000 ms timeout; 256 busy loops on 16 cores reproduce it). A test that hangs
+    // never finishes, so a long bound catches it just the same.
+    testTimeout: 60_000,
     // Two projects over one config. The warm-up and the testing-library setup cost about a sixth of a
     // CPU second per test file, so only the files that draw components run them; the stores, models
     // and tools tests get the globals alone. Both keep jsdom: a plain Node environment would compile

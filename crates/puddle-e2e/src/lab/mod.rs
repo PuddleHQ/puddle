@@ -26,6 +26,7 @@
     reason = "fixtures fail the test that started them by panicking"
 )]
 
+mod feeds;
 mod git_host;
 mod interceptor;
 mod pac;
@@ -43,6 +44,7 @@ use std::process::Child;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+pub use feeds::{MAVEN_COORDINATES, NPM_PACKAGE, NUGET_PACKAGE, PIP_PROJECT, private_feeds};
 pub use git_host::{GitHost, GitHostOptions, NameProxy, Seen, Versions, clean_git, git_available};
 pub use interceptor::{Interceptor, NtlmLeg, NtlmProxy, Root};
 pub use pac::{PacServer, failover_pac};

@@ -738,6 +738,16 @@ mod tests {
     }
 
     #[test]
+    fn the_proxy_debug_names_its_address_and_hides_the_token() {
+        let endpoints = PuddleEndpoints::new();
+        let proxy = PullProxy::bind(&endpoints).unwrap();
+        let shown = format!("{proxy:?}");
+        assert!(shown.starts_with("PullProxy {"), "{shown}");
+        assert!(shown.contains(&proxy.local_addr().to_string()), "{shown}");
+        assert!(!shown.contains(proxy.token().expose()), "{shown}");
+    }
+
+    #[test]
     fn debug_never_shows_the_token() {
         let t = token();
         assert_eq!(format!("{t:?}"), "PullToken(<redacted>)");

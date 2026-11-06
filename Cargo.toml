@@ -32,6 +32,7 @@ puddle-netpolicy = { path = "crates/puddle-netpolicy" }
 puddle-ca = { path = "crates/puddle-ca" }
 puddle-guest-env = { path = "crates/puddle-guest-env" }
 puddle-ssh = { path = "crates/puddle-ssh" }
+puddle-ssh-agent = { path = "crates/puddle-ssh-agent" }
 puddle-certs = { path = "crates/puddle-certs" }
 puddle-workspace = { path = "crates/puddle-workspace" }
 puddle-doctor = { path = "crates/puddle-doctor" }

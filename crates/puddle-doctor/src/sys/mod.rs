@@ -23,9 +23,11 @@ pub(crate) use macos::hypervisor;
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub(crate) use unix::hypervisor;
 #[cfg(unix)]
-pub(crate) use unix::{code_integrity, file_access, global_secure_access, job};
+pub(crate) use unix::{code_integrity, file_access, global_secure_access, job, ssh_agent_service};
 #[cfg(windows)]
-pub(crate) use windows::{code_integrity, file_access, global_secure_access, hypervisor, job};
+pub(crate) use windows::{
+    code_integrity, file_access, global_secure_access, hypervisor, job, ssh_agent_service,
+};
 
 /// msb's rule about the folders above its catalog exists only on Linux here; the probe never asks elsewhere.
 #[cfg(not(target_os = "linux"))]

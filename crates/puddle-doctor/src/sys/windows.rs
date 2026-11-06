@@ -21,8 +21,9 @@ use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
 use windows_sys::Win32::System::Services::{
-    CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceStatus, SC_HANDLE,
-    SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_STATUS,
+    CloseServiceHandle, OpenSCManagerW, OpenServiceW, QUERY_SERVICE_CONFIGW, QueryServiceConfigW,
+    QueryServiceStatus, SC_HANDLE, SC_MANAGER_CONNECT, SERVICE_DISABLED, SERVICE_QUERY_CONFIG,
+    SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_STATUS,
 };
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, IsProcessorFeaturePresent, PF_VIRT_FIRMWARE_ENABLED,
@@ -34,8 +35,8 @@ use windows_sys::Win32::System::WindowsProgramming::{
 };
 
 use crate::facts::{
-    CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts,
-    ServiceState,
+    AgentService, CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts,
+    JobFacts, ServiceState,
 };
 
 /// The services of the Microsoft Entra Global Secure Access client.
@@ -259,6 +260,77 @@ pub(crate) fn global_secure_access() -> Option<GsaFacts> {
     Some(GsaFacts::from_services(states))
 }
 
+/// The service of the OpenSSH Authentication Agent.
+const SSH_AGENT_SERVICE: &str = "ssh-agent";
+
+/// What the OpenSSH Authentication Agent service looks like: not installed, disabled, stopped or
+/// running. `None` when the service manager cannot be asked at all.
+#[expect(unsafe_code, reason = "Service Control Manager queries")]
+pub(crate) fn ssh_agent_service() -> Option<AgentService> {
+    // SAFETY: local machine, default database, connect right only (no admin needed).
+    let scm = unsafe { OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT) };
+    if scm.is_null() {
+        return None;
+    }
+    let state = agent_service_state(scm);
+    // SAFETY: closes the manager handle opened above, once.
+    unsafe { CloseServiceHandle(scm) };
+    Some(state)
+}
+
+#[expect(unsafe_code, reason = "Service Control Manager queries")]
+fn agent_service_state(scm: SC_HANDLE) -> AgentService {
+    let w = wide(SSH_AGENT_SERVICE);
+    // SAFETY: `scm` is open; `w` is NUL-terminated and outlives the call.
+    let svc = unsafe { OpenServiceW(scm, w.as_ptr(), SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG) };
+    if svc.is_null() {
+        // SAFETY: reads this thread's last error, set by OpenServiceW just above.
+        return match ServiceState::from_open_error(unsafe { GetLastError() }) {
+            ServiceState::Missing => AgentService::Missing,
+            _ => AgentService::Unreadable,
+        };
+    }
+    // SAFETY: all-zero is a valid value of this plain-data struct.
+    let mut status: SERVICE_STATUS = unsafe { std::mem::zeroed() };
+    // SAFETY: `svc` is open with SERVICE_QUERY_STATUS; `status` is a valid out pointer.
+    let running = unsafe { QueryServiceStatus(svc, &raw mut status) } != 0;
+    let state = if running {
+        Some(status.dwCurrentState == SERVICE_RUNNING)
+    } else {
+        None
+    };
+    let disabled = service_start_disabled(svc);
+    // SAFETY: closes the handle opened above, once.
+    unsafe { CloseServiceHandle(svc) };
+    match (state, disabled) {
+        (Some(running), Some(disabled)) => AgentService::installed(disabled, running),
+        _ => AgentService::Unreadable,
+    }
+}
+
+/// Whether the open service `svc` (opened with `SERVICE_QUERY_CONFIG`) has the start type
+/// disabled; `None` when its configuration cannot be read.
+#[expect(unsafe_code, reason = "Service Control Manager queries")]
+fn service_start_disabled(svc: SC_HANDLE) -> Option<bool> {
+    let mut needed: u32 = 0;
+    // SAFETY: a null buffer of size 0 asks for the size needed; `needed` is a valid out pointer.
+    unsafe { QueryServiceConfigW(svc, std::ptr::null_mut(), 0, &raw mut needed) };
+    let bytes = usize::try_from(needed)
+        .ok()
+        .filter(|n| *n >= size_of::<QUERY_SERVICE_CONFIGW>())?;
+    // u64 elements keep the buffer aligned for the struct the call writes into it.
+    let mut buffer = vec![0_u64; bytes.div_ceil(size_of::<u64>())];
+    let config = buffer.as_mut_ptr().cast::<QUERY_SERVICE_CONFIGW>();
+    // SAFETY: `config` points to a buffer of at least `needed` bytes, aligned for the struct;
+    // `needed` is a valid out pointer.
+    let read = unsafe { QueryServiceConfigW(svc, config, needed, &raw mut needed) };
+    if read == 0 {
+        return None;
+    }
+    // SAFETY: the call succeeded, so the buffer starts with an initialised QUERY_SERVICE_CONFIGW.
+    Some(unsafe { (*config).dwStartType } == SERVICE_DISABLED)
+}
+
 /// What the service `name` looks like through the open service manager `scm`.
 #[expect(unsafe_code, reason = "Service Control Manager queries")]
 fn service_state(scm: SC_HANDLE, name: &str) -> ServiceState {
@@ -307,6 +379,7 @@ mod tests {
         let _ci = code_integrity();
         let _job = job();
         assert!(global_secure_access().is_some());
+        let _service = ssh_agent_service();
     }
 
     #[test]

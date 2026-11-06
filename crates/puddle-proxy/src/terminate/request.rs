@@ -421,6 +421,45 @@ mod tests {
     }
 
     #[test]
+    fn a_hundred_continue_is_expected_only_by_an_http11_request_with_a_body() {
+        let t = target("github.com", 443);
+        let no_body = parse(
+            &head("GET /a HTTP/1.1\r\nHost: github.com\r\nExpect: 100-continue\r\n\r\n"),
+            &t,
+        )
+        .unwrap();
+        assert!(!no_body.expect_continue, "no body, nothing to continue");
+        let old = parse(
+            &head("POST /a HTTP/1.0\r\nHost: github.com\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n"),
+            &t,
+        )
+        .unwrap();
+        assert!(!old.expect_continue, "HTTP/1.0 has no 100 Continue");
+    }
+
+    #[test]
+    fn a_websocket_upgrade_needs_http11_get_and_no_body() {
+        let t = target("github.com", 443);
+        let upgrade = |line: &str, extra: &str| {
+            parse(
+                &head(&format!(
+                    "{line}\r\nHost: github.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n{extra}\r\n"
+                )),
+                &t,
+            )
+            .unwrap()
+            .upgrade
+        };
+        assert!(upgrade("GET /a HTTP/1.1", ""));
+        assert!(!upgrade("GET /a HTTP/1.0", ""), "HTTP/1.0 has no upgrade");
+        assert!(!upgrade("POST /a HTTP/1.1", ""), "only GET upgrades");
+        assert!(
+            !upgrade("GET /a HTTP/1.1", "Content-Length: 2\r\n"),
+            "a request with a body does not"
+        );
+    }
+
+    #[test]
     fn upstream_headers_are_rebuilt() {
         let t = target("github.com", 443);
         let h = head(

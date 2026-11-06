@@ -1296,6 +1296,7 @@ dependencies = [
  "puddle-agent",
  "puddle-agent-proto",
  "puddle-proxy",
+ "tokio",
 ]
 
 [[package]]

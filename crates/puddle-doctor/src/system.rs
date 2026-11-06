@@ -10,10 +10,14 @@ use puddle_runtime::{
     VersionStatus,
 };
 
+use puddle_ssh_agent::{
+    AgentEndpoint, AgentError, Identity, WINDOWS_DEFAULT_PIPE, key_family, list_identities,
+};
+
 use crate::diagnose::Probe;
 use crate::facts::{
-    AccessDenied, BootFacts, CodeIntegrityFacts, DataPathFacts, DiskFacts, GsaFacts,
-    HypervisorFacts, JobFacts, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
+    AccessDenied, AgentService, BootFacts, CodeIntegrityFacts, DataPathFacts, DiskFacts, GsaFacts,
+    HypervisorFacts, JobFacts, Os, ProcessOutcome, RuntimeFacts, RuntimeState, SshAgentFacts,
 };
 use crate::{boot, launch, sys};
 
@@ -25,6 +29,7 @@ pub struct SystemProbe {
     dev: DevOverride,
     keep_boot_logs: Option<PathBuf>,
     data_dir: Option<PathBuf>,
+    ssh_agent_pipe: Option<String>,
     opened: OnceCell<BundledRuntime>,
 }
 
@@ -39,6 +44,7 @@ impl SystemProbe {
             dev,
             keep_boot_logs: None,
             data_dir: None,
+            ssh_agent_pipe: None,
             opened: OnceCell::new(),
         }
     }
@@ -58,6 +64,14 @@ impl SystemProbe {
     #[must_use]
     pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.data_dir = Some(dir.into());
+        self
+    }
+
+    /// Asks the SSH agent on `pipe` (a pipe name on Windows, a socket path elsewhere) instead of the
+    /// default one. A blank value counts as unset.
+    #[must_use]
+    pub fn with_ssh_agent_pipe(mut self, pipe: Option<String>) -> Self {
+        self.ssh_agent_pipe = pipe;
         self
     }
 
@@ -196,7 +210,177 @@ impl Probe for SystemProbe {
         }
     }
 
+    fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
+        ssh_agent_facts(
+            AgentEndpoint::for_host(self.ssh_agent_pipe.as_deref()),
+            limit,
+            sys::ssh_agent_service,
+        )
+    }
+
     fn data_path(&self) -> Option<DataPathFacts> {
         cfg!(target_os = "linux").then(|| sys::data_path(self.data_dir.as_deref()))
+    }
+}
+
+/// What asking the agent gave. `service` reads the OpenSSH Authentication Agent service's state,
+/// called only when the endpoint is the default pipe and nothing answers there: advice about that
+/// service means nothing for a pipe the user named.
+fn ssh_agent_facts(
+    endpoint: Option<AgentEndpoint>,
+    limit: Duration,
+    service: impl FnOnce() -> Option<AgentService>,
+) -> SshAgentFacts {
+    let Some(endpoint) = endpoint else {
+        return SshAgentFacts::NoEndpoint;
+    };
+    facts_from_answer(
+        endpoint.to_string(),
+        list_identities(&endpoint, limit),
+        service,
+    )
+}
+
+fn facts_from_answer(
+    shown: String,
+    answer: Result<Vec<Identity>, AgentError>,
+    service: impl FnOnce() -> Option<AgentService>,
+) -> SshAgentFacts {
+    match answer {
+        Ok(keys) => SshAgentFacts::Keys {
+            endpoint: shown,
+            families: keys
+                .iter()
+                .map(|k| key_family(k.key_type().unwrap_or_default()).to_owned())
+                .collect(),
+        },
+        Err(AgentError::Unreachable(e)) => SshAgentFacts::Unreachable {
+            service: (shown == WINDOWS_DEFAULT_PIPE).then(service).flatten(),
+            by_default: shown == WINDOWS_DEFAULT_PIPE,
+            endpoint: shown,
+            detail: e.to_string(),
+        },
+        Err(AgentError::Refused) => SshAgentFacts::Locked { endpoint: shown },
+        Err(AgentError::TimedOut(limit)) => SshAgentFacts::TimedOut {
+            endpoint: shown,
+            limit,
+        },
+        Err(e @ (AgentError::Io(_) | AgentError::Protocol(_))) => SshAgentFacts::Unusable {
+            endpoint: shown,
+            detail: e.to_string(),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::*;
+
+    fn blob(name: &str) -> Vec<u8> {
+        let mut v = u32::try_from(name.len()).unwrap().to_be_bytes().to_vec();
+        v.extend_from_slice(name.as_bytes());
+        v
+    }
+
+    fn key(name: &str) -> Identity {
+        Identity::new(blob(name), "a comment that must not be reported".into())
+    }
+
+    fn facts(endpoint: &str, answer: Result<Vec<Identity>, AgentError>) -> SshAgentFacts {
+        facts_from_answer(endpoint.into(), answer, || Some(AgentService::Stopped))
+    }
+
+    #[test]
+    fn keys_are_reported_as_families_only() {
+        let got = facts(
+            "/run/agent.sock",
+            Ok(vec![
+                key("ssh-ed25519"),
+                key("ssh-rsa-cert-v01@openssh.com"),
+                Identity::new(vec![0, 0], String::new()),
+                key("made-up@example.com"),
+            ]),
+        );
+        assert_eq!(
+            got,
+            SshAgentFacts::Keys {
+                endpoint: "/run/agent.sock".into(),
+                families: ["ed25519", "rsa", "other", "other"]
+                    .map(String::from)
+                    .to_vec(),
+            }
+        );
+    }
+
+    #[test]
+    fn the_service_is_read_only_for_the_default_pipe() {
+        let gone = || AgentError::Unreachable(io::ErrorKind::NotFound.into());
+        let named = facts(r"\\.\pipe\pageant.alice", Err(gone()));
+        assert!(
+            matches!(named, SshAgentFacts::Unreachable { service: None, .. }),
+            "{named:?}"
+        );
+        let default = facts(WINDOWS_DEFAULT_PIPE, Err(gone()));
+        assert!(
+            format!("{default:?}").contains("service: Some(Stopped)"),
+            "{default:?}"
+        );
+    }
+
+    #[test]
+    fn each_error_has_its_own_facts() {
+        let at = |e| facts("/s", Err(e));
+        assert_eq!(
+            at(AgentError::Refused),
+            SshAgentFacts::Locked {
+                endpoint: "/s".into()
+            }
+        );
+        let limit = Duration::from_secs(2);
+        assert_eq!(
+            at(AgentError::TimedOut(limit)),
+            SshAgentFacts::TimedOut {
+                endpoint: "/s".into(),
+                limit
+            }
+        );
+        for e in [
+            AgentError::Io(io::ErrorKind::BrokenPipe.into()),
+            AgentError::Protocol("not an identities answer"),
+        ] {
+            let text = e.to_string();
+            assert_eq!(
+                at(e),
+                SshAgentFacts::Unusable {
+                    endpoint: "/s".into(),
+                    detail: text
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn no_endpoint_asks_nothing() {
+        let got = ssh_agent_facts(None, Duration::from_secs(2), || None);
+        assert_eq!(got, SshAgentFacts::NoEndpoint);
+    }
+
+    #[test]
+    fn a_probe_with_nothing_at_the_named_endpoint_says_unreachable() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-agent");
+        let probe = SystemProbe::new(
+            dir.path().to_path_buf(),
+            RuntimeVersion::built_for(),
+            DevOverride::from_env(),
+        )
+        .with_ssh_agent_pipe(Some(missing.display().to_string()));
+        let got = probe.ssh_agent(Duration::from_secs(2));
+        assert!(
+            matches!(&got, SshAgentFacts::Unreachable { endpoint, service: None, by_default: false, .. } if *endpoint == missing.display().to_string()),
+            "{got:?}"
+        );
     }
 }

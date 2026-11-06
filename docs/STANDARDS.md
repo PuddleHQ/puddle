@@ -533,7 +533,7 @@ before pushing a change that touches the UI's behaviour, routes or accessibility
 
 | Workflow | Trigger | Runner | Gates |
 |---|---|---|---|
-| `ci.yml` | push to `develop`/`main`, every PR, every merge queue run, nightly (the two advisories jobs only), manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e`, `advisories` and `ui-audit`) in parallel jobs (Rust and repository gates; UI gates; RustSec advisories; npm advisories) plus `linux (all gates)`, the one result that needs them; every gate runs even if an earlier one fails |
+| `ci.yml` | push to `develop`/`main`, every PR, every merge queue run, nightly (the two advisories jobs only), manual (a newer push to a PR or `develop` cancels the run in flight; `main` never) | `ubuntu-24.04` | all of `scripts/check.sh all` (the `pre-push` set plus `ui-e2e`, `advisories` and `ui-audit`) in parallel jobs (Rust tests with coverage; Rust and repository gates; UI gates with the Chromium end-to-end tests; UI end-to-end tests on WebKit; RustSec advisories; npm advisories) plus `linux (all gates)`, the one result that needs them; every gate runs even if an earlier one fails |
 | `windows.yml` | every PR to `develop` and `main` (a newer push to the PR cancels the run in flight), every merge queue run, nightly 02:37 UTC (a job skips if this workflow already has a green nightly or manual run on that commit; a merge queue run never counts), manual | `windows-2025` | four parallel jobs (clippy; nextest, doc tests, secret scan; UI gates, e2e on Edge and the desktop shell smoke test; release build, MSVC: only on the nightly, on PRs to `main` and on manual runs from `develop`, so PRs to `develop` skip it) plus `windows-msvc (build, clippy, tests)`, the one result that needs them all. The nightly retries each failed test once and lists the flaky ones in the job summary, without failing |
 | `mutants.yml` | every PR that touches `crates/`, the mutants settings or scripts (a newer push cancels the run in flight; not a required check yet), nightly 03:53 UTC, manual | `ubuntu-24.04` | `scripts/check.sh mutants` on a PR (the mutants on the changed lines of the crates and files in `scripts/mutants-crates.txt`); the nightly sweep, one job per listed crate or file, uncached on Sundays |
 | `windows-cache.yml` | push to `develop` that changes a `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` or `.cargo/config.toml`, manual | `windows-2025` | builds the test binaries once (no tests) so the pull requests' `windows.yml` runs restore a current `windows` Rust cache entry instead of an older one; only a run on `develop` saves it |
@@ -581,7 +581,7 @@ tests (the compare API; any doubt runs everything).
 names report on the queue's commit too. Two repository variables switch the rest on; unset, nothing changes:
 
 - `PUDDLE_QUEUE=on` (set together with the merge queue rule on `develop`, never before it): a pull request to `develop`
-  runs the Linux jobs, without the `git-env` and `notices` gates and with the UI end-to-end tests on Chromium only,
+  runs the Linux jobs, without the `git-env` and `notices` gates and the WebKit end-to-end job (`ui-webkit`),
   and the Windows tests job (`windows tests`: nextest, doc tests, secret scan) when the PR changes Rust or fixture
   files (`win_rust`), so a Windows-only failure shows on the PR and not first in the queue. Windows clippy, the Windows UI
   job and both VM workflows skip, and their result jobs still report; a PR that changes no Rust skips the Windows
@@ -603,9 +603,9 @@ names report on the queue's commit too. Two repository variables switch the rest
   skip only on a `merge_group` run with the variable exactly `on` and the output `true` (specs marked `,defer:<output>`);
   their job summary says the check is not a test result for the skipped jobs. Unset or any other value, everything runs in
   the queue as before. Rollback: `gh variable set PUDDLE_TIER --body off`.
-  The same variable also narrows the Linux UI job's end-to-end tests to Chromium on a merge queue run (`scope` output
-  `defer_linux_webkit`; nothing skips, so the result job is unchanged and its `full-steps` guard accepts only
-  `chromium`, and only with the variable `on` and the output `true`). A diff that touches markup, styles or the
+  The same variable also skips the WebKit end-to-end job (`ui-webkit`) on a merge queue run (`scope` output
+  `defer_linux_webkit`; the result job accepts the skip only with the variable `on` and the output `true`, spec
+  `,defer:defer_linux_webkit`). A diff that touches markup, styles or the
   browser test setup (`ui/**/*.svelte`, `*.css`, `ui/src/app.html`, `ui/static/`, `ui/package.json`, the Playwright
   and Vite configs, the e2e helpers `fixture.ts`, `fixture-build.ts`, `support.ts` and `warm-up.ts`) keeps WebKit in the queue. WebKit runs nightly in `webkit.yml`, and a pull
   request to `main` runs both browsers in `ci.yml`.

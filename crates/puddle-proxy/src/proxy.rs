@@ -72,7 +72,8 @@ pub struct ProxyConfig {
     /// upstream budget, by a busy disk or a paused machine, still connects instead of finding its
     /// connection cut.
     pub guest_handshake_timeout: Duration,
-    /// How long a terminated connection may sit idle between two requests before it is closed.
+    /// How long a terminated connection, or a guest connection carrying plain HTTP, may sit idle
+    /// between two requests before it is closed.
     pub keepalive_timeout: Duration,
     /// How long a bound host may take to answer once the whole request is sent. Over it: `504`.
     pub upstream_head_timeout: Duration,
@@ -1553,8 +1554,9 @@ where
     }
 }
 
-/// Plain HTTP: one request per connection, `Host` rewritten to the checked target, body framed
-/// exactly, so a second request can't ride on the checked connection.
+/// One plain-HTTP request on a connection that carries only it (the image-pull listener's way;
+/// a workspace's plain HTTP keeps its connection, see [`plain::serve`]): `Host` rewritten to the
+/// checked target, body framed exactly, so a second request can't ride on the checked connection.
 pub(crate) async fn forward<S: AsyncRead + AsyncWrite + Unpin>(
     mut reader: ClientReader<S>,
     mut server: TcpStream,

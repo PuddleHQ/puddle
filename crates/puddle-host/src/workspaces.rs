@@ -35,9 +35,7 @@ use puddle_api::{
     LocalSource, NewWorkspace, OpenTarget, Operation, RepoFindings, Repository, ShellInitCheck,
     StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
-use puddle_api::{
-    EndReason, TerminalEnd, TerminalError, TerminalLink, TerminalService, TerminalSize,
-};
+use puddle_api::{EndReason, TerminalError, TerminalLink, TerminalService, TerminalSize};
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
 use puddle_compute::{

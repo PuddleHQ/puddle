@@ -226,14 +226,14 @@ async fn finish(socket: &mut WebSocket, end: &TerminalEnd) {
         message: end.message.as_deref(),
     })
     .unwrap_or_default();
-    if socket.send(Message::Text(text.into())).await.is_ok() {
-        let _ = socket
-            .send(Message::Close(Some(CloseFrame {
-                code: close_code::NORMAL,
-                reason: "".into(),
-            })))
-            .await;
-    }
+    // The page may have gone already; there is no one to tell.
+    let _ = socket.send(Message::Text(text.into())).await;
+    let _ = socket
+        .send(Message::Close(Some(CloseFrame {
+            code: close_code::NORMAL,
+            reason: "".into(),
+        })))
+        .await;
 }
 
 async fn refuse(socket: &mut WebSocket) {

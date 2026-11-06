@@ -527,43 +527,125 @@ async fn volume_size_zero_is_refused() {
     assert!(matches!(err, ComputeError::InvalidSpec { .. }));
 }
 
+/// A stream whose every read and write fails.
+struct Broken;
+impl tokio::io::AsyncRead for Broken {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        _: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Err(std::io::Error::other("read broke")))
+    }
+}
+impl tokio::io::AsyncWrite for Broken {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        _: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Err(std::io::Error::other("write broke")))
+    }
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
 #[tokio::test]
 async fn ssh_reports_io_errors() {
-    struct Broken;
-    impl tokio::io::AsyncRead for Broken {
-        fn poll_read(
-            self: std::pin::Pin<&mut Self>,
-            _: &mut std::task::Context<'_>,
-            _: &mut tokio::io::ReadBuf<'_>,
-        ) -> std::task::Poll<std::io::Result<()>> {
-            std::task::Poll::Ready(Err(std::io::Error::other("read broke")))
-        }
-    }
-    impl tokio::io::AsyncWrite for Broken {
-        fn poll_write(
-            self: std::pin::Pin<&mut Self>,
-            _: &mut std::task::Context<'_>,
-            _: &[u8],
-        ) -> std::task::Poll<std::io::Result<usize>> {
-            std::task::Poll::Ready(Err(std::io::Error::other("write broke")))
-        }
-        fn poll_flush(
-            self: std::pin::Pin<&mut Self>,
-            _: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<std::io::Result<()>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-        fn poll_shutdown(
-            self: std::pin::Pin<&mut Self>,
-            _: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<std::io::Result<()>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-    }
     let rt = FakeRuntime::new();
     let sb = rt.create(spec("a")).await.unwrap();
     let err = sb.serve_ssh(Broken).await.unwrap_err();
     assert!(err.to_string().contains("write broke"), "{err}");
+    // The terminal stand-in reports a connection that breaks the same way.
+    rt.serve_terminals();
+    let err = sb.serve_ssh(Broken).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ComputeError::Runtime {
+                op: "serve ssh",
+                ..
+            }
+        ),
+        "{err}"
+    );
+}
+
+struct AnyHost;
+
+impl russh::client::Handler for AnyHost {
+    type Error = russh::Error;
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the trait's method is async; the answer is known"
+    )]
+    async fn check_server_key(
+        &mut self,
+        _key: &russh::keys::PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn the_terminal_stand_in_runs_an_unknown_line_and_ends_cleanly_when_the_client_leaves_a_flood()
+ {
+    let (near, far) = tokio::io::duplex(64 * 1024);
+    let server = tokio::spawn(pty::serve(far));
+    let mut client = russh::client::connect_stream(Arc::default(), near, AnyHost)
+        .await
+        .unwrap();
+    let key = russh::keys::PrivateKey::from(
+        russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[1; 32]),
+    );
+    let auth = client
+        .authenticate_publickey(
+            "agent",
+            russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None),
+        )
+        .await
+        .unwrap();
+    assert!(auth.success());
+    let mut channel = client.channel_open_session().await.unwrap();
+    channel
+        .request_pty(false, "xterm", 80, 24, 0, 0, &[])
+        .await
+        .unwrap();
+    channel.request_shell(false).await.unwrap();
+    channel.data(&b"nothing-known\rflood\r"[..]).await.unwrap();
+    let mut seen = String::new();
+    while !seen.contains("yyyy") {
+        match channel.wait().await {
+            Some(russh::ChannelMsg::Data { data }) => {
+                seen.push_str(&String::from_utf8_lossy(&data))
+            }
+            Some(_) => {}
+            None => break,
+        }
+    }
+    assert!(seen.contains("$ "), "{seen}");
+    client
+        .disconnect(russh::Disconnect::ByApplication, "bye", "en")
+        .await
+        .unwrap();
+    drop(channel);
+    // However the connection ends under a flood, the server task ends too.
+    tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .ok();
 }
 
 #[tokio::test]

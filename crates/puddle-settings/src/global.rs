@@ -247,6 +247,12 @@ pub struct UiPrefs {
     /// warning line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disk_fail_free_gb: Option<FreeGb>,
+    /// The SSH agent Puddle asks for the key list: a named pipe on Windows (default
+    /// `\\.\pipe\openssh-ssh-agent`; Pageant's OpenSSH pipe goes here), a socket path elsewhere
+    /// (default the `SSH_AUTH_SOCK` of Puddle's session). A blank value counts as unset. Set in the
+    /// settings file; no screen edits it yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_agent_pipe: Option<String>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -402,6 +408,16 @@ impl UiPrefs {
         )
     }
 
+    /// The pipe or socket of the SSH agent the user named, or `None` when none is (a blank value
+    /// is none).
+    #[must_use]
+    pub fn ssh_agent_pipe(&self) -> Option<&str> {
+        self.ssh_agent_pipe
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
     fn is_empty(&self) -> bool {
         *self == Self::default()
     }
@@ -429,6 +445,26 @@ mod tests {
             loaded.settings.to_document(),
             json!({ "schema_version": 2 })
         );
+    }
+
+    #[test]
+    fn the_ssh_agent_pipe_is_unset_by_default_and_a_blank_value_is_unset() {
+        assert_eq!(UiPrefs::default().ssh_agent_pipe(), None);
+        let named = GlobalSettings::from_document(
+            json!({"ui": {"ssh_agent_pipe": r"  \\.\pipe\pageant.alice  "}}),
+        )
+        .unwrap();
+        assert_eq!(
+            named.settings.ui.ssh_agent_pipe(),
+            Some(r"\\.\pipe\pageant.alice")
+        );
+        assert_eq!(
+            named.settings.to_document()["ui"],
+            json!({"ssh_agent_pipe": r"  \\.\pipe\pageant.alice  "}),
+            "the stored text is kept as written"
+        );
+        let blank = GlobalSettings::from_document(json!({"ui": {"ssh_agent_pipe": "  "}})).unwrap();
+        assert_eq!(blank.settings.ui.ssh_agent_pipe(), None);
     }
 
     #[test]

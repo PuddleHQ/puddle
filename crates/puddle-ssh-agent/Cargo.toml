@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "puddle-ssh-agent"
+description = "A client for the SSH agent on the host: where it listens and which keys it holds"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+puddle-ipc = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

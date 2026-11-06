@@ -134,7 +134,13 @@ pub(crate) async fn audit(
 ) -> Result<Json<AuditPage>, ApiError> {
     let after = query.after;
     let (filter, cursor, limit) = query.parse()?;
-    let lines = blocking(move || Ok(state.store.audit_query(&filter, cursor, limit)?)).await?;
+    let (lines, mut names) = blocking(move || {
+        let lines = state.store.audit_query(&filter, cursor, limit)?;
+        let ids: Vec<i64> = lines.iter().map(|(id, _)| *id).collect();
+        let names = state.store.audit_workspace_names(&ids)?;
+        Ok((lines, names))
+    })
+    .await?;
     let entries = lines
         .iter()
         .map(|(id, line)| {
@@ -143,6 +149,7 @@ pub(crate) async fn audit(
             })?;
             Ok(AuditEntry {
                 id: *id,
+                workspace_name: names.remove(id),
                 record: AuditRecord::from(record),
             })
         })

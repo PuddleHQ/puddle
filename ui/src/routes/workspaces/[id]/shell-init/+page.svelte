@@ -111,7 +111,7 @@
 
     <form onsubmit={save} novalidate>
       <div class="field">
-        <label for="{fid}-text">Script for {workspace.display_name}</label>
+        <label for="{fid}-text">Script for {workspace.name}</label>
         <textarea
           id="{fid}-text"
           class="mono"

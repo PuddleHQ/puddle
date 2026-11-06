@@ -2,8 +2,9 @@
 //! A workspace's checkouts and the calls that add, manage and remove its repositories, over real
 //! HTTP against `FakeWorkspaces`: every refusal of API-56 and what API-57 lists.
 
+use puddle_api::DisplayName;
 use puddle_api::{Found, FoundList, RemoteNote, RepoUrl, Repository, Unsaved, WorkspaceRecord};
-use puddle_types::{CheckoutDir, WorkspaceId, WorkspaceName, WorkspaceStatus};
+use puddle_types::{CheckoutDir, WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};
 
 use crate::common::{Api, start};
@@ -37,7 +38,7 @@ fn seed(api: &Api, name: &str, status: WorkspaceStatus, dirs: &[(&str, &str)], g
             directory: CheckoutDir::new(dir).unwrap(),
         })
         .collect();
-    let mut record = WorkspaceRecord::new(id(name), WorkspaceName::new(name).unwrap(), entries);
+    let mut record = WorkspaceRecord::new(id(name), DisplayName::parse(name).unwrap(), entries);
     record.status = status;
     api.workspaces.seed(record, Unsaved::default());
     api.workspaces.set_checkouts(
@@ -216,7 +217,7 @@ async fn a_clone_is_accepted_busy_cloning_and_lists_the_entry_with_progress() {
         .send(
             "PATCH",
             "/api/workspaces/web",
-            Some(&json!({"display_name": "Website"})),
+            Some(&json!({"name": "Website"})),
         )
         .await;
     assert_eq!(renamed.status, 200, "{}", renamed.body);

@@ -25,11 +25,13 @@ computer and read the editor's secrets (a signed-in GitHub token). The browser e
    always `false`.
 7. The setting is in the connect step, the workspace's Settings tab and the global Settings page.
 8. Puddle keeps its own ssh config file, `ssh/config` in its data folder, with one `Host
-   puddle-<workspace>` entry per running workspace that has direct SSH on: user `root`, the
+   puddle-<id>` entry per running workspace that has direct SSH on: user `root`, the
    `puddle ssh-bridge` as `ProxyCommand`, and a login key that only Puddle holds
    (`ssh/login_ed25519`; the host gives the runtime only its public half). The entry never uses the
    user's own keys or ssh agent. Puddle rewrites the whole file from what is running, and empties
-   it when it starts, so an entry never outlives its endpoint.
+   it when it starts, so an entry never outlives its endpoint. `<id>` is the workspace's id, which
+   never changes; the name the user gave the workspace is display text and is in no host name, file
+   name or key, so renaming a workspace touches none of this.
 9. The one change to the user's own `~/.ssh/config` is an `Include` line for that file at its top,
    written when the first entry is about to be, which is after the user confirmed the trust text
    (it says so). Everything else in the file stays byte for byte, a symlinked config is followed and
@@ -37,7 +39,7 @@ computer and read the editor's secrets (a signed-in GitHub token). The browser e
    `Host` or `Match` line. A config that cannot be read or written, is read-only, is a link to a file
    that is not there, or was saved by another program meanwhile is reported as a problem on the
    workspace; nothing is overwritten.
-10. The host key of a workspace's sandbox is remembered in a file of Puddle's own, per workspace, and
+10. The host key of a workspace's sandbox is remembered in a file of Puddle's own, named by the workspace's id, and
    forgotten when the endpoint is a new one, since a rebuilt sandbox has a new key, and kept when an
    attach finds the endpoint the entry already names.
 11. "Open in VS Code" runs VS Code's `code` command on the workspace's ssh host

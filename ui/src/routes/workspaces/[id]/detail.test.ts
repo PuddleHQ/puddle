@@ -224,9 +224,7 @@ describe("the detail layout", () => {
   });
 
   it("titles the page with the name the user gave, keeps the identifier in the paths, and opens the rename dialog", async () => {
-    api.list = [
-      workspace("demo", { status: "running", display_name: "Web shop" }),
-    ];
+    api.list = [workspace("demo", { status: "running", name: "Web shop" })];
     await load();
     render(DetailLayout, { children: (() => {}) as never });
     expect(
@@ -603,22 +601,25 @@ describe("the overview", () => {
     expect(screen.queryByText("Root disk")).toBeNull();
   });
 
-  it("shows the identifier only once the workspace has another name", async () => {
+  it("shows the workspace id on its own row, with a button that copies it", async () => {
+    api.list = [workspace("demo", { status: "running", name: "Web shop" })];
     await load();
-    const view = render(Overview);
-    await screen.findByText("Status");
-    expect(screen.queryByText("Identifier")).toBeNull();
-    view.unmount();
-    api.list = [
-      workspace("demo", { status: "running", display_name: "Web shop" }),
-    ];
-    await load();
+    const write = vi.fn(async (_text: string) => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: write },
+      configurable: true,
+    });
     render(Overview);
-    expect(await screen.findByText("Identifier")).toBeInTheDocument();
-    expect(screen.getByText("Identifier").nextElementSibling).toHaveTextContent(
-      /^w-demo$/,
+    const row = await screen.findByText("Workspace id");
+    expect(row.nextElementSibling).toHaveTextContent(/^w-demo\s*Copy$/);
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Copy the workspace id" }),
     );
-    // The disk is still named after the identifier.
+    expect(write).toHaveBeenCalledWith("w-demo");
+    expect(
+      await screen.findByRole("button", { name: "Copy the workspace id" }),
+    ).toHaveTextContent("Copied");
+    // The disk is named after the id, not the name.
     expect(screen.getByText("ws-w-demo")).toBeInTheDocument();
   });
 

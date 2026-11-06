@@ -326,7 +326,7 @@ run_gate() {
         # Playwright against the real API serving the built UI. WebKit stands in for WebKitGTK and
         # WKWebView; where it can't start locally (missing system libraries) this runs Chromium
         # only and says so. CI (CI set) never narrows by itself; PUDDLE_E2E_PROJECTS set by the
-        # caller (ci.yml's light pull request mode, or a merge queue run in the nightly tier) narrows anywhere.
+        # caller (ci.yml's `ui` job runs Chromium, its `ui-webkit` job WebKit) narrows anywhere.
         ui_build
         case "$(uname -s)" in
         MINGW* | MSYS* | CYGWIN*) ;; # Windows runs the installed Edge, not Playwright's browsers

@@ -816,7 +816,7 @@ impl State {
     }
 
     fn workspace(&self, seed: &WorkspaceSeed, now: u64) -> Result<(), String> {
-        let name = puddle_types::WorkspaceName::new(&seed.name)
+        let name = puddle_api::DisplayName::parse(&seed.name)
             .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
         let id = WorkspaceId::new(&seed.name)
             .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;

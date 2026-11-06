@@ -1074,6 +1074,61 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Remembers `name` as the current name of `workspace`; audit records written from now on
+    /// carry it as `workspace_name`. Call it when a workspace is created or renamed, and for
+    /// every workspace at start.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the database can't be written.
+    pub fn set_workspace_name(
+        &self,
+        workspace: &WorkspaceId,
+        name: &str,
+    ) -> Result<(), StoreError> {
+        let conn = lock(&self.conn);
+        conn.execute(
+            "INSERT INTO workspace_names (workspace_id, name) VALUES (?1, ?2)
+             ON CONFLICT (workspace_id) DO UPDATE SET name = excluded.name",
+            params![workspace.as_str(), name],
+        )?;
+        Ok(())
+    }
+
+    /// [`Store::set_workspace_name`] for a caller that cannot act on a failure: it is logged and
+    /// dropped, and the records written meanwhile carry no name (a reader shows the id). Returns
+    /// whether the name was written.
+    pub fn note_workspace_name(&self, workspace: &WorkspaceId, name: &str) -> bool {
+        let written = self.set_workspace_name(workspace, name);
+        if let Err(err) = &written {
+            tracing::warn!(%workspace, error = %err, "the workspace's name was not written to the store");
+        }
+        written.is_ok()
+    }
+
+    /// The `workspace_name` each of the audit records `ids` was written with; a record written
+    /// before the column existed, or with no workspace, has none and is left out.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the database can't be read.
+    pub fn audit_workspace_names(&self, ids: &[i64]) -> Result<HashMap<i64, String>, StoreError> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare_cached(
+            "SELECT workspace_name FROM audit WHERE id = ?1 AND workspace_name IS NOT NULL",
+        )?;
+        let mut names = HashMap::new();
+        for id in ids {
+            if let Some(name) = stmt
+                .query_row([id], |row| row.get::<_, String>(0))
+                .optional()?
+            {
+                names.insert(*id, name);
+            }
+        }
+        Ok(names)
+    }
+
     /// SQLite's query plan for [`Store::audit_query`] with these arguments, one line per step.
     /// Lets a test check that a filter combination uses an index instead of timing it.
     ///
@@ -1201,8 +1256,9 @@ fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
 fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
-        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, workspace_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                 (SELECT name FROM workspace_names WHERE workspace_id = ?3))",
         params![
             sql_ts(record.ts()),
             record.kind(),
@@ -1581,6 +1637,52 @@ mod tests {
         let clock = Arc::new(ManualClock::new(1_000_000));
         let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
         (clock, store)
+    }
+
+    #[test]
+    fn an_audit_record_carries_the_name_its_workspace_had_when_it_was_written() {
+        let (_, store) = store();
+        let acme = WorkspaceId::new("acme").unwrap();
+        let op = |workspace: Option<&WorkspaceId>| NewWorkspaceOp {
+            op: WorkspaceOpKind::Rename,
+            workspace: workspace.cloned(),
+            outcome: WorkspaceOpOutcome::Succeeded,
+            actor: Actor::Ui,
+            detail: None,
+        };
+        store.record_workspace_op(&op(Some(&acme))).unwrap(); // before any name
+        store.set_workspace_name(&acme, "Acme shop").unwrap();
+        store.record_workspace_op(&op(Some(&acme))).unwrap();
+        store.set_workspace_name(&acme, "Acme").unwrap();
+        store.record_workspace_op(&op(Some(&acme))).unwrap();
+        store.record_workspace_op(&op(None)).unwrap(); // no workspace
+
+        let ids: Vec<i64> = store
+            .audit_lines(0, 100)
+            .unwrap()
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(ids.len(), 4);
+        let names = store.audit_workspace_names(&ids).unwrap();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert_eq!(names[&ids[1]], "Acme shop");
+        assert_eq!(names[&ids[2]], "Acme");
+        assert!(store.audit_workspace_names(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name() {
+        let (_, store) = store();
+        let ws = WorkspaceId::new("acme").unwrap();
+        assert!(store.note_workspace_name(&ws, "Acme shop"));
+        assert!(
+            store.note_workspace_name(&ws, "Acme"),
+            "a rename replaces it"
+        );
+        store.break_database("DROP TABLE workspace_names");
+        assert!(!store.note_workspace_name(&ws, "Lost"));
+        assert!(store.set_workspace_name(&ws, "Lost").is_err());
     }
 
     #[test]

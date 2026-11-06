@@ -218,7 +218,7 @@ mod tests {
         fn record() -> WorkspaceRecord {
             WorkspaceRecord::new(
                 puddle_types::WorkspaceId::new("0123456789abcdef0123456789abcdef").unwrap(),
-                puddle_types::WorkspaceName::new("web").unwrap(),
+                puddle_api::DisplayName::parse("web").unwrap(),
                 Vec::new(),
             )
         }
@@ -319,7 +319,7 @@ mod tests {
         fn record() -> WorkspaceRecord {
             WorkspaceRecord::new(
                 puddle_types::WorkspaceId::new("0123456789abcdef0123456789abcdef").unwrap(),
-                puddle_types::WorkspaceName::new("web").unwrap(),
+                puddle_api::DisplayName::parse("web").unwrap(),
                 Vec::new(),
             )
         }

@@ -31,6 +31,7 @@ gh api --paginate "repos/$repo/actions/caches?per_page=100" --jq '.actions_cache
                    then .key | sub("-[0-9a-f]{8}-[0-9a-f]{8}$"; "")
                  elif (.key | startswith("msb-linux-")) then "msb-linux"
                  elif (.key | startswith("node-cache-")) then "node-cache"
+                 elif (.key | startswith("playwright-webkit-")) then "playwright-webkit"
                  elif (.key | startswith("playwright-")) then "playwright"
                  elif (.key | startswith("notices-ok-")) then "notices-ok"
                  elif (.key | startswith("vm-guest-env-tools-")) then "vm-guest-env-tools"

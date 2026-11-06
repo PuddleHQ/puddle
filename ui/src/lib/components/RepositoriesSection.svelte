@@ -222,7 +222,7 @@
     {#if listing.checkouts.length === 0 && missing.length === 0}
       <p class="hint">No checkout is on the disk and none is listed.</p>
     {/if}
-    <ul class="rows" aria-label="Checkouts of {workspace.display_name}">
+    <ul class="rows" aria-label="Checkouts of {workspace.name}">
       {#each listing.checkouts as checkout (checkout.directory)}
         {@const entry = checkout.entry}
         {@const remoteUrl = checkout.remote_url}
@@ -301,10 +301,7 @@
       </p>
     {/if}
   {:else if store.status !== "loading" && entries.length > 0}
-    <ul
-      class="rows"
-      aria-label="Repositories listed for {workspace.display_name}"
-    >
+    <ul class="rows" aria-label="Repositories listed for {workspace.name}">
       {#each entries as entry (entry.directory)}
         <li>
           <div class="what">

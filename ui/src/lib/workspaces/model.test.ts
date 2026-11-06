@@ -26,7 +26,6 @@ import {
   repoUrlProblem,
   sortWorkspaces,
   canRename,
-  displayNameProblem,
   statusLabel,
   operationOfStep,
   statusTone,
@@ -146,47 +145,38 @@ describe("words", () => {
   });
 });
 
-describe("names", () => {
-  it.each([
-    ["web-shop", null],
-    ["a", null],
-    ["a1-b2", null],
-    ["", "Give the workspace a name."],
-    ["Web", "Use only lowercase letters, digits and hyphens."],
-    ["a b", "Use only lowercase letters, digits and hyphens."],
-    ["a_b", "Use only lowercase letters, digits and hyphens."],
-    ["-a", "Start and end with a letter or digit."],
-    ["a-", "Start and end with a letter or digit."],
-    ["m--x", "Names starting with m-- are reserved for Puddle's own use."],
-    ["tauri", '"tauri" is reserved; pick another.'],
-    ["ipc", '"ipc" is reserved; pick another.'],
-    ["asset", '"asset" is reserved; pick another.'],
-  ])("%j -> %j", (name, problem) => {
-    expect(nameProblem(name)).toBe(problem);
-  });
-
-  it("allows the longest and refuses one more", () => {
-    expect(nameProblem("a".repeat(MAX_NAME_LENGTH))).toBeNull();
-    expect(nameProblem("a".repeat(MAX_NAME_LENGTH + 1))).toMatch(/at most 60/);
-  });
-
-  it("suggests a name from a repository URL", () => {
+describe("suggested names", () => {
+  it("suggests the repository's own name as typed, without a slug", () => {
     expect(suggestName("https://github.com/acme/Ledger_Service.git")).toBe(
-      "ledger-service",
+      "Ledger_Service",
     );
     expect(suggestName("https://github.com/acme/web-shop/")).toBe("web-shop");
     expect(suggestName("https://example.org/a/b.git?x=1#y")).toBe("b");
     expect(suggestName("")).toBe("");
-    expect(suggestName("https://github.com/acme/___")).toBe("");
-    expect(suggestName("https://github.com/acme/tauri.git")).toBe("");
-    // Runs of punctuation collapse to one hyphen, so a suggestion never starts with the reserved m--.
-    expect(suggestName("https://github.com/acme/m--x.git")).toBe("m-x");
+    expect(suggestName("https://github.com/acme/tauri.git")).toBe("tauri");
+    expect(suggestName("/home/me/Shop API \u00fc")).toBe("Shop API \u00fc");
     expect(suggestName(`https://h/${"x".repeat(80)}`)).toHaveLength(
       MAX_NAME_LENGTH,
     );
     expect(
-      nameProblem(suggestName("https://github.com/acme/Ledger_Service.git")),
+      nameProblem(
+        suggestName("https://github.com/acme/Ledger_Service.git"),
+        null,
+        [],
+      ),
     ).toBeNull();
+  });
+
+  it("allows the longest name and refuses one more", () => {
+    expect(nameProblem("a".repeat(MAX_NAME_LENGTH), null, [])).toBeNull();
+    expect(nameProblem("a".repeat(MAX_NAME_LENGTH + 1), null, [])).toMatch(
+      /at most 60/,
+    );
+  });
+
+  it("takes the old reserved and label-only names as plain text", () => {
+    for (const ok of ["tauri", "m--x", "Web", "a b", "a_b", "-a", "a-"])
+      expect(nameProblem(ok, null, []), ok).toBeNull();
   });
 });
 
@@ -327,18 +317,18 @@ describe("the list", () => {
   });
 });
 
-describe("display names", () => {
-  const all = [workspace("a", { display_name: "Web shop" }), workspace("b")];
-  const problem = (text: string) => displayNameProblem(text, all[1]!, all);
+describe("names", () => {
+  const all = [workspace("a", { name: "Web shop" }), workspace("b")];
+  const problem = (text: string) => nameProblem(text, all[1]!.id, all);
 
   it("sorts the list by what the user calls the workspaces", () => {
-    expect(sortWorkspaces(all).map((w) => w.name)).toEqual(["b", "a"]);
+    expect(sortWorkspaces(all).map((w) => w.name)).toEqual(["b", "Web shop"]);
     expect(
       sortWorkspaces([
-        workspace("z", { display_name: "Same" }),
-        workspace("y", { display_name: "Same" }),
-      ]).map((w) => w.name),
-    ).toEqual(["y", "z"]);
+        workspace("z", { name: "Same" }),
+        workspace("y", { name: "Same" }),
+      ]).map((w) => w.id),
+    ).toEqual(["w-y", "w-z"]);
   });
 
   it("accepts a name, trimmed, with spaces, capitals and other scripts", () => {
@@ -359,7 +349,9 @@ describe("display names", () => {
   });
 
   it("is not a clash with the workspace's own name", () => {
-    expect(displayNameProblem("web shop", all[0]!, all)).toBeNull();
+    expect(nameProblem("web shop", all[0]!.id, all)).toBeNull();
+    // A new workspace has no id yet, so every name counts.
+    expect(nameProblem("web shop", null, all)).toMatch(/already called/);
   });
 
   it("allows a rename whenever the workspace is not being created or deleted", () => {

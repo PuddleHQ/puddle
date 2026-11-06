@@ -243,6 +243,15 @@ mod tests {
                 free_bytes: self.free_bytes,
             }
         }
+        fn disk_encryption(&self) -> puddle_doctor::DiskEncryptionFacts {
+            puddle_doctor::DiskEncryptionFacts {
+                data: puddle_doctor::DataEncryption::Volume {
+                    dir: PathBuf::from("/data/puddle"),
+                    protection: puddle_doctor::Protection::Encrypted { by: "LUKS2".into() },
+                },
+                swap: puddle_doctor::SwapFacts::None,
+            }
+        }
         fn ssh_agent(&self, _limit: Duration) -> puddle_doctor::SshAgentFacts {
             puddle_doctor::SshAgentFacts::Keys {
                 endpoint: "/run/agent.sock".into(),

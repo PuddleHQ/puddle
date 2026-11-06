@@ -6,6 +6,7 @@ ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot           a test VM booted and ran a program in 1.1 s
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 warn  SSH agent           no agent answers on /run/user/1000/agent.sock: SSH to servers other than Git hosts gets no key from Puddle; start your agent or name its socket in the settings
       note: SSH to servers other than Git hosts gets no key from Puddle. Start your agent
             (ssh-agent, gpg-agent, 1Password or Bitwarden) in the session that starts Puddle so
@@ -53,6 +54,11 @@ No problems found; 1 warning to know about. (1.2 s)
       "id": "disk_space",
       "status": "ok",
       "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+    },
+    {
+      "id": "disk_encryption",
+      "status": "ok",
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
     },
     {
       "id": "ssh_agent",

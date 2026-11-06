@@ -11,6 +11,7 @@ info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
       note: Puddle works. Root in a sandbox can map the virtual devices' registers through
             /dev/mem, so the runtime's own checks on every register access are the only line
             there. The Linux runtime's guest kernel is built without /dev/mem.
+ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 info  SSH agent             the agent on \\.\pipe\openssh-ssh-agent did not answer within 2 s; it may be waiting for you to unlock it
       note: Agents that ask you before they answer (1Password, Bitwarden) do this while they are
             locked. Unlock the agent and run the check again. Git hosts need no agent.
@@ -67,6 +68,11 @@ No problems found. (1.2 s)
       "summary": "the guest kernel of the Windows runtime has /dev/mem",
       "finding": "guest_dev_mem_present",
       "fix": "Puddle works. Root in a sandbox can map the virtual devices' registers through /dev/mem, so the runtime's own checks on every register access are the only line there. The Linux runtime's guest kernel is built without /dev/mem."
+    },
+    {
+      "id": "disk_encryption",
+      "status": "ok",
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
     },
     {
       "id": "ssh_agent",

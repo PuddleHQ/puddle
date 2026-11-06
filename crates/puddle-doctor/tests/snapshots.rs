@@ -15,9 +15,10 @@ use std::time::Duration;
 
 use puddle_doctor::{
     AccessDenied, AgentService, BlockedBy, BlockedFolder, BootFacts, CheckId, CodeIntegrity,
-    CodeIntegrityFacts, DataPathFacts, DiskFacts, Finding, GsaFacts, HypervisorApi,
-    HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe, ProcessOutcome, Report, RuntimeFacts,
-    RuntimeState, SshAgentFacts, Status, WritableFolder, diagnose,
+    CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, Finding,
+    GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe,
+    ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState, SshAgentFacts, Status,
+    SwapArea, SwapFacts, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -44,6 +45,7 @@ struct Fake {
     gsa: Option<GsaFacts>,
     disk: DiskFacts,
     data_path: Option<DataPathFacts>,
+    enc: DiskEncryptionFacts,
     ssh: SshAgentFacts,
     launches: Cell<u32>,
     boots: Cell<u32>,
@@ -81,6 +83,24 @@ fn disk_with_bytes(free_bytes: u64) -> DiskFacts {
     }
 }
 
+fn encrypted(by: &str) -> DiskEncryptionFacts {
+    let p = Protection::Encrypted { by: by.into() };
+    encryption(p.clone(), p)
+}
+
+fn encryption(data: Protection, swap: Protection) -> DiskEncryptionFacts {
+    DiskEncryptionFacts {
+        data: DataEncryption::Volume {
+            dir: PathBuf::from(DATA),
+            protection: data,
+        },
+        swap: SwapFacts::Areas(vec![SwapArea {
+            name: "/dev/dm-1".into(),
+            protection: swap,
+        }]),
+    }
+}
+
 /// A healthy Windows workstation.
 fn windows() -> Fake {
     Fake {
@@ -106,6 +126,7 @@ fn windows() -> Fake {
         gsa: Some(GsaFacts::NotInstalled),
         disk: disk_with_gb(120),
         data_path: None,
+        enc: encrypted("BitLocker"),
         ssh: SshAgentFacts::Keys {
             endpoint: WIN_PIPE.into(),
             families: vec!["ed25519".into(), "rsa".into()],
@@ -180,6 +201,9 @@ impl Probe for Fake {
     }
     fn data_path(&self) -> Option<DataPathFacts> {
         self.data_path.clone()
+    }
+    fn disk_encryption(&self) -> DiskEncryptionFacts {
+        self.enc.clone()
     }
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
         assert_eq!(limit, Duration::from_secs(2), "the agent gets 2 s");
@@ -1157,6 +1181,7 @@ fn json_schema_is_versioned_and_stable() {
             "test_boot",
             "disk_space",
             "guest_kernel",
+            "disk_encryption",
             "ssh_agent",
             "global_secure_access"
         ]
@@ -1635,4 +1660,152 @@ fn no_ssh_agent_result_is_ever_a_failure() {
         assert_ne!(r.check(CheckId::SshAgent).unwrap().status, Status::Fail);
         assert!(r.ok);
     }
+}
+
+#[test]
+fn encryption_is_ok_on_an_encrypted_machine_and_with_no_swap() {
+    let r = check("encryption_ok", &linux(), CheckId::DiskEncryption, None);
+    assert_eq!(r.check(CheckId::DiskEncryption).unwrap().status, Status::Ok);
+    let fake = Fake {
+        enc: DiskEncryptionFacts {
+            data: DataEncryption::Volume {
+                dir: PathBuf::from(DATA),
+                protection: Protection::Encrypted { by: "LUKS2".into() },
+            },
+            swap: SwapFacts::None,
+        },
+        ..linux()
+    };
+    check("encryption_no_swap", &fake, CheckId::DiskEncryption, None);
+}
+
+#[test]
+fn an_unencrypted_drive_warns_and_names_what_it_means_for_secrets() {
+    let fake = Fake {
+        enc: encryption(
+            Protection::NotEncrypted,
+            Protection::Encrypted { by: "LUKS2".into() },
+        ),
+        ..linux()
+    };
+    let r = check(
+        "encryption_drive_not_encrypted",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskNotEncrypted),
+    );
+    let c = r.check(CheckId::DiskEncryption).unwrap();
+    assert_eq!(c.status, Status::Warn);
+    assert!(c.fix.as_deref().unwrap().contains("secrets"));
+    assert!(r.ok, "a warning never fails the report");
+}
+
+#[test]
+fn an_unencrypted_swap_warns_on_every_os() {
+    for (name, fake) in [
+        ("encryption_swap_not_encrypted_linux", linux()),
+        ("encryption_swap_not_encrypted_windows", windows()),
+        (
+            "encryption_swap_not_encrypted_macos",
+            Fake {
+                os: Os::MacOs,
+                ..linux()
+            },
+        ),
+    ] {
+        let fake = Fake {
+            enc: encryption(
+                Protection::Encrypted { by: "x".into() },
+                Protection::NotEncrypted,
+            ),
+            ..fake
+        };
+        check(
+            name,
+            &fake,
+            CheckId::DiskEncryption,
+            Some(Finding::SwapNotEncrypted),
+        );
+    }
+}
+
+#[test]
+fn an_unreadable_state_is_info_and_swap_in_memory_is_fine() {
+    let fake = Fake {
+        enc: DiskEncryptionFacts {
+            data: DataEncryption::Volume {
+                dir: PathBuf::from(DATA),
+                protection: Protection::Unknown {
+                    why: "PowerShell did not answer within 8s".into(),
+                },
+            },
+            swap: SwapFacts::Areas(vec![SwapArea {
+                name: "/dev/zram0".into(),
+                protection: Protection::NotOnDisk {
+                    what: "compressed memory (zram)".into(),
+                },
+            }]),
+        },
+        ..windows()
+    };
+    let r = check(
+        "encryption_unknown",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskEncryptionUnknown),
+    );
+    assert_eq!(
+        r.check(CheckId::DiskEncryption).unwrap().status,
+        Status::Info
+    );
+}
+
+#[test]
+fn an_unreadable_swap_list_with_an_unencrypted_drive_still_warns_and_keeps_the_reason() {
+    let fake = Fake {
+        enc: DiskEncryptionFacts {
+            data: DataEncryption::Volume {
+                dir: PathBuf::from(DATA),
+                protection: Protection::NotEncrypted,
+            },
+            swap: SwapFacts::Unreadable {
+                why: "/proc/swaps: permission denied".into(),
+            },
+        },
+        ..linux()
+    };
+    let r = check(
+        "encryption_swap_list_unreadable",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskNotEncrypted),
+    );
+    let c = r.check(CheckId::DiskEncryption).unwrap();
+    assert!(c.detail.as_deref().unwrap().contains("/proc/swaps"));
+    assert_eq!(SwapFacts::None.areas().len(), 0);
+}
+
+#[test]
+fn drive_and_swap_both_unencrypted_on_an_unknown_os_gets_generic_advice() {
+    let fake = Fake {
+        os: Os::Other,
+        enc: encryption(Protection::NotEncrypted, Protection::NotEncrypted),
+        ..linux()
+    };
+    let r = check(
+        "encryption_both_not_encrypted_other_os",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskNotEncrypted),
+    );
+    let fix = r
+        .check(CheckId::DiskEncryption)
+        .unwrap()
+        .fix
+        .clone()
+        .unwrap();
+    assert!(
+        fix.starts_with("The drive and the swap are not encrypted"),
+        "{fix}"
+    );
 }

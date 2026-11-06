@@ -299,4 +299,21 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn a_field_without_h3_stays_byte_for_byte_beside_one_that_loses_entries() {
+        let (left, removed) = stripped(&[br#"h2=":443",h2=":8443""#, br#"h3=":443""#]);
+        assert_eq!(removed, 1);
+        assert_eq!(left, vec![br#"h2=":443",h2=":8443""#.to_vec()]);
+    }
+
+    #[test]
+    fn headers_with_nothing_to_strip_are_left_in_their_order() {
+        let mut headers = HeaderMap::new();
+        headers.append(ALT_SVC, HeaderValue::from_static(r#"h2=":443""#));
+        headers.append("x-other", HeaderValue::from_static("1"));
+        assert_eq!(strip_h3(&mut headers), 0);
+        let names: Vec<_> = headers.keys().map(|n| n.as_str().to_owned()).collect();
+        assert_eq!(names, ["alt-svc", "x-other"]);
+    }
 }

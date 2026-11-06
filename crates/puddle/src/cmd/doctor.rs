@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use puddle_doctor::boot::boot_logs_dir;
 use puddle_doctor::{Options, Probe, Report, SystemProbe, diagnose};
-use puddle_host::{FileSettings, HostPaths, disk_limits};
+use puddle_host::{FileSettings, HostPaths, disk_limits, ssh_agent_pipe};
 
 use crate::cli::{Command, UsageError};
 
@@ -60,6 +60,7 @@ pub fn run(args: DoctorArgs) -> ExitCode {
         .map_err(|e| e.to_string())
         .and_then(|exe| SystemProbe::installed(&exe).map_err(|e| e.to_string()))
         .map(|probe| keeping_logs(probe, data.as_deref()))
+        .map(|probe| probe.with_ssh_agent_pipe(ssh_pipe(data.as_deref())))
     {
         Ok(probe) => probe,
         Err(e) => {
@@ -105,6 +106,11 @@ fn free_space_lines(data: Option<&Path>) -> (u64, u64) {
         None => puddle_settings::DiskSpaceLimits::default(),
     };
     (limits.warn().bytes(), limits.fail().bytes())
+}
+
+/// The SSH agent pipe or socket the settings in the data folder name, if any.
+fn ssh_pipe(data: Option<&Path>) -> Option<String> {
+    data.and_then(|data| ssh_agent_pipe(&FileSettings::new(HostPaths::new(data).settings())))
 }
 
 /// The report on `probe` as the text to print and the exit code; `disk_lines` are the free-space
@@ -235,6 +241,12 @@ mod tests {
             DiskFacts::Read {
                 dir: PathBuf::from("/data/puddle"),
                 free_bytes: self.free_bytes,
+            }
+        }
+        fn ssh_agent(&self, _limit: Duration) -> puddle_doctor::SshAgentFacts {
+            puddle_doctor::SshAgentFacts::Keys {
+                endpoint: "/run/agent.sock".into(),
+                families: vec!["ed25519".into()],
             }
         }
     }

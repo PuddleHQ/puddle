@@ -96,3 +96,25 @@ fn the_grammar_corpus_reaches_every_shape_of_line_the_grammar_makes() {
     shapes.dedup();
     assert_eq!(shapes, ["answer", "not a query", "not an answer", "query"]);
 }
+
+#[test]
+fn every_exchange_in_the_ask_corpus_keeps_the_stream_invariants() {
+    for (name, input) in corpus_of("resolve_ask") {
+        let exchange = fuzzing::AskExchange::from_input(&input);
+        assert!(exchange.is_some(), "{name} does not decode");
+        if let Some(exchange) = exchange {
+            fuzzing::resolve_ask(&exchange);
+        }
+    }
+}
+
+#[test]
+fn the_ask_corpus_reaches_every_shape_of_reply_the_grammar_makes() {
+    let mut shapes: Vec<&str> = corpus_of("resolve_ask")
+        .iter()
+        .filter_map(|(_, input)| fuzzing::AskExchange::from_input(input).map(|e| e.shape()))
+        .collect();
+    shapes.sort_unstable();
+    shapes.dedup();
+    assert_eq!(shapes, ["answer", "cut", "junk"]);
+}

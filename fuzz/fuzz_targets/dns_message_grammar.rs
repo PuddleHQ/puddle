@@ -5,9 +5,9 @@
 
 use libfuzzer_sys::fuzz_target;
 
-#[path = "../checks/dns_message.rs"]
-mod dns_message;
 #[path = "../checks/dns_message_grammar.rs"]
 mod checks;
+#[path = "../checks/dns_message.rs"]
+mod dns_message;
 
 fuzz_target!(|message: checks::Message| checks::dns_message_grammar(&message));

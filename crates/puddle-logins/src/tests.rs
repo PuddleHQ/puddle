@@ -124,9 +124,13 @@ async fn answered(
 }
 
 async fn claude_login(rig: &Rig, access: &str, refresh: &str) -> Value {
+    claude_login_at(rig, "platform.claude.com", access, refresh).await
+}
+
+async fn claude_login_at(rig: &Rig, token_host: &str, access: &str, refresh: &str) -> Value {
     let exchange = rig
         .logins
-        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+        .begin(&host(token_host), "POST", "/v1/oauth/token");
     let body = answered(
         exchange,
         200,
@@ -175,6 +179,36 @@ async fn a_claude_login_keeps_the_tokens_and_the_tool_gets_stand_ins_with_their_
     assert_eq!(kept[0].roles, [Role::Access, Role::Refresh]);
 }
 
+/// Claude Code 2.1.5 and older exchange the code and refresh on the console host. The answer
+/// is the one the newer host gives; the request bodies are what that version sends.
+#[tokio::test]
+async fn an_old_claude_code_login_on_the_console_host_is_kept_like_a_new_one() {
+    let rig = rig();
+    let given = claude_login_at(&rig, "console.anthropic.com", REAL_ACCESS, REAL_REFRESH).await;
+    let access = given["access_token"].as_str().unwrap();
+    let refresh = given["refresh_token"].as_str().unwrap();
+    assert!(access.starts_with("sk-ant-oat01-") && access.len() == REAL_ACCESS.len());
+    assert!(refresh.starts_with("sk-ant-ort01-") && refresh.len() == REAL_REFRESH.len());
+    assert!(!given.to_string().contains("CANARY"));
+    assert_eq!(given["expires_in"], 28800);
+    assert_eq!(rig.registry.len(), 2);
+    assert_eq!(rig.notices.seen(), []);
+    let kept = vault(&rig).read(&CLAUDE, Role::Access).unwrap().unwrap();
+    assert_eq!(kept.real.as_str(), REAL_ACCESS);
+
+    // The refresh the old version sends carries the stand-in, swapped back toward the console host.
+    let exchange = rig
+        .logins
+        .begin(&host("console.anthropic.com"), "POST", "/v1/oauth/token")
+        .unwrap();
+    assert_eq!(exchange.swap_fields(), ["refresh_token"]);
+
+    // A login on either host fills the same slots: one stand-in each.
+    let again = claude_login_at(&rig, "platform.claude.com", ACCESS_B, REFRESH_B).await;
+    assert_eq!(again["access_token"], given["access_token"]);
+    assert_eq!(rig.registry.len(), 2);
+}
+
 #[tokio::test]
 async fn a_refresh_gives_the_tool_the_same_stand_ins_with_new_tokens_behind_them() {
     let rig = rig();
@@ -220,6 +254,8 @@ async fn the_token_endpoint_asks_for_the_refresh_swap_and_other_requests_are_not
 
     for (name, method, path) in [
         ("platform.claude.com", "GET", "/v1/oauth/token"),
+        ("console.anthropic.com", "GET", "/v1/oauth/token"),
+        ("console.anthropic.com", "POST", "/v1/oauth/authorize"),
         ("platform.claude.com", "POST", "/v1/oauth/authorize"),
         ("platform.claude.com", "POST", "/v1/oauth/token/extra"),
         ("api.anthropic.com", "POST", "/v1/oauth/token"),
@@ -864,6 +900,7 @@ fn the_hosts_are_every_profiles_endpoints_and_api_hosts_while_capture_is_on() {
     let hosts = rig.logins.hosts();
     for name in [
         "platform.claude.com",
+        "console.anthropic.com",
         "api.anthropic.com",
         "github.com",
         "api.github.com",

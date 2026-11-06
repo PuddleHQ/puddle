@@ -45,6 +45,7 @@ describe("localCategory", () => {
 
   it("has a label for every category", () => {
     expect(Object.keys(LOCAL_LABELS).sort()).toEqual([
+      "company_network",
       "link_local",
       "loopback",
       "metadata",

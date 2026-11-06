@@ -265,11 +265,35 @@ done
 MAIN_ENV=()
 main_case "light: PUDDLE_QUEUE unset" ui pull_request develop ok "$tmp/ui.txt"
 
+# The Windows tests run on a pull request that changes Rust, in the light mode too (`win_rust` stays
+# true there; the windows workflow no longer skips its tests job on `light`). A docs-only pull
+# request keeps `win_rust=false`, so the job is skipped and the result job accepts that. The queue
+# run of the same files is never light.
+printf 'crates/puddle-fs/src/lib.rs\n' >"$tmp/rust.txt"
+printf 'docs/STANDARDS.md\nREADME.md\n' >"$tmp/docs.txt"
+printf 'ui/e2e/fixtures/data.json\n' >"$tmp/fixture.txt"
+want_out() { grep -q "^$1\$" "$tmp/out" || bad "main: $2: want $1, got: $(tr '\n' ' ' <"$tmp/out")"; }
+MAIN_ENV=(PUDDLE_QUEUE=on)
+WANT_LIGHT=true main_case "light: rust-only pull request" rust pull_request develop ok "$tmp/rust.txt"
+want_out win_rust=true "light: a rust-only pull request keeps the Windows tests"
+want_out ci_rust=true "light: a rust-only pull request runs the Linux Rust gates"
+WANT_LIGHT=true main_case "light: fixture-only pull request" mixed pull_request develop ok "$tmp/fixture.txt"
+want_out win_rust=true "light: a fixture-only pull request keeps the Windows tests"
+WANT_LIGHT=true main_case "light: docs-only pull request" docs pull_request develop ok "$tmp/docs.txt"
+want_out win_rust=false "light: a docs-only pull request has no Windows tests"
+WANT_LIGHT=true main_case "light: ui-only pull request" ui pull_request develop ok "$tmp/ui.txt"
+want_out win_rust=false "light: a ui-only pull request has no Windows tests"
+WANT_LIGHT=true main_case "light: always-run path" full pull_request develop ok "$tmp/rename.txt"
+want_out win_rust=true "light: an always-run path keeps the Windows tests"
+MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 PUDDLE_QUEUE=on)
+main_case "queue: rust-only merge group" rust merge_group "" ok "$tmp/rust.txt"
+want_out win_rust=true "queue: a rust-only merge group runs the Windows tests"
+MAIN_ENV=()
+
 # The nightly tier through the whole script: only a merge queue run with PUDDLE_TIER=on, and the
 # outputs of the group's diff; any doubt prints the full set with nothing deferred.
 printf 'crates/puddle-app/src/lib.rs\n' >"$tmp/app.txt"
 printf 'ui/src/lib/components/RequestRow.svelte\n' >"$tmp/component.txt"
-want_out() { grep -q "^$1\$" "$tmp/out" || bad "main: $2: want $1, got: $(tr '\n' ' ' <"$tmp/out")"; }
 MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 PUDDLE_TIER=on)
 main_case "tier: merge group, ui-only diff" ui merge_group "" ok "$tmp/ui.txt"
 want_out defer_vm_windows=true "tier: ui-only diff defers the VM job"
@@ -455,7 +479,7 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key[,fl
 matrix_bg() { (fail=0; matrix "$@"; echo "matrix $1: $MATRIX_CASES cases" >&2; exit "$fail") & mpids+=($!); }
 mpids=()
 matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip
-matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust,queue ui=ui,queue,defer:defer_win_ui
+matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust ui=ui,queue,defer:defer_win_ui
 matrix_bg vm-linux --nightly-skips vm build=vm,queue tests=vm,queue
 matrix_bg vm-windows --nightly-skips vm build=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows
 for p in "${mpids[@]}"; do wait "$p" || fail=1; done
@@ -467,19 +491,25 @@ verdict push 1 "ci push: light ran, rust skipped" "$CI_FULL" "${ci_specs[@]}" --
 # The light mode: a queue-only job may skip on a pull request to develop with PUDDLE_QUEUE=on, and
 # nowhere else. The verdict works the mode out from the event, not from the scope job's output.
 VM_Q=(--nightly-skips 'build=vm,queue' 'tests=vm,queue')
-WIN_Q=('clippy=win_rust,queue' 'tests=win_rust,queue' 'ui=ui,queue')
+WIN_Q=('clippy=win_rust,queue' 'tests=win_rust' 'ui=ui,queue')
 WIN_ALL='{"win_rust":"true","ui":"true","light":"true"}'
 VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=develop)
 verdict pull_request 0 "light: vm skipped" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
-verdict pull_request 0 "light: windows skipped, release skipped" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
+verdict pull_request 0 "light: windows clippy and ui skipped, tests ran, release skipped" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=success ui=skipped release=skipped
+verdict pull_request 1 "light: windows tests skipped though a rust path changed" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
+verdict pull_request 1 "light: windows tests failed" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=failure ui=skipped release=skipped
+verdict pull_request 1 "light: windows tests cancelled" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=cancelled ui=skipped release=skipped
+WIN_DOCS='{"win_rust":"false","ui":"false","light":"true"}'
+verdict pull_request 0 "light: docs-only, every windows job skipped by scope" "$WIN_DOCS" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=skipped
+verdict pull_request 1 "light: docs-only, a windows job failed" "$WIN_DOCS" "${WIN_Q[@]}" -- clippy=skipped tests=failure ui=skipped release=skipped
 verdict pull_request 0 "light: vm ran anyway" "$VM" "${VM_Q[@]}" -- build=success tests=success
 verdict pull_request 1 "light: vm build failed" "$VM" "${VM_Q[@]}" -- build=failure tests=skipped
-verdict pull_request 1 "light: a cancelled windows job" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=cancelled tests=skipped ui=skipped release=skipped
+verdict pull_request 1 "light: a cancelled windows job" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=cancelled tests=success ui=skipped release=skipped
 verdict pull_request 1 "light: a skip without the queue mark" "$CI_FULL" "${ci_specs[@]}" -- rust=skipped light=skipped ui=success
 verdict merge_group 1 "light env on a merge queue run" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
 verdict push 1 "light env on a push" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
 VERDICT_ENV=(PUDDLE_QUEUE=on PR_BASE_REF=main)
-verdict pull_request 1 "light: pull request to main" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=skipped ui=skipped release=success
+verdict pull_request 1 "light: pull request to main" "$WIN_ALL" "${WIN_Q[@]}" -- clippy=skipped tests=success ui=skipped release=success
 VERDICT_ENV=(PUDDLE_QUEUE=ON PR_BASE_REF=develop)
 verdict pull_request 1 "light: PUDDLE_QUEUE=ON is not on" "$VM" "${VM_Q[@]}" -- build=skipped tests=skipped
 VERDICT_ENV=(PR_BASE_REF=develop)
@@ -490,7 +520,7 @@ verdict merge_group 0 "merge queue: vm scoped out by the group's diff" "$VMF" "$
 # The nightly tier: the result job accepts the skip of a moved job on a merge queue run only with
 # PUDDLE_TIER=on and scope's defer output true for that job; the summary says so.
 VMT=(--nightly-skips 'build=vm,queue,defer:defer_vm_windows' 'tests=vm,queue,defer:defer_vm_windows')
-WINT=('clippy=win_rust,queue,defer:defer_win_clippy' 'tests=win_rust,queue' 'ui=ui,queue,defer:defer_win_ui')
+WINT=('clippy=win_rust,queue,defer:defer_win_clippy' 'tests=win_rust' 'ui=ui,queue,defer:defer_win_ui')
 VM_D='{"vm":"true","defer_vm_windows":"true"}'
 VM_E='{"vm":"true","defer_vm_windows":"false"}'
 WIN_D='{"win_rust":"true","ui":"true","defer_win_clippy":"true","defer_win_ui":"true"}'
@@ -622,7 +652,7 @@ import re, sys, yaml
 d = sys.argv[1]
 results = {  # workflow: (result job id, required name, verdict specs as the matrix above tests them)
     "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip"),
-    "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust,queue ui=ui,queue,defer:defer_win_ui"),
+    "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy tests=win_rust ui=ui,queue,defer:defer_win_ui"),
     "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue tests=vm,queue"),
     "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows"),
 }

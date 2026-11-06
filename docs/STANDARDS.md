@@ -284,7 +284,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
 | L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch), mutants-exclusions (no stale mutation exclusion), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
-| L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux), nightly + PRs to `main` (Windows) |
+| L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux); Windows: every PR that changes Rust, the merge queue, nightly, PRs to `main` |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
 | L4 Windows e2e (**W**) | the L3 scenarios on WHP plus Windows-only paths; hostile-guest **tier W** | same crate, same names | `vm-windows.yml` on the hosted `windows-2025` runner: every pull request to `develop`, by hand on any branch, nightly on `develop` |
@@ -581,9 +581,13 @@ tests (the compare API; any doubt runs everything).
 names report on the queue's commit too. Two repository variables switch the rest on; unset, nothing changes:
 
 - `PUDDLE_QUEUE=on` (set together with the merge queue rule on `develop`, never before it): a pull request to `develop`
-  runs only the Linux jobs, without the `git-env` and `notices` gates and with the UI end-to-end tests on Chromium only.
-  The Windows jobs and both VM workflows skip, and their result jobs still report. The merge queue then runs the full
-  set on the commit that lands. `scope` sets `light=true`; the result jobs (`ci/scope.sh verdict`, specs marked
+  runs the Linux jobs, without the `git-env` and `notices` gates and with the UI end-to-end tests on Chromium only,
+  and the Windows tests job (`windows tests`: nextest, doc tests, secret scan) when the PR changes Rust or fixture
+  files (`win_rust`), so a Windows-only failure shows on the PR and not first in the queue. Windows clippy, the Windows UI
+  job and both VM workflows skip, and their result jobs still report; a PR that changes no Rust skips the Windows
+  tests too and the result job accepts that like any scoped skip. The merge queue then runs the full
+  set on the commit that lands, with nextest stopping at its first failure (`--max-fail 1`; a PR and the nightly run
+  every test). The VM tiers (`vm-linux`, `vm-windows`) run in the queue only. `scope` sets `light=true`; the result jobs (`ci/scope.sh verdict`, specs marked
   `,queue`) and a last `full-steps` step in each job with skipped steps work the mode out again from the event, so a
   skip anywhere else still fails. A pull request to `main` always runs the full set.
 - `PUDDLE_QUEUE_SKIP_PUSH=on`: a push to `develop` whose commit a green merge queue run of `ci` tested skips the Rust,

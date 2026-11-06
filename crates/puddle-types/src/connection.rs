@@ -133,7 +133,7 @@ impl From<BlockReason> for RefusedReason {
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
 /// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`,
 /// `connection_limit`, `request_rule`, `suppressed`, `merged`, `limit:<code>` (a limit ended the connection or cut a stream of it), `pass_through:<code>` (a host the workspace decrypts only because it decrypts every host was passed through untouched), `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
-/// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, ...).
+/// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, `token_endpoint_spliced`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionReason {
@@ -327,6 +327,10 @@ pub struct ConnectionEvent {
     /// environment somewhere it should not.
     /// An id reads `stand-in:<secret|login>:<name>`; it never carries a value.
     pub unswapped_stand_ins: Vec<String>,
+    /// The ids of the stand-ins whose real values an answer from one of their hosts held, put back as
+    /// the stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),
+    /// each once, at most 16.
+    pub scrubbed_stand_ins: Vec<String>,
     /// Method and path, when the proxy saw the request in clear.
     pub http: Option<HttpRequestLine>,
     /// Bytes from the guest.
@@ -362,6 +366,7 @@ impl ConnectionEvent {
             binding_id: None,
             injected: false,
             unswapped_stand_ins: Vec::new(),
+            scrubbed_stand_ins: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,
@@ -396,6 +401,7 @@ impl ConnectionEvent {
             binding_id: None,
             injected: false,
             unswapped_stand_ins: Vec::new(),
+            scrubbed_stand_ins: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,

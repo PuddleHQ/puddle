@@ -100,3 +100,13 @@ updates:
     groups:
       lab-proxies:
         patterns: ["*"]
+  # Frozen on purpose: ci/login-tools-old pins Claude Code 2.1.5, and the CI install step checks that
+  # exact version, because the old login flow is tested against it. Nothing watches this directory
+  # automatically, yet Dependabot still opened a bump here (its security updates run without an entry
+  # in this file). `open-pull-requests-limit: 0` turns off both version and security update PRs for it.
+  - package-ecosystem: npm
+    directory: /ci/login-tools-old
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0

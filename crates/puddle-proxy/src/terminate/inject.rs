@@ -14,6 +14,7 @@ use ::http::{HeaderName, HeaderValue};
 use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroize as _;
 
+use super::wiped::Wiped;
 use crate::destination::BoxFuture;
 use crate::proxy::Refusal;
 
@@ -95,7 +96,10 @@ impl InjectedHeader {
     }
 
     pub(crate) fn header_value(&self) -> Option<HeaderValue> {
-        let mut value = HeaderValue::from_str(self.value.expose()).ok()?;
+        // The bytes sit in a buffer that is overwritten when the last clone of the value drops;
+        // `HeaderValue::from_str` would copy them into one that is freed as it is.
+        let bytes = Wiped::copy_of(self.value.expose().as_bytes()).into_bytes();
+        let mut value = HeaderValue::from_maybe_shared(bytes).ok()?;
         value.set_sensitive(true);
         Some(value)
     }

@@ -44,6 +44,10 @@ use super::request::{self, UpstreamVersion, bad, misdirected};
 use super::request_rules::{self, Refused};
 use super::session::short;
 use super::session::{Context, Outcome};
+use super::stand_in::{
+    NotScrubbed, ScrubNotes, answer_encoding_refusal, answer_failed_refusal, limit_accept_encoding,
+    scrub_answer,
+};
 use super::streams::{
     Activity, Clock, Registry, SWEEP_INTERVAL, Step, StreamGuard, Sweeper, ended,
 };
@@ -119,6 +123,8 @@ struct Shared {
     /// Why the real server could not be used at the handshake; the first stream gets it.
     deferred: Mutex<Option<Refusal>>,
     outcome: Mutex<Outcome>,
+    /// What the scrub of the answers did; it joins the outcome when the connection ends.
+    scrubbed: Arc<ScrubNotes>,
     streams: Arc<Registry>,
 }
 
@@ -256,6 +262,7 @@ where
         connecting: tokio::sync::Mutex::new(None),
         deferred: Mutex::new(deferred),
         outcome: Mutex::new(outcome),
+        scrubbed: Arc::default(),
         streams: Arc::new(Registry::new(Arc::clone(&limit_hit))),
     });
     let service = {
@@ -310,6 +317,7 @@ where
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     outcome.ended = limit_hit.get().copied();
+    outcome.record_scrubbed(&shared.scrubbed);
     std::mem::take(&mut *outcome)
 }
 
@@ -600,10 +608,8 @@ async fn exchange(
     if let Some(refusal) = unauthorized_answer(shared, &response, unauthorized.as_ref()) {
         return Err(refusal);
     }
-    let mut response = read_exchange_answer(shared, exchange.as_mut(), response).await?;
-    cx.termination
-        .stand_ins()
-        .hide_in_answer(response.headers_mut(), &cx.target.host);
+    let response = read_exchange_answer(shared, exchange.as_mut(), response).await?;
+    let response = scrub(shared, response, head_only).await?;
     let lease = match route {
         Route::H1(lease) => Some(lease),
         Route::H2(_) => None,
@@ -1043,19 +1049,10 @@ async fn websocket(
     };
     if !agreed {
         // The server said no: its answer goes to the guest as any other.
-        let mut response = response;
-        cx.termination
-            .stand_ins()
-            .hide_in_answer(response.headers_mut(), &cx.target.host);
+        let response = scrub(shared, response.map(AnswerBody::Streaming), false).await?;
         let sent = Arc::new(Sent::default());
         sent.finish();
-        return Ok(guest_response(
-            response.map(AnswerBody::Streaming),
-            false,
-            &sent,
-            lease,
-            guard,
-        ));
+        return Ok(guest_response(response, false, &sent, lease, guard));
     }
     if let Some(key) = &key
         && !ws::accept_matches(response.headers(), key)
@@ -1070,6 +1067,11 @@ async fn websocket(
         http_body_util::Empty::<Bytes>::new()
             .map_err(|never| match never {})
             .boxed_unsync(),
+    );
+    cx.termination.stand_ins().scrub_answer_headers(
+        response.headers_mut(),
+        &cx.target.host,
+        &shared.scrubbed,
     );
     for (name, value) in ws::answer_headers(response.headers(), false) {
         answer.headers_mut().append(name, value);
@@ -1124,7 +1126,33 @@ fn swap_stand_ins(
         .unwrap_or_else(PoisonError::into_inner);
     outcome.record_stand_ins(host, &swapped);
     outcome.record_stand_ins(host, &in_target);
+    if shared.cx.termination.stand_ins().scrubs_answers_from(host) {
+        limit_accept_encoding(headers);
+    }
     target
+}
+
+/// The answer with its real values put back as stand-ins (see [`scrub_answer`]); one in an
+/// encoding Puddle does not read is refused.
+async fn scrub(
+    shared: &Shared,
+    response: Response<AnswerBody>,
+    head_only: bool,
+) -> Result<Response<AnswerBody>, Refusal> {
+    let cx = &shared.cx;
+    scrub_answer(
+        cx.termination.stand_ins(),
+        response,
+        &cx.target.host,
+        head_only,
+        &shared.scrubbed,
+        cx.proxy.config.body_idle_timeout,
+    )
+    .await
+    .map_err(|why| match why {
+        NotScrubbed::Encoding => answer_encoding_refusal(&cx.target.host),
+        NotScrubbed::Failed => answer_failed_refusal(&cx.target.host),
+    })
 }
 
 fn record_injection(shared: &Shared, injection: Option<&Injection>) {
@@ -1440,7 +1468,7 @@ fn release(lease: Option<Lease>, sent: &Sent) {
 impl<B> Body for UpstreamBody<B>
 where
     B: Body<Data = Bytes> + Unpin,
-    B::Error: std::error::Error + Send + Sync + 'static,
+    B::Error: Into<BoxError>,
 {
     type Data = Bytes;
     type Error = BoxError;
@@ -1460,7 +1488,7 @@ where
             }
             Poll::Ready(Some(Err(err))) => {
                 this.lease = None;
-                Poll::Ready(Some(Err(Box::new(err))))
+                Poll::Ready(Some(Err(err.into())))
             }
             Poll::Ready(None) => {
                 this.finished();

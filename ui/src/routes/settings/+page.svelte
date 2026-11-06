@@ -8,6 +8,7 @@
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
+  import ProxySignIn from "#lib/components/ProxySignIn.svelte";
   import Toast from "#lib/components/Toast.svelte";
   import EnvironmentTable from "#lib/components/EnvironmentTable.svelte";
   import { EnvironmentStore } from "#lib/stores/environment.svelte.ts";
@@ -743,11 +744,13 @@
               workspace, Puddle keeps the real token on this computer and the
               workspace gets a stand-in that works only through Puddle. On by
               default. When Puddle cannot keep a token, it stops the sign-in
-              instead of letting the real token into the workspace. Turn it off
-              and a sign-in keeps its real token in the workspace. A workspace
+              instead of letting the real token into the workspace. A workspace
               can set its own switch; a change takes effect when a workspace
               next starts, and turning it off leaves the logins Puddle already
-              kept unused.
+              kept unused. A token the workspace prints, such as the one of
+              <code>claude setup-token</code>, is a stand-in as well and works
+              only inside that workspace. With capture off, a login keeps its
+              real token in the workspace.
             </p>
           </div>
           <input
@@ -847,6 +850,7 @@
             ></a
           >
         </div>
+        <ProxySignIn />
         <h3>System check</h3>
         <div class="setting">
           <div class="grow">

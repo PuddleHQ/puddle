@@ -2,6 +2,8 @@
 //! The OS credential store through the `keyring` crate: Credential Manager on Windows, Keychain
 //! on macOS, the Secret Service on Linux.
 
+use zeroize::Zeroize;
+
 use crate::name::StoredId;
 use crate::secret::Secret;
 use crate::store::{SecretStore, StoreError};
@@ -61,6 +63,11 @@ impl SecretStore for KeyringStore {
         match self.entry(id)?.get_password() {
             Ok(value) => Ok(Some(Secret::new(value))),
             Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring::Error::BadEncoding(mut blob)) => {
+                // The error carries the stored bytes; overwrite them before they are freed.
+                blob.zeroize();
+                Err(StoreError)
+            }
             Err(_) => Err(StoreError),
         }
     }

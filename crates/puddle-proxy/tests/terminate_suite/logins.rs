@@ -1116,3 +1116,150 @@ async fn over_http2_a_login_capture_cannot_keep_fails_the_same_way() {
         assert_eq!(registry.len(), 0);
     }
 }
+
+/// A workspace with Claude's login (capture `enabled` or not) and one more allowed host,
+/// `spliced.test`, that is not decrypted and whose server is returned.
+async fn login_beside_a_spliced_host(pki: &Pki, enabled: bool) -> (Rig, FakeServer, FakeServer) {
+    let token = server(pki, TOKEN_HOST, claude_token_server()).await;
+    let spliced = server(
+        pki,
+        "spliced.test",
+        Arc::new(|_| Reply::ok("the real thing")),
+    )
+    .await;
+    let registry = Arc::new(StandIns::new());
+    let (logins, _) = logins_on(&registry, &Arc::new(MemoryStore::new()), enabled);
+    logins.load().await;
+    let rig = RigBuilder::new(pki)
+        .bound(vec![TOKEN_HOST, API_HOST])
+        .allow(vec![TOKEN_HOST, API_HOST, "spliced.test"])
+        .name(TOKEN_HOST, token.addr)
+        .name("spliced.test", spliced.addr)
+        .injector(TestInjector::new(|_| InjectDecision::PassThrough))
+        .stand_ins(&registry)
+        .exchanges(Arc::new(logins))
+        .build();
+    (rig, token, spliced)
+}
+
+/// `CONNECT authority`, then a TLS handshake that trusts the fake internet and asks for `sni`.
+async fn handshake_asking_for(
+    rig: &Rig,
+    pki: &Pki,
+    authority: &str,
+    sni: &str,
+) -> (
+    terminate_support::Guest,
+    std::io::Result<terminate_support::TlsStream>,
+) {
+    let mut guest = rig.guest();
+    let (code, reader) = guest.connect_to(authority).await;
+    assert_eq!(code, 200);
+    let config = terminate_support::Guest::client_config(std::slice::from_ref(&pki.root), &[]);
+    let result = tokio_rustls::TlsConnector::from(Arc::new(config))
+        .connect(
+            rustls::pki_types::ServerName::try_from(sni.to_owned()).unwrap(),
+            reader,
+        )
+        .await;
+    // The guest stays with the caller: dropping it would cut the route under the record.
+    (guest, result)
+}
+
+#[tokio::test]
+async fn a_tunnel_to_another_host_that_asks_for_the_token_endpoint_is_refused() {
+    let pki = Pki::new();
+    let (rig, token, spliced) = login_beside_a_spliced_host(&pki, true).await;
+    // Another name, another port: the proxy does not decrypt either, and the hello names the
+    // token endpoint, so no refresh token or code can go to the real server unswapped.
+    let mut guests = Vec::new();
+    for authority in ["spliced.test:443", "spliced.test:8443"] {
+        let (guest, refused) = handshake_asking_for(&rig, &pki, authority, TOKEN_HOST).await;
+        assert!(refused.is_err(), "{authority}: the guest gets an alert");
+        guests.push(guest);
+    }
+    let events = rig.events(2).await;
+    for event in events {
+        assert_eq!(event.reason.to_string(), "token_endpoint_spliced");
+        assert_eq!(event.decision, puddle_types::ConnectionDecision::Blocked);
+    }
+    assert_eq!(token.accepted(), 0);
+    assert_eq!(spliced.accepted(), 2, "connected, but never sent the hello");
+    assert!(spliced.recorded().is_empty());
+}
+
+#[tokio::test]
+async fn another_name_in_a_spliced_tunnel_and_the_decrypted_endpoint_itself_still_work() {
+    let pki = Pki::new();
+    let (rig, token, spliced) = login_beside_a_spliced_host(&pki, true).await;
+    // Spliced and honest: the server's own certificate, no refusal.
+    let mut other = rig.guest();
+    let mut client = other
+        .tls_trusting("spliced.test:443", std::slice::from_ref(&pki.root))
+        .await
+        .unwrap();
+    assert_eq!(
+        client.get("spliced.test", "/").await.text(),
+        "the real thing"
+    );
+    drop(client);
+    // A tunnel to the token endpoint itself is decrypted, as before.
+    let mut guest = rig.guest();
+    let mut client = guest.tls(&format!("{TOKEN_HOST}:443"), None).await.unwrap();
+    client
+        .send(&request(
+            "POST",
+            TOKEN_HOST,
+            "/v1/oauth/token",
+            "Content-Type: application/json\r\n",
+            &authorization_code(),
+        ))
+        .await;
+    assert_eq!(client.response("POST").await.status, 200);
+    assert_eq!(spliced.recorded().len(), 1);
+    assert_eq!(token.recorded().len(), 1);
+    drop(client);
+    for event in rig.events(2).await {
+        assert_ne!(event.reason.to_string(), "token_endpoint_spliced");
+    }
+}
+
+#[tokio::test]
+async fn with_capture_off_a_tunnel_that_asks_for_the_token_endpoint_is_left_alone() {
+    let pki = Pki::new();
+    let (rig, token, _spliced) = login_beside_a_spliced_host(&pki, false).await;
+    // Nothing is swapped for this workspace, so there is nothing to protect.
+    let (_guest, result) = handshake_asking_for(&rig, &pki, "spliced.test:443", TOKEN_HOST).await;
+    assert!(
+        result.is_err(),
+        "the server's certificate is for another name"
+    );
+    assert_eq!(rig.events(1).await[0].reason.to_string(), "rule");
+    assert_eq!(token.accepted(), 0);
+}
+
+#[tokio::test]
+async fn a_host_decrypted_only_because_everything_is_asks_for_the_token_endpoint_in_vain() {
+    let pki = Pki::new();
+    let token = server(&pki, TOKEN_HOST, claude_token_server()).await;
+    let free = server(&pki, "free.test", Arc::new(|_| Reply::ok("free"))).await;
+    let registry = Arc::new(StandIns::new());
+    let (logins, _) = logins_on(&registry, &Arc::new(MemoryStore::new()), true);
+    logins.load().await;
+    let rig = RigBuilder::new(&pki)
+        .bound(vec![TOKEN_HOST, API_HOST])
+        .allow(vec![TOKEN_HOST, API_HOST, "free.test"])
+        .name(TOKEN_HOST, token.addr)
+        .name("free.test", free.addr)
+        .injector(TestInjector::new(|_| InjectDecision::PassThrough))
+        .stand_ins(&registry)
+        .exchanges(Arc::new(logins))
+        .decrypting_all(true, &[])
+        .build();
+    let (_guest, refused) = handshake_asking_for(&rig, &pki, "free.test:443", TOKEN_HOST).await;
+    assert!(refused.is_err());
+    let event = rig.events(1).await.remove(0);
+    assert_eq!(event.reason.to_string(), "token_endpoint_spliced");
+    assert_eq!(event.decision, puddle_types::ConnectionDecision::Blocked);
+    assert_eq!(free.accepted(), 0);
+}

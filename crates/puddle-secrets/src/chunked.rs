@@ -123,7 +123,8 @@ impl<S: SecretStore> SecretStore for ChunkedStore<S> {
         let Some(head) = Head::parse(stored.expose()) else {
             return Ok(Some(stored));
         };
-        let mut value = String::new();
+        // Room for every piece up front: a `String` that grows frees each smaller copy unwiped.
+        let mut value = String::with_capacity(head.pieces * CHUNK_UNITS * 3);
         for index in 0..head.pieces {
             // A missing piece is a damaged entry, never a shorter value.
             let piece = self.inner.get(&head.piece(id, index)?)?.ok_or(StoreError)?;

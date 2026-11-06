@@ -25,15 +25,17 @@ use std::time::Duration;
 
 use ::http::header::{self, HeaderMap};
 use ::http::{HeaderValue, Response, StatusCode};
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use http_body::{Body, Frame, SizeHint};
 use http_body_util::BodyExt as _;
 use hyper::body::Incoming;
 use puddle_types::Host;
 
 use super::inject::InjectRefusal;
-use super::stand_in::{StandIns, Swapped};
+use super::leg::BoxError;
+use super::stand_in::{ScrubBody, StandIns, Swapped};
 use super::token_body::TokenBody;
+use super::wiped::Wiped;
 use crate::destination::BoxFuture;
 
 /// The most of a request or answer body an exchange reads. A token message is a few hundred
@@ -161,6 +163,12 @@ pub trait ExchangeRewriter: Send + Sync + fmt::Debug {
     /// exchange. Asked after the upstream certificate is verified and the injector has decided,
     /// for every request on a decrypted host, so it answers from memory and never waits.
     fn begin(&self, host: &Host, method: &str, path: &str) -> Option<Exchange>;
+
+    /// Whether `host` is the host of a token endpoint this rewriter reads. Asked of the name in
+    /// the `ClientHello` of a connection that is not decrypted, which is refused when it is.
+    fn is_token_endpoint(&self, _host: &Host) -> bool {
+        false
+    }
 }
 
 /// The request body of an exchange with its stand-ins swapped: `Some` with the new body when
@@ -177,10 +185,7 @@ pub(crate) fn swap_request_body(
         return (None, Swapped::default());
     };
     let (report, changed) = stand_ins.swap_fields(&mut parsed, exchange.swap_fields(), host);
-    (
-        changed.then(|| Bytes::copy_from_slice(&parsed.render())),
-        report,
-    )
+    (changed.then(|| parsed.render_bytes()), report)
 }
 
 /// An answer's body on its way to the guest: the upstream's own, or what the rewriter had in hand.
@@ -194,23 +199,30 @@ pub(crate) enum AnswerBody {
         first: Option<Bytes>,
         rest: Incoming,
     },
+    /// One of the above with the real values in it put back as stand-ins.
+    Scrubbed(Box<ScrubBody>),
+}
+
+fn boxed(err: hyper::Error) -> BoxError {
+    Box::new(err)
 }
 
 impl Body for AnswerBody {
     type Data = Bytes;
-    type Error = hyper::Error;
+    type Error = BoxError;
 
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, hyper::Error>>> {
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         match &mut *self {
-            Self::Streaming(body) => Pin::new(body).poll_frame(cx),
+            Self::Streaming(body) => Pin::new(body).poll_frame(cx).map_err(boxed),
             Self::Buffered(bytes) => Poll::Ready(bytes.take().map(|b| Ok(Frame::data(b)))),
             Self::Rejoined { first, rest } => match first.take() {
                 Some(bytes) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
-                None => Pin::new(rest).poll_frame(cx),
+                None => Pin::new(rest).poll_frame(cx).map_err(boxed),
             },
+            Self::Scrubbed(body) => Pin::new(&mut **body).poll_frame(cx),
         }
     }
 
@@ -219,6 +231,7 @@ impl Body for AnswerBody {
             Self::Streaming(body) => body.is_end_stream(),
             Self::Buffered(bytes) => bytes.is_none(),
             Self::Rejoined { .. } => false,
+            Self::Scrubbed(body) => body.is_end_stream(),
         }
     }
 
@@ -239,6 +252,7 @@ impl Body for AnswerBody {
                 hint.set_lower(inner.lower().saturating_add(held));
                 hint
             }
+            Self::Scrubbed(body) => body.size_hint(),
         }
     }
 }
@@ -277,7 +291,9 @@ pub(crate) async fn read_answer(
         }
         return Ok(Response::from_parts(parts, AnswerBody::Streaming(body)));
     }
-    let mut whole = BytesMut::new();
+    // The answer carries the real tokens: it is gathered in a buffer that is overwritten, and
+    // never reallocated unwiped, however the upstream frames it.
+    let mut whole = Wiped::new();
     loop {
         let frame = tokio::time::timeout(idle, body.frame())
             .await
@@ -298,18 +314,17 @@ pub(crate) async fn read_answer(
             return Ok(Response::from_parts(
                 parts,
                 AnswerBody::Rejoined {
-                    first: Some(whole.freeze()),
+                    first: Some(whole.into_bytes()),
                     rest: body,
                 },
             ));
         }
     }
-    let whole = whole.freeze();
-    let replaced = answer.rewrite(&head, &whole).await;
+    let replaced = answer.rewrite(&head, whole.as_ref()).await;
     if let Some(refusal) = answer.refusal() {
         return Err(AnswerError::Refused(refusal));
     }
-    let body = replaced.unwrap_or(whole);
+    let body = replaced.unwrap_or_else(|| whole.into_bytes());
     // Whatever framing the upstream used, the guest gets this body at its own length.
     if let Ok(length) = HeaderValue::from_str(&body.len().to_string()) {
         parts.headers.insert(header::CONTENT_LENGTH, length);
@@ -323,6 +338,22 @@ pub(crate) async fn read_answer(
 
 #[cfg(test)]
 mod tests {
+    #[derive(Debug)]
+    struct NoOverride;
+
+    impl ExchangeRewriter for NoOverride {
+        fn begin(&self, _: &Host, _: &str, _: &str) -> Option<Exchange> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_rewriter_names_no_token_endpoint_unless_it_says_so() {
+        let host = Host::parse_normalised("tokens.test").unwrap();
+        assert!(!NoOverride.is_token_endpoint(&host));
+        assert!(NoOverride.begin(&host, "POST", "/").is_none());
+    }
+
     use super::*;
 
     struct Plain;

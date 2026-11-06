@@ -24,6 +24,7 @@
     },
     "sign_in": {
       "methods": ["negotiate", "ntlm"],
+      "stored": [],
       "attempts": [
         {
           "proxy": "fallback.corp.example:3128",

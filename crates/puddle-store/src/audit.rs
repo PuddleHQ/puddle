@@ -104,6 +104,12 @@ pub struct ConnectionRecord {
     /// query). Absent in records written before it existed.
     #[serde(default)]
     pub unswapped_stand_ins: Vec<String>,
+    /// The ids of the stand-ins whose real values an answer from one of their hosts held, put back as
+    /// the stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),
+    /// each once, at most 16. Absent in records written
+    /// before it existed.
+    #[serde(default)]
+    pub scrubbed_stand_ins: Vec<String>,
     /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
     pub method: Option<String>,
     /// HTTP path without query string, where `method` is set.
@@ -147,6 +153,7 @@ impl ConnectionRecord {
             binding_id: event.binding_id.clone(),
             injected: event.injected,
             unswapped_stand_ins: event.unswapped_stand_ins.clone(),
+            scrubbed_stand_ins: event.scrubbed_stand_ins.clone(),
             method,
             path,
             path_truncated: false,
@@ -199,6 +206,7 @@ impl ConnectionRecord {
             binding_id: None,
             injected: false,
             unswapped_stand_ins: Vec::new(),
+            scrubbed_stand_ins: Vec::new(),
             method: None,
             path: None,
             path_truncated: false,
@@ -1246,6 +1254,11 @@ mod tests {
             AuditRecord::Connection(ConnectionRecord { unswapped_stand_ins, .. })
                 if unswapped_stand_ins.is_empty()
         ));
+        assert!(matches!(
+            AuditRecord::Connection(ConnectionRecord::from_event(1, &event())),
+            AuditRecord::Connection(ConnectionRecord { scrubbed_stand_ins, .. })
+                if scrubbed_stand_ins.is_empty()
+        ));
         let flagged = ConnectionRecord::from_event(1, &{
             let mut event = event();
             event.unswapped_stand_ins = vec![
@@ -1413,6 +1426,7 @@ mod tests {
             "binding_id",
             "injected",
             "unswapped_stand_ins",
+            "scrubbed_stand_ins",
             "refused_address",
             "refused_reason",
             "category",

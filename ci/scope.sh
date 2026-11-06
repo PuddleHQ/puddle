@@ -82,7 +82,7 @@ set -uo pipefail
 
 # Crates that no VM test depends on (cargo metadata, all dependency kinds; checked by
 # `SCOPE_TEST_METADATA=1 ci/scope-test.sh`).
-NO_VM=" puddle puddle-app xtask "
+NO_VM=" puddle puddle-app puddle-no-dump xtask "
 # Crates outside the closure of puddle-e2e and puddle-app, which the UI jobs build.
 NO_UI=" puddle xtask "
 MAX_FILES=300

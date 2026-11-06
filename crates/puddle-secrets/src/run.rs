@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use zeroize::Zeroizing;
 
@@ -179,15 +179,43 @@ pub(crate) async fn run_with(
         // A tool that exits before reading its input is not an error here: its status says so.
         let _ = pipe.write_all(bytes).await;
     }
-    let out = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(out)) => out,
-        Ok(Err(_)) => return Err(SourceError::CouldNotRun(tool)),
-        Err(_) => return Err(SourceError::Timeout(tool)),
+    let Some(mut stdout) = child.stdout.take() else {
+        return Err(SourceError::CouldNotRun(tool));
     };
-    Ok(Output {
-        success: out.status.success(),
-        stdout: Zeroizing::new(out.stdout),
-    })
+    let read = async {
+        let bytes = read_wiping(&mut stdout).await?;
+        let status = child.wait().await?;
+        Ok::<_, std::io::Error>((status, bytes))
+    };
+    match tokio::time::timeout(timeout, read).await {
+        Ok(Ok((status, stdout))) => Ok(Output {
+            success: status.success(),
+            stdout,
+        }),
+        Ok(Err(_)) => Err(SourceError::CouldNotRun(tool)),
+        Err(_) => Err(SourceError::Timeout(tool)),
+    }
+}
+
+/// First size of the buffer a tool's output is read into; a token answer fits in it.
+const FIRST_READ: usize = 4096;
+
+/// Reads `reader` to its end into a buffer that is overwritten when it drops. When the buffer is
+/// full the next one is made first and the old one is overwritten after the copy, so no
+/// reallocation frees an unwiped copy of the output.
+async fn read_wiping<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<Zeroizing<Vec<u8>>> {
+    let mut buf = Zeroizing::new(Vec::with_capacity(FIRST_READ));
+    loop {
+        if buf.len() == buf.capacity() {
+            let mut bigger = Zeroizing::new(Vec::with_capacity(buf.capacity() * 2));
+            bigger.extend_from_slice(&buf);
+            // After the swap `bigger` holds the full old buffer and wipes it as it drops.
+            std::mem::swap(&mut buf, &mut bigger);
+        }
+        if reader.read_buf(&mut *buf).await? == 0 {
+            return Ok(buf);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -197,6 +225,14 @@ mod tests {
     fn name(tool: &str) -> String {
         let extension = if cfg!(windows) { ".exe" } else { "" };
         format!("{tool}{extension}")
+    }
+
+    #[tokio::test]
+    async fn output_larger_than_the_first_buffer_is_read_whole() {
+        let data: Vec<u8> = (0..20_000u32).map(|i| (i % 251) as u8).collect();
+        let mut reader = &data[..];
+        let read = read_wiping(&mut reader).await.unwrap();
+        assert_eq!(&read[..], &data[..]);
     }
 
     #[cfg(unix)]

@@ -33,6 +33,7 @@ gh api --paginate "repos/$repo/actions/caches?per_page=100" --jq '.actions_cache
                  elif (.key | startswith("node-cache-")) then "node-cache"
                  elif (.key | startswith("playwright-")) then "playwright"
                  elif (.key | startswith("notices-ok-")) then "notices-ok"
+                 elif (.key | startswith("vm-guest-env-tools-")) then "vm-guest-env-tools"
                  else null end;
       def trunk: .ref == "refs/heads/develop" or .ref == "refs/heads/main";
       ( [ .[] | select(trunk and (group != null)) | . + {g: group} ]

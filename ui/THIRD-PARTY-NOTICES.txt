@@ -272,7 +272,7 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ========================================================================
-@lucide/svelte 1.66.0 (ISC)
+@lucide/svelte 1.67.0 (ISC)
 https://github.com/lucide-icons/lucide.git
 
 ISC License
@@ -381,7 +381,7 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tauri.git
 Creator: Person: Daniel Thompson-Yvetot
 
 ========================================================================
-bits-ui 2.20.3 (MIT)
+bits-ui 2.20.4 (MIT)
 
 MIT License
 

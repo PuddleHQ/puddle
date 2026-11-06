@@ -27,6 +27,8 @@ cat >"$tmp/caches.tsv" <<EOF
 8	refs/heads/gh-readonly-queue-lookalike	node-cache-Linux-x64-npm-4	$now	$now
 9	refs/heads/develop	notices-ok-1111111111111111111111111111111111111111111111111111111111111111	$older	$now
 10	refs/heads/develop	notices-ok-2222222222222222222222222222222222222222222222222222222222222222	$now	$now
+11	refs/heads/develop	playwright-Linux-aaaa	$now	$now
+12	refs/heads/develop	playwright-webkit-Linux-bbbb	$older	$now
 EOF
 mkdir "$tmp/bin"
 cat >"$tmp/bin/gh" <<'GH'
@@ -54,6 +56,7 @@ got=$(sort -n "$tmp/deleted" | tr '\n' ' ')
 # 1, 2: queue refs, fresh; 4: a stale pull request entry; 5: a superseded develop rust entry.
 # 8: a fresh entry on a branch whose name only starts like the queue prefix stays.
 # 9: a superseded notices stamp on develop (10, the newest, stays).
+# 11, 12: the Chromium and the WebKit browser entries are two groups, so the older one stays.
 [ "$got" = "1 2 4 5 9 " ] || bad "deleted '$got', want '1 2 4 5 9 '"
 
 : >"$tmp/deleted"
@@ -63,7 +66,7 @@ PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_CACHES="$tmp/caches.tsv" FAKE_D
 grep -q 'gh-readonly-queue/develop/pr-7-abc' "$tmp/out" || bad "DRY_RUN=1 does not list the queue entry"
 # The inventory lists every entry, deleted or kept, with ref, size and times.
 grep -q '^  cargo-xwin-0.23.1-x86_64  refs/heads/develop  1  ' "$tmp/out" || bad "the inventory lacks the develop cargo-xwin entry"
-[ "$(grep -c '^  ' "$tmp/out")" = 10 ] || bad "the inventory should list all 10 entries: $(cat "$tmp/out")"
+[ "$(grep -c '^  ' "$tmp/out")" = 12 ] || bad "the inventory should list all 12 entries: $(cat "$tmp/out")"
 
 if [ "$fail" = 0 ]; then
     echo "cache-gc-test: ok"

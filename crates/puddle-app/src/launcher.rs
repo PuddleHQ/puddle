@@ -257,7 +257,7 @@ mod tests {
     fn record(name: &str) -> WorkspaceRecord {
         WorkspaceRecord::new(
             WorkspaceId::new(name).unwrap(),
-            puddle_types::WorkspaceName::new(name).unwrap(),
+            puddle_api::DisplayName::parse(name).unwrap(),
             Vec::new(),
         )
     }

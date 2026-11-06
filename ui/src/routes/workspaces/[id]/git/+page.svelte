@@ -197,10 +197,7 @@
         public repositories only.
       </p>
     {:else}
-      <ol
-        class="ids"
-        aria-label="Identities of {workspace.display_name}, in order"
-      >
+      <ol class="ids" aria-label="Identities of {workspace.name}, in order">
         {#each git.identities as identity, index (identity.id)}
           <li data-identity-id={identity.id}>
             <div class="what">
@@ -237,7 +234,7 @@
               <button
                 type="button"
                 class="btn"
-                aria-label="Remove {identity.label} from {workspace.display_name}"
+                aria-label="Remove {identity.label} from {workspace.name}"
                 onclick={() => detach(identity)}>Remove</button
               >
             </div>
@@ -360,7 +357,7 @@
       </p>
     {:else}
       <div class="wrap">
-        <table aria-label="Repositories of {workspace.display_name}">
+        <table aria-label="Repositories of {workspace.name}">
           <thead>
             <tr>
               <th scope="col">Repository</th>

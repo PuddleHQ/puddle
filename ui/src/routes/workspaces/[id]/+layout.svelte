@@ -35,12 +35,12 @@
   <div class="head">
     <div class="title">
       <p class="crumb"><a href="/workspaces">Workspaces</a> /</p>
-      <h1>{workspace.display_name}</h1>
+      <h1>{workspace.name}</h1>
     </div>
     <button
       type="button"
       class="btn rename"
-      aria-label="Rename {workspace.display_name}"
+      aria-label="Rename {workspace.name}"
       disabled={!canRename(workspace)}
       onclick={() => actions.openRename(workspace)}
     >

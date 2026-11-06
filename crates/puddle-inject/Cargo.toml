@@ -20,6 +20,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing = { workspace = true }
+zeroize = { workspace = true }
 
 [features]
 # `testing`: in-memory settings and credential sources for tests (never in product code).

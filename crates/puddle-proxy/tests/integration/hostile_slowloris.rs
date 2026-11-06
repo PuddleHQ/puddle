@@ -56,23 +56,7 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
     }
     // A paused clock still jumps to the next timer whenever the runtime waits on I/O, unless a
     // blocking task is running; this one runs until the test drops `thaw`.
-    let (thaw, thawed) = std::sync::mpsc::channel::<()>();
-    let watched = Arc::clone(&refusals);
-    let mut frozen = tokio::task::spawn_blocking(move || {
-        let (mut seen, mut since) = (0, std::time::Instant::now());
-        loop {
-            match thawed.recv_timeout(STALL_POLL) {
-                Err(RecvTimeoutError::Timeout) => {}
-                _ => return true,
-            }
-            let now = watched.count.load(Ordering::SeqCst);
-            if now != seen {
-                (seen, since) = (now, std::time::Instant::now());
-            } else if since.elapsed() >= STALL_LIMIT {
-                return false;
-            }
-        }
-    });
+    let (thaw, mut frozen) = hold_thread(&refusals);
     tokio::time::pause();
     let started = Instant::now();
     let mut tasks = Vec::new();
@@ -148,6 +132,32 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
         answered.iter().max()
     );
     assert_unharmed(bystander_took, quiet, "while the streams are held");
+}
+
+/// Starts a blocking task that runs until the returned sender is dropped, which keeps a paused
+/// clock from jumping ahead. Its result is `true` when it was released and `false` when it gave
+/// up after [`STALL_LIMIT`] without one more refusal.
+fn hold_thread(
+    refusals: &Arc<Refusals>,
+) -> (std::sync::mpsc::Sender<()>, tokio::task::JoinHandle<bool>) {
+    let (thaw, thawed) = std::sync::mpsc::channel::<()>();
+    let watched = Arc::clone(refusals);
+    let held = tokio::task::spawn_blocking(move || {
+        let (mut seen, mut since) = (0, std::time::Instant::now());
+        loop {
+            match thawed.recv_timeout(STALL_POLL) {
+                Err(RecvTimeoutError::Timeout) => {}
+                _ => return true,
+            }
+            let now = watched.count.load(Ordering::SeqCst);
+            if now != seen {
+                (seen, since) = (now, std::time::Instant::now());
+            } else if since.elapsed() >= STALL_LIMIT {
+                return false;
+            }
+        }
+    });
+    (thaw, held)
 }
 
 /// How many streams the proxy has refused at the cap, counted from the warning it logs as it

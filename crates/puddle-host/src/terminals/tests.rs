@@ -288,6 +288,57 @@ async fn a_server_that_refuses_the_login_the_pty_or_the_shell_or_hangs_up_says_w
     }
 }
 
+#[tokio::test]
+async fn a_server_that_sends_stray_messages_before_the_shell_still_gives_one() {
+    let hub = Hub::default();
+    let mut link = session(&hub, "chatty").await;
+    type_line(&link, "whoami").await;
+    bytes_until(&mut link, "chatty\r\n").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_workspace_that_is_not_ready_in_time_ends_as_a_boot_failure() {
+    let end = wait_until_ready(
+        Duration::from_secs(90),
+        Duration::from_millis(250),
+        || async { Ok::<Option<()>, TerminalError>(None) },
+    )
+    .await
+    .unwrap_err();
+    let TerminalError::Ended(end) = end else {
+        panic!("{end:?}")
+    };
+    assert_eq!(end.reason, EndReason::BootFailed);
+    assert_eq!(
+        end.message.as_deref(),
+        Some("the workspace was not ready in 90 seconds")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_wait_ends_with_what_the_probe_finds_after_some_looks() {
+    let mut looks = 0;
+    let found = wait_until_ready(Duration::from_secs(90), Duration::from_millis(250), || {
+        looks += 1;
+        let ready = looks == 3;
+        async move { Ok::<_, TerminalError>(ready.then_some("up")) }
+    })
+    .await
+    .unwrap();
+    assert_eq!(found, "up");
+    assert_eq!(looks, 3);
+
+    let refused = wait_until_ready::<(), _, _>(Duration::from_secs(90), Duration::ZERO, || async {
+        Err(TerminalError::NotRunning("gone".into()))
+    })
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(refused, TerminalError::NotRunning(_)),
+        "{refused:?}"
+    );
+}
+
 /// Keeps the far end of the connection open for a while after the server function returned.
 fn keep_open(stream: tokio::io::DuplexStream) {
     tokio::spawn(async move {

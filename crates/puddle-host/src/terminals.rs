@@ -10,6 +10,7 @@
 use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use puddle_api::{
     EndReason, MAX_MESSAGE_BYTES, TerminalEnd, TerminalError, TerminalInput, TerminalLink,
@@ -24,7 +25,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 /// How long a failed sign-in waits for the server to say why it refused.
-const REFUSAL_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+const REFUSAL_WAIT: Duration = Duration::from_millis(500);
 
 /// What the host signs in with: the login key of direct SSH, read into memory.
 #[derive(Clone)]
@@ -248,6 +249,39 @@ where
         .map_err(|e| Failure::Broke(e.to_string()))?;
     expect_success(&mut channel, "a shell").await?;
     Ok((handle, channel))
+}
+
+/// Looks with `probe` every `every` until it finds something, an error ends the wait, and
+/// `limit` without a find ends it as a boot failure naming the seconds.
+pub(crate) async fn wait_until_ready<T, F, Fut>(
+    limit: Duration,
+    every: Duration,
+    mut probe: F,
+) -> Result<T, TerminalError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Option<T>, TerminalError>>,
+{
+    let waiting = async {
+        loop {
+            if let Some(found) = probe().await? {
+                return Ok(found);
+            }
+            tokio::time::sleep(every).await;
+        }
+    };
+    tokio::time::timeout(limit, waiting)
+        .await
+        .unwrap_or_else(|_| {
+            Err(TerminalError::Ended(TerminalEnd {
+                reason: EndReason::BootFailed,
+                status: None,
+                message: Some(format!(
+                    "the workspace was not ready in {} seconds",
+                    limit.as_secs()
+                )),
+            }))
+        })
 }
 
 async fn expect_success(channel: &mut Shell, what: &str) -> Result<(), Failure> {

@@ -246,6 +246,8 @@ struct GuestState {
 
 /// How long a terminal opened while its workspace starts waits for the boot hook.
 const TERMINAL_BOOT_WAIT: Duration = Duration::from_secs(90);
+/// How often the wait looks again.
+const TERMINAL_BOOT_POLL: Duration = Duration::from_millis(250);
 
 /// What a sandbox owns while this process serves it.
 struct Live<R: Runtime> {
@@ -2693,47 +2695,28 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         name: &WorkspaceId,
     ) -> Result<(Arc<GatedSandbox<R::Sandbox>>, SessionUser), TerminalError> {
-        let waiting = async {
-            loop {
-                let record = self.state().slots.get(name).map(|s| s.record.clone());
-                let Some(record) = record.filter(|r| {
-                    matches!(
-                        r.status,
-                        WorkspaceStatus::Running | WorkspaceStatus::Starting
-                    )
-                }) else {
-                    return Err(TerminalError::NotRunning(
-                        "the workspace is not running".into(),
-                    ));
-                };
-                let found = {
-                    let live = self.inner.live.lock().await;
-                    live.get(name).and_then(|l| {
-                        let user = l
-                            .guest
-                            .as_ref()
-                            .map_or(record.session_user, |g| g.session_user);
-                        Some((l.gated.clone()?, user))
-                    })
-                };
-                if let Some(found) = found {
-                    return Ok(found);
-                }
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-        };
-        tokio::time::timeout(TERMINAL_BOOT_WAIT, waiting)
-            .await
-            .unwrap_or_else(|_| {
-                Err(TerminalError::Ended(TerminalEnd {
-                    reason: EndReason::BootFailed,
-                    status: None,
-                    message: Some(format!(
-                        "the workspace was not ready in {} seconds",
-                        TERMINAL_BOOT_WAIT.as_secs()
-                    )),
-                }))
-            })
+        crate::terminals::wait_until_ready(TERMINAL_BOOT_WAIT, TERMINAL_BOOT_POLL, || async {
+            let record = self.state().slots.get(name).map(|s| s.record.clone());
+            let Some(record) = record.filter(|r| {
+                matches!(
+                    r.status,
+                    WorkspaceStatus::Running | WorkspaceStatus::Starting
+                )
+            }) else {
+                return Err(TerminalError::NotRunning(
+                    "the workspace is not running".into(),
+                ));
+            };
+            let live = self.inner.live.lock().await;
+            Ok(live.get(name).and_then(|l| {
+                let user = l
+                    .guest
+                    .as_ref()
+                    .map_or(record.session_user, |g| g.session_user);
+                Some((l.gated.clone()?, user))
+            }))
+        })
+        .await
     }
 
     /// Removes the workspace's sandbox, if it has one: the root disk goes with it, the volume

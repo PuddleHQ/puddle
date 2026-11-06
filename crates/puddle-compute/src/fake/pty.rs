@@ -17,7 +17,8 @@
 //!
 //! A Ctrl+C byte ends a `flood`. A few login names make the server misbehave, for a client's
 //! failure paths: `denied` is refused at login, `nopty` and `noshell` get no pseudo-terminal or
-//! shell, `hangup` has the channel closed at the pty request, and `kill` as a line ends the shell
+//! shell, `hangup` has the channel closed at the pty request, `chatty` sends a stray message before
+//! it answers the pty request, and `kill` as a line ends the shell
 //! by a signal.
 
 use std::sync::Arc;
@@ -95,6 +96,8 @@ impl Handler for Shell {
         match self.user.as_str() {
             "nopty" => return session.channel_failure(channel),
             "hangup" => return session.close(channel),
+            // A stray message ahead of the answer, as a real server sends window adjustments.
+            "chatty" => session.data(channel, b"banner".to_vec())?,
             _ => {}
         }
         term.clone_into(&mut self.term);

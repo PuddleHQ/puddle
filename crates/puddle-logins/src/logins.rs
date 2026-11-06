@@ -865,7 +865,7 @@ impl ExchangeRewriter for Logins {
 #[cfg(test)]
 mod refusal_tests {
     use super::*;
-    use crate::profile::CLAUDE;
+    use crate::profile::{CLAUDE, Role, Scope};
 
     fn field(path: &str, kind: FieldKind) -> BodyField {
         BodyField {
@@ -926,15 +926,15 @@ mod refusal_tests {
 
     #[test]
     fn a_field_named_by_a_dotted_path_is_named_at_that_path_only() {
-        static NESTED: [crate::profile::Field; 1] = [crate::profile::Field {
+        static NESTED: [Field; 1] = [Field {
             path: "data.token",
-            role: crate::profile::Role::Access,
+            role: Role::Access,
             resource: None,
             prefixes: &[],
             keep_last: 0,
-            scope: crate::profile::Scope::Api,
+            scope: Scope::Api,
         }];
-        let mut endpoint = CLAUDE.endpoints[0].clone();
+        let mut endpoint = CLAUDE.endpoints[0];
         endpoint.fields = &NESTED;
         let long = FieldKind::Text(MIN_TOKEN_LEN);
         let holds = |fields: Vec<BodyField>| holds_unnamed_token(&endpoint, &fields);

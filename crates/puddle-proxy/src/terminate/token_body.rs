@@ -14,6 +14,8 @@ use std::borrow::Cow;
 use serde_json::{Map, Value};
 use zeroize::{Zeroize as _, Zeroizing};
 
+use super::wiped::Wiped;
+
 /// How the body is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyFormat {
@@ -178,15 +180,33 @@ impl TokenBody {
     /// bytes are zeroised when dropped, since they may hold a token.
     #[must_use]
     pub fn render(&self) -> Zeroizing<Vec<u8>> {
-        Zeroizing::new(match &self.parsed {
-            Parsed::Json(map) => serde_json::to_vec(map).unwrap_or_default(),
-            Parsed::Form(pairs) => pairs
-                .iter()
-                .map(|pair| pair.raw.as_str())
-                .collect::<Vec<_>>()
-                .join("&")
-                .into_bytes(),
-        })
+        self.render_wiped().into_zeroizing()
+    }
+
+    /// [`render`](Self::render) as a shared buffer for a request body: overwritten when the last
+    /// clone drops, and never copied through a buffer that is freed as it is.
+    pub(crate) fn render_bytes(&self) -> bytes::Bytes {
+        self.render_wiped().into_bytes()
+    }
+
+    fn render_wiped(&self) -> Wiped {
+        let mut out = Wiped::new();
+        match &self.parsed {
+            Parsed::Json(map) => {
+                if serde_json::to_writer(&mut out, map).is_err() {
+                    out = Wiped::new();
+                }
+            }
+            Parsed::Form(pairs) => {
+                for (index, pair) in pairs.iter().enumerate() {
+                    if index > 0 {
+                        out.extend_from_slice(b"&");
+                    }
+                    out.extend_from_slice(pair.raw.as_bytes());
+                }
+            }
+        }
+        out
     }
 }
 

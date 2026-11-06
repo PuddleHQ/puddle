@@ -73,6 +73,7 @@ mod stand_in;
 mod streams;
 mod token_body;
 mod watch;
+mod wiped;
 mod ws;
 
 use std::collections::HashMap;

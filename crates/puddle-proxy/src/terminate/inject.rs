@@ -11,10 +11,10 @@ use std::fmt;
 use std::sync::Arc;
 
 use ::http::{HeaderName, HeaderValue};
-use bytes::Bytes;
 use puddle_types::{Host, WorkspaceId};
 use zeroize::Zeroize as _;
 
+use super::wiped::Wiped;
 use crate::destination::BoxFuture;
 use crate::proxy::Refusal;
 
@@ -98,25 +98,10 @@ impl InjectedHeader {
     pub(crate) fn header_value(&self) -> Option<HeaderValue> {
         // The bytes sit in a buffer that is overwritten when the last clone of the value drops;
         // `HeaderValue::from_str` would copy them into one that is freed as it is.
-        let bytes = Bytes::from_owner(WipedBytes(self.value.expose().as_bytes().to_vec()));
+        let bytes = Wiped::copy_of(self.value.expose().as_bytes()).into_bytes();
         let mut value = HeaderValue::from_maybe_shared(bytes).ok()?;
         value.set_sensitive(true);
         Some(value)
-    }
-}
-
-/// The bytes of a header value that is a secret, overwritten when they drop.
-struct WipedBytes(Vec<u8>);
-
-impl AsRef<[u8]> for WipedBytes {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl Drop for WipedBytes {
-    fn drop(&mut self) {
-        self.0.zeroize();
     }
 }
 

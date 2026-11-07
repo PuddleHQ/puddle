@@ -324,6 +324,27 @@ async fn ssh_is_blocked_before_the_policy_is_asked() {
 }
 
 #[tokio::test]
+async fn ssh_to_a_name_that_is_not_a_git_host_is_decided_by_the_rules() {
+    let policy = Arc::new(StaticPolicy::new());
+    policy.allow(&host("nas.example"));
+    policy.deny_host(&host("denied.example"));
+    let p = proxy(
+        policy.clone(),
+        StaticResolver::new()
+            .with("nas.example", &[ip("93.184.216.34")])
+            .with("denied.example", &[ip("93.184.216.35")]),
+    );
+    let ssh = |name| request(name).with_protocol(ProtocolHint::Ssh);
+    assert!(admit(&p, &ssh("nas.example")).await.is_ok());
+    let refusal = admit(&p, &ssh("denied.example")).await.unwrap_err();
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("deny"));
+    let refusal = admit(&p, &ssh("new.example")).await.unwrap_err();
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+    assert_eq!(policy.decisions(), 3);
+    assert_eq!(policy.pending().len(), 1);
+}
+
+#[tokio::test]
 async fn a_blocked_decision_from_the_policy_is_never_pending() {
     let p = proxy(
         FnPolicy::new(|_| {
@@ -458,9 +479,9 @@ async fn the_audit_event_follows_each_admit_path() {
     let resolver = || StaticResolver::new().with("nas.example", &[ip("10.0.0.5")]);
     let kind = |e: &ConnectionEvent| (e.decision, e.reason, e.rule_id, e.pending_id);
 
-    // Name stage: SSH never reaches the rules.
+    // Name stage: SSH to a Git host's name never reaches the rules.
     let p = proxy(Arc::new(StaticPolicy::new()), resolver());
-    let req = request("nas.example").with_protocol(ProtocolHint::Ssh);
+    let req = request("gitlab.com").with_protocol(ProtocolHint::Ssh);
     let (_, e) = super::admit(&p, &req).await;
     assert_eq!(
         kind(&e),
@@ -469,6 +490,20 @@ async fn the_audit_event_follows_each_admit_path() {
             ConnectionReason::Blocked(BlockReason::SshUnsupported),
             None,
             None
+        )
+    );
+    // SSH to any other name is decided like any connection: no rule, so pending.
+    let policy = Arc::new(StaticPolicy::new());
+    let p = proxy(policy.clone(), resolver());
+    let req = request("nas.example").with_protocol(ProtocolHint::Ssh);
+    let (_, e) = super::admit(&p, &req).await;
+    assert_eq!(
+        kind(&e),
+        (
+            ConnectionDecision::Pending,
+            ConnectionReason::NoRule,
+            None,
+            Some(policy.pending()[0].id)
         )
     );
     // Name stage: a literal blocked by the address check.

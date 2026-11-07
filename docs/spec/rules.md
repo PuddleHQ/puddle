@@ -109,10 +109,12 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   goes pending for the exact name, unless the "wildcards reach local addresses"
   setting is on (global default off, per-workspace override *(default)*). The IP check only looks
   up rules (`Policy::lookup`); it never writes a pending row for the address. Puddle's own
-  endpoints are blocked whatever rules or toggles say, and never become pending. So is SSH from a
-  workspace, which is not supported yet (reason `ssh_unsupported`, R-24): the proxy recognises it by
-  the client's identification line on any port and refuses it before any rule is asked, so no rule
-  allows it and it never goes pending. UDP other than DNS is refused the same way, inside the
+  endpoints are blocked whatever rules or toggles say, and never become pending. So is SSH to a
+  Git host's name that Puddle does not serve (reason `ssh_unsupported`, R-24): the proxy recognises
+  SSH by the client's identification line on any port and refuses it before any rule is asked, so no
+  rule allows it and it never goes pending. SSH to any other name is an ordinary connection: the
+  rules decide it as for any `CONNECT` (R-2, so a rule for the name covers every port), a request
+  with no rule goes pending as that host and port, and an allowed one is spliced end to end. UDP other than DNS is refused the same way, inside the
   workspace, before it leaves; the workspace's agent reports where each refused datagram was going
   and the proxy records it as `blocked` with reason `udp_unsupported` (never pending, never
   approvable; one record per destination at most every ten seconds).

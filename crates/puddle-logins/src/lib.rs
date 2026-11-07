@@ -18,11 +18,15 @@
 #![forbid(unsafe_code)]
 
 #[cfg(test)]
+mod docker_tests;
+#[cfg(test)]
 mod entra_tests;
 #[cfg(test)]
 mod jwt_tests;
 mod logins;
 mod marker;
+#[cfg(test)]
+mod openai_tests;
 mod profile;
 mod shape;
 #[cfg(test)]
@@ -34,7 +38,7 @@ mod widened_tests;
 pub use logins::{ForgetError, Kept, KeptList, KeptLogin, LoginNotices, Logins, Problem};
 pub use marker::Marker;
 pub use profile::{
-    Audience, CLAUDE, ENTRA, Endpoint, Field, GITHUB, Method, Profile, Role, Scope, Slot,
-    StandInKind, builtin, path_matches,
+    Audience, CLAUDE, DOCKER, ENTRA, Endpoint, Field, GITHUB, Method, OPENAI, Profile, Role, Scope,
+    Slot, StandInKind, builtin, path_matches,
 };
 pub use shape::{ShapeError, stand_in_for};

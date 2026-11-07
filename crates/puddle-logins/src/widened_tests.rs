@@ -27,6 +27,7 @@ const fn field(path: &'static str, role: Role, resource: Option<&'static str>) -
         prefixes: &["ey", "npm_"],
         keep_last: 0,
         stand_in: StandInKind::Shaped,
+        only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Any,
     }
@@ -40,7 +41,7 @@ static WIDE: [Profile; 1] = [Profile {
             host: "login.wide.test",
             method: Method::Post,
             path: "/*/oauth2/token",
-            refresh_field: Some("refresh_token"),
+            request_fields: &["refresh_token"],
             fields: &[
                 field("arm_token", Role::Access, Some("arm")),
                 field("graph_token", Role::Access, Some("graph")),
@@ -50,7 +51,7 @@ static WIDE: [Profile; 1] = [Profile {
             host: "registry.wide.test",
             method: Method::Any,
             path: "/-/user/org.couchdb.user:*",
-            refresh_field: None,
+            request_fields: &[],
             fields: &[field("data.deep.token", Role::ApiKey, None)],
         },
     ],

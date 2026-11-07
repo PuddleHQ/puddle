@@ -618,14 +618,25 @@ impl Logins {
         if holds_unnamed_token(endpoint, &parsed.fields()) {
             return Err(Problem::UnnamedToken);
         }
-        let found: Vec<(&'static Field, Zeroizing<String>)> = endpoint
-            .fields
-            .iter()
-            .filter_map(|field| {
-                let text = parsed.text_at(field.path)?;
-                (!text.is_empty()).then(|| (field, Zeroizing::new(text.into_owned())))
-            })
-            .collect();
+        let mut found: Vec<(&'static Field, Zeroizing<String>)> = Vec::new();
+        for field in endpoint.fields {
+            // The first field that takes the token is the one used for its answer field. Fields
+            // with an audience share a path on purpose (one per resource): `by_audience` picks.
+            if field.audience == Audience::Any
+                && found
+                    .iter()
+                    .any(|(taken, _)| taken.path == field.path && taken.audience == Audience::Any)
+            {
+                continue;
+            }
+            let Some(text) = parsed.text_at(field.path).filter(|text| !text.is_empty()) else {
+                continue;
+            };
+            if field.only_prefixed && !field.prefixes.iter().any(|p| text.starts_with(p)) {
+                continue;
+            }
+            found.push((field, Zeroizing::new(text.into_owned())));
+        }
         if found.is_empty() {
             // A pending device code, an error, a refusal: nothing to keep.
             return Ok(None);
@@ -763,7 +774,16 @@ pub enum ForgetError {
 const MIN_TOKEN_LEN: usize = 16;
 
 /// Name endings of fields that carry a count, a kind or an address, not a credential.
-const NOT_TOKENS: [&str; 7] = ["_type", "_in", "_at", "_url", "_uri", "_endpoint", "_scope"];
+const NOT_TOKENS: [&str; 8] = [
+    "_type",
+    "_in",
+    "_at",
+    "_url",
+    "_uri",
+    "_endpoint",
+    "_scope",
+    "_label",
+];
 
 /// Whether a field's name says it holds a credential.
 fn token_like(name: &str) -> bool {
@@ -901,8 +921,13 @@ impl ExchangeRewriter for Logins {
         let route = on_host
             .find(|route| route.method.accepts(method) && path_matches(&route.path, &path))?;
         let mut exchange = Exchange::new();
-        if let Some(field) = route.endpoint.refresh_field {
-            exchange = exchange.swapping(field);
+        for field in route.endpoint.request_fields {
+            exchange = exchange.swapping(*field);
+        }
+        // An endpoint with no token fields (a revoke) is only a request to swap in: its answer
+        // is not read, so an empty `200` is not an unexpected answer.
+        if route.endpoint.fields.is_empty() {
+            return Some(exchange);
         }
         Some(exchange.answered_by(Box::new(Capture {
             logins: self.clone(),
@@ -967,6 +992,7 @@ mod refusal_tests {
             "token_uri",
             "token_endpoint",
             "token_scope",
+            "token_label",
             "scope",
             "keyboard",
             "account",
@@ -986,6 +1012,7 @@ mod refusal_tests {
             stand_in: crate::profile::StandInKind::Shaped,
             scope: Scope::Api,
             audience: Audience::Any,
+            only_prefixed: false,
         }];
         let mut endpoint = CLAUDE.endpoints[0];
         endpoint.fields = &NESTED;

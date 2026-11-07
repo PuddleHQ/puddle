@@ -145,6 +145,21 @@ mod tests {
     }
 
     #[test]
+    fn a_save_that_fails_does_not_panic_and_leaves_what_is_there() {
+        let (dir, file) = file();
+        let path = dir.path().join("quit-trims.json");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("keep"), "x").unwrap();
+        file.save(&BTreeMap::from([(id("acme"), "x".to_owned())]));
+        file.save(&BTreeMap::new());
+        assert!(
+            path.join("keep").exists(),
+            "a folder where the file belongs"
+        );
+        assert!(file.load().is_empty());
+    }
+
+    #[test]
     fn a_broken_or_foreign_file_is_ignored() {
         let (dir, file) = file();
         let path = dir.path().join("quit-trims.json");

@@ -501,6 +501,21 @@ impl Proxy {
             .is_some_and(Upstream::resolves_unknown_names)
     }
 
+    /// Whether `request`'s name is one whose SSH Puddle serves itself or refuses, never splices:
+    /// a built-in Git host or a host of one of the workspace's Git credentials.
+    fn is_git_ssh_name(&self, request: &EgressRequest) -> bool {
+        crate::ssh_git::built_in(&request.host).is_some()
+            || self
+                .termination_of(request)
+                .is_some_and(|t| t.git_ssh_hosts().contains(&request.host))
+    }
+
+    /// Whether `request` is SSH to a Git host's name that Puddle does not serve: refused at once,
+    /// before the rules (SSH to any other name is spliced after a rules decision).
+    pub(crate) fn refuses_ssh(&self, request: &EgressRequest) -> bool {
+        request.protocol == Some(ProtocolHint::Ssh) && self.is_git_ssh_name(request)
+    }
+
     /// The rule that decides `request`, without recording anything (on a blocking thread: the
     /// policy may read SQLite).
     pub(crate) async fn look_up_rule(
@@ -523,7 +538,7 @@ impl Proxy {
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Decision, PolicyError> {
-        if request.protocol == Some(ProtocolHint::Ssh) {
+        if self.refuses_ssh(request) {
             return Ok(Decision::Blocked {
                 reason: BlockReason::SshUnsupported,
             });
@@ -912,7 +927,11 @@ async fn relay(
     }
     // A bound host is terminated: the guest's TLS handshake comes first, so a client that asks
     // for the wrong name never causes a connection to the real server.
-    if let Some((termination, mode, tls)) = proxy.terminating(request, from_container) {
+    // SSH to a name that is not a Git host is spliced, even on port 443 of a terminated name.
+    let spliced_ssh = request.protocol == Some(ProtocolHint::Ssh);
+    if !spliced_ssh
+        && let Some((termination, mode, tls)) = proxy.terminating(request, from_container)
+    {
         let cx = Arc::new(terminate::Context {
             proxy: Arc::clone(proxy),
             termination,
@@ -976,7 +995,7 @@ async fn note_tunnel(
     let end = tunnel(
         reader,
         stream,
-        Some(request),
+        Some(request).filter(|request| proxy.is_git_ssh_name(request)),
         watch,
         proxy.termination_of(request),
     )
@@ -1125,10 +1144,11 @@ async fn admit_into(
 ) -> Result<Admitted, Refusal> {
     let host = &request.host;
     let port = request.port;
-    // SSH is refused whatever the destination is: before the name stage (so the reason is the
-    // protocol, not a toggle that turning on would only lead to the same refusal) and before
-    // any rule, so it never becomes a pending row or an allow.
-    if request.protocol == Some(ProtocolHint::Ssh) {
+    // SSH to a Git host's name is refused whatever the destination is: before the name stage (so
+    // the reason is the protocol, not a toggle that turning on would only lead to the same
+    // refusal) and before any rule, so it never becomes a pending row or an allow. SSH to any
+    // other name is decided below like every connection.
+    if proxy.refuses_ssh(request) {
         note_block(event, BlockReason::SshUnsupported);
         return Err(block(request, &[BlockReason::SshUnsupported]));
     }

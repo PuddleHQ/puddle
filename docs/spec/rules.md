@@ -109,10 +109,12 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   goes pending for the exact name, unless the "wildcards reach local addresses"
   setting is on (global default off, per-workspace override *(default)*). The IP check only looks
   up rules (`Policy::lookup`); it never writes a pending row for the address. Puddle's own
-  endpoints are blocked whatever rules or toggles say, and never become pending. So is SSH from a
-  workspace, which is not supported yet (reason `ssh_unsupported`, R-24): the proxy recognises it by
-  the client's identification line on any port and refuses it before any rule is asked, so no rule
-  allows it and it never goes pending. UDP other than DNS is refused the same way, inside the
+  endpoints are blocked whatever rules or toggles say, and never become pending. So is SSH to a
+  Git host's name that Puddle does not serve (reason `ssh_unsupported`, R-24): the proxy recognises
+  SSH by the client's identification line on any port and refuses it before any rule is asked, so no
+  rule allows it and it never goes pending. SSH to any other name is an ordinary connection: the
+  rules decide it as for any `CONNECT` (R-2, so a rule for the name covers every port), a request
+  with no rule goes pending as that host and port, and an allowed one is spliced end to end. UDP other than DNS is refused the same way, inside the
   workspace, before it leaves; the workspace's agent reports where each refused datagram was going
   and the proxy records it as `blocked` with reason `udp_unsupported` (never pending, never
   approvable; one record per destination at most every ten seconds).
@@ -199,7 +201,7 @@ readable as JSONL (one record per line).
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `category` (`company_network` for a destination in that category, `null` otherwise and in older records), `signal` (`pac_direct`, `dns_suffix`, `private_access_cgnat` or `vpn_route`: the signal that put it there, `null` when none is known), `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
   `toggle:<category>`, `company_network_off`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
-  `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
+  `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `bad_git_path` (a Git path Puddle does not read, over HTTPS or SSH), `ssh_command_unsupported` (an SSH command that is not `git-upload-pack` or `git-receive-pack`), `ssh_channel_refused` (an SSH channel request Puddle does not allow), `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
   went out unchanged: to a host outside their hosts, or in the path or query; also `stale-stand-in:secret:<name>` and
   `stale-stand-in:github` for a value shaped like a stand-in that the workspace does not hold),
   `scrubbed_stand_ins` (the ids of the stand-ins whose real values an answer from one of their

@@ -478,6 +478,9 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
   for every input, or only timing changes). Those go in `.cargo/mutants.toml` as an `exclude_re` entry with a comment
   that says why it is equivalent, and are reviewed like a lint suppression. A mutant that only a test of a
   logging line or a timing could catch is not equivalent: assert the line or the timing.
+  An entry names the function and the mutation text, never a line number: the `mutants-exclusions` gate fails an entry
+  that names a literal line (an edit above it would fail an unrelated change) and one that matches no mutant. When two
+  mutants read alike (the Windows and the Unix body of one function), give each body its own function name.
 - **Test selection and the cache.** Mutants run through nextest's `mutants` profile (the default profile's tests, so no
   VM tests, with four threads and a 512 MiB heap limit per test process: a mutant can make a loop allocate without
   end, and the limit fails that test instead of the machine), in a copy
@@ -584,7 +587,7 @@ names report on the queue's commit too. Two repository variables switch the rest
 
 - `PUDDLE_QUEUE=on` (set together with the merge queue rule on `develop`, never before it): a pull request to `develop`
   runs the Linux jobs, without the `git-env` and `notices` gates and the WebKit end-to-end job (`ui-webkit`),
-  and the Windows test jobs (`windows tests`: the build, two nextest partitions, the doc tests and secret scan) when the PR changes Rust or fixture
+  and the Windows test jobs (`windows tests`: the build, four nextest partitions, the doc tests and secret scan) when the PR changes Rust or fixture
   files (`win_rust`), so a Windows-only failure shows on the PR and not first in the queue. Windows clippy, the Windows UI
   job and both VM workflows skip, and their result jobs still report; a PR that changes no Rust skips the Windows
   tests too and the result job accepts that like any scoped skip. The merge queue then runs the full

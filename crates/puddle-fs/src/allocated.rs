@@ -11,25 +11,32 @@ use std::path::Path;
 /// # Errors
 ///
 /// The file cannot be looked at (it is missing, or the process may not read its entry).
-#[cfg(unix)]
 pub fn allocated_bytes(path: &Path) -> io::Result<u64> {
+    // The two bodies have their own names so that a mutation exclusion can name the Windows one,
+    // which a Linux run never compiles.
+    #[cfg(unix)]
+    {
+        allocated_unix(path)
+    }
+    #[cfg(windows)]
+    {
+        allocated_windows(path)
+    }
+}
+
+#[cfg(unix)]
+fn allocated_unix(path: &Path) -> io::Result<u64> {
     use std::os::unix::fs::MetadataExt;
     // `blocks` counts 512-byte units whatever the file system's block size is.
     Ok(std::fs::metadata(path)?.blocks().saturating_mul(512))
 }
 
-/// Bytes the host's file system has allocated for the file at `path`: for a sparse file the part
-/// that holds data, not its length.
-///
-/// # Errors
-///
-/// The file cannot be looked at (it is missing, or the process may not read its entry).
 #[cfg(windows)]
 #[expect(
     unsafe_code,
     reason = "GetCompressedFileSizeW is the only way to read a sparse file's allocated size"
 )]
-pub fn allocated_bytes(path: &Path) -> io::Result<u64> {
+fn allocated_windows(path: &Path) -> io::Result<u64> {
     use std::os::windows::ffi::OsStrExt;
 
     use windows_sys::Win32::Storage::FileSystem::GetCompressedFileSizeW;

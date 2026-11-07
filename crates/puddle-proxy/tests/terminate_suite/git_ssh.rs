@@ -651,21 +651,20 @@ async fn forwarding_in_either_direction_is_refused_with_a_reason() {
 // Which connections are served, and the limits.
 
 #[tokio::test]
-async fn ssh_to_a_name_that_is_not_a_git_host_is_refused_as_before() {
+async fn ssh_to_a_name_that_is_not_a_git_host_is_not_served_but_spliced_to_the_real_host() {
     let t = SshRig::new().await;
     t.git
         .rig
         .policy
         .allow(&crate::terminate_support::host("elsewhere.test"));
     let mut guest = t.git.rig.guest();
+    // The name goes to the rules, then upstream: Puddle's server never answers, so the server key
+    // check of `try_client` is never reached and the client sees the real host's bytes.
     let refused = t.try_client(&mut guest, "elsewhere.test:22").await;
-    assert!(refused.is_err_and(|status| status.contains(" 403 ") || status.contains(" 4")));
+    assert!(refused.is_err_and(|e| !e.contains(" 403 ")));
     let events = t.events(1).await;
-    assert_eq!(events[0].decision, ConnectionDecision::Blocked);
-    assert_eq!(
-        events[0].reason,
-        ConnectionReason::Blocked(puddle_types::BlockReason::SshUnsupported)
-    );
+    assert_eq!(events[0].decision, ConnectionDecision::Allow);
+    assert_eq!(t.upstream.calls().len(), 0, "no Git command was served");
 }
 
 #[tokio::test]

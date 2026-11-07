@@ -251,7 +251,7 @@ async fn ssh_to_a_git_host_is_refused_with_the_https_form_of_the_remote() {
 }
 
 #[tokio::test]
-async fn ssh_to_any_other_host_and_port_gets_the_plain_message() {
+async fn ssh_to_any_other_host_and_port_waits_in_the_inbox_as_that_host_and_port() {
     if !clients_available() {
         return;
     }
@@ -261,20 +261,29 @@ async fn ssh_to_any_other_host_and_port_gets_the_plain_message() {
         vec!["-p", "2222", "me@nas.example.test"],
         vec!["me@203.0.113.7"],
         vec!["me@[2001:db8::1]"],
-        vec!["me@2001:db8::1"],
     ] {
         let out = rig.ssh(&config, &args).await;
         assert_eq!(out.status.code(), Some(255), "{args:?}");
-        // The refusal comes first; ssh adds its own line about the connection closing.
-        assert_eq!(
-            stderr(&out).lines().next(),
-            Some("puddle: SSH is not supported yet; no rule or setting allows it"),
+        assert!(
+            !stderr(&out).contains("SSH is not supported"),
             "{args:?}: {}",
             stderr(&out)
         );
-        assert!(!stderr(&out).contains("HTTPS"), "{args:?}");
     }
-    rig.assert_only_refusals(4).await;
+    let pending: Vec<(String, u16)> = rig
+        .policy
+        .pending()
+        .iter()
+        .map(|p| (p.host.to_string(), p.port))
+        .collect();
+    assert_eq!(
+        pending,
+        [
+            ("nas.example.test".to_owned(), 2222),
+            ("203.0.113.7".to_owned(), 22),
+            ("2001:db8::1".to_owned(), 22),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -441,14 +450,22 @@ async fn a_dns_name_that_starts_with_127_is_an_ordinary_destination() {
     let config = rig.ssh_config("");
     for name in ["127.0.0.1.nip.example.test", "127.evil.example.test"] {
         let out = rig.ssh(&config, &[&format!("me@{name}")]).await;
-        assert_eq!(
-            stderr(&out).lines().next(),
-            Some("puddle: SSH is not supported yet; no rule or setting allows it"),
+        assert!(
+            !stderr(&out).contains("SSH is not supported"),
             "{name}: {}",
             stderr(&out)
         );
     }
-    rig.assert_only_refusals(2).await;
+    let pending: Vec<String> = rig
+        .policy
+        .pending()
+        .iter()
+        .map(|p| p.host.to_string())
+        .collect();
+    assert_eq!(
+        pending,
+        ["127.0.0.1.nip.example.test", "127.evil.example.test"]
+    );
 }
 
 #[tokio::test]

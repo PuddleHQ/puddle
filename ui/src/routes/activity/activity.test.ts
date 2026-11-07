@@ -29,6 +29,7 @@ vi.mock("#lib/stores/audit.svelte.ts", async (original) => {
 });
 
 import { auditStore } from "#lib/stores/audit.svelte.ts";
+import { requestRulesStore } from "#lib/stores/request-rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import ActivityPage from "./+page.svelte";
 
@@ -184,6 +185,41 @@ describe("the activity page", () => {
       await fireEvent.submit(screen.getByRole("search"));
       await waitFor(() => expect(hosts()).toEqual(["files.test:443"]));
     }
+  });
+  it("links a refusing rule that still exists and marks one that is gone", async () => {
+    vi.spyOn(requestRulesStore, "refresh").mockResolvedValue();
+    requestRulesStore.status = "ready";
+    requestRulesStore.rules = [{ id: 7 } as never];
+    api.entries = [
+      connection(4, {
+        host: "files.test",
+        decision: "deny",
+        reason: "request_rule",
+        request_rule: 7,
+        method: "POST",
+        path: "/upload",
+        ts: Date.now(),
+      }),
+      connection(5, {
+        host: "gone.test",
+        decision: "deny",
+        reason: "request_rule",
+        request_rule: 8,
+        method: "POST",
+        path: "/upload",
+        ts: Date.now() - 100,
+      }),
+    ];
+    await open();
+    const link = screen.getByRole("link", { name: "method and path rule 7" });
+    expect(link).toHaveAttribute("href", "/rules?request-rule=7");
+    expect(
+      screen.getByText(/method and path rule 8 \(deleted\)/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "method and path rule 8" }),
+    ).toBeNull();
+    vi.restoreAllMocks();
   });
   it("reads at once on Enter in the search field", async () => {
     await open();

@@ -882,6 +882,32 @@ impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for SkipWrites<S> {
 }
 
 #[tokio::test]
+async fn the_server_names_itself_puddle_in_its_identification_line() {
+    let t = SshRig::new().await;
+    let guest = t.git.rig.guest();
+    let mut stream = guest.open_stream().await;
+    stream
+        .write_all(
+            format!(
+                "CONNECT bound.test:22 HTTP/1.1\r\nHost: bound.test:22\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\nSSH-2.0-test\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        reader.read_line(&mut line).await.unwrap();
+        if line.starts_with("SSH-") {
+            break;
+        }
+    }
+    assert_eq!(line, "SSH-2.0-Puddle\r\n");
+}
+
+#[tokio::test]
 async fn a_libssh2_client_is_asked_for_a_key_because_it_fails_a_login_with_none() {
     // libgit2 (cargo's built-in Git) reads an accepted `none` as "no authentication methods
     // succeeded"; any key will do.

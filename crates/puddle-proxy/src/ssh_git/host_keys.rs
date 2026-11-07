@@ -280,18 +280,16 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_source_still_hands_out_bytes_of_every_width() {
+    fn a_failed_source_hands_out_the_splitmix64_stream_in_every_width() {
         use rand_core::TryRng;
         let mut source = Source::new(|_| Err(getrandom::Error::UNSUPPORTED));
+        assert_eq!(source.try_next_u64().unwrap(), 0x6e78_9e6a_a1b9_65f4);
+        assert!(source.failed);
+        // The low half of the second output, then seven bytes of the third.
+        assert_eq!(source.try_next_u32().unwrap(), 0x8009_454f);
         let mut seven = [0; 7];
         source.try_fill_bytes(&mut seven).unwrap();
-        let (a, b) = (
-            source.try_next_u32().unwrap(),
-            source.try_next_u64().unwrap(),
-        );
-        assert!(source.failed);
-        assert!(seven.iter().any(|&b| b != 0));
-        assert!(a != 0 && b != 0);
+        assert_eq!(seven, [0xec, 0x81, 0x4c, 0x72, 0xa8, 0xb8, 0x8b]);
     }
 
     #[test]

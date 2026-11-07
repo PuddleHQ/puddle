@@ -173,6 +173,15 @@ mod tests {
     }
 
     #[test]
+    fn a_block_of_exactly_the_limit_is_valid_and_one_byte_more_is_not() {
+        assert_eq!(invalid(&"k".repeat(MAX_BLOCK)), None);
+        assert_eq!(
+            invalid(&"k".repeat(MAX_BLOCK + 1)),
+            Some("the block is too large")
+        );
+    }
+
+    #[test]
     fn a_block_in_place_is_replaced_where_it_stands() {
         let file = format!("top ssh-rsa A\n{}bottom ssh-rsa B\n", ours("old ssh-rsa C"));
         let expected = format!("top ssh-rsa A\n{}bottom ssh-rsa B\n", ours(KEY_A));

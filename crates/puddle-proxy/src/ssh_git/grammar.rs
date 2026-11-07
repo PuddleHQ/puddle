@@ -447,6 +447,19 @@ mod tests {
     }
 
     #[test]
+    fn the_built_in_ssh_names_are_every_built_in_host_once() {
+        let names = built_in_names();
+        assert_eq!(names.len(), BUILT_IN.len());
+        for name in ["github.com", "ssh.github.com", "ssh.dev.azure.com"] {
+            assert!(
+                names.contains(&Host::parse_normalised(name).unwrap()),
+                "{name}"
+            );
+        }
+        assert_eq!(crate::git_ssh_built_in_hosts(), names);
+    }
+
+    #[test]
     fn the_built_in_names_map_to_their_https_hosts() {
         for (ssh, https) in [
             ("github.com", "github.com"),

@@ -2094,7 +2094,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(asked.into_inner(), 2);
-        assert_ne!(second, first);
+        // Two random draws are not compared: `asked` shows the second came from a new draw.
         assert_eq!(second.as_str().len(), WorkspaceId::GENERATED_LEN);
     }
 

@@ -3136,10 +3136,30 @@ async fn a_create_that_cannot_clear_left_over_browser_data_is_refused() {
         "no workspace was made: {}",
         list.body
     );
-    // The refused create's id is retired: the next one of the name gets another.
+    // The refused create's id is retired and saved: the next one of the name gets another.
+    let book: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(list_path(&rig)).unwrap()).unwrap();
+    assert_eq!(book["retired_ids"], json!(["acme"]), "{book}");
     *rig.launcher.forget_fails_with.lock().unwrap() = None;
     let mut events = api.events().await;
     create_as(&api, &mut events, "acme", "acme-2").await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_create_still_answers_when_its_retired_id_cannot_be_saved() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
+    make_unwritable(&list_path(&rig));
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert!(
+        reply.body.contains("a window still holds it"),
+        "{}",
+        reply.body
+    );
     host.shutdown().await;
 }
 

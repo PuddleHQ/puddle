@@ -3086,6 +3086,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let mut state = self.state();
         state.slots.remove(id);
         state.retired.insert(id.clone());
+        // Saved now: no entry carries this id, so a crash before the next save would forget it.
+        if let Err(e) = self.persist(&state) {
+            tracing::warn!(workspace = %id, error = %e, "the retired id was not saved after a refused create");
+        }
         drop(state);
         Err(WorkspaceError::Conflict(format!(
             "browser data left under the id {id} could not be removed ({}), and the new \

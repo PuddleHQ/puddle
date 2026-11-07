@@ -187,6 +187,29 @@ pub(crate) fn canonical_path(path: &str) -> String {
     format!("/{}", segments.join("/"))
 }
 
+/// The built-in token endpoint a request to `host` with `method` and `path` is for, as the
+/// proxy reads it (the path in any spelling `canonical_path` collapses). A test that stands in
+/// for a service uses it to know which of its answers capture will read.
+#[must_use]
+pub fn token_endpoint_of(
+    host: &str,
+    method: &str,
+    path: &str,
+) -> Option<(&'static Profile, &'static Endpoint)> {
+    let path = canonical_path(path);
+    crate::profile::builtin().iter().find_map(|profile| {
+        profile
+            .endpoints
+            .iter()
+            .find(|e| {
+                e.host.eq_ignore_ascii_case(host)
+                    && e.method.accepts(method)
+                    && path_matches(&canonical_path(e.path), &path)
+            })
+            .map(|endpoint| (profile, endpoint))
+    })
+}
+
 impl Logins {
     /// The captured logins of `workspace`, for the profiles `profiles`.
     ///

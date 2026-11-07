@@ -54,6 +54,7 @@ use crate::injection::{
 use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
 use crate::proxy_sign_ins::HostProxySignIns;
+use crate::quit_trims::QuitTrims;
 use crate::ssh_config::SshSetup;
 use crate::workspaces::{Parts, RewriteGate, known_ids};
 use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords, VsCodeLauncher};
@@ -415,6 +416,10 @@ pub struct Host<R: Runtime + Clone> {
     url: Url,
     events: Arc<EventHub>,
     problems: Arc<Problems>,
+    quit_trims: QuitTrims,
+    /// The untrimmed disks the last quit left, with why; the ones still untrimmed at this quit
+    /// stay in the file.
+    carried: BTreeMap<WorkspaceId, String>,
     proxy_passwords: Arc<ProxyPasswords>,
     store: Arc<Store>,
     settings: Arc<dyn SettingsRepo>,
@@ -589,6 +594,16 @@ impl<R: Runtime + Clone> Host<R> {
             problems.raise(problem);
         }
         steps.push(Step::Reconciled);
+        // A trim that failed when the last run quit is told now, to a user who can read it.
+        let quit_trims = QuitTrims::new(config.paths.quit_trims());
+        let carried: BTreeMap<WorkspaceId, String> = quit_trims
+            .load()
+            .into_iter()
+            .filter(|(id, _)| stored.iter().any(|s| &s.id == id))
+            .collect();
+        for (id, why) in &carried {
+            problems.raise(crate::quit_trims::problem(id, why));
+        }
         let workspaces = adopt_holders(&runtime, &config, &stored).await?;
         steps.push(Step::WorkspacesAdopted);
 
@@ -702,6 +717,8 @@ impl<R: Runtime + Clone> Host<R> {
             url: served.url,
             events,
             problems,
+            quit_trims,
+            carried,
             proxy_passwords,
             store,
             settings,
@@ -824,6 +841,32 @@ impl<R: Runtime + Clone> Host<R> {
             .push(step);
     }
 
+    /// Writes the workspaces whose disk is still untrimmed: this quit's failed trims, and the
+    /// ones from the last quit that no later trim has fixed (their problem still stands).
+    fn save_quit_trims(&self, report: &ShutdownReport) {
+        let standing: BTreeSet<String> = self.problems.list().into_iter().map(|p| p.key).collect();
+        let mut untrimmed: BTreeMap<WorkspaceId, String> = self
+            .carried
+            .iter()
+            .filter(|(id, _)| standing.contains(&crate::quit_trims::key(id)))
+            .map(|(id, why)| (id.clone(), why.clone()))
+            .collect();
+        for (sandbox, why) in report.untrimmed() {
+            if let Ok(id) = WorkspaceId::new(sandbox.as_str()) {
+                untrimmed.insert(id, why);
+            }
+        }
+        // A workspace whose trim worked now is clean, whatever the file said.
+        for outcome in &report.sandboxes {
+            if outcome.trim == puddle_lifecycle::TrimOutcome::Trimmed
+                && let Ok(id) = WorkspaceId::new(outcome.sandbox.as_str())
+            {
+                untrimmed.remove(&id);
+            }
+        }
+        self.quit_trims.save(&untrimmed);
+    }
+
     /// Stops the host: refuse new operations, let running ones finish (up to the grace period),
     /// trim and stop every sandbox, close the routes, stop the API, stop the background tasks.
     /// Calling it again returns the first result.
@@ -836,6 +879,7 @@ impl<R: Runtime + Clone> Host<R> {
                 self.step(Step::OperationsFinished);
                 let sandboxes = self.lifecycle.shutdown().await;
                 self.step(Step::WorkspacesStopped);
+                self.save_quit_trims(&sandboxes);
                 self.workspaces.release_all().await;
                 self.step(Step::RoutesClosed);
                 if let Some(api) = self.api.lock().await.take() {

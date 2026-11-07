@@ -231,6 +231,8 @@ session_user() { # session_user <name> <home>
         say "session user $name (uid $uid), sudo at $sudo_at"
     else
         say "session user $name (uid $uid), no sudo in this image"
+        # A line of its own and fixed: the host reads it (`BootReport::session_user_has_no_sudo`).
+        say "session user cannot become root: no sudo"
     fi
 }
 

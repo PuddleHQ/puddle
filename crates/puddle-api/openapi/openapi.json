@@ -14196,6 +14196,7 @@
           "unexpected_answer",
           "unusable_token",
           "bound_token",
+          "unnamed_token",
           "unreadable",
           "capture_off",
           "unknown"

@@ -258,6 +258,7 @@ pub struct Proxy {
     log: Arc<dyn ConnectionLog>,
     upstream: Option<Upstream>,
     terminations: Option<TerminationConfig>,
+    git_ssh: Option<crate::ssh_git::GitSsh>,
     guest: Option<Arc<dyn GuestWatcher>>,
     pub(crate) sink: Arc<dyn EventSink>,
     reports: Option<Arc<dyn AgentReports>>,
@@ -292,6 +293,7 @@ impl Proxy {
             log: Arc::new(NullConnectionLog),
             upstream: None,
             terminations: None,
+            git_ssh: None,
             guest: None,
             sink,
             reports: None,
@@ -368,6 +370,39 @@ impl Proxy {
     ) -> Self {
         self.terminations = Some(TerminationConfig { source, tls });
         self
+    }
+
+    /// Serves SSH to the Git hosts the workspace terminates (see [`crate::ssh_git::GitSsh`]): Puddle's own
+    /// SSH server with `git`'s host keys, each command carried out by its upstream. Without it
+    /// every SSH connection is refused (`ssh_unsupported`).
+    #[must_use]
+    pub fn with_git_ssh(mut self, git: crate::ssh_git::GitSsh) -> Self {
+        self.git_ssh = Some(git);
+        self
+    }
+
+    /// The Git SSH server and host for `request`, when SSH to its name is served by Puddle: a
+    /// built-in Git host, or a host of one of the workspace's Git credentials.
+    fn git_ssh_for(
+        &self,
+        request: &EgressRequest,
+    ) -> Option<(
+        &crate::ssh_git::GitSsh,
+        Arc<terminate::Termination>,
+        crate::ssh_git::GitHost,
+    )> {
+        let git = self.git_ssh.as_ref()?;
+        let termination = self.termination_of(request)?;
+        let host = crate::ssh_git::built_in(&request.host).or_else(|| {
+            termination
+                .git_ssh_hosts()
+                .contains(&request.host)
+                .then(|| crate::ssh_git::GitHost {
+                    https: request.host.clone(),
+                    form: crate::ssh_git::PathForm::Plain,
+                })
+        })?;
+        Some((git, termination, host))
     }
 
     /// Passes what each workspace's agent says about the guest (the way to open a stream to it,
@@ -855,6 +890,11 @@ async fn relay(
 ) -> ConnectionEvent {
     let proxy = &handler.proxy;
     let from_container = ssh::from_container(head);
+    if request.protocol == Some(ProtocolHint::Ssh)
+        && let Some((git, termination, host)) = proxy.git_ssh_for(request)
+    {
+        return crate::ssh_git::serve(handler, reader, request, git, &termination, host).await;
+    }
     let (admitted, mut event) = admit(proxy, request).await;
     let admitted = match admitted {
         Ok(admitted) => admitted,

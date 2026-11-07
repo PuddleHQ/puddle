@@ -10,6 +10,7 @@ import {
   describe as row,
   exportName,
   fromSearch,
+  splitDetail,
   isFiltered,
   isNarrowed,
   jsonLine,
@@ -549,7 +550,9 @@ describe("a record as a row", () => {
     ).toMatchObject({
       outcome: { label: "Denied", tone: "deny" },
       detail: "DELETE /repos/a/b · method and path rule 7",
+      requestRule: 7,
     });
+    expect(row(connection(6).record).requestRule).toBeUndefined();
     expect(
       row(
         connection(5, {
@@ -559,6 +562,18 @@ describe("a record as a row", () => {
         }).record,
       ).detail,
     ).toContain("because the host has rules on method and path");
+  });
+  it("cuts a detail around its rule's name, or leaves it whole when the name is missing", () => {
+    expect(splitDetail("GET /a · method and path rule 7 · x", 7)).toEqual({
+      before: "GET /a · ",
+      name: "method and path rule 7",
+      after: " · x",
+    });
+    expect(splitDetail("GET /a", 7)).toEqual({
+      before: "GET /a",
+      name: "",
+      after: "",
+    });
   });
   it("shows a workspace operation with who asked, what it touched and how it ended", () => {
     const op = (fields: Record<string, unknown>) =>

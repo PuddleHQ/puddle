@@ -86,4 +86,30 @@ mod tests {
             "the file system made it dense: {used}"
         );
     }
+
+    /// NTFS gives a file the whole of its length unless the file is marked sparse, and msb marks
+    /// not its length.
+    #[cfg(windows)]
+    #[test]
+    fn a_sparse_marked_ntfs_file_takes_what_was_written_not_its_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("disk.raw");
+        std::fs::File::create(&path).unwrap();
+        let marked = std::process::Command::new("fsutil")
+            .args(["sparse", "setflag"])
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(marked.success(), "fsutil could not mark the file sparse");
+        let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(1024 * 1024 * 1024).unwrap();
+        file.write_all(&[1_u8; 4096]).unwrap();
+        file.sync_all().unwrap();
+        let used = allocated_bytes(&path).unwrap();
+        assert!(used >= 4096, "{used}");
+        assert!(
+            used < 64 * 1024 * 1024,
+            "apparent size reported as allocated: {used}"
+        );
+    }
 }

@@ -51,6 +51,7 @@ mod platform;
 mod ports;
 mod proxy_passwords;
 mod proxy_sign_ins;
+mod quit_trims;
 mod settings_read;
 mod shell_init;
 mod space_watch;

@@ -283,7 +283,7 @@ impl Guest {
                 Some((code, out)) => ExecOutput::new(code, out, ""),
                 None => ExecOutput::new(0, "D\n", ""),
             },
-            "trim" if self.fail_trim.load(Ordering::SeqCst) => {
+            "trim" | "shutdown-trim" if self.fail_trim.load(Ordering::SeqCst) => {
                 ExecOutput::new(1, "", "fstrim: the discard operation is not supported")
             }
             "check" if self.dirty.load(Ordering::SeqCst) => {
@@ -784,13 +784,17 @@ fn status_of(reply: &support::Reply) -> String {
 #[test]
 fn a_tests_data_folder_is_in_memory_where_the_machine_has_a_memory_mount() {
     let dir = support::scratch_dir();
-    let in_ram = std::env::var_os("TMPDIR").is_none() && support::is_ram_mount("/dev/shm");
-    assert_eq!(
-        dir.path().starts_with("/dev/shm"),
-        in_ram,
-        "{:?}",
-        dir.path()
-    );
+    match std::env::var_os("TMPDIR") {
+        // A `TMPDIR` the runner set is respected, whether or not it is itself in RAM (the check
+        // host puts it under `/dev/shm`).
+        Some(tmp) => assert!(dir.path().starts_with(&tmp), "{:?}", dir.path()),
+        None => assert_eq!(
+            dir.path().starts_with("/dev/shm"),
+            support::is_ram_mount("/dev/shm"),
+            "{:?}",
+            dir.path()
+        ),
+    }
     assert!(!support::is_ram_mount("/"), "the root is no memory mount");
     assert!(!support::is_ram_mount("/no/such/mount"));
     // Whatever the folder is, a host can write and sync a file in it.
@@ -8454,6 +8458,71 @@ async fn a_trim_that_failed_at_stop_and_a_stop_that_had_to_be_forced_are_problem
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_trim_that_failed_when_puddle_quit_is_a_problem_at_the_next_start_until_a_trim_works() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    rig.guest.fail_trim.store(true, Ordering::SeqCst);
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    drop(api);
+
+    let host = rig.start().await;
+    let api = self::api(&host);
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].0, "trim:acme");
+    assert_eq!(problems[0].1.as_deref(), Some("acme"));
+    assert!(problems[0].2.contains("when Puddle quit"), "{problems:?}");
+    assert!(problems[0].3.contains("not supported"), "{problems:?}");
+    assert!(problems[0].3.contains("Reclaim space"), "{problems:?}");
+
+    // Quitting again with the workspace stopped trims nothing; the note stays until a trim works.
+    host.shutdown().await;
+    drop(host);
+    let host = rig.start().await;
+    let api = self::api(&host);
+    let keys: Vec<_> = problems_of(&api).await.into_iter().map(|p| p.0).collect();
+    assert_eq!(keys, ["trim:acme"]);
+
+    // A start and a stop whose trim works end it, and the next start has nothing to say.
+    rig.guest.fail_trim.store(false, Ordering::SeqCst);
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(problems_of(&api).await, []);
+    host.shutdown().await;
+    drop(host);
+    let host = rig.start().await;
+    assert_eq!(problems_of(&self::api(&host)).await, []);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_quit_whose_trim_works_leaves_no_note_and_a_foreign_note_file_is_ignored() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(host);
+    let note = rig.config().paths.quit_trims();
+    assert!(!note.exists(), "a clean quit writes no note");
+
+    std::fs::write(&note, r#"{"version":9,"untrimmed":{"acme":"x"}}"#).unwrap();
+    let host = rig.start().await;
+    assert_eq!(problems_of(&self::api(&host)).await, []);
+    host.shutdown().await;
+    assert!(!note.exists(), "the quit rewrote the file from what stood");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn what_reconcile_kept_removed_or_could_not_do_at_start_is_listed_with_the_way_out() {
     let rig = Rig::new();
     rig.runtime
@@ -9671,6 +9740,91 @@ async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_d
             .list()
             .iter()
             .all(|p| p.key != "entrypoint:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_image_with_no_sudo_is_a_problem_until_a_start_that_finds_sudo() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: session user agent (uid 1000), no sudo in this image\n\
+         puddle-boot: session user cannot become root: no sudo\n"
+            .to_owned();
+    create(&api, &mut events, "acme").await;
+    let problem = host
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "no-sudo:acme")
+        .unwrap_or_else(|| panic!("no problem: {:?}", host.problems().list()));
+    assert_eq!(
+        problem.title,
+        "acme has no sudo, so its user cannot become root"
+    );
+    assert!(
+        problem.detail.contains("use an image that has `sudo`")
+            && problem.detail.contains("session user to root"),
+        "{}",
+        problem.detail
+    );
+    assert_eq!(
+        problem.workspace.as_ref().map(WorkspaceId::as_str),
+        Some("acme")
+    );
+
+    // It stays through a stop, and a start that says nothing about sudo (sudo found, or a root
+    // session user) takes it away.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .any(|p| p.key == "no-sudo:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "no-sudo:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+
+    // A delete takes a problem that is still up away with the workspace.
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: session user cannot become root: no sudo\n".to_owned();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .any(|p| p.key == "no-sudo:acme")
+    );
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let bare = json!({"confirm": true}).to_string();
+    let accepted = api.delete("/api/workspaces/acme", Some(&bare)).await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "no-sudo:acme"),
         "{:?}",
         host.problems().list()
     );

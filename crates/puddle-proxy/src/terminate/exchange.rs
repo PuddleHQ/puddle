@@ -31,6 +31,7 @@ use http_body_util::BodyExt as _;
 use hyper::body::Incoming;
 use puddle_types::Host;
 
+use super::inject::InjectRefusal;
 use super::leg::BoxError;
 use super::stand_in::{ScrubBody, StandIns, Swapped};
 use super::token_body::TokenBody;
@@ -143,8 +144,16 @@ pub trait AnswerRewriter: Send {
     ) -> BoxFuture<'a, Option<Bytes>>;
 
     /// The answer turned out larger than [`MAX_EXCHANGE_BODY`] (it had no length to say so up
-    /// front) and went to the guest as it is.
+    /// front). It goes to the guest as it is unless [`Self::refusal`] says otherwise.
     fn too_large(&mut self) {}
+
+    /// Asked once the rewriter has seen the answer (not wanted, too large, or rewritten): `Some`
+    /// when the answer must not reach the guest. The upstream answer is dropped unread and the
+    /// guest gets this refusal instead. A rewriter that holds something the guest must never see
+    /// (a real token it could not replace) says so here.
+    fn refusal(&mut self) -> Option<InjectRefusal> {
+        None
+    }
 }
 
 /// Decides, per terminated request, whether it is an exchange to read. One rewriter serves one
@@ -248,20 +257,38 @@ impl Body for AnswerBody {
     }
 }
 
+/// Why [`read_answer`] gave no answer for the guest.
+#[derive(Debug)]
+pub(crate) enum AnswerError {
+    /// The upstream failed or stalled.
+    Upstream(io::Error),
+    /// The rewriter refused the answer.
+    Refused(InjectRefusal),
+}
+
+impl From<io::Error> for AnswerError {
+    fn from(err: io::Error) -> Self {
+        Self::Upstream(err)
+    }
+}
+
 /// Lets `answer` see `response` and gives back what the guest gets: the response itself when the
 /// rewriter does not want it, else its body read in full (at most [`MAX_EXCHANGE_BODY`]; a
 /// larger one is passed on whole, the part read first) and replaced when the rewriter says so.
 ///
 /// # Errors
-/// The upstream failed or stalled while its answer was read.
+/// The upstream failed or stalled while its answer was read, or the rewriter refused the answer.
 pub(crate) async fn read_answer(
     answer: &mut dyn AnswerRewriter,
     response: Response<Incoming>,
     idle: Duration,
-) -> io::Result<Response<AnswerBody>> {
+) -> Result<Response<AnswerBody>, AnswerError> {
     let (mut parts, mut body) = response.into_parts();
     let head = AnswerHead::of(parts.status, &parts.headers);
     if !answer.wants(&head) {
+        if let Some(refusal) = answer.refusal() {
+            return Err(AnswerError::Refused(refusal));
+        }
         return Ok(Response::from_parts(parts, AnswerBody::Streaming(body)));
     }
     // The answer carries the real tokens: it is gathered in a buffer that is overwritten, and
@@ -281,6 +308,9 @@ pub(crate) async fn read_answer(
         if whole.len() > MAX_EXCHANGE_BODY {
             tracing::info!("a token answer is larger than expected and goes through unread");
             answer.too_large();
+            if let Some(refusal) = answer.refusal() {
+                return Err(AnswerError::Refused(refusal));
+            }
             return Ok(Response::from_parts(
                 parts,
                 AnswerBody::Rejoined {
@@ -291,6 +321,9 @@ pub(crate) async fn read_answer(
         }
     }
     let replaced = answer.rewrite(&head, whole.as_ref()).await;
+    if let Some(refusal) = answer.refusal() {
+        return Err(AnswerError::Refused(refusal));
+    }
     let body = replaced.unwrap_or_else(|| whole.into_bytes());
     // Whatever framing the upstream used, the guest gets this body at its own length.
     if let Ok(length) = HeaderValue::from_str(&body.len().to_string()) {

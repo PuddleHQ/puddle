@@ -217,8 +217,10 @@ mod tests {
 
     #[test]
     fn a_message_of_exactly_the_limit_is_read() {
+        // The literal, so a changed `MAX_MESSAGE` cannot move the test with it.
+        assert_eq!(MAX_MESSAGE, 262_144);
         let mut m = vec![MSG_FAILURE];
-        m.resize(MAX_MESSAGE, 0);
+        m.resize(262_144, 0);
         assert!(matches!(run(framed(&m)).0, Err(AgentError::Refused)));
     }
 

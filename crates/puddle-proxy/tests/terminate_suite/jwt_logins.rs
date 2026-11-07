@@ -30,7 +30,7 @@ static PROFILE: [Profile; 1] = [Profile {
         host: TOKEN_HOST,
         method: Method::Post,
         path: "/token",
-        refresh_field: None,
+        request_fields: &[],
         fields: &[Field {
             path: "access_token",
             role: Role::Access,
@@ -38,6 +38,7 @@ static PROFILE: [Profile; 1] = [Profile {
             prefixes: &[],
             keep_last: 0,
             stand_in: StandInKind::Jwt,
+            only_prefixed: false,
             scope: Scope::Api,
             audience: Audience::Any,
         }],

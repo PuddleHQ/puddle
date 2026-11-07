@@ -484,7 +484,7 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
   that names a literal line (an edit above it would fail an unrelated change) and one that matches no mutant. When two
   mutants read alike (the Windows and the Unix body of one function), give each body its own function name.
 - **Test selection and the cache.** Mutants run through nextest's `mutants` profile (the default profile's tests, so no
-  VM tests, with four threads and a 512 MiB heap limit per test process: a mutant can make a loop allocate without
+  VM tests, with four threads and a 1 GiB heap limit per test process: a mutant can make a loop allocate without
   end, and the limit fails that test instead of the machine), in a copy
   of the tree each, `MUTANTS_JOBS` at a time. The nightly sweep skips a crate whose inputs hash like the last
   passing run's: the committed trees of the crate and of every workspace crate it depends on (normal, build and

@@ -20,4 +20,8 @@ PUDDLE_TEST_MEMORY_KB=65536 "$cap" awk 'BEGIN { s = "x"; for (;;) s = s s }' >/d
 # The limit is soft: a child may lift it for itself (the real tools the login tests start need that).
 out=$(PUDDLE_TEST_MEMORY_KB=65536 "$cap" sh -c 'ulimit -S -d unlimited && ulimit -S -d') || fail "a child must be able to lift the soft limit"
 [ "$out" = unlimited ] || fail "the lifted limit must read unlimited: $out"
+# The default leaves room for the threads' stacks: 300 parked blocking threads (hostile_audit_backlog)
+# reach about 450 MiB and aborted CI shards at 512 MiB.
+out=$(env -u PUDDLE_TEST_MEMORY_KB "$cap" sh -c 'ulimit -S -d') || fail "the default limit must be readable"
+[ "$out" -ge 1048576 ] || fail "the default limit must be at least 1 GiB for thread-heavy tests: $out"
 echo "cap-test-memory-test: ok"

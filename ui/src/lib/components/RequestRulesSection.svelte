@@ -33,12 +33,15 @@
     workspace,
     workspaces = [],
     now,
+    selected,
   }: {
     store?: RequestRulesStore;
     workspace?: string;
     /** Workspaces to suggest in the form. */
     workspaces?: string[];
     now: number;
+    /** The rule an Activity link named. */
+    selected?: number | undefined;
   } = $props();
 
   const id = $props.id();
@@ -178,6 +181,7 @@
     <RequestRuleTable
       rules={shown}
       {now}
+      {selected}
       onDelete={editable
         ? (rule) => {
             deleting = rule;

@@ -22,8 +22,8 @@ use std::time::Duration;
 use puddle_ca::{CaBuilder, CaCertificate, WorkspaceCa};
 use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
 use puddle_proxy::{
-    Injector, Interception, PassThrough, RequestRule, RequestRules, StandInOrigin, StandIns,
-    Termination, TerminationSet, TerminationSource, Terminations,
+    GitSshHostKeys, Injector, Interception, PassThrough, RequestRule, RequestRules, StandInOrigin,
+    StandIns, Termination, TerminationSet, TerminationSource, Terminations,
 };
 use puddle_secrets::{Fetch, ReadLog, SecretCache, SecretStore, SourceSpec, Sources};
 use puddle_store::{Store, WorkspaceGit};
@@ -34,7 +34,7 @@ use tokio::time::Instant;
 use puddle_logins::Logins;
 
 use crate::environment::{Resolved, resolve};
-use crate::git_hosts::decrypt_set;
+use crate::git_hosts::{SshListing, decrypt_set, ssh_credential_hosts};
 use crate::logins::LoginKeeper;
 
 /// What an injector is built from.
@@ -81,6 +81,8 @@ pub(crate) struct Began {
     pub(crate) certificate: CaCertificate,
     /// The workspace's Git settings as they were when its CA was made.
     pub(crate) git: WorkspaceGit,
+    /// This start's SSH host keys and the names they are listed under, when Git over SSH is on.
+    pub(crate) ssh: Option<SshListing>,
     /// The variables the guest starts with: the workspace's own and the global ones, each secret
     /// as its stand-in.
     pub(crate) env: GuestEnv,
@@ -91,6 +93,8 @@ pub(crate) struct Began {
 #[derive(Clone)]
 struct Running {
     ca: Arc<WorkspaceCa>,
+    /// This start's SSH host keys; only when Git over SSH is on.
+    ssh_keys: Option<Arc<GitSshHostKeys>>,
     injector: Arc<dyn Injector>,
     stand_ins: Arc<StandIns>,
     logins: Logins,
@@ -104,15 +108,23 @@ impl Running {
     /// (secrets and captured logins share it) and the reading of its login exchanges.
     fn termination(
         &self,
+        git: &WorkspaceGit,
         set: TerminationSet,
         interception: Interception,
         request_rules: RequestRules,
     ) -> Termination {
-        Termination::new(set, Arc::clone(&self.ca), Arc::clone(&self.injector))
+        let termination = Termination::new(set, Arc::clone(&self.ca), Arc::clone(&self.injector))
             .with_stand_ins(Arc::clone(&self.stand_ins))
             .with_exchanges(Arc::new(self.logins.clone()))
             .with_interception(interception)
-            .with_request_rules(request_rules)
+            .with_request_rules(request_rules);
+        // The keys and the names they serve change together: the guest's list names the same.
+        match &self.ssh_keys {
+            Some(keys) => termination
+                .with_git_ssh_keys(Arc::clone(keys))
+                .with_git_ssh_hosts(ssh_credential_hosts(git)),
+            None => termination,
+        }
     }
 }
 
@@ -148,6 +160,8 @@ pub(crate) struct Injection {
     /// store that is slow for one workspace's secrets holds up no other workspace.
     environment: Mutex<BTreeMap<WorkspaceId, Arc<tokio::sync::Mutex<()>>>>,
     vault_timeout: Duration,
+    /// Whether each start makes SSH host keys for Git over SSH.
+    git_ssh: bool,
 }
 
 impl Injection {
@@ -167,7 +181,14 @@ impl Injection {
             syncing: Mutex::new(()),
             environment: Mutex::new(BTreeMap::new()),
             vault_timeout: VAULT_TIMEOUT,
+            git_ssh: false,
         }
+    }
+
+    /// Makes SSH host keys at each start (and serves Git over SSH with them), or not.
+    pub(crate) fn with_git_ssh(mut self, on: bool) -> Self {
+        self.git_ssh = on;
+        self
     }
 
     /// Keeps each workspace's login marker in `dir`.
@@ -247,7 +268,24 @@ impl Injection {
             .login_keeper
             .logins(workspace, capture, Arc::clone(&stand_ins));
         logins.load().await;
-        self.register(workspace, resolved, stand_ins, logins)
+        let ssh_keys = self.host_keys_for(workspace).await?;
+        self.register(workspace, resolved, stand_ins, logins, ssh_keys)
+    }
+
+    /// This start's SSH host keys, when Git over SSH is on. The RSA key takes a moment, so it is
+    /// made off the async threads.
+    async fn host_keys_for(
+        &self,
+        workspace: &WorkspaceId,
+    ) -> Result<Option<Arc<GitSshHostKeys>>, String> {
+        if !self.git_ssh {
+            return Ok(None);
+        }
+        let made = tokio::task::spawn_blocking(GitSshHostKeys::generate)
+            .await
+            .map_err(|e| format!("cannot make {workspace}'s SSH host keys: {e}"))?;
+        made.map(|keys| Some(Arc::new(keys)))
+            .map_err(|e| format!("{workspace}: {e}"))
     }
 
     fn register(
@@ -256,6 +294,7 @@ impl Injection {
         resolved: Resolved,
         stand_ins: Arc<StandIns>,
         logins: Logins,
+        ssh_keys: Option<Arc<GitSshHostKeys>>,
     ) -> Result<Began, String> {
         let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
         let git = self.git(workspace)?;
@@ -281,8 +320,10 @@ impl Injection {
         // The registry and the list of running CAs change together, under the list's lock, so a
         // `resync` or an `end` never sees one without the other.
         let mut running = self.running();
+        let now_keys = ssh_keys.clone();
         let now = Running {
             ca,
+            ssh_keys,
             injector,
             stand_ins,
             logins,
@@ -291,16 +332,19 @@ impl Injection {
         self.terminations.insert(
             workspace.clone(),
             now.termination(
+                &git,
                 decrypted(&git, &now.stand_ins, &now.logins),
                 self.interception(workspace, &now.learned)?,
                 self.request_rules(workspace)?,
             ),
         );
         running.insert(workspace.clone(), now);
+        let ssh = now_keys.map(|keys| SshListing::for_git(keys, &git));
         drop(running);
         Ok(Began {
             certificate,
             git,
+            ssh,
             env: guest,
         })
     }
@@ -379,6 +423,7 @@ impl Injection {
         self.terminations.insert(
             workspace.clone(),
             now.termination(
+                &git,
                 decrypted(&git, &now.stand_ins, &now.logins),
                 self.interception(workspace, &now.learned)?,
                 self.request_rules(workspace)?,
@@ -714,6 +759,104 @@ mod tests {
         terminations
             .termination(ws)
             .is_some_and(|t| t.set().contains(&Host::parse_normalised(host).unwrap()))
+    }
+
+    /// An injection that makes SSH host keys at each start.
+    fn injection_with_ssh(store: &Arc<Store>) -> (Injection, Arc<Terminations>) {
+        let (injection, terminations) = injection(store);
+        (injection.with_git_ssh(true), terminations)
+    }
+
+    fn served_keys(terminations: &Terminations, ws: &WorkspaceId) -> Vec<String> {
+        let termination = terminations.termination(ws).unwrap();
+        termination
+            .git_ssh_keys()
+            .map(|keys| {
+                keys.keys()
+                    .iter()
+                    .map(|k| k.public_key().to_openssh().unwrap())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn git_over_ssh_off_makes_no_host_keys_and_serves_no_ssh_names() {
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let ws = workspace("alpha");
+        attach(&store, &ws, "ada", "git.corp.example");
+        let began = injection.begin(&ws, false).await.unwrap();
+        assert!(began.ssh.is_none());
+        let termination = terminations.termination(&ws).unwrap();
+        assert!(termination.git_ssh_keys().is_none());
+        assert!(
+            !termination
+                .git_ssh_hosts()
+                .contains(&Host::parse_normalised("git.corp.example").unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn each_start_makes_new_host_keys_the_workspace_serves_and_the_guest_lists() {
+        let store = store();
+        let (injection, terminations) = injection_with_ssh(&store);
+        let (a, b) = (workspace("alpha"), workspace("beta"));
+        attach(&store, &a, "ada", "git.corp.example");
+        let first = injection.begin(&a, false).await.unwrap();
+        let other = injection.begin(&b, false).await.unwrap();
+
+        // The keys served are the ones listed, under the built-in names and the credential's.
+        let listing = first.ssh.unwrap();
+        let served = served_keys(&terminations, &a);
+        assert_eq!(served.len(), 3);
+        let lines = listing.lines().unwrap();
+        for key in &served {
+            let half = key.split(' ').take(2).collect::<Vec<_>>().join(" ");
+            for name in ["github.com", "ssh.dev.azure.com", "git.corp.example"] {
+                assert!(lines.contains(&format!("{name} {half}")), "{name}");
+                assert!(lines.contains(&format!("[{name}]:443 {half}")), "{name}");
+            }
+        }
+        let ssh_hosts = terminations.termination(&a).unwrap();
+        assert!(
+            ssh_hosts
+                .git_ssh_hosts()
+                .contains(&Host::parse_normalised("git.corp.example").unwrap())
+        );
+        // Another workspace has other keys, and a restart of the first makes new ones.
+        assert_ne!(served_keys(&terminations, &b), served);
+        assert!(other.ssh.is_some());
+        injection.end(&a);
+        injection.begin(&a, false).await.unwrap();
+        assert_ne!(served_keys(&terminations, &a), served);
+    }
+
+    #[tokio::test]
+    async fn a_change_to_the_identities_keeps_the_keys_and_changes_the_names() {
+        let store = store();
+        let (injection, terminations) = injection_with_ssh(&store);
+        let ws = workspace("alpha");
+        let began = injection.begin(&ws, false).await.unwrap();
+        let before = served_keys(&terminations, &ws);
+        assert!(
+            !began
+                .ssh
+                .unwrap()
+                .lines()
+                .unwrap()
+                .contains("git.corp.example")
+        );
+        attach(&store, &ws, "ada", "git.corp.example");
+        injection.resync(&ws).unwrap();
+        assert_eq!(served_keys(&terminations, &ws), before);
+        assert!(
+            terminations
+                .termination(&ws)
+                .unwrap()
+                .git_ssh_hosts()
+                .contains(&Host::parse_normalised("git.corp.example").unwrap())
+        );
     }
 
     #[tokio::test]

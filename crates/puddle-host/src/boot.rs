@@ -14,7 +14,7 @@ use puddle_ca::{CaCertificate, TrustBundle};
 use puddle_certs::devcert::GuestDevCert;
 use puddle_certs::{CorporateRoots, GuestTrust};
 use puddle_compute::{DiskSize, FileMount, ImageConfig, OwnedDisk, SandboxSpec, VsockRoute};
-use puddle_guest_env::{ProxySettings, guest_proxy_config};
+use puddle_guest_env::{ProxySettings, guest_proxy_config, ssh_known_hosts_file};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
 use puddle_store::Store;
@@ -22,7 +22,7 @@ use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionU
 use puddle_workspace::Layout;
 
 use crate::dev_cert::GuestCertSource;
-use crate::git_hosts::Authors;
+use crate::git_hosts::{Authors, SshListing};
 use crate::shell_init::{self, Copies};
 use crate::{GuestSettings, HostError};
 
@@ -90,6 +90,8 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) ca: &'a CaCertificate,
     /// The commit authors: the fallback and the rules by remote.
     pub(crate) authors: &'a Authors,
+    /// This start's SSH host keys and the names they are listed under, when Git over SSH is on.
+    pub(crate) ssh: Option<&'a SshListing>,
     /// The user's variables for this workspace, a secret as its stand-in. They sit under Puddle's
     /// own (the proxy and trust variables win), except that a `JAVA_TOOL_OPTIONS`, `MAVEN_ARGS`,
     /// `GRADLE_USER_HOME` or `DOCKER_CONFIG` of the user's is kept and Puddle's setting is added to
@@ -222,6 +224,9 @@ impl BootKit {
             ));
         if let Some(file) = guest.editor_file {
             builder = builder.file(file.clone());
+        }
+        if let Some(lines) = guest.ssh.and_then(SshListing::lines) {
+            builder = builder.file(ssh_known_hosts_file(&lines).map_err(|e| e.to_string())?);
         }
         for step in trust.boot_steps() {
             builder = builder.step(step);

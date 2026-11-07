@@ -9,33 +9,15 @@
 //! put it, and the first value `ssh` reads for an option wins, so Puddle's drop-in then comes
 //! before the system defaults.
 //!
-//! A file with a NUL byte, invalid UTF-8 or more than [`MAX_MERGE_FILE`] bytes is refused.
+//! A file with a NUL byte, invalid UTF-8 or more than [`crate::MAX_MERGE_FILE`] bytes is refused.
 
-use super::{MAX_MERGE_FILE, MergeEntry, MergeRefusal, Merged, Unmerged};
+use super::{MergeEntry, MergeRefusal, Merged, Unmerged, read_text};
 
 /// The comment above the line Puddle adds. Removal finds the pair by it, so it never changes.
 pub(super) const MARKER: &str = "# Added by Puddle at boot: this image's ssh_config did not read the folder that holds Puddle's ssh settings.";
 
 /// The only key path of this format.
 pub(super) const KEY: &str = "Include";
-
-fn read(existing: Option<&[u8]>) -> Result<Option<&str>, MergeRefusal> {
-    let Some(bytes) = existing else {
-        return Ok(None);
-    };
-    if bytes.len() > MAX_MERGE_FILE {
-        return Err(MergeRefusal::TooLarge);
-    }
-    if bytes.contains(&0) {
-        return Err(MergeRefusal::NulByte);
-    }
-    std::str::from_utf8(bytes)
-        .map(Some)
-        .map_err(|_| MergeRefusal::Syntax {
-            format: "UTF-8",
-            reason: "invalid byte sequence".to_owned(),
-        })
-}
 
 /// The pattern as the entry holds it.
 fn pattern(entries: &[MergeEntry]) -> &str {
@@ -48,7 +30,7 @@ pub(super) fn apply(
     existing: Option<&[u8]>,
     entries: &[MergeEntry],
 ) -> Result<String, MergeRefusal> {
-    let original = read(existing)?.unwrap_or("");
+    let original = read_text(existing)?.unwrap_or("");
     let wanted = pattern(entries);
     if reaches(original, wanted) {
         return Ok(original.to_owned());
@@ -59,7 +41,7 @@ pub(super) fn apply(
 /// Removes the pair Puddle added; whether the file is empty afterwards. A pair the user edited
 /// or moved is not Puddle's any more and stays.
 pub(super) fn unmerge(existing: &[u8]) -> Result<Unmerged, MergeRefusal> {
-    let original = read(Some(existing))?.unwrap_or("");
+    let original = read_text(Some(existing))?.unwrap_or("");
     let (out, empty) = remove_pair(original);
     let merged = if out == original {
         Merged::Unchanged
@@ -145,6 +127,7 @@ fn reaches(text: &str, wanted: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MAX_MERGE_FILE;
     use crate::{MergeFormat, MergeSpec};
 
     const WANTED: &str = "/etc/ssh/ssh_config.d/*.conf";

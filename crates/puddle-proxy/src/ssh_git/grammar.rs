@@ -76,6 +76,14 @@ const BUILT_IN: [(&str, &str, PathForm); 8] = [
     ),
 ];
 
+/// The SSH names of the built-in Git hosts, the ones every workspace has.
+pub(crate) fn built_in_names() -> Vec<Host> {
+    BUILT_IN
+        .iter()
+        .filter_map(|(ssh, ..)| Host::parse_normalised(ssh).ok())
+        .collect()
+}
+
 /// The built-in Git host called `name`, if there is one.
 pub(crate) fn built_in(name: &Host) -> Option<GitHost> {
     let name = name.to_string();

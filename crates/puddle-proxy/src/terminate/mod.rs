@@ -133,6 +133,7 @@ pub struct Termination {
     interception: Interception,
     request_rules: RequestRules,
     git_ssh_hosts: TerminationSet,
+    git_ssh_keys: Option<Arc<crate::ssh_git::GitSshHostKeys>>,
 }
 
 /// How a connection to a host is decrypted.
@@ -164,6 +165,7 @@ impl Termination {
             interception: Interception::default(),
             request_rules: RequestRules::default(),
             git_ssh_hosts: TerminationSet::new(),
+            git_ssh_keys: None,
         }
     }
 
@@ -193,8 +195,24 @@ impl Termination {
         self
     }
 
+    /// Serves Git over SSH to this workspace with `keys`, the host keys of this start, instead of
+    /// the keys the proxy's [`crate::GitSsh`] holds. They are the ones the guest's
+    /// `ssh_known_hosts` lists.
+    #[must_use]
+    pub fn with_git_ssh_keys(mut self, keys: Arc<crate::ssh_git::GitSshHostKeys>) -> Self {
+        self.git_ssh_keys = Some(keys);
+        self
+    }
+
+    /// The keys of this start, when it has its own.
+    #[must_use]
+    pub fn git_ssh_keys(&self) -> Option<&crate::ssh_git::GitSshHostKeys> {
+        self.git_ssh_keys.as_deref()
+    }
+
     /// The hosts whose SSH is ended for Git, beyond the built-in ones.
-    pub(crate) fn git_ssh_hosts(&self) -> &TerminationSet {
+    #[must_use]
+    pub fn git_ssh_hosts(&self) -> &TerminationSet {
         &self.git_ssh_hosts
     }
 

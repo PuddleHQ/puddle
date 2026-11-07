@@ -17,3 +17,6 @@ crates/xtask/src/inventory.rs	licence entry in the puddle notices
 crates/xtask/tests/runtime.rs	licence entry in the puddle notices
 crates/puddle-agent/src/capture/rules.rs	table inet puddle
 crates/puddle-host/tests/vm_capture.rs	table inet puddle
+crates/puddle-types/src/merge/knownhosts.rs	# puddle:
+crates/puddle-agent/src/merge_file.rs	# puddle:
+crates/puddle-guest-env/src/render.rs	# puddle:

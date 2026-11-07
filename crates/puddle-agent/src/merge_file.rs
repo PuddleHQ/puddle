@@ -166,10 +166,16 @@ pub fn run(request: &Request, stdin: impl Read) -> Result<Outcome, MergeFileErro
             let spec: MergeSpec =
                 serde_json::from_slice(&input).map_err(|e| MergeFileError::Spec(e.to_string()))?;
             let applied = apply(request, &spec, mode);
-            // The line in `ssh_config` only improves a message: a file Puddle can't read or
-            // write is left as it is, with a notice, and never stops the boot.
+            // The line in `ssh_config` only improves a message and the host keys in
+            // `ssh_known_hosts` only spare the user a prompt: a file Puddle can't read or write is
+            // left as it is, with a notice, and never stops the boot.
             match applied {
-                Err(e @ MergeFileError::Io { .. }) if spec.format() == MergeFormat::SshConfig => {
+                Err(e @ MergeFileError::Io { .. })
+                    if matches!(
+                        spec.format(),
+                        MergeFormat::SshConfig | MergeFormat::KnownHosts
+                    ) =>
+                {
                     Ok(Outcome::Left(e.to_string()))
                 }
                 other => other,
@@ -669,6 +675,66 @@ mod tests {
         let r = req(&d, Action::Apply { mode: 0o640 });
         fs::create_dir_all(&r.file).unwrap();
         assert!(run(&r, docker().as_slice()).is_err());
+    }
+
+    fn known_hosts_request(dir: &Dir) -> Request {
+        Request {
+            action: Action::Apply { mode: 0o644 },
+            state_dir: dir.0.join("state"),
+            key: "/etc/ssh/ssh_known_hosts".to_owned(),
+            file: dir.0.join("etc/ssh/ssh_known_hosts"),
+        }
+    }
+
+    fn known_hosts(lines: &str) -> Vec<u8> {
+        let entry = MergeEntry::known_hosts(lines);
+        serde_json::to_vec(&MergeSpec::new(MergeFormat::KnownHosts, vec![entry]).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_host_keys_replace_only_the_block_and_a_rerun_with_the_same_keys_changes_nothing() {
+        let d = Dir::new("known-hosts");
+        let r = known_hosts_request(&d);
+        fs::create_dir_all(r.file.parent().unwrap()).unwrap();
+        let image = "example.org ssh-rsa AAAA\n";
+        fs::write(&r.file, image).unwrap();
+        let first = known_hosts("github.com ssh-ed25519 AAAA1");
+        assert_eq!(run(&r, first.as_slice()).unwrap(), Outcome::Changed);
+        assert_eq!(
+            run(&r, first.as_slice()).unwrap(),
+            Outcome::Unchanged,
+            "the same keys"
+        );
+        // The next start has other keys: the block is replaced, the image's line stays.
+        let second = known_hosts("github.com ssh-ed25519 AAAA2");
+        assert_eq!(run(&r, second.as_slice()).unwrap(), Outcome::Changed);
+        assert_eq!(
+            fs::read_to_string(&r.file).unwrap(),
+            format!("{image}# puddle: begin\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n")
+        );
+        // The guest removed the end marker: the next run repairs the file.
+        let damaged = fs::read_to_string(&r.file)
+            .unwrap()
+            .replace("# puddle: end\n", "");
+        fs::write(&r.file, damaged).unwrap();
+        assert_eq!(run(&r, second.as_slice()).unwrap(), Outcome::Changed);
+        assert_eq!(
+            fs::read_to_string(&r.file).unwrap(),
+            format!(
+                "{image}github.com ssh-ed25519 AAAA2\n# puddle: begin\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n"
+            )
+        );
+    }
+
+    #[test]
+    fn host_keys_that_cannot_be_written_are_a_notice_and_not_a_failed_boot() {
+        let d = Dir::new("known-hosts-directory");
+        let r = known_hosts_request(&d);
+        fs::create_dir_all(&r.file).unwrap();
+        let why = run(&r, known_hosts("github.com ssh-ed25519 AAAA").as_slice())
+            .unwrap()
+            .to_string();
+        assert!(why.starts_with("left: "), "{why}");
     }
 
     #[test]

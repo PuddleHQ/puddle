@@ -6,6 +6,12 @@
 //! [`WebHost::register`] fills. Every request is recorded as a [`Seen`](super::Seen), headers
 //! included, so a test can say what the server was sent (a credential the proxy swapped in, say).
 //!
+//! A request to a login profile's token endpoint (`puddle_logins::token_endpoint_of`) gets a JSON
+//! `200` with an `error` by default, the shape of a real service's refusal: login capture reads
+//! JSON and forms and refuses any other type, so the plain-text default would stop the login.
+//! A [`Responder`] that answers such an endpoint `2xx` with a type capture refuses fails the test that started the site, when the site is dropped (see
+//! [`WebHost::take_unreadable_token_answers`]).
+//!
 //! The certificate's root is named so that it never contains the product name: a test that looks
 //! at the issuer a guest sees can tell Puddle's certificate from the fixture's. Test code only.
 
@@ -18,6 +24,8 @@ use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use puddle_logins::token_endpoint_of;
+use puddle_proxy::TokenBody;
 use rustls::pki_types::CertificateDer;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -63,6 +71,8 @@ impl std::fmt::Debug for WebOptions {
 struct State {
     options: WebOptions,
     seen: Mutex<Vec<Seen>>,
+    /// Token-endpoint answers a responder gave with a type login capture refuses.
+    unreadable: Mutex<Vec<String>>,
 }
 
 /// The fake website. Stops when dropped.
@@ -79,6 +89,11 @@ impl Drop for WebHost {
         for task in &self.tasks {
             task.abort();
         }
+        let unreadable = self.take_unreadable_token_answers();
+        assert!(
+            unreadable.is_empty() || std::thread::panicking(),
+            "a fake answered a login token endpoint with a type capture refuses: {unreadable:#?}"
+        );
     }
 }
 
@@ -90,6 +105,7 @@ impl WebHost {
         let state = Arc::new(State {
             options,
             seen: Mutex::new(Vec::new()),
+            unreadable: Mutex::new(Vec::new()),
         });
         let plain_listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
         let tls_listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
@@ -136,6 +152,20 @@ impl WebHost {
     #[must_use]
     pub fn tls_addr(&self) -> SocketAddr {
         self.tls
+    }
+
+    /// The token-endpoint answers (`METHOD host path: status, type`) that a responder gave with a
+    /// type the login capture refuses, oldest first; empties the list. A site dropped with any
+    /// left fails the test.
+    #[must_use]
+    pub fn take_unreadable_token_answers(&self) -> Vec<String> {
+        std::mem::take(
+            &mut *self
+                .state
+                .unreadable
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
     }
 
     /// Every request answered so far, oldest first.
@@ -245,6 +275,32 @@ async fn handle(
         body: body.iter().copied().take(64 * 1024).collect(),
     };
     let chosen = state.options.responder.as_ref().and_then(|ask| ask(&seen));
+    let endpoint = seen.headers_named("host").first().and_then(|host| {
+        let host = host.split(':').next().unwrap_or_default();
+        token_endpoint_of(host, &seen.method, &seen.target).map(|_| host.to_owned())
+    });
+    let chosen = match (chosen, &endpoint) {
+        (None, Some(_)) => Some(WebAnswer {
+            status: 200,
+            content_type: "application/json",
+            body: br#"{"error":"invalid_request","error_description":"lab web host: no grant"}"#
+                .to_vec(),
+        }),
+        (chosen, _) => chosen,
+    };
+    if let (Some(chosen), Some(host)) = (&chosen, &endpoint) {
+        let success = (200..300).contains(&chosen.status) && chosen.status != 204;
+        if success && !TokenBody::reads(Some(chosen.content_type)) {
+            state
+                .unreadable
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(format!(
+                    "{} {host}{}: {}, {}",
+                    seen.method, seen.target, chosen.status, chosen.content_type
+                ));
+        }
+    }
     let answer = if let Some(chosen) = chosen {
         seen.status = chosen.status;
         let mut reply = Response::builder()

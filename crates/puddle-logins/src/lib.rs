@@ -35,7 +35,9 @@ mod vault;
 #[cfg(test)]
 mod widened_tests;
 
-pub use logins::{ForgetError, Kept, KeptList, KeptLogin, LoginNotices, Logins, Problem};
+pub use logins::{
+    ForgetError, Kept, KeptList, KeptLogin, LoginNotices, Logins, Problem, token_endpoint_of,
+};
 pub use marker::Marker;
 pub use profile::{
     Audience, CLAUDE, DOCKER, ENTRA, Endpoint, Field, GITHUB, Method, OPENAI, Profile, Role, Scope,

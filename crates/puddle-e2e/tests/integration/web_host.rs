@@ -251,3 +251,132 @@ async fn a_refusal_with_401_carries_a_basic_challenge() {
         "{text}"
     );
 }
+
+/// One request through the proxy; the whole answer as text.
+async fn ask(proxy: &NameProxy, method: &str, host: &str, path: &str) -> String {
+    let mut conn = through(
+        proxy,
+        &format!("{method} http://{host}{path} HTTP/1.1\r\n"),
+        &format!("Host: {host}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+    )
+    .await;
+    let mut text = String::new();
+    conn.read_to_string(&mut text).await.unwrap();
+    text
+}
+
+/// A request path for a profile endpoint's path pattern: a wildcard segment becomes `x`.
+fn path_for(pattern: &str) -> String {
+    pattern.replace('*', "x")
+}
+
+/// The guard against a plain-text token answer: with no responder, every login profile's token endpoint
+/// is answered with a type login capture reads, so a VM test (or the next profile's) that reaches
+/// one does not stop its login as "another type" (found in the merge queue, not before).
+#[tokio::test]
+async fn every_login_profiles_token_endpoint_is_answered_with_a_type_capture_reads() {
+    let endpoints: Vec<_> = puddle_logins::builtin()
+        .iter()
+        .flat_map(|profile| profile.endpoints.iter().map(move |e| (profile.id, e)))
+        .collect();
+    assert!(endpoints.len() >= 6, "{} endpoints", endpoints.len());
+    let hosts: Vec<&str> = endpoints.iter().map(|(_, e)| e.host).collect();
+    let web = WebHost::start(&hosts, WebOptions::default()).await;
+    let proxy = NameProxy::start(&[]).await;
+    web.register(&proxy, &hosts);
+    for (id, endpoint) in endpoints {
+        let method = if endpoint.method.accepts("POST") {
+            "POST"
+        } else {
+            "GET"
+        };
+        let text = ask(&proxy, method, endpoint.host, &path_for(endpoint.path)).await;
+        assert!(
+            text.starts_with("HTTP/1.1 200"),
+            "{id} {}: {text}",
+            endpoint.host
+        );
+        let content_type = text
+            .lines()
+            .find_map(|l| {
+                l.to_ascii_lowercase()
+                    .strip_prefix("content-type: ")
+                    .map(str::to_owned)
+            })
+            .unwrap();
+        assert!(
+            puddle_proxy::TokenBody::reads(Some(&content_type)),
+            "{id} {}{}: the default answer is {content_type}, a type capture refuses",
+            endpoint.host,
+            endpoint.path
+        );
+    }
+    assert_eq!(web.take_unreadable_token_answers(), Vec::<String>::new());
+    // A path that is no token endpoint keeps the plain default.
+    let other = ask(&proxy, "POST", hosts[0], "/elsewhere").await;
+    assert!(other.contains("content-type: text/plain"), "{other}");
+}
+
+/// The other half of the guard: a responder that answers a token endpoint with a type capture
+/// refuses is named, and only when the answer is a success that capture would read.
+#[tokio::test]
+async fn a_responder_that_answers_a_token_endpoint_in_a_refused_type_is_named() {
+    let responder: puddle_e2e::lab::Responder = std::sync::Arc::new(|seen| {
+        let status = match seen.target.as_str() {
+            "/v1/oauth/token" => 200,
+            "/v1/oauth/token?refused" => 400,
+            "/v1/oauth/token?empty" => 204,
+            _ => return None,
+        };
+        Some(puddle_e2e::lab::WebAnswer {
+            status,
+            content_type: "text/plain",
+            body: b"nope".to_vec(),
+        })
+    });
+    let web = WebHost::start(
+        &["platform.claude.com", "other.test"],
+        WebOptions {
+            responder: Some(responder),
+            ..WebOptions::default()
+        },
+    )
+    .await;
+    let proxy = NameProxy::start(&[]).await;
+    web.register(&proxy, &["platform.claude.com", "other.test"]);
+    for path in ["/v1/oauth/token?refused", "/v1/oauth/token?empty"] {
+        ask(&proxy, "POST", "platform.claude.com", path).await;
+    }
+    ask(&proxy, "POST", "other.test", "/v1/oauth/token").await;
+    assert_eq!(web.take_unreadable_token_answers(), Vec::<String>::new());
+    ask(&proxy, "POST", "platform.claude.com", "/v1/oauth/token").await;
+    assert_eq!(
+        web.take_unreadable_token_answers(),
+        ["POST platform.claude.com/v1/oauth/token: 200, text/plain"]
+    );
+    assert_eq!(web.take_unreadable_token_answers(), Vec::<String>::new());
+}
+
+#[tokio::test]
+#[should_panic(expected = "a fake answered a login token endpoint with a type capture refuses")]
+async fn a_site_dropped_with_an_unreadable_token_answer_fails_its_test() {
+    let responder: puddle_e2e::lab::Responder = std::sync::Arc::new(|_| {
+        Some(puddle_e2e::lab::WebAnswer {
+            status: 200,
+            content_type: "text/plain",
+            body: b"access_token=x".to_vec(),
+        })
+    });
+    let web = WebHost::start(
+        &["github.com"],
+        WebOptions {
+            responder: Some(responder),
+            ..WebOptions::default()
+        },
+    )
+    .await;
+    let proxy = NameProxy::start(&[]).await;
+    web.register(&proxy, &["github.com"]);
+    ask(&proxy, "POST", "github.com", "/login/oauth/access_token").await;
+    drop(web);
+}

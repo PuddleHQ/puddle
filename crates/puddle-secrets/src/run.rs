@@ -86,15 +86,28 @@ fn find_file(file: &str, search_path: &OsStr) -> Option<PathBuf> {
         .find(|candidate| is_executable(candidate))
 }
 
-#[cfg(unix)]
+/// The two bodies have their own names so that a mutation exclusion can name the one a Linux run
+/// never compiles.
 fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        has_execute_bit(path)
+    }
+    #[cfg(not(unix))]
+    {
+        exists_as_file(path)
+    }
+}
+
+#[cfg(unix)]
+fn has_execute_bit(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     path.metadata()
         .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
+fn exists_as_file(path: &Path) -> bool {
     path.is_file()
 }
 

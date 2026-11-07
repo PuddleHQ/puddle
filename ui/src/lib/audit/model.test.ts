@@ -385,6 +385,8 @@ describe("a record as a row", () => {
       "push_denied",
       "pull_denied",
       "bad_git_path",
+      "ssh_command_unsupported",
+      "ssh_channel_refused",
       "credential_rejected",
       "credential_unavailable",
       "credential_ambiguous",
@@ -401,6 +403,15 @@ describe("a record as a row", () => {
     ]) {
       expect(detail(reason), reason).not.toContain(reason);
     }
+    expect(detail("ssh_command_unsupported")).toBe(
+      "because Puddle serves only git-upload-pack and git-receive-pack over SSH, and this command was neither",
+    );
+    expect(detail("ssh_channel_refused")).toBe(
+      "because the SSH session asked for something Puddle does not allow (a terminal, a subsystem, forwarding or a second command)",
+    );
+    expect(detail("bad_git_path")).toBe(
+      "because the Git address is not one Puddle reads, or names the repository in more than one way (use owner/repository)",
+    );
     expect(detail("a_code_from_a_newer_puddle")).toBe(
       "because a_code_from_a_newer_puddle",
     );

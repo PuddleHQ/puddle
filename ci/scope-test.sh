@@ -883,10 +883,10 @@ wtext2 = open(f"{d}/windows.yml").read()
 if wj["tests"].get("needs") != "test-build":
     bad.append("windows: the partition job must need exactly test-build")
 parts = wj["tests"]["strategy"]["matrix"]["partition"]
-if len(parts) != 2 or parts != list(range(1, len(parts) + 1)):
-    bad.append(f"windows: partitions {parts}, want 1..2 (the job names say 'of 2')")
-if "of 2)" not in wj["tests"]["name"] or "of 2)" not in str([s.get("name") for s in wj["tests"]["steps"]]):
-    bad.append("windows: the partition job and step names must say 'of 2' (the matrix size)")
+if len(parts) != 4 or parts != list(range(1, len(parts) + 1)):
+    bad.append(f"windows: partitions {parts}, want 1..4 (the job names say 'of 4')")
+if "of 4)" not in wj["tests"]["name"] or "of 4)" not in str([s.get("name") for s in wj["tests"]["steps"]]):
+    bad.append("windows: the partition job and step names must say 'of 4' (the matrix size)")
 if 'hash:${PARTITION}/${PARTITIONS}' not in wtext2 or "PARTITIONS: ${{ strategy.job-total }}" not in wtext2:
     bad.append("windows: the partitions must split by nextest `--partition hash:` over strategy.job-total")
 up = [s for s in wj["test-build"]["steps"] if s.get("uses", "").startswith("actions/upload-artifact")]

@@ -29,7 +29,7 @@ enum OpenError {
     Failed(u32),
 }
 
-pub(super) fn read(sources: &[StoreSource]) -> Result<StoreSnapshot, StoreError> {
+pub(crate) fn read(sources: &[StoreSource]) -> Result<StoreSnapshot, StoreError> {
     let mut snapshot = StoreSnapshot::new();
     for &source in sources {
         match Store::open(source) {

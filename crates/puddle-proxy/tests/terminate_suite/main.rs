@@ -15,6 +15,7 @@ mod entra_logins;
 mod everything;
 mod exchange;
 mod git_inject;
+mod git_ssh;
 mod grpc;
 mod guest_tls;
 mod h2;

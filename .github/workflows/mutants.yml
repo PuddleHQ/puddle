@@ -77,13 +77,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: list
-        # One job per unit: a whole crate, or one file of a crate the list names file by file.
+        # One job per unit: a whole crate, one file of a crate the list names file by file, or one shard
+        # (`--shard K/N`) of a crate whose list line says `shards=N`.
         run: |
           matrix=$(scripts/mutants.sh --matrix)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   sweep:
-    name: mutants (${{ matrix.crate }} ${{ matrix.file }})
+    name: mutants (${{ matrix.crate }} ${{ matrix.file }}${{ matrix.shard && format('shard {0}', matrix.shard) || '' }})
     needs: crates
     runs-on: ubuntu-24.04
     timeout-minutes: 300
@@ -104,7 +105,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/develop' }}
       - name: cache key of the crate's inputs
         id: key
-        run: echo "key=$(scripts/mutants.sh --key '${{ matrix.crate }}' '${{ matrix.file }}')" >> "$GITHUB_OUTPUT"
+        run: echo "key=$(scripts/mutants.sh --key '${{ matrix.crate }}' '${{ matrix.file }}' '${{ matrix.shard }}')" >> "$GITHUB_OUTPUT"
       - name: result of the last passing run on these inputs
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -115,14 +116,14 @@ jobs:
           UNCACHED_INPUT: ${{ inputs.uncached }}
           CRATE: ${{ matrix.crate }}
           FILE: ${{ matrix.file }}
+          SHARD: ${{ matrix.shard }}
         run: |
           uncached=
           if [ "$UNCACHED_INPUT" = true ] || [ "$(date -u +%u)" = 7 ]; then uncached=--uncached; fi
-          if [ -n "$FILE" ]; then
-            scripts/mutants.sh sweep --crate "$CRATE" --file "$FILE" --cache .mutants-cache $uncached
-          else
-            scripts/mutants.sh sweep --crate "$CRATE" --cache .mutants-cache $uncached
-          fi
+          set -- --crate "$CRATE" --cache .mutants-cache
+          if [ -n "$FILE" ]; then set -- "$@" --file "$FILE"; fi
+          if [ -n "$SHARD" ]; then set -- "$@" --shard "$SHARD"; fi
+          scripts/mutants.sh sweep "$@" $uncached
       - name: survivors
         if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

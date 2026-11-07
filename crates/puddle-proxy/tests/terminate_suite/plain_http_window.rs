@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! A plain-HTTP response bigger than one yamux stream window, forwarded by the proxy (which reads
-//! nothing more from the guest once the request is in), arrives whole. The client keeps its
-//! sending side open, as curl and apt do.
+//! A plain-HTTP response bigger than one yamux stream window arrives whole while the guest sends
+//! nothing more. The client keeps its sending side open and the connection alive, as curl and
+//! apt do.
 #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use crate::terminate_support;
 
@@ -72,13 +72,13 @@ async fn a_plain_http_download_larger_than_the_stream_window_arrives_whole() {
         head,
         [
             "HTTP/1.1 200 OK\r\n".to_owned(),
-            format!("Content-Length: {}\r\n", DOWNLOAD_MIB * MIB)
+            format!("content-length: {}\r\n", DOWNLOAD_MIB * MIB)
         ]
     );
     let mut total = 0;
     let mut buf = vec![0_u8; 256 * 1024];
     let read = tokio::time::timeout(Duration::from_secs(20), async {
-        loop {
+        while total < DOWNLOAD_MIB * MIB {
             let n = response.read(&mut buf).await.unwrap();
             if n == 0 {
                 break;

@@ -106,7 +106,7 @@ async fn plain_http_goes_through_squid_with_the_basic_credential() {
     let (code, _, body) = status_and_body(
         rig.agent.local_addr(),
         &format!(
-            "GET http://web.corp.test:{}/hello HTTP/1.1\r\nHost: web.corp.test\r\n\r\n",
+            "GET http://web.corp.test:{}/hello HTTP/1.1\r\nHost: web.corp.test\r\nConnection: close\r\n\r\n",
             origin_addr.port()
         ),
     )

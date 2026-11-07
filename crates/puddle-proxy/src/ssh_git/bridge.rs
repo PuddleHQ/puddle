@@ -136,14 +136,14 @@ async fn accepted(
     }
     let mut body = answer.into_body();
     let mut text = Vec::new();
-    while text.len() < REFUSAL_BYTES {
-        match body.frame().await {
-            Some(Ok(frame)) => {
-                if let Ok(data) = frame.into_data() {
-                    text.extend_from_slice(&data);
-                }
-            }
-            Some(Err(_)) | None => break,
+    while let Some(Ok(frame)) = body.frame().await {
+        if let Ok(data) = frame.into_data() {
+            text.extend_from_slice(&data);
+        }
+        if text.len() > REFUSAL_BYTES {
+            // Longer than any refusal of Puddle's (one line): the status says what happened.
+            text.clear();
+            break;
         }
     }
     let text = String::from_utf8_lossy(&text);

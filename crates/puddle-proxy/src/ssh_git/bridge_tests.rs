@@ -547,6 +547,24 @@ async fn a_refusal_from_the_host_names_its_status_and_the_repository() {
 }
 
 #[tokio::test]
+async fn a_refusal_body_up_to_the_limit_is_read_for_puddles_words_and_a_longer_one_is_not() {
+    static EXACT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static OVER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let exact = EXACT.get_or_init(|| format!("puddle: no\n{}", " ".repeat(REFUSAL_BYTES - 11)));
+    let over = OVER.get_or_init(|| format!("{exact} "));
+    assert_eq!(exact.len(), REFUSAL_BYTES);
+    let mut host = Host2::answering([Reply::Status(StatusCode::FORBIDDEN, exact)]);
+    let (_, result) = session(&mut host, &command(GitService::Upload, None), b"").await;
+    assert_eq!(result.unwrap_err().message, "no");
+    let mut host = Host2::answering([Reply::Status(StatusCode::FORBIDDEN, over)]);
+    let (_, result) = session(&mut host, &command(GitService::Upload, None), b"").await;
+    assert_eq!(
+        result.unwrap_err().message,
+        "the Git host answered 403 Forbidden for bound.test/acme/web.git"
+    );
+}
+
+#[tokio::test]
 async fn only_the_start_of_a_long_refusal_is_read() {
     struct Endless(Option<UpBody>);
     impl SmartHttp for Endless {

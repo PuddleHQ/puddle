@@ -1250,6 +1250,14 @@ async fn the_https_leg_sends_a_v2_command_as_gits_requests_with_the_identitys_cr
         assert_eq!(request.header("git-protocol"), Some("version=2"));
     }
     assert_eq!(seen[1].body, b"0014command=ls-refs\n0000");
+    assert_eq!(
+        t.git
+            .server
+            .accepted
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "one connection carries a command's requests"
+    );
     drop(ssh);
     let events = t.events(1).await;
     let event = &events[0];

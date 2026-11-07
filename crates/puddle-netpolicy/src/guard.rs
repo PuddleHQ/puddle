@@ -336,8 +336,8 @@ pub fn git_https_remote(host: &Host) -> Option<&'static str> {
     }
 }
 
-/// The refusal text for SSH: every SSH connection gets it, a Git host's also names the HTTPS form
-/// of the remote.
+/// The refusal text for SSH to a Git host's name that Puddle does not serve: it names the HTTPS
+/// form of the remote when it is a built-in one (a Git credential's own host gets the plain line).
 fn ssh_unsupported_message(host: &Host) -> String {
     match git_https_remote(host) {
         Some(https) => format!("SSH is not supported yet, use HTTPS: the remote becomes {https}"),

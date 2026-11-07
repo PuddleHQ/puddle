@@ -111,6 +111,28 @@ impl RecordResolver for SystemRecords {
     }
 }
 
+/// How many records [`collect`] left out, only to say so in a log line. A type of its own so that a
+/// mutation exclusion can name these counters without also covering the byte counter beside them.
+#[derive(Default)]
+struct LeftOut {
+    skipped: usize,
+    truncated: usize,
+}
+
+impl LeftOut {
+    fn bump_skipped(&mut self) {
+        self.skipped += 1;
+    }
+
+    fn bump_truncated(&mut self) {
+        self.truncated += 1;
+    }
+
+    fn any(&self) -> bool {
+        self.skipped + self.truncated > 0
+    }
+}
+
 /// The records of `answers` the stub can carry, and the smallest time to live among them. What is
 /// left out (another type, a target that is not a plain host name, TXT past its byte cap, more
 /// than [`MAX_RECORDS`]) is said in the log: the guest sees a shorter answer.
@@ -118,10 +140,10 @@ fn collect<'a>(fqdn: &str, answers: impl Iterator<Item = (&'a RData, u32)>) -> (
     let mut records = Vec::new();
     let mut ttl = TTL_RANGE.1;
     let mut txt_bytes = 0;
-    let (mut skipped, mut truncated) = (0_usize, 0_usize);
+    let mut left_out = LeftOut::default();
     for (data, answer_ttl) in answers {
         if records.len() >= MAX_RECORDS {
-            truncated += 1;
+            left_out.bump_truncated();
             continue;
         }
         let record = match data {
@@ -150,11 +172,11 @@ fn collect<'a>(fqdn: &str, answers: impl Iterator<Item = (&'a RData, u32)>) -> (
             ttl = ttl.min(answer_ttl);
             records.push(record);
         } else {
-            skipped += 1;
+            left_out.bump_skipped();
         }
     }
-    if skipped + truncated > 0 {
-        tracing::warn!(host = %fqdn, skipped, truncated, kept = records.len(), "some records of the answer were left out: an unsupported or oversized record, a target that is not a plain host name, or more than an answer may carry");
+    if left_out.any() {
+        tracing::warn!(host = %fqdn, skipped = left_out.skipped, truncated = left_out.truncated, kept = records.len(), "some records of the answer were left out: an unsupported or oversized record, a target that is not a plain host name, or more than an answer may carry");
     }
     (records, ttl)
 }

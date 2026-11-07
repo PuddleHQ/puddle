@@ -22,11 +22,20 @@ pub fn free_bytes(path: &Path) -> io::Result<u64> {
                 format!("{} and its parents do not exist", path.display()),
             )
         })?;
-    free_bytes_of(existing)
+    // The two bodies have their own names so that a mutation exclusion can name the Windows one,
+    // which a Linux run never compiles.
+    #[cfg(unix)]
+    {
+        free_bytes_unix(existing)
+    }
+    #[cfg(windows)]
+    {
+        free_bytes_windows(existing)
+    }
 }
 
 #[cfg(unix)]
-fn free_bytes_of(path: &Path) -> io::Result<u64> {
+fn free_bytes_unix(path: &Path) -> io::Result<u64> {
     let stat = rustix::fs::statvfs(path)?;
     Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
 }
@@ -36,7 +45,7 @@ fn free_bytes_of(path: &Path) -> io::Result<u64> {
     unsafe_code,
     reason = "GetDiskFreeSpaceExW is the only call that reports the space free to this user"
 )]
-fn free_bytes_of(path: &Path) -> io::Result<u64> {
+fn free_bytes_windows(path: &Path) -> io::Result<u64> {
     use std::os::windows::ffi::OsStrExt;
 
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;

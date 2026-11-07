@@ -217,7 +217,12 @@ const REASONS: Record<string, string> = {
     'the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
   pull_denied:
     'the fetch is not on the workspace\'s pull list (add it on its Git tab, or turn off "Only pull from listed repos")',
-  bad_git_path: "the Git address names the repository in more than one way",
+  bad_git_path:
+    "the Git address is not one Puddle reads, or names the repository in more than one way (use owner/repository)",
+  ssh_command_unsupported:
+    "Puddle serves only git-upload-pack and git-receive-pack over SSH, and this command was neither",
+  ssh_channel_refused:
+    "the SSH session asked for something Puddle does not allow (a terminal, a subsystem, forwarding or a second command)",
   credential_rejected:
     "the Git host did not accept the credential Puddle added",
   credential_unavailable: "the Git credential could not be read",

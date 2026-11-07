@@ -146,6 +146,10 @@ impl<R: Runtime> Launcher for AppLauncher<R> {
         })
     }
 
+    fn has_browser_data(&self, workspace: &WorkspaceId) -> bool {
+        sandbox_window::has_data_folder(&self.webview_root, workspace)
+    }
+
     fn forget_browser<'a>(
         &'a self,
         workspace: &'a WorkspaceId,
@@ -431,6 +435,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(logins.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn browser_data_is_there_while_either_data_folder_is() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let root = data.path().join("webview");
+        let launcher = AppLauncher::new(app.handle().clone(), root.clone());
+        let name = WorkspaceId::new("demo").unwrap();
+        assert!(!launcher.has_browser_data(&name));
+        for folder in ["demo.forward", "demo"] {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+            assert!(launcher.has_browser_data(&name), "{folder}");
+            std::fs::remove_dir_all(root.join(folder)).unwrap();
+        }
+        assert!(!launcher.has_browser_data(&name));
+        // Another workspace's folder is not this one's.
+        std::fs::create_dir_all(root.join("demo2")).unwrap();
+        assert!(!launcher.has_browser_data(&name));
     }
 
     #[tokio::test(flavor = "multi_thread")]

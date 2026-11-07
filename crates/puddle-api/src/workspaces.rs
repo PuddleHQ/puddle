@@ -693,14 +693,64 @@ impl fmt::Display for StartFolder {
     }
 }
 
-/// The id a workspace of this name gets while ids are derived from names: ASCII letters and
-/// digits lower-cased, every other run of characters one hyphen, at most
-/// [`WorkspaceId::MAX_LEN`] characters. A name with nothing usable in it, or one that comes out
-/// reserved, gets `workspace-` and eight hex digits of a hash of the name, so the same name
-/// always gives the same id.
-pub(crate) fn id_for_name(
-    name: &DisplayName,
-) -> Result<WorkspaceId, puddle_types::ValidationError> {
+/// How many ids a create draws before it refuses: with about 39 random bits, only a broken
+/// random source makes 16 draws in a row hit ids that are taken.
+pub const MAX_ID_DRAWS: u32 = 16;
+
+/// Why a create got no id: every draw was taken or gave nothing.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("no free workspace id was found; the system's random source may be broken")]
+#[non_exhaustive]
+pub struct NoFreeId;
+
+/// Where new workspace ids come from.
+pub trait IdSource: Send + Sync {
+    /// Draw number `attempt` (counted from 0) for a new workspace called `name`. A create
+    /// draws again while the id is taken, at most [`MAX_ID_DRAWS`] times.
+    ///
+    /// # Errors
+    ///
+    /// When the source gave nothing, with the reason. That draw counts.
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String>;
+}
+
+/// The operating system's random source, five bytes a draw ([`WorkspaceId::from_random`]);
+/// nothing of the name goes into the id. The host uses this one.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RandomIds;
+
+impl IdSource for RandomIds {
+    fn draw(&self, _name: &DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
+        let mut bytes = [0_u8; 5];
+        getrandom::fill(&mut bytes).map_err(|e| format!("no randomness: {e}"))?;
+        Ok(WorkspaceId::from_random(bytes))
+    }
+}
+
+/// Ids made from the name, for tests and the UI fixture, which name a workspace's paths before
+/// it exists: `Shop API` gets `shop-api` (ASCII letters and digits lower-cased, every other run
+/// of characters one hyphen), and the draws after the first add `-2`, `-3` and so on. A name
+/// with nothing usable in it, or one that comes out reserved, gets `workspace-` and eight hex
+/// digits of a hash of the name.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NameIds;
+
+impl IdSource for NameIds {
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String> {
+        let base = id_for_name(name).map_err(|e| e.to_string())?;
+        if attempt == 0 {
+            return Ok(base);
+        }
+        let suffix = format!("-{}", attempt + 1);
+        let room = WorkspaceId::MAX_LEN - suffix.len();
+        let stem: String = base.as_str().chars().take(room).collect();
+        WorkspaceId::new(&format!("{}{suffix}", stem.trim_end_matches('-')))
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// The name as an id, for [`NameIds`].
+fn id_for_name(name: &DisplayName) -> Result<WorkspaceId, puddle_types::ValidationError> {
     let mut slug = String::new();
     for c in name.as_str().chars() {
         if c.is_ascii_alphanumeric() {
@@ -726,7 +776,7 @@ pub(crate) fn id_for_name(
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NewWorkspace {
-    /// The workspace's name: display text. Its id is derived from it (until ids are generated).
+    /// The workspace's name: display text. The id is drawn apart from it (see [`NewWorkspace::id`]).
     pub name: DisplayName,
     /// What to clone, in order, with the Git settings each starts with.
     pub repositories: Vec<NewRepository>,
@@ -751,35 +801,25 @@ impl NewWorkspace {
         }
     }
 
-    /// The id the new workspace gets: the name as a DNS label (`id_for_name`), with `-2`,
-    /// `-3` and so on added while `taken` says the id is in use, so two names that make the
-    /// same label are two workspaces.
+    /// The id the new workspace gets: the first draw of `source` that `taken` does not refuse.
+    /// Nothing about the name decides it (unless `source` is made to).
     ///
     /// # Errors
     ///
-    /// When 99 ids of that label are taken.
+    /// [`NoFreeId`] after [`MAX_ID_DRAWS`] draws that were all taken or gave nothing.
     pub fn id(
         &self,
+        source: &dyn IdSource,
         taken: impl Fn(&WorkspaceId) -> bool,
-    ) -> Result<WorkspaceId, puddle_types::ValidationError> {
-        let base = id_for_name(&self.name)?;
-        if !taken(&base) {
-            return Ok(base);
-        }
-        for n in 2..=99 {
-            let suffix = format!("-{n}");
-            let room = WorkspaceId::MAX_LEN - suffix.len();
-            let stem: String = base.as_str().chars().take(room).collect();
-            let candidate = WorkspaceId::new(&format!("{}{suffix}", stem.trim_end_matches('-')))?;
-            if !taken(&candidate) {
-                return Ok(candidate);
+    ) -> Result<WorkspaceId, NoFreeId> {
+        for attempt in 0..MAX_ID_DRAWS {
+            match source.draw(&self.name, attempt) {
+                Ok(id) if !taken(&id) => return Ok(id),
+                Ok(id) => tracing::debug!(%id, attempt, "a drawn workspace id is taken"),
+                Err(reason) => tracing::warn!(%reason, attempt, "no workspace id was drawn"),
             }
         }
-        Err(puddle_types::ValidationError::new(
-            "workspace id",
-            base.as_str(),
-            "has too many workspaces with the same name",
-        ))
+        Err(NoFreeId)
     }
 
     /// The entries the new workspace's list holds.
@@ -1335,6 +1375,12 @@ pub trait Launcher: Send + Sync {
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async { Ok(()) })
     }
+
+    /// Whether the shell keeps browser data under `workspace`'s id (a window's data folder). A
+    /// new workspace never gets an id that has some. The default keeps none.
+    fn has_browser_data(&self, _workspace: &WorkspaceId) -> bool {
+        false
+    }
 }
 
 /// What a browser editor window needs: where the editor is and how to sign in to it.
@@ -1680,6 +1726,8 @@ mod tests {
         )
         .unwrap()
         .unwrap();
+        // A shell with no window keeps no browser data under any id.
+        assert!(!NoWindow.has_browser_data(&WorkspaceId::new("demo").unwrap()));
     }
 
     #[test]
@@ -1956,15 +2004,21 @@ mod tests {
     }
 
     #[test]
-    fn a_taken_id_gets_a_number_and_the_numbers_run_out() {
+    fn the_name_source_numbers_its_later_draws_and_cuts_the_label_for_the_number() {
         let new = |name: &str| NewWorkspace::new(DisplayName::parse(name).unwrap(), Vec::new());
         let taken =
             |ids: &'static [&'static str]| move |id: &WorkspaceId| ids.contains(&id.as_str());
-        assert_eq!(new("Shop").id(taken(&[])).unwrap().as_str(), "shop");
-        assert_eq!(new("Shop").id(taken(&["shop"])).unwrap().as_str(), "shop-2");
+        assert_eq!(
+            new("Shop").id(&NameIds, taken(&[])).unwrap().as_str(),
+            "shop"
+        );
+        assert_eq!(
+            new("Shop").id(&NameIds, taken(&["shop"])).unwrap().as_str(),
+            "shop-2"
+        );
         assert_eq!(
             new("shop!")
-                .id(taken(&["shop", "shop-2"]))
+                .id(&NameIds, taken(&["shop", "shop-2"]))
                 .unwrap()
                 .as_str(),
             "shop-3"
@@ -1972,11 +2026,76 @@ mod tests {
         // The number fits under the longest id: the label is cut, never the number.
         let long = "a".repeat(DisplayName::MAX_CHARS);
         let full = WorkspaceId::new(&long).unwrap();
-        let second = new(&long).id(|id| *id == full).unwrap();
+        let second = new(&long).id(&NameIds, |id| *id == full).unwrap();
         assert_eq!(second.as_str().len(), WorkspaceId::MAX_LEN);
         assert!(second.as_str().ends_with("-2"), "{second}");
-        // At most 99 of one label.
-        assert!(new("Shop").id(|_| true).is_err());
+    }
+
+    /// A source that gives the same id every time, or nothing at all, and counts its draws.
+    struct Stuck {
+        id: Option<WorkspaceId>,
+        draws: std::sync::atomic::AtomicU32,
+    }
+
+    impl IdSource for Stuck {
+        fn draw(&self, _name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String> {
+            assert_eq!(
+                attempt,
+                self.draws.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            );
+            self.id
+                .clone()
+                .ok_or_else(|| "the source is empty".to_owned())
+        }
+    }
+
+    #[test]
+    fn a_stuck_source_is_given_up_on_after_sixteen_draws() {
+        let new = NewWorkspace::new(DisplayName::parse("acme").unwrap(), Vec::new());
+        let stuck = WorkspaceId::new("a0000000").unwrap();
+        for id in [Some(stuck.clone()), None] {
+            let source = Stuck {
+                id,
+                draws: std::sync::atomic::AtomicU32::new(0),
+            };
+            let err = new.id(&source, |id| *id == stuck).unwrap_err();
+            assert_eq!(source.draws.into_inner(), MAX_ID_DRAWS);
+            assert_eq!(MAX_ID_DRAWS, 16);
+            assert_eq!(
+                err.to_string(),
+                "no free workspace id was found; the system's random source may be broken"
+            );
+        }
+        // A free id on the last draw is still taken up.
+        let source = Stuck {
+            id: Some(stuck.clone()),
+            draws: std::sync::atomic::AtomicU32::new(0),
+        };
+        let seen = std::sync::atomic::AtomicU32::new(0);
+        let last = new
+            .id(&source, |_| {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 < MAX_ID_DRAWS
+            })
+            .unwrap();
+        assert_eq!(last, stuck);
+    }
+
+    #[test]
+    fn the_random_source_draws_generated_ids_whatever_the_name() {
+        let new = NewWorkspace::new(DisplayName::parse("acme").unwrap(), Vec::new());
+        let first = new.id(&RandomIds, |_| false).unwrap();
+        assert_eq!(first.as_str().len(), WorkspaceId::GENERATED_LEN);
+        assert_ne!(first.as_str(), "acme");
+        // A taken id is drawn again, not numbered: the first draw is refused, the second taken up.
+        let asked = std::sync::atomic::AtomicU32::new(0);
+        let second = new
+            .id(&RandomIds, |_| {
+                asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0
+            })
+            .unwrap();
+        assert_eq!(asked.into_inner(), 2);
+        // Two random draws are not compared: `asked` shows the second came from a new draw.
+        assert_eq!(second.as_str().len(), WorkspaceId::GENERATED_LEN);
     }
 
     #[test]

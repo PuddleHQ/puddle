@@ -5499,7 +5499,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Creates a workspace: its disk, then a clone of each repository in the list, one at a time.\nThe list is checked whole before anything exists. Each repository's identity joins the\nworkspace and its repository table row is made before the first clone. A clone that fails\nfails only its repository: a background problem names it and the create still ends `done`.\nAnswers 202; follow it with `workspace_progress` events.",
+        "summary": "Creates a workspace: its disk, then a clone of each repository in the list, one at a time.\nThe list is checked whole before anything exists. Each repository's identity joins the\nworkspace and its repository table row is made before the first clone. A clone that fails\nfails only its repository: a background problem names it and the create still ends `done`.\nPuddle picks the new workspace's id (eight random characters, never one used before); the\nanswer carries it. Answers 202; follow it with `workspace_progress` events.",
         "operationId": "create_workspace",
         "requestBody": {
           "content": {
@@ -5543,7 +5543,7 @@
             }
           },
           "409": {
-            "description": "another workspace has that name (ignoring case), or the id it would get is taken, or two identities of the list cover the same place (`identity_collision`)",
+            "description": "another workspace has that name (ignoring case), or two identities of the list cover the same place (`identity_collision`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5583,7 +5583,7 @@
             }
           },
           "503": {
-            "description": "workspaces are not available",
+            "description": "workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source)",
             "content": {
               "application/json": {
                 "schema": {

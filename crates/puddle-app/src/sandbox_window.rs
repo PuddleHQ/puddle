@@ -97,6 +97,17 @@ pub fn data_folder(webview_root: &Path, workspace: &WorkspaceId) -> PathBuf {
     webview_root.join(workspace.as_str())
 }
 
+/// Whether the webview keeps data of `workspace` (the editor's or its forwarded ports'). A folder
+/// that cannot be looked at counts as there.
+#[must_use]
+pub fn has_data_folder(webview_root: &Path, workspace: &WorkspaceId) -> bool {
+    let editor = data_folder(webview_root, workspace);
+    let forward = forward_data_folder(&editor);
+    [editor, forward]
+        .iter()
+        .any(|folder| !matches!(folder.try_exists(), Ok(false)))
+}
+
 /// Deletes the webview's data of `workspace` (the editor's and its forwarded ports'), when the
 /// workspace is deleted. A folder that is not there is fine.
 ///

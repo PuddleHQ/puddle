@@ -33,6 +33,9 @@ pub trait ServerHalves: Send + Sync {
     ///
     /// The file exists and could not be deleted.
     fn forget(&self, workspace: &WorkspaceId) -> io::Result<()>;
+
+    /// Whether a half is stored for `workspace`. One that cannot be looked for counts as there.
+    fn has(&self, workspace: &WorkspaceId) -> bool;
 }
 
 /// [`ServerHalves`] in owner-only files, `<folder>/<workspace>.key`, hex.
@@ -114,6 +117,11 @@ impl ServerHalves for FileHalves {
             _ => Ok(()),
         }
     }
+
+    fn has(&self, workspace: &WorkspaceId) -> bool {
+        let cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        cache.contains_key(workspace) || !matches!(self.path(workspace).try_exists(), Ok(false))
+    }
 }
 
 #[cfg(test)]
@@ -143,6 +151,21 @@ mod tests {
         halves.forget(&name("a")).unwrap();
         halves.forget(&name("a")).unwrap();
         assert_ne!(halves.half(&name("a")).unwrap(), old);
+    }
+
+    #[test]
+    fn a_half_is_there_from_its_first_use_until_it_is_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        let halves = FileHalves::new(dir.path());
+        assert!(!halves.has(&name("a")));
+        halves.half(&name("a")).unwrap();
+        assert!(halves.has(&name("a")));
+        assert!(!halves.has(&name("b")));
+        // A file another run left counts too.
+        std::fs::write(dir.path().join("b.key"), "left").unwrap();
+        assert!(halves.has(&name("b")));
+        halves.forget(&name("a")).unwrap();
+        assert!(!halves.has(&name("a")));
     }
 
     #[test]

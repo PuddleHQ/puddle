@@ -178,6 +178,10 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     /// The front's lookup of running guests, which the editor's password is asked through.
     pub(crate) front_guests: Arc<dyn puddle_front::Guests>,
     pub(crate) front_halves: Arc<dyn puddle_front::ServerHalves>,
+    /// Where new workspace ids come from.
+    pub(crate) ids: Arc<dyn puddle_api::IdSource>,
+    /// The folder of the login markers, which a new id must not find one of its own in.
+    pub(crate) login_markers: std::path::PathBuf,
 }
 
 struct Slot {
@@ -206,8 +210,16 @@ impl Slot {
     }
 }
 
+/// What the runtime holds, by name, when a create draws an id.
+struct RuntimeNames {
+    volumes: BTreeSet<String>,
+    sandboxes: BTreeSet<String>,
+}
+
 struct State {
     slots: BTreeMap<WorkspaceId, Slot>,
+    /// The ids of deleted workspaces: no new workspace gets one.
+    retired: BTreeSet<WorkspaceId>,
     closed: bool,
 }
 
@@ -291,6 +303,8 @@ struct Inner<R: Runtime + Clone> {
     front_addr: std::net::SocketAddr,
     front_guests: Arc<dyn puddle_front::Guests>,
     front_halves: Arc<dyn puddle_front::ServerHalves>,
+    ids: Arc<dyn puddle_api::IdSource>,
+    login_markers: std::path::PathBuf,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceId, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -519,6 +533,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(crate) fn new(
         parts: Parts<R>,
         restored: Vec<Stored>,
+        mut retired: BTreeSet<WorkspaceId>,
         status: &BTreeMap<WorkspaceId, WorkspaceStatus>,
     ) -> Result<Self, HostError> {
         let mut slots = BTreeMap::new();
@@ -526,8 +541,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         for stored in restored {
             if stored.creating {
                 // A create that never finished (Puddle died in it): there is no workspace, and
-                // reconcile removes the half-made volume.
+                // reconcile removes the half-made volume. Its id is retired like a failed create's.
                 tracing::warn!(workspace = %stored.id, "dropping a workspace whose create never finished");
+                retired.insert(stored.id);
                 interrupted = true;
                 continue;
             }
@@ -574,9 +590,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 front_addr: parts.front_addr,
                 front_guests: parts.front_guests,
                 front_halves: parts.front_halves,
+                ids: parts.ids,
+                login_markers: parts.login_markers,
                 rewrite_gate: parts.rewrite_gate,
                 state: Mutex::new(State {
                     slots,
+                    retired,
                     closed: false,
                 }),
                 live: tokio::sync::Mutex::new(BTreeMap::new()),
@@ -623,7 +642,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 creating: slot.creating,
             })
             .collect();
-        self.inner.book.save(stored)?;
+        // A workspace being deleted leaves the list now, and its id is retired with it.
+        let mut retired = state.retired.clone();
+        retired.extend(
+            state
+                .slots
+                .values()
+                .filter(|slot| slot.deleting)
+                .map(|slot| slot.record.id.clone()),
+        );
+        self.inner.book.save(stored, &retired)?;
         self.note_names(state);
         Ok(())
     }
@@ -929,8 +957,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let mut result = result;
         let old_entry = slot.creating;
         match (&result, op) {
-            (Err(_), Operation::Creating) | (Ok(()), Operation::Deleting) => {
+            (Err(_), Operation::Creating) => {
+                // A failed create may leave rows and files keyed by its id: retired like a
+                // deleted workspace's, so no later one meets them.
                 state.slots.remove(id);
+                state.retired.insert(id.clone());
+            }
+            (Ok(()), Operation::Deleting) => {
+                state.slots.remove(id);
+                // Saved as retired when the delete began; kept so every later save has it.
+                state.retired.insert(id.clone());
             }
             (Err(_), Operation::Starting) => {
                 slot.record.status = if std::mem::take(&mut slot.volume_missing) {
@@ -2971,8 +3007,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 key,
                 format!("{name}'s settings were not deleted"),
                 format!(
-                    "{e}. A workspace made later with the name {name} would inherit them, direct \
-                     SSH included; delete the file by hand."
+                    "{e}. No later workspace gets the id {name}, so none inherits them; delete \
+                     the file by hand to tidy up."
                 ),
             )),
         }
@@ -2993,6 +3029,46 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         failed
     }
 
+    /// The names the runtime has for volumes and sandboxes, which a new id must not meet.
+    async fn runtime_names(&self) -> Result<RuntimeNames, WorkspaceError> {
+        let unavailable = |e: ComputeError| {
+            WorkspaceError::Unavailable(format!(
+                "Puddle cannot list the runtime's disks and sandboxes, so it cannot pick an id \
+                 no earlier workspace used: {e}"
+            ))
+        };
+        let volumes = self
+            .inner
+            .runtime
+            .list_volumes()
+            .await
+            .map_err(unavailable)?;
+        let sandboxes = self.inner.runtime.list().await.map_err(unavailable)?;
+        Ok(RuntimeNames {
+            volumes: volumes.into_iter().map(|v| v.name).collect(),
+            sandboxes: sandboxes.into_iter().map(|s| s.name).collect(),
+        })
+    }
+
+    /// Whether `id` is in use or was ever used: listed or retired, a volume `ws-<id>`, a
+    /// sandbox `<id>` or `m--<id>`, or anything Puddle's data folder keys by it (browser data,
+    /// the front's key half, a settings file, a login marker). A settings file that cannot be
+    /// read counts as there.
+    fn id_taken(&self, state: &State, runtime: &RuntimeNames, id: &WorkspaceId) -> bool {
+        let inner = &self.inner;
+        state.slots.contains_key(id)
+            || state.retired.contains(id)
+            || runtime.volumes.contains(id.volume_name().as_str())
+            || runtime.sandboxes.contains(id.as_str())
+            || runtime
+                .sandboxes
+                .contains(&format!("{}{id}", puddle_workspace::MAINTENANCE_PREFIX))
+            || inner.launcher.has_browser_data(id)
+            || inner.front_halves.has(id)
+            || !matches!(inner.settings.load_workspace(id), Ok(None))
+            || puddle_logins::Marker::for_workspace(&inner.login_markers, id).exists()
+    }
+
     /// The editor's origin is `<id>.localhost`, so a workspace with this id would reach the
     /// browser data an earlier one left (a delete cut short, or made where no window could clean
     /// it). No window can exist for a workspace that is still being created: clear it once the id is reserved.
@@ -3006,19 +3082,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.problems.clear(&problem_key("browser-data", id));
             return Ok(());
         }
-        // Give the name back (not saved yet): the create is refused.
-        self.state().slots.remove(id);
+        // The create is refused; the id it reserved is retired like a failed create's.
+        let mut state = self.state();
+        state.slots.remove(id);
+        state.retired.insert(id.clone());
+        // Saved now: no entry carries this id, so a crash before the next save would forget it.
+        if let Err(e) = self.persist(&state) {
+            tracing::warn!(workspace = %id, error = %e, "the retired id was not saved after a refused create");
+        }
+        drop(state);
         Err(WorkspaceError::Conflict(format!(
-            "browser data left from an earlier workspace named {name} could not be removed ({}), \
-             and the new one would inherit it; {name} was not created. Close its editor windows \
-             and try again",
+            "browser data left under the id {id} could not be removed ({}), and the new \
+             workspace would inherit it; {name} was not created. Close its editor windows and \
+             try again",
             failed.join("; ")
         )))
     }
 
-    /// Deletes what the browser editor kept for a deleted workspace, so one made later under the
-    /// same name starts clean. A failure is a notice (the data stays; a create under the name
-    /// tries again and is refused while it cannot).
+    /// Deletes what the browser editor kept for a deleted workspace. A failure is a notice: the
+    /// data stays under an id no later workspace gets.
     async fn forget_browser_state(&self, name: &WorkspaceId) {
         let inner = &self.inner;
         let key = problem_key("browser-data", name);
@@ -3030,7 +3112,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 key,
                 format!("{name}'s browser editor data was not deleted"),
                 format!(
-                    "{}. A workspace made later with the name {name} is refused until it is gone; \
+                    "{}. No later workspace gets the id {name}, so none reaches it; to tidy up, \
                      close the editor windows and delete its folders under webview and front in \
                      Puddle's data folder.",
                     failed.join("; ")
@@ -3178,18 +3260,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let id = {
-                let state = self.state();
-                new.id(|id| state.slots.contains_key(id))
-            }
-            .map_err(|e| WorkspaceError::Invalid(format!("this name can't be a workspace: {e}")))?;
-            let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
-            record.start_folder.clone_from(&new.start_folder);
-            record.image = new
-                .image
-                .as_ref()
-                .map_or_else(|| DEFAULT_IMAGE.to_owned(), |i| i.as_str().to_owned());
-            record.memory = match new.memory {
+            let runtime_names = self.runtime_names().await?;
+            let memory = match new.memory {
                 Some(memory) => memory,
                 None => self.default_memory().map_err(|reason| {
                     WorkspaceError::Conflict(format!(
@@ -3198,57 +3270,52 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     ))
                 })?,
             };
-            record.created_at = self.inner.clock.now_ms();
-            record.disk_size_mib = u64::from(self.inner.workspaces.config().default_size.as_mib());
-            record.disk_used_mib = None;
-            record.busy = Some(Operation::Creating);
-            // A volume of this name that the list does not name holds someone's work (reconcile
-            // keeps it); a create would clone into the old checkout. Refuse before anything exists.
-            let volume = id.volume_name();
-            if self
-                .inner
-                .runtime
-                .volume(&volume)
-                .await
-                .map_err(|e| {
-                    WorkspaceError::Unavailable(format!(
-                        "cannot check for an existing volume {volume}: {e}"
-                    ))
-                })?
-                .is_some()
-            {
-                return Err(WorkspaceError::Conflict(format!(
-                    "a volume named {volume} already exists, left from an earlier workspace, and may hold its work; \
-                     {} was not created. Choose another name; Puddle does not reuse or delete that volume",
-                    new.name
-                )));
-            }
-            {
+            let record = {
                 let mut state = self.state();
                 if state.closed {
                     return Err(WorkspaceError::Unavailable(
                         "Puddle is shutting down".to_owned(),
                     ));
                 }
-                if state.slots.contains_key(&id)
-                    || puddle_api::label_taken(
-                        state.slots.values().map(|s| &s.record),
-                        new.name.as_str(),
-                        None,
-                    )
-                    .is_some()
+                if puddle_api::label_taken(
+                    state.slots.values().map(|s| &s.record),
+                    new.name.as_str(),
+                    None,
+                )
+                .is_some()
                 {
                     return Err(WorkspaceError::Conflict(format!(
                         "a workspace named {} already exists",
                         new.name
                     )));
                 }
+                // Drawn and reserved under one lock, so two creates never get the same id.
+                let id = new
+                    .id(&*self.inner.ids, |id| {
+                        self.id_taken(&state, &runtime_names, id)
+                    })
+                    .map_err(|e| WorkspaceError::Unavailable(e.to_string()))?;
+                let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
+                record.start_folder.clone_from(&new.start_folder);
+                record.image = new
+                    .image
+                    .as_ref()
+                    .map_or_else(|| DEFAULT_IMAGE.to_owned(), |i| i.as_str().to_owned());
+                record.memory = memory;
+                record.created_at = self.inner.clock.now_ms();
+                record.disk_size_mib =
+                    u64::from(self.inner.workspaces.config().default_size.as_mib());
+                record.disk_used_mib = None;
+                record.busy = Some(Operation::Creating);
                 state
                     .slots
                     .insert(id.clone(), Slot::new(record.clone(), true));
-            }
-            // Reserved before the clear: a create that loses the race for the name is refused
-            // above and cannot clear the winner's data.
+                record
+            };
+            let id = record.id.clone();
+            // A second guard: a drawn id is never one with browser data left (`id_taken`), so
+            // this finds nothing unless a window wrote some since. Reserved first, so no other
+            // create can be clearing the same id.
             self.clear_left_over_browser_state(&id, &new.name).await?;
             {
                 let mut state = self.state();

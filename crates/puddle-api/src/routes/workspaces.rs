@@ -310,7 +310,8 @@ impl GitSetup for StoreGitSetup {
 /// The list is checked whole before anything exists. Each repository's identity joins the
 /// workspace and its repository table row is made before the first clone. A clone that fails
 /// fails only its repository: a background problem names it and the create still ends `done`.
-/// Answers 202; follow it with `workspace_progress` events.
+/// Puddle picks the new workspace's id (eight random characters, never one used before); the
+/// answer carries it. Answers 202; follow it with `workspace_progress` events.
 #[utoipa::path(
     post,
     path = "/api/workspaces",
@@ -318,9 +319,9 @@ impl GitSetup for StoreGitSetup {
     request_body = NewWorkspaceRequest,
     responses(
         (status = ACCEPTED, description = "creation started", body = Workspace),
-        (status = CONFLICT, description = "another workspace has that name (ignoring case), or the id it would get is taken, or two identities of the list cover the same place (`identity_collision`)", body = ApiErrorBody),
+        (status = CONFLICT, description = "another workspace has that name (ignoring case), or two identities of the list cover the same place (`identity_collision`)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "invalid name, repository (address, SSH remote, directory clash, the same repository twice, unknown identity, more than 100), start folder, image or memory, or `repo_url` sent", body = ApiErrorBody),
-        (status = SERVICE_UNAVAILABLE, description = "workspaces are not available", body = ApiErrorBody)
+        (status = SERVICE_UNAVAILABLE, description = "workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source)", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn create_workspace(
@@ -349,19 +350,9 @@ pub(crate) async fn create_workspace(
     })
     .await?;
     let new = body.into_new(|id| known.contains(&id), &locals)?;
-    let existing: BTreeSet<WorkspaceId> = state
-        .workspaces
-        .list()
-        .await?
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let planned = new
-        .id(|id| existing.contains(id))
-        .map_err(|e| ApiError::invalid(format!("this name can't be a workspace: {e}")))?;
     let store = state.store.clone();
     let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
-    blocking(move || Ok(store.check_repository_git(&planned, &requests)?)).await?;
+    blocking(move || Ok(store.check_repository_git(None, &requests)?)).await?;
     let git = StoreGitSetup::new(state.store.clone());
     let record = state.workspaces.create(new, &git).await?;
     // A new workspace may start with direct SSH on (the global default).

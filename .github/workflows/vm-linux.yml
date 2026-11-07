@@ -11,8 +11,8 @@
 # (ci/scope.sh, the `scope` job); the result job accepts that skip only when `scope` said so. With the
 # repository variable PUDDLE_QUEUE set to `on`, a pull request to develop skips them too (the light
 # mode) and the merge queue runs them on the commit that lands.
-# The test binaries are built once (`cargo nextest archive`) and the tests run in six partitions
-# on six runners at once; the guest agent and the runtime layout check are built in a job beside the archive build.
+# The test binaries are built once (`cargo nextest archive`) and the tests run in ten partitions
+# on ten runners at once; the guest agent and the runtime layout check are built in a job beside the archive build.
 # `vm-linux (KVM, msb microVMs)` is the one result of all of them. The partitions are balanced by measured test time
 # (ci/vm-partition.sh, ci/vm-test-timings-linux.tsv), not by nextest's name hash.
 name: vm-linux
@@ -225,7 +225,7 @@ jobs:
         uses: ./.github/actions/cancel-group
 
   tests:
-    name: vm-linux tests (partition ${{ matrix.partition }} of 6)
+    name: vm-linux tests (partition ${{ matrix.partition }} of 10)
     needs: [build, agent]
     if: needs.build.outputs.run == 'true'
     permissions:
@@ -243,7 +243,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4, 5, 6]
+        partition: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     env:
       # The hosted runner has passwordless sudo; the doctor test that hands a folder to another uid
       # fails without it instead of skipping.
@@ -394,7 +394,7 @@ jobs:
         timeout-minutes: 2
         continue-on-error: true
         run: ci/runner-speed.sh | tee "$RUNNER_TEMP/runner-speed.txt"
-      - name: VM tests (tier K, partition ${{ matrix.partition }} of 6)
+      - name: VM tests (tier K, partition ${{ matrix.partition }} of 10)
         if: steps.kvm.outputs.ok == 'true'
         timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 52 || 32 }}
         env:

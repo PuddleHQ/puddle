@@ -761,13 +761,17 @@ fn status_of(reply: &support::Reply) -> String {
 #[test]
 fn a_tests_data_folder_is_in_memory_where_the_machine_has_a_memory_mount() {
     let dir = support::scratch_dir();
-    let in_ram = std::env::var_os("TMPDIR").is_none() && support::is_ram_mount("/dev/shm");
-    assert_eq!(
-        dir.path().starts_with("/dev/shm"),
-        in_ram,
-        "{:?}",
-        dir.path()
-    );
+    match std::env::var_os("TMPDIR") {
+        // A `TMPDIR` the runner set is respected, whether or not it is itself in RAM (the check
+        // host puts it under `/dev/shm`).
+        Some(tmp) => assert!(dir.path().starts_with(&tmp), "{:?}", dir.path()),
+        None => assert_eq!(
+            dir.path().starts_with("/dev/shm"),
+            support::is_ram_mount("/dev/shm"),
+            "{:?}",
+            dir.path()
+        ),
+    }
     assert!(!support::is_ram_mount("/"), "the root is no memory mount");
     assert!(!support::is_ram_mount("/no/such/mount"));
     // Whatever the folder is, a host can write and sync a file in it.

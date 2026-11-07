@@ -778,6 +778,31 @@ describe("method and path rules", () => {
     ).toBeInTheDocument();
   });
 
+  it("selects the rule the address names, as the Activity screen links to it", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    window.history.replaceState({}, "", "/rules?request-rule=2");
+    requestApi.rules = [requestRule(1), requestRule(2)];
+    render(RulesPage);
+    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
+    const rows = within(section()).getAllByRole("row").slice(1);
+    await waitFor(() =>
+      expect(rows[1]).toHaveAttribute("aria-current", "true"),
+    );
+    expect(rows[0]).not.toHaveAttribute("aria-current");
+    window.history.replaceState({}, "", "/rules");
+  });
+
+  it("ignores a rule named in the address that is not a number", async () => {
+    window.history.replaceState({}, "", "/rules?request-rule=abc");
+    requestApi.rules = [requestRule(1)];
+    render(RulesPage);
+    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
+    expect(within(section()).getAllByRole("row")[1]).not.toHaveAttribute(
+      "aria-current",
+    );
+    window.history.replaceState({}, "", "/rules");
+  });
+
   it("lists the rules and deletes one after asking", async () => {
     requestApi.rules = [
       requestRule(1, {

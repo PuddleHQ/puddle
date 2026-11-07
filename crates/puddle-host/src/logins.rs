@@ -42,6 +42,7 @@ fn kind_of(problem: Problem) -> LoginProblemKind {
         Problem::StoreUnavailable => LoginProblemKind::StoreUnavailable,
         Problem::UnusableToken => LoginProblemKind::UnusableToken,
         Problem::BoundToken => LoginProblemKind::BoundToken,
+        Problem::UnnamedToken => LoginProblemKind::UnnamedToken,
         Problem::Unreadable => LoginProblemKind::Unreadable,
         Problem::CaptureOff => LoginProblemKind::CaptureOff,
         Problem::UnexpectedAnswer => LoginProblemKind::UnexpectedAnswer,
@@ -176,6 +177,7 @@ mod tests {
             ),
             (Problem::UnusableToken, LoginProblemKind::UnusableToken),
             (Problem::BoundToken, LoginProblemKind::BoundToken),
+            (Problem::UnnamedToken, LoginProblemKind::UnnamedToken),
             (Problem::Unreadable, LoginProblemKind::Unreadable),
             (Problem::CaptureOff, LoginProblemKind::CaptureOff),
         ];

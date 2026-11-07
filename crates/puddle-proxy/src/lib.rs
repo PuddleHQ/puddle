@@ -89,11 +89,11 @@ pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use records::{RecordError, RecordResolver, Records, SystemRecords};
 pub use route::Route;
 pub use terminate::{
-    AnswerHead, AnswerRewriter, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange, ExchangeRewriter,
-    HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
-    Interception, LEARNED_CAP, LEARNED_TTL, MAX_EXCHANGE_BODY, NoInjection, PassThrough,
-    PatternError, Placement, RequestRule, RequestRules, RequestView, SecretValue, StandIn,
-    StandInError, StandInOrigin, StandIns, Termination, TerminationSet, TerminationSource,
-    Terminations, TokenBody, TokenBodyError, Unauthorized, secret_stand_in,
+    AnswerHead, AnswerRewriter, BodyField, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange,
+    ExchangeRewriter, FieldKind, HeaderError, InjectContext, InjectDecision, InjectRefusal,
+    InjectedHeader, Injection, Injector, Interception, LEARNED_CAP, LEARNED_TTL, MAX_EXCHANGE_BODY,
+    NoInjection, PassThrough, PatternError, Placement, RequestRule, RequestRules, RequestView,
+    SecretValue, StandIn, StandInError, StandInOrigin, StandIns, Termination, TerminationSet,
+    TerminationSource, Terminations, TokenBody, TokenBodyError, Unauthorized, secret_stand_in,
 };
 pub use upstream::Upstream;

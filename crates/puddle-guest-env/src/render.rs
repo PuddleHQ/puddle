@@ -583,13 +583,8 @@ Match host \"*,!localhost,!::1\"
             format!("# puddle: begin\n{lines}\n# puddle: end\n")
         );
         for bad in ["", "# a comment", "a ssh-rsa A\n\nb ssh-rsa B"] {
-            assert!(
-                matches!(
-                    ssh_known_hosts_file(bad),
-                    Err(ConfigError::GuestPath { .. })
-                ),
-                "{bad:?}"
-            );
+            let err = ssh_known_hosts_file(bad).unwrap_err();
+            assert!(matches!(err, ConfigError::GuestPath { .. }), "{bad:?}");
         }
     }
 

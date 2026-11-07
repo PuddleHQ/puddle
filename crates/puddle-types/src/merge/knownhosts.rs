@@ -179,6 +179,7 @@ mod tests {
         assert_eq!(written(KEY_A, &file), expected);
         // The same keys change nothing, not even the bytes.
         assert_eq!(applied(KEY_A, &expected), Merged::Unchanged);
+        assert_eq!(written(KEY_A, &expected), expected);
     }
 
     #[test]

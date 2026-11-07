@@ -280,6 +280,21 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_source_still_hands_out_bytes_of_every_width() {
+        use rand_core::TryRng;
+        let mut source = Source::new(|_| Err(getrandom::Error::UNSUPPORTED));
+        let mut seven = [0; 7];
+        source.try_fill_bytes(&mut seven).unwrap();
+        let (a, b) = (
+            source.try_next_u32().unwrap(),
+            source.try_next_u64().unwrap(),
+        );
+        assert!(source.failed);
+        assert!(seven.iter().any(|&b| b != 0));
+        assert!(a != 0 && b != 0);
+    }
+
+    #[test]
     fn random_numbers_that_fail_make_no_keys() {
         let failing = |_: &mut [u8]| Err(getrandom::Error::UNSUPPORTED);
         let err = GitSshHostKeys::generate_with(failing).unwrap_err();

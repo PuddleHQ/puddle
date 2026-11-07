@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Just enough HTTP/1.1 for a forward proxy: the request head with hard limits, the request
-//! target, and request-body framing so exactly one plain-HTTP request is forwarded per connection.
+//! target, and request-body framing, so a request ends exactly where its framing says and the
+//! bytes after it are read as the next request, never as part of this one.
 //!
 //! Everything here parses guest input, so it never trusts a length, never buffers more than
 //! [`MAX_HEAD`], and refuses ambiguous framing instead of guessing.

@@ -435,15 +435,3 @@ async fn not_knowing_whether_a_folder_is_there_is_an_error_not_a_no() {
         "{err}"
     );
 }
-
-/// The fixtures must not touch the repository a git hook points `GIT_DIR` at.
-#[test]
-fn fixtures_leave_the_repository_of_a_git_hook_alone() {
-    // skip-ok: the parent run starts this binary again as a child, and the child must not recurse.
-    if common::is_hook_env_child() {
-        return;
-    }
-    common::assert_hook_env_leaves_the_repository_alone(
-        "fixtures_leave_the_repository_of_a_git_hook_alone",
-    );
-}

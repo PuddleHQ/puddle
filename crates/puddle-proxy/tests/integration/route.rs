@@ -30,9 +30,9 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufRead
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
-const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+pub(crate) const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
-fn host(h: &str) -> Host {
+pub(crate) fn host(h: &str) -> Host {
     Host::parse_normalised(h).unwrap()
 }
 
@@ -41,8 +41,8 @@ fn workspace(name: &str) -> WorkspaceId {
 }
 
 /// A proxy serving one route, its policy and IPC root.
-struct Rig {
-    policy: Arc<StaticPolicy>,
+pub(crate) struct Rig {
+    pub(crate) policy: Arc<StaticPolicy>,
     log: Arc<CollectingConnectionLog>,
     proxy: Arc<Proxy>,
     root: IpcRoot,
@@ -55,12 +55,12 @@ impl Rig {
     }
 
     /// `*.test` names from `resolver`, every address allowed (the servers are on loopback).
-    fn with_resolver(config: &ProxyConfig, resolver: StaticResolver) -> Self {
+    pub(crate) fn with_resolver(config: &ProxyConfig, resolver: StaticResolver) -> Self {
         Self::with_checks(config, resolver, Arc::new(AnyAddress))
     }
 
     /// As [`Self::with_resolver`], with `check` deciding which resolved addresses may be used.
-    fn with_checks(
+    pub(crate) fn with_checks(
         config: &ProxyConfig,
         resolver: StaticResolver,
         check: Arc<dyn AddressCheck>,
@@ -85,12 +85,12 @@ impl Rig {
         }
     }
 
-    async fn guest(&self) -> Guest {
+    pub(crate) async fn guest(&self) -> Guest {
         Guest::connect(&self.route).await
     }
 
     /// The first `count` connection events, waiting up to 5 s for them.
-    async fn events(&self, count: usize) -> Vec<ConnectionEvent> {
+    pub(crate) async fn events(&self, count: usize) -> Vec<ConnectionEvent> {
         let events = self.log.wait_for(count, Duration::from_secs(5)).await;
         assert!(
             events.len() >= count,
@@ -115,7 +115,7 @@ impl AddressCheck for RefuseOneAddress {
 }
 
 /// One agent connection: a yamux client session on the route.
-struct Guest {
+pub(crate) struct Guest {
     control: Control,
     driver: JoinHandle<()>,
 }
@@ -135,7 +135,7 @@ impl Guest {
         Self { control, driver }
     }
 
-    async fn stream(&mut self) -> StreamHandle {
+    pub(crate) async fn stream(&mut self) -> StreamHandle {
         self.control.open_stream().await.unwrap()
     }
 
@@ -157,13 +157,13 @@ impl Guest {
 }
 
 /// Reads a response head; returns the status code.
-async fn status<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> io::Result<u16> {
+pub(crate) async fn status<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> io::Result<u16> {
     let (code, _) = response_head(reader).await?;
     Ok(code)
 }
 
 /// Reads a response head; returns the status code and the header lines.
-async fn response_head<R: AsyncRead + Unpin>(
+pub(crate) async fn response_head<R: AsyncRead + Unpin>(
     reader: &mut BufReader<R>,
 ) -> io::Result<(u16, Vec<String>)> {
     let mut line = String::new();
@@ -184,7 +184,7 @@ async fn response_head<R: AsyncRead + Unpin>(
     }
 }
 
-fn header_value(headers: &[String], name: &str) -> Option<String> {
+pub(crate) fn header_value(headers: &[String], name: &str) -> Option<String> {
     headers.iter().find_map(|h| {
         let (n, v) = h.split_once(':')?;
         n.eq_ignore_ascii_case(name).then(|| v.trim().to_owned())
@@ -192,7 +192,7 @@ fn header_value(headers: &[String], name: &str) -> Option<String> {
 }
 
 /// Reads to the end; a reset or other error is returned as is.
-async fn read_all<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Vec<u8>> {
+pub(crate) async fn read_all<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Vec<u8>> {
     let mut out = Vec::new();
     reader.read_to_end(&mut out).await?;
     Ok(out)
@@ -506,8 +506,12 @@ async fn a_stream_closed_before_a_request_is_dropped_quietly() {
     assert_eq!(rig.policy.decisions(), 0);
 }
 
+/// A plain-HTTP request goes upstream rebuilt: `Host` is the checked target, hop-by-hop headers
+/// and the guest's proxy credential are gone, and the body is exactly its framed length. A request
+/// pipelined behind it (for another host) is not part of it: it is decided on its own, here
+/// refused, and its bytes never reach the first server.
 #[tokio::test]
-async fn a_plain_http_request_is_forwarded_once_with_the_checked_host() {
+async fn a_plain_http_request_is_forwarded_with_the_checked_host() {
     let response = "HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello";
     let (server, received) = http_server(response, 4).await;
     let rig = Rig::with_resolver(
@@ -518,46 +522,80 @@ async fn a_plain_http_request_is_forwarded_once_with_the_checked_host() {
     let mut guest = rig.guest().await;
     let mut stream = guest.stream().await;
     let port = server.port();
-    let request = format!(
-        "POST http://Web.Test:{port}/up?x=1 HTTP/1.1\r\nHost: evil.test\r\nConnection: keep-alive, X-Hop\r\nX-Hop: 1\r\nProxy-Authorization: Basic Zm9v\r\nContent-Length: 4\r\nAccept: */*\r\n\r\nbody\
-         GET http://evil.test/ HTTP/1.1\r\n\r\n"
+    let first = format!(
+        "POST http://Web.Test:{port}/up?x=1 HTTP/1.1\r\nHost: evil.test\r\nConnection: keep-alive, X-Hop\r\nX-Hop: 1\r\nProxy-Authorization: Basic Zm9v\r\nContent-Length: 4\r\nAccept: */*\r\n\r\nbody"
     );
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let response_back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
-    assert_eq!(response_back, response);
-    let (head, rest) = received.await.unwrap();
+    let second = "GET http://evil.test/ HTTP/1.1\r\n\r\n";
+    stream
+        .write_all(format!("{first}{second}").as_bytes())
+        .await
+        .unwrap();
+    let mut reader = BufReader::new(stream);
+    let (code, headers) = response_head(&mut reader).await.unwrap();
+    assert_eq!(code, 200);
     assert_eq!(
-        head,
-        format!(
-            "POST /up?x=1 HTTP/1.1\r\nHost: web.test:{port}\r\nContent-Length: 4\r\nAccept: */*\r\nConnection: close\r\n\r\n"
-        )
+        header_value(&headers, "content-length").as_deref(),
+        Some("5")
     );
-    assert_eq!(rest, b"body", "the pipelined request must not be forwarded");
-    let event = &rig.events(1).await[0];
-    let http = event.http.as_ref().unwrap();
+    let mut hello = [0u8; 5];
+    reader.read_exact(&mut hello).await.unwrap();
+    assert_eq!(&hello, b"hello");
+    let (code, headers) = response_head(&mut reader).await.unwrap();
+    assert_eq!(code, 403, "the pipelined request is decided on its own");
+    assert_eq!(
+        header_value(&headers, "x-puddle-decision").as_deref(),
+        Some("pending")
+    );
+    let (head, rest) = received.await.unwrap();
+    let lines: Vec<&str> = head.trim_end().split("\r\n").collect();
+    assert_eq!(lines[0], "POST /up?x=1 HTTP/1.1");
+    let mut fields: Vec<String> = lines[1..].iter().map(|l| l.to_ascii_lowercase()).collect();
+    fields.sort();
+    assert_eq!(
+        fields,
+        [
+            "accept: */*".to_owned(),
+            "content-length: 4".to_owned(),
+            format!("host: web.test:{port}"),
+        ]
+    );
+    assert_eq!(
+        rest, b"body",
+        "the pipelined request must not reach this server"
+    );
+    let events = rig.events(2).await;
+    let http = events[0].http.as_ref().unwrap();
     assert_eq!((http.method(), http.path()), ("POST", "/up"));
     assert_eq!(
         (
-            event.decision,
-            event.resolved_ip,
-            event.bytes_up,
-            event.bytes_down
+            events[0].decision,
+            events[0].resolved_ip,
+            events[0].bytes_down
         ),
         (
             ConnectionDecision::Allow,
             Some(LOCAL),
-            request.len() as u64,
             response.len() as u64
         )
     );
+    assert!(events[0].bytes_up >= first.len() as u64);
+    assert_eq!(
+        (events[1].host.to_string(), events[1].decision),
+        ("evil.test".to_owned(), ConnectionDecision::Pending)
+    );
+    assert_eq!(
+        events[0].bytes_up + events[1].bytes_up,
+        (first.len() + second.len()) as u64,
+        "every byte the guest sent is on one of the two records"
+    );
 }
 
-/// The sequential variant of a keep-alive case: the guest asks for `web.test` with keep-alive, waits for the
-/// answer, then asks for `evil.test` on the same stream. The proxy closed the stream after the
-/// first answer, so the second request is never read: no rule is asked about `evil.test`, no row
-/// is written, and nothing is connected to.
+/// The sequential variant of a keep-alive host switch: the guest asks for `web.test`, waits for
+/// the answer, then asks for `evil.test` on the same stream. The second request is decided on its
+/// own: `evil.test` has no rule, so it becomes a pending request and a `403`, nothing connects to
+/// it, and the two requests are two records.
 #[tokio::test]
-async fn hostile_hg09_a_second_request_after_the_first_answer_is_never_looked_at() {
+async fn hostile_hg09_a_second_request_after_the_first_answer_is_decided_on_its_own() {
     let response = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
     let (server, received) = http_server(response, 0).await;
     let rig = Rig::with_resolver(
@@ -568,36 +606,47 @@ async fn hostile_hg09_a_second_request_after_the_first_answer_is_never_looked_at
     );
     rig.policy.allow(&host("web.test"));
     let mut guest = rig.guest().await;
-    let mut stream = guest.stream().await;
+    let stream = guest.stream().await;
+    let mut reader = BufReader::new(stream);
     let first = format!(
         "GET http://web.test:{}/ HTTP/1.1\r\nHost: web.test\r\nConnection: keep-alive\r\n\r\n",
         server.port()
     );
-    stream.write_all(first.as_bytes()).await.unwrap();
-    // The proxy ends the stream after the answer: reading to the end finishes.
-    let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
-    assert_eq!(back, response);
-    let (head, _) = received.await.unwrap();
-    assert!(
-        head.contains("Connection: close\r\n") && !head.contains("keep-alive"),
-        "the upstream is told to close, not to keep the connection alive: {head}"
-    );
+    reader.get_mut().write_all(first.as_bytes()).await.unwrap();
+    assert_eq!(status(&mut reader).await.unwrap(), 200);
+    let mut ok = [0u8; 2];
+    reader.read_exact(&mut ok).await.unwrap();
+    assert_eq!(&ok, b"ok");
+    received.await.unwrap();
     let trap = TcpListener::bind((LOCAL, 0)).await.unwrap();
     let second = format!(
         "GET http://evil.test:{}/ HTTP/1.1\r\nHost: evil.test\r\n\r\n",
         trap.local_addr().unwrap().port()
     );
-    // The write may fail (the stream is closed) or vanish; either way nothing comes back.
-    let _ = stream.write_all(second.as_bytes()).await;
-    let after = read_all(&mut stream).await.unwrap_or_default();
-    assert_eq!(after, b"", "no second answer");
+    reader.get_mut().write_all(second.as_bytes()).await.unwrap();
+    let (code, headers) = response_head(&mut reader).await.unwrap();
+    assert_eq!(code, 403);
+    assert_eq!(
+        header_value(&headers, "x-puddle-decision").as_deref(),
+        Some("pending")
+    );
     let accepted = tokio::time::timeout(Duration::from_millis(300), trap.accept()).await;
     assert!(accepted.is_err(), "evil.test was connected to");
-    rig.events(1).await;
+    let events = rig.events(2).await;
+    assert_eq!(
+        events
+            .iter()
+            .map(|e| (e.host.to_string(), e.decision))
+            .collect::<Vec<_>>(),
+        [
+            ("web.test".to_owned(), ConnectionDecision::Allow),
+            ("evil.test".to_owned(), ConnectionDecision::Pending)
+        ]
+    );
     assert_eq!(
         (rig.policy.decisions(), rig.policy.pending().len()),
-        (1, 0),
-        "only the first request was decided and no row exists for the second"
+        (2, 1),
+        "each request was decided, and the second one is waiting for approval"
     );
 }
 
@@ -655,12 +704,15 @@ async fn hostile_hg17_the_guests_proxy_authorization_never_reaches_a_plain_http_
     let mut guest = rig.guest().await;
     let mut stream = guest.stream().await;
     let request = format!(
-        "GET http://web.test:{}/ HTTP/1.1\r\nHost: web.test\r\nProxy-Authorization: Basic Z3Vlc3Q6cHc=\r\nproxy-authorization: Bearer second\r\nProxy-Connection: keep-alive\r\nAuthorization: Bearer mine\r\n\r\n",
+        "GET http://web.test:{}/ HTTP/1.1\r\nHost: web.test\r\nProxy-Authorization: Basic Z3Vlc3Q6cHc=\r\nproxy-authorization: Bearer second\r\nProxy-Connection: keep-alive\r\nAuthorization: Bearer mine\r\nConnection: close\r\n\r\n",
         server.port()
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
-    assert_eq!(back, response);
+    assert_eq!(
+        back,
+        response.replace("\r\n\r\n", "\r\nconnection: close\r\n\r\n")
+    );
     let (head, _) = received.await.unwrap();
     let lower = head.to_ascii_lowercase();
     assert!(
@@ -691,10 +743,16 @@ async fn hostile_hg08_a_mixed_answer_is_connected_at_the_allowed_address_and_aud
     rig.policy.allow(&host("mixed.test"));
     let mut guest = rig.guest().await;
     let mut stream = guest.stream().await;
-    let request = format!("GET http://mixed.test:{}/ HTTP/1.1\r\n\r\n", server.port());
+    let request = format!(
+        "GET http://mixed.test:{}/ HTTP/1.1\r\nConnection: close\r\n\r\n",
+        server.port()
+    );
     stream.write_all(request.as_bytes()).await.unwrap();
     let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
-    assert_eq!(back, response);
+    assert_eq!(
+        back,
+        response.replace("\r\n\r\n", "\r\nconnection: close\r\n\r\n")
+    );
     received.await.unwrap();
     let event = &rig.events(1).await[0];
     assert_eq!(
@@ -726,14 +784,18 @@ async fn a_chunked_upload_is_forwarded_with_its_framing() {
     let mut guest = rig.guest().await;
     let mut stream = guest.stream().await;
     let request = format!(
-        "PUT http://web.test:{}/f HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n{chunked}",
+        "PUT http://web.test:{}/f HTTP/1.1\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{chunked}",
         server.port()
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
     assert!(back.starts_with("HTTP/1.1 201"), "{back}");
     let (head, body) = received.await.unwrap();
-    assert!(head.contains("Transfer-Encoding: chunked\r\n"), "{head}");
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("transfer-encoding: chunked\r\n"),
+        "{head}"
+    );
     assert_eq!(body, chunked.as_bytes());
 }
 
@@ -1016,9 +1078,12 @@ async fn a_server_answering_before_the_upload_ends_reaches_the_guest() {
 }
 
 /// Plain HTTP: a server that resets mid-request makes the guest stream fail, not end
-/// cleanly as if the response were complete.
+/// cleanly as if the response were complete. The server resets only once the guest has the
+/// head and part of the body: a reset that overtakes unread data (Windows discards it) is
+/// before any response, and a 502 is the right answer to that.
 #[tokio::test]
 async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_error() {
+    let (seen_tx, seen_rx) = tokio::sync::oneshot::channel::<()>();
     let listener = TcpListener::bind((LOCAL, 0)).await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -1028,6 +1093,7 @@ async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_erro
         conn.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\npart")
             .await
             .unwrap();
+        let _ = seen_rx.await;
         conn.set_zero_linger().unwrap();
         drop(conn);
     });
@@ -1039,6 +1105,20 @@ async fn a_server_reset_during_a_plain_http_request_reaches_the_guest_as_an_erro
         .write_all(format!("GET http://127.0.0.1:{port}/ HTTP/1.1\r\n\r\n").as_bytes())
         .await
         .unwrap();
+    let mut seen = Vec::new();
+    let mut chunk = [0u8; 256];
+    while !seen.ends_with(b"part") {
+        let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            n, 0,
+            "the guest's answer ended before the body began: {seen:?}"
+        );
+        seen.extend_from_slice(&chunk[..n]);
+    }
+    seen_tx.send(()).unwrap();
     let got = tokio::time::timeout(Duration::from_secs(5), read_all(&mut stream))
         .await
         .unwrap();
@@ -1548,10 +1628,16 @@ async fn an_ip_rule_deny_names_the_refused_address_on_the_audit_row() {
     rig.policy.deny_host(&host("127.0.0.2"));
     let mut guest = rig.guest().await;
     let mut stream = guest.stream().await;
-    let request = format!("GET http://mixed.test:{}/ HTTP/1.1\r\n\r\n", server.port());
+    let request = format!(
+        "GET http://mixed.test:{}/ HTTP/1.1\r\nConnection: close\r\n\r\n",
+        server.port()
+    );
     stream.write_all(request.as_bytes()).await.unwrap();
     let back = String::from_utf8(read_all(&mut stream).await.unwrap()).unwrap();
-    assert_eq!(back, response);
+    assert_eq!(
+        back,
+        response.replace("\r\n\r\n", "\r\nconnection: close\r\n\r\n")
+    );
     received.await.unwrap();
     // A request is recorded when it ends, which can be after the guest has its answer: wait for
     // the first row so the refused CONNECT cannot be recorded ahead of it.

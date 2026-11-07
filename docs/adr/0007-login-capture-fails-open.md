@@ -1,7 +1,7 @@
 # 0007 — Login capture fails open: when it cannot work, the login goes through and the user is told
 
 Date: 2026-10-12
-Status: accepted
+Status: superseded by 0009
 
 ## Context
 

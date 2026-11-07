@@ -98,9 +98,21 @@ pub use inject::{
 pub use intercept::{Interception, LEARNED_CAP, LEARNED_TTL, PassThrough};
 pub use request_rules::{RequestRule, RequestRules};
 pub(crate) use session::{Context, Outcome, run};
+/// The HTTP/1.1 pieces the plain-HTTP path shares with a decrypted connection: the upstream
+/// client, the guest's body streamed into it, and the response rebuilt for the guest.
+pub(crate) mod h1 {
+    pub(crate) use super::body::{Abort, ChannelBody};
+    pub(crate) use super::exchange::AnswerBody;
+    pub(crate) use super::leg::{
+        BoxError, H1Conn, READY_WAIT, UpBody, h1 as handshake, setup_refusal,
+    };
+    pub(crate) use super::request::{Parsed, framed, upstream_headers};
+    pub(crate) use super::response::{Written, write as write_response};
+    pub(crate) use super::session::{keep_reading, send_and_pump, short};
+}
 pub use set::{PatternError, TerminationSet};
 pub use stand_in::{Placement, StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
-pub use token_body::{BodyFormat, TokenBody, TokenBodyError};
+pub use token_body::{BodyField, BodyFormat, FieldKind, TokenBody, TokenBodyError};
 
 /// Hosts Puddle decrypts by default: GitHub and Azure DevOps, for git and Git LFS. Not
 /// `api.github.com` (the `gh` CLI and gists would become an exfiltration channel with a

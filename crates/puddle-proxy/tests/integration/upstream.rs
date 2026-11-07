@@ -7,6 +7,7 @@
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
+use crate::plain_keepalive::{answer, get as keepalive_get, keep_alive_server};
 use crate::pull_support;
 
 use std::io;
@@ -240,7 +241,7 @@ async fn absolute_form_goes_through_the_company_proxy() {
     rig.policy.allow(&host("plain.test"));
     let mut guest = rig.guest().await;
     let (code, _, mut body) = guest
-        .request("GET http://plain.test:8080/a/b?q=1 HTTP/1.1\r\nHost: plain.test:8080\r\n\r\n")
+        .request("GET http://plain.test:8080/a/b?q=1 HTTP/1.1\r\nHost: plain.test:8080\r\nConnection: close\r\n\r\n")
         .await;
     assert_eq!(code, 200);
     assert_eq!(
@@ -286,7 +287,9 @@ async fn a_407_from_the_company_proxy_is_answered_with_the_configured_credential
 
     // Plain HTTP on the same proxy: probe, credential, request carrying Basic.
     let (code, _, body) = guest
-        .request("GET http://plain.test:80/x HTTP/1.1\r\nHost: plain.test\r\n\r\n")
+        .request(
+            "GET http://plain.test:80/x HTTP/1.1\r\nHost: plain.test\r\nConnection: close\r\n\r\n",
+        )
         .await;
     assert_eq!(
         code, 403,
@@ -295,7 +298,9 @@ async fn a_407_from_the_company_proxy_is_answered_with_the_configured_credential
     drop(body);
     rig.policy.allow(&host("plain.test"));
     let (code, _, mut body) = guest
-        .request("GET http://plain.test:80/x HTTP/1.1\r\nHost: plain.test\r\n\r\n")
+        .request(
+            "GET http://plain.test:80/x HTTP/1.1\r\nHost: plain.test\r\nConnection: close\r\n\r\n",
+        )
         .await;
     assert_eq!(code, 200);
     assert!(
@@ -547,7 +552,7 @@ async fn hostile_when_every_address_is_ip_denied_no_hop_is_contacted() {
 }
 
 #[tokio::test]
-async fn hostile_a_guest_cannot_supply_proxy_credentials_or_a_second_request() {
+async fn hostile_a_guest_cannot_supply_proxy_credentials_or_smuggle_a_second_request() {
     let proxy = FakeProxy::start(Behaviour::Open).await;
     let (up, _) = upstream(vec![via(&proxy)], Arc::new(NoAuth));
     let rig = Rig::new(StaticResolver::new().with("plain.test", &[LOCAL]), up, None);
@@ -559,8 +564,10 @@ async fn hostile_a_guest_cannot_supply_proxy_credentials_or_a_second_request() {
             "Host: elsewhere.test\r\n",
             "Proxy-Authorization: Basic Z3Vlc3Q6Z3Vlc3Q=\r\n",
             "Proxy-Connection: keep-alive\r\n",
+            "X-Puddle-Workspace: other\r\n",
             "\r\n",
-            "GET http://plain.test/two HTTP/1.1\r\nHost: plain.test\r\n\r\n",
+            "GET http://plain.test/two HTTP/1.1\r\nHost: plain.test\r\n",
+            "Proxy-Authorization: Basic c2Vjb25kOnNlY29uZA==\r\nConnection: close\r\n\r\n",
         ))
         .await;
     assert_eq!(code, 200);
@@ -570,14 +577,25 @@ async fn hostile_a_guest_cannot_supply_proxy_credentials_or_a_second_request() {
         .into_iter()
         .filter(|s| s.method == "GET")
         .collect();
-    assert_eq!(gets.len(), 1, "the pipelined request was dropped");
-    assert_eq!(gets[0].target, "http://plain.test:80/one");
     assert_eq!(
-        gets[0].proxy_authorization, None,
-        "the guest's credential is not forwarded"
+        gets.iter().map(|g| g.target.as_str()).collect::<Vec<_>>(),
+        ["http://plain.test:80/one", "http://plain.test:80/two"],
+        "the pipelined request goes as its own request, decided on its own"
     );
-    let host_header = gets[0].headers.iter().find(|(n, _)| n == "host").unwrap();
-    assert_eq!(host_header.1, "plain.test", "Host is the checked target");
+    assert_eq!(rig.events(2).await.len(), 2, "one record per request");
+    for get in &gets {
+        assert_eq!(
+            get.proxy_authorization, None,
+            "the guest's credential is not forwarded"
+        );
+        let host_header = get.headers.iter().find(|(n, _)| n == "host").unwrap();
+        assert_eq!(host_header.1, "plain.test", "Host is the checked target");
+        assert!(
+            get.headers.iter().all(|(n, _)| !n.starts_with("x-puddle-")),
+            "Puddle's own header names never travel: {:?}",
+            get.headers
+        );
+    }
 }
 
 /// With Puddle's own credential for the company proxy configured, a guest's `Proxy-Authorization`
@@ -612,7 +630,7 @@ async fn hostile_hg17_the_guests_proxy_authorization_never_reaches_the_company_p
     drop(tunnel);
     let (code, _, mut body) = guest
         .request(&format!(
-            "GET http://site.test:{port}/x HTTP/1.1\r\nHost: site.test\r\nProxy-Authorization: {}\r\nPROXY-AUTHORIZATION: {}\r\n\r\n",
+            "GET http://site.test:{port}/x HTTP/1.1\r\nHost: site.test\r\nProxy-Authorization: {}\r\nPROXY-AUTHORIZATION: {}\r\nConnection: close\r\n\r\n",
             theirs[0],
             theirs[1],
             port = server.addr.port()
@@ -881,6 +899,60 @@ async fn a_pull_tunnel_is_reset_when_its_route_is_gone() {
         .await
         .expect("the pull tunnel is closed within 2 s");
     assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
+}
+
+/// A plain-HTTP connection kept to the company proxy carries the next request while the network
+/// stays the same; after a network change the next request goes out on the new route.
+#[tokio::test]
+async fn a_kept_plain_connection_is_not_reused_after_a_network_change() {
+    let (web, direct) = keep_alive_server().await;
+    let proxy = FakeProxy::start(Behaviour::Open).await;
+    let (network, up) = Network::upstream(vec![via(&proxy)]);
+    let rig = Rig::new(StaticResolver::new().with("plain.test", &[LOCAL]), up, None);
+    rig.policy.allow(&host("plain.test"));
+    let mut guest = rig.guest().await;
+    let mut reader = BufReader::new(guest.control.open_stream().await.unwrap());
+    let mut ask = async |path: &str| {
+        let request = keepalive_get("plain.test", web, path);
+        reader
+            .get_mut()
+            .write_all(request.as_bytes())
+            .await
+            .unwrap();
+        let got = answer(&mut reader, "GET").await;
+        assert_eq!(got.code, 200, "{path}");
+        String::from_utf8(got.body).unwrap()
+    };
+    let port = web.port();
+    assert_eq!(
+        ask("/1").await,
+        format!("via-proxy http://plain.test:{port}/1")
+    );
+    assert_eq!(
+        ask("/2").await,
+        format!("via-proxy http://plain.test:{port}/2")
+    );
+
+    // The machine leaves the company network: the route is DIRECT now.
+    network.flip(vec![Hop::Direct]);
+    assert_eq!(ask("/3").await, "/3");
+
+    let conns: Vec<_> = proxy
+        .seen()
+        .into_iter()
+        .filter(|s| s.method == "GET")
+        .map(|s| s.conn)
+        .collect();
+    assert_eq!(conns, [1, 1], "the first two on one proxy connection");
+    assert_eq!(direct.lines(), ["GET /3"], "the third on the new route");
+    let hops: Vec<_> = rig
+        .events(3)
+        .await
+        .into_iter()
+        .map(|e| e.upstream.unwrap_or_default())
+        .collect();
+    let via_proxy = format!("PROXY {}", proxy.proxy_addr());
+    assert_eq!(hops, [via_proxy.as_str(), via_proxy.as_str(), "DIRECT"]);
 }
 
 // ---- the pull proxy ----

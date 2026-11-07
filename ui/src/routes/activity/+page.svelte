@@ -17,6 +17,7 @@
     toSearch,
     type Filter,
   } from "#lib/audit/model.ts";
+  import { requestRulesStore } from "#lib/stores/request-rules.svelte.ts";
   import { auditStore as store } from "#lib/stores/audit.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import Toast from "#lib/components/Toast.svelte";
@@ -55,15 +56,25 @@
     }`,
   );
 
+  /** Only a rule list that was read says a rule is gone; until then every name stays a link. */
+  function ruleGone(id: number): boolean {
+    return (
+      requestRulesStore.status === "ready" &&
+      !requestRulesStore.rules.some((r) => r.id === id)
+    );
+  }
+
   onMount(() => {
     filter = fromSearch(window.location.search);
     void store.load(filter);
     const stop = store.start();
+    const stopRules = requestRulesStore.start();
     const clock = setInterval(() => {
       now = Date.now();
     }, 60_000);
     return () => {
       stop();
+      stopRules();
       clearInterval(clock);
       clearTimeout(typing);
       store.setFollowing(true);
@@ -273,6 +284,7 @@
       entries={store.entries}
       hasMore={store.hasMore}
       {now}
+      {ruleGone}
       onTop={(atTop) => store.setFollowing(atTop)}
       onNearEnd={() => void store.loadMore()}
     />

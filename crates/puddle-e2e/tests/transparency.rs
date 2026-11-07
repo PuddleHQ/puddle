@@ -494,14 +494,17 @@ async fn response_head(conn: &mut BufReader<TcpStream>, request: &str) -> u64 {
         if line == "\r\n" {
             return length.expect("a Content-Length");
         }
-        if let Some(value) = line.strip_prefix("Content-Length: ") {
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
             length = Some(value.trim().parse().unwrap());
         }
     }
 }
 
-/// apt's way: a plain `GET http://...` with no tunnel, which the proxy forwards (reading nothing
-/// more from the client once the request is in) while 256 MiB come down, sixteen stream windows.
+/// apt's way: a plain `GET http://...` with no tunnel, which the proxy forwards while 256 MiB come
+/// down, sixteen stream windows, and the client sends nothing more. The request asks to close, so
+/// the download ends at the end of the connection.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_large_plain_http_response_comes_down_with_no_stall() {
     const SIZE: u64 = 256 << 20;
@@ -510,8 +513,9 @@ async fn a_large_plain_http_response_comes_down_with_no_stall() {
     let source = http_source(SIZE).await;
     let port = source.port();
     let mut conn = direct(rig.agent.local_addr()).await;
-    let request =
-        format!("GET http://echo.test:{port}/big HTTP/1.1\r\nHost: echo.test:{port}\r\n\r\n");
+    let request = format!(
+        "GET http://echo.test:{port}/big HTTP/1.1\r\nHost: echo.test:{port}\r\nConnection: close\r\n\r\n"
+    );
     assert_eq!(response_head(&mut conn, &request).await, SIZE);
     let drops = rcvq_drops();
     let through = download(&mut conn, source, SIZE).await.unwrap();

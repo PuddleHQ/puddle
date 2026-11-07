@@ -699,7 +699,7 @@ pub const MAX_ID_DRAWS: u32 = 16;
 
 /// Why a create got no id: every draw was taken or gave nothing.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("Puddle could not pick a new workspace id; the system's random source may be broken")]
+#[error("no free workspace id was found; the system's random source may be broken")]
 #[non_exhaustive]
 pub struct NoFreeId;
 
@@ -2063,7 +2063,7 @@ mod tests {
             assert_eq!(MAX_ID_DRAWS, 16);
             assert_eq!(
                 err.to_string(),
-                "Puddle could not pick a new workspace id; the system's random source may be broken"
+                "no free workspace id was found; the system's random source may be broken"
             );
         }
         // A free id on the last draw is still taken up.

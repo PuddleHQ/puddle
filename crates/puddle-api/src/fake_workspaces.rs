@@ -1515,8 +1515,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, WorkspaceError::Unavailable(_)), "{err}");
         assert!(
-            err.to_string()
-                .contains("could not pick a new workspace id"),
+            err.to_string().contains("no free workspace id was found"),
             "{err}"
         );
     }

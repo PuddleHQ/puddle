@@ -5986,7 +5986,7 @@ async fn a_source_that_keeps_giving_a_taken_id_gets_a_refusal_after_sixteen_draw
     assert_eq!(reply.status, 503, "{}", reply.body);
     assert_eq!(
         reply.json()["message"],
-        "Puddle could not pick a new workspace id; the system's random source may be broken"
+        "no free workspace id was found; the system's random source may be broken"
     );
     let list = api.get("/api/workspaces").await.json();
     assert_eq!(list["workspaces"].as_array().unwrap().len(), 1, "{list}");

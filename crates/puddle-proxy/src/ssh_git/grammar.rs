@@ -246,13 +246,23 @@ mod tests {
         })
     }
 
-    fn repo(command: &str, name: &str) -> Result<(GitService, String), Refused> {
-        match parse(command, &host(name))? {
-            Command::Git(service, repository) => {
-                Ok((service, format!("{}{}", repository.host, repository.path)))
-            }
-            Command::LfsAuthenticate { .. } | Command::LfsTransfer => Err(Refused::Unsupported),
-        }
+    fn repo(command: &str, name: &str) -> Result<Command, Refused> {
+        parse(command, &host(name))
+    }
+
+    /// The command a fetch or a push of `path` on `https` reads into, shaped like `parse`'s result.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the tests compare it with what `parse` returns"
+    )]
+    fn git(service: GitService, https: &str, path: &str) -> Result<Command, Refused> {
+        Ok(Command::Git(
+            service,
+            Repository {
+                host: Host::parse_normalised(https).unwrap(),
+                path: path.to_owned(),
+            },
+        ))
     }
 
     #[test]
@@ -264,30 +274,26 @@ mod tests {
             "'/acme/web'",
         ] {
             assert_eq!(
-                repo(&format!("git-upload-pack {arg}"), "github.com").unwrap(),
-                (GitService::Upload, "github.com/acme/web.git".to_owned()),
+                repo(&format!("git-upload-pack {arg}"), "github.com"),
+                git(GitService::Upload, "github.com", "/acme/web.git"),
                 "{arg}"
             );
         }
         assert_eq!(
-            repo("git-receive-pack '/acme/web.git'", "ssh.github.com").unwrap(),
-            (GitService::Receive, "github.com/acme/web.git".to_owned())
+            repo("git-receive-pack '/acme/web.git'", "ssh.github.com"),
+            git(GitService::Receive, "github.com", "/acme/web.git")
         );
         assert_eq!(
-            repo("git-upload-pack '/a/b/c.git'", "gitlab.com")
-                .unwrap()
-                .1,
-            "gitlab.com/a/b/c.git"
+            repo("git-upload-pack '/a/b/c.git'", "gitlab.com"),
+            git(GitService::Upload, "gitlab.com", "/a/b/c.git")
         );
     }
 
     #[test]
     fn a_repository_may_start_with_a_dot_and_keep_its_case() {
         assert_eq!(
-            repo("git-upload-pack '/Acme/.github.git'", "github.com")
-                .unwrap()
-                .1,
-            "github.com/Acme/.github.git"
+            repo("git-upload-pack '/Acme/.github.git'", "github.com"),
+            git(GitService::Upload, "github.com", "/Acme/.github.git")
         );
     }
 
@@ -297,19 +303,23 @@ mod tests {
             repo(
                 "git-upload-pack 'v3/org/My%20Project/repo'",
                 "ssh.dev.azure.com"
+            ),
+            git(
+                GitService::Upload,
+                "dev.azure.com",
+                "/org/My%20Project/_git/repo"
             )
-            .unwrap()
-            .1,
-            "dev.azure.com/org/My%20Project/_git/repo"
         );
         assert_eq!(
             repo(
                 "git-receive-pack '/v3/org/proj/repo'",
                 "vs-ssh.visualstudio.com"
+            ),
+            git(
+                GitService::Receive,
+                "org.visualstudio.com",
+                "/proj/_git/repo"
             )
-            .unwrap()
-            .1,
-            "org.visualstudio.com/proj/_git/repo"
         );
         for bad in ["'org/proj/repo'", "'v2/org/proj/repo'", "'v3/org/proj'"] {
             assert_eq!(

@@ -811,15 +811,18 @@ async fn pump(
     let from_guest = async {
         let _ = tokio::io::copy(&mut input, &mut to_upstream).await;
         let _ = to_upstream.shutdown().await;
-        // The guest is done sending; the command ends when its own side does.
-        std::future::pending::<Result<(), super::GitSshFailure>>().await
     };
     let main = async { tokio::join!(run, to_guest) };
-    tokio::select! {
-        // A copy that fails is the guest's channel ending under the command: the command's own
-        // result says how it went.
-        (result, _copied) = main => result,
-        never = from_guest => never,
+    let (mut from_guest, mut main) = (pin!(from_guest), pin!(main));
+    // The guest finishing its side says nothing about the command, which ends when its own side
+    // does; a copy that fails is the guest's channel ending under it, and the command's own result
+    // says how it went.
+    let mut guest_done = false;
+    loop {
+        tokio::select! {
+            (result, _copied) = &mut main => return result,
+            () = &mut from_guest, if !guest_done => guest_done = true,
+        }
     }
 }
 

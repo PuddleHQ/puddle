@@ -9468,6 +9468,91 @@ async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_d
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_image_with_no_sudo_is_a_problem_until_a_start_that_finds_sudo() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: session user agent (uid 1000), no sudo in this image\n\
+         puddle-boot: session user cannot become root: no sudo\n"
+            .to_owned();
+    create(&api, &mut events, "acme").await;
+    let problem = host
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "no-sudo:acme")
+        .unwrap_or_else(|| panic!("no problem: {:?}", host.problems().list()));
+    assert_eq!(
+        problem.title,
+        "acme has no sudo, so its user cannot become root"
+    );
+    assert!(
+        problem.detail.contains("use an image that has `sudo`")
+            && problem.detail.contains("session user to root"),
+        "{}",
+        problem.detail
+    );
+    assert_eq!(
+        problem.workspace.as_ref().map(WorkspaceId::as_str),
+        Some("acme")
+    );
+
+    // It stays through a stop, and a start that says nothing about sudo (sudo found, or a root
+    // session user) takes it away.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .any(|p| p.key == "no-sudo:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "no-sudo:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+
+    // A delete takes a problem that is still up away with the workspace.
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: session user cannot become root: no sudo\n".to_owned();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .any(|p| p.key == "no-sudo:acme")
+    );
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let bare = json!({"confirm": true}).to_string();
+    let accepted = api.delete("/api/workspaces/acme", Some(&bare)).await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        host.problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "no-sudo:acme"),
+        "{:?}",
+        host.problems().list()
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn deleting_a_workspace_removes_its_shell_init_and_the_folder() {
     let rig = Rig::new();
     let host = rig.start().await;

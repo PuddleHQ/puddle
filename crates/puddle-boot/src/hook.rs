@@ -73,6 +73,16 @@ impl BootReport {
             .find_map(|line| line.strip_prefix("puddle-boot: entrypoint exited with status "))
     }
 
+    /// The hook made a session user that is not root, and the image has no `sudo`, so the user
+    /// cannot become root (`puddle-boot: session user cannot become root: no sudo`). `false` for a
+    /// root session user and for an image with `sudo`.
+    #[must_use]
+    pub fn session_user_has_no_sudo(&self) -> bool {
+        self.stdout
+            .lines()
+            .any(|line| line == "puddle-boot: session user cannot become root: no sudo")
+    }
+
     /// The git the guest has, as `(major, minor)`, when the hook found one and could read its
     /// version (`puddle-boot: git version 2.39.5`). `None` for a guest with no git yet.
     #[must_use]
@@ -413,6 +423,30 @@ mod tests {
             None
         );
         assert_eq!(BootReport::default().entrypoint_failure(), None);
+    }
+
+    #[test]
+    fn the_report_says_when_the_session_user_has_no_sudo() {
+        let said = |stdout: &str| BootReport {
+            duration: Duration::ZERO,
+            stdout: stdout.into(),
+        };
+        assert!(
+            said(
+                "puddle-boot: session user agent (uid 1000), no sudo in this image\n\
+                 puddle-boot: session user cannot become root: no sudo\n"
+            )
+            .session_user_has_no_sudo()
+        );
+        assert!(
+            !said("puddle-boot: session user agent (uid 1000), sudo at /usr/bin/sudo\n")
+                .session_user_has_no_sudo()
+        );
+        assert!(
+            !said("puddle-boot: session user cannot become root: no sudo, x\n")
+                .session_user_has_no_sudo()
+        );
+        assert!(!BootReport::default().session_user_has_no_sudo());
     }
 
     #[test]

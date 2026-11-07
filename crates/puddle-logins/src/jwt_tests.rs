@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Tests of a field whose stand-in is a JWT ([`StandInKind::Jwt`]): a refresh makes a new stand-in, and
-//! the slot keeps the older ones registered until the workspace stops.
+//! the slot keeps the last few older ones registered.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -148,6 +148,25 @@ async fn a_refresh_makes_a_new_stand_in_and_a_few_older_ones_stay_registered() {
         (kept.stand_in.as_str(), kept.real.as_str()),
         (given[4].as_str(), last_real.as_str())
     );
+}
+
+#[tokio::test]
+async fn a_long_run_of_refreshes_never_holds_more_than_the_bound() {
+    let rig = rig_for(&JWT_PROFILE);
+    for n in 0_u64..60 {
+        token(
+            &rig,
+            &jwt(1_000_000_001 + 3600 * n, &format!("{n:A>86}")),
+            REFRESH,
+        )
+        .await;
+        // The newest, the kept older ones and the one refresh-token stand-in, however long it runs.
+        assert!(
+            rig.registry.len() <= 1 + crate::logins::RETIRED_KEPT + 1,
+            "refresh {n}"
+        );
+    }
+    assert_eq!(rig.registry.len(), 1 + crate::logins::RETIRED_KEPT + 1);
 }
 
 #[tokio::test]

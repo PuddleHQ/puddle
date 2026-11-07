@@ -292,6 +292,6 @@ mod tests {
     #[test]
     fn debug_shows_a_count_and_never_a_key() {
         let shown = format!("{:?}", made());
-        assert_eq!(shown, "GitSshHostKeys { keys: 3 }");
+        assert_eq!(shown, "GitSshHostKeys { keys: 3, .. }");
     }
 }

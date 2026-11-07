@@ -72,11 +72,16 @@ fn without(lines: &[&str]) -> (String, usize, bool) {
         return (lines.concat(), lines.iter().map(|l| l.len()).sum(), false);
     };
     let well_formed = found.len() == 2
-        && lines[first].trim_end_matches(['\r', '\n']) == BEGIN
-        && lines[last].trim_end_matches(['\r', '\n']) == END;
-    let before: String = lines[..first].concat();
+        && lines
+            .get(first)
+            .is_some_and(|l| l.trim_end_matches(['\r', '\n']) == BEGIN)
+        && lines
+            .get(last)
+            .is_some_and(|l| l.trim_end_matches(['\r', '\n']) == END);
+    let before: String = lines.iter().take(first).copied().collect();
     let at = before.len();
-    let rest = [before, lines[last + 1..].concat()].concat();
+    let after: String = lines.iter().skip(last + 1).copied().collect();
+    let rest = [before, after].concat();
     (rest, at, well_formed)
 }
 

@@ -142,7 +142,7 @@ impl SshRig {
         keys: Vec<GitSshHostKey>,
     ) -> Self {
         let upstream = Arc::new(upstream);
-        let key = keys[0].clone();
+        let key = keys.first().expect("at least one host key").clone();
         let git_ssh =
             GitSsh::new(Arc::clone(&upstream) as Arc<dyn GitSshUpstream>, keys).with_limits(limits);
         let world = GitRig::world();

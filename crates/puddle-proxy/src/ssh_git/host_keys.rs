@@ -33,7 +33,7 @@ pub struct GitSshKeyError(String);
 struct Source {
     fill: fn(&mut [u8]) -> Result<(), getrandom::Error>,
     failed: bool,
-    /// SplitMix64 state of the throwaway generator.
+    /// `SplitMix64` state of the throwaway generator.
     state: u64,
 }
 
@@ -57,7 +57,9 @@ impl Source {
             z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
             z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
             z ^= z >> 31;
-            chunk.copy_from_slice(&z.to_le_bytes()[..chunk.len()]);
+            for (dst, src) in chunk.iter_mut().zip(z.to_le_bytes()) {
+                *dst = src;
+            }
         }
     }
 }
@@ -98,7 +100,7 @@ impl fmt::Debug for GitSshHostKeys {
         // A key never reaches a log, not even through a derived `Debug`.
         f.debug_struct("GitSshHostKeys")
             .field("keys", &self.keys.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -271,7 +273,7 @@ mod tests {
         let keys = made();
         assert_eq!(keys.known_hosts(&[]), None);
         let address = host("192.0.2.7");
-        assert_eq!(keys.known_hosts(&[address.clone()]), None);
+        assert_eq!(keys.known_hosts(std::slice::from_ref(&address)), None);
         let text = keys.known_hosts(&[address, host("gitlab.com")]).unwrap();
         assert!(!text.contains("192.0.2.7"), "{text}");
         assert!(text.starts_with("gitlab.com "));

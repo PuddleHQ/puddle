@@ -283,7 +283,7 @@ impl Guest {
                 Some((code, out)) => ExecOutput::new(code, out, ""),
                 None => ExecOutput::new(0, "D\n", ""),
             },
-            "trim" if self.fail_trim.load(Ordering::SeqCst) => {
+            "trim" | "shutdown-trim" if self.fail_trim.load(Ordering::SeqCst) => {
                 ExecOutput::new(1, "", "fstrim: the discard operation is not supported")
             }
             "check" if self.dirty.load(Ordering::SeqCst) => {
@@ -8241,6 +8241,71 @@ async fn a_trim_that_failed_at_stop_and_a_stop_that_had_to_be_forced_are_problem
     events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(problems_of(&api).await, []);
     host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_trim_that_failed_when_puddle_quit_is_a_problem_at_the_next_start_until_a_trim_works() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    rig.guest.fail_trim.store(true, Ordering::SeqCst);
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    drop(api);
+
+    let host = rig.start().await;
+    let api = self::api(&host);
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].0, "trim:acme");
+    assert_eq!(problems[0].1.as_deref(), Some("acme"));
+    assert!(problems[0].2.contains("when Puddle quit"), "{problems:?}");
+    assert!(problems[0].3.contains("not supported"), "{problems:?}");
+    assert!(problems[0].3.contains("Reclaim space"), "{problems:?}");
+
+    // Quitting again with the workspace stopped trims nothing; the note stays until a trim works.
+    host.shutdown().await;
+    drop(host);
+    let host = rig.start().await;
+    let api = self::api(&host);
+    let keys: Vec<_> = problems_of(&api).await.into_iter().map(|p| p.0).collect();
+    assert_eq!(keys, ["trim:acme"]);
+
+    // A start and a stop whose trim works end it, and the next start has nothing to say.
+    rig.guest.fail_trim.store(false, Ordering::SeqCst);
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(problems_of(&api).await, []);
+    host.shutdown().await;
+    drop(host);
+    let host = rig.start().await;
+    assert_eq!(problems_of(&self::api(&host)).await, []);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_quit_whose_trim_works_leaves_no_note_and_a_foreign_note_file_is_ignored() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(host);
+    let note = rig.config().paths.quit_trims();
+    assert!(!note.exists(), "a clean quit writes no note");
+
+    std::fs::write(&note, r#"{"version":9,"untrimmed":{"acme":"x"}}"#).unwrap();
+    let host = rig.start().await;
+    assert_eq!(problems_of(&self::api(&host)).await, []);
+    host.shutdown().await;
+    assert!(!note.exists(), "the quit rewrote the file from what stood");
 }
 
 #[tokio::test(flavor = "multi_thread")]

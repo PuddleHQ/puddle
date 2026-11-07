@@ -43,6 +43,12 @@ impl HostPaths {
         self.data.join("workspaces.json")
     }
 
+    /// The workspaces whose disk the last quit could not trim, so the next start can say so.
+    #[must_use]
+    pub fn quit_trims(&self) -> PathBuf {
+        self.data.join("quit-trims.json")
+    }
+
     /// The markers that say which services have a login kept for a workspace (one small file for
     /// each), so a start with capture off need not ask the credential store.
     #[must_use]
@@ -86,6 +92,7 @@ mod tests {
             paths.store(),
             paths.settings(),
             paths.workspace_book(),
+            paths.quit_trims(),
             paths.guest_share(),
             paths.front_keys(),
             paths.front_port_file(),
@@ -103,6 +110,7 @@ mod tests {
             paths.store(),
             paths.settings(),
             paths.workspace_book(),
+            paths.quit_trims(),
             paths.guest_share(),
             paths.front_keys(),
             paths.front_port_file(),

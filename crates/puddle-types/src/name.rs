@@ -234,9 +234,8 @@ impl WorkspaceId {
     /// ```
     #[must_use]
     pub fn from_random(bytes: [u8; 5]) -> Self {
-        let bits = bytes
-            .iter()
-            .fold(0_u64, |acc, &b| (acc << 8) | u64::from(b));
+        let [b0, b1, b2, b3, b4] = bytes;
+        let bits = u64::from_be_bytes([0, 0, 0, b0, b1, b2, b3, b4]);
         let id = (0..Self::GENERATED_LEN)
             .map(|i| {
                 let five = (bits >> (5 * (Self::GENERATED_LEN - 1 - i))) & 0x1f;
@@ -523,6 +522,21 @@ mod tests {
             // Every generated id is a valid id, and so a volume and a sandbox name.
             assert_eq!(WorkspaceId::new(s).unwrap(), id);
             assert!(!RESERVED_WORKSPACE_NAMES.contains(&s));
+        }
+    }
+
+    #[test]
+    fn exact_ids_for_fixed_bytes_pin_every_byte_position() {
+        let cases: [([u8; 5], &str); 6] = [
+            ([0, 0, 0, 0, 1], "a0000001"),
+            ([0, 0, 0, 1, 0], "a0000080"),
+            ([0, 0, 1, 0, 0], "a0002000"),
+            ([0, 1, 0, 0, 0], "a00g0000"),
+            ([1, 0, 0, 0, 0], "a4000000"),
+            ([0xde, 0xad, 0xbe, 0xef, 0x42], "ftpvxvt2"),
+        ];
+        for (bytes, id) in cases {
+            assert_eq!(WorkspaceId::from_random(bytes).as_str(), id, "{bytes:?}");
         }
     }
 

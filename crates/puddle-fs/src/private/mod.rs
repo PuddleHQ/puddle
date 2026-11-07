@@ -444,8 +444,12 @@ mod tests {
             tighten_dir(&file).unwrap_err().kind(),
             io::ErrorKind::InvalidInput
         );
+        // A folder inside the temp folder, so a `tighten_file` that wrongly chmods what it is given
+        // cannot leave the temp folder itself unremovable.
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
         assert_eq!(
-            tighten_file(dir.path()).unwrap_err().kind(),
+            tighten_file(&sub).unwrap_err().kind(),
             io::ErrorKind::InvalidInput
         );
     }

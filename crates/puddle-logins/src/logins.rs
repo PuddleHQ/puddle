@@ -188,7 +188,7 @@ pub(crate) fn canonical_path(path: &str) -> String {
 }
 
 /// The built-in token endpoint a request to `host` with `method` and `path` is for, as the
-/// proxy reads it (the path in any spelling [`canonical_path`] collapses). A test that stands in
+/// proxy reads it (the path in any spelling `canonical_path` collapses). A test that stands in
 /// for a service uses it to know which of its answers capture will read.
 #[must_use]
 pub fn token_endpoint_of(

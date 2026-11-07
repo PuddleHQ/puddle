@@ -112,8 +112,26 @@ fn refusal() -> WebAnswer {
     }
 }
 
+/// The GitHub token endpoint's answer to a body it cannot use: real GitHub answers a bad request
+/// with a form (`application/x-www-form-urlencoded`, status 200) holding an `error`, never plain
+/// text, so the host's login capture reads it and finds no token.
+fn github_token_endpoint(seen: &Seen) -> Option<WebAnswer> {
+    if host_of(seen) != OTHER_TOKEN_HOST || read_path(&seen.target) != "/login/oauth/access_token" {
+        return None;
+    }
+    Some(WebAnswer {
+        status: 200,
+        content_type: "application/x-www-form-urlencoded; charset=utf-8",
+        body: b"error=bad_verification_code&error_description=The+code+passed+is+incorrect+or+expired."
+            .to_vec(),
+    })
+}
+
 /// The Claude Code token endpoint, wherever it is spelled to be.
 fn token_endpoint(seen: &Seen) -> Option<WebAnswer> {
+    if let Some(answer) = github_token_endpoint(seen) {
+        return Some(answer);
+    }
     if host_of(seen) != TOKEN_HOST || read_path(&seen.target) != "/v1/oauth/token" {
         return None;
     }

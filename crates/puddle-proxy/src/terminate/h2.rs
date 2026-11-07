@@ -32,7 +32,9 @@ use tokio::sync::Notify;
 use tokio::time::Instant;
 use zeroize::Zeroizing;
 
-use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
+use super::exchange::{
+    AnswerBody, AnswerError, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body,
+};
 use super::guest::{ALPN_H2, ALPN_HTTP11};
 use super::inject::{
     Forwarding, InjectContext, Injection, RequestView, Unauthorized, body_too_large,
@@ -707,12 +709,18 @@ async fn read_exchange_answer(
     let cx = &shared.cx;
     read_answer(answer, response, cx.proxy.config.body_idle_timeout)
         .await
-        .map_err(|err| {
-            tracing::info!(host = %cx.target.host, error = %err, "the answer could not be read");
-            Refusal::new(
-                "502 Bad Gateway",
-                format!("{} did not finish its answer", cx.target.host),
-            )
+        .map_err(|err| match err {
+            AnswerError::Refused(refusal) => {
+                tracing::info!(host = %cx.target.host, code = refusal.code(), "the answer was refused");
+                refusal.to_refusal()
+            }
+            AnswerError::Upstream(err) => {
+                tracing::info!(host = %cx.target.host, error = %err, "the answer could not be read");
+                Refusal::new(
+                    "502 Bad Gateway",
+                    format!("{} did not finish its answer", cx.target.host),
+                )
+            }
         })
 }
 

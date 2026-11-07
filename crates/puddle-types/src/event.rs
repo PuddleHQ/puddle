@@ -398,17 +398,21 @@ pub enum GitAccess {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[non_exhaustive]
 pub enum LoginProblemKind {
-    /// The operating system's credential store did not take the token: the workspace got the real
-    /// token, so the login works but is not protected.
+    /// The operating system's credential store did not take the token: the login failed and the
+    /// workspace got nothing. Unlock the store or start it, then sign in again.
     StoreUnavailable,
-    /// The service's answer was in a form Puddle does not read: the workspace got the real token.
+    /// The service's answer was in a form Puddle does not read: the login failed and the workspace
+    /// got nothing.
     UnexpectedAnswer,
-    /// The token has a length or a character a stand-in cannot copy: the workspace got the real
-    /// token.
+    /// The token has a length or a character a stand-in cannot copy: the login failed and the
+    /// workspace got nothing.
     UnusableToken,
     /// The service ties its tokens to a key of the tool's own, which a stand-in cannot stand in
-    /// for: the workspace got the real token.
+    /// for: the login failed and the workspace got nothing.
     BoundToken,
+    /// The answer carries a token in a field Puddle does not know, so it could not be kept: the
+    /// login failed and the workspace got nothing.
+    UnnamedToken,
     /// A login Puddle kept earlier could not be read back when the workspace started: the tool
     /// asks for a new sign-in.
     Unreadable,
@@ -417,7 +421,7 @@ pub enum LoginProblemKind {
     /// turn capture on again, or sign in again.
     CaptureOff,
     /// A problem this version of Puddle has no name for. Nothing is known about it, so the notice
-    /// says only that the login may not work or may not be protected.
+    /// says only that the login may not work.
     Unknown,
 }
 
@@ -762,6 +766,7 @@ mod tests {
     #[test]
     fn login_problem_kinds_have_fixed_wire_names() {
         for (kind, wire) in [
+            (LoginProblemKind::UnnamedToken, "unnamed_token"),
             (LoginProblemKind::CaptureOff, "capture_off"),
             (LoginProblemKind::Unknown, "unknown"),
         ] {

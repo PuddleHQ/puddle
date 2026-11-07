@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The notice for a login made inside a workspace that Puddle could not capture, or could not
 // use after a restart. Capture is on by default and is meant to be invisible, so every case where
-// it does not work says so: the first four leave the real token in the workspace (the login still
-// works, it is just not protected), the next two mean the login in the workspace does not work
-// (the tool will ask for a new sign-in, or its stand-in is refused), and an unnamed problem says
-// only that.
+// it does not work says so: the first five fail the login (the real token never reaches the
+// workspace, the tool is told why and asks again), the next two mean the login already in the
+// workspace does not work (the tool will ask for a new sign-in, or its stand-in is refused), and
+// an unnamed problem says only that.
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
@@ -21,6 +21,7 @@ const KINDS: readonly Kind[] = [
   "unexpected_answer",
   "unusable_token",
   "bound_token",
+  "unnamed_token",
   "unreadable",
   "capture_off",
   "unknown",
@@ -28,13 +29,15 @@ const KINDS: readonly Kind[] = [
 
 const WHY: Record<Kind, string> = {
   store_unavailable:
-    "Puddle can't keep tokens in this computer's credential store, so a login made in this workspace stays in it as the real token. The login works, but an agent in the workspace could copy it. Make the credential store available and sign in again to protect it.",
+    "Puddle can't keep tokens in this computer's credential store, so it stopped the sign-in: the real token never reached this workspace. Unlock the credential store or start it, then sign in again inside the workspace.",
   unexpected_answer:
-    "Puddle could not read the service's answer, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
+    "Puddle could not read the service's answer, so it stopped the sign-in: the real token never reached this workspace. Try signing in again; if it keeps failing, the service changed how it answers.",
   unusable_token:
-    "the token has a form Puddle cannot imitate, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
+    "the token has a form Puddle cannot imitate, so it stopped the sign-in: the real token never reached this workspace. If you need this service in the workspace, turn login capture off in the workspace settings; the real token then lands in the workspace.",
   bound_token:
-    "the service ties its token to a key of the tool's own, which Puddle cannot stand in for, so the workspace received the real token. The login works, but an agent in the workspace could copy it.",
+    "the service ties its token to a key of the tool's own, which Puddle cannot stand in for, so it stopped the sign-in: the real token never reached this workspace. If you need this service in the workspace, turn login capture off in the workspace settings; the real token then lands in the workspace.",
+  unnamed_token:
+    "the service's answer carries a token Puddle does not know how to keep, so it stopped the sign-in: the real token never reached this workspace. If you need this service in the workspace, turn login capture off in the workspace settings; the real token then lands in the workspace.",
   unreadable:
     "Puddle could not read the login it kept for this workspace from the credential store, so the tool will ask you to sign in again. Sign in inside the workspace to keep a new login.",
   capture_off:
@@ -68,7 +71,7 @@ function titleFor(e: LoginProblem): string {
   const login = `${e.service} login in ${workspaces.labelOf(e.workspace)}`;
   if (keptLogin(e.kind)) return `${login} can't be used.`;
   if (e.kind === "unknown") return `${login} has a problem.`;
-  return `${login} is not protected.`;
+  return `${login} was stopped.`;
 }
 
 /** The confirmation before a kept login is forgotten, from the notice and from the settings list. */

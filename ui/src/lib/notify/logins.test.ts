@@ -26,17 +26,18 @@ describe("a login Puddle could not capture", () => {
     "unexpected_answer",
     "unusable_token",
     "bound_token",
-  ])("says the login works but is not protected (%s)", (kind) => {
+    "unnamed_token",
+  ])("stops the sign-in and keeps the real token out (%s)", (kind) => {
     expect(notices.handle(problem(kind))).toBe(true);
     expect(center.items).toHaveLength(1);
     const notice = center.items[0]!;
     expect(notice).toMatchObject({
       key: `login:web:Claude Code:${kind}`,
       tone: "warning",
-      title: "Claude Code login in web is not protected.",
+      title: "Claude Code login in web was stopped.",
       link: { href: "/workspaces/web/settings", label: "Workspace settings" },
     });
-    expect(notice.detail).toContain("real token");
+    expect(notice.detail).toContain("never reached this workspace");
     expect(notice.detail).toMatch(/^[A-Z]/);
   });
 
@@ -109,9 +110,7 @@ describe("the notice watcher", () => {
     const watcher = new NoticeWatcher({ notifier: new InAppNotifier(center) });
     watcher.handle(problem("bound_token", "GitHub"));
     expect(center.items).toHaveLength(1);
-    expect(center.items[0]!.title).toBe(
-      "GitHub login in web is not protected.",
-    );
+    expect(center.items[0]!.title).toBe("GitHub login in web was stopped.");
   });
 });
 
@@ -148,6 +147,7 @@ describe("forgetting a kept login from its notice", () => {
     "unexpected_answer",
     "unusable_token",
     "bound_token",
+    "unnamed_token",
     "unknown",
   ])("offers nothing to forget on a %s notice", (kind) => {
     notices.handle(problem(kind));

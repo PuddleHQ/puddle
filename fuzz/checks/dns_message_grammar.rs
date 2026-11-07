@@ -213,9 +213,6 @@ type Question = (WireName, Vec<u8>, u16, u16);
 
 /// What the grammar made of one message, for deciding what the stub must do with it.
 struct Shape {
-    response: bool,
-    opcode: u16,
-    header_counts: [u16; 4],
     /// The first question, as written, when the message was not cut or damaged after it.
     first: Option<Question>,
     /// Whether the scan of the additional section can be modelled: one question, honest records.
@@ -225,12 +222,21 @@ struct Shape {
 }
 
 impl Shape {
-    fn expect(self, length: usize) -> Expect {
-        let [questions, answers, authority, _] = self.header_counts;
-        if length < 12 || self.response {
+    /// What the stub must do with `bytes`. The header is read from the bytes, not from what the
+    /// grammar meant to write, because a cut inside the header followed by padding rewrites it.
+    fn expect(self, bytes: &[u8]) -> Expect {
+        let word = |at: usize| {
+            bytes
+                .get(at..at + 2)
+                .and_then(|b| <[u8; 2]>::try_from(b).ok())
+                .map_or(0, u16::from_be_bytes)
+        };
+        let flags = word(2);
+        let (questions, answers, authority) = (word(4), word(6), word(8));
+        if bytes.len() < 12 || flags & 0x8000 != 0 {
             return Expect::Drop;
         }
-        if self.opcode != 0 {
+        if (flags >> 11) & 0xF != 0 {
             return Expect::Answer(Rcode::NotImp);
         }
         if questions != 1 || answers != 0 || authority != 0 {
@@ -242,7 +248,7 @@ impl Shape {
         if !name.fits() {
             return Expect::Answer(Rcode::FormErr);
         }
-        let edns = if self.scanned {
+        let edns = if self.scanned && word(10) == self.additional {
             self.records
                 .iter()
                 .take(usize::from(self.additional.min(8)))
@@ -384,19 +390,12 @@ impl<'a> Arbitrary<'a> for Message {
             out.extend_from_slice(&bytes_of(u, 9)?);
         }
         let shape = Shape {
-            response,
-            opcode,
-            header_counts,
             first: first.filter(|_| intact),
-            scanned: questions == 1
-                && answers == 0
-                && authority == 0
-                && honest
-                && header_counts[3] == additional,
+            scanned: questions == 1 && answers == 0 && authority == 0 && honest,
             records,
             additional,
         };
-        let expect = shape.expect(out.len());
+        let expect = shape.expect(&out);
         Ok(Self {
             bytes: out,
             expect,

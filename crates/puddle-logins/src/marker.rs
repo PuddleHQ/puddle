@@ -53,6 +53,21 @@ impl Marker {
         Self::default()
     }
 
+    /// The file the marker is kept in, if any.
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// Whether the file is there. One that cannot be looked for counts as there; a marker in no
+    /// file never is.
+    #[must_use]
+    pub fn exists(&self) -> bool {
+        self.path
+            .as_deref()
+            .is_some_and(|path| !matches!(path.try_exists(), Ok(false)))
+    }
+
     /// Deletes the file, when a workspace is deleted. A file that is not there is fine.
     pub fn clear(&self) {
         if let Some(path) = &self.path
@@ -136,6 +151,20 @@ mod tests {
 
     fn set(ids: &[&str]) -> BTreeSet<String> {
         ids.iter().map(|id| (*id).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_marker_exists_from_its_first_write_until_it_is_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = Marker::for_workspace(dir.path(), &WorkspaceId::new("acme").unwrap());
+        assert_eq!(marker.path().unwrap().parent(), Some(dir.path()));
+        assert!(!marker.exists());
+        marker.write(&set(&["claude"]));
+        assert!(marker.exists());
+        marker.clear();
+        assert!(!marker.exists());
+        assert!(!Marker::none().exists());
+        assert_eq!(Marker::none().path(), None);
     }
 
     #[test]

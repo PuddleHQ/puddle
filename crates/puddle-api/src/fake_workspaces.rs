@@ -22,8 +22,8 @@ use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, chec
 use crate::workspaces::{
     AttachMode, Attached, BrowserTarget, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB,
     DeleteCheck, DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing,
-    LocalSource, NewRepository, NewWorkspace, Operation, RepoFindings, ShellInitCheck, StartFolder,
-    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
+    LocalSource, NameIds, NewRepository, NewWorkspace, Operation, RepoFindings, ShellInitCheck,
+    StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService,
 };
 
 /// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
@@ -702,9 +702,11 @@ impl WorkspaceService for FakeWorkspaces {
             let record = {
                 // The id is picked under the lock, so two creates cannot take the same one.
                 let mut state = lock(&self.inner.state);
-                let id = new.id(|id| state.entries.contains_key(id)).map_err(|e| {
-                    WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
-                })?;
+                // Ids come from the name, so a test or the UI fixture can name a workspace's
+                // paths before it exists.
+                let id = new
+                    .id(&NameIds, |id| state.entries.contains_key(id))
+                    .map_err(|e| WorkspaceError::Unavailable(e.to_string()))?;
                 let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
                 record.start_folder.clone_from(&new.start_folder);
                 record.image = new
@@ -1491,22 +1493,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn names_that_make_the_same_id_get_numbers_until_the_numbers_run_out() {
+    async fn names_that_make_the_same_id_get_numbers_until_the_draws_run_out() {
         let (fake, _) = fake();
-        // 100 different names, one label: "w" and two marks.
-        let marks: Vec<char> = "!#$%&*+,.:".chars().collect();
-        let names: Vec<String> = marks
-            .iter()
-            .flat_map(|a| marks.iter().map(move |b| format!("w{a}{b}")))
+        // Seventeen different names, one label: "w" and a mark.
+        let names: Vec<String> = "!#$%&*+,.:;<=>?@^"
+            .chars()
+            .map(|m| format!("w{m}"))
             .collect();
-        for name in &names[..99] {
-            fake.create(new_ws(name), &NoGitSetup).await.unwrap();
+        for (n, name) in names[..16].iter().enumerate() {
+            let made = fake.create(new_ws(name), &NoGitSetup).await.unwrap();
+            let want = if n == 0 {
+                "w".to_owned()
+            } else {
+                format!("w-{}", n + 1)
+            };
+            assert_eq!(made.id.as_str(), want);
         }
         let err = fake
-            .create(new_ws(&names[99]), &NoGitSetup)
+            .create(new_ws(&names[16]), &NoGitSetup)
             .await
             .unwrap_err();
-        assert!(matches!(err, WorkspaceError::Invalid(_)), "{err}");
+        assert!(matches!(err, WorkspaceError::Unavailable(_)), "{err}");
+        assert!(
+            err.to_string()
+                .contains("could not pick a new workspace id"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

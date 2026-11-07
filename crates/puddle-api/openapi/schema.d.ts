@@ -988,7 +988,8 @@ export interface paths {
          *     The list is checked whole before anything exists. Each repository's identity joins the
          *     workspace and its repository table row is made before the first clone. A clone that fails
          *     fails only its repository: a background problem names it and the create still ends `done`.
-         *     Answers 202; follow it with `workspace_progress` events.
+         *     Puddle picks the new workspace's id (eight random characters, never one used before); the
+         *     answer carries it. Answers 202; follow it with `workspace_progress` events.
          */
         post: operations["create_workspace"];
         delete?: never;
@@ -9717,7 +9718,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description another workspace has that name (ignoring case), or the id it would get is taken, or two identities of the list cover the same place (`identity_collision`) */
+            /** @description another workspace has that name (ignoring case), or two identities of the list cover the same place (`identity_collision`) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9753,7 +9754,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description workspaces are not available */
+            /** @description workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source) */
             503: {
                 headers: {
                     [name: string]: unknown;

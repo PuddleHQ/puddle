@@ -556,20 +556,24 @@ impl Store {
     }
 
     /// Checks that setting up `requests` in order (as [`Store::start_repository_git`] does) on
-    /// the workspace `ws` would work: every named identity exists and no two identities on the
-    /// workspace's list would cover the same place. Changes nothing.
+    /// the workspace `ws`, or on a new workspace (`None`, whose list is empty), would work: every
+    /// named identity exists and no two identities on the workspace's list would cover the same
+    /// place. Changes nothing.
     ///
     /// # Errors
     /// [`StoreError::UnknownIdentity`], [`StoreError::IdentityCollision`] naming both, or a
     /// database error.
     pub fn check_repository_git(
         &self,
-        ws: &WorkspaceId,
+        ws: Option<&WorkspaceId>,
         requests: &[RepoGitRequest],
     ) -> Result<(), StoreError> {
         let conn = lock(&self.conn);
         let everyone = all(&conn)?;
-        let mut list = attached(&conn, ws)?;
+        let mut list = match ws {
+            Some(ws) => attached(&conn, ws)?,
+            None => Vec::new(),
+        };
         for request in requests {
             let (chosen, _) = choose(&everyone, &list, request)?;
             if let Some(identity) = chosen

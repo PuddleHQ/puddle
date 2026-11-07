@@ -585,6 +585,8 @@ struct RecordingLauncher {
     forgotten: Mutex<Vec<String>>,
     /// Makes every forget fail with this message.
     forget_fails_with: Mutex<Option<String>>,
+    /// The ids the shell says it keeps browser data under.
+    data_under: Mutex<Vec<String>>,
 }
 
 impl Launcher for RecordingLauncher {
@@ -636,6 +638,14 @@ impl Launcher for RecordingLauncher {
             }
         })
     }
+
+    fn has_browser_data(&self, workspace: &WorkspaceId) -> bool {
+        self.data_under
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|id| id == workspace.as_str())
+    }
 }
 
 /// A launcher with no window, as `puddle serve` has: it answers a desktop attach like the
@@ -667,6 +677,8 @@ struct Rig {
     rewrite_gate: Mutex<Option<RewriteGate>>,
     /// Starts the host with SSH host keys for Git over SSH.
     git_ssh: AtomicBool,
+    /// Where new ids come from, for a test about them; else ids made from names.
+    ids: Mutex<Option<Arc<dyn puddle_api::IdSource>>>,
 }
 
 impl Rig {
@@ -685,6 +697,7 @@ impl Rig {
             secrets: Arc::new(MemoryStore::new()),
             rewrite_gate: Mutex::new(None),
             git_ssh: AtomicBool::new(false),
+            ids: Mutex::new(None),
         }
     }
 
@@ -736,6 +749,9 @@ impl Rig {
             .rewrite_gate
             .clone_from(&self.rewrite_gate.lock().unwrap());
         options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
+        if let Some(ids) = self.ids.lock().unwrap().clone() {
+            options.workspace_ids = Some(ids);
+        }
         // No guest runs here, so nothing may ask the machine's DNS about a name.
         options.resolver = Some(Arc::new(puddle_proxy::testing::StaticResolver::new()));
         Host::start(
@@ -763,9 +779,16 @@ fn new_workspace(name: &str) -> String {
 }
 
 async fn create(api: &Api, events: &mut support::Events, name: &'static str) {
+    create_as(api, events, name, name).await;
+}
+
+/// Creates a workspace called `name` and checks that it got the id `id` (the hermetic options
+/// make ids from names: `acme`, then `acme-2` while `acme` is taken).
+async fn create_as(api: &Api, events: &mut support::Events, name: &str, id: &str) {
     let reply = api.post("/api/workspaces", &new_workspace(name)).await;
     assert_eq!(reply.status, 202, "{}", reply.body);
-    events.until(ended(name), Duration::from_secs(20)).await;
+    assert_eq!(reply.json()["id"], id, "{}", reply.body);
+    events.until(ended(id), Duration::from_secs(20)).await;
 }
 
 /// Turns the file at `path` into a non-empty folder: replacing it then fails on every OS.
@@ -1340,9 +1363,9 @@ async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
     );
     assert!(rig.runtime.list().await.unwrap().is_empty());
     assert!(rig.runtime.list_volumes().await.unwrap().is_empty());
-    // The name is free again.
+    // The name is free again; the failed create's id is retired with what may be keyed by it.
     rig.guest.fail_sync.store(false, Ordering::SeqCst);
-    create(&api, &mut events, "acme").await;
+    create_as(&api, &mut events, "acme", "acme-2").await;
     host.shutdown().await;
 }
 
@@ -2356,19 +2379,23 @@ async fn a_failed_boot_leaves_nothing_behind_and_a_failed_start_says_crashed() {
     assert!(rig.runtime.list().await.unwrap().is_empty());
 
     rig.guest.fail_boot.store(false, Ordering::SeqCst);
-    create(&api, &mut events, "acme").await;
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
+    // The failed create's id is retired: the next one of the name gets another.
+    create_as(&api, &mut events, "acme", "acme-2").await;
+    api.post("/api/workspaces/acme-2/stop", "").await;
+    events.until(ended("acme-2"), Duration::from_secs(20)).await;
     rig.guest.fail_boot.store(true, Ordering::SeqCst);
-    api.post("/api/workspaces/acme/start", "").await;
-    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme-2/start", "").await;
+    let end = events.until(ended("acme-2"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "failed", "{end}");
-    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "crashed");
+    assert_eq!(
+        status_of(&api.get("/api/workspaces/acme-2").await),
+        "crashed"
+    );
     // The volume and the workspace survive a failed start.
     assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
     rig.guest.fail_boot.store(false, Ordering::SeqCst);
-    api.post("/api/workspaces/acme/start", "").await;
-    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme-2/start", "").await;
+    let end = events.until(ended("acme-2"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "done", "{end}");
     host.shutdown().await;
 }
@@ -2799,6 +2826,13 @@ async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_wi
         &rig,
         &json!({"schema_version": 2, "workspace_defaults": {"clipboard_read": "deny"}}),
     );
+    // The workspace exists first (its id is drawn at create); its file is damaged while Puddle
+    // is closed.
+    let first = rig.start().await;
+    let mut events = api(&first).events().await;
+    create(&api(&first), &mut events, "acme").await;
+    first.shutdown().await;
+    drop(first);
     let dir = rig
         .dir
         .path()
@@ -2807,7 +2841,20 @@ async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_wi
         .join("workspaces");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("acme.json"), b"{ not json").unwrap();
-    let (host, body) = browser_attach_over_damaged_settings(&rig).await;
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let _editor = editor_stand_in(&rig, "acme").await;
+    let reply = api
+        .post(
+            "/api/workspaces/acme/attach",
+            &json!({"mode": "browser"}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let body = reply.json();
     assert_eq!(body["opened"], false, "{body}");
     let message = body["message"].as_str().unwrap();
     assert!(
@@ -2987,13 +3034,17 @@ async fn deleting_a_workspace_deletes_the_editor_s_secret_key_and_the_windows_da
     );
     assert!(!has_problem(&host, "browser-data:acme"));
 
-    // A workspace of the same name does not inherit the old key.
-    create(&api, &mut events, "acme").await;
-    let _editor = editor_stand_in(&rig, "acme").await;
-    let origin = browser_origin(&rig, &api, "acme").await;
-    served_at(&origin).await;
-    mint_key(&origin).await;
-    assert_ne!(std::fs::read_to_string(&key).unwrap(), first);
+    // A workspace of the same name gets another id, so another origin and another key; the
+    // old one stays gone.
+    create_as(&api, &mut events, "acme", "acme-2").await;
+    let _editor = editor_stand_in(&rig, "acme-2").await;
+    let again = browser_origin(&rig, &api, "acme-2").await;
+    assert_ne!(again, origin);
+    served_at(&again).await;
+    mint_key(&again).await;
+    let new_key = key.with_file_name("acme-2.key");
+    assert_ne!(std::fs::read_to_string(&new_key).unwrap(), first);
+    assert!(!key.exists());
     host.shutdown().await;
 }
 
@@ -3025,11 +3076,11 @@ async fn a_delete_that_cannot_remove_the_editor_s_data_says_so_and_still_deletes
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_new_workspace_starts_without_browser_data_left_under_its_name() {
-    // A delete that was cut short (a crash, `puddle serve` with no window to clean) leaves the
-    // webview folder and the key half behind; the name's origin is the same, so the next
-    // workspace of that name must not find them. The recording launcher only notes the ask for
-    // the webview folder (its removal is the app's unit test); the key half is a real file.
+async fn a_new_workspace_clears_browser_data_under_its_own_id_and_leaves_an_earlier_ids_alone() {
+    // A delete cut short (a crash, `puddle serve` with no window to clean) leaves the webview
+    // folder and the key half behind. The id is never drawn again, so the data stays where it
+    // is; the create still clears under its own id, a second guard for data a window wrote after
+    // the draw. The recording launcher only notes the ask; the key half is a real file.
     let rig = Rig::new();
     let key = HostPaths::new(rig.dir.path().join("data"))
         .front_keys()
@@ -3039,9 +3090,9 @@ async fn a_new_workspace_starts_without_browser_data_left_under_its_name() {
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    create(&api, &mut events, "acme").await;
-    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme"]);
-    assert!(!key.exists(), "the old key half is gone");
+    create_as(&api, &mut events, "acme", "acme-2").await;
+    assert_eq!(*rig.launcher.forgotten.lock().unwrap(), ["acme-2"]);
+    assert_eq!(std::fs::read(&key).unwrap(), b"left by an earlier acme");
     host.shutdown().await;
 }
 
@@ -3060,7 +3111,7 @@ async fn a_refused_duplicate_create_leaves_the_running_workspaces_browser_data_a
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_create_that_clears_what_a_failed_delete_left_withdraws_its_notice() {
+async fn browser_data_a_delete_could_not_remove_stays_under_an_id_no_new_workspace_gets() {
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
@@ -3070,9 +3121,25 @@ async fn a_create_that_clears_what_a_failed_delete_left_withdraws_its_notice() {
     *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
     delete_and_wait(&api, &mut events, "acme").await;
     assert!(has_problem(&host, "browser-data:acme"));
+    let problem = problem_of(&host, "browser-data:acme");
+    assert!(
+        problem
+            .detail
+            .contains("No later workspace gets the id acme"),
+        "{problem:?}"
+    );
     *rig.launcher.forget_fails_with.lock().unwrap() = None;
-    create(&api, &mut events, "acme").await;
-    assert!(!has_problem(&host, "browser-data:acme"));
+    // The next workspace of the name has another id: it asks to clear only its own.
+    create_as(&api, &mut events, "acme", "acme-2").await;
+    assert_eq!(
+        rig.launcher
+            .forgotten
+            .lock()
+            .unwrap()
+            .last()
+            .map(String::as_str),
+        Some("acme-2")
+    );
     host.shutdown().await;
 }
 
@@ -3094,6 +3161,30 @@ async fn a_create_that_cannot_clear_left_over_browser_data_is_refused() {
         !list.body.contains("acme"),
         "no workspace was made: {}",
         list.body
+    );
+    // The refused create's id is retired and saved: the next one of the name gets another.
+    let book: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(list_path(&rig)).unwrap()).unwrap();
+    assert_eq!(book["retired_ids"], json!(["acme"]), "{book}");
+    *rig.launcher.forget_fails_with.lock().unwrap() = None;
+    let mut events = api.events().await;
+    create_as(&api, &mut events, "acme", "acme-2").await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_create_still_answers_when_its_retired_id_cannot_be_saved() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
+    make_unwritable(&list_path(&rig));
+    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert!(
+        reply.body.contains("a window still holds it"),
+        "{}",
+        reply.body
     );
     host.shutdown().await;
 }
@@ -4144,6 +4235,8 @@ async fn an_interrupted_create_is_dropped_and_its_volume_removed() {
         saved["workspaces"].as_array().unwrap().is_empty(),
         "{saved}"
     );
+    // Its id is retired: whatever it left keyed by it is never met again.
+    assert_eq!(saved["retired_ids"], json!(["half"]), "{saved}");
     host.shutdown().await;
 }
 
@@ -4561,12 +4654,13 @@ async fn a_failed_create_start_and_stop_are_failures_in_the_activity_log_that_th
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "failed", "{end}");
     std::fs::remove_file(&parent).unwrap();
-    // A stop that fails, on a workspace that then runs.
-    create(&api, &mut events, "acme").await;
+    // A stop that fails, on a workspace of the same name that then runs (under another id: the
+    // failed create's is retired).
+    create_as(&api, &mut events, "acme", "acme-2").await;
     rig.runtime
-        .inject(Op::Stop, Fault::once(disk_error("stop")).only_for("acme"));
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
+        .inject(Op::Stop, Fault::once(disk_error("stop")).only_for("acme-2"));
+    api.post("/api/workspaces/acme-2/stop", "").await;
+    events.until(ended("acme-2"), Duration::from_secs(20)).await;
 
     let failed = workspace_ops("outcome=failed", &api).await;
     let seen: Vec<_> = failed.iter().map(op_summary).collect();
@@ -4574,7 +4668,7 @@ async fn a_failed_create_start_and_stop_are_failures_in_the_activity_log_that_th
         seen,
         [
             ("create".into(), "acme".into(), "failed".into()),
-            ("stop".into(), "acme".into(), "failed".into()),
+            ("stop".into(), "acme-2".into(), "failed".into()),
         ]
     );
     for record in &failed {
@@ -4811,8 +4905,7 @@ async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    allow_direct_ssh(&api, "acme", true).await;
-    create(&api, &mut events, "acme").await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
     let name = WorkspaceId::new("acme").unwrap();
     let endpoint: PathBuf = host.workspaces().ssh_endpoint(&name).await.unwrap();
     assert_ne!(endpoint.as_os_str(), "");
@@ -4828,8 +4921,7 @@ async fn a_new_workspace_does_not_inherit_the_settings_of_a_deleted_one_of_the_s
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    allow_direct_ssh(&api, "acme", true).await;
-    create(&api, &mut events, "acme").await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
     let name = WorkspaceId::new("acme").unwrap();
     assert!(host.workspaces().direct_ssh_allowed(&name));
     let file = rig
@@ -4843,9 +4935,14 @@ async fn a_new_workspace_does_not_inherit_the_settings_of_a_deleted_one_of_the_s
     stop_and_wait(&api, &mut events, "acme").await;
     delete_and_wait(&api, &mut events, "acme").await;
     assert!(!file.exists(), "a delete removes the settings file");
-    create(&api, &mut events, "acme").await;
-    let view = api.get("/api/workspaces/acme").await.json();
+    create_as(&api, &mut events, "acme", "acme-2").await;
+    let view = api.get("/api/workspaces/acme-2").await.json();
     assert_eq!(view["direct_ssh"], false, "{view}");
+    assert!(
+        !host
+            .workspaces()
+            .direct_ssh_allowed(&WorkspaceId::new("acme-2").unwrap())
+    );
     assert!(!host.workspaces().direct_ssh_allowed(&name));
     host.shutdown().await;
 }
@@ -4856,8 +4953,7 @@ async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    allow_direct_ssh(&api, "acme", true).await;
-    create(&api, &mut events, "acme").await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
     stop_and_wait(&api, &mut events, "acme").await;
     let file = rig
         .dir
@@ -4873,12 +4969,16 @@ async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes
     assert!(problem.detail.contains("settings"), "{problem:?}");
     let list = api.get("/api/workspaces").await;
     assert!(!list.body.contains("acme"), "{}", list.body);
-    // Once the file is dealt with, the next delete of that name withdraws the notice.
-    std::fs::remove_dir_all(&file).unwrap();
-    create(&api, &mut events, "acme").await;
-    stop_and_wait(&api, &mut events, "acme").await;
-    delete_and_wait(&api, &mut events, "acme").await;
-    assert!(!has_problem(&host, "settings:acme"));
+    assert!(
+        problem
+            .detail
+            .contains("No later workspace gets the id acme"),
+        "{problem:?}"
+    );
+    // The next workspace of the name has another id and none of the old settings.
+    create_as(&api, &mut events, "acme", "acme-2").await;
+    let view = api.get("/api/workspaces/acme-2").await.json();
+    assert_eq!(view["direct_ssh"], false, "{view}");
     host.shutdown().await;
 }
 
@@ -4891,8 +4991,7 @@ async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_f
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    allow_direct_ssh(&api, "acme", true).await;
-    create(&api, &mut events, "acme").await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
     stop_and_wait(&api, &mut events, "acme").await;
     let file = rig
         .dir
@@ -4932,8 +5031,7 @@ async fn an_ssh_session_the_runtime_cannot_serve_reaches_the_user_as_an_event() 
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    allow_direct_ssh(&api, "acme", true).await;
-    create(&api, &mut events, "acme").await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
     let name = WorkspaceId::new("acme").unwrap();
     let endpoint: PathBuf = host.workspaces().ssh_endpoint(&name).await.unwrap();
     rig.runtime.inject(
@@ -4968,6 +5066,23 @@ async fn allow_direct_ssh(api: &Api, name: &str, on: bool) {
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
+}
+
+/// Creates `name` with direct SSH set `on` in its own settings. Settings belong to a workspace
+/// that exists (its id is drawn at create), so it is made, stopped, set and started again.
+async fn create_with_direct_ssh(
+    api: &Api,
+    events: &mut support::Events,
+    name: &'static str,
+    on: bool,
+) {
+    create(api, events, name).await;
+    stop_and_wait(api, events, name).await;
+    allow_direct_ssh(api, name, on).await;
+    let reply = api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended(name), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -5295,8 +5410,7 @@ async fn a_workspace_that_follows_the_global_default_gets_its_entry_and_one_that
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     create(&api, &mut events, "acme").await;
-    allow_direct_ssh(&api, "beta", false).await;
-    create(&api, &mut events, "beta").await;
+    create_with_direct_ssh(&api, &mut events, "beta", false).await;
     assert_eq!(ssh_hosts(&rig), ["puddle-acme"]);
     host.shutdown().await;
 }
@@ -5412,8 +5526,7 @@ async fn a_host_without_the_puddle_program_says_why_direct_ssh_has_no_entry() {
     let host = rig.start_with(config).await;
     let api = api(&host);
     let mut events = api.events().await;
-    allow_direct_ssh(&api, "acme", true).await;
-    create(&api, &mut events, "acme").await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
     let (_, detail) = problem_is(&api, "ssh:acme", true).await.unwrap();
     assert!(detail.contains("no `puddle` program"), "{detail}");
     assert!(ssh_hosts(&rig).is_empty());
@@ -5427,8 +5540,7 @@ async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    allow_direct_ssh(&api, "acme", true).await;
-    create(&api, &mut events, "acme").await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
     let attach = || async {
         let reply = api
             .post(
@@ -5508,8 +5620,7 @@ async fn a_launcher_that_fails_says_why_in_the_answer() {
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
-    allow_direct_ssh(&api, "acme", true).await;
-    create(&api, &mut events, "acme").await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
     *rig.launcher.fail_with.lock().unwrap() = Some("VS Code is not installed".into());
     let reply = api
         .post(
@@ -5532,8 +5643,7 @@ async fn an_endpoint_that_cannot_open_is_reported_and_ends_when_it_can() {
     let api = api(&host);
     let mut events = api.events().await;
     let name = WorkspaceId::new("acme").unwrap();
-    allow_direct_ssh(&api, "acme", true).await;
-    create(&api, &mut events, "acme").await;
+    create_with_direct_ssh(&api, &mut events, "acme", true).await;
     let endpoint = host.workspaces().ssh_endpoint(&name).await.unwrap();
     let folder = endpoint.parent().unwrap().to_path_buf();
     allow_direct_ssh(&api, "acme", false).await;
@@ -5836,36 +5946,156 @@ async fn a_restored_volume_lets_a_volume_missing_workspace_start() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn creating_a_workspace_named_like_a_kept_volume_is_refused_and_leaves_it_alone() {
+async fn a_drawn_id_that_anything_is_kept_under_is_drawn_again_and_what_is_kept_stays() {
     let rig = Rig::new();
+    let paths = HostPaths::new(rig.dir.path().join("data"));
+    let id = |s: &str| WorkspaceId::new(s).unwrap();
+    // Before the start: a kept volume, a key half, a settings file, a login marker and a
+    // retired id in the list; browser data the shell keeps.
     rig.runtime
         .create_volume(puddle_compute::VolumeSpec {
-            name: WorkspaceId::new("lost").unwrap().volume_name(),
+            name: id("vol").volume_name(),
             size: puddle_compute::DiskSize::mib(1024),
         })
         .await
         .unwrap();
+    let key = paths.front_keys().join("key.key");
+    let settings = paths.settings().join("workspaces").join("set.json");
+    let marker = puddle_logins::Marker::for_workspace(&paths.login_markers(), &id("mark"));
+    let marker = marker.path().unwrap().to_path_buf();
+    for (file, text) in [
+        (&key, "left"),
+        (&settings, "{}"),
+        (&marker, "puddle-logins-kept v2\n"),
+        (
+            &paths.workspace_book(),
+            r#"{"version": 3, "workspaces": [], "retired_ids": ["old"]}"#,
+        ),
+    ] {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    rig.launcher.data_under.lock().unwrap().push("web".into());
+    let host = rig.start().await;
+    // Sandboxes made after the start, which removes the ones it does not know.
+    for name in ["sbx", "m--mnt"] {
+        rig.runtime
+            .create(puddle_compute::SandboxSpec::new(
+                SandboxName::new(name).unwrap(),
+                ImageRef::new(FakeRuntime::DEBIAN).unwrap(),
+            ))
+            .await
+            .unwrap();
+    }
+    let api = api(&host);
+    let mut events = api.events().await;
+    for name in ["vol", "sbx", "mnt", "key", "set", "mark", "web", "old"] {
+        create_as(&api, &mut events, name, &format!("{name}-2")).await;
+    }
+    // Nothing that was kept was touched.
+    assert!(volume_names(&rig).await.contains(&"ws-vol".to_owned()));
+    assert_eq!(std::fs::read_to_string(&key).unwrap(), "left");
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{}");
+    assert!(marker.is_file());
+    assert!(
+        !rig.launcher
+            .forgotten
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|id| id == "web" || id == "key")
+    );
+    let book: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(paths.workspace_book()).unwrap()).unwrap();
+    assert_eq!(book["retired_ids"], json!(["old"]));
+    host.shutdown().await;
+}
+
+/// A source that always gives the same id.
+struct Always(&'static str);
+
+impl puddle_api::IdSource for Always {
+    fn draw(&self, _name: &puddle_api::DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
+        Ok(WorkspaceId::new(self.0).unwrap())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_source_that_keeps_giving_a_taken_id_gets_a_refusal_after_sixteen_draws() {
+    let rig = Rig::new();
+    *rig.ids.lock().unwrap() = Some(Arc::new(Always("k3m9q2xa")));
     let host = rig.start().await;
     let api = api(&host);
-
-    let reply = api.post("/api/workspaces", &new_workspace("lost")).await;
-    assert_eq!(reply.status, 409, "{}", reply.body);
-    let message = reply.json()["message"].as_str().unwrap().to_owned();
-    assert!(message.contains("ws-lost"), "{message}");
-    assert!(message.contains("may hold"), "{message}");
-    assert!(message.contains("another name"), "{message}");
-    // Nothing was made or removed, and no list entry exists.
-    assert_eq!(volume_names(&rig).await, ["ws-lost"]);
-    assert!(rig.runtime.list().await.unwrap().is_empty());
-    assert!(
-        api.get("/api/workspaces").await.json()["workspaces"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    // Another name still works.
     let mut events = api.events().await;
-    create(&api, &mut events, "other").await;
+    create_as(&api, &mut events, "first", "k3m9q2xa").await;
+    let reply = api.post("/api/workspaces", &new_workspace("second")).await;
+    assert_eq!(reply.status, 503, "{}", reply.body);
+    assert_eq!(
+        reply.json()["message"],
+        "no free workspace id was found; the system's random source may be broken"
+    );
+    let list = api.get("/api/workspaces").await.json();
+    assert_eq!(list["workspaces"].as_array().unwrap().len(), 1, "{list}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_made_again_under_a_deleted_ones_name_gets_a_new_random_id_and_nothing_of_the_old()
+ {
+    let rig = Rig::new();
+    *rig.ids.lock().unwrap() = Some(Arc::new(puddle_api::RandomIds));
+    let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
+    write_global_settings(&rig, &microsoft_chosen(covering, false));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let made = |reply: &support::Reply| {
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        let id = reply.json()["id"].as_str().unwrap().to_owned();
+        assert_eq!(id.len(), 8, "{id}");
+        assert_ne!(id, "acme");
+        id
+    };
+    let first = made(&api.post("/api/workspaces", &new_workspace("acme")).await);
+    events.until(ended(&first), Duration::from_secs(20)).await;
+    let reply = api
+        .put(
+            &format!("/api/settings/workspaces/{first}"),
+            &json!({"overrides": {"direct_ssh": true}}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let _editor = editor_stand_in(&rig, &first).await;
+    let origin = browser_origin(&rig, &api, &first).await;
+    assert!(origin.contains(&format!("//{first}.localhost")), "{origin}");
+    api.post(&format!("/api/workspaces/{first}/stop"), "").await;
+    events.until(ended(&first), Duration::from_secs(20)).await;
+    let gone = api
+        .delete(
+            &format!("/api/workspaces/{first}"),
+            Some(&json!({"confirm": true}).to_string()),
+        )
+        .await;
+    assert_eq!(gone.status, 202, "{}", gone.body);
+    events.until(ended(&first), Duration::from_secs(20)).await;
+
+    let second = made(&api.post("/api/workspaces", &new_workspace("acme")).await);
+    events.until(ended(&second), Duration::from_secs(20)).await;
+    assert_ne!(second, first);
+    let book: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(HostPaths::new(rig.dir.path().join("data")).workspace_book()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(book["retired_ids"], json!([first]), "{book}");
+    assert_eq!(book["workspaces"][0]["id"], second.as_str(), "{book}");
+    assert_eq!(book["workspaces"][0]["name"], "acme", "{book}");
+    // Nothing of the first: its settings, its origin.
+    let view = api.get(&format!("/api/workspaces/{second}")).await.json();
+    assert_eq!(view["direct_ssh"], false, "{view}");
+    assert_eq!(view["name"], "acme", "{view}");
+    let _editor = editor_stand_in(&rig, &second).await;
+    let again = browser_origin(&rig, &api, &second).await;
+    assert_ne!(again, origin);
     host.shutdown().await;
 }
 
@@ -5896,29 +6126,30 @@ async fn a_sandbox_record_the_list_does_not_name_is_removed_and_reported_but_its
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_create_is_refused_when_the_runtime_cannot_say_whether_the_volume_exists() {
+async fn a_create_is_refused_when_the_runtime_cannot_list_its_disks_or_sandboxes() {
     let rig = Rig::new();
     let host = rig.start().await;
     let api = api(&host);
-    rig.runtime.inject(
-        Op::Volume,
-        Fault::once(puddle_compute::ComputeError::Runtime {
-            op: "volume",
-            message: "volume lookup broke".into(),
-        }),
-    );
-
-    let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
-    assert_eq!(reply.status, 503, "{}", reply.body);
-    let message = reply.json()["message"].as_str().unwrap().to_owned();
-    assert!(message.contains("ws-acme"), "{message}");
-    assert!(message.contains("volume lookup broke"), "{message}");
-    assert!(
-        api.get("/api/workspaces").await.json()["workspaces"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
+    for op in [Op::ListVolumes, Op::List] {
+        rig.runtime.inject(
+            op,
+            Fault::once(puddle_compute::ComputeError::Runtime {
+                op: "list",
+                message: "listing broke".into(),
+            }),
+        );
+        let reply = api.post("/api/workspaces", &new_workspace("acme")).await;
+        assert_eq!(reply.status, 503, "{}", reply.body);
+        let message = reply.json()["message"].as_str().unwrap().to_owned();
+        assert!(message.contains("cannot pick an id"), "{message}");
+        assert!(message.contains("listing broke"), "{message}");
+        assert!(
+            api.get("/api/workspaces").await.json()["workspaces"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
     host.shutdown().await;
 }
 
@@ -6197,6 +6428,8 @@ async fn the_workspaces_reconnection_grace_reaches_the_editor_server_at_the_next
     let host = rig.start_with(config).await;
     let api = api(&host);
     let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
     let reply = api
         .put(
             "/api/settings/workspaces/acme",
@@ -6204,7 +6437,8 @@ async fn the_workspaces_reconnection_grace_reaches_the_editor_server_at_the_next
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
     let seen = agent_settings(&rig.guest.plan_bytes(rig.guest.boots() - 1));
     assert_eq!(
         seen.get("PUDDLE_AGENT_EDITOR_GRACE").map(String::as_str),
@@ -8218,8 +8452,8 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
     );
     assert!(host.store().rules().is_empty(), "its rules went with it");
 
-    // A new workspace of the same name starts clean, with the global secret only.
-    create(&api, &mut events, "acme").await;
+    // A new workspace of the same name (another id) starts clean, with the global secret only.
+    create_as(&api, &mut events, "acme", "acme-2").await;
     let env = rig.guest.boot_envs.lock().unwrap().last().cloned().unwrap();
     assert!(env.get("OWN_TOKEN").is_none() && env.get("EDITOR").is_none());
     assert!(env.get("GLOBAL_TOKEN").is_some());
@@ -10001,7 +10235,7 @@ async fn a_create_that_cannot_write_the_shell_init_folder_fails_and_leaves_nothi
     assert!(rig.runtime.list().await.unwrap().is_empty());
 
     std::fs::remove_file(&parent).unwrap();
-    create(&api, &mut events, "acme").await;
+    create_as(&api, &mut events, "acme", "acme-2").await;
     host.shutdown().await;
 }
 
@@ -11324,7 +11558,9 @@ async fn a_restore_makes_a_working_list_entry_with_the_disk_untouched_and_ends_i
     let restored = first.post("/api/orphan-volumes/lost/restore", "{}").await;
     assert_eq!(restored.status, 201, "{}", restored.body);
     let made = restored.json();
-    assert_eq!(made["name"], "lost");
+    // The id is the disk's; the name is the folder of its first checkout.
+    assert_eq!(made["id"], "lost");
+    assert_eq!(made["name"], "api");
     assert_eq!(made["status"], "stopped");
     assert_eq!(
         made["repositories"][0]["url"],
@@ -11363,8 +11599,12 @@ async fn a_restore_makes_a_working_list_entry_with_the_disk_untouched_and_ends_i
     let again = rig.start().await;
     let api2 = api(&again);
     let listed = api2.get("/api/workspaces").await.json();
-    assert_eq!(listed["workspaces"][0]["name"], "lost", "{listed}");
+    assert_eq!(listed["workspaces"][0]["name"], "api", "{listed}");
     assert_eq!(orphan_ids(&api2).await, ["other"]);
+    // A second disk whose first checkout has the same folder: the name gets a number.
+    let other = api2.post("/api/orphan-volumes/other/restore", "{}").await;
+    assert_eq!(other.status, 201, "{}", other.body);
+    assert_eq!(other.json()["name"], "api (2)", "{}", other.body);
     again.shutdown().await;
 }
 
@@ -11465,7 +11705,8 @@ async fn a_restore_never_overwrites_a_list_entry_or_takes_a_disk_a_sandbox_holds
         .iter()
         .map(|w| w["name"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(names, ["acme", "twice"]);
+    // The disk's first checkout names the entry (this fake guest lists one set for every disk).
+    assert_eq!(names, ["acme", "api"]);
 
     // No such disk.
     let none = api1.post("/api/orphan-volumes/nothing/restore", "{}").await;

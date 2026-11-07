@@ -47,9 +47,15 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 ## Decision
 
 1. **Each workspace is a named msb disk volume** (`ws-<id>`, ext4, `--mount-named
-   ws-<id>:/workspaces/<name>:kind=disk,size=N`) in puddle's private `MSB_HOME`: Puddle bundles
+   ws-<id>:/workspaces/<id>:kind=disk,size=N`) in puddle's private `MSB_HOME`: Puddle bundles
    its own msb runtime, so its images and volumes never mix with an msb the user installed
-   separately. No Windows folder is bind-mounted as the workspace.
+   separately. No Windows folder is bind-mounted as the workspace. The `<id>` is Puddle's own:
+   eight random lowercase Crockford base32 characters, the first a letter, picked at create and
+   never given to a second workspace (a deleted one's id stays retired in Puddle's workspace list,
+   and a draw that meets a kept volume, a sandbox or a data-folder file of that id is drawn
+   again). The name the user types is display text and names no volume, sandbox or folder, so a
+   workspace made again under a deleted one's name finds none of its data. Workspaces made before
+   ids were generated keep the id they have, which is the name they were created with.
 2. **Code gets in by cloning inside the VM** through Puddle's proxy in the first milestone, with
    git HTTPS credentials injected by the proxy. **"Start from my Windows checkout"** is the first
    thing after it; the measurements showed the mechanism works (a read-only bind of the checkout +
@@ -80,8 +86,8 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 8. **A second attach is refused cleanly.** Puddle tracks which sandbox has a workspace's volume and
    refuses a second attach itself, with a message naming the sandbox that holds it, rather than
    relying on msb's `already attached with an incompatible disk mode`. If msb does refuse a create,
-   Puddle removes the stopped sandbox record msb leaves behind (and any orphan `sandboxes\<name>`
-   directory a failed create leaves), so the name isn't blocked.
+   Puddle removes the stopped sandbox record msb leaves behind (and any orphan `sandboxes\<id>`
+   directory a failed create leaves); the failed create's id is retired like a deleted one's.
 9. **Puddle always passes `kind=disk,size=N`** with `--mount-named`, also for an existing volume
    (msb 0.7.6 otherwise treats it as a directory mount).
 
@@ -96,7 +102,7 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
   Windows path handling mostly drops out. Resizing a volume is not known to be supported by msb; the
   size is set at creation.
 - **The IDE attaches into the VM.** VS Code Remote-SSH and JetBrains Gateway open
-  `/workspaces/<name>` over `msb ssh`. A guest-local tree means inotify works and the git
+  `/workspaces/<id>` over `msb ssh`. A guest-local tree means inotify works and the git
   extension is fast. Windows-native tools (Visual Studio, Rider local, Explorer, Windows git GUIs)
   have no access to the live tree until the post-v1 Windows mount feature (4).
 - **Backups are `git push`.** Unpushed work exists only inside `disk.raw` under `MSB_HOME`; a

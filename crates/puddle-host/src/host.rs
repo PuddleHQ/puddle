@@ -315,6 +315,10 @@ pub struct HostOptions {
     /// SSH server for Git. Off by default: the proxy serves no SSH to Git hosts until it is given
     /// an upstream for it.
     pub git_ssh: bool,
+    /// Where new workspace ids come from. Without one, the operating system's random source
+    /// ([`puddle_api::RandomIds`]); tests give [`puddle_api::NameIds`], so a workspace called
+    /// `acme` gets the id `acme`.
+    pub workspace_ids: Option<Arc<dyn puddle_api::IdSource>>,
 }
 
 impl Default for HostOptions {
@@ -329,6 +333,7 @@ impl Default for HostOptions {
             company_signals: None,
             rewrite_gate: None,
             git_ssh: false,
+            workspace_ids: None,
         }
     }
 }
@@ -507,6 +512,7 @@ impl<R: Runtime + Clone> Host<R> {
             settings,
             book,
             stored,
+            retired,
         } = open_state(&config.paths, &events, &clock)?;
         steps.push(Step::StoreOpened);
 
@@ -655,8 +661,14 @@ impl<R: Runtime + Clone> Host<R> {
                 front_addr,
                 front_guests,
                 front_halves,
+                ids: options
+                    .workspace_ids
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
+                login_markers: config.paths.login_markers(),
             },
             stored,
+            retired,
             &status,
         )?;
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
@@ -921,6 +933,7 @@ struct State {
     settings: Arc<dyn SettingsRepo>,
     book: WorkspaceBook,
     stored: Vec<crate::files::Stored>,
+    retired: BTreeSet<WorkspaceId>,
 }
 
 /// Opens the database, the settings files and the workspace list.
@@ -936,12 +949,16 @@ fn open_state(
     );
     let settings: Arc<dyn SettingsRepo> = Arc::new(FileSettings::new(paths.settings()));
     let book = WorkspaceBook::new(paths.workspace_book());
-    let stored = book.load()?;
+    let crate::files::Book {
+        workspaces: stored,
+        retired,
+    } = book.load()?;
     Ok(State {
         store,
         settings,
         book,
         stored,
+        retired,
     })
 }
 

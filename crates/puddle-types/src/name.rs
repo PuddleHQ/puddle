@@ -24,6 +24,13 @@ pub const WORKSPACE_VOLUME_PREFIX: &str = "ws-";
 /// (`tauri.localhost`, `ipc.localhost`, `asset.localhost`).
 pub const RESERVED_WORKSPACE_NAMES: [&str; 3] = ["tauri", "ipc", "asset"];
 
+/// The alphabet of generated workspace ids: lowercase Crockford base32, digits first.
+const CROCKFORD: &str = "0123456789abcdefghjkmnpqrstvwxyz";
+/// How many of [`CROCKFORD`]'s symbols are digits; the rest are letters.
+const DIGITS: usize = 10;
+/// How many of [`CROCKFORD`]'s symbols are letters.
+const LETTERS: usize = CROCKFORD.len() - DIGITS;
+
 /// Checks `value` against the DNS-label rule with at most `max_len` characters.
 fn check_label(what: &'static str, value: &str, max_len: usize) -> Result<(), ValidationError> {
     if value.is_empty() {
@@ -210,6 +217,38 @@ impl WorkspaceId {
             ));
         }
         Ok(Self(id.to_owned()))
+    }
+
+    /// Length of a generated id.
+    pub const GENERATED_LEN: usize = 8;
+
+    /// The id that 40 random bits give: eight characters of lowercase Crockford base32 (`0-9`
+    /// and `a-z` without `i`, `l`, `o` and `u`), the first one a letter. Each character takes
+    /// five bits; the first maps its five onto the 22 letters, so an id carries about 39 bits.
+    /// It is a DNS label without a hyphen and longer than every reserved name.
+    ///
+    /// ```
+    /// use puddle_types::WorkspaceId;
+    /// assert_eq!(WorkspaceId::from_random([0; 5]).as_str(), "a0000000");
+    /// assert_eq!(WorkspaceId::from_random([0xff; 5]).as_str(), "kzzzzzzz");
+    /// ```
+    #[must_use]
+    pub fn from_random(bytes: [u8; 5]) -> Self {
+        let [b0, b1, b2, b3, b4] = bytes;
+        let bits = u64::from_be_bytes([0, 0, 0, b0, b1, b2, b3, b4]);
+        let id = (0..Self::GENERATED_LEN)
+            .map(|i| {
+                let five = (bits >> (5 * (Self::GENERATED_LEN - 1 - i))) & 0x1f;
+                let five = usize::try_from(five).unwrap_or_default();
+                let symbol = if i == 0 {
+                    DIGITS + five % LETTERS
+                } else {
+                    five
+                };
+                CROCKFORD.chars().nth(symbol).unwrap_or('0')
+            })
+            .collect();
+        Self(id)
     }
 
     /// The name of the sandbox that runs this workspace: the same label.
@@ -460,6 +499,66 @@ mod tests {
             assert!(err.reason().contains("reserved"), "{err}");
         }
         assert!(WorkspaceId::new("tauri-app").is_ok());
+    }
+
+    #[test]
+    fn every_id_from_random_bits_is_eight_crockford_characters_starting_with_a_letter() {
+        let letters = "abcdefghjkmnpqrstvwxyz";
+        // Every first five bits, with the rest of the bits varied.
+        for seed in 0_u8..=255 {
+            let bytes = [
+                seed,
+                seed.wrapping_mul(7),
+                !seed,
+                seed ^ 0x5a,
+                seed.rotate_left(3),
+            ];
+            let id = WorkspaceId::from_random(bytes);
+            let s = id.as_str();
+            assert_eq!(s.len(), WorkspaceId::GENERATED_LEN, "{s}");
+            assert!(s.chars().all(|c| CROCKFORD.contains(c)), "{s}");
+            assert!(s.starts_with(|c| letters.contains(c)), "{s}");
+            assert!(!s.contains(['i', 'l', 'o', 'u', '-']), "{s}");
+            // Every generated id is a valid id, and so a volume and a sandbox name.
+            assert_eq!(WorkspaceId::new(s).unwrap(), id);
+            assert!(!RESERVED_WORKSPACE_NAMES.contains(&s));
+        }
+    }
+
+    #[test]
+    fn exact_ids_for_fixed_bytes_pin_every_byte_position() {
+        let cases: [([u8; 5], &str); 6] = [
+            ([0, 0, 0, 0, 1], "a0000001"),
+            ([0, 0, 0, 1, 0], "a0000080"),
+            ([0, 0, 1, 0, 0], "a0002000"),
+            ([0, 1, 0, 0, 0], "a00g0000"),
+            ([1, 0, 0, 0, 0], "a4000000"),
+            ([0xde, 0xad, 0xbe, 0xef, 0x42], "ftpvxvt2"),
+        ];
+        for (bytes, id) in cases {
+            assert_eq!(WorkspaceId::from_random(bytes).as_str(), id, "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn every_five_bits_pick_their_own_character() {
+        assert_eq!(CROCKFORD.len(), 32);
+        assert_eq!(LETTERS, 22);
+        // The groups 0 to 7, five bits each: 00000 00001 00010 00011 00100 00101 00110 00111.
+        let one_each = [0x00, 0x44, 0x32, 0x14, 0xc7];
+        assert_eq!(WorkspaceId::from_random(one_each).as_str(), "a1234567");
+        // The first five bits run over the letters, wrapping after the 22nd.
+        let firsts: String = (0_u8..32)
+            .map(|five| WorkspaceId::from_random([five << 3, 0, 0, 0, 0]))
+            .map(|id| id.as_str().chars().next().unwrap())
+            .collect();
+        assert_eq!(firsts, "abcdefghjkmnpqrstvwxyzabcdefghjk");
+        // The last character takes the last five bits.
+        let lasts: String = (0_u8..32)
+            .map(|five| WorkspaceId::from_random([0, 0, 0, 0, five]))
+            .map(|id| id.as_str().chars().last().unwrap())
+            .collect();
+        assert_eq!(lasts, CROCKFORD);
     }
 
     #[test]

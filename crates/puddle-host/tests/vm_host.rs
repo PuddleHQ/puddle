@@ -4499,3 +4499,144 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
 
     host.shutdown().await;
 }
+
+/// The port of `host`'s browser front.
+fn front_port(host: &Host<MsbRuntime>) -> u16 {
+    let fronts: Vec<u16> = host
+        .endpoints()
+        .list()
+        .iter()
+        .filter(|(_, kind)| *kind == puddle_netpolicy::EndpointKind::BrowserFront)
+        .map(|(addr, _)| addr.port())
+        .collect();
+    assert_eq!(fronts.len(), 1, "one front is registered: {fronts:?}");
+    fronts.first().copied().expect("a front")
+}
+
+/// Creates a workspace called `name` with no repository and waits for it; returns its id.
+async fn create_bare(api: &Api, events: &mut support::Events, name: &str) -> String {
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let id = reply
+        .json()
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_owned();
+    let end = events.until(ended(&id), Duration::from_secs(600)).await;
+    assert_eq!(end.get("step"), Some(&json!("done")), "{end}");
+    id
+}
+
+/// Runs `op` (`start`, `stop`) on `id` and waits for it to end well.
+async fn op_and_wait(api: &Api, events: &mut support::Events, id: &str, op: &str) {
+    let reply = api.post(&format!("/api/workspaces/{id}/{op}"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended(id), Duration::from_secs(300)).await;
+    assert_eq!(end.get("step"), Some(&json!("done")), "{op}: {end}");
+}
+
+/// Ids are never reused, on a real runtime: a workspace made again under a deleted one's name
+/// gets another id, so another volume `ws-<id>` and another browser-editor origin, and the
+/// deleted id stays retired in the list. Then the list is rewritten as the previous release
+/// wrote it (version 2, the id equal to the name the workspace was made with, a display name
+/// beside it): the next Puddle reads it in place and the workspace starts with its checkout as it
+/// was. The test's hosts make ids from names (the hermetic options), so every sandbox and volume
+/// name carries the run's prefix; the fake-host tests cover the random ids themselves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_a_deleted_workspaces_id_is_never_reused_and_a_version_2_list_keeps_its_checkouts()
+{
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        root,
+        ..
+    } = start_vm_host("ids").await;
+    let prefix = settings.prefix.as_str();
+    let name = format!("{prefix} ids");
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let port = front_port(&host);
+
+    let first = create_bare(&api, &mut events, &name).await;
+    let first_origin = puddle_front::origin_of(port, &WorkspaceId::new(&first).unwrap());
+    op_and_wait(&api, &mut events, &first, "stop").await;
+    let gone = api
+        .delete(
+            &format!("/api/workspaces/{first}"),
+            Some(&json!({"confirm": true}).to_string()),
+        )
+        .await;
+    assert_eq!(gone.status, 202, "{}", gone.body);
+    let end = events.until(ended(&first), Duration::from_secs(300)).await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // The same name again: another id, volume and origin; the first id is retired.
+    let second = create_bare(&api, &mut events, &name).await;
+    assert_ne!(second, first);
+    let second_id = WorkspaceId::new(&second).unwrap();
+    assert_ne!(puddle_front::origin_of(port, &second_id), first_origin);
+    let volumes: Vec<String> = runtime
+        .list_volumes()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| v.name)
+        .collect();
+    assert!(volumes.contains(&format!("ws-{second}")), "{volumes:?}");
+    assert!(!volumes.contains(&format!("ws-{first}")), "{volumes:?}");
+    let book_path = puddle_host::HostPaths::new(&root).workspace_book();
+    let book: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&book_path).unwrap()).unwrap();
+    assert_eq!(book["retired_ids"], json!([first]), "{book}");
+
+    // A checkout on the second one's volume: a commit and a file beside it.
+    guest(
+        &runtime,
+        &second_id,
+        &format!(
+            "set -e; mkdir -p /workspaces/{second}/app; cd /workspaces/{second}/app; \
+             git init -q; git -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m kept; \
+             echo kept > notes.txt"
+        ),
+    )
+    .await;
+    op_and_wait(&api, &mut events, &second, "stop").await;
+    host.shutdown().await;
+    drop(host);
+
+    // The list as the previous release wrote it: version 2, the id as `name`, the display text
+    // as `display_name`, no retired ids.
+    let mut entry = book["workspaces"][0].clone();
+    entry["name"] = json!(second);
+    entry["display_name"] = json!(format!("{prefix} legacy"));
+    let v2 = json!({"version": 2, "workspaces": [entry]});
+    std::fs::write(&book_path, serde_json::to_vec_pretty(&v2).unwrap()).unwrap();
+
+    let VmHost { host, runtime, .. } = start_vm_host("ids").await;
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let listed = api.get("/api/workspaces").await.json();
+    assert_eq!(listed["workspaces"][0]["id"], second.as_str(), "{listed}");
+    assert_eq!(
+        listed["workspaces"][0]["name"],
+        format!("{prefix} legacy"),
+        "{listed}"
+    );
+    op_and_wait(&api, &mut events, &second, "start").await;
+    let seen = guest(
+        &runtime,
+        &second_id,
+        &format!("cd /workspaces/{second}/app; git log --format=%s; cat notes.txt"),
+    )
+    .await;
+    assert_eq!(seen.trim(), "kept\nkept", "{seen}");
+    op_and_wait(&api, &mut events, &second, "stop").await;
+    host.shutdown().await;
+}

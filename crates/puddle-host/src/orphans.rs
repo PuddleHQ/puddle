@@ -96,6 +96,35 @@ fn readable(checkout: &FoundCheckout) -> Option<Repository> {
     })
 }
 
+/// The name a restored disk's entry gets: `base` (its first checkout's folder, else its id), or
+/// with ` (2)`, ` (3)` and so on when a listed workspace has that name, cut to fit the longest
+/// name.
+fn free_name(state: &State, base: &str) -> DisplayName {
+    let taken = |name: &DisplayName| {
+        puddle_api::label_taken(state.slots.values().map(|s| &s.record), name.as_str(), None)
+            .is_some()
+    };
+    let mut n = 1_usize;
+    loop {
+        let suffix = if n == 1 {
+            String::new()
+        } else {
+            format!(" ({n})")
+        };
+        let stem: String = base
+            .chars()
+            .take(DisplayName::MAX_CHARS - suffix.chars().count())
+            .collect();
+        // `base` is a folder name or an id: never empty, never a control character.
+        if let Ok(name) = DisplayName::parse(&format!("{}{suffix}", stem.trim_end()))
+            && !taken(&name)
+        {
+            return name;
+        }
+        n += 1;
+    }
+}
+
 impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The workspace disks no listed workspace claims, in id order.
     pub(super) async fn orphan_volume_ids(&self) -> Result<Vec<WorkspaceId>, WorkspaceError> {
@@ -126,14 +155,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// Whether the list now names `id` or a workspace called `name`.
-    fn claimed(state: &State, id: &WorkspaceId, name: &DisplayName) -> Result<(), WorkspaceError> {
-        if state.slots.contains_key(id)
-            || puddle_api::label_taken(state.slots.values().map(|s| &s.record), name.as_str(), None)
-                .is_some()
-        {
+    /// Whether the list now names `id`.
+    fn claimed(state: &State, id: &WorkspaceId) -> Result<(), WorkspaceError> {
+        if let Some(slot) = state.slots.get(id) {
             return Err(WorkspaceError::Conflict(format!(
-                "a workspace named {name} is already in the list; nothing was replaced"
+                "{} already uses the disk {}; nothing was replaced",
+                slot.record.name,
+                id.volume_name()
             )));
         }
         Ok(())
@@ -145,8 +173,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         asked: Option<RepoUrl>,
         git: &dyn GitSetup,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
-        let name = DisplayName::parse(id.as_str())
-            .map_err(|e| WorkspaceError::Invalid(format!("this name can't be a workspace: {e}")))?;
         let volume = id.volume_name();
         let info = self
             .inner
@@ -164,7 +190,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     "Puddle is shutting down".to_owned(),
                 ));
             }
-            Self::claimed(&state, id, &name)?;
+            Self::claimed(&state, id)?;
         }
         let listed = self
             .inner
@@ -188,21 +214,26 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 "{reason}, so Puddle can't tell how much memory the workspace gets; fix or reset the settings"
             ))
         })?;
-        let mut record = WorkspaceRecord::new(id.clone(), name.clone(), repositories.clone());
-        record.status = WorkspaceStatus::Stopped;
-        record.memory = memory;
-        record.created_at = self.inner.clock.now_ms();
-        record.disk_size_mib = u64::from(info.size.as_mib());
-        {
+        let named_after = listed
+            .checkouts
+            .first()
+            .map_or_else(|| id.to_string(), |c| c.dir.clone());
+        let record = {
             let mut state = self.state();
             if state.closed {
                 return Err(WorkspaceError::Unavailable(
                     "Puddle is shutting down".to_owned(),
                 ));
             }
-            // The disk was read without the lock, so claim it again here: a create or another
-            // restore may have taken the name meanwhile, and an entry is never replaced.
-            Self::claimed(&state, id, &name)?;
+            // The disk was read without the lock, so claim it again here: another restore may
+            // have taken it meanwhile, and an entry is never replaced.
+            Self::claimed(&state, id)?;
+            let name = free_name(&state, &named_after);
+            let mut record = WorkspaceRecord::new(id.clone(), name, repositories.clone());
+            record.status = WorkspaceStatus::Stopped;
+            record.memory = memory;
+            record.created_at = self.inner.clock.now_ms();
+            record.disk_size_mib = u64::from(info.size.as_mib());
             state.slots.insert(
                 id.clone(),
                 Slot {
@@ -216,11 +247,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             if let Err(e) = self.persist(&state) {
                 state.slots.remove(id);
                 return Err(WorkspaceError::Unavailable(format!(
-                    "{name} was not restored: {e}; {SAVE_HINT}"
+                    "{} was not restored: {e}; {SAVE_HINT}",
+                    record.name
                 )));
             }
-        }
-        tracing::info!(workspace = %name, volume = %volume, "a workspace disk was restored as a workspace");
+            record
+        };
+        tracing::info!(workspace = %id, name = %record.name, volume = %volume, "a workspace disk was restored as a workspace");
         let new: Vec<NewRepository> = repositories
             .into_iter()
             .map(|repository| NewRepository {

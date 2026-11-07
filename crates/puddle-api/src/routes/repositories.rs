@@ -84,7 +84,7 @@ pub(crate) async fn add_repository(
         AddRepository::Clone(new) => {
             let requests: Vec<_> = git_request(new).into_iter().collect();
             let (store, name) = (state.store.clone(), record.id.clone());
-            blocking(move || Ok(store.check_repository_git(&name, &requests)?)).await?;
+            blocking(move || Ok(store.check_repository_git(Some(&name), &requests)?)).await?;
             StatusCode::ACCEPTED
         }
         AddRepository::Existing { .. } => StatusCode::OK,

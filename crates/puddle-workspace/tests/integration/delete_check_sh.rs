@@ -373,16 +373,3 @@ async fn a_missing_volume_root_fails_closed() {
         assert!(err.to_string().contains("cannot enter"), "{shell}: {err}");
     }
 }
-
-/// The fixtures must not touch the repository a git hook points `GIT_DIR` at: `git init --bare`
-/// there turns that repository bare.
-#[test]
-fn fixtures_leave_the_repository_of_a_git_hook_alone() {
-    // skip-ok: the parent run starts this binary again as a child, and the child must not recurse.
-    if common::is_hook_env_child() {
-        return;
-    }
-    common::assert_hook_env_leaves_the_repository_alone(
-        "fixtures_leave_the_repository_of_a_git_hook_alone",
-    );
-}

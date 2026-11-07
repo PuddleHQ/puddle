@@ -5,7 +5,7 @@
 # Clippy, tests and UI run on every trigger; the release build runs only on the nightly, on pull
 # requests to main and on manual runs from develop, so a pull request to develop skips it. The jobs
 # run side by side, so the run takes as long as the slowest one instead of the sum: the tests are built once
-# (`test-build`, a nextest archive) and run on two runners (`tests`), the doc tests and the secret scan have a
+# (`test-build`, a nextest archive) and run on four runners (`tests`), the doc tests and the secret scan have a
 # job (`docs`), and the UI is split into Edge end-to-end (`ui-e2e`) and the rest (`ui-unit`). Two cache entries
 # (debug builds, clippy's check builds); only runs on develop save them. The release build has none.
 # A pull request runs only the jobs its changed files can affect (ci/scope.sh, the `scope` job):
@@ -198,16 +198,16 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
-  # Two runners run the archive side by side (nextest `--partition hash:`: a test's partition follows its name, so
+  # Four runners run the archive side by side (nextest `--partition hash:`: a test's partition follows its name, so
   # a new test never moves the others). Each runner makes its own second-user account and runs its own mitmproxy.
   # The job is not skipped when the build job found nothing new (a nightly on a green commit): its steps are, so
   # the result job sees a success and not a skip it would have to explain.
   tests:
-    name: windows tests (nextest, partition ${{ matrix.partition }} of 2)
+    name: windows tests (nextest, partition ${{ matrix.partition }} of 4)
     needs: test-build
     if: ${{ !cancelled() && needs.test-build.result == 'success' }}
     runs-on: windows-2025
-    # About 4.3 min of tests across both partitions, plus the steps before them (a few minutes).
+    # About 4.3 min of tests across all four partitions, plus the steps before them (a few minutes).
     timeout-minutes: 30
     # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
     permissions:
@@ -216,7 +216,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2]
+        partition: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.test-build.outputs.run == 'true'
@@ -255,7 +255,7 @@ jobs:
         with:
           name: windows-tests-build
           path: ${{ runner.temp }}/bundle
-      - name: tests (partition ${{ matrix.partition }} of 2)
+      - name: tests (partition ${{ matrix.partition }} of 4)
         if: needs.test-build.outputs.run == 'true'
         shell: bash
         env:

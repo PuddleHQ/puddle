@@ -584,7 +584,7 @@ names report on the queue's commit too. Two repository variables switch the rest
 
 - `PUDDLE_QUEUE=on` (set together with the merge queue rule on `develop`, never before it): a pull request to `develop`
   runs the Linux jobs, without the `git-env` and `notices` gates and the WebKit end-to-end job (`ui-webkit`),
-  and the Windows test jobs (`windows tests`: the build, two nextest partitions, the doc tests and secret scan) when the PR changes Rust or fixture
+  and the Windows test jobs (`windows tests`: the build, four nextest partitions, the doc tests and secret scan) when the PR changes Rust or fixture
   files (`win_rust`), so a Windows-only failure shows on the PR and not first in the queue. Windows clippy, the Windows UI
   job and both VM workflows skip, and their result jobs still report; a PR that changes no Rust skips the Windows
   tests too and the result job accepts that like any scoped skip. The merge queue then runs the full

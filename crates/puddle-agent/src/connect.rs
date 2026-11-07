@@ -499,6 +499,20 @@ mod tests {
         Request::parse(&[host, &port.to_string()]).unwrap()
     }
 
+    #[tokio::test]
+    async fn keep_open_flushes_on_shutdown_and_leaves_the_writer_open() {
+        let (writer, mut peer) = tokio::io::duplex(64);
+        let mut keep = KeepOpen(writer);
+        keep.write_all(b"one").await.unwrap();
+        keep.shutdown().await.unwrap();
+        // A shut-down duplex refuses writes, so this succeeding shows shutdown left it open.
+        keep.write_all(b"two").await.unwrap();
+        keep.flush().await.unwrap();
+        let mut got = [0u8; 6];
+        peer.read_exact(&mut got).await.unwrap();
+        assert_eq!(&got, b"onetwo");
+    }
+
     #[test]
     fn a_connect_from_a_container_carries_the_origin_header_and_one_from_the_guest_does_not() {
         let plain =

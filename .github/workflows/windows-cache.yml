@@ -50,7 +50,7 @@ jobs:
           shared-key: windows
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      # What `cargo nextest run` builds in windows.yml, without running the tests.
+      # What `cargo nextest archive` builds in windows.yml (the same test binaries), without running the tests.
       - name: build the test binaries
         shell: bash
         run: cargo test --workspace --all-features --locked --no-run

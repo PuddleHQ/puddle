@@ -91,6 +91,15 @@ mod tests {
     }
 
     #[test]
+    fn display_is_exactly_the_name() {
+        for name in ["appid", "a.b.c", "a[b]", "x.y-z~", "k", "0", "A_b"] {
+            assert_eq!(QueryName::new(name).unwrap().to_string(), name);
+        }
+        let longest = "n".repeat(MAX_QUERY_NAME_LEN);
+        assert_eq!(format!("{}", QueryName::new(&longest).unwrap()), longest);
+    }
+
+    #[test]
     fn a_name_that_would_split_or_hide_in_a_query_is_refused() {
         let long = "n".repeat(MAX_QUERY_NAME_LEN + 1);
         for bad in [

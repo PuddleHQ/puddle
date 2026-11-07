@@ -131,4 +131,27 @@ mod tests {
         );
         drop(listener);
     }
+
+    #[test]
+    fn only_would_block_and_timed_out_become_a_timeout() {
+        let limit = Duration::from_secs(3);
+        for kind in [io::ErrorKind::WouldBlock, io::ErrorKind::TimedOut] {
+            let got = as_timeout(AgentError::Io(io::Error::from(kind)), limit);
+            assert!(
+                matches!(got, AgentError::TimedOut(l) if l == limit),
+                "{kind:?}: {got:?}"
+            );
+        }
+        for kind in [
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::UnexpectedEof,
+            io::ErrorKind::Interrupted,
+        ] {
+            let got = as_timeout(AgentError::Io(io::Error::from(kind)), limit);
+            assert!(
+                matches!(&got, AgentError::Io(e) if e.kind() == kind),
+                "{kind:?}: {got:?}"
+            );
+        }
+    }
 }

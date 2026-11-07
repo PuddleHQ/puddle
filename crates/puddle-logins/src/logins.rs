@@ -136,7 +136,7 @@ struct Inner {
 
 /// How many earlier stand-ins of a slot stay swapped. A session token lasts about half an hour
 /// and is exchanged again before it ends, so the tool never holds more than the last two.
-const RETIRED_KEPT: usize = 3;
+pub(crate) const RETIRED_KEPT: usize = 3;
 
 /// One workspace's captured logins. Cheap to clone.
 #[derive(Clone)]

@@ -1134,7 +1134,7 @@ fn upstream_request(
 /// the peer opened its window again by being read, so a writer that is stuck on a full window
 /// while nobody reads (the guest is waiting for the response) never wakes: a download of more
 /// than one window would stall. Anything the guest does send stays buffered for the next request.
-async fn keep_reading<R: tokio::io::AsyncBufRead + Unpin>(
+pub(crate) async fn keep_reading<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
 ) -> std::convert::Infallible {
     // An empty read is the guest closing its side: the response may still go out.
@@ -1144,7 +1144,7 @@ async fn keep_reading<R: tokio::io::AsyncBufRead + Unpin>(
 
 /// Sends `request` while pumping the guest's body into it. `None` as the first answer: the
 /// upstream did not answer in time. The second is the pump's result, if it finished.
-async fn send_and_pump<R>(
+pub(crate) async fn send_and_pump<R>(
     sender: &mut SendRequest<UpBody>,
     reader: &mut R,
     request: ::http::Request<UpBody>,

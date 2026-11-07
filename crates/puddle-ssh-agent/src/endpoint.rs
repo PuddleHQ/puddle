@@ -102,6 +102,14 @@ mod tests {
     }
 
     #[test]
+    fn for_host_takes_the_configured_endpoint_whatever_the_environment_holds() {
+        assert_eq!(
+            AgentEndpoint::for_host(Some("/configured/agent.sock")),
+            Some(AgentEndpoint::at("/configured/agent.sock"))
+        );
+    }
+
+    #[test]
     fn it_shows_its_path() {
         let e = AgentEndpoint::at("/a/b");
         assert_eq!(e.to_string(), "/a/b");

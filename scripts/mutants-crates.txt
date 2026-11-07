@@ -8,6 +8,8 @@
 #   puddle-proxy src/route.rs
 #   puddle-proxy src/upstream.rs
 # A crate uses one form only; when its last file is in, replace its lines with the plain `crate` line.
+# `crate shards=N` lists the whole crate but sweeps it as N jobs (`cargo mutants --shard K/N`), for a crate
+# whose one-job sweep does not fit the workflow's time limit.
 puddle-netpolicy
 puddle-inject
 puddle-types
@@ -18,4 +20,4 @@ puddle-ssh      # whole-crate sweep 6 min at --jobs 1 (76 mutants)
 puddle-fs       # Linux only: 3 min (69 mutants); Windows-only code is excluded in .cargo/mutants.toml
 puddle-secrets  # 18 min (248 mutants)
 puddle-certs    # Linux only: whole-crate sweep at --jobs 1 (288 mutants); Windows-only code is excluded in .cargo/mutants.toml
-puddle-proxy    # swept file by file at --jobs 1 (about 970 mutants, about 7 h in all); the whole-crate run is the `mutants` workflow's
+puddle-proxy shards=16  # 2409 mutants: one whole-crate job passed its 5 h limit; 16 shards of about 150 (101 mutants took 10 min locally)

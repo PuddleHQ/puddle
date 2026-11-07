@@ -8,6 +8,7 @@ use crate::terminate_support;
 use std::sync::Arc;
 use std::time::Duration;
 
+use puddle_agent_proto::ssh::{PROTOCOL_HEADER, SSH};
 use puddle_proxy::{InjectDecision, PassThrough};
 use puddle_types::ConnectionDecision;
 use rustls::pki_types::ServerName;
@@ -567,4 +568,37 @@ async fn a_decrypted_host_that_cannot_be_reached_gets_an_error_the_tool_can_read
     let response = client.get("dead.test", "/").await;
     assert_eq!(response.status, 502);
     client.close().await;
+}
+
+#[tokio::test]
+async fn ssh_to_a_decrypted_name_is_spliced_at_once_and_never_waits_for_a_tls_hello() {
+    let pki = Pki::new();
+    let server = FakeServer::plain(Arc::new(|_| Reply::ok("never asked"))).await;
+    let injector = adds_nothing();
+    let rig = RigBuilder::new(&pki)
+        .name("free.test", server.addr)
+        .allow(vec!["bound.test", "free.test"])
+        .injector(injector.clone())
+        .decrypting_all(true, &[])
+        .build();
+    let guest = rig.guest();
+    let mut stream = guest.open_stream().await;
+    let head = format!(
+        "CONNECT free.test:443 HTTP/1.1\r\nHost: free.test:443\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let mut answer = [0u8; 12];
+    stream.read_exact(&mut answer).await.unwrap();
+    assert_eq!(&answer, b"HTTP/1.1 200");
+    // A terminated connection would wait for the guest's TLS hello before it connected upstream.
+    puddle_test_kit::eventually(
+        "the real server was connected to",
+        Duration::from_secs(5),
+        || match server.accepted() {
+            1 => Ok(()),
+            n => Err(format!("{n} connections")),
+        },
+    )
+    .await;
+    assert_eq!(injector.calls(), 0, "nothing was decrypted");
 }

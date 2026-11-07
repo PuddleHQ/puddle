@@ -538,25 +538,23 @@ async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
     assert_eq!(records[2]["workspace_id"], "e2e");
 }
 
-/// Every SSH connection is refused at once with its own audit reason, whatever the host, the port
-/// and the rules: it never becomes a pending row, never counts as an allow, and the host that a
-/// rule allows is refused just the same. The client is the agent's `connect` command (what `ssh`
-/// runs as its `ProxyCommand`) speaking an SSH identification line.
+/// SSH to a Git host's name is refused at once with its own audit reason, whatever the port and
+/// the rules: it never becomes a pending row, never counts as an allow, and a rule that allows the
+/// host changes nothing. The client is the agent's `connect` command (what `ssh` runs as its
+/// `ProxyCommand`) speaking an SSH identification line.
 #[tokio::test]
 async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
     let rig = rig().await;
-    allow(&rig.store, "echo.test");
+    allow(&rig.store, "github.com");
     let settings = puddle_agent::connect::Settings::from_config(&Config {
         listen: rig.agent.local_addr(),
         ..Config::default()
     });
     let destinations = [
-        ("echo.test", 22),
-        ("new.test", 2222),
-        ("sink.test", 443),
         ("github.com", 22),
         ("ssh.github.com", 443),
-        ("2001:db8::1", 22),
+        ("gitlab.com", 22),
+        ("ssh.dev.azure.com", 22),
     ];
     for (host, port) in destinations {
         let request = puddle_agent::connect::Request::parse(&[host, &port.to_string()]).unwrap();
@@ -575,11 +573,7 @@ async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
             stderr.starts_with("puddle: SSH is not supported yet"),
             "{host}:{port}: {stderr}"
         );
-        assert_eq!(
-            stderr.contains("use HTTPS"),
-            host.ends_with("github.com"),
-            "{host}"
-        );
+        assert!(stderr.contains("use HTTPS"), "{host}");
     }
     let records = wait_for_records(&rig.store, destinations.len()).await;
     assert_eq!(records.len(), destinations.len(), "{records:?}");
@@ -603,28 +597,54 @@ async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
         0,
         "nothing in the inbox"
     );
-    // No rule was made, and the one that allows echo.test still decides everything else.
+    // No rule was made, and the one that allows github.com still decides everything else.
     assert_eq!(rig.store.rules().len(), 1);
+}
+
+/// SSH to a name that is not a Git host is decided by the stored rules like any connection: with
+/// no rule it waits in the inbox as the host and port it asked for, and the client is told so.
+#[tokio::test]
+async fn ssh_to_another_host_waits_in_the_inbox_with_its_port() {
+    let rig = rig().await;
+    let settings = puddle_agent::connect::Settings::from_config(&Config {
+        listen: rig.agent.local_addr(),
+        ..Config::default()
+    });
+    let request = puddle_agent::connect::Request::parse(&["nas.test", "2222"]).unwrap();
+    let (mut ssh, stdin) = tokio::io::duplex(1024);
+    let (stdout, _printed) = tokio::io::duplex(1024);
+    ssh.write_all(b"SSH-2.0-OpenSSH_10.0p2\r\n").await.unwrap();
+    let mut stderr = Vec::new();
+    let exit = puddle_agent::connect::run(&settings, &request, stdin, stdout, &mut stderr).await;
+    assert_eq!(exit, puddle_agent::connect::Exit::Failed);
+    let stderr = String::from_utf8(stderr).unwrap();
+    assert!(!stderr.contains("SSH is not supported"), "{stderr}");
+    let pending = rig.store.open_pending(None).unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(
+        (pending[0].host.to_string(), pending[0].port),
+        ("nas.test".to_owned(), 2222)
+    );
 }
 
 /// What the transparent listener sends for a captured raw SSH client (libssh2, Go): the `CONNECT`
 /// with the client's identification line right behind it, with the header or without. The real proxy
-/// refuses it before the rules, and it is audited as SSH, never as a pending row, even for a host
-/// a rule allows and an address nobody has seen.
+/// refuses it before the rules when the name is a Git host's, and it is audited as SSH, never as a
+/// pending row, even for a host a rule allows.
 #[tokio::test]
 async fn a_captured_raw_ssh_client_is_refused_before_the_rules_and_never_pending() {
     let rig = rig().await;
-    allow(&rig.store, "echo.test");
+    allow(&rig.store, "github.com");
     let config = Config {
         target: Target::Unix(rig.route.endpoint().path().to_path_buf()),
         ..Config::default()
     };
     let upstream = puddle_agent::upstream::Upstream::new(&config);
     let attempts = [
-        ("echo.test:22", true),
-        ("192.0.2.22:22", true),
-        ("192.0.2.23:2222", false),
-        ("new.test:22", false),
+        ("github.com:22", true),
+        ("ssh.github.com:443", true),
+        ("gitlab.com:22", false),
+        ("altssh.gitlab.com:443", false),
     ];
     for (authority, header) in attempts {
         let mut stream = upstream.open().await.unwrap();

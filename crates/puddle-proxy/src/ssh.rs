@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Recognising SSH on a `CONNECT` tunnel and refusing it.
+//! Recognising SSH on a `CONNECT` tunnel and refusing it for Git hosts.
 //!
-//! Every SSH connection from a workspace is refused at once, whatever the host and the port: the
-//! client's identification line (`SSH-2.0-...`) is what tells SSH from anything else
-//! ([`puddle_agent_proto::ssh`]). Two places can see it:
+//! SSH to the name of a Git host (`github.com`, `ssh.dev.azure.com`, a host of one of the
+//! workspace's Git credentials) that Puddle does not serve is refused at once, whatever the port:
+//! the client's identification line (`SSH-2.0-...`) is what tells SSH from anything else
+//! ([`puddle_agent_proto::ssh`]). SSH to any other name is decided by the rules like every
+//! connection and spliced when allowed, so nothing here touches it. Two places can see the line:
 //!
 //! - **Before the decision:** the `CONNECT` carries it. The agent's `connect` command sets the
 //!   [`PROTOCOL_HEADER`] once it has read the banner, and a client may send the banner right behind

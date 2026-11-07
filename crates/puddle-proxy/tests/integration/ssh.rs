@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! I tests for SSH from a workspace: every SSH connection is refused at once, whatever the host
-//! and port, with the reason `ssh_unsupported`; it never reaches the rules, the inbox or the
-//! resolver, and nothing of it reaches a server. A fake guest (yamux client) on a real
-//! per-workspace endpoint, the real proxy behind it.
+//! I tests for SSH from a workspace. SSH to a Git host's name is refused at once, whatever the
+//! port, with the reason `ssh_unsupported`; it never reaches the rules, the inbox or the
+//! resolver, and nothing of it reaches a server. SSH to any other name is decided by the rules like
+//! every connection and spliced when allowed. A fake guest (yamux client) on a real per-workspace
+//! endpoint, the real proxy behind it.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -126,9 +127,14 @@ impl Guest {
 
     /// Opens a tunnel to `authority`; the stream is positioned after the `200`.
     async fn tunnel(&mut self, authority: &str) -> StreamHandle {
+        self.tunnel_with(authority, &[]).await
+    }
+
+    /// [`Self::tunnel`] with extra headers on the `CONNECT`.
+    async fn tunnel_with(&mut self, authority: &str, headers: &[&str]) -> StreamHandle {
         let mut stream = self.control.open_stream().await.unwrap();
         stream
-            .write_all(connect(authority, &[]).as_bytes())
+            .write_all(connect(authority, headers).as_bytes())
             .await
             .unwrap();
         let mut head = Vec::new();
@@ -225,7 +231,7 @@ fn assert_ssh_refusals(events: &[ConnectionEvent], count: usize) {
 }
 
 #[tokio::test]
-async fn an_announced_ssh_connect_is_refused_for_any_host_and_port_before_any_rule() {
+async fn an_announced_ssh_connect_to_a_git_host_is_refused_on_any_port_before_any_rule() {
     let rig = Rig::new(&[]);
     // A rule that would allow the host does not matter: SSH is refused before the rules.
     rig.policy.allow(&host("github.com"));
@@ -237,10 +243,9 @@ async fn an_announced_ssh_connect_is_refused_for_any_host_and_port_before_any_ru
         "bitbucket.org:22",
         "ssh.dev.azure.com:22",
         "vs-ssh.visualstudio.com:22",
-        "git.example.test:2222",
-        "nas.example.test:22",
-        "[2001:db8::1]:22",
-        "203.0.113.7:22",
+        "altssh.gitlab.com:443",
+        "altssh.bitbucket.org:443",
+        "github.com:2222",
     ];
     for authority in authorities {
         let answer = guest.announce(authority).await;
@@ -262,7 +267,7 @@ async fn an_announced_ssh_connect_is_refused_for_any_host_and_port_before_any_ru
 }
 
 #[tokio::test]
-async fn the_refusal_gives_the_https_form_of_a_known_git_hosts_remote_and_no_other() {
+async fn the_refusal_gives_the_https_form_of_a_known_git_hosts_remote() {
     let rig = Rig::new(&[]);
     let mut guest = rig.guest().await;
     for (authority, https) in [
@@ -290,11 +295,6 @@ async fn the_refusal_gives_the_https_form_of_a_known_git_hosts_remote_and_no_oth
             "{authority}: {answer}"
         );
     }
-    let answer = guest.announce("git.example.test:22").await;
-    assert!(
-        answer.ends_with("puddle: SSH is not supported yet; no rule or setting allows it\n"),
-        "{answer}"
-    );
 }
 
 #[tokio::test]
@@ -321,54 +321,103 @@ async fn the_banner_sent_with_the_connect_is_enough_and_the_header_is_not_case_s
 }
 
 #[tokio::test]
-async fn ssh_to_an_address_whose_toggle_is_off_is_the_ssh_refusal_not_a_toggle_refusal() {
+async fn ssh_to_an_address_whose_toggle_is_off_is_a_toggle_refusal_like_any_connection() {
     let rig = Rig::with_default_guard();
     let mut guest = rig.guest().await;
     for authority in ["127.0.0.1:22", "10.1.2.3:22", "localhost:22"] {
         let answer = guest.announce(authority).await;
         assert!(
-            answer.contains("x-puddle-blocked: ssh_unsupported"),
+            answer.contains("x-puddle-blocked: ") && !answer.contains("ssh_unsupported"),
             "{authority}: {answer}"
         );
-        assert!(!answer.contains("toggle"), "{authority}: {answer}");
+        assert!(answer.contains("toggle"), "{authority}: {answer}");
     }
-    assert_ssh_refusals(&rig.events(3).await, 3);
+    let events = rig.events(3).await;
+    assert!(
+        events
+            .iter()
+            .all(|e| e.decision == ConnectionDecision::Blocked
+                && e.reason != ConnectionReason::Blocked(BlockReason::SshUnsupported)),
+        "{events:?}"
+    );
 }
 
 #[tokio::test]
-async fn ssh_that_waits_for_the_200_is_ended_at_its_first_bytes_and_the_server_gets_nothing() {
-    let server = Silent::start().await;
-    let rig = Rig::new(&["git.test"]);
-    // The host is allowed (rules ignore the port), so the tunnel opens.
-    rig.policy.allow(&host("git.test"));
+async fn ssh_to_a_name_no_rule_covers_waits_in_the_inbox_with_its_port() {
+    let rig = Rig::new(&["nas.test"]);
     let mut guest = rig.guest().await;
-    let mut tunnel = guest
-        .tunnel(&format!("git.test:{}", server.addr.port()))
-        .await;
-    tunnel.write_all(BANNER).await.unwrap();
-    let mut answer = Vec::new();
-    tokio::time::timeout(Duration::from_secs(5), tunnel.read_to_end(&mut answer))
-        .await
-        .expect("the tunnel ends")
-        .unwrap();
-    let answer = String::from_utf8(answer).unwrap();
-    assert_eq!(
-        answer,
-        "puddle: SSH is not supported yet; no rule or setting allows it\r\n"
-    );
+    let answer = guest.announce("nas.test:2222").await;
     assert!(
-        !answer.starts_with("SSH-"),
-        "a pre-banner line, not a banner"
+        answer.contains("x-puddle-decision: pending") && !answer.contains("ssh_unsupported"),
+        "{answer}"
     );
-    assert!(
-        server.received().is_empty(),
-        "the client's identification never went upstream: {:?}",
-        server.received()
-    );
+    let pending = rig.policy.pending();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].host.to_string(), "nas.test");
+    assert_eq!(pending[0].port, 2222);
     let events = rig.events(1).await;
-    assert_ssh_refusals(&events, 1);
-    assert_eq!(events.first().unwrap().resolved_ip, Some(LOCAL));
-    assert_eq!(server.connections(), 1, "only the tunnel's own connect");
+    assert_eq!(events[0].decision, ConnectionDecision::Pending);
+    assert_eq!(events[0].pending_id, Some(pending[0].id));
+}
+
+#[tokio::test]
+async fn ssh_to_a_name_a_rule_denies_is_refused_by_the_rule_not_as_unsupported() {
+    let rig = Rig::new(&["nas.test"]);
+    rig.policy.deny_host(&host("nas.test"));
+    let mut guest = rig.guest().await;
+    let answer = guest.announce("nas.test:22").await;
+    assert!(
+        answer.contains("x-puddle-decision: deny") && !answer.contains("ssh_unsupported"),
+        "{answer}"
+    );
+    assert_eq!(rig.policy.pending().len(), 0);
+}
+
+#[tokio::test]
+async fn an_allowed_name_gets_its_ssh_spliced_end_to_end_on_any_port() {
+    let server = Silent::start().await;
+    let rig = Rig::new(&["nas.test"]);
+    rig.policy.allow(&host("nas.test"));
+    let mut guest = rig.guest().await;
+    // Announced, as the agent's `connect` command sends it, and not announced (the banner only
+    // follows the 200): the same splice, and the server gets the client's bytes unchanged.
+    for headers in [&["x-puddle-protocol: ssh"][..], &[][..]] {
+        let mut tunnel = guest
+            .tunnel_with(&format!("nas.test:{}", server.addr.port()), headers)
+            .await;
+        tunnel.write_all(BANNER).await.unwrap();
+        tunnel.flush().await.unwrap();
+        tunnel.shutdown().await.unwrap();
+    }
+    // The banner right behind the head, as the agent's `connect` sends it.
+    let mut early = guest.control.open_stream().await.unwrap();
+    let mut head = connect(
+        &format!("nas.test:{}", server.addr.port()),
+        &["x-puddle-protocol: ssh"],
+    )
+    .into_bytes();
+    head.extend_from_slice(BANNER);
+    early.write_all(&head).await.unwrap();
+    puddle_test_kit::eventually(
+        "the server received the three banners",
+        Duration::from_secs(5),
+        || {
+            let got = server.received().len();
+            if got >= BANNER.len() * 3 {
+                Ok(())
+            } else {
+                Err(format!("{got} of {} bytes", BANNER.len() * 3))
+            }
+        },
+    )
+    .await;
+    assert_eq!(server.received(), [BANNER, BANNER, BANNER].concat());
+    assert_eq!(server.connections(), 3, "one upstream connection each");
+    let events = rig.events(2).await;
+    for event in &events {
+        assert_eq!(event.decision, ConnectionDecision::Allow, "{event:?}");
+        assert_eq!(event.reason, ConnectionReason::Rule, "{event:?}");
+    }
 }
 
 #[tokio::test]
@@ -477,7 +526,7 @@ async fn the_hosts_direct_ssh_into_a_workspace_needs_still_pass_https_untouched(
     // Direct SSH into a workspace (an editor's Remote-SSH) is Puddle's own endpoint and never
     // reaches this proxy. What the editor's server does inside the workspace afterwards is HTTPS to
     // the hosts the direct-SSH setting allows: the refusal of the workspace's own SSH leaves it
-    // alone, while an SSH client to the same host is still refused.
+    // alone.
     let server = Silent::start().await;
     let hosts = [
         "update.code.visualstudio.com",
@@ -512,11 +561,6 @@ async fn the_hosts_direct_ssh_into_a_workspace_needs_still_pass_https_untouched(
     )
     .await;
     assert_eq!(server.received().len(), hello.len() * hosts.len());
-    let answer = guest.announce("update.code.visualstudio.com:22").await;
-    assert!(
-        answer.contains("x-puddle-blocked: ssh_unsupported"),
-        "{answer}"
-    );
 }
 
 /// Resolves every name to one address, after a pause.

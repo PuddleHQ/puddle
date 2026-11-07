@@ -637,6 +637,7 @@ pub(crate) struct RigBuilder {
     pub(crate) request_rules: puddle_proxy::RequestRules,
     /// Git over SSH for the bound names (off by default).
     pub(crate) git_ssh: Option<puddle_proxy::GitSsh>,
+    pub(crate) git_ssh_keys: Option<Arc<puddle_proxy::GitSshHostKeys>>,
 }
 
 impl RigBuilder {
@@ -656,12 +657,19 @@ impl RigBuilder {
             interception: Interception::default(),
             request_rules: puddle_proxy::RequestRules::default(),
             git_ssh: None,
+            git_ssh_keys: None,
         }
     }
 
     /// Serves the SSH of the bound names as Git hosts.
     pub(crate) fn git_ssh(mut self, git: puddle_proxy::GitSsh) -> Self {
         self.git_ssh = Some(git);
+        self
+    }
+
+    /// Gives the `box` workspace the host keys of its own start for Git over SSH.
+    pub(crate) fn git_ssh_keys(mut self, keys: Arc<puddle_proxy::GitSshHostKeys>) -> Self {
+        self.git_ssh_keys = Some(keys);
         self
     }
 
@@ -783,6 +791,9 @@ impl RigBuilder {
         .with_git_ssh_hosts(TerminationSet::parse(self.bound.iter().copied()).unwrap());
         if let Some(exchanges) = self.exchanges {
             termination = termination.with_exchanges(exchanges);
+        }
+        if let Some(keys) = self.git_ssh_keys {
+            termination = termination.with_git_ssh_keys(keys);
         }
         terminations.insert(workspace("box"), termination);
         // A second workspace with its own CA for the same names.

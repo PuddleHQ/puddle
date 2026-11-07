@@ -76,6 +76,14 @@ const BUILT_IN: [(&str, &str, PathForm); 8] = [
     ),
 ];
 
+/// The SSH names of the built-in Git hosts, the ones every workspace has.
+pub(crate) fn built_in_names() -> Vec<Host> {
+    BUILT_IN
+        .iter()
+        .filter_map(|(ssh, ..)| Host::parse_normalised(ssh).ok())
+        .collect()
+}
+
 /// The built-in Git host called `name`, if there is one.
 pub(crate) fn built_in(name: &Host) -> Option<GitHost> {
     let name = name.to_string();
@@ -436,6 +444,19 @@ mod tests {
         assert_eq!(plain.audit_path(), "/acme/web");
         let azure = repository("'v3/Org/Proj/Repo'", &host("ssh.dev.azure.com")).unwrap();
         assert_eq!(azure.audit_path(), "/org/proj/repo");
+    }
+
+    #[test]
+    fn the_built_in_ssh_names_are_every_built_in_host_once() {
+        let names = built_in_names();
+        assert_eq!(names.len(), BUILT_IN.len());
+        for name in ["github.com", "ssh.github.com", "ssh.dev.azure.com"] {
+            assert!(
+                names.contains(&Host::parse_normalised(name).unwrap()),
+                "{name}"
+            );
+        }
+        assert_eq!(crate::git_ssh_built_in_hosts(), names);
     }
 
     #[test]

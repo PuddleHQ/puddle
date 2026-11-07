@@ -36,6 +36,7 @@ use crate::ValidationError;
 
 mod json;
 mod jsonc;
+mod knownhosts;
 mod sshconfig;
 
 /// Largest file the engine reads (4 MiB). A larger one is left alone.
@@ -56,6 +57,10 @@ pub enum MergeFormat {
     /// the value is the pattern), added at the top when no `Include` before the first `Host` or
     /// `Match` reads that pattern. The rest of the file keeps its bytes.
     SshConfig,
+    /// OpenSSH's `ssh_known_hosts`: Puddle owns the lines between `# puddle: begin` and
+    /// `# puddle: end` (key path `["Puddle"]`, the value is the lines, one host-key entry each).
+    /// A file without the markers gets them at its end, and every other byte of the file stays.
+    KnownHosts,
 }
 
 /// One key Puddle owns, as a path from the top level (`["proxies", "default"]`), and its value
@@ -83,6 +88,16 @@ impl MergeEntry {
         Self {
             key: vec!["Include".to_owned()],
             value: pattern.to_owned(),
+        }
+    }
+
+    /// The block of host-key lines of an `ssh_known_hosts` ([`MergeFormat::KnownHosts`]): `lines`
+    /// are `host keytype base64` entries separated by `\n`, without a final line break.
+    #[must_use]
+    pub fn known_hosts(lines: &str) -> Self {
+        Self {
+            key: vec![knownhosts::KEY.to_owned()],
+            value: lines.to_owned(),
         }
     }
 
@@ -237,6 +252,14 @@ impl MergeSpec {
                         ));
                     }
                 }
+                MergeFormat::KnownHosts => {
+                    if e.key != [knownhosts::KEY] {
+                        return Err(ValidationError::new(WHAT, &shown, "only Puddle is owned"));
+                    }
+                    if let Some(reason) = knownhosts::invalid(&e.value) {
+                        return Err(ValidationError::new(WHAT, &shown, reason));
+                    }
+                }
             }
         }
         Ok(Self { format, entries })
@@ -284,7 +307,12 @@ impl MergeSpec {
         previous: &[Vec<String>],
     ) -> Result<Merged, MergeRefusal> {
         let Some(dialect) = dialect(self.format) else {
-            return sshconfig::apply(existing, &self.entries).map(|out| {
+            let applied = if self.format == MergeFormat::KnownHosts {
+                knownhosts::apply(existing, &self.entries)
+            } else {
+                sshconfig::apply(existing, &self.entries)
+            };
+            return applied.map(|out| {
                 if existing == Some(out.as_bytes()) {
                     Merged::Unchanged
                 } else {
@@ -317,7 +345,11 @@ pub fn unmerge(
     keys: &[Vec<String>],
 ) -> Result<Unmerged, MergeRefusal> {
     let Some(dialect) = dialect(format) else {
-        return sshconfig::unmerge(existing);
+        return if format == MergeFormat::KnownHosts {
+            knownhosts::unmerge(existing)
+        } else {
+            sshconfig::unmerge(existing)
+        };
     };
     let Some(original) = text(Some(existing))? else {
         return Ok(Unmerged {
@@ -340,7 +372,7 @@ fn dialect(format: MergeFormat) -> Option<json::Dialect> {
     match format {
         MergeFormat::Json => Some(json::Dialect::Strict),
         MergeFormat::Jsonc => Some(json::Dialect::Comments),
-        MergeFormat::SshConfig => None,
+        MergeFormat::SshConfig | MergeFormat::KnownHosts => None,
     }
 }
 
@@ -361,6 +393,26 @@ fn text(existing: Option<&[u8]>) -> Result<Option<String>, MergeRefusal> {
 
 fn display_key(key: &[String]) -> String {
     key.join(".")
+}
+
+/// The text of a line-based file: `None` for no file; refused with a NUL byte, invalid UTF-8 or
+/// more than [`MAX_MERGE_FILE`] bytes.
+fn read_text(existing: Option<&[u8]>) -> Result<Option<&str>, MergeRefusal> {
+    let Some(bytes) = existing else {
+        return Ok(None);
+    };
+    if bytes.len() > MAX_MERGE_FILE {
+        return Err(MergeRefusal::TooLarge);
+    }
+    if bytes.contains(&0) {
+        return Err(MergeRefusal::NulByte);
+    }
+    std::str::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| MergeRefusal::Syntax {
+            format: "UTF-8",
+            reason: "invalid byte sequence".to_owned(),
+        })
 }
 
 #[cfg(test)]

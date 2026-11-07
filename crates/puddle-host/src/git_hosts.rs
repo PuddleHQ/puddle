@@ -6,9 +6,11 @@
 //! so a credential on `dev.azure.com` covers both.
 
 use puddle_boot::{GitAuthorRule, GitIdentity, MAX_GIT_AUTHOR_GLOBS, MAX_GIT_AUTHOR_RULES};
-use puddle_proxy::TerminationSet;
+use std::sync::Arc;
+
+use puddle_proxy::{GitSshHostKeys, TerminationSet, git_ssh_built_in_hosts};
 use puddle_store::{Identity, WorkspaceGit};
-use puddle_types::{Problem, Problems, WorkspaceId};
+use puddle_types::{Host, Problem, Problems, WorkspaceId};
 
 /// Azure DevOps's own host; its organisations also answer on `{org}.visualstudio.com`.
 const AZURE_DEVOPS: &str = "dev.azure.com";
@@ -46,6 +48,62 @@ pub(crate) fn decrypt_set(git: &WorkspaceGit) -> TerminationSet {
         }
     }
     set
+}
+
+/// The hosts of `git`'s credentials whose SSH Puddle ends itself, on top of the built-in Git
+/// hosts: the names it decrypts (an enterprise server), with no wildcard.
+pub(crate) fn ssh_credential_hosts(git: &WorkspaceGit) -> TerminationSet {
+    let mut set = TerminationSet::new();
+    for identity in &git.identities {
+        for credential in &identity.credentials {
+            for pattern in decrypt_patterns(credential.host.as_str()) {
+                if !pattern.contains('*') {
+                    let _ = set.insert(&pattern);
+                }
+            }
+        }
+    }
+    set
+}
+
+/// Every name a workspace with `git` may use for Git over SSH: the built-in Git hosts and the
+/// hosts of its credentials. These are the names the guest's `ssh_known_hosts` lists the host
+/// keys under.
+pub(crate) fn ssh_names(git: &WorkspaceGit) -> Vec<Host> {
+    let mut names = git_ssh_built_in_hosts();
+    names.extend(
+        git.identities
+            .iter()
+            .flat_map(|identity| &identity.credentials)
+            .flat_map(|credential| decrypt_patterns(credential.host.as_str()))
+            .filter(|pattern| !pattern.contains('*'))
+            .filter_map(|pattern| Host::parse_normalised(&pattern).ok()),
+    );
+    names.sort_by_key(ToString::to_string);
+    names.dedup();
+    names
+}
+
+/// This start's SSH host keys and the names the guest's `ssh_known_hosts` lists them under.
+#[derive(Clone)]
+pub(crate) struct SshListing {
+    pub(crate) keys: Arc<GitSshHostKeys>,
+    pub(crate) hosts: Vec<Host>,
+}
+
+impl SshListing {
+    /// The same keys for the names `git` has now.
+    pub(crate) fn for_git(keys: Arc<GitSshHostKeys>, git: &WorkspaceGit) -> Self {
+        Self {
+            keys,
+            hosts: ssh_names(git),
+        }
+    }
+
+    /// The `known_hosts` lines of the block.
+    pub(crate) fn lines(&self) -> Option<String> {
+        self.keys.known_hosts(&self.hosts)
+    }
 }
 
 /// The credential hosts of `git`'s identities that are never decrypted, so their credential is
@@ -380,6 +438,48 @@ mod tests {
     }
 
     #[test]
+    fn the_ssh_names_are_the_built_in_hosts_and_the_credential_hosts_without_wildcards() {
+        let names = |git: &WorkspaceGit| -> Vec<String> {
+            ssh_names(git).iter().map(ToString::to_string).collect()
+        };
+        let none = names(&git(vec![]));
+        assert_eq!(none.len(), 8, "{none:?}");
+        assert!(none.contains(&"ssh.github.com".to_owned()));
+        // A sorted list with no duplicates, whatever the order of the identities.
+        let mut sorted = none.clone();
+        sorted.sort();
+        assert_eq!(none, sorted);
+
+        let with = git(vec![
+            ("Corp", vec![credential("Git.Corp.Example", &[], true)]),
+            // Azure DevOps adds `*.visualstudio.com`, which is no name to list a key under.
+            ("Azure", vec![credential("dev.azure.com", &[], true)]),
+            // Another port is never decrypted, so its SSH is no Git name either.
+            ("Odd", vec![credential("git.odd.example:8443", &[], true)]),
+            // A built-in name is listed once.
+            ("Hub", vec![credential("github.com", &[], true)]),
+        ]);
+        let listed = names(&with);
+        assert_eq!(listed.len(), 10, "{listed:?}");
+        assert!(listed.contains(&"git.corp.example".to_owned()));
+        assert!(!listed.iter().any(|n| n.contains('*') || n.contains("odd")));
+
+        let served = ssh_credential_hosts(&with);
+        assert!(served.contains(&Host::parse_normalised("git.corp.example").unwrap()));
+        assert!(served.contains(&Host::parse_normalised("dev.azure.com").unwrap()));
+        assert!(!served.contains(&Host::parse_normalised("git.odd.example").unwrap()));
+    }
+
+    #[test]
+    fn a_listing_has_the_lines_of_its_keys_for_its_names() {
+        let keys = Arc::new(GitSshHostKeys::generate().unwrap());
+        let listing = SshListing::for_git(Arc::clone(&keys), &git(vec![]));
+        let lines = listing.lines().unwrap();
+        assert_eq!(lines.lines().count(), 8 * 2 * 3);
+        assert_eq!(Some(lines), keys.known_hosts(&listing.hosts));
+    }
+
+    #[test]
     fn a_credential_decrypts_its_host_and_azure_devops_its_legacy_names_too() {
         assert_eq!(decrypt_patterns("GitHub.com"), ["github.com"]);
         assert_eq!(decrypt_patterns("github.com:443"), ["github.com"]);
@@ -405,7 +505,7 @@ mod tests {
                 ],
             ),
         ]));
-        let host = |h: &str| puddle_types::Host::parse_normalised(h).unwrap();
+        let host = |h: &str| Host::parse_normalised(h).unwrap();
         for yes in ["github.com", "dev.azure.com", "contoso.visualstudio.com"] {
             assert!(set.contains(&host(yes)), "{yes}");
         }

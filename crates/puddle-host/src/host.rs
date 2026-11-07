@@ -310,6 +310,11 @@ pub struct HostOptions {
     /// Holds an author rewrite back when it starts (tests, to make the rewrites of one workspace
     /// run out of order). Without one, no rewrite waits.
     pub rewrite_gate: Option<RewriteGate>,
+    /// Makes SSH host keys for each start of a workspace's sandbox and lists them in the guest's
+    /// `ssh_known_hosts` under the Git hosts, so the guest's `ssh` finds the keys of Puddle's own
+    /// SSH server for Git. Off by default: the proxy serves no SSH to Git hosts until it is given
+    /// an upstream for it.
+    pub git_ssh: bool,
     /// Where new workspace ids come from. Without one, the operating system's random source
     /// ([`puddle_api::RandomIds`]); tests give [`puddle_api::NameIds`], so a workspace called
     /// `acme` gets the id `acme`.
@@ -327,6 +332,7 @@ impl Default for HostOptions {
             resolver: None,
             company_signals: None,
             rewrite_gate: None,
+            git_ssh: false,
             workspace_ids: None,
         }
     }
@@ -1077,7 +1083,8 @@ impl Injecting {
                 options.injector.clone(),
                 Arc::clone(vault),
             )
-            .with_login_markers(login_markers),
+            .with_login_markers(login_markers)
+            .with_git_ssh(options.git_ssh),
         );
         // The platform's roots plus the company's, as the guest is given.
         let tls = TlsClient::new(roots.certificates().iter().map(der_of))?;

@@ -10,19 +10,21 @@
 use crate::git_support::GitRig;
 use crate::terminate_support::{Guest, Pki, RigBuilder};
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::borrow::Cow;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use puddle_agent_proto::ssh::{PROTOCOL_HEADER, SSH};
 use puddle_proxy::{
-    BoxFuture, GitSsh, GitSshCommand, GitSshFailure, GitSshGreeting, GitSshHostKey, GitSshLimits,
-    GitSshStream, GitSshUpstream,
+    BoxFuture, GitSsh, GitSshCommand, GitSshFailure, GitSshGreeting, GitSshHostKey, GitSshHostKeys,
+    GitSshLimits, GitSshStream, GitSshUpstream,
 };
 use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionReason, Host};
 use russh::ChannelMsg;
+use russh::Preferred;
 use russh::client::{self, Handle};
 use russh::keys::PublicKeyOrCertificate;
-use russh::keys::ssh_key::{Algorithm, rand_core};
+use russh::keys::ssh_key::{Algorithm, EcdsaCurve, HashAlg, rand_core};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 
 /// The operating system's random numbers, for the host key of a test.
@@ -130,13 +132,19 @@ impl SshRig {
     }
 
     async fn with(upstream: Recording, limits: GitSshLimits) -> Self {
+        Self::with_keys(upstream, limits, vec![host_key()]).await
+    }
+
+    /// The same with these host keys (at least one); `key` is the first.
+    async fn with_keys(
+        upstream: Recording,
+        limits: GitSshLimits,
+        keys: Vec<GitSshHostKey>,
+    ) -> Self {
         let upstream = Arc::new(upstream);
-        let key = host_key();
-        let git_ssh = GitSsh::new(
-            Arc::clone(&upstream) as Arc<dyn GitSshUpstream>,
-            vec![key.clone()],
-        )
-        .with_limits(limits);
+        let key = keys.first().expect("at least one host key").clone();
+        let git_ssh =
+            GitSsh::new(Arc::clone(&upstream) as Arc<dyn GitSshUpstream>, keys).with_limits(limits);
         let world = GitRig::world();
         let pki = Pki::new();
         let server = crate::terminate_support::FakeServer::tls(
@@ -178,6 +186,20 @@ impl SshRig {
         guest: &mut Guest,
         authority: &str,
     ) -> Result<Handle<Trusting>, String> {
+        let (handle, shown) = self
+            .handshake(guest, authority, client::Config::default())
+            .await?;
+        assert_eq!(shown, self.key.public_key().to_openssh().unwrap());
+        Ok(handle)
+    }
+
+    /// The handshake with `config`; the connection and the host key the server showed.
+    async fn handshake(
+        &self,
+        guest: &mut Guest,
+        authority: &str,
+        config: client::Config,
+    ) -> Result<(Handle<Trusting>, String), String> {
         let mut stream = guest.open_stream().await;
         stream
             .write_all(
@@ -205,7 +227,7 @@ impl SshRig {
         let handler = Trusting {
             seen: Arc::clone(&seen),
         };
-        let handle = client::connect_stream(Arc::new(client::Config::default()), reader, handler)
+        let handle = client::connect_stream(Arc::new(config), reader, handler)
             .await
             .map_err(|e| e.to_string())?;
         let shown = seen
@@ -213,8 +235,7 @@ impl SshRig {
             .unwrap()
             .clone()
             .expect("the server showed a key");
-        assert_eq!(shown, self.key.public_key().to_openssh().unwrap());
-        Ok(handle)
+        Ok((handle, shown))
     }
 
     async fn events(&self, count: usize) -> Vec<ConnectionEvent> {
@@ -860,6 +881,32 @@ impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for SkipWrites<S> {
 }
 
 #[tokio::test]
+async fn the_server_names_itself_puddle_in_its_identification_line() {
+    let t = SshRig::new().await;
+    let guest = t.git.rig.guest();
+    let mut stream = guest.open_stream().await;
+    stream
+        .write_all(
+            format!(
+                "CONNECT bound.test:22 HTTP/1.1\r\nHost: bound.test:22\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\nSSH-2.0-test\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        reader.read_line(&mut line).await.unwrap();
+        if line.starts_with("SSH-") {
+            break;
+        }
+    }
+    assert_eq!(line, "SSH-2.0-Puddle\r\n");
+}
+
+#[tokio::test]
 async fn a_libssh2_client_is_asked_for_a_key_because_it_fails_a_login_with_none() {
     // libgit2 (cargo's built-in Git) reads an accepted `none` as "no authentication methods
     // succeeded"; any key will do.
@@ -1033,4 +1080,108 @@ async fn without_an_answer_of_its_own_a_shell_says_no_identity_and_ends_255() {
         greeting.message,
         "puddle: no identity on this workspace has a credential for github.com; add one on the workspace's Git tab\n"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The host keys of one start.
+
+/// One start's keys for the whole test binary: the RSA key takes a moment to make.
+fn start_keys() -> &'static GitSshHostKeys {
+    static KEYS: OnceLock<GitSshHostKeys> = OnceLock::new();
+    KEYS.get_or_init(|| GitSshHostKeys::generate().unwrap())
+}
+
+#[tokio::test]
+async fn a_client_gets_the_key_of_the_type_it_asks_for_and_the_known_hosts_lines_list_it() {
+    let keys = start_keys();
+    let t = SshRig::with_keys(
+        Recording::default(),
+        GitSshLimits::default(),
+        keys.keys().to_vec(),
+    )
+    .await;
+    let hosts = [Host::parse_normalised("bound.test").unwrap()];
+    let listed = keys.known_hosts(&hosts).unwrap();
+    for (algorithm, kind) in [
+        (Algorithm::Ed25519, "ssh-ed25519"),
+        (
+            Algorithm::Ecdsa {
+                curve: EcdsaCurve::NistP256,
+            },
+            "ecdsa-sha2-nistp256",
+        ),
+        (
+            Algorithm::Rsa {
+                hash: Some(HashAlg::Sha512),
+            },
+            "ssh-rsa",
+        ),
+    ] {
+        let config = client::Config {
+            preferred: Preferred {
+                key: Cow::Owned(vec![algorithm]),
+                ..Preferred::default()
+            },
+            ..client::Config::default()
+        };
+        let mut guest = t.git.rig.guest();
+        let (mut handle, shown) = t
+            .handshake(&mut guest, "bound.test:22", config)
+            .await
+            .unwrap();
+        login(&mut handle).await;
+        assert!(shown.starts_with(kind), "{kind}: {shown}");
+        // What the client saw is a line of the file the guest's `ssh` reads, in both spellings.
+        let shown = shown.split(' ').take(2).collect::<Vec<_>>().join(" ");
+        for pattern in ["bound.test", "[bound.test]:443"] {
+            let line = format!("{pattern} {shown}");
+            assert!(listed.lines().any(|l| l == line), "{line} not in {listed}");
+        }
+        let ran = exec(&handle, &[], "git-upload-pack '/acme/web.git'", b"").await;
+        assert!(ran.out.starts_with("HELLO git-upload-pack"), "{ran:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_workspace_with_keys_of_its_own_start_is_served_with_them_and_not_the_default_ones() {
+    let keys = Arc::new(start_keys().clone());
+    let decoy = host_key();
+    let upstream = Arc::new(Recording::default());
+    let git_ssh = GitSsh::new(
+        Arc::clone(&upstream) as Arc<dyn GitSshUpstream>,
+        vec![decoy.clone()],
+    );
+    let world = GitRig::world();
+    let pki = Pki::new();
+    let server = crate::terminate_support::FakeServer::tls(
+        pki.server_config("bound.test", crate::terminate_support::Flaw::None),
+        Arc::new(|_: &crate::terminate_support::Recorded| {
+            crate::terminate_support::Reply::ok("never asked")
+        }),
+    )
+    .await;
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(world.injector.clone())
+        .git_ssh(git_ssh)
+        .git_ssh_keys(Arc::clone(&keys))
+        .build();
+    let t = SshRig {
+        git: GitRig {
+            world,
+            server,
+            rig,
+            stand_in: String::new(),
+        },
+        upstream,
+        key: keys.keys()[0].clone(),
+    };
+    let mut guest = t.git.rig.guest();
+    let (mut handle, shown) = t
+        .handshake(&mut guest, "bound.test:22", client::Config::default())
+        .await
+        .unwrap();
+    login(&mut handle).await;
+    assert_eq!(shown, keys.keys()[0].public_key().to_openssh().unwrap());
+    assert_ne!(shown, decoy.public_key().to_openssh().unwrap());
 }

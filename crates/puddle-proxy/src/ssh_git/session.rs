@@ -191,7 +191,9 @@ where
     });
     let config = Arc::new(russh::server::Config {
         server_id: russh::SshId::Standard("SSH-2.0-Puddle".into()),
-        keys: git.host_keys.as_ref().clone(),
+        keys: termination
+            .git_ssh_keys()
+            .map_or_else(|| git.host_keys.as_ref().clone(), |own| own.keys().to_vec()),
         auth_rejection_time: std::time::Duration::ZERO,
         auth_rejection_time_initial: Some(std::time::Duration::ZERO),
         inactivity_timeout: None,

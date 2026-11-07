@@ -103,6 +103,34 @@ fn an_ssh_config_of_exactly_the_limit_is_merged_and_one_byte_more_is_refused() {
 }
 
 #[test]
+fn an_ssh_known_hosts_of_exactly_the_limit_is_merged_and_one_byte_more_is_refused() {
+    let spec = MergeSpec::new(
+        MergeFormat::KnownHosts,
+        vec![MergeEntry::known_hosts("github.com ssh-ed25519 AAAA")],
+    )
+    .unwrap();
+    let ok = ssh_of(MAX_MERGE_FILE);
+    assert!(matches!(
+        spec.apply(Some(&ok), &[]).unwrap(),
+        Merged::Write(_)
+    ));
+    assert_eq!(
+        unmerge(MergeFormat::KnownHosts, &ok, &[]).unwrap().merged,
+        Merged::Unchanged
+    );
+
+    let big = ssh_of(MAX_MERGE_FILE + 1);
+    assert_eq!(
+        spec.apply(Some(&big), &[]).unwrap_err(),
+        MergeRefusal::TooLarge
+    );
+    assert_eq!(
+        unmerge(MergeFormat::KnownHosts, &big, &[]).unwrap_err(),
+        MergeRefusal::TooLarge
+    );
+}
+
+#[test]
 fn a_lone_slash_outside_a_string_is_a_syntax_error_even_when_a_block_comment_closes_later() {
     let text = b"{\"a\": 1 /x */ }";
     let err = json_spec(MergeFormat::Jsonc)

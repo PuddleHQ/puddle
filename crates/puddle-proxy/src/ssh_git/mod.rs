@@ -23,6 +23,7 @@
 //! as service and repository, with the credential's binding when the table let it through.
 
 mod grammar;
+mod host_keys;
 mod session;
 
 use std::fmt;
@@ -34,8 +35,16 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::destination::BoxFuture;
 pub use grammar::GitService;
-pub(crate) use grammar::{GitHost, PathForm, built_in};
+pub(crate) use grammar::{GitHost, PathForm, built_in, built_in_names};
+pub use host_keys::{GitSshHostKeys, GitSshKeyError};
 pub(crate) use session::serve;
+
+/// The SSH names of the built-in Git hosts (`github.com`, `ssh.github.com`, `ssh.dev.azure.com`
+/// and the rest), which every workspace's SSH to is ended by Puddle once Git over SSH is on.
+#[must_use]
+pub fn git_ssh_built_in_hosts() -> Vec<Host> {
+    built_in_names()
+}
 
 /// The host key type a [`GitSsh`] serves; the keys live in memory for one start of a workspace.
 pub use russh::keys::PrivateKey as GitSshHostKey;
@@ -157,8 +166,9 @@ impl fmt::Debug for GitSsh {
 }
 
 impl GitSsh {
-    /// Serves the SSH of terminated Git hosts with `host_keys` (at least one), carrying commands
-    /// out through `upstream`.
+    /// Serves the SSH of terminated Git hosts, carrying commands out through `upstream`, with
+    /// `host_keys` for a workspace whose [`crate::Termination`] has no keys of its own
+    /// ([`crate::Termination::with_git_ssh_keys`]); empty when every workspace has its own.
     #[must_use]
     pub fn new(upstream: Arc<dyn GitSshUpstream>, host_keys: Vec<GitSshHostKey>) -> Self {
         Self {

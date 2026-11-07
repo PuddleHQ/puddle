@@ -22,6 +22,11 @@ pub const SUDOERS_GUEST: &str = "/etc/sudoers.d/puddle-proxy";
 /// before it, so a `ProxyCommand` or `ProxyJump` the user sets wins.
 pub const SSH_CONFIG_GUEST: &str = "/etc/ssh/ssh_config.d/00-puddle.conf";
 
+/// The system-wide list of known host keys. `ssh` reads it, and so do tools that read no
+/// `ssh_config` (cargo's built-in Git), so the keys of Puddle's SSH server for Git go here and
+/// not into a file of Puddle's own.
+pub const SSH_KNOWN_HOSTS_GUEST: &str = "/etc/ssh/ssh_known_hosts";
+
 /// The system `ssh_config`, which has to read the folder above.
 pub(crate) const SSH_CONFIG_SYSTEM: &str = "/etc/ssh/ssh_config";
 
@@ -336,6 +341,24 @@ fn ssh_config_include() -> Result<GuestFile, ConfigError> {
     Ok(GuestFile::merged(path, spec))
 }
 
+/// The guest's `ssh_known_hosts` with the host keys of Puddle's SSH server for Git: `lines` are
+/// `host keytype base64` entries, one per line. The file is the image's and the user's, so it is
+/// merged: Puddle owns only the lines between its two marker lines.
+///
+/// # Errors
+///
+/// [`ConfigError::GuestPath`] when `lines` is empty, longer than the merge allows or holds a
+/// comment, a blank line or a control character.
+pub fn ssh_known_hosts_file(lines: &str) -> Result<GuestFile, ConfigError> {
+    let spec = MergeSpec::new(
+        MergeFormat::KnownHosts,
+        vec![MergeEntry::known_hosts(lines)],
+    )
+    .map_err(|e| path_error(&e))?;
+    let path = GuestPath::new(SSH_KNOWN_HOSTS_GUEST).map_err(|e| path_error(&e))?;
+    Ok(GuestFile::merged(path, spec))
+}
+
 /// Every outbound `ssh` connection goes through the agent, which says that SSH is not supported
 /// yet. What is inside the workspace is not outbound: a host named `localhost` or `::1` stays
 /// ssh's own, and the agent dials any other destination itself when every address it resolves to
@@ -547,6 +570,22 @@ Match host \"*,!localhost,!::1\"
         assert!(text(f).ends_with("Include /etc/ssh/ssh_config.d/*.conf\n"));
         // The pattern is the folder the drop-in is written into.
         assert!(SSH_CONFIG_GUEST.starts_with("/etc/ssh/ssh_config.d/"));
+    }
+
+    #[test]
+    fn the_known_hosts_file_is_a_merge_of_one_block_and_refuses_what_is_not_host_keys() {
+        let lines = "github.com ssh-ed25519 AAAA\n[github.com]:443 ssh-ed25519 AAAA";
+        let f = ssh_known_hosts_file(lines).unwrap();
+        assert_eq!(f.path().as_str(), SSH_KNOWN_HOSTS_GUEST);
+        assert!(matches!(f.apply(), puddle_types::ApplyKind::Merge(_)));
+        assert_eq!(
+            text(&f),
+            format!("# puddle: begin\n{lines}\n# puddle: end\n")
+        );
+        for bad in ["", "# a comment", "a ssh-rsa A\n\nb ssh-rsa B"] {
+            let err = ssh_known_hosts_file(bad).unwrap_err();
+            assert!(matches!(err, ConfigError::GuestPath { .. }), "{bad:?}");
+        }
     }
 
     #[test]

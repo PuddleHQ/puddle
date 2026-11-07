@@ -495,6 +495,20 @@ impl Guest {
         plan_files(&self.plans.lock().unwrap()[n].1)
     }
 
+    /// The merge specs of boot plan number `n` (from 0), by guest path.
+    fn plan_merges(&self, n: usize) -> std::collections::BTreeMap<String, Vec<u8>> {
+        plan_calls(&self.plans.lock().unwrap()[n].1, "merge")
+    }
+
+    /// The host keys block boot plan number `n` merges into `ssh_known_hosts`, if it does.
+    fn known_hosts_block(&self, n: usize) -> Option<String> {
+        let merges = self.plan_merges(n);
+        let spec = merges.get("/etc/ssh/ssh_known_hosts")?;
+        let spec: serde_json::Value = serde_json::from_slice(spec).unwrap();
+        assert_eq!(spec["format"], "known_hosts");
+        Some(spec["entries"][0]["value"].as_str().unwrap().to_owned())
+    }
+
     fn boots(&self) -> usize {
         self.plans.lock().unwrap().len()
     }
@@ -513,10 +527,18 @@ impl Guest {
 /// The files a rendered boot plan writes: each `puddle_file '<path>' <mode> '<printf format>'`
 /// line, with the format decoded the way `printf` reads it (`\NNN` is an octal byte).
 fn plan_files(plan: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
+    plan_calls(plan, "file")
+}
+
+/// The same for the lines of one call: `file` (a file's contents) or `merge` (a merge spec).
+fn plan_calls(plan: &[u8], call: &str) -> std::collections::BTreeMap<String, Vec<u8>> {
     let text = String::from_utf8(plan.to_vec()).unwrap();
     let mut files = std::collections::BTreeMap::new();
     for line in text.split("\npuddle_") {
-        let Some(rest) = line.strip_prefix("file ") else {
+        let Some(rest) = line
+            .strip_prefix(call)
+            .and_then(|rest| rest.strip_prefix(' '))
+        else {
             continue;
         };
         let rest = rest.strip_prefix('\'').unwrap();
@@ -653,6 +675,8 @@ struct Rig {
     secrets: Arc<MemoryStore>,
     /// Holds an author rewrite back when it starts, for a test that sets it before the start.
     rewrite_gate: Mutex<Option<RewriteGate>>,
+    /// Starts the host with SSH host keys for Git over SSH.
+    git_ssh: AtomicBool,
     /// Where new ids come from, for a test about them; else ids made from names.
     ids: Mutex<Option<Arc<dyn puddle_api::IdSource>>>,
 }
@@ -672,6 +696,7 @@ impl Rig {
             windowless: AtomicBool::new(false),
             secrets: Arc::new(MemoryStore::new()),
             rewrite_gate: Mutex::new(None),
+            git_ssh: AtomicBool::new(false),
             ids: Mutex::new(None),
         }
     }
@@ -719,6 +744,7 @@ impl Rig {
             self.launcher.clone()
         };
         options.secret_store = Some(self.secrets.clone());
+        options.git_ssh = self.git_ssh.load(Ordering::SeqCst);
         options
             .rewrite_gate
             .clone_from(&self.rewrite_gate.lock().unwrap());
@@ -7199,6 +7225,98 @@ fn attach_during_the_next_boot(rig: &Rig, host: &Host<FakeRuntime>, workspace: &
     let workspace = name(workspace);
     *rig.guest.during_boot.lock().unwrap() =
         Some(Box::new(move || attach_a_new_identity(&store, &workspace)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_git_over_ssh_each_start_lists_its_own_host_keys_under_the_git_hosts() {
+    let rig = Rig::new();
+    rig.git_ssh.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let first = rig.guest.known_hosts_block(rig.guest.boots() - 1).unwrap();
+    // Three key types under the built-in names, each name plain and as `[name]:443`.
+    for kind in ["ssh-ed25519", "ecdsa-sha2-nistp256", "ssh-rsa"] {
+        for pattern in [
+            "github.com",
+            "[ssh.github.com]:443",
+            "vs-ssh.visualstudio.com",
+        ] {
+            assert!(
+                first.contains(&format!("{pattern} {kind} ")),
+                "{pattern} {kind}"
+            );
+        }
+    }
+    // The block is a merge into the system file; nothing writes a file of Puddle's own, and the
+    // private halves never reach the plan.
+    let files = rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(!files.contains_key("/etc/ssh/ssh_known_hosts"));
+    assert!(
+        files
+            .values()
+            .all(|bytes| !String::from_utf8_lossy(bytes).contains("PRIVATE KEY"))
+    );
+
+    // A restart makes new keys: the next plan lists them, and none of the old ones.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let second = rig.guest.known_hosts_block(rig.guest.boots() - 1).unwrap();
+    let key_of = |block: &str| {
+        block
+            .lines()
+            .next()
+            .unwrap()
+            .split(' ')
+            .nth(2)
+            .unwrap()
+            .to_owned()
+    };
+    assert_ne!(key_of(&first), key_of(&second));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_git_over_ssh_an_identity_on_another_host_adds_that_name_and_keeps_the_keys() {
+    let rig = Rig::new();
+    rig.git_ssh.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let booted = rig.guest.boots();
+    let before = rig.guest.known_hosts_block(booted - 1).unwrap();
+    assert!(!before.contains("git.corp.example"));
+
+    let identity = make_identity(&api, "Corp", "git.corp.example", &[]).await;
+    attach(&api, "acme", identity).await;
+    rig.guest.boots_reach(booted + 1).await;
+    let after = rig.guest.known_hosts_block(rig.guest.boots() - 1).unwrap();
+    // The new name is listed in both spellings and every line that was there is still there.
+    assert!(
+        after.contains("\ngit.corp.example ssh-ed25519 ")
+            || after.starts_with("git.corp.example ssh-ed25519 "),
+        "{after}"
+    );
+    assert!(after.contains("[git.corp.example]:443 ssh-rsa "), "{after}");
+    for line in before.lines() {
+        assert!(after.lines().any(|l| l == line), "{line}");
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_git_over_ssh_the_guest_boots_with_no_host_keys() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(rig.guest.known_hosts_block(rig.guest.boots() - 1), None);
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

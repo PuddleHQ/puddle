@@ -63,8 +63,8 @@ use crate::boot::{BootKit, GuestInputs};
 use crate::files::{Stored, WorkspaceBook};
 use crate::front::Flavours;
 use crate::git_hosts::{
-    Authors, GitProblem, authors, credentials_problem, left_out_problem, never_decrypted,
-    old_git_problem,
+    Authors, GitProblem, SshListing, authors, credentials_problem, left_out_problem,
+    never_decrypted, old_git_problem,
 };
 use crate::injection::Injection;
 use crate::kubernetes::{kubernetes_key, kubernetes_problem};
@@ -232,6 +232,9 @@ struct GuestState {
     ca: CaCertificate,
     /// The commit authors the guest holds now.
     authors: Authors,
+    /// This start's SSH host keys and the names the guest lists them under now; `None` when Git
+    /// over SSH is off.
+    ssh: Option<SshListing>,
     /// The user's variables the guest holds now, a secret as its stand-in: what it started with,
     /// or what the last change to them wrote into its login-shell file.
     env: GuestEnv,
@@ -1263,6 +1266,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             image,
             ca: began.certificate,
             authors: wanted,
+            ssh: began.ssh,
             env: began.env,
             dev_cert: inner.kit.dev_cert().await,
             start_folder: start_folder.cloned(),
@@ -1275,6 +1279,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             &GuestInputs {
                 ca: &state.ca,
                 authors: &state.authors,
+                ssh: state.ssh.as_ref(),
                 env: &state.env,
                 editor: state.editor.as_ref(),
                 dev_cert: state.dev_cert.as_ref(),
@@ -1426,11 +1431,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let wanted = authors(&git);
         self.report_git_settings(name, &git, &wanted);
-        if guest.authors == wanted {
+        // The keys stay the start's; the names they are listed under follow the identities.
+        let listing = guest
+            .ssh
+            .as_ref()
+            .map(|held| SshListing::for_git(Arc::clone(&held.keys), &git));
+        if guest.authors == wanted
+            && guest.ssh.as_ref().map(|s| &s.hosts) == listing.as_ref().map(|s| &s.hosts)
+        {
             return;
         }
         let replanned = GuestState {
             authors: wanted.clone(),
+            ssh: listing.clone(),
             ..guest
         };
         match self.run_plan_report(name, &gated, &replanned).await {
@@ -1441,6 +1454,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     && let Some(state) = entry.guest.as_mut()
                 {
                     state.authors = wanted;
+                    state.ssh = listing;
                 }
             }
             Err(reason) => Self::raise_author_sync(&inner.problems, name, &reason),
@@ -1711,6 +1725,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let inputs = GuestInputs {
             ca: &guest.ca,
             authors: &guest.authors,
+            ssh: guest.ssh.as_ref(),
             env: &guest.env,
             editor: guest.editor.as_ref(),
             dev_cert: guest.dev_cert.as_ref(),

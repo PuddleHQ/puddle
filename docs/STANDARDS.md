@@ -640,7 +640,7 @@ annotates `::error` and stops cargo or nextest so the job ends readable with its
 
 The VM no-hypervisor policy fails a merge queue run like a PR, and `verdict --nightly-skips` accepts a skip only on a
 scheduled run. Self-tests: `ci/scope-test.sh` (light mode and merge queue cases, a verdict matrix over every event and
-variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cancel-group-test.sh`, `ci/cache-gc-test.sh`, `ci/dependabot-auto-merge-test.sh`, `ci/merge-queue-sweep-test.sh`, `ci/cancel-dissolved-groups-test.sh`, `ci/dependabot-notices-test.sh`, `ci/raise-coverage-baseline-test.sh`, `ci/test-vm-skip-policy.sh`, `ci/vm-tests-report-test.sh`, `ci/vm-partition-test.sh`, all in the
+variable, the workflow wiring), `ci/should-run-test.sh`, `ci/cancel-group-test.sh`, `ci/cache-gc-test.sh`, `ci/tools-cache-heal-test.sh`, `ci/dependabot-auto-merge-test.sh`, `ci/merge-queue-sweep-test.sh`, `ci/cancel-dissolved-groups-test.sh`, `ci/dependabot-notices-test.sh`, `ci/raise-coverage-baseline-test.sh`, `ci/test-vm-skip-policy.sh`, `ci/vm-tests-report-test.sh`, `ci/vm-partition-test.sh`, all in the
 `hooks` gate.
 Actions are pinned to commit SHAs and must be GitHub-owned or on the repo's allow-list (selected
 actions, SHA pinning required; an unpinned `uses:` ends as a `startup_failure` with no jobs).

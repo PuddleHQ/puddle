@@ -17,7 +17,7 @@ use hyper::client::conn::http1::SendRequest;
 use hyper_util::rt::TokioIo;
 use puddle_types::{EgressRequest, Host};
 use rustls::pki_types::{CertificateDer, ServerName};
-use tokio::io::{AsyncReadExt as _, BufReader, DuplexStream};
+use tokio::io::{AsyncRead, AsyncReadExt as _, BufReader};
 use tokio::task::JoinHandle;
 
 use super::bridge::{self, SmartHttp};
@@ -239,7 +239,7 @@ fn closed() -> GitSshFailure {
 }
 
 /// Reads the termination's answer to the in-memory `CONNECT`, which is always a `200`.
-async fn connected(client: &mut DuplexStream) -> Result<(), GitSshFailure> {
+async fn connected<R: AsyncRead + Unpin>(client: &mut R) -> Result<(), GitSshFailure> {
     let mut head = Vec::new();
     let mut byte = [0_u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
@@ -289,6 +289,24 @@ mod tests {
 
     fn named(name: &str) -> GitSshAccount {
         GitSshAccount::Named(name.to_owned())
+    }
+
+    #[tokio::test]
+    async fn the_answer_to_the_in_memory_connect_is_read_to_its_blank_line_and_no_further() {
+        let mut answer = &b"HTTP/1.1 200 Connection Established\r\n\r\nTLS"[..];
+        assert!(connected(&mut answer).await.is_ok());
+        assert_eq!(answer, b"TLS");
+        for bad in [&b""[..], b"HTTP/1.1 200 OK\r\n"] {
+            let mut answer = bad;
+            assert_eq!(
+                connected(&mut answer).await.unwrap_err().message,
+                "the connection to the Git host closed"
+            );
+        }
+        let endless = vec![b'x'; MAX_ANSWER + 10];
+        let mut answer = &endless[..];
+        assert!(connected(&mut answer).await.is_err());
+        assert_eq!(answer.len(), 10, "it stops at its limit");
     }
 
     #[test]

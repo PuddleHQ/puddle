@@ -123,6 +123,9 @@ mk "$tmp/j1.xml" 10.000 99.000; mk "$tmp/j2.xml" 30.000 99.000; mk "$tmp/j3.xml"
 # 8. the filterset: the soak runs on the nightly and on a dispatch only
 for ev in pull_request merge_group push ""; do GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh" | grep -q vm_soak_ || bad "soak is not excluded on '$ev'"; done
 for ev in schedule workflow_dispatch; do GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh" | grep -q vm_soak_ && bad "soak is excluded on $ev"; done
+# The desktop VS Code tests are in no partition on any event, and the job that runs them selects exactly them.
+for ev in schedule workflow_dispatch pull_request merge_group push ""; do GITHUB_EVENT_NAME=$ev "$here/vm-filter.sh" | grep -q 'not (.*vm_vscode_' || bad "vscode tests are not excluded on '$ev'"; done
+[ "$("$here/vm-filter.sh" vscode)" = 'test(/(^|::)vm_vscode_/)' ] || bad "the vscode job's filter is not just the vscode tests"
 
 # 9. the committed timing files are usable: every line parses and the file is not empty
 for os in linux windows; do

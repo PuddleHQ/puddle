@@ -94,6 +94,12 @@ slow-timeout = { period = "600s", terminate-after = 6 }
 filter = "test(/(^|::)vm_soak_/)"
 slow-timeout = { period = "600s", terminate-after = 3 }
 
+# The desktop VS Code story (`vm_vscode_*`) boots a VM, installs Remote-SSH and attaches the real window five times (the
+# first attach unpacks and starts VS Code's server in the guest, a reload replaces it); 25 minutes, inside the job's 30.
+[[profile.vm.overrides]]
+filter = "test(/(^|::)vm_vscode_/)"
+slow-timeout = { period = "300s", terminate-after = 5 }
+
 # The transparency suite moves a gibibyte each way and lets a reader take a minute: a slow runner
 # must not turn "finishes in 30 s" into a kill (a gibibyte each way took 250 s on four busy CPUs).
 [[profile.default.overrides]]

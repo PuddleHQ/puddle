@@ -33,6 +33,12 @@
 //! `browser.rs`); tests that use them are named `vm_browser_*` so the CI jobs can tell which
 //! partition needs the browser installed.
 //!
+//! # A desktop VS Code client
+//!
+//! [`VsCodeRelease`], [`VsCodeLaunch`] and [`VsCodeWindow`] start the pinned desktop VS Code on
+//! Remote-SSH and drive it over the DevTools Protocol (module docs in `vscode.rs`); tests that use
+//! them are named `vm_vscode_*`, which `ci/vm-filter.sh` keeps out of the partitions: one job runs them.
+//!
 //! # Running
 //!
 //! ```text
@@ -44,12 +50,14 @@
 #![forbid(unsafe_code)]
 
 mod browser;
+mod driver;
 mod env;
 mod error;
 mod host_memory;
 mod prefix;
 mod runtime;
 pub mod sockets;
+mod vscode;
 
 pub use browser::{
     BROWSER_MODULES_VAR, BrowserClient, BrowserCookie, BrowserSession, NODE_VAR, Node, NodeOutput,
@@ -60,6 +68,9 @@ pub use error::HarnessError;
 pub use host_memory::resident_bytes;
 pub use prefix::RunPrefix;
 pub use runtime::{AMBIENT_MSB_VARS, RuntimePair, refuse_ambient_msb_vars};
+pub use vscode::{
+    Attached, VSCODE_DIR_VAR, VsCodeLaunch, VsCodeRelease, VsCodeWindow, local_terminal_probe,
+};
 
 /// The stock devcontainer image every VM tier boots first.
 pub const DEBIAN_DEVCONTAINER: &str = "mcr.microsoft.com/devcontainers/base:debian";

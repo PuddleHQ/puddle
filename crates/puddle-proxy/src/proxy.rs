@@ -372,7 +372,7 @@ impl Proxy {
         self
     }
 
-    /// Serves SSH to the Git hosts the workspace terminates (see [`GitSsh`]): Puddle's own
+    /// Serves SSH to the Git hosts the workspace terminates (see [`crate::ssh_git::GitSsh`]): Puddle's own
     /// SSH server with `git`'s host keys, each command carried out by its upstream. Without it
     /// every SSH connection is refused (`ssh_unsupported`).
     #[must_use]

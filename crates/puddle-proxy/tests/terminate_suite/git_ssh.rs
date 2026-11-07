@@ -770,13 +770,12 @@ async fn a_connection_with_no_open_channel_is_closed_after_the_idle_limit() {
     let mut guest = t.git.rig.guest();
     let mut ssh = t.client(&mut guest, "bound.test:22").await;
     login(&mut ssh).await;
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !ssh.is_closed() {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .expect("the idle connection is closed");
+    puddle_test_kit::eventually(
+        "the idle connection is closed",
+        Duration::from_secs(5),
+        || ssh.is_closed(),
+    )
+    .await;
     t.events(1).await;
 }
 
@@ -806,6 +805,7 @@ async fn a_busy_connection_is_not_closed_by_the_idle_limit_and_channels_are_capp
         ssh.channel_open_session().await.is_err(),
         "a third channel is over the cap"
     );
+    // flake-ok: an absence window; the idle limit is 300 ms and nothing signals that it did not fire.
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert!(!ssh.is_closed(), "busy, so not idle");
     first.eof().await.unwrap();
@@ -931,16 +931,12 @@ async fn a_closed_channel_frees_its_place_and_a_second_shell_on_one_channel_is_r
         "the one place is taken"
     );
     unused.close().await.unwrap();
-    let mut shell = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if let Ok(channel) = ssh.channel_open_session().await {
-                return channel;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("a closed channel frees its place");
+    let mut shell = puddle_test_kit::eventually_async(
+        "a closed channel frees its place",
+        Duration::from_secs(5),
+        || async { ssh.channel_open_session().await.ok() },
+    )
+    .await;
     shell.request_shell(true).await.unwrap();
     shell.request_shell(true).await.unwrap();
     let ran = collect(&mut shell, 2).await;

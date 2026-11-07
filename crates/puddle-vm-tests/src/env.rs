@@ -256,6 +256,23 @@ impl VmEnv {
             .replace())
     }
 
+    /// The id of the process that runs the VM of the sandbox `name`, from msb's own record.
+    ///
+    /// # Errors
+    ///
+    /// [`HarnessError::Sdk`] when msb has no such sandbox, [`HarnessError::NoVmProcess`] when its
+    /// record holds no process id (the sandbox is not running).
+    pub async fn process_id_of(&self, name: &str) -> Result<u32, HarnessError> {
+        let handle = self.scope(Box::pin(Sandbox::get(name))).await?;
+        handle
+            .local()
+            .and_then(|local| local.pid)
+            .and_then(|pid| u32::try_from(pid).ok())
+            .ok_or_else(|| HarnessError::NoVmProcess {
+                name: name.to_owned(),
+            })
+    }
+
     /// Runs `future` with this environment's backend as the SDK default (task-local, so other
     /// tests in the process are unaffected).
     pub async fn scope<F: Future>(&self, future: F) -> F::Output {

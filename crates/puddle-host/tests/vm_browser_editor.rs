@@ -60,7 +60,9 @@ const EXPLORER_ROWS: &str = "[...document.querySelectorAll('.explorer-folders-vi
      .map(r => ({ name: r.querySelector('.label-name')?.textContent, level: r.getAttribute('aria-level') }))";
 
 /// What the window shows when its explorer does not get ready: where it is, the explorer's rows,
-/// the side bar's view and any dialog or notification in front of it.
+/// the side bar's view and any dialog or notification in front of it. Each pane header says
+/// whether its pane is expanded, and `loading` says whether the Folders view's progress bar is
+/// running: together they tell a collapsed pane from an explorer still resolving.
 const WINDOW_STATE: &str = r"(() => {
   const text = (e, n) => (e?.textContent || '').replace(/\s+/g, ' ').slice(0, n);
   const all = (selector, n) => [...document.querySelectorAll(selector)].map(e => text(e, n));
@@ -68,7 +70,10 @@ const WINDOW_STATE: &str = r"(() => {
     href: location.href,
     rows: all('.explorer-folders-view .monaco-list-row', 80),
     sidebar: text(document.querySelector('.part.sidebar .title-label'), 80),
-    panes: all('.part.sidebar .pane-header', 80),
+    panes: [...document.querySelectorAll('.part.sidebar .pane-header')]
+      .map(e => ({ title: text(e, 80), expanded: e.getAttribute('aria-expanded') })),
+    loading: document.querySelector('.explorer-folders-view .monaco-progress-container')
+      ?.classList.contains('active') ?? null,
     welcome: all('.part.sidebar .welcome-view-content', 300),
     dialogs: all('.monaco-dialog-box', 400),
     notifications: all('.notifications-toasts .notification-list-item', 300),

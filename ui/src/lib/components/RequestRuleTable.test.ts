@@ -46,6 +46,24 @@ describe("the method and path table", () => {
     expect(second).toHaveTextContent("Every workspace");
   });
 
+  it("marks the selected rule and leaves the others plain", () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    render(RequestRuleTable, {
+      props: {
+        now: NOW,
+        rules: [requestRule(1), requestRule(2)],
+        selected: 2,
+      },
+    } as never);
+    const [first, second] = screen.getAllByRole("row").slice(1);
+    expect(second).toHaveAttribute("aria-current", "true");
+    expect(first).not.toHaveAttribute("aria-current");
+    expect(document.activeElement).toBe(second);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ block: "center" });
+  });
+
   it("shows the never-decrypt warning in full, labelled in words", () => {
     const warning =
       "api.example.com is decrypted for this rule although the never-decrypt list names it: *.example.com (every workspace). A tool there that does not trust Puddle's certificate will fail on it.";

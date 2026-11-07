@@ -482,28 +482,56 @@ mod tests {
     }
 
     // Raced before the swaps shared one lock (red 19 of 20 runs on 2 CPUs): the icon's restore
-    // overwrote a crash hook installed at the same moment. Each round drops the hook it chained:
-    // left in place they pile up, the closing panic runs all of them with a backtrace each, and
-    // 300 rounds took over 120 s under coverage.
+    // overwrote a crash hook installed at the same moment. The rounds chain a hook that only sets
+    // a flag, as `crash::install` does through `panic_hook::chain`: the real one writes a crash
+    // file with a backtrace and an fsync per panic, and under a busy disk 300 of those took over
+    // 120 s. A silent base hook keeps the closing panic off stderr. One last round uses
+    // the real `crash::install`.
     #[test]
     fn a_hook_installed_while_the_icon_is_made_survives_it() {
-        let data = tempfile::tempdir().unwrap();
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let silent = || std::panic::set_hook(Box::new(|_| {}));
+        silent();
         for round in 0..300 {
-            let folder = data.path().join(round.to_string());
+            let ran = Arc::new(AtomicBool::new(false));
+            let seen = Arc::clone(&ran);
             let barrier = std::sync::Barrier::new(2);
+            let barrier = &barrier;
             std::thread::scope(|scope| {
                 scope.spawn(|| {
                     barrier.wait();
                     assert_eq!(guarded(|| 1), Some(1));
                 });
-                scope.spawn(|| {
+                scope.spawn(move || {
                     barrier.wait();
-                    crate::crash::install(folder.clone());
+                    puddle_types::panic_hook::chain(move |_| seen.store(true, Ordering::SeqCst));
                 });
             });
             let _ = std::thread::spawn(|| panic!("after both")).join();
-            assert!(folder.exists(), "round {round}: the crash hook was lost");
-            drop(std::panic::take_hook());
+            assert!(
+                ran.load(Ordering::SeqCst),
+                "round {round}: the chained hook was lost"
+            );
+            silent();
         }
+
+        let data = tempfile::tempdir().unwrap();
+        let folder = data.path().join("crashes");
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                barrier.wait();
+                assert_eq!(guarded(|| 1), Some(1));
+            });
+            scope.spawn(|| {
+                barrier.wait();
+                crate::crash::install(folder.clone());
+            });
+        });
+        let _ = std::thread::spawn(|| panic!("after both")).join();
+        assert!(folder.exists(), "the crash hook was lost");
+        drop(std::panic::take_hook());
     }
 }

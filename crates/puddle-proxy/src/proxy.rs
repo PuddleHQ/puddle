@@ -25,7 +25,7 @@ use puddle_types::{
     PatternKind, PendingOutcome, Policy, PolicyError, ProtocolHint, RefusedReason, RuleId,
     SuffixAllows, WorkspaceId,
 };
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tracing::Instrument;
@@ -38,6 +38,7 @@ use crate::coalesce::Coalescing;
 use crate::counted::Counted;
 use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
+use crate::plain;
 use crate::records::{RecordResolver, SystemRecords};
 use crate::ssh;
 use crate::tap::RequestTap;
@@ -74,7 +75,8 @@ pub struct ProxyConfig {
     /// upstream budget, by a busy disk or a paused machine, still connects instead of finding its
     /// connection cut.
     pub guest_handshake_timeout: Duration,
-    /// How long a terminated connection may sit idle between two requests before it is closed.
+    /// How long a terminated connection, or a guest connection carrying plain HTTP, may sit idle
+    /// between two requests before it is closed.
     pub keepalive_timeout: Duration,
     /// How long a bound host may take to answer once the whole request is sent. Over it: `504`.
     pub upstream_head_timeout: Duration,
@@ -101,6 +103,11 @@ pub struct ProxyConfig {
     /// How long a terminated HTTP/2 connection may take to end after the proxy asked it to shut
     /// down (idle too long, or a stream that would not give up) before it is dropped.
     pub shutdown_grace: Duration,
+    /// How many plain-HTTP requests one guest connection may carry. The answer to the last says
+    /// `connection: close`, and the guest's client opens a new connection for the next. Each
+    /// request is decided and recorded on its own either way; the limit bounds how long one
+    /// connection lives. The idle time between two requests is `keepalive_timeout`.
+    pub max_requests_per_connection: usize,
 }
 
 impl Default for ProxyConfig {
@@ -123,6 +130,7 @@ impl Default for ProxyConfig {
             stream_idle_timeout: Duration::from_secs(3600),
             websocket_idle_timeout: Duration::from_secs(3600),
             shutdown_grace: Duration::from_secs(20),
+            max_requests_per_connection: 1000,
         }
     }
 }
@@ -209,6 +217,13 @@ impl ProxyConfig {
     #[must_use]
     pub fn with_guest_handshake_timeout(mut self, timeout: Duration) -> Self {
         self.guest_handshake_timeout = timeout;
+        self
+    }
+
+    /// The default limits with another number of plain-HTTP requests per guest connection.
+    #[must_use]
+    pub fn with_max_requests_per_connection(mut self, max: usize) -> Self {
+        self.max_requests_per_connection = max.max(1);
         self
     }
 
@@ -526,7 +541,7 @@ impl Proxy {
     }
 
     /// Hands `event` to the connection log on a blocking thread (it may write to SQLite).
-    async fn record(&self, event: ConnectionEvent) {
+    pub(crate) async fn record(&self, event: ConnectionEvent) {
         let log = Arc::clone(&self.log);
         if tokio::task::spawn_blocking(move || log.record(&event))
             .await
@@ -718,21 +733,26 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
             return;
         }
     };
-    let (target, path, body) = match parse_request(&head) {
+    let (target, path, _) = match parse_request(&head) {
         Ok(parsed) => parsed,
         Err(refusal) => {
             refuse(reader.get_mut(), &refusal).await;
             return;
         }
     };
+    if let Some(path) = path {
+        match plain::Incoming::new(head, target, path) {
+            Ok(first) => plain::serve(handler, reader, &counts, first).await,
+            Err(refusal) => refuse(reader.get_mut(), &refusal).await,
+        }
+        return;
+    }
     let mut request =
         EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port);
-    if path.is_some() {
-        request = request.with_protocol(ProtocolHint::Http);
-    } else if ssh::announced(&head) || ssh::started(reader.buffer()) {
+    if ssh::announced(&head) || ssh::started(reader.buffer()) {
         request = request.with_protocol(ProtocolHint::Ssh);
     }
-    let mut event = relay(handler, reader, &request, &head, &target, path, body).await;
+    let mut event = relay(handler, reader, &request, &head, &target).await;
     event.bytes_up = counts.read();
     event.bytes_down = counts.written();
     proxy.record(event).await;
@@ -813,7 +833,7 @@ type RecordChange = Box<dyn FnOnce(&mut ConnectionEvent) + Send>;
 /// Applies the workspace's rules on method and path to what the proxy can read without
 /// decrypting: a plain-HTTP request, and (because a tunnel's content is not readable) a tunnel
 /// to a covered host on a port that is not decrypted. `None`: nothing refuses it.
-fn refuse_by_request_rule(
+pub(crate) fn refuse_by_request_rule(
     proxy: &Proxy,
     request: &EgressRequest,
     head: &Head,
@@ -858,16 +878,15 @@ fn refuse_by_request_rule(
     Some((refusal, change))
 }
 
-/// Decides, connects and relays one request whose destination is known; returns what the audit
-/// records about it (bytes are filled in by the caller once the stream is gone).
+/// Decides, connects and relays one `CONNECT` whose destination is known; returns what the audit
+/// records about it (bytes are filled in by the caller once the stream is gone). Plain HTTP goes
+/// to [`plain::serve`] instead.
 async fn relay(
     handler: &WorkspaceHandler,
     mut reader: GuestReader,
     request: &EgressRequest,
     head: &Head,
     target: &Target,
-    path: Option<String>,
-    body: Body,
 ) -> ConnectionEvent {
     let proxy = &handler.proxy;
     let from_container = ssh::from_container(head);
@@ -878,9 +897,6 @@ async fn relay(
         return crate::ssh_git::serve(handler, reader, request, git, &termination, host).await;
     }
     let (admitted, mut event) = admit(proxy, request).await;
-    event.http = path
-        .as_ref()
-        .map(|p| HttpRequestLine::new(head.method.as_str(), p));
     let admitted = match admitted {
         Ok(admitted) => admitted,
         Err(refusal) => {
@@ -889,7 +905,7 @@ async fn relay(
             return event;
         }
     };
-    if let Some(refused) = refuse_by_request_rule(proxy, request, head, path.as_deref()) {
+    if let Some(refused) = refuse_by_request_rule(proxy, request, head, None) {
         let (refusal, change) = refused;
         change(&mut event);
         refuse(reader.get_mut(), &refusal).await;
@@ -897,9 +913,7 @@ async fn relay(
     }
     // A bound host is terminated: the guest's TLS handshake comes first, so a client that asks
     // for the wrong name never causes a connection to the real server.
-    if path.is_none()
-        && let Some((termination, mode, tls)) = proxy.terminating(request, from_container)
-    {
+    if let Some((termination, mode, tls)) = proxy.terminating(request, from_container) {
         let cx = Arc::new(terminate::Context {
             proxy: Arc::clone(proxy),
             termination,
@@ -929,7 +943,7 @@ async fn relay(
     let out = match connect_out(
         proxy.upstream.as_ref(),
         target,
-        path.is_none(),
+        true,
         &admitted,
         proxy.config.connect_timeout,
     )
@@ -945,29 +959,10 @@ async fn relay(
     event.outcome = Some(ConnectionOutcome::Connected);
     event.resolved_ip = out.addr.map(|addr| addr.ip());
     event.upstream = out.hop;
-    if let Some(code) = proxy
-        .skipped(request, from_container)
-        .filter(|_| path.is_none())
-    {
+    if let Some(code) = proxy.skipped(request, from_container) {
         event.reason = ConnectionReason::PassedThrough(code);
     }
-    match path {
-        None => {
-            note_tunnel(proxy, reader, (out.stream, out.watch), request, &mut event).await;
-        }
-        Some(path) => {
-            forward(
-                reader,
-                out.stream,
-                head,
-                &path,
-                target,
-                body,
-                out.via.as_ref(),
-            )
-            .await;
-        }
-    }
+    note_tunnel(proxy, reader, (out.stream, out.watch), request, &mut event).await;
     event
 }
 
@@ -1005,8 +1000,8 @@ type GuestReader = ClientReader<GuestStream>;
 
 /// Reads the head within `limit`. `Err(None)`: the client closed or failed before a request, so
 /// there is no one to answer.
-pub(crate) async fn read_request<S: AsyncRead + Unpin>(
-    reader: &mut ClientReader<S>,
+pub(crate) async fn read_request<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
     limit: Duration,
 ) -> Result<Head, Option<Refusal>> {
     match tokio::time::timeout(limit, http::read_head(reader)).await {
@@ -1683,8 +1678,9 @@ where
     }
 }
 
-/// Plain HTTP: one request per connection, `Host` rewritten to the checked target, body framed
-/// exactly, so a second request can't ride on the checked connection.
+/// One plain-HTTP request on a connection that carries only it (the image-pull listener's way;
+/// a workspace's plain HTTP keeps its connection, see [`plain::serve`]): `Host` rewritten to the
+/// checked target, body framed exactly, so a second request can't ride on the checked connection.
 pub(crate) async fn forward<S: AsyncRead + AsyncWrite + Unpin>(
     mut reader: ClientReader<S>,
     mut server: TcpStream,

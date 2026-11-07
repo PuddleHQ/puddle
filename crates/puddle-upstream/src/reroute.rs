@@ -43,6 +43,13 @@ impl RouteWatch {
         }
     }
 
+    /// Whether a network epoch began since the connection was made (or since [`Self::changed`]
+    /// last saw one), whether or not the new route still has the hop. Never waits.
+    #[must_use]
+    pub fn epoch_moved(&self) -> bool {
+        *self.epochs.borrow() != self.epoch
+    }
+
     /// Resolves once a new network epoch's route to the destination no longer contains the hop
     /// the connection was made over. A route that still lists the hop (as a fallback, say) keeps
     /// the connection: nothing is wrong with it. Never resolves while the epoch is unchanged.

@@ -21,8 +21,11 @@
 //!    toggle on and an exact allow of the name or of the address itself, unless "wildcards
 //!    reach local addresses" is on (R-14); a block names the toggle that would allow it.
 //! 5. **Relay**: `CONNECT` is spliced both ways, an abort on either side reaching the other as a
-//!    reset; a plain-HTTP request is forwarded once with `Host` rewritten to the checked
-//!    target and its body framed exactly, so nothing unchecked rides along.
+//!    reset. A plain-HTTP request is rebuilt from its parsed parts (`Host` set to the checked
+//!    target, its body framed exactly) and sent on an upstream connection to that host. A guest
+//!    connection may carry more plain-HTTP requests after it (keep-alive): each one goes through
+//!    steps 2 to 6 on its own, and reuses the upstream connection only for the same host and port
+//!    and an address its own checks let through, so nothing unchecked rides along.
 //!    A tunnel that carries plain HTTP (Node `fetch` and Yarn Berry send `http://` as
 //!    `CONNECT host:80`) is decided and relayed like any tunnel; only its first request line is
 //!    read, for the audit.
@@ -31,7 +34,8 @@
 //!    each request, asks the [`Injector`] what to do, swaps the workspace's [`StandIns`] for their
 //!    real values in the headers, and sends it over its own verified TLS connection to the real
 //!    server ([`Proxy::with_termination`], [`terminate`]).
-//! 6. **Audit**: every request that got as far as a destination ends as one
+//! 6. **Audit**: every connection, and every plain-HTTP request, that got as far as a destination
+//!    ends as one
 //!    [`puddle_types::ConnectionEvent`] (decision, reason, rule or pending row, address connected
 //!    to, method and path of a plain-HTTP request or of a tunnel's first HTTP request, bytes each
 //!    way) handed to the
@@ -63,6 +67,7 @@ mod destination;
 #[cfg(feature = "fuzzing")]
 pub mod fuzzing;
 mod http;
+mod plain;
 mod proxy;
 mod pull;
 mod records;

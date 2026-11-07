@@ -62,7 +62,25 @@ fn ask(endpoint: &AgentEndpoint, limit: Duration) -> Result<Vec<Identity>, Agent
         .set_read_timeout(Some(limit))
         .and_then(|()| stream.set_write_timeout(Some(limit)))
         .map_err(AgentError::Io)?;
-    wire::exchange(&mut stream)
+    wire::exchange(&mut stream).map_err(|error| as_timeout(error, limit))
+}
+
+/// A socket timeout set in [`ask`] surfaces as `WouldBlock` (Linux, macOS) or `TimedOut`. When the
+/// request thread hits it just before the caller's own wait ends, the thread's error is the one
+/// the caller reads, so it must say what the caller would have said.
+#[cfg(unix)]
+fn as_timeout(error: AgentError, limit: Duration) -> AgentError {
+    match error {
+        AgentError::Io(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) =>
+        {
+            AgentError::TimedOut(limit)
+        }
+        other => other,
+    }
 }
 
 #[cfg(windows)]
@@ -79,3 +97,25 @@ fn ask(endpoint: &AgentEndpoint, _limit: Duration) -> Result<Vec<Identity>, Agen
 
 #[cfg(not(any(unix, windows)))]
 compile_error!("puddle-ssh-agent supports unix and windows hosts");
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixListener;
+
+    /// The request thread's own read timeout, reached before the caller's wait ends (a loaded host
+    /// schedules the caller late), must be the same answer the caller gives.
+    #[test]
+    fn a_read_timeout_on_the_request_thread_is_a_timeout_not_an_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("silent.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let limit = Duration::from_millis(50);
+        let result = ask(&AgentEndpoint::at(&path), limit);
+        assert!(
+            matches!(result, Err(AgentError::TimedOut(l)) if l == limit),
+            "{result:?}"
+        );
+        drop(listener);
+    }
+}

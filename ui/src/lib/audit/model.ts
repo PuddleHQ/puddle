@@ -174,6 +174,28 @@ export interface RowView {
   outcome: { label: string; tone: Tone } | null;
   /** What else is worth a glance: why, how much, which rule. */
   detail: string;
+  /** The rule on method and path that refused a connection; its name is part of `detail`. */
+  requestRule?: number;
+}
+
+/** How a rule on method and path reads inside a connection's detail. */
+export function requestRuleName(id: number): string {
+  return `method and path rule ${id}`;
+}
+
+/** A detail line cut around the name of its rule, so the name can be a link. */
+export function splitDetail(
+  detail: string,
+  id: number,
+): { before: string; name: string; after: string } {
+  const name = requestRuleName(id);
+  const at = detail.indexOf(name);
+  if (at < 0) return { before: detail, name: "", after: "" };
+  return {
+    before: detail.slice(0, at),
+    name,
+    after: detail.slice(at + name.length),
+  };
 }
 
 const REASONS: Record<string, string> = {
@@ -423,7 +445,7 @@ function connectionDetail(
   const set = setLabel(record.rule_set);
   if (set !== null) parts.push(set);
   if (record.request_rule !== null) {
-    parts.push(`method and path rule ${record.request_rule}`);
+    parts.push(requestRuleName(record.request_rule));
   } else if (record.rule_id !== null) parts.push(`rule ${record.rule_id}`);
   else if (set === null && note === undefined) parts.push(`because ${reason}`);
   if (note !== undefined) parts.push(note);
@@ -525,6 +547,9 @@ export function describe(record: AuditRecord): RowView {
         destination: endpoint(record.host, record.port),
         outcome: connectionOutcome(record),
         detail: connectionDetail(record),
+        ...(record.request_rule === null
+          ? {}
+          : { requestRule: record.request_rule }),
       };
     case "pending_created":
     case "pending_decided":

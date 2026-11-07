@@ -1726,6 +1726,8 @@ mod tests {
         )
         .unwrap()
         .unwrap();
+        // A shell with no window keeps no browser data under any id.
+        assert!(!NoWindow.has_browser_data(&WorkspaceId::new("demo").unwrap()));
     }
 
     #[test]

@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Measurement only, never merged: the UI end-to-end step on the hosted runners with 2 and with 4 Playwright
+# workers, five runs each, alternating so runner drift hits both. Each job uploads its Playwright log
+# (list reporter: one line and duration per test) and the runner's core count.
+name: e2e-workers-probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/e2e-workers-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  linux:
+    name: probe linux ${{ matrix.browser }} workers=${{ matrix.workers }} run=${{ matrix.run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        browser: [chromium, webkit]
+        run: [1, 2, 3, 4, 5]
+        workers: [2, 4]
+    env:
+      PUDDLE_E2E_PROJECTS: ${{ matrix.browser }}
+      PUDDLE_E2E_WORKERS: ${{ matrix.workers }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Playwright browser and its system libraries
+        timeout-minutes: 10
+        run: |
+          ci/apt-setup.sh
+          cd ui
+          npm ci --ignore-scripts --no-audit --no-fund
+          ../ci/apt-retry.sh npx playwright install-deps ${{ matrix.browser }}
+          npx playwright install ${{ matrix.browser }}
+      - name: UI end-to-end
+        run: |
+          mkdir -p probe
+          { echo "nproc=$(nproc)"; grep -m1 'model name' /proc/cpuinfo; free -m | sed -n 2p; } | tee probe/runner.txt
+          start=$(date +%s)
+          set +e
+          scripts/check.sh ui-e2e 2>&1 | tee probe/e2e.log
+          code=${PIPESTATUS[0]}
+          echo "step_seconds=$(( $(date +%s) - start )) exit=$code" | tee -a probe/runner.txt
+          exit "$code"
+      - name: upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: probe-linux-${{ matrix.browser }}-w${{ matrix.workers }}-r${{ matrix.run }}
+          path: probe
+          retention-days: 7
+
+  windows:
+    name: probe windows edge workers=${{ matrix.workers }} run=${{ matrix.run }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        run: [1, 2, 3, 4, 5]
+        workers: [2, 4]
+    env:
+      PUDDLE_E2E_WORKERS: ${{ matrix.workers }}
+    steps:
+      - name: stop the storage service
+        shell: pwsh
+        run: |
+          Stop-Service StorSvc -Force -ErrorAction SilentlyContinue
+          Set-Service StorSvc -StartupType Disabled
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: windows
+          save-if: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: UI end-to-end
+        shell: bash
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: |
+          mkdir -p probe
+          { echo "nproc=$(nproc)"; echo "NUMBER_OF_PROCESSORS=$NUMBER_OF_PROCESSORS"; } | tee probe/runner.txt
+          start=$(date +%s)
+          set +e
+          scripts/check.sh ui-e2e 2>&1 | tee probe/e2e.log
+          code=${PIPESTATUS[0]}
+          echo "step_seconds=$(( $(date +%s) - start )) exit=$code" | tee -a probe/runner.txt
+          exit "$code"
+      - name: upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: probe-windows-w${{ matrix.workers }}-r${{ matrix.run }}
+          path: probe
+          retention-days: 7

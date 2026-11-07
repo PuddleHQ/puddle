@@ -6747,7 +6747,6 @@ dependencies = [
 name = "puddle-types"
 version = "0.0.0"
 dependencies = [
- "getrandom 0.4.3",
  "proptest",
  "puddle-test-kit",
  "puddle-types",

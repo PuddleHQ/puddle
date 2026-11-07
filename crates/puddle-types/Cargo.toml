@@ -17,7 +17,6 @@ testing = []
 openapi = ["dep:utoipa"]
 
 [dependencies]
-getrandom = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

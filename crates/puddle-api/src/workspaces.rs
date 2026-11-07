@@ -714,14 +714,16 @@ pub trait IdSource: Send + Sync {
     fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String>;
 }
 
-/// The operating system's random source ([`WorkspaceId::generate`]); nothing of the name goes
-/// into the id. The host uses this one.
+/// The operating system's random source, five bytes a draw ([`WorkspaceId::from_random`]);
+/// nothing of the name goes into the id. The host uses this one.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RandomIds;
 
 impl IdSource for RandomIds {
     fn draw(&self, _name: &DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
-        WorkspaceId::generate().map_err(|e| e.to_string())
+        let mut bytes = [0_u8; 5];
+        getrandom::fill(&mut bytes).map_err(|e| format!("no randomness: {e}"))?;
+        Ok(WorkspaceId::from_random(bytes))
     }
 }
 

@@ -222,18 +222,6 @@ impl WorkspaceId {
     /// Length of a generated id.
     pub const GENERATED_LEN: usize = 8;
 
-    /// A new id from the operating system's random source (see [`WorkspaceId::from_random`]).
-    ///
-    /// # Errors
-    ///
-    /// When the random source gives nothing.
-    pub fn generate() -> std::io::Result<Self> {
-        let mut bytes = [0_u8; 5];
-        getrandom::fill(&mut bytes)
-            .map_err(|e| std::io::Error::other(format!("no randomness: {e}")))?;
-        Ok(Self::from_random(bytes))
-    }
-
     /// The id that 40 random bits give: eight characters of lowercase Crockford base32 (`0-9`
     /// and `a-z` without `i`, `l`, `o` and `u`), the first one a letter. Each character takes
     /// five bits; the first maps its five onto the 22 letters, so an id carries about 39 bits.
@@ -515,10 +503,18 @@ mod tests {
     }
 
     #[test]
-    fn a_generated_id_is_eight_crockford_characters_starting_with_a_letter() {
+    fn every_id_from_random_bits_is_eight_crockford_characters_starting_with_a_letter() {
         let letters = "abcdefghjkmnpqrstvwxyz";
-        for _ in 0..500 {
-            let id = WorkspaceId::generate().unwrap();
+        // Every first five bits, with the rest of the bits varied.
+        for seed in 0_u8..=255 {
+            let bytes = [
+                seed,
+                seed.wrapping_mul(7),
+                !seed,
+                seed ^ 0x5a,
+                seed.rotate_left(3),
+            ];
+            let id = WorkspaceId::from_random(bytes);
             let s = id.as_str();
             assert_eq!(s.len(), WorkspaceId::GENERATED_LEN, "{s}");
             assert!(s.chars().all(|c| CROCKFORD.contains(c)), "{s}");

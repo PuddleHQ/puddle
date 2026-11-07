@@ -933,6 +933,24 @@ fn the_debug_output_names_no_token() {
 }
 
 #[test]
+fn a_request_is_matched_to_its_token_endpoint_in_any_spelling() {
+    use crate::token_endpoint_of;
+    let (profile, endpoint) =
+        token_endpoint_of("Platform.Claude.com", "POST", "//V1/oauth/./token?x=1").unwrap();
+    assert_eq!(
+        (profile.id, endpoint.host),
+        ("claude", "platform.claude.com")
+    );
+    let (profile, _) =
+        token_endpoint_of("login.microsoftonline.com", "POST", "/t1/oauth2/v2.0/token").unwrap();
+    assert_eq!(profile.id, "entra");
+    // Another method, another host on the same path, another path: none of them.
+    assert!(token_endpoint_of("platform.claude.com", "GET", "/v1/oauth/token").is_none());
+    assert!(token_endpoint_of("api.anthropic.com", "POST", "/v1/oauth/token").is_none());
+    assert!(token_endpoint_of("platform.claude.com", "POST", "/v1/oauth").is_none());
+}
+
+#[test]
 fn canonical_paths_collapse_every_spelling_to_one() {
     use crate::logins::canonical_path;
     assert_eq!(canonical_path("/a/b"), "/a/b");

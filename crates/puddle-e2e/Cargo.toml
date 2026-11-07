@@ -28,6 +28,8 @@ http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 puddle-api = { workspace = true }
+puddle-logins = { workspace = true }
+puddle-proxy = { workspace = true }
 puddle-repos = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-settings = { workspace = true }

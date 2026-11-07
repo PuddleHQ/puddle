@@ -15,7 +15,9 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use zeroize::Zeroizing;
 
 use super::body::{Abort, BodyReader, ChannelBody, pump};
-use super::exchange::{AnswerBody, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body};
+use super::exchange::{
+    AnswerBody, AnswerError, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body,
+};
 use super::guest::{
     ALPN_HTTP11, FirstBytes, Hello, Prefixed, Proto, Scan, capture_first_record, parse_hello,
     read_hello, scan_hello, server_config,
@@ -758,7 +760,12 @@ where
         };
         match read_answer(answer, response, self.cx.proxy.config.body_idle_timeout).await {
             Ok(read) => Ok(read),
-            Err(err) => {
+            Err(AnswerError::Refused(refusal)) => {
+                tracing::info!(host = %self.cx.target.host, code = refusal.code(), "the answer was refused");
+                self.upstream = None;
+                Err(self.refuse(&refusal.to_refusal()).await)
+            }
+            Err(AnswerError::Upstream(err)) => {
                 tracing::info!(host = %self.cx.target.host, error = %err, "the answer could not be read");
                 self.upstream = None;
                 Err(self
@@ -1127,7 +1134,7 @@ fn upstream_request(
 /// the peer opened its window again by being read, so a writer that is stuck on a full window
 /// while nobody reads (the guest is waiting for the response) never wakes: a download of more
 /// than one window would stall. Anything the guest does send stays buffered for the next request.
-async fn keep_reading<R: tokio::io::AsyncBufRead + Unpin>(
+pub(crate) async fn keep_reading<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
 ) -> std::convert::Infallible {
     // An empty read is the guest closing its side: the response may still go out.
@@ -1137,7 +1144,7 @@ async fn keep_reading<R: tokio::io::AsyncBufRead + Unpin>(
 
 /// Sends `request` while pumping the guest's body into it. `None` as the first answer: the
 /// upstream did not answer in time. The second is the pump's result, if it finished.
-async fn send_and_pump<R>(
+pub(crate) async fn send_and_pump<R>(
     sender: &mut SendRequest<UpBody>,
     reader: &mut R,
     request: ::http::Request<UpBody>,

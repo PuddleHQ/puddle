@@ -15,7 +15,15 @@
 #   npm caches, Linux and Windows                a push; pull refs 2-day cleanup    0.34
 #   rust-cache `fuzz`                            a fuzz run (fuzz)                  0.17
 #   licence notices stamp (one per input hash)   a push that ran the gate (ci)        0.00
-#   total wanted                                                                    9.61 of 10
+#   rust-cache `gates`, `mutants`                develop runs (ci, mutants)          2.1, 0.6
+#   guest tools cache (vm-guest-env-tools-*)     the develop nightly or a dispatch   0.34
+#   total wanted (2026-11-06)                                                       about 10.0 of 10
+#
+# The table above was 9.61 on 2026-10-24 (sizes as of 2026-11-06: `linux` 4.26, `windows` 1.84); the `gates` and `mutants`
+# entries and the guest tools cache came later, so the wanted set leaves no room for a replacement.
+# On 2026-11-06 the guest tools cache (saved at 11:10, restored by queue runs from 11:16 on) was purged by 12:50, together with every entry older than the
+# `linux` replacement saved at 12:46; ci/tools-cache-heal.sh (the last step here) dispatches a develop vm-linux run
+# to refill it, at most once per 8 hours.
 #
 # The Linux msb is no cache entry: the VM jobs download the fork release's prebuilt one
 # (ci/fetch-msb.sh); a leftover `msb-linux-*` entry ages out (ci/cache-gc.sh drops orphans after 7 days).
@@ -80,3 +88,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ci/cache-gc.sh | tee -a "$GITHUB_STEP_SUMMARY"
+      # After the deletions, so the check sees what is left. A failure here must not fail the clean-up it follows.
+      - name: refill the guest tools cache when GitHub evicted it
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ci/tools-cache-heal.sh | tee -a "$GITHUB_STEP_SUMMARY"

@@ -2086,8 +2086,14 @@ mod tests {
         let first = new.id(&RandomIds, |_| false).unwrap();
         assert_eq!(first.as_str().len(), WorkspaceId::GENERATED_LEN);
         assert_ne!(first.as_str(), "acme");
-        // A taken id is drawn again, not numbered.
-        let second = new.id(&RandomIds, |id| *id == first).unwrap();
+        // A taken id is drawn again, not numbered: the first draw is refused, the second taken up.
+        let asked = std::sync::atomic::AtomicU32::new(0);
+        let second = new
+            .id(&RandomIds, |_| {
+                asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0
+            })
+            .unwrap();
+        assert_eq!(asked.into_inner(), 2);
         assert_ne!(second, first);
         assert_eq!(second.as_str().len(), WorkspaceId::GENERATED_LEN);
     }

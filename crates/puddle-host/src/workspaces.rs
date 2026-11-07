@@ -533,7 +533,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(crate) fn new(
         parts: Parts<R>,
         restored: Vec<Stored>,
-        retired: BTreeSet<WorkspaceId>,
+        mut retired: BTreeSet<WorkspaceId>,
         status: &BTreeMap<WorkspaceId, WorkspaceStatus>,
     ) -> Result<Self, HostError> {
         let mut slots = BTreeMap::new();
@@ -541,8 +541,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         for stored in restored {
             if stored.creating {
                 // A create that never finished (Puddle died in it): there is no workspace, and
-                // reconcile removes the half-made volume.
+                // reconcile removes the half-made volume. Its id is retired like a failed create's.
                 tracing::warn!(workspace = %stored.id, "dropping a workspace whose create never finished");
+                retired.insert(stored.id);
                 interrupted = true;
                 continue;
             }
@@ -3068,8 +3069,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.problems.clear(&problem_key("browser-data", id));
             return Ok(());
         }
-        // Give the name back (not saved yet): the create is refused.
-        self.state().slots.remove(id);
+        // The create is refused; the id it reserved is retired like a failed create's.
+        let mut state = self.state();
+        state.slots.remove(id);
+        state.retired.insert(id.clone());
+        drop(state);
         Err(WorkspaceError::Conflict(format!(
             "browser data left under the id {id} could not be removed ({}), and the new \
              workspace would inherit it; {name} was not created. Close its editor windows and \

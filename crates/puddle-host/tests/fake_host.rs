@@ -3132,6 +3132,10 @@ async fn a_create_that_cannot_clear_left_over_browser_data_is_refused() {
         "no workspace was made: {}",
         list.body
     );
+    // The refused create's id is retired: the next one of the name gets another.
+    *rig.launcher.forget_fails_with.lock().unwrap() = None;
+    let mut events = api.events().await;
+    create_as(&api, &mut events, "acme", "acme-2").await;
     host.shutdown().await;
 }
 
@@ -4181,6 +4185,8 @@ async fn an_interrupted_create_is_dropped_and_its_volume_removed() {
         saved["workspaces"].as_array().unwrap().is_empty(),
         "{saved}"
     );
+    // Its id is retired: whatever it left keyed by it is never met again.
+    assert_eq!(saved["retired_ids"], json!(["half"]), "{saved}");
     host.shutdown().await;
 }
 

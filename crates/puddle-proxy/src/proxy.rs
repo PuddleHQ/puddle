@@ -891,7 +891,6 @@ async fn relay(
     let proxy = &handler.proxy;
     let from_container = ssh::from_container(head);
     if request.protocol == Some(ProtocolHint::Ssh)
-        && path.is_none()
         && let Some((git, termination, host)) = proxy.git_ssh_for(request)
     {
         return crate::ssh_git::serve(handler, reader, request, git, &termination, host).await;

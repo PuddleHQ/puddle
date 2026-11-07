@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Git over SSH end to end on real microVMs: the guest's own OpenSSH, `git`, Git LFS and cargo's
+//! Git over SSH end to end on real microVMs: the guest's own OpenSSH, `git` and cargo's
 //! built-in Git (libgit2) talk SSH to a Git host Puddle knows, Puddle ends the SSH session itself
 //! and reaches the host the way the workspace's identity does, so the guest holds no key, no agent
 //! socket and no token, and the repository table decides every push as it does over HTTPS.
@@ -445,7 +445,6 @@ fn publish_tool(host: &GitHost, file: &Path, name: &str) {
 /// Git (libgit2, which ignores `ssh_config` and reaches Puddle through the transparent capture);
 /// and a fetch through a `ControlMaster` connection. (The guest image has no Git LFS; its SSH
 /// commands are the guest side's, tested in the proxy's suite.)
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_git_ssh_other_clients_reach_the_same_session() {
     let fake = git_host().await;

@@ -191,6 +191,12 @@ type OwnKey = ((u8, usize), u8, bool, Reverse<RuleId>);
 /// Precedence among set entries (R-39): most specific, then deny over allow, then a stable order.
 type SetKey = ((u8, usize), bool, Reverse<(RuleSetId, i64)>);
 
+/// Whether `key` beats the best so far. A tie keeps the earlier hit; see the mutation exclusion in
+/// `.cargo/mutants.toml` for why that cannot change an answer.
+fn outranks<K: Ord>(key: &K, best: &K) -> bool {
+    key > best
+}
+
 fn own_key(rule: &Rule) -> OwnKey {
     (
         rule.pattern.specificity(),
@@ -295,7 +301,9 @@ impl RuleIndex {
                             let dropped = ignore
                                 && rule.effect == Effect::Allow
                                 && matches!(rule.pattern, Pattern::Suffix(_));
-                            if applies && !dropped && own.is_none_or(|o| own_key(rule) > own_key(o))
+                            if applies
+                                && !dropped
+                                && own.is_none_or(|o| outranks(&own_key(rule), &own_key(o)))
                             {
                                 own = Some(rule);
                             }
@@ -316,10 +324,16 @@ impl RuleIndex {
                 }
             };
             let key = set_key(hit);
-            if set_best.as_ref().is_none_or(|(best, _)| key > *best) {
+            if set_best
+                .as_ref()
+                .is_none_or(|(best, _)| outranks(&key, best))
+            {
                 set_best = Some((key, hit));
             }
-            if hit.effect() == Effect::Deny && set_deny.as_ref().is_none_or(|(best, _)| key > *best)
+            if hit.effect() == Effect::Deny
+                && set_deny
+                    .as_ref()
+                    .is_none_or(|(best, _)| outranks(&key, best))
             {
                 set_deny = Some((key, hit));
             }

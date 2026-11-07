@@ -13,7 +13,7 @@ puddle-inject
 puddle-types
 puddle-ca
 puddle-store    # whole-crate sweep 100 min at --jobs 1 (831 mutants)
-puddle-ssh-agent  # whole-crate sweep 2 min at --jobs 1 (58 mutants); Windows `ask` excluded in .cargo/mutants.toml
+puddle-ssh-agent  # whole-crate sweep 2 min at --jobs 1 (58 mutants); Windows `ask_pipe` excluded in .cargo/mutants.toml
 puddle-ssh      # whole-crate sweep 6 min at --jobs 1 (76 mutants)
 puddle-fs       # Linux only: 3 min (69 mutants); Windows-only code is excluded in .cargo/mutants.toml
 puddle-secrets  # 18 min (248 mutants)

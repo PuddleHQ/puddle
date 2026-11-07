@@ -326,7 +326,11 @@ where
 {
     let (mut from_server, mut to_server) = conn.into_split();
     let down = async {
+        // `copy` flushes only what it wrote itself, and the process's stdout is line-buffered:
+        // without this flush an SSH server's KEXINIT that came in behind its banner stays here
+        // while the client waits for it.
         stdout.write_all(ahead).await?;
+        stdout.flush().await?;
         tokio::io::copy(&mut from_server, &mut stdout).await?;
         stdout.flush().await
     };
@@ -772,6 +776,56 @@ mod tests {
         out.read_exact(&mut printed).await.unwrap();
         assert_eq!(&printed, b"SSH-2.0-fixture\r\n");
         drop(ssh);
+    }
+
+    /// An SSH server sends its KEXINIT right behind its banner with no round trip, so both can
+    /// come in the read that holds the proxy's answer; the server then waits for the client.
+    /// The process's stdout is line-buffered (a `BufWriter` here), so what came behind the answer
+    /// reaches the client only if it is flushed.
+    #[tokio::test]
+    async fn what_the_server_sent_behind_the_answer_reaches_a_buffered_stdout_while_it_waits() {
+        const AHEAD: &[u8] = b"SSH-2.0-fixture\r\n\x00\x00\x00\x2c\x06\x14KEXINIT";
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 256];
+            while !seen.ends_with(b"OpenSSH_10.0p2\r\n") {
+                let n = conn.read(&mut buf).await.unwrap();
+                assert_ne!(n, 0, "the client closed before its banner");
+                seen.extend_from_slice(&buf[..n]);
+            }
+            let mut answer = b"HTTP/1.1 200 Connection Established\r\n\r\n".to_vec();
+            answer.extend_from_slice(AHEAD);
+            conn.write_all(&answer).await.unwrap();
+            // The server waits for the client's key exchange and sends nothing more.
+            let _ = done_rx.await;
+        });
+        let (mut ssh, stdin) = tokio::io::duplex(64);
+        ssh.write_all(b"SSH-2.0-OpenSSH_10.0p2\r\n").await.unwrap();
+        let (stdout, mut out) = tokio::io::duplex(256);
+        let task = tokio::spawn(async move {
+            let mut stderr = Vec::new();
+            run(
+                &settings(addr),
+                &request("git.example.test", 22),
+                stdin,
+                tokio::io::BufWriter::new(stdout),
+                &mut stderr,
+            )
+            .await
+        });
+        let mut printed = vec![0u8; AHEAD.len()];
+        tokio::time::timeout(Duration::from_secs(10), out.read_exact(&mut printed))
+            .await
+            .expect("the bytes behind the answer never reached stdout")
+            .unwrap();
+        assert_eq!(printed, AHEAD);
+        let _ = done_tx.send(());
+        drop(ssh);
+        let _ = task.await;
     }
 
     #[tokio::test]

@@ -34,7 +34,6 @@ use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
 use puddle_agent_proto::ssh::{BANNER_MIN, PROTOCOL_HEADER, SSH, is_banner};
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
-    copy_bidirectional, join,
 };
 use tokio::net::TcpStream;
 use tokio::time::Instant;
@@ -245,19 +244,8 @@ where
     }
     let first = peek(&mut stdin, settings.first_bytes).await;
     match open(settings, request, &first).await {
-        Ok(Opened::Tunnel { mut conn, rest }) => {
-            let mut both = join(stdin, &mut stdout);
-            let carried = async {
-                both.write_all(&rest).await?;
-                copy_bidirectional(&mut both, &mut conn).await
-            };
-            match carried.await {
-                Ok(_) => Exit::Done,
-                Err(err) => {
-                    tracing::debug!(error = %err, "connection ended with an error");
-                    Exit::Failed
-                }
-            }
+        Ok(Opened::Tunnel { conn, rest }) => {
+            carry_until_the_server_closes(conn, &rest, stdin, stdout).await
         }
         Ok(Opened::Refused(text)) => {
             say(stderr, &text).await;
@@ -314,7 +302,7 @@ where
         // An IPv4-mapped IPv6 address (::ffff:127.0.0.1) is local by `is_local`; dial its IPv4
         // form, since Windows refuses to connect to the mapped one (os error 10049).
         match TcpStream::connect(SocketAddr::new(ip.to_canonical(), port)).await {
-            Ok(conn) => return carry_until_the_server_closes(conn, stdin, stdout).await,
+            Ok(conn) => return carry_until_the_server_closes(conn, &[], stdin, stdout).await,
             Err(err) => failure = format!("puddle-agent connect: {ip} port {port}: {err}\n"),
         }
     }
@@ -324,14 +312,21 @@ where
 
 /// Carries both directions until the server is done. The client's own end is no signal: `stdout`
 /// is a pipe that stays open until this process exits, so a client waiting for the server to
-/// close would never close its side first.
-async fn carry_until_the_server_closes<I, O>(conn: TcpStream, mut stdin: I, mut stdout: O) -> Exit
+/// close would never close its side first. `ahead` is what the server already sent: it goes to
+/// `stdout` before anything else.
+async fn carry_until_the_server_closes<I, O>(
+    conn: TcpStream,
+    ahead: &[u8],
+    mut stdin: I,
+    mut stdout: O,
+) -> Exit
 where
     I: AsyncRead + Unpin,
     O: AsyncWrite + Unpin,
 {
     let (mut from_server, mut to_server) = conn.into_split();
     let down = async {
+        stdout.write_all(ahead).await?;
         tokio::io::copy(&mut from_server, &mut stdout).await?;
         stdout.flush().await
     };
@@ -471,12 +466,51 @@ async fn say<E: AsyncWrite + Unpin>(stderr: &mut E, text: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::task::{Context, Poll};
+
+    use puddle_test_kit::eventually;
     use tokio::net::TcpListener;
 
     use super::*;
 
+    /// A writer whose shutdown only flushes, as a process's stdout pipe behaves: the descriptor
+    /// stays open until the process exits.
+    struct KeepOpen<W>(W);
+
+    impl<W: AsyncWrite + Unpin> AsyncWrite for KeepOpen<W> {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Pin::new(&mut self.0).poll_write(cx, buf)
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Pin::new(&mut self.0).poll_flush(cx)
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.poll_flush(cx)
+        }
+    }
+
     fn request(host: &str, port: u16) -> Request {
         Request::parse(&[host, &port.to_string()]).unwrap()
+    }
+
+    #[tokio::test]
+    async fn keep_open_flushes_on_shutdown_and_leaves_the_writer_open() {
+        let (writer, mut peer) = tokio::io::duplex(64);
+        let mut keep = KeepOpen(writer);
+        keep.write_all(b"one").await.unwrap();
+        keep.shutdown().await.unwrap();
+        // A shut-down duplex refuses writes, so this succeeding shows shutdown left it open.
+        keep.write_all(b"two").await.unwrap();
+        keep.flush().await.unwrap();
+        let mut got = [0u8; 6];
+        peer.read_exact(&mut got).await.unwrap();
+        assert_eq!(&got, b"onetwo");
     }
 
     #[test]
@@ -690,6 +724,54 @@ mod tests {
             head,
             "CONNECT db.test:5432 HTTP/1.1\r\nHost: db.test:5432\r\n\r\nhello"
         );
+    }
+
+    /// What an `ssh` `ProxyCommand` does: its end of both pipes stays open until the command exits
+    /// (`stdout` does not even close on shutdown), so only the server's close can end the command.
+    #[tokio::test]
+    async fn a_server_that_closes_ends_the_command_though_the_client_keeps_its_pipes_open() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            // Everything the client sent is read, so the close is a FIN and not a reset.
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 256];
+            while !seen.ends_with(b"OpenSSH_10.0p2\r\n") {
+                let n = conn.read(&mut buf).await.unwrap();
+                assert_ne!(n, 0, "the client closed before its banner");
+                seen.extend_from_slice(&buf[..n]);
+            }
+            conn.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\nSSH-2.0-fixture\r\n")
+                .await
+                .unwrap();
+            // Dropped here: the server closed after its banner.
+        });
+        let (mut ssh, stdin) = tokio::io::duplex(64);
+        ssh.write_all(b"SSH-2.0-OpenSSH_10.0p2\r\n").await.unwrap();
+        let (stdout, mut out) = tokio::io::duplex(64);
+        let task = tokio::spawn(async move {
+            let mut stderr = Vec::new();
+            run(
+                &settings(addr),
+                &request("git.example.test", 22),
+                stdin,
+                KeepOpen(stdout),
+                &mut stderr,
+            )
+            .await
+        });
+        eventually(
+            "the command ends after the server closed",
+            Duration::from_secs(10),
+            || task.is_finished(),
+        )
+        .await;
+        assert_eq!(task.await.unwrap(), Exit::Done);
+        let mut printed = [0u8; 17];
+        out.read_exact(&mut printed).await.unwrap();
+        assert_eq!(&printed, b"SSH-2.0-fixture\r\n");
+        drop(ssh);
     }
 
     #[tokio::test]

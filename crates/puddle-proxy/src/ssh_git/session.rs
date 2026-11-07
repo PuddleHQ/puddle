@@ -22,7 +22,7 @@ use tokio::task::JoinSet;
 use tokio::time::{Instant, sleep_until, timeout_at};
 
 use super::grammar::{self, Command, GitHost, Refused, Repository};
-use super::{GitSsh, GitSshCommand, GitSshLimits, GitSshUpstream};
+use super::{GitSsh, GitSshCommand, GitSshContext, GitSshLimits, GitSshUpstream};
 use crate::proxy::{ClientReader, WorkspaceHandler, admit, refuse};
 use crate::terminate::{
     InjectContext, InjectDecision, InjectRefusal, Injector, Prefixed, RequestView, Termination,
@@ -71,8 +71,8 @@ impl Summary {
 struct Ctx {
     workspace: WorkspaceId,
     host: GitHost,
-    /// The name the guest connected to, for `ssh -T`.
-    name: puddle_types::Host,
+    /// What the upstream is given about the connection.
+    route: GitSshContext,
     injector: Arc<dyn Injector>,
     upstream: Arc<dyn GitSshUpstream>,
     summary: Mutex<Summary>,
@@ -180,7 +180,7 @@ where
     let ctx = Arc::new(Ctx {
         workspace: request.workspace.clone(),
         host,
-        name: request.host.clone(),
+        route: GitSshContext::new(handler.clone(), request.host.clone()),
         injector: Arc::clone(termination.injector()),
         upstream: Arc::clone(&git.upstream),
         summary: Mutex::new(Summary::default()),
@@ -219,6 +219,10 @@ where
     }
     event.injected = summary.injected;
     event.binding_id = summary.binding_id.clone();
+    if let Some(reached) = ctx.route.first_reached() {
+        event.resolved_ip = reached.ip;
+        event.upstream = reached.hop;
+    }
     event
 }
 
@@ -796,7 +800,7 @@ async fn pump(
     let mut out = channel.make_writer();
     let upstream = Arc::clone(&ctx.upstream);
     let run = async move {
-        let result = upstream.run(command, &mut theirs).await;
+        let result = upstream.run(&ctx.route, command, &mut theirs).await;
         drop(theirs);
         result
     };
@@ -829,7 +833,7 @@ async fn pump(
 }
 
 async fn run_shell(ctx: &Ctx, channel: Channel<Msg>) {
-    let greeting = ctx.upstream.greeting(&ctx.name).await;
+    let greeting = ctx.upstream.greeting(&ctx.route, &ctx.host.https).await;
     end(
         &channel,
         Finish {

@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The bridge against a recording smart-HTTP host: which requests a session turns into, with
 //! which bodies and headers, and what the guest reads back.
-#![expect(
-    clippy::unwrap_used,
-    reason = "a test fails by panicking at the step that went wrong"
-)]
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -552,10 +548,6 @@ async fn a_refusal_from_the_host_names_its_status_and_the_repository() {
 
 #[tokio::test]
 async fn only_the_start_of_a_long_refusal_is_read() {
-    // A refusal body that never ends: the bridge stops after its limit instead of reading on.
-    let endless = futures_util::stream::repeat_with(|| {
-        Ok::<_, BoxError>(http_body::Frame::data(Bytes::from_static(&[b'x'; 1024])))
-    });
     struct Endless(Option<UpBody>);
     impl SmartHttp for Endless {
         fn send(
@@ -571,6 +563,11 @@ async fn only_the_start_of_a_long_refusal_is_read() {
             })
         }
     }
+
+    // A refusal body that never ends: the bridge stops after its limit instead of reading on.
+    let endless = futures_util::stream::repeat_with(|| {
+        Ok::<_, BoxError>(http_body::Frame::data(Bytes::from_static(&[b'x'; 1024])))
+    });
     let mut host = Endless(Some(StreamBody::new(endless).boxed_unsync()));
     let (mut guest, mut ours) = tokio::io::duplex(1 << 16);
     guest.shutdown().await.unwrap();

@@ -175,7 +175,7 @@ async fn copy<W: AsyncWrite + Unpin>(
             continue;
         };
         if !stripping {
-            out.write_all(&data).await.map_err(guest_gone)?;
+            out.write_all(&data).await.map_err(|err| guest_gone(&err))?;
             continue;
         }
         start.extend_from_slice(&data);
@@ -183,20 +183,22 @@ async fn copy<W: AsyncWrite + Unpin>(
             stripping = false;
             out.write_all(start.get(skip..).unwrap_or_default())
                 .await
-                .map_err(guest_gone)?;
+                .map_err(|err| guest_gone(&err))?;
         }
     }
     if stripping {
-        out.write_all(&start).await.map_err(guest_gone)?;
+        out.write_all(&start)
+            .await
+            .map_err(|err| guest_gone(&err))?;
     }
-    out.flush().await.map_err(guest_gone)
+    out.flush().await.map_err(|err| guest_gone(&err))
 }
 
 fn upstream_broke(err: &(dyn std::error::Error + Send + Sync)) -> GitSshFailure {
     GitSshFailure::new(format!("the answer from the Git host broke off: {err}"))
 }
 
-fn guest_gone(err: io::Error) -> GitSshFailure {
+fn guest_gone(err: &io::Error) -> GitSshFailure {
     GitSshFailure::new(format!("the guest's side of the channel closed: {err}"))
 }
 
@@ -340,7 +342,10 @@ impl Commands {
         }
         let line = line.strip_suffix(b"\n").unwrap_or(line);
         let (update, capabilities) = match line.iter().position(|b| *b == 0) {
-            Some(nul) => (&line[..nul], line.get(nul + 1..).unwrap_or_default()),
+            Some(nul) => {
+                let (update, rest) = line.split_at(nul);
+                (update, rest.get(1..).unwrap_or_default())
+            }
             None => (line, &b""[..]),
         };
         let mut fields = update.split(|b| *b == b' ');

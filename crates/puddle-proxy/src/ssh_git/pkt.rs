@@ -167,7 +167,7 @@ mod tests {
     #[tokio::test]
     async fn a_stream_that_ends_inside_a_length_is_an_error_and_one_that_ends_between_lines_is_not()
     {
-        assert!(lines(b"").await.unwrap().is_empty());
+        assert_eq!(lines(b"").await.unwrap(), Vec::<Line>::new());
         let err = lines(b"00").await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }

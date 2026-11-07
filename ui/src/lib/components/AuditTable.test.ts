@@ -40,6 +40,13 @@ describe("AuditTable", () => {
       "DELETE /repos/a/b · method and path rule 7",
     );
   });
+  it("follows the link without opening the row's raw record", async () => {
+    render(AuditTable, { entries: [refused(7)], now: NOW });
+    const link = screen.getByRole("link", { name: "method and path rule 7" });
+    link.addEventListener("click", (e) => e.preventDefault());
+    await fireEvent.click(link);
+    expect(document.querySelector("tr.detail")).toBeNull();
+  });
   it("shows a deleted rule as plain text marked (deleted)", () => {
     render(AuditTable, {
       entries: [refused(7)],

@@ -79,7 +79,16 @@
       filter.state !== "any",
   );
 
+  /** The rule on method and path an Activity link named (`?request-rule=<id>`). */
+  let selectedRequestRule = $state<number | undefined>(undefined);
+
   onMount(() => {
+    const named = new URLSearchParams(window.location.search).get(
+      "request-rule",
+    );
+    if (named !== null && /^\d+$/.test(named)) {
+      selectedRequestRule = Number(named);
+    }
     const stop = store.start();
     const stopSets = ruleSets.start();
     const clock = setInterval(() => {
@@ -328,7 +337,7 @@
   {/if}
 {/if}
 
-<RequestRulesSection {workspaces} {now} />
+<RequestRulesSection {workspaces} {now} selected={selectedRequestRule} />
 
 <RuleSetsSection
   store={ruleSets}

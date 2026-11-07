@@ -154,6 +154,46 @@ test.describe("the list", () => {
     await expect(row.first()).toContainText("DELETE /repos/acme/web-shop");
     await expect(row.first()).toContainText("method and path rule 1");
   });
+
+  test("the refusing rule in the Activity screen leads to its row on the Rules screen", async ({
+    page,
+    backend,
+  }) => {
+    await backend.installClock(page);
+    await backend.signIn(page);
+    await page.goto("/activity");
+    const row = page.getByRole("row").filter({ hasText: "api.example.com" });
+    await row
+      .first()
+      .getByRole("link", { name: "method and path rule 1" })
+      .click();
+    await expect(page).toHaveURL(/\/rules\?request-rule=1$/);
+    await expect(
+      section(page).locator('tbody tr[aria-current="true"]'),
+    ).toHaveCount(1);
+    await expect(rowFor(page, "api.example.com").first()).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    await expect(rowFor(page, "api.example.com").first()).toBeFocused();
+  });
+
+  test("a deleted rule shows as plain text in the Activity screen", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await backend.installClock(page);
+    await backend.signIn(page);
+    await request.delete("/api/request-rules/1", { headers: auth(backend) });
+    await page.goto("/activity");
+    const row = page
+      .getByRole("row")
+      .filter({ hasText: "DELETE /repos/acme/web-shop" })
+      .first();
+    await expect(row).toContainText("method and path rule 1 (deleted)");
+    await expect(row.getByRole("link")).toHaveCount(0);
+  });
 });
 
 test.describe("adding", () => {

@@ -3,7 +3,12 @@
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
-  import { describe, rawJson, type AuditEntry } from "#lib/audit/model.ts";
+  import {
+    describe,
+    rawJson,
+    splitDetail,
+    type AuditEntry,
+  } from "#lib/audit/model.ts";
   import {
     DETAIL_HEIGHT,
     ROW_HEIGHT,
@@ -24,6 +29,7 @@
     now,
     onTop,
     onNearEnd,
+    ruleGone = () => false,
   }: {
     /** Newest first. */
     entries: AuditEntry[];
@@ -34,6 +40,8 @@
     onTop?: (atTop: boolean) => void;
     /** The user is close to the last loaded row and more exist. */
     onNearEnd?: () => void;
+    /** A rule on method and path that no longer exists is shown as text, not as a link. */
+    ruleGone?: (id: number) => boolean;
   } = $props();
 
   let box = $state<HTMLElement>();
@@ -185,7 +193,21 @@
               <span class="chip {row.outcome.tone}">{row.outcome.label}</span>
             {/if}
           </td>
-          <td class="muted" title={row.detail}>{row.detail}</td>
+          <td class="muted" title={row.detail}>
+            {#if row.requestRule === undefined}{row.detail}{:else}
+              {@const cut = splitDetail(row.detail, row.requestRule)}
+              <span class="split"
+                ><span class="cut">{cut.before}</span
+                >{#if ruleGone(row.requestRule)}<span class="keep"
+                    >{cut.name} (deleted)</span
+                  >{:else}<a
+                    class="keep"
+                    href="/rules?request-rule={row.requestRule}"
+                    onclick={(e) => e.stopPropagation()}>{cut.name}</a
+                  >{/if}<span class="cut">{cut.after}</span></span
+              >
+            {/if}
+          </td>
         </tr>
         {#if open}
           <tr class="detail" aria-rowindex={range.start + i + 2}>
@@ -271,6 +293,21 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     border-bottom: 1px solid var(--color-border-subtle);
+  }
+  /* A cut line gives way to its rule's name: the name is a link and must stay in view. */
+  .split {
+    display: flex;
+    min-width: 0;
+  }
+  .split .cut {
+    min-width: 0;
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .split .keep {
+    flex: none;
+    white-space: pre;
   }
   tr.row td.time {
     padding-inline: var(--space-1);

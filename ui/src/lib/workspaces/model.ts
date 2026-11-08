@@ -71,6 +71,7 @@ const OPERATION_WORDS: Record<Operation, string> = {
   stopping: "Stopping",
   reclaiming: "Reclaiming space",
   resetting_root_disk: "Resetting the root disk",
+  growing_root_disk: "Making the root disk bigger",
   cloning: "Cloning",
   deleting: "Deleting",
 };
@@ -86,6 +87,7 @@ const STEP_WORDS: Record<Step, string> = {
   checking: "Checking for unsaved work",
   reclaiming: "Reclaiming free space",
   resetting_root_disk: "Resetting the root disk",
+  growing_root_disk: "Making the root disk bigger",
   stopping: "Stopping the workspace",
   removing: "Removing the workspace",
   done: "Done",
@@ -101,6 +103,7 @@ const SCRIPTS: Record<Operation, readonly Step[]> = {
   stopping: ["stopping", "reclaiming"],
   reclaiming: ["reclaiming"],
   resetting_root_disk: ["resetting_root_disk"],
+  growing_root_disk: ["growing_root_disk"],
   cloning: ["cloning"],
   deleting: ["checking", "removing"],
 };

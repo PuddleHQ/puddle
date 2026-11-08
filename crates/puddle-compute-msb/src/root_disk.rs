@@ -44,6 +44,38 @@ pub(crate) fn usage(sandbox_dir: &Path) -> Option<RootDiskUse> {
     })
 }
 
+/// What msb's plan for a root-disk size change says.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum GrowPlan {
+    /// msb refuses the change; the text says why (a size that is not above the current one).
+    Refused(String),
+    /// The running guest gets the room now.
+    Live,
+    /// The room arrives at the next start (a stopped sandbox, or a runtime that cannot grow a
+    /// running disk).
+    Deferred,
+}
+
+/// Reads msb's dry-run `plan` of a root-disk size change.
+pub(crate) fn grow_plan(plan: &microsandbox::sandbox::SandboxModificationPlan) -> GrowPlan {
+    use microsandbox::{ModificationDisposition, PlannedChange};
+    if let Some(conflict) = plan.conflicts.first() {
+        return GrowPlan::Refused(conflict.message.clone());
+    }
+    let live = plan.changes.iter().any(|change| {
+        matches!(
+            change,
+            PlannedChange::Config(c)
+                if c.field == "root_disk_size" && c.disposition == ModificationDisposition::Live
+        )
+    });
+    if live {
+        GrowPlan::Live
+    } else {
+        GrowPlan::Deferred
+    }
+}
+
 const MIB: u64 = 1024 * 1024;
 
 /// qcow2 files start with this magic, then the version and the backing-file fields; the virtual
@@ -183,5 +215,71 @@ mod tests {
         let home = Home::new();
         fs::remove_file(home.mine().join("upper.ext4")).unwrap();
         assert_eq!(usage(&home.mine()), None);
+    }
+
+    fn plan(
+        conflict: Option<&str>,
+        disposition: Option<microsandbox::ModificationDisposition>,
+        field: &str,
+    ) -> microsandbox::sandbox::SandboxModificationPlan {
+        use microsandbox::{
+            ChangeKind, ConfigPlannedChange, ModificationConflict, ModificationPolicy,
+            PlannedChange,
+        };
+        microsandbox::sandbox::SandboxModificationPlan {
+            sandbox: "a".into(),
+            status: "running".into(),
+            applied: false,
+            policy: ModificationPolicy::NoRestart,
+            changes: disposition
+                .map(|disposition| {
+                    PlannedChange::Config(ConfigPlannedChange {
+                        field: field.into(),
+                        change: ChangeKind::Updated,
+                        before: None,
+                        after: None,
+                        disposition,
+                        reason: None,
+                    })
+                })
+                .into_iter()
+                .collect(),
+            conflicts: conflict
+                .map(|message| ModificationConflict {
+                    field: "root_disk_size".into(),
+                    message: message.into(),
+                })
+                .into_iter()
+                .collect(),
+            warnings: vec![],
+            resize_status: vec![],
+        }
+    }
+
+    #[test]
+    fn a_plan_reads_as_live_deferred_or_refused() {
+        use microsandbox::ModificationDisposition as D;
+        assert_eq!(
+            grow_plan(&plan(None, Some(D::Live), "root_disk_size")),
+            GrowPlan::Live
+        );
+        assert_eq!(
+            grow_plan(&plan(None, Some(D::NextStart), "root_disk_size")),
+            GrowPlan::Deferred
+        );
+        assert_eq!(
+            grow_plan(&plan(None, Some(D::RequiresRestart), "root_disk_size")),
+            GrowPlan::Deferred
+        );
+        // A live change of some other field is not the disk.
+        assert_eq!(
+            grow_plan(&plan(None, Some(D::Live), "cpus")),
+            GrowPlan::Deferred
+        );
+        assert_eq!(grow_plan(&plan(None, None, "")), GrowPlan::Deferred);
+        assert_eq!(
+            grow_plan(&plan(Some("too small"), Some(D::Live), "root_disk_size")),
+            GrowPlan::Refused("too small".into())
+        );
     }
 }

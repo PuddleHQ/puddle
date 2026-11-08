@@ -227,6 +227,174 @@ async fn vm_host_boots_a_new_workspace_with_a_16_gib_sparse_root_disk() {
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
+/// What the guest's `df` says `/` holds, in MiB.
+async fn guest_root_mib(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> u64 {
+    let size = guest_within(
+        runtime,
+        sandbox,
+        "df -BM --output=size / | tail -n 1 | tr -dc 0-9",
+        Duration::from_secs(60),
+    )
+    .await;
+    size.trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("df said {size:?}"))
+}
+
+/// A root disk grows in a real guest: live while the workspace runs (on Windows, until the libkrun
+/// change lands, with a restart that loses nothing saved to disk), offline while it is stopped, and
+/// "Reset root disk" makes the fresh one as big as the grown size. A file written to the root disk
+/// before the grow has the same checksum after each step.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_grows_a_root_disk_live_and_offline_and_a_reset_keeps_the_size() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("growroot").await;
+    let name = format!("{}-growroot", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let before = guest_root_mib(&runtime, &sandbox).await;
+    assert!((15_000..=16_384).contains(&before), "df {before} MiB");
+
+    // Data on the root disk, and a marker on the memory-backed /tmp that only a restart removes.
+    let sum = guest_within(
+        &runtime,
+        &sandbox,
+        "dd if=/dev/urandom of=/seed bs=1M count=64 2>/dev/null && sync && touch /tmp/boot-marker \
+         && sha256sum /seed | cut -d' ' -f1",
+        Duration::from_secs(120),
+    )
+    .await;
+    let sum = sum.trim().to_owned();
+    assert_eq!(sum.len(), 64, "{sum:?}");
+    let seed_sum = || {
+        guest_within(
+            &runtime,
+            &sandbox,
+            "sha256sum /seed | cut -d' ' -f1",
+            Duration::from_secs(120),
+        )
+    };
+
+    // Live (or restarted) grow to 20 GiB.
+    let reply = api
+        .post(
+            &format!("/api/workspaces/{name}/grow-root-disk"),
+            r#"{"size_mib": 20480}"#,
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let grown = guest_root_mib(&runtime, &sandbox).await;
+    eprintln!("guest df after the grow: {grown} MiB");
+    assert!(
+        (19_000..=20_480).contains(&grown),
+        "df {grown} MiB after growing to 20480"
+    );
+    assert_eq!(seed_sum().await.trim(), sum, "the file changed");
+    let marker = guest_within(
+        &runtime,
+        &sandbox,
+        "test -e /tmp/boot-marker && echo kept || echo gone",
+        Duration::from_secs(60),
+    )
+    .await;
+    if cfg!(windows) {
+        eprintln!("boot marker after the grow on Windows: {}", marker.trim());
+    } else {
+        assert_eq!(marker.trim(), "kept", "a live grow restarted the guest");
+    }
+    let workspace = api.get(&format!("/api/workspaces/{name}")).await.json();
+    assert_eq!(workspace["root_disk_size_mib"], 20_480, "{workspace}");
+    assert_eq!(workspace["status"], "running", "{workspace}");
+
+    // Offline grow to 24 GiB.
+    let reply = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    let reply = api
+        .post(
+            &format!("/api/workspaces/{name}/grow-root-disk"),
+            r#"{"size_mib": 24576}"#,
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let reply = api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let offline = guest_root_mib(&runtime, &sandbox).await;
+    eprintln!("guest df after the offline grow: {offline} MiB");
+    assert!(
+        (23_000..=24_576).contains(&offline),
+        "df {offline} MiB after growing to 24576"
+    );
+    assert_eq!(seed_sum().await.trim(), sum, "the file changed");
+
+    // A reset makes a fresh root disk that is still 24 GiB: the seed is gone, the room is not.
+    let reply = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    let reply = api
+        .post(&format!("/api/workspaces/{name}/reset-root-disk"), "")
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    let reply = api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let fresh = guest_root_mib(&runtime, &sandbox).await;
+    assert!(
+        (23_000..=24_576).contains(&fresh),
+        "df {fresh} MiB after a reset"
+    );
+    let seed = guest_within(
+        &runtime,
+        &sandbox,
+        "test -e /seed && echo there || echo gone",
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_eq!(seed.trim(), "gone");
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
 /// A workspace boots with the CPU count the settings name (the global default here), and a change
 /// in its own settings reaches the guest at the next start and not before: `nproc` in the guest
 /// says how many CPUs it really has.

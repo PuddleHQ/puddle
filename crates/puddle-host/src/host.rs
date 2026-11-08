@@ -676,6 +676,7 @@ impl<R: Runtime + Clone> Host<R> {
                     .clone()
                     .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
                 login_markers: config.paths.login_markers(),
+                data_dir: config.paths.data().to_path_buf(),
             },
             stored,
             retired,

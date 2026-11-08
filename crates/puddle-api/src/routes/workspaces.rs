@@ -21,9 +21,9 @@ use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::wire::{
-    AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceIdentity,
-    NewWorkspaceRequest, RenameWorkspaceRequest, SessionUserRequest, Workspace, WorkspaceList,
-    WorkspaceLookupConflict, WorkspaceMatch,
+    AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, GrowRootDiskRequest,
+    NewWorkspaceIdentity, NewWorkspaceRequest, RenameWorkspaceRequest, SessionUserRequest,
+    Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
 };
 use crate::workspaces::{GitSetup, LocalSource, NewRepository};
 
@@ -519,6 +519,37 @@ pub(crate) async fn reset_root_disk(
     let record = state
         .workspaces
         .reset_root_disk(&workspace_id(&id)?)
+        .await?;
+    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+}
+
+/// Makes the workspace's root disk bigger. The root disk holds the home directory, tool caches
+/// and installed packages, and only ever grows. A running workspace has the room at once when
+/// the runtime can grow a disk under a running guest; otherwise Puddle restarts it, which loses
+/// nothing that was saved to disk. A stopped workspace has the room at its next start. The size
+/// is kept when the root disk is reset. Answers 202; the workspace is busy
+/// (`growing_root_disk`) until it is done.
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{id}/grow-root-disk",
+    tag = "workspaces",
+    params(("id" = String, Path, description = "workspace id")),
+    request_body = GrowRootDiskRequest,
+    responses(
+        (status = ACCEPTED, description = "growing started", body = Workspace),
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
+        (status = CONFLICT, description = "busy, or starting or stopping", body = ApiErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "not above the current size, or more than this computer has free", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn grow_root_disk(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    crate::extract::Json(body): crate::extract::Json<GrowRootDiskRequest>,
+) -> Result<(StatusCode, Json<Workspace>), ApiError> {
+    let record = state
+        .workspaces
+        .grow_root_disk(&workspace_id(&id)?, body.size_mib)
         .await?;
     Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
 }

@@ -25,6 +25,8 @@ pub enum WorkspaceOperation {
     Reclaiming,
     /// Removing the sandbox so the next start makes a fresh root disk.
     ResettingRootDisk,
+    /// Making the root disk bigger.
+    GrowingRootDisk,
     /// Cloning one repository into a running workspace; stop and delete are refused until it
     /// ends.
     Cloning,
@@ -40,6 +42,7 @@ impl From<domain::Operation> for WorkspaceOperation {
             domain::Operation::Stopping => Self::Stopping,
             domain::Operation::Reclaiming => Self::Reclaiming,
             domain::Operation::ResettingRootDisk => Self::ResettingRootDisk,
+            domain::Operation::GrowingRootDisk => Self::GrowingRootDisk,
             domain::Operation::Cloning => Self::Cloning,
             domain::Operation::Deleting => Self::Deleting,
         }
@@ -479,6 +482,16 @@ impl RenameWorkspaceRequest {
     pub(crate) fn into_name(self) -> Result<domain::DisplayName, ApiError> {
         domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)
     }
+}
+
+/// `POST /api/workspaces/{id}/grow-root-disk`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GrowRootDiskRequest {
+    /// The new root disk size in MiB. It must be above the current size: a root disk only grows.
+    /// Required.
+    #[schema(minimum = 1)]
+    pub size_mib: u32,
 }
 
 /// `PUT /api/workspaces/{id}/session-user`.

@@ -56,6 +56,14 @@ const DOCKER_DISK_SIZE: DiskSize = DiskSize::gib(20);
 /// made before this size existed keeps the 4 GiB it was made with.
 const WORKSPACE_ROOT_DISK_SIZE: DiskSize = DiskSize::gib(16);
 
+/// The root disk a workspace's sandbox is made with: the default, or the size the user grew it to
+/// when that is more, so a reset or a made-again sandbox keeps what was grown.
+pub(crate) fn root_disk_size(grown_mib: Option<u32>) -> DiskSize {
+    grown_mib.map_or(WORKSPACE_ROOT_DISK_SIZE, |mib| {
+        WORKSPACE_ROOT_DISK_SIZE.max(DiskSize::mib(mib))
+    })
+}
+
 /// The disk Docker's data lives on: one per sandbox, deleted with it.
 fn docker_disk() -> OwnedDisk {
     #[expect(
@@ -266,7 +274,6 @@ impl BootKit {
     ) -> SandboxSpec {
         let spec = SandboxSpec::new(name.sandbox_name(), image)
             .with_memory(memory)
-            .with_root_disk(WORKSPACE_ROOT_DISK_SIZE)
             .with_env(env)
             .with_route(VsockRoute::new(AGENT_ROUTE_PORT, route.endpoint().path()))
             .with_owned_disk(docker_disk());
@@ -416,6 +423,14 @@ fn link_or_copy_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_workspace_gets_the_default_root_disk_or_the_size_it_was_grown_to_when_that_is_more() {
+        assert_eq!(root_disk_size(None), DiskSize::gib(16));
+        assert_eq!(root_disk_size(Some(4_096)), DiskSize::gib(16));
+        assert_eq!(root_disk_size(Some(16_384)), DiskSize::gib(16));
+        assert_eq!(root_disk_size(Some(40_960)), DiskSize::mib(40_960));
+    }
 
     fn release(dir: &Path, version: &str) -> PathBuf {
         let release = dir.join("release");

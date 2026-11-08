@@ -735,6 +735,7 @@ describe("a record as a row", () => {
       "repo_added",
       "repo_switched",
       "repo_removed",
+      "root_disk_grown",
       "git_repaired",
     ]) {
       expect(op({ op: kind }).detail).toMatch(/^[A-Z][a-z ]+, by api$/);

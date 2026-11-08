@@ -50,6 +50,7 @@ const DONE_WORDS: Record<string, (label: string) => string> = {
   reclaiming: (name) => `Reclaimed free space on ${name}.`,
   resetting_root_disk: (name) =>
     `Reset the root disk of ${name}; it is made again at the next start.`,
+  growing_root_disk: (name) => `Made the root disk of ${name} bigger.`,
   cloning: (name) => `Cloned a repository into ${name}.`,
   deleting: (name) => `Deleted ${name}.`,
 };

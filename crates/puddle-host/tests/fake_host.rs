@@ -3700,6 +3700,15 @@ impl Runtime for SlowPull {
         self.0.set_cpus(name, cpus)
     }
 
+    fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: puddle_compute::DiskSize,
+    ) -> impl Future<Output = Result<puddle_compute::RootDiskGrowth, puddle_compute::ComputeError>> + Send
+    {
+        self.0.grow_root_disk(name, size)
+    }
+
     fn set_memory(
         &self,
         name: &SandboxName,
@@ -9864,6 +9873,335 @@ async fn resetting_the_root_disk_needs_a_stopped_workspace_and_keeps_the_volume(
             .iter()
             .any(|s| s.name == sandbox.as_str())
     );
+    host.shutdown().await;
+}
+
+/// Grows the root disk of `acme` to `size_mib` and waits for the operation to end; returns the
+/// last progress event.
+async fn grow_root_disk(
+    api: &Api,
+    events: &mut support::Events,
+    size_mib: u64,
+) -> serde_json::Value {
+    let reply = api
+        .post(
+            "/api/workspaces/acme/grow-root-disk",
+            &format!(r#"{{"size_mib": {size_mib}}}"#),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    assert_eq!(reply.json()["busy"], "growing_root_disk");
+    events.until(ended("acme"), Duration::from_secs(20)).await
+}
+
+fn gib(n: u32) -> puddle_compute::DiskSize {
+    puddle_compute::DiskSize::gib(n)
+}
+
+/// The last `root_disk_grown` record of the activity log: (outcome, detail).
+async fn grown_record(api: &Api) -> (String, String) {
+    let ops = workspace_ops("workspace=acme", api).await;
+    let last = ops
+        .iter()
+        .rev()
+        .find(|r| r["op"] == "root_disk_grown")
+        .expect("a root_disk_grown record")
+        .clone();
+    (
+        last["outcome"].as_str().unwrap().to_owned(),
+        last["detail"].as_str().unwrap().to_owned(),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_running_workspaces_root_disk_grows_live_and_the_audit_log_says_so() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["root_disk_size_mib"], 20_480, "{w}");
+    assert_eq!(w["status"], "running", "{w}");
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(20_480))
+    );
+    assert!(
+        rig.runtime.calls().iter().all(|c| c.op != Op::Stop),
+        "a live grow does not stop the workspace"
+    );
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "succeeded");
+    assert_eq!(
+        detail,
+        "root disk grown from 16384 MiB to 20480 MiB, while it ran"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_root_disk_never_shrinks_and_never_grows_past_the_free_space() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    // The host reads the figures again when an operation ends.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["root_disk_size_mib"], 16_384, "{w}");
+    for size in [1_u64, 16_384] {
+        let reply = api
+            .post(
+                "/api/workspaces/acme/grow-root-disk",
+                &format!(r#"{{"size_mib": {size}}}"#),
+            )
+            .await;
+        assert_eq!(reply.status, 422, "{}", reply.body);
+        assert!(reply.body.contains("only grows"), "{}", reply.body);
+    }
+    let huge = api
+        .post(
+            "/api/workspaces/acme/grow-root-disk",
+            &format!(r#"{{"size_mib": {}}}"#, u32::MAX),
+        )
+        .await;
+    assert_eq!(huge.status, 422, "{}", huge.body);
+    assert!(huge.body.contains("free"), "{}", huge.body);
+    let missing = api
+        .post(
+            "/api/workspaces/nope/grow-root-disk",
+            r#"{"size_mib": 20000}"#,
+        )
+        .await;
+    assert_eq!(missing.status, 404, "{}", missing.body);
+    assert!(
+        workspace_ops("workspace=acme", &api)
+            .await
+            .iter()
+            .all(|r| r["op"] != "root_disk_grown"),
+        "a refused request is not a grow"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_grow_that_adds_most_of_the_free_space_is_allowed_with_a_warning() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let free_mib = puddle_fs::free_bytes(&rig.dir.path().join("data")).unwrap() / (1024 * 1024);
+    let size = 16_384 + free_mib * 3 / 4;
+    let end = grow_root_disk(&api, &mut events, size).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let problems = problems_of(&api).await;
+    assert!(
+        problems
+            .iter()
+            .any(|(key, ws, title, _)| key == "root-room:acme"
+                && ws.as_deref() == Some("acme")
+                && title.contains("bigger than most of the free space")),
+        "{problems:?}"
+    );
+    // A small grow after it takes the warning away.
+    let end = grow_root_disk(&api, &mut events, size + 1).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert!(
+        problems_of(&api)
+            .await
+            .iter()
+            .all(|(key, ..)| key != "root-room:acme")
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_workspaces_root_disk_grows_at_the_next_start_with_a_warning_and_a_reset_keeps_the_size()
+ {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let end = grow_root_disk(&api, &mut events, 24_576).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(24_576))
+    );
+    let (_, detail) = grown_record(&api).await;
+    assert_eq!(
+        detail,
+        "root disk grown from 16384 MiB to 24576 MiB, at its next start"
+    );
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "stopped", "{w}");
+    assert!(
+        problems_of(&api)
+            .await
+            .iter()
+            .any(|(key, _, title, _)| key == "root-copy:acme" && title.contains("old root disk")),
+    );
+
+    // A reset removes the sandbox and the warning; the fresh root disk is the grown size.
+    let reply = api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(
+        problems_of(&api)
+            .await
+            .iter()
+            .all(|(key, ..)| key != "root-copy:acme")
+    );
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(24_576))
+    );
+
+    // The size is in the saved list, so a new Puddle makes it again after a reset.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    let again = rig.start().await;
+    let api = Api::new(again.url(), again.token());
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(24_576))
+    );
+    again.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runtime_that_cannot_grow_live_gets_a_restart_that_loses_nothing() {
+    let rig = Rig::new();
+    rig.runtime.set_live_root_grow(false);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "running", "{w}");
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::mib(20_480))
+    );
+    let ops: Vec<Op> = rig.runtime.calls().iter().map(|c| c.op).collect();
+    assert!(
+        ops.contains(&Op::Stop) && ops.iter().filter(|o| **o == Op::Start).count() == 1,
+        "{ops:?}"
+    );
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "succeeded");
+    assert_eq!(
+        detail,
+        "root disk grown from 16384 MiB to 20480 MiB, with a restart"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_grow_changes_nothing_and_is_audited() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    rig.runtime.inject(
+        Op::GrowRootDisk,
+        Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "grow",
+            message: "disk full".into(),
+        }),
+    );
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "running", "{w}");
+    assert_eq!(w["busy"], serde_json::Value::Null, "{w}");
+    assert_eq!(rig.runtime.root_disk_size(&sandbox), Some(gib(16)));
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "failed");
+    assert!(
+        detail.starts_with("root disk not grown from 16384 MiB to 20480 MiB: "),
+        "{detail}"
+    );
+    // The size was not kept: a reset makes the default one.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/reset-root-disk", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(rig.runtime.root_disk_size(&sandbox), Some(gib(16)));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_for_a_grow_that_fails_leaves_the_workspace_as_a_stop_or_a_start_would() {
+    let rig = Rig::new();
+    rig.runtime.set_live_root_grow(false);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+
+    // The stop fails: the workspace is still running.
+    rig.runtime.inject(
+        Op::Stop,
+        Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "stop",
+            message: "stuck".into(),
+        }),
+    );
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "running", "{w}");
+
+    // The start fails: the workspace is crashed, and a start brings it back.
+    rig.runtime.inject(
+        Op::Start,
+        Fault::once(puddle_compute::ComputeError::Runtime {
+            op: "start",
+            message: "no memory".into(),
+        }),
+    );
+    let end = grow_root_disk(&api, &mut events, 24_576).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "crashed", "{w}");
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let w = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(w["status"], "running", "{w}");
     host.shutdown().await;
 }
 

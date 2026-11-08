@@ -12,8 +12,8 @@ use microsandbox::sandbox::{SandboxHandle, SandboxStatus as SdkStatus};
 use microsandbox::volume::Volume;
 use microsandbox::{Backend, LocalBackend, MicrosandboxError, Sandbox};
 use puddle_compute::{
-    Capabilities, ComputeError, ImageConfig, Runtime, SandboxInfo, SandboxSpec, VolumeInfo,
-    VolumeSpec,
+    Capabilities, ComputeError, DiskSize, ImageConfig, RootDiskGrowth, Runtime, SandboxInfo,
+    SandboxSpec, VolumeInfo, VolumeSpec,
 };
 use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 
@@ -350,12 +350,7 @@ pub(crate) fn log_tail(dir: &Path, max: usize) -> String {
 fn spec_mounts(spec: &SandboxSpec) -> Vec<(String, Option<u32>)> {
     spec.volumes
         .iter()
-        .map(|m| {
-            (
-                m.volume.to_string(),
-                m.ensure_size.map(puddle_compute::DiskSize::as_mib),
-            )
-        })
+        .map(|m| (m.volume.to_string(), m.ensure_size.map(DiskSize::as_mib)))
         .collect()
 }
 
@@ -539,6 +534,36 @@ impl Runtime for MsbRuntime {
                 .await
                 .map_err(|e| map("set cpus of", name.as_str(), e))?;
             Ok(())
+        })
+    }
+
+    fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: DiskSize,
+    ) -> impl Future<Output = Result<RootDiskGrowth, ComputeError>> + Send {
+        Box::pin(async move {
+            let record = self.existing(name).await?;
+            let mib = size.as_mib();
+            let plan = self
+                .sdk(record.modify().root_disk_size(mib).dry_run())
+                .await
+                .map_err(|e| map("plan the root disk growth of", name.as_str(), e))?;
+            match root_disk::grow_plan(&plan) {
+                root_disk::GrowPlan::Refused(reason) => Err(ComputeError::InvalidSpec { reason }),
+                root_disk::GrowPlan::Live => {
+                    self.sdk(record.modify().root_disk_size(mib).apply())
+                        .await
+                        .map_err(|e| map("grow the root disk of", name.as_str(), e))?;
+                    Ok(RootDiskGrowth::Live)
+                }
+                root_disk::GrowPlan::Deferred => {
+                    self.sdk(record.modify().root_disk_size(mib).next_start().apply())
+                        .await
+                        .map_err(|e| map("grow the root disk of", name.as_str(), e))?;
+                    Ok(RootDiskGrowth::NextStart)
+                }
+            }
         })
     }
 

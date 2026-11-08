@@ -47,6 +47,15 @@ pub struct RootDiskUse {
     pub used: DiskSize,
 }
 
+/// When a root disk's new size takes effect, from [`Runtime::grow_root_disk`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootDiskGrowth {
+    /// The running guest has the room now.
+    Live,
+    /// The room arrives with the next start of the sandbox.
+    NextStart,
+}
+
 impl SandboxInfo {
     /// The name as a [`SandboxName`], or `None` if it isn't a valid Puddle name.
     #[must_use]
@@ -246,6 +255,22 @@ pub trait Runtime: Send + Sync + 'static {
         name: &SandboxName,
         cpus: CpuCount,
     ) -> impl Future<Output = Result<(), ComputeError>> + Send;
+
+    /// Grows the root disk of a sandbox to `size`: now when it runs and the runtime can grow a
+    /// disk under a running guest ([`RootDiskGrowth::Live`], the guest sees the room at once and
+    /// nothing is lost), otherwise at its next start ([`RootDiskGrowth::NextStart`], a stopped
+    /// sandbox always; a running one when the runtime cannot grow live, which the caller
+    /// answers by restarting it). A root disk only grows: nothing here shrinks it.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::NotFound`]; [`ComputeError::InvalidSpec`] when `size` is not above the
+    /// current size.
+    fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: DiskSize,
+    ) -> impl Future<Output = Result<RootDiskGrowth, ComputeError>> + Send;
 
     /// Every sandbox the runtime knows, in name order, including ones Puddle didn't create.
     ///

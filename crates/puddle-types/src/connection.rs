@@ -518,16 +518,11 @@ mod tests {
         for category in LocalCategory::ALL {
             let code = guard(BlockReason::LocalToggle(category));
             assert_eq!(code, category.audit_reason());
-            // The company network keeps its own audit code (`company_network_off`).
-            if category == LocalCategory::CompanyNetwork {
-                assert_eq!(code, "company_network_off");
-            } else {
-                assert!(code.starts_with("toggle:"), "{code}");
-            }
+            assert!(code.starts_with("toggle:"), "{code}");
         }
         assert_eq!(
             guard(BlockReason::CompanyNetwork(CompanySignal::PacDirect)),
-            "company_network_off"
+            "toggle:company_network"
         );
     }
 

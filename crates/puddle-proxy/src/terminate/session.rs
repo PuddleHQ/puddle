@@ -124,14 +124,12 @@ impl Outcome {
     /// credential (its id is the binding unless a binding already is), one that went out
     /// unchanged joins the record's list.
     pub(crate) fn record_stand_ins(&mut self, host: &Host, swapped: &Swapped) {
-        if !swapped.unswapped.is_empty() {
-            tracing::info!(%host, stand_ins = ?swapped.unswapped, "a stand-in went out unchanged (a host it is not for, or the request target)");
-        }
         if let Some(id) = swapped.swapped.first() {
             self.injected = true;
             self.binding_id.get_or_insert_with(|| id.clone());
         }
         for id in &swapped.unswapped {
+            tracing::info!(%host, stand_in = %id, "a stand-in went out unchanged (a host it is not for, or the request target)");
             if self.unswapped_stand_ins.len() < MAX_UNSWAPPED_STAND_INS
                 && !self.unswapped_stand_ins.contains(id)
             {

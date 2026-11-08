@@ -282,7 +282,14 @@ async fn a_wrong_or_missing_sni_gets_an_alert_and_never_reaches_the_upstream() {
         let result = guest
             .tls_with("bound.test:443", sni, &[b"http/1.1"], send_sni)
             .await;
-        assert!(result.is_err(), "sni {sni:?} sent {send_sni}");
+        let err = result
+            .err()
+            .unwrap_or_else(|| panic!("sni {sni:?} sent {send_sni}"));
+        assert_eq!(
+            err.to_string(),
+            "received fatal alert: AccessDenied",
+            "the guest is told, not just cut off"
+        );
     }
     let events = rig.events(2).await;
     for event in events {

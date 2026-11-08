@@ -64,6 +64,65 @@ describe("parseRepoUrl", () => {
     );
   });
 
+  it.each([
+    ["git@github.com:Acme/Web-Shop.git", ["github.com", "acme", "web-shop"]],
+    ["ssh://git@github.com/acme/web", ["github.com", "acme", "web"]],
+    [
+      "ssh://git@ssh.github.com:443/acme/web.git",
+      ["github.com", "acme", "web"],
+    ],
+    ["git@gitlab.com:grp/sub/web.git", ["gitlab.com", "grp", "sub/web"]],
+    ["git@altssh.gitlab.com:grp/web.git", ["gitlab.com", "grp", "web"]],
+    ["git@bitbucket.org:acme/web.git", ["bitbucket.org", "acme", "web"]],
+    [
+      "git@ssh.dev.azure.com:v3/Org/My%20Project/Repo",
+      ["dev.azure.com", "org", "my project/repo"],
+    ],
+    [
+      "ssh://git@vs-ssh.visualstudio.com/v3/org/proj/repo",
+      ["org.visualstudio.com", "org", "proj/repo"],
+    ],
+  ])(
+    "lists SSH address %s as its HTTPS repository",
+    (url, [host, owner, repo]) => {
+      expect(parseRepoUrl(url, { ssh: true })).toEqual({
+        ok: true,
+        host,
+        owner,
+        repo,
+      });
+    },
+  );
+
+  it("keeps refusing SSH where a workspace is cloned, and says why on the Git tab", () => {
+    const ssh = "git@github.com:acme/web.git";
+    expect(parseRepoUrl(ssh).ok).toBe(false);
+    expect(parseRepoUrl(ssh, { ssh: false }).ok).toBe(false);
+    const message = (url: string) => {
+      const got = parseRepoUrl(url, { ssh: true });
+      return got.ok ? "" : got.message;
+    };
+    expect(message("git@example.com:acme/web.git")).toMatch(
+      /GitHub, GitLab, Bitbucket and Azure DevOps/,
+    );
+    expect(message("git@github.com:web")).toMatch(
+      /not a repository address Puddle can read/,
+    );
+    expect(message("git@github.com:")).toMatch(/not an SSH address/);
+    expect(message("git@github.com:acme/my repo.git")).toMatch(
+      /not an SSH address/,
+    );
+    expect(message("ssh://git:pw@github.com/acme/web")).toMatch(
+      /not an SSH address/,
+    );
+    expect(message("git@ssh.dev.azure.com:Org/Proj/Repo")).toMatch(
+      /not an SSH address/,
+    );
+    expect(message("https://github.com/a")).toMatch(
+      /not a repository address Puddle can read/,
+    );
+  });
+
   it("names a repository the way the table does", () => {
     expect(repoName({ host: "github.com", owner: "acme", repo: "web" })).toBe(
       "github.com/acme/web",

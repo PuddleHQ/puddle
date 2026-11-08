@@ -3941,6 +3941,32 @@ async fn every_sandbox_has_its_own_20_gib_disk_for_dockers_data_and_the_volume_d
     again.shutdown().await;
 }
 
+/// A new workspace's sandbox is made with a 16 GiB root disk (sparse on the host), and a stop and
+/// start keeps that sandbox (a start never names a size, so a sandbox made at 4 GiB stays there).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_workspaces_sandbox_gets_a_16_gib_root_disk_and_a_start_keeps_it() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::gib(16))
+    );
+    for step in ["stop", "start"] {
+        let reply = api.post(&format!("/api/workspaces/acme/{step}"), "").await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+    }
+    assert_eq!(
+        rig.runtime.root_disk_size(&sandbox),
+        Some(puddle_compute::DiskSize::gib(16))
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
     let rig = Rig::new();

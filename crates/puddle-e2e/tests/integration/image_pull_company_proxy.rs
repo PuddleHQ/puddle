@@ -169,7 +169,13 @@ async fn a_wrong_proxy_password_fails_the_pull_before_the_registry_sees_a_reques
     let Some(squid) = Squid::start(&squid_options(addr)) else {
         return;
     };
-    let w = world(squid, listener, addr, "not the password").await;
+    let w = world(
+        squid,
+        listener,
+        addr,
+        &format!("{}-but-wrong", basic_password()),
+    )
+    .await;
     let err = w.runtime.pull_image(&w.image).await.unwrap_err();
     assert!(matches!(err, ComputeError::ImagePull { .. }), "{err:?}");
     assert!(w.seen.requests().is_empty(), "{:?}", w.seen.requests());

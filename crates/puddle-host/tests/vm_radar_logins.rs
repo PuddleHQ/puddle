@@ -122,11 +122,14 @@ fn flows() -> Vec<Flow> {
             ),
         },
         Flow {
+            // `--no-auto-update`: without it the tool also downloads its own update from
+            // `release-assets.githubusercontent.com` (seen 2026-11-08, copilot 1.0.105), which is no
+            // login traffic and carries no credential, so it is kept out of the question asked here.
             name: "copilot with a made-up token",
             profile: "github",
             must_call: "api.github.com",
             script: format!(
-                "{github_home}; COPILOT_GITHUB_TOKEN={FAKE_GITHUB} timeout 90 copilot -p 'say hi' </dev/null; echo rc=$?"
+                "{github_home}; COPILOT_GITHUB_TOKEN={FAKE_GITHUB} timeout 90 copilot --no-auto-update -p 'say hi' </dev/null; echo rc=$?"
             ),
         },
     ]
@@ -199,6 +202,12 @@ fn in_profile(profile: &str, host: &str) -> bool {
 
 fn last_line(out: &str) -> &str {
     out.lines().last().unwrap_or("")
+}
+
+/// The last few lines of a tool's output, joined, for the log.
+fn tail(out: &str) -> String {
+    let lines: Vec<&str> = out.lines().collect();
+    lines[lines.len().saturating_sub(8)..].join(" | ")
 }
 
 /// The hosts of a flow's connections that its profile does not cover.
@@ -292,7 +301,7 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
             "{}: {} host(s) called: {seen:?}\n  output: {}",
             flow.name,
             seen.len(),
-            last_line(&out)
+            tail(&out)
         );
         if !outside.is_empty() {
             failures.push(format!(

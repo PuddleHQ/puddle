@@ -50,6 +50,12 @@ const DOCKER_DATA_DIR: &str = "/var/lib/docker";
 /// guest writes; the ceiling is what Docker can fill before it reports a full disk.
 const DOCKER_DISK_SIZE: DiskSize = DiskSize::gib(20);
 
+/// How big a new workspace's root disk is. The image file is sparse (NTFS sparse flag on Windows,
+/// holes on Linux), so a fresh disk costs about what a 4 GiB one did and the host spends more only
+/// as the guest writes; the size is the ceiling for packages, tool caches and `/home`. A workspace
+/// made before this size existed keeps the 4 GiB it was made with.
+const WORKSPACE_ROOT_DISK_SIZE: DiskSize = DiskSize::gib(16);
+
 /// The disk Docker's data lives on: one per sandbox, deleted with it.
 fn docker_disk() -> OwnedDisk {
     #[expect(
@@ -260,6 +266,7 @@ impl BootKit {
     ) -> SandboxSpec {
         let spec = SandboxSpec::new(name.sandbox_name(), image)
             .with_memory(memory)
+            .with_root_disk(WORKSPACE_ROOT_DISK_SIZE)
             .with_env(env)
             .with_route(VsockRoute::new(AGENT_ROUTE_PORT, route.endpoint().path()))
             .with_owned_disk(docker_disk());

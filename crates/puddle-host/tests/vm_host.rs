@@ -164,6 +164,69 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
     assert_eq!(record.status, WorkspaceStatus::Stopped);
 }
 
+/// A new workspace boots with a 16 GiB root disk: the guest's `df` on `/` says about 16 GiB, the
+/// host reports the 16 384 MiB capacity, and the image file is sparse, so what it takes on the host
+/// (Linux holes, NTFS sparse flag on Windows) is a small part of that and not the apparent size.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_boots_a_new_workspace_with_a_16_gib_sparse_root_disk() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("rootdisk").await;
+    let name = format!("{}-rootdisk", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // The guest's own view: the ext4 upper under `/` is 16 GiB less the journal and metadata.
+    let size = guest_within(
+        &runtime,
+        &sandbox,
+        "df -BM --output=size / | tail -n 1 | tr -dc 0-9",
+        Duration::from_secs(60),
+    )
+    .await;
+    let guest_mib: u64 = size
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("df said {size:?}"));
+    eprintln!("guest df size of /: {guest_mib} MiB");
+    assert!(
+        (15_000..=16_384).contains(&guest_mib),
+        "df shows {guest_mib} MiB for a 16 GiB root disk"
+    );
+
+    // The host's view: the capacity is the 16 GiB, the use is what the file takes (sparse).
+    let workspace = api.get(&format!("/api/workspaces/{name}")).await.json();
+    assert_eq!(workspace["root_disk_size_mib"], 16_384, "{workspace}");
+    let used = workspace["root_disk_used_mib"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("no root disk use in {workspace}"));
+    eprintln!("root disk takes {used} MiB of 16384 on the host");
+    assert!(
+        used < 16_384 / 4,
+        "a mostly empty 16 GiB root disk takes {used} MiB: the file is not sparse"
+    );
+    assert_eq!(workspace["disk_warnings"], json!([]), "{workspace}");
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
 /// A workspace boots with the CPU count the settings name (the global default here), and a change
 /// in its own settings reaches the guest at the next start and not before: `nproc` in the guest
 /// says how many CPUs it really has.

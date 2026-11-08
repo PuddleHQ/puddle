@@ -366,9 +366,28 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             .screenshot(&out.join("u7b-before.png"))
             .await
             .unwrap();
-        let hung = shell(&runtime, &sandbox, ASKPASS).await;
+        eventually_async("the git extension's socket exists", SHOWS, || async {
+            let said = shell(
+                &runtime,
+                &sandbox,
+                "ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1",
+            )
+            .await;
+            (!said.trim().is_empty()).then_some(())
+        })
+        .await;
+        let hung = shell(
+            &runtime,
+            &sandbox,
+            &format!("PUDDLE_ASKPASS_DEBUG=1; {ASKPASS}"),
+        )
+        .await;
         window.screenshot(&out.join("u7b-after.png")).await.unwrap();
-        assert!(hung.contains("password="), "first askpass try: {hung}");
+        let logs = shell(&runtime, &sandbox, "grep -rhiE 'askpass|authentication|getSession|credential' /home/agent/.vscode-server/data/logs 2>/dev/null | tail -n 40").await;
+        assert!(
+            hung.contains("password="),
+            "first askpass try: {hung}\nlogs:\n{logs}"
+        );
 
         // U7b: the guest's git extension asks the window for a GitHub token and gets what the window's
         // `github` provider holds. Here that is the canary; with a person signed in it would be their

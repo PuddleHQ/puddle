@@ -775,11 +775,10 @@
           on the drive that holds Puddle's data. When it fills up, a build or a
           tool in a workspace stops with an error that does not name the cause.
           <code>puddle doctor</code> and the app check the free space against these
-          two lines (GB of 1024 x 1024 x 1024 bytes). They measure the room
-          left on the drive, not the size of the disks: a workspace's root disk
-          (16 GiB for a new workspace) and its volume are sparse files that take
-          space only as the workspace writes, so a workspace can still grow past
-          what is left.
+          two lines (GB of 1024 x 1024 x 1024 bytes). They measure the room left on
+          the drive, not the size of the disks: a workspace's root disk (16 GiB for
+          a new workspace) and its volume are sparse files that take space only as
+          the workspace writes, so a workspace can still grow past what is left.
         </p>
         <div class="setting">
           <div class="grow">

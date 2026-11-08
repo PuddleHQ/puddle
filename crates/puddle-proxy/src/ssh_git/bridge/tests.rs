@@ -847,6 +847,7 @@ async fn session_big(
     let (mut guest, mut ours) = tokio::io::duplex(1 << 20);
     let writer = tokio::spawn(async move {
         let _ = guest.write_all(input.as_bytes()).await;
+        let _ = guest.shutdown().await;
         guest
     });
     let result = carry(host, command, &mut ours).await;
@@ -892,4 +893,79 @@ async fn a_v0_fetch_whose_haves_never_flush_stops_at_the_bound() {
     let result = session_big(&mut host, &command(GitService::Upload, None), input).await;
     assert!(result.unwrap_err().message.contains("32 MiB"));
     assert_eq!(host.seen.len(), 1, "no round was posted");
+}
+
+/// Pkt-lines that add up to exactly `total` bytes, each made by `line` for its own length.
+fn exact(total: usize, line: impl Fn(usize) -> String) -> String {
+    const WHOLE: usize = 60_000;
+    let mut out = String::new();
+    for _ in 0..total / WHOLE {
+        out.push_str(&line(WHOLE));
+    }
+    let rest = total % WHOLE;
+    assert!(rest >= 120, "{rest}");
+    out.push_str(&line(rest));
+    assert_eq!(out.len(), total);
+    out
+}
+
+/// A pkt-line of exactly `n` bytes that starts with `head` and ends with a newline.
+fn padded(head: &str, n: usize) -> String {
+    let fill = n - 4 - head.len() - 1;
+    pkt(&format!("{head}{}\n", "a".repeat(fill)))
+}
+
+#[tokio::test]
+async fn a_request_of_exactly_the_bound_is_sent_and_one_byte_more_is_not() {
+    let update = |n: usize| padded(&format!("{OLD} {NEW} refs/heads/"), n);
+    for over in [false, true] {
+        let extra = usize::from(over);
+        let v2 = format!("{}0000", exact(MAX_REQUEST + extra, |n| padded("have ", n)));
+        let v0 = format!(
+            "{}0000{}",
+            exact(MAX_REQUEST + extra, |n| padded("want ", n)),
+            "0009done\n"
+        );
+        // The push's section counts its flush too.
+        let push = format!("{}0000", exact(MAX_REQUEST - 4 + extra, update));
+        for (service, protocol, input) in [
+            (GitService::Upload, Some("version=2"), v2),
+            (GitService::Upload, None, v0),
+            (GitService::Receive, None, push),
+        ] {
+            let mut host = Host2::answering([Reply::Ok(ADVERT_V0), Reply::Ok(b"0008NAK\n")]);
+            let result = session_big(&mut host, &command(service, protocol), input).await;
+            if over {
+                assert!(
+                    result.unwrap_err().message.contains("32 MiB"),
+                    "{service:?}"
+                );
+                assert_eq!(host.seen.len(), 1, "{service:?}: nothing was posted");
+            } else {
+                result.unwrap();
+                assert_eq!(host.seen.len(), 2, "{service:?}: the request was posted");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_wants_and_haves_of_a_v0_fetch_share_one_bound() {
+    let want = pkt("want 1111111111111111111111111111111111111111\n");
+    let held = want.len() + 4;
+    for over in [false, true] {
+        let haves = exact(MAX_REQUEST - held + usize::from(over), |n| {
+            padded("have ", n)
+        });
+        let input = format!("{want}0000{haves}0009done\n");
+        let mut host = Host2::answering([Reply::Ok(ADVERT_V0), Reply::Ok(b"0008NAK\n")]);
+        let result = session_big(&mut host, &command(GitService::Upload, None), input).await;
+        if over {
+            assert!(result.unwrap_err().message.contains("32 MiB"));
+            assert_eq!(host.seen.len(), 1);
+        } else {
+            result.unwrap();
+            assert_eq!(host.seen.len(), 2);
+        }
+    }
 }

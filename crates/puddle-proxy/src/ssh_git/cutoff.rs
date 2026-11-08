@@ -146,6 +146,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn closing_the_stream_reaches_the_stream_under_it() {
+        let (near, mut far) = tokio::io::duplex(64);
+        let mut stream = Cuttable::new(near, Arc::new(Cutoff::default()));
+        stream.write_all(b"x").await.unwrap();
+        stream.shutdown().await.unwrap();
+        let mut seen = Vec::new();
+        far.read_to_end(&mut seen).await.unwrap();
+        assert_eq!(seen, b"x");
+    }
+
+    #[tokio::test]
     async fn dropping_the_guard_cuts() {
         let cutoff = Arc::new(Cutoff::default());
         let guard = CutOnDrop(Arc::clone(&cutoff));

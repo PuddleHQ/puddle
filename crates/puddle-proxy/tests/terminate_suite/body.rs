@@ -194,6 +194,36 @@ async fn a_body_over_the_limit_is_413_whether_declared_or_chunked_and_nothing_go
 }
 
 #[tokio::test]
+async fn a_chunked_body_is_refused_at_one_byte_over_the_limit_and_not_at_the_limit() {
+    let (server, rig, peek) = h1().await;
+    let mut guest = rig.guest();
+    let half = LIMIT / 2;
+    let chunked = |second: usize| {
+        let (a, b) = ("a".repeat(half), "b".repeat(second));
+        format!(
+            "POST /peek HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: chunked\r\n\r\n{half:x}\r\n{a}\r\n{second:x}\r\n{b}\r\n0\r\n\r\n"
+        )
+    };
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client.send(chunked(half).as_bytes()).await;
+    let exact = client.response("POST").await;
+    assert_eq!(exact.status, 200);
+    assert_eq!(exact.text().len(), LIMIT);
+    assert_eq!(bodies(&peek).len(), 1);
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client.send(chunked(half + 1).as_bytes()).await;
+    let over = client.response("POST").await;
+    assert_eq!(over.status, 413);
+    assert_eq!(over.header("x-puddle-blocked"), Some("body_too_large"));
+    assert_eq!(
+        bodies(&peek).len(),
+        1,
+        "the injector never saw the larger body"
+    );
+    assert_eq!(server.recorded().len(), 1);
+}
+
+#[tokio::test]
 async fn a_body_that_stops_short_or_is_badly_framed_is_a_400_and_nothing_goes_upstream() {
     let (server, rig, _peek) = h1().await;
     let mut guest = rig.guest();

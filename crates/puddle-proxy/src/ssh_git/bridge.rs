@@ -36,7 +36,7 @@ const AGENT: &str = "git/puddle-ssh";
 const REFUSAL_BYTES: usize = 4096;
 
 /// Largest piece of a pack read from the guest at once.
-const PIECE: usize = 64 * 1024;
+const PIECE: usize = 65_536;
 
 /// The smart-HTTP endpoints of one repository, as the bridge reaches them.
 pub(crate) trait SmartHttp: Send {
@@ -61,7 +61,7 @@ pub(crate) async fn carry(
         command.service.http_service()
     );
     let advert = http
-        .send(request(command, Method::GET, &target, empty())?)
+        .send(request(command, Method::GET, &target, UpBody::default())?)
         .await?;
     copy(accepted(advert, command).await?, &mut write, true).await?;
     match command.service {
@@ -106,10 +106,6 @@ fn request(
     builder
         .body(body)
         .map_err(|err| GitSshFailure::new(format!("the request for {target} is not valid: {err}")))
-}
-
-fn empty() -> UpBody {
-    bytes_body(Bytes::new())
 }
 
 fn bytes_body(bytes: Bytes) -> UpBody {
@@ -438,16 +434,8 @@ async fn push<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin>(
             }
         }
     };
-    let body = body.map_err(BoxError::from).boxed_unsync();
-    let (answer, ()) = tokio::join!(
-        async {
-            match post(command, body) {
-                Ok(request) => http.send(request).await,
-                Err(failure) => Err(failure),
-            }
-        },
-        feed
-    );
+    let request = post(command, body.map_err(BoxError::from).boxed_unsync())?;
+    let (answer, ()) = tokio::join!(http.send(request), feed);
     copy(accepted(answer?, command).await?, out, false).await
 }
 

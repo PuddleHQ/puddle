@@ -750,3 +750,90 @@ fn version_2_is_spoken_only_when_the_client_names_it() {
     assert!(!speaks_v2(&command(GitService::Upload, Some("version=1"))));
     assert!(!speaks_v2(&command(GitService::Upload, None)));
 }
+
+#[tokio::test]
+async fn trailers_in_an_answer_are_not_bytes_for_the_guest() {
+    struct Trailing;
+    impl SmartHttp for Trailing {
+        fn send(
+            &mut self,
+            _: http::Request<UpBody>,
+        ) -> BoxFuture<'_, Result<http::Response<UpBody>, GitSshFailure>> {
+            let frames: Vec<Result<http_body::Frame<Bytes>, BoxError>> = vec![
+                Ok(http_body::Frame::data(Bytes::from_static(
+                    b"000eversion 2\n",
+                ))),
+                Ok(http_body::Frame::trailers(http::HeaderMap::new())),
+                Ok(http_body::Frame::data(Bytes::from_static(b"0000"))),
+            ];
+            let body = StreamBody::new(futures_util::stream::iter(frames)).boxed_unsync();
+            Box::pin(async move { Ok(http::Response::new(body)) })
+        }
+    }
+    let (mut guest, mut ours) = tokio::io::duplex(1 << 16);
+    guest.shutdown().await.unwrap();
+    carry(
+        &mut Trailing,
+        &command(GitService::Upload, Some("version=2")),
+        &mut ours,
+    )
+    .await
+    .unwrap();
+    drop(ours);
+    let mut out = Vec::new();
+    guest.read_to_end(&mut out).await.unwrap();
+    assert_eq!(out, b"000eversion 2\n0000");
+}
+
+/// Answers the advertisement, then takes `frames` frames of the push body and fails.
+struct Refusing {
+    calls: usize,
+    frames: usize,
+}
+
+impl SmartHttp for Refusing {
+    fn send(
+        &mut self,
+        request: http::Request<UpBody>,
+    ) -> BoxFuture<'_, Result<http::Response<UpBody>, GitSshFailure>> {
+        self.calls += 1;
+        let first = self.calls == 1;
+        let frames = self.frames;
+        Box::pin(async move {
+            if first {
+                return Ok(http::Response::new(bytes_body(Bytes::from_static(
+                    ADVERT_PUSH,
+                ))));
+            }
+            let mut body = request.into_body();
+            for _ in 0..frames {
+                let _ = body.frame().await;
+            }
+            Err(GitSshFailure::new("refused mid-body"))
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_host_that_stops_taking_the_push_ends_it_whatever_the_guest_still_sends() {
+    for frames in [0, 1] {
+        let commands = format!("{}0000", pkt(&format!("{OLD} {NEW} refs/heads/main\n")));
+        let (mut guest, mut ours) = tokio::io::duplex(4 << 20);
+        guest.write_all(commands.as_bytes()).await.unwrap();
+        // More pack than the body's channel holds, so the bridge is still sending when the host
+        // stops; the guest's input stays open, so only the host's refusal can end it.
+        guest.write_all(&vec![b'P'; 1 << 20]).await.unwrap();
+        let failure = tokio::time::timeout(
+            Duration::from_secs(30),
+            carry(
+                &mut Refusing { calls: 0, frames },
+                &command(GitService::Receive, None),
+                &mut ours,
+            ),
+        )
+        .await
+        .expect("the bridge kept reading after the host stopped taking the push")
+        .unwrap_err();
+        assert_eq!(failure.message, "refused mid-body", "{frames}");
+    }
+}

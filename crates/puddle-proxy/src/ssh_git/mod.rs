@@ -119,13 +119,11 @@ fn no_identity(host: &Host) -> GitSshGreeting {
     }
 }
 
-/// The connection an upstream works for: whose it is, the name the guest asked for, and the
-/// workspace's own way out (its rules, termination and company-proxy route), which Puddle's
+/// The connection an upstream works for: whose it is, and the workspace's own way out (its rules, termination and company-proxy route), which Puddle's
 /// upstreams use to reach the Git host.
 #[derive(Debug)]
 pub struct GitSshContext {
     pub(crate) handler: WorkspaceHandler,
-    pub(crate) name: Host,
     reached: Mutex<Option<Reached>>,
 }
 
@@ -137,10 +135,9 @@ pub(crate) struct Reached {
 }
 
 impl GitSshContext {
-    pub(crate) fn new(handler: WorkspaceHandler, name: Host) -> Self {
+    pub(crate) fn new(handler: WorkspaceHandler) -> Self {
         Self {
             handler,
-            name,
             reached: Mutex::new(None),
         }
     }
@@ -149,12 +146,6 @@ impl GitSshContext {
     #[must_use]
     pub fn workspace(&self) -> &WorkspaceId {
         &self.handler.workspace
-    }
-
-    /// The name the guest connected to (`ssh.github.com`, not the HTTPS host).
-    #[must_use]
-    pub fn name(&self) -> &Host {
-        &self.name
     }
 
     /// Keeps the first place an upstream connection reached.

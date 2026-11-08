@@ -33,7 +33,7 @@ use crate::terminate::h1::{BoxError, UpBody};
 use crate::terminate::{self, Outcome};
 
 /// The in-memory connection's buffer each way.
-const PIPE: usize = 256 * 1024;
+const PIPE: usize = 262_144;
 
 /// Most bytes of the termination's `CONNECT` answer read before giving up on it.
 const MAX_ANSWER: usize = 1024;
@@ -184,17 +184,13 @@ impl Leg<'_> {
         let (server, _) = Counted::new(server);
         let done = tokio::spawn(terminate::run(context, BufReader::new(server)));
         connected(&mut client).await?;
-        let tls = tls_connector(root)?
+        let tls = tls_connector(root, &self.host)?
             .connect(server_name(&self.host)?, client)
             .await
-            .map_err(|err| {
-                GitSshFailure::new(format!("the connection to {} failed: {err}", self.host))
-            })?;
+            .map_err(|err| failed("connection to", &self.host, &err))?;
         let (send, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
             .await
-            .map_err(|err| {
-                GitSshFailure::new(format!("the connection to {} failed: {err}", self.host))
-            })?;
+            .map_err(|err| failed("connection to", &self.host, &err))?;
         tokio::spawn(connection);
         Ok(Open { send, done })
     }
@@ -226,12 +222,15 @@ impl SmartHttp for Leg<'_> {
                 .await?
                 .send_request(request)
                 .await
-                .map_err(|err| {
-                    GitSshFailure::new(format!("the request to {host} failed: {err}"))
-                })?;
+                .map_err(|err| failed("request to", &host, &err))?;
             Ok(answer.map(|body| body.map_err(BoxError::from).boxed_unsync()))
         })
     }
+}
+
+/// `the <what> <host> failed: <err>`.
+fn failed(what: &str, host: &Host, err: &dyn std::fmt::Display) -> GitSshFailure {
+    GitSshFailure::new(format!("the {what} {host} failed: {err}"))
 }
 
 fn closed() -> GitSshFailure {
@@ -259,15 +258,12 @@ fn server_name(host: &Host) -> Result<ServerName<'static>, GitSshFailure> {
 /// A TLS client that trusts only `root`, the workspace's CA, and speaks HTTP/1.1.
 fn tls_connector(
     root: CertificateDer<'static>,
+    host: &Host,
 ) -> Result<tokio_rustls::TlsConnector, GitSshFailure> {
     static PROVIDER: OnceLock<Arc<rustls::crypto::CryptoProvider>> = OnceLock::new();
     let provider =
         Arc::clone(PROVIDER.get_or_init(|| Arc::new(rustls::crypto::ring::default_provider())));
-    let unusable = |err: rustls::Error| {
-        GitSshFailure::new(format!(
-            "Puddle could not set up TLS to its own termination: {err}"
-        ))
-    };
+    let unusable = |err: rustls::Error| failed("TLS set-up for", host, &err);
     let mut roots = rustls::RootCertStore::empty();
     roots.add(root).map_err(unusable)?;
     let mut config = rustls::ClientConfig::builder_with_provider(provider)
@@ -307,6 +303,14 @@ mod tests {
         let mut answer = &endless[..];
         assert!(connected(&mut answer).await.is_err());
         assert_eq!(answer.len(), 10, "it stops at its limit");
+    }
+
+    #[test]
+    fn a_failure_on_the_way_names_the_step_and_the_host() {
+        assert_eq!(
+            failed("request to", &host("github.com"), &"reset").message,
+            "the request to github.com failed: reset"
+        );
     }
 
     #[test]

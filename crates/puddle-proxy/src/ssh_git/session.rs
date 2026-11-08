@@ -180,7 +180,7 @@ where
     let ctx = Arc::new(Ctx {
         workspace: request.workspace.clone(),
         host,
-        route: GitSshContext::new(handler.clone(), request.host.clone()),
+        route: GitSshContext::new(handler.clone()),
         injector: Arc::clone(termination.injector()),
         upstream: Arc::clone(&git.upstream),
         summary: Mutex::new(Summary::default()),

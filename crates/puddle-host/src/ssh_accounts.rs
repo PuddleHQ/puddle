@@ -246,6 +246,8 @@ mod tests {
         let (store, _) = store_with(&[("me", "github.com", true)]);
         let accounts = SshAccounts::new(store);
         let clock = Arc::new(ManualClock::new(1_700_000_000_000));
+        // The fake store of secrets is never told a credential went stale here.
+        OneToken.invalidate(&source("unused", "github.com"));
         let api = Arc::new(FakeApi::new());
         api.reply("api.github.com", "/user", ApiReply::new(401, "{}"));
         accounts.read_with(Arc::new(Repos::new(api, Arc::new(OneToken), clock)));

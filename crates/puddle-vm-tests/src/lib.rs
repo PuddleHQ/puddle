@@ -44,10 +44,12 @@
 #![forbid(unsafe_code)]
 
 mod browser;
+mod bulk;
 mod env;
 mod error;
 mod freeze;
 mod host_memory;
+pub mod load;
 mod prefix;
 mod runtime;
 pub mod sockets;
@@ -56,6 +58,7 @@ pub use browser::{
     BROWSER_MODULES_VAR, BrowserClient, BrowserCookie, BrowserSession, NODE_VAR, Node, NodeOutput,
     PageId, PageOutcome, PageRequest,
 };
+pub use bulk::{BulkHost, STALL_AFTER_BYTES};
 pub use env::{Settings, VmEnv, create_from_registry, registry_of, test_owner, within};
 pub use error::HarnessError;
 pub use freeze::{FrozenProcess, Gaps, parse_ticks};

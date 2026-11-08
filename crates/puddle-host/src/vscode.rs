@@ -204,14 +204,13 @@ mod tests {
 
     #[cfg(unix)]
     mod commands {
-        use std::os::unix::fs::PermissionsExt as _;
-
         use super::*;
 
         fn script(dir: &std::path::Path, body: &str) -> VsCodeLauncher {
             let path = dir.join("code");
-            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            // Written by a child process: a write from this process can leave its descriptor in a
+            // sibling test's forked child, and the exec below then fails with "Text file busy".
+            puddle_test_kit::write_executable(&path, &format!("#!/bin/sh\n{body}\n"));
             VsCodeLauncher::with_program(path).with_patience(Duration::from_millis(1500))
         }
 

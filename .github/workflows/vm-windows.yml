@@ -30,6 +30,11 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
+    inputs:
+      vscode_only:
+        description: "Run only the desktop VS Code job (the partitions are skipped; the vm-windows result then reports their skip)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -193,7 +198,7 @@ jobs:
   tests:
     name: vm-windows tests (partition ${{ matrix.partition }} of 12)
     needs: [build, agent]
-    if: needs.build.outputs.run == 'true'
+    if: ${{ needs.build.outputs.run == 'true' && !inputs.vscode_only }}
     permissions:
       contents: read
       actions: write

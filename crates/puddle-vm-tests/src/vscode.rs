@@ -340,30 +340,29 @@ impl VsCodeWindow {
     }
 
     /// Waits until the workbench shows a folder in the explorer and the remote indicator says
-    /// `SSH:`, then reports what it shows. With `fresh` it waits for a window reloaded since
-    /// [`VsCodeWindow::reload`] stamped it.
+    /// `SSH:`, then reports what it shows.
     ///
     /// # Errors
     ///
     /// [`HarnessError::Browser`] when it did not happen within `within`.
-    pub async fn attached(
-        &mut self,
-        within: Duration,
-        fresh: bool,
-    ) -> Result<Attached, HarnessError> {
+    pub async fn attached(&mut self, within: Duration) -> Result<Attached, HarnessError> {
         let seen = self
             .call(
-                json!({"op": "attached", "timeoutMs": millis(within), "fresh": fresh}),
+                json!({"op": "attached", "timeoutMs": millis(within)}),
                 within,
             )
             .await?;
+        Ok(Self::state(&seen))
+    }
+
+    fn state(seen: &Value) -> Attached {
         let text = |key: &str| {
             seen.get(key)
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned()
         };
-        Ok(Attached {
+        Attached {
             folders: seen
                 .get("folders")
                 .and_then(Value::as_array)
@@ -373,7 +372,7 @@ impl VsCodeWindow {
                 .collect(),
             remote: text("remote"),
             title: text("title"),
-        })
+        }
     }
 
     /// Runs a command from the command palette, by its exact label.
@@ -410,9 +409,10 @@ impl VsCodeWindow {
     ///
     /// [`HarnessError::Browser`] when the window did not come back within `within`.
     pub async fn reload(&mut self, within: Duration) -> Result<Attached, HarnessError> {
-        self.call(json!({"op": "mark"}), STEP).await?;
-        self.palette("Developer: Reload Window").await?;
-        self.attached(within, true).await
+        let seen = self
+            .call(json!({"op": "reload", "timeoutMs": millis(within)}), within)
+            .await?;
+        Ok(Self::state(&seen))
     }
 
     /// Evaluates an expression in the window and returns its value.
@@ -630,6 +630,7 @@ mod tests {
                first: () => chain(name + ' first'),
                click: async () => { calls.push(name + ' click'); },
                focus: async () => { calls.push(name + ' focus'); },
+               isVisible: async () => name.includes('working directory') && ++terminals % 2 === 1,
              });
              const page = {
                url: () => 'vscode-file://vscode-app/workbench.html',
@@ -640,16 +641,13 @@ mod tests {
                  type: async (t) => { calls.push('type ' + t); },
                },
                locator: (sel) => chain(sel),
-               waitForFunction: async (e) => {
-                 calls.push('wait ' + e.slice(0, 40));
-                 if (e.includes('never')) throw new Error('timed out');
-                 return { jsonValue: async () => (++terminals % 2 === 1 ? 'picker' : 'terminal') };
-               },
-               evaluate: async (e) => {
-                 if (e === 'calls') return calls;
-                 if (e.includes('folders:')) return { folders: ['api', 'web'], remote: 'SSH: x', title: 't' };
-                 if (e.includes('boom')) throw new Error('boom');
-                 return e;
+               waitForEvent: async (e) => { calls.push('event ' + e); },
+               evaluate: async (f) => {
+                 if (f.name === 'readState') return { folders: ['api', 'web'], remote: 'SSH: x', title: 't' };
+                 const text = f.toString();
+                 if (text.includes('(calls)')) return calls;
+                 if (text.includes('boom')) throw new Error('boom');
+                 return /return \\((.*)\\);/.exec(text)[1];
                },
                screenshot: async (o) => { calls.push('shot ' + o.path); },
              };
@@ -701,7 +699,7 @@ mod tests {
             .await
             .expect("connected after two refusals");
         let seen = window
-            .attached(Duration::from_secs(5), false)
+            .attached(Duration::from_secs(5))
             .await
             .expect("attached");
         assert_eq!(
@@ -792,7 +790,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_reload_stamps_the_page_runs_the_command_and_waits_for_a_fresh_one() {
+    async fn a_reload_listens_for_the_new_document_before_it_runs_the_command_and_then_waits_for_the_workbench()
+     {
         let modules = stub_modules();
         let mut window = stub_window(&modules, 9230, Duration::from_secs(30))
             .await
@@ -806,13 +805,21 @@ mod tests {
             .iter()
             .filter_map(Value::as_str)
             .collect();
+        // `load` is awaited for before the command's row is clicked, so a fast reload is not missed.
+        let listen = calls
+            .iter()
+            .position(|c| *c == "event load")
+            .expect("listens");
+        let click = calls
+            .iter()
+            .position(|c| c.contains("Developer: Reload Window") && c.ends_with("click"))
+            .expect("clicks the row");
+        assert!(listen < click, "{calls:?}");
         assert!(
-            calls.iter().any(|c| c.contains("Developer: Reload Window")),
-            "{calls:?}"
-        );
-        assert!(
-            calls.last().is_some_and(|c| c.starts_with("wait ")),
-            "the last step waits for the window: {calls:?}"
+            calls
+                .last()
+                .is_some_and(|c| c.starts_with("[id=\"status.host\"] filter /SSH:/")),
+            "the last step waits for the remote indicator of the new window: {calls:?}"
         );
         let shot = modules.path().join("w.png");
         window.screenshot(&shot).await.expect("screenshot");

@@ -341,7 +341,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             .start(&release, &node, &modules, &out.join("code.log"))
             .await
             .expect("VS Code starts");
-        let up = window.attached(UP, false).await.expect("attached");
+        let up = window.attached(UP).await.expect("attached");
         window.screenshot(&out.join("attached.png")).await.unwrap();
         assert!(up.remote.contains("SSH:"), "{up:?}");
         for folder in ["api", "web"] {
@@ -418,7 +418,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             .start(&release, &node, &modules, &out.join("code-profile.log"))
             .await
             .expect("VS Code starts in the profile");
-        window.attached(UP, false).await.expect("attached again");
+        window.attached(UP).await.expect("attached again");
         eventually_async("the git extension's socket is up", SHOWS, || async {
             let said = shell(
                 &runtime,

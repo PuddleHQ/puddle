@@ -5,15 +5,17 @@
 // Playwright's `connectOverCDP`. JSON lines on stdin; every command gets one JSON line on stdout, in the shape of the browser
 // client (`browser/driver.mjs`): {"ok":true,"result":...,"console":[],"pageErrors":[]} or {"ok":false,"error":"..."}.
 //   {"op":"connect","port":9230,"timeoutMs":..}   connects to the window; retries a refused connection until the budget ends
-//   {"op":"attached","ready":"<expr>","timeoutMs":..,"fresh":bool}
-//       waits until the workbench shows a folder in the explorer and the remote indicator says `SSH:` (and, with `fresh`, until
-//       the page is not the one `mark` stamped), then returns {folders, remote, title}
-//   {"op":"mark"}                                  stamps the current page, so `attached` with `fresh` can tell a reload from before
+//   {"op":"attached","timeoutMs":..}               waits until the workbench shows a folder in the explorer and the remote indicator
+//                                                  says `SSH:`, then returns {folders, remote, title}
+//   {"op":"reload","timeoutMs":..}                 Developer: Reload Window, then waits as `attached` does, on the new document
 //   {"op":"palette","label":"..","timeoutMs":..}   F1, types the label, clicks the row whose label is exactly that
 //   {"op":"terminal","line":"..","timeoutMs":..}   opens a new terminal (taking the first folder when it asks which) and types `line`
 //   {"op":"eval","expression":".."}                evaluates an expression in the window
 //   {"op":"screenshot","path":".."}                saves a PNG of the window
 //   {"op":"quit"}                                  disconnects (the test stops the VS Code process itself)
+// Nothing here evaluates a string in the page: VS Code's workbench enforces Trusted Types, which blocks `eval` and `new Function` there,
+// so Playwright's string predicates (`waitForFunction("...")`) fail with "requires 'TrustedScript' assignment". Waits use locators,
+// reads use function values, which Playwright sends over the protocol as they are.
 // Playwright comes from the UI's lockfile; PUDDLE_VM_BROWSER_MODULES names the node_modules folder that holds `playwright-core`.
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -26,8 +28,15 @@ const logs = [];
 const errors = [];
 
 // The explorer's top-level rows and the remote indicator: what "the window is attached and shows the workspace" means.
-const FOLDERS = "Array.from(document.querySelectorAll('.explorer-folders-view .monaco-list-row .label-name')).map((e) => e.textContent.trim())";
-const REMOTE = "(document.querySelector('[id=\"status.host\"]')?.textContent ?? '').trim()";
+const FOLDER_ROWS = ".explorer-folders-view .monaco-list-row .label-name";
+const REMOTE = '[id="status.host"]';
+
+// Read in the page (a function value, not a string).
+const readState = () => ({
+  folders: Array.from(document.querySelectorAll(".explorer-folders-view .monaco-list-row .label-name")).map((e) => e.textContent.trim()),
+  remote: (document.querySelector('[id="status.host"]')?.textContent ?? "").trim(),
+  title: document.title,
+});
 
 const workbench = () => {
   const found = browser.contexts().flatMap((c) => c.pages()).find((p) => /workbench/.test(p.url()));
@@ -60,15 +69,11 @@ const connect = async (command) => {
   return null;
 };
 
-const attached = async (command) => {
+const attached = async (timeoutMs) => {
   const page = workbench();
-  const fresh = command.fresh ? "&& window.__puddleMark === undefined" : "";
-  await page.waitForFunction(
-    `${FOLDERS}.length > 0 && ${REMOTE}.includes('SSH:') ${fresh}`,
-    undefined,
-    { timeout: command.timeoutMs, polling: 250 },
-  );
-  return page.evaluate(`({ folders: ${FOLDERS}, remote: ${REMOTE}, title: document.title })`);
+  await page.locator(FOLDER_ROWS).first().waitFor({ state: "visible", timeout: timeoutMs });
+  await page.locator(REMOTE).filter({ hasText: /SSH:/ }).waitFor({ state: "visible", timeout: timeoutMs });
+  return page.evaluate(readState);
 };
 
 // The row whose label is exactly `label`: "Terminal: Create New Terminal" is a prefix of "... in Editor Area", and picking the
@@ -84,20 +89,31 @@ const palette = async (label, timeoutMs) => {
   return null;
 };
 
-const PICKER = "(() => { const q = document.querySelector('.quick-input-widget'); return !!q && getComputedStyle(q).display !== 'none'; })()";
-const TERMINAL = "!!document.querySelector('.terminal-wrapper .xterm-helper-textarea')";
+// In a multi-root workspace the new-terminal command first asks which folder the terminal starts in.
+const PICKER = ".quick-input-widget:visible";
+const TERMINAL = ".terminal-wrapper .xterm-helper-textarea";
 
 const terminal = async (line, timeoutMs) => {
   const page = workbench();
   await palette("Terminal: Create New Terminal", timeoutMs);
-  // In a multi-root workspace the command first asks which folder the terminal starts in; take the first one.
-  const first = await page.waitForFunction(`${PICKER} ? 'picker' : ${TERMINAL} ? 'terminal' : false`, undefined, { timeout: timeoutMs, polling: 250 });
-  if ((await first.jsonValue()) === "picker") await page.keyboard.press("Enter");
-  await page.waitForFunction(`${TERMINAL} && !(${PICKER})`, undefined, { timeout: timeoutMs, polling: 250 });
-  await page.locator(".terminal-wrapper .xterm-helper-textarea").first().focus({ timeout: timeoutMs });
+  const asking = page.locator(PICKER).filter({ hasText: /working directory/i });
+  const typing = page.locator(TERMINAL).first();
+  await Promise.race([asking.waitFor({ state: "visible", timeout: timeoutMs }), typing.waitFor({ state: "attached", timeout: timeoutMs })]);
+  if (await asking.isVisible()) await page.keyboard.press("Enter");
+  await typing.waitFor({ state: "attached", timeout: timeoutMs });
+  await typing.focus({ timeout: timeoutMs });
   await page.keyboard.type(line);
   await page.keyboard.press("Enter");
   return null;
+};
+
+// Electron reloads the window in place: the page object stays, its document is replaced, and `load` fires for the new one.
+const reload = async (timeoutMs) => {
+  const page = workbench();
+  const loaded = page.waitForEvent("load", { timeout: timeoutMs });
+  await palette("Developer: Reload Window", timeoutMs);
+  await loaded;
+  return attached(timeoutMs);
 };
 
 const run = async (command) => {
@@ -105,16 +121,16 @@ const run = async (command) => {
     case "connect":
       return connect(command);
     case "attached":
-      return attached(command);
-    case "mark":
-      await workbench().evaluate("window.__puddleMark = 1");
-      return null;
+      return attached(command.timeoutMs);
+    case "reload":
+      return reload(command.timeoutMs);
     case "palette":
       return palette(command.label, command.timeoutMs);
     case "terminal":
       return terminal(command.line, command.timeoutMs);
     case "eval":
-      return workbench().evaluate(command.expression);
+      // A function made here and sent as a value, so the page never evaluates a string.
+      return workbench().evaluate(new Function(`return (${command.expression});`));
     case "screenshot":
       await workbench().screenshot({ path: command.path });
       return null;

@@ -357,7 +357,12 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         // token, which is why a desktop attach makes the workspace trusted.
         let token = eventually_async("the guest's askpass gets a token", SHOWS, || async {
             let said = shell(&runtime, &sandbox, ASKPASS).await;
-            said.contains("password=").then_some(said)
+            // The last answer is what the failure shows.
+            if said.contains("password=") {
+                Ok(said)
+            } else {
+                Err(said)
+            }
         })
         .await;
         assert!(

@@ -146,6 +146,8 @@ impl VsCodeLaunch {
             "telemetry.telemetryLevel": "off",
             "update.mode": "none",
             "workbench.startupEditor": "none",
+            // The first-run sign-in dialog for Copilot is a modal over the window and the account asks.
+            "chat.disableAIFeatures": true,
             "extensions.autoUpdate": false,
             "extensions.autoCheckUpdates": false,
             "extensions.ignoreRecommendations": true,

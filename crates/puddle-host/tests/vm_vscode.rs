@@ -117,7 +117,8 @@ if [ -n "$PUDDLE_ASKPASS_DEBUG" ]; then
   VSCODE_GIT_IPC_HANDLE=$H VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js VSCODE_GIT_ASKPASS_EXTRA_ARGS= timeout 15 sh $S/extensions/git/dist/askpass.sh "Username for 'https://github.com': " 2>&1; echo "rc=$?"
   echo "--- git credential fill, traced"
   printf 'protocol=https\nhost=github.com\n\n' | GIT_TRACE=1 GIT_TERMINAL_PROMPT=0 timeout 15 env VSCODE_GIT_IPC_HANDLE=$H GIT_ASKPASS=$S/extensions/git/dist/askpass.sh VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js git credential fill 2>&1; echo "rc=$?"
-  echo "--- exthost logs"; grep -rhi "askpass" /home/agent/.vscode-server/data/logs 2>/dev/null | tail -n 20
+  echo "--- logs"; find /home/agent/.vscode-server/data/logs -name '*.log' 2>&1 | head -n 30
+  for f in $(find /home/agent/.vscode-server/data/logs -name '*.log' | grep -E 'remoteexthost|Git|github|auth' | head -n 6); do echo "== $f"; tail -n 15 "$f"; done
   exit 0
 fi
 printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HANDLE=$H GIT_ASKPASS=$S/extensions/git/dist/askpass.sh VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js git credential fill 2>&1 || true"#;
@@ -360,6 +361,11 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             );
         }
         assert!(up.title.contains("(Workspace)"), "{up:?}");
+
+        window
+            .screenshot(&out.join("u7b-before.png"))
+            .await
+            .unwrap();
 
         // U7b: the guest's git extension asks the window for a GitHub token and gets what the window's
         // `github` provider holds. Here that is the canary; with a person signed in it would be their

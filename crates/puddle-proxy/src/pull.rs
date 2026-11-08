@@ -677,7 +677,6 @@ fn blocked(
     };
     let what = match (reason, toggle) {
         (BlockReason::PuddleEndpoint, _) => "one of Puddle's own endpoints".to_owned(),
-        (BlockReason::CompanyNetwork(_), _) => "a company network address".to_owned(),
         (_, Some(category)) => format!("a {} address", category.describe()),
         _ => "an address image pulls may not reach".to_owned(),
     };

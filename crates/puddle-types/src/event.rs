@@ -1180,6 +1180,7 @@ mod tests {
                 "git_access_denied",
                 "git_no_identity",
                 "login_problem",
+                "foreign_credential",
                 "audit_appended",
                 "network_changed",
                 "proxy_sign_in_failed",

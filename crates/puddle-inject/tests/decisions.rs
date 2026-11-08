@@ -81,7 +81,7 @@ async fn on_a_git_path_the_workspaces_own_authorization_passes_unchanged() {
             };
             let decision = w.decide("github.com", method, target, &[header]).await;
             assert!(
-                matches!(decision, InjectDecision::PassThrough),
+                matches!(decision, InjectDecision::PassThroughOwnCredential),
                 "{method} {target} with {header}: {decision:?}"
             );
         }
@@ -595,7 +595,7 @@ async fn a_flood_of_owners_with_their_own_credential_is_remembered_in_bounded_me
     for i in 0..600 {
         let target = format!("/owner{i}/repo.git/info/refs?service=git-upload-pack");
         let decision = w.decide("github.com", "GET", &target, &[OWN]).await;
-        assert_eq!(decision, InjectDecision::PassThrough);
+        assert_eq!(decision, InjectDecision::PassThroughOwnCredential);
         if i % 100 == 0 {
             later(Duration::from_secs(5)).await;
         }
@@ -626,7 +626,7 @@ async fn a_tool_that_retries_with_its_own_credential_is_not_told_off() {
     later(Duration::from_millis(50)).await;
     // A token from a credential helper, `.netrc` or the address goes out as the tool sent it.
     let retry = w.decide("github.com", "GET", PRIVATE, &[OWN]).await;
-    assert_eq!(retry, InjectDecision::PassThrough);
+    assert_eq!(retry, InjectDecision::PassThroughOwnCredential);
     later(Duration::from_secs(10)).await;
     assert_eq!(w.events.take(), []);
     // Another owner's retry does not cover this one.
@@ -800,7 +800,7 @@ async fn a_push_with_a_source_that_needs_a_sign_in_is_a_502_that_says_so_and_nev
             &[OWN]
         )
         .await,
-        InjectDecision::PassThrough
+        InjectDecision::PassThroughOwnCredential
     ));
 }
 
@@ -1467,7 +1467,7 @@ async fn no_identity_events_after_a_full_table(wait: Duration) -> usize {
     for i in 0..256 {
         let target = format!("/owner{i}/repo.git/info/refs?service=git-upload-pack");
         let decision = w.decide("github.com", "GET", &target, &[OWN]).await;
-        assert_eq!(decision, InjectDecision::PassThrough);
+        assert_eq!(decision, InjectDecision::PassThroughOwnCredential);
     }
     tokio::time::advance(wait).await;
     answered_401(&w.decide("github.com", "GET", PRIVATE, &[]).await);

@@ -3355,6 +3355,28 @@ mod tests {
         assert_eq!(wire["refused_reason"], "ip_rule");
     }
 
+    /// The kinds of foreign credential reach the wire as stored, and a record written before the
+    /// field existed reads as none.
+    #[test]
+    fn foreign_credential_kinds_reach_the_wire_and_an_old_record_has_none() {
+        let mut stored = serde_json::json!({
+            "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
+            "port": 443, "resolved_ip": null, "decision": "allow", "reason": "rule", "rule_id": 4,
+            "pending_id": null, "binding_id": null, "injected": false, "method": null, "path": null,
+            "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
+        });
+        let old: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();
+        let wire = serde_json::to_value(AuditRecord::from(old)).unwrap();
+        assert_eq!(wire["foreign_credentials"], serde_json::json!([]));
+        stored["foreign_credentials"] = serde_json::json!(["github_token", "git_authorization"]);
+        let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
+        let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
+        assert_eq!(
+            wire["foreign_credentials"],
+            serde_json::json!(["github_token", "git_authorization"])
+        );
+    }
+
     /// A record written before the company-network fields existed reads them as `null`.
     #[test]
     fn a_record_without_a_category_reads_as_none() {

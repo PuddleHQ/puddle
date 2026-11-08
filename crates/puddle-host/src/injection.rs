@@ -806,6 +806,27 @@ mod tests {
             .unwrap_or_default()
     }
 
+    #[test]
+    fn a_workspace_warns_about_a_foreign_credential_by_its_setting_read_each_time() {
+        let store = store();
+        let ws = workspace("alpha");
+        let (injection, _) = injection(&store);
+        // Without settings to read the warning is on.
+        assert!(injection.foreign_warning(&ws).is_on());
+        let repo = Arc::new(puddle_api::MemorySettings::default());
+        let injection = injection.with_settings(repo.clone());
+        let warning = injection.foreign_warning(&ws);
+        assert!(warning.is_on());
+        puddle_api::SettingsRepo::save_workspace(
+            repo.as_ref(),
+            &ws,
+            serde_json::json!({"overrides": {"warn_foreign_credentials": false}}),
+        )
+        .unwrap();
+        assert!(!warning.is_on(), "a change applies to the next request");
+        assert!(injection.foreign_warning(&workspace("beta")).is_on());
+    }
+
     #[tokio::test]
     async fn git_over_ssh_off_makes_no_host_keys_and_serves_no_ssh_names() {
         let store = store();

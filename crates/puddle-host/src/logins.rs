@@ -289,6 +289,31 @@ mod tests {
     }
 
     #[test]
+    fn the_foreign_credential_warning_is_on_unless_the_workspace_or_the_global_setting_turns_it_off()
+     {
+        let repo = MemorySettings::default();
+        let ws = workspace("alpha");
+        assert!(foreign_warning_enabled(&repo, &ws));
+        repo.save_global(json!({"workspace_defaults": {"warn_foreign_credentials": false}}))
+            .unwrap();
+        assert!(!foreign_warning_enabled(&repo, &ws));
+        repo.save_workspace(
+            &ws,
+            json!({"overrides": {"warn_foreign_credentials": true}}),
+        )
+        .unwrap();
+        assert!(foreign_warning_enabled(&repo, &ws));
+        assert!(!foreign_warning_enabled(&repo, &workspace("beta")));
+    }
+
+    #[test]
+    fn settings_that_cannot_be_read_leave_the_foreign_credential_warning_on() {
+        let repo = MemorySettings::default();
+        repo.save_global(json!("not settings")).unwrap();
+        assert!(foreign_warning_enabled(&repo, &workspace("alpha")));
+    }
+
+    #[test]
     fn settings_that_cannot_be_read_leave_capture_on() {
         let repo = MemorySettings::default();
         repo.save_global(json!("not settings")).unwrap();

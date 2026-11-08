@@ -59,6 +59,12 @@ impl ForeignCredentialWarning {
         }
     }
 
+    /// Whether the warning is on now.
+    #[must_use]
+    pub fn is_on(&self) -> bool {
+        (self.enabled)()
+    }
+
     /// Notes that a request to `host` carried credentials of `kinds`: each joins `flagged` (the
     /// connection record's list) once, and the first sight of a host and kind raises the notice.
     /// Nothing when the warning is off. Only the host and the kinds are read, logged or sent.
@@ -70,7 +76,7 @@ impl ForeignCredentialWarning {
         flagged: &mut Vec<String>,
         kinds: &[ForeignCredentialKind],
     ) {
-        if kinds.is_empty() || !(self.enabled)() {
+        if kinds.is_empty() || !self.is_on() {
             return;
         }
         for kind in kinds {

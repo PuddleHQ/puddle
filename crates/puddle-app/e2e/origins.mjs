@@ -24,7 +24,8 @@
 // CDP_PORT (default 9336; each session uses the next two ports).
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -35,6 +36,9 @@ const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
 const basePort = Number(process.env.CDP_PORT ?? 9336);
 const FORWARDED = [5173, 5174];
+
+// Cookie hosts this session wrote, with the data folder that must come to hold them on disk.
+let written = [];
 
 const failures = [];
 function check(name, ok, detail = "") {
@@ -114,6 +118,31 @@ const describe = `({
 
 const listPages = async (port) => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter((t) => t.type === "page");
 
+/** The `Cookies` SQLite file somewhere under a webview data folder (its subpath varies by version). */
+function findCookieDb(dir) {
+  if (!existsSync(dir)) return null;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = findCookieDb(path);
+      if (found) return found;
+    } else if (entry.name === "Cookies") return path;
+  }
+  return null;
+}
+
+/** Whether the cookie store under `dir` has a row for the probe cookie of `host`. */
+function cookieOnDisk(dir, host) {
+  const file = findCookieDb(dir);
+  if (!file) return false;
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    return db.prepare("select count(*) as n from cookies where host_key = ? and name = 'probe'").get(host).n > 0;
+  } finally {
+    db.close();
+  }
+}
+
 /** One run of the shell on workspace `id` over the shared data folder. */
 async function session(n, id, forget, body) {
   const port = basePort + 2 * n;
@@ -186,6 +215,13 @@ async function session(n, id, forget, body) {
         }
       }, 30_000).catch((err) => check(`session ${n}: the webview flushed and exited`, false, String(err)));
     }
+    // A debug port going quiet says the browser process is going, not that its network service has
+    // finished writing the cookie store (a cookie is committed lazily and flushed on the way out),
+    // so wait until each cookie this session wrote is on disk before the next session reads.
+    for (const { host, dir } of written) {
+      await until(`the cookie of ${host} on disk`, async () => cookieOnDisk(dir, host), 30_000).catch((err) => check(`session ${n}: the webview flushed ${host}'s cookie`, false, String(err)));
+    }
+    written = [];
     for (const page of opened) page.close();
     if (!exited) spawnSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore" });
     await until("puddle-app to exit", async () => exited, 30_000).catch(() => undefined);
@@ -225,6 +261,7 @@ function expectKept(label, id, all) {
 async function writeAll(id, pages) {
   for (const which of Object.keys(hostsOf(id))) {
     const origin = await pages[which].evaluate(write(tagOf(id, which)));
+    written.push({ host: hostsOf(id)[which], dir: join(webview, which === "workspace" ? id : `${id}.forward`) });
     check(`${id} ${which}: wrote on ${hostsOf(id)[which]}`, origin === `http://${hostsOf(id)[which]}:${sitePort}`, origin);
   }
 }

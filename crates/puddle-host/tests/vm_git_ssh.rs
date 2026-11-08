@@ -407,6 +407,11 @@ async fn vm_git_ssh_clones_fetches_and_pushes_over_ssh_and_the_guest_holds_no_ke
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
+/// The guest is Linux, so the host's own cargo is a guest program only on a Linux host (a Windows
+/// or macOS host has a PE or Mach-O file there); the libgit2 step is guest-side behaviour and the
+/// Linux tier covers it.
+const CARGO_RUNS_IN_GUEST: bool = cfg!(target_os = "linux");
+
 /// The cargo binary of the toolchain running this test (cargo sets `CARGO` for what it runs).
 fn host_cargo() -> std::path::PathBuf {
     let cargo = std::env::var_os("CARGO").map_or_else(
@@ -435,7 +440,7 @@ fn publish_tool(host: &GitHost, file: &Path, name: &str) {
         host,
         "tools/bin",
         &format!(
-            "cp '{}' ./{name} && chmod +x ./{name} && git add {name} && git commit -q -m {name} && git push -q origin HEAD:main",
+            "cp '{}' ./{name} && git add --chmod=+x {name} && git commit -q -m {name} && git push -q origin HEAD:main",
             target.display()
         ),
     );
@@ -454,7 +459,9 @@ async fn vm_git_ssh_other_clients_reach_the_same_session() {
         "printf '[package]\\nname = \"dep\"\\nversion = \"0.1.0\"\\nedition = \"2021\"\\n' > Cargo.toml && \
          mkdir -p src && echo 'pub fn dep() {}' > src/lib.rs && git add . && git commit -q -m crate && git push -q origin HEAD:main",
     );
-    publish_tool(&fake, &host_cargo(), "cargo");
+    if CARGO_RUNS_IN_GUEST {
+        publish_tool(&fake, &host_cargo(), "cargo");
+    }
     let (net, vm, sandbox) = workspace(&fake, "ssho").await;
 
     // Protocol v0: clone and fetch, and the trace never says version 2.
@@ -494,27 +501,29 @@ async fn vm_git_ssh_other_clients_reach_the_same_session() {
     .await;
     assert_eq!(out.trim(), head_of(&fake, "acme/app"), "{out}");
 
-    // cargo's built-in Git (libgit2 over libssh2): the image's setting says use the git CLI, so
-    // this turns it off, as a user may. libgit2 takes an accepted `none` as no way in and cargo
-    // signs only with an agent, so the user has an agent with a key of their own (never used).
-    let out = guest_within(
-        &vm.runtime,
-        &sandbox,
-        &format!(
-            "set -eu; cd /tmp/o; git clone -q https://{NAME}/tools/bin.git tools; \
-             mkdir -p user/src; cd user; echo 'fn main() {{}}' > src/main.rs; \
-             printf '[package]\\nname = \"user\"\\nversion = \"0.1.0\"\\nedition = \"2021\"\\n[dependencies]\\ndep = {{ git = \"ssh://git@{NAME}/acme/dep.git\" }}\\n' > Cargo.toml; \
-             eval $(ssh-agent -s) >/dev/null; ssh-keygen -q -t ed25519 -N '' -f /tmp/o/any; ssh-add -q /tmp/o/any; rm -f /tmp/o/any; \
-             CARGO_NET_GIT_FETCH_WITH_CLI=false CARGO_HOME=/tmp/o/cargo-home /tmp/o/tools/cargo generate-lockfile 2>&1; kill $SSH_AGENT_PID; \
-             grep -c 'ssh://git@{NAME}/acme/dep.git' Cargo.lock"
-        ),
-        Duration::from_secs(300),
-    )
-    .await;
-    assert!(
-        out.trim_end().ends_with('1'),
-        "cargo's libgit2 fetched the SSH dependency: {out}"
-    );
+    if CARGO_RUNS_IN_GUEST {
+        // cargo's built-in Git (libgit2 over libssh2): the image's setting says use the git CLI, so
+        // this turns it off, as a user may. libgit2 takes an accepted `none` as no way in and cargo
+        // signs only with an agent, so the user has an agent with a key of their own (never used).
+        let out = guest_within(
+            &vm.runtime,
+            &sandbox,
+            &format!(
+                "set -eu; cd /tmp/o; git clone -q https://{NAME}/tools/bin.git tools; \
+                 mkdir -p user/src; cd user; echo 'fn main() {{}}' > src/main.rs; \
+                 printf '[package]\\nname = \"user\"\\nversion = \"0.1.0\"\\nedition = \"2021\"\\n[dependencies]\\ndep = {{ git = \"ssh://git@{NAME}/acme/dep.git\" }}\\n' > Cargo.toml; \
+                 eval $(ssh-agent -s) >/dev/null; ssh-keygen -q -t ed25519 -N '' -f /tmp/o/any; ssh-add -q /tmp/o/any; rm -f /tmp/o/any; \
+                 CARGO_NET_GIT_FETCH_WITH_CLI=false CARGO_HOME=/tmp/o/cargo-home /tmp/o/tools/cargo generate-lockfile 2>&1; kill $SSH_AGENT_PID; \
+                 grep -c 'ssh://git@{NAME}/acme/dep.git' Cargo.lock"
+            ),
+            Duration::from_secs(300),
+        )
+        .await;
+        assert!(
+            out.trim_end().ends_with('1'),
+            "cargo's libgit2 fetched the SSH dependency: {out}"
+        );
+    }
 
     // ControlMaster: one master connection, two fetches through it.
     let out = guest(

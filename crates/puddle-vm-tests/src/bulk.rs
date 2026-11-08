@@ -14,8 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Barrier;
-use tokio::task::JoinHandle;
+use tokio::sync::{Barrier, Notify};
 
 /// How much of a `/stall/` body is sent before the silence.
 pub const STALL_AFTER_BYTES: usize = 65_536;
@@ -23,16 +22,16 @@ pub const STALL_AFTER_BYTES: usize = 65_536;
 const CHUNK: usize = 65_536;
 const MAX_HEAD: usize = 16_384;
 
-/// The server. Stops accepting when dropped.
+/// The server. Stops accepting when dropped (answers in progress finish or end with their client).
 pub struct BulkHost {
     addr: SocketAddr,
     served: Arc<AtomicUsize>,
-    task: JoinHandle<()>,
+    stop: Arc<Notify>,
 }
 
 impl Drop for BulkHost {
     fn drop(&mut self) {
-        self.task.abort();
+        self.stop.notify_one();
     }
 }
 
@@ -71,14 +70,14 @@ impl BulkHost {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let addr = listener.local_addr()?;
         let served = Arc::new(AtomicUsize::new(0));
-        let barrier = Arc::new(Barrier::new(gate));
-        let counted = served.clone();
-        let task = tokio::spawn(async move {
-            while let Ok((tcp, _)) = listener.accept().await {
-                tokio::spawn(answer(tcp, barrier.clone(), counted.clone()));
-            }
-        });
-        Ok(Self { addr, served, task })
+        let stop = Arc::new(Notify::new());
+        tokio::spawn(accept_loop(
+            listener,
+            Arc::new(Barrier::new(gate)),
+            served.clone(),
+            stop.clone(),
+        ));
+        Ok(Self { addr, served, stop })
     }
 
     /// Where the server listens.
@@ -94,33 +93,49 @@ impl BulkHost {
     }
 }
 
-async fn answer(mut tcp: TcpStream, gate: Arc<Barrier>, served: Arc<AtomicUsize>) {
+/// Answers every connection on its own task until `stop` is notified, then closes the listener.
+async fn accept_loop(
+    listener: TcpListener,
+    gate: Arc<Barrier>,
+    served: Arc<AtomicUsize>,
+    stop: Arc<Notify>,
+) {
+    loop {
+        tokio::select! {
+            () = stop.notified() => return,
+            Ok((tcp, _)) = listener.accept() => {
+                let (gate, served) = (gate.clone(), served.clone());
+                tokio::spawn(async move {
+                    // A client that leaves mid-answer is not the server's problem.
+                    let _ = answer(tcp, &gate, &served).await;
+                });
+            }
+        }
+    }
+}
+
+async fn answer(mut tcp: TcpStream, gate: &Barrier, served: &AtomicUsize) -> std::io::Result<()> {
     let mut head = Vec::new();
     let mut chunk = [0u8; 1024];
     while !head.windows(4).any(|w| w == b"\r\n\r\n") {
-        match tcp.read(&mut chunk).await {
-            Ok(0) | Err(_) => return,
-            Ok(n) => head.extend_from_slice(chunk.get(..n).unwrap_or_default()),
+        let n = tcp.read(&mut chunk).await?;
+        if n == 0 || head.len() + n > MAX_HEAD {
+            return Ok(());
         }
-        if head.len() > MAX_HEAD {
-            return;
-        }
+        head.extend_from_slice(chunk.get(..n).unwrap_or_default());
     }
     let Some(ask) = parse_ask(&String::from_utf8_lossy(&head)) else {
-        let _ = tcp
+        return tcp
             .write_all(
                 b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
             )
             .await;
-        return;
     };
     let (Ask::Gate(n) | Ask::Stall(n)) = ask;
     let reply = format!(
         "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\ncontent-length: {n}\r\nconnection: close\r\n\r\n"
     );
-    if tcp.write_all(reply.as_bytes()).await.is_err() {
-        return;
-    }
+    tcp.write_all(reply.as_bytes()).await?;
     let zeros = vec![0u8; CHUNK];
     match ask {
         Ask::Gate(n) => {
@@ -128,31 +143,21 @@ async fn answer(mut tcp: TcpStream, gate: Arc<Barrier>, served: Arc<AtomicUsize>
             let mut left = n;
             while left > 0 {
                 let k = usize::try_from(left).map_or(CHUNK, |l| l.min(CHUNK));
-                if tcp
-                    .write_all(zeros.get(..k).unwrap_or_default())
-                    .await
-                    .is_err()
-                {
-                    return;
-                }
+                tcp.write_all(zeros.get(..k).unwrap_or_default()).await?;
                 left -= k as u64;
             }
-            let _ = tcp.shutdown().await;
+            tcp.shutdown().await?;
             served.fetch_add(1, Ordering::SeqCst);
         }
         Ask::Stall(n) => {
             let first = usize::try_from(n).map_or(STALL_AFTER_BYTES, |n| n.min(STALL_AFTER_BYTES));
-            if tcp
-                .write_all(zeros.get(..first).unwrap_or_default())
-                .await
-                .is_err()
-            {
-                return;
-            }
+            tcp.write_all(zeros.get(..first).unwrap_or_default())
+                .await?;
             // Hold the connection open until the client gives up: read returns when it closes.
-            let _ = tcp.read(&mut chunk).await;
+            let _closed = tcp.read(&mut chunk).await?;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -298,7 +303,10 @@ mod tests {
 
     async fn send_raw(addr: SocketAddr, request: &[u8]) -> Vec<u8> {
         let mut tcp = TcpStream::connect(addr).await.unwrap();
-        tcp.write_all(request).await.unwrap();
+        // The server may close on an oversized head while the rest is still being sent.
+        let _ = tcp.write_all(request).await;
+        // Half-close: a request that is not complete ends instead of waiting for more.
+        let _ = tcp.shutdown().await;
         let mut all = Vec::new();
         // The server may close on an oversized head while the rest is still being sent.
         let _ = tcp.read_to_end(&mut all).await;
@@ -320,6 +328,27 @@ mod tests {
         assert!(at_limit.starts_with(b"HTTP/1.1 200 OK\r\n"), "{at_limit:?}");
         let over = send_raw(host.addr(), &request_of(MAX_HEAD + 1)).await;
         assert_eq!(over, b"", "an oversized head got an answer");
+    }
+
+    #[tokio::test]
+    async fn a_client_that_sends_nothing_and_leaves_is_let_go() {
+        let host = BulkHost::start(1).await.unwrap();
+        // Closing our sending half with no request: the server must end the connection (EOF here).
+        assert_eq!(send_raw(host.addr(), b"").await, b"");
+    }
+
+    #[tokio::test]
+    async fn a_client_that_leaves_before_its_body_does_not_count_as_served() {
+        let host = BulkHost::start(1).await.unwrap();
+        let mut tcp = ask(host.addr(), "/gate/1073741824").await;
+        // The head says what is coming; then we leave with a gibibyte unread.
+        let head = read_reply(&mut tcp, 0).await;
+        assert!(head.starts_with(b"HTTP/1.1 200 OK"));
+        drop(tcp);
+        // The server's writes fail once the reset arrives; a later client is served as usual.
+        let reply = get(host.addr(), "/gate/10").await;
+        assert_eq!(body_of(&reply).len(), 10);
+        assert_eq!(host.served(), 1);
     }
 
     #[tokio::test]

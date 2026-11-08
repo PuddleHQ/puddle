@@ -146,7 +146,15 @@ async function session(n, id, forget, body) {
     });
     const page = await connect(target.webSocketDebuggerUrl);
     opened.push(page);
-    await until(`${host} to load`, () => page.evaluate(`document.readyState === "complete"`));
+    // A window is listed at the address it is navigating to, while its document is still the
+    // initial about:blank (already "complete"), so readyState alone does not say the page loaded:
+    // wait for the document to be the target's, and on a timeout say what the window shows.
+    await until(`${host} to load`, async () => {
+      const now = await page.evaluate(describe);
+      return now.href === target.url && now.readyState === "complete";
+    }).catch(async (err) => {
+      throw new Error(`${err.message}; the window shows ${JSON.stringify(await page.evaluate(describe).catch(() => null))} for ${target.url}`);
+    });
     // Which document each storage call will run in, printed before the first one so a storage
     // error names its window (an error page or an opaque origin would show here).
     console.log(`     ${host} window: ${JSON.stringify({ targetUrl: target.url, ...(await page.evaluate(describe)) })}`);

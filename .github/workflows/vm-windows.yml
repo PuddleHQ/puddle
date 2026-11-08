@@ -272,7 +272,7 @@ jobs:
           # cargo-nextest is called directly: through `cargo` it would make rustup install the
           # pinned toolchain here, which an archive run never needs.
           mkdir -p "$RUNNER_TEMP/vmx"
-          # Which tests run here is ci/vm-filter.sh (vm_machine_*, vm_radar_* and, off the nightly, vm_soak_* stay out).
+          # Which tests run here is ci/vm-filter.sh (vm_machine_*, vm_radar_* and, off the nightly, vm_soak_* and vm_perf_* stay out).
           FILTER=$(ci/vm-filter.sh)
           # This partition's share by measured time; the hash split, with a warning, when that data is unusable.
           sel=$(ci/vm-partition.sh args "${{ matrix.partition }}" "${{ strategy.job-total }}" \

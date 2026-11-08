@@ -44,32 +44,47 @@ pub enum ShellError {
 /// A workspace window for the smoke test to attack.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxProbe {
-    /// The workspace the window stands for (`probe`).
+    /// The workspace the window stands for (`probe` unless `PUDDLE_APP_SANDBOX_PROBE_WORKSPACE`
+    /// names another id).
     pub workspace: WorkspaceId,
     /// The page to open, on a `<workspace>.localhost:<port>` origin.
     pub url: Url,
     /// WebView2's DevTools Protocol port for that window (Windows).
     pub debug_port: u16,
+    /// Remove the workspace's webview data before the window opens, the way deleting the workspace
+    /// does (`PUDDLE_APP_SANDBOX_PROBE_FORGET=1`), so a test can show what a real webview keeps
+    /// after a delete.
+    pub forget: bool,
 }
 
 impl SandboxProbe {
-    /// The probe the environment asks for: `PUDDLE_APP_SANDBOX_PROBE` is the page and
-    /// `PUDDLE_APP_SANDBOX_DEBUG_PORT` its debug port.
+    /// The probe the environment asks for: `PUDDLE_APP_SANDBOX_PROBE` is the page,
+    /// `PUDDLE_APP_SANDBOX_DEBUG_PORT` its debug port, and the optional
+    /// `PUDDLE_APP_SANDBOX_PROBE_WORKSPACE` and `PUDDLE_APP_SANDBOX_PROBE_FORGET` the workspace id
+    /// and the data removal.
     fn from_env() -> Option<Self> {
+        let var = |name| std::env::var(name).ok();
         Self::parse(
-            std::env::var("PUDDLE_APP_SANDBOX_PROBE").ok().as_deref(),
-            std::env::var("PUDDLE_APP_SANDBOX_DEBUG_PORT")
-                .ok()
-                .as_deref(),
+            var("PUDDLE_APP_SANDBOX_PROBE").as_deref(),
+            var("PUDDLE_APP_SANDBOX_DEBUG_PORT").as_deref(),
+            var("PUDDLE_APP_SANDBOX_PROBE_WORKSPACE").as_deref(),
+            var("PUDDLE_APP_SANDBOX_PROBE_FORGET").as_deref(),
         )
     }
 
-    /// The probe for these two values; none unless both are there and valid.
-    fn parse(url: Option<&str>, debug_port: Option<&str>) -> Option<Self> {
+    /// The probe for these values; none unless the page and the debug port are there and valid.
+    /// A workspace id that is not one makes no probe either, so a typo cannot open `probe`.
+    fn parse(
+        url: Option<&str>,
+        debug_port: Option<&str>,
+        workspace: Option<&str>,
+        forget: Option<&str>,
+    ) -> Option<Self> {
         Some(Self {
-            workspace: WorkspaceId::new("probe").ok()?,
+            workspace: WorkspaceId::new(workspace.unwrap_or("probe")).ok()?,
             url: Url::parse(url?).ok()?,
             debug_port: debug_port?.parse().ok()?,
+            forget: forget == Some("1"),
         })
     }
 }
@@ -370,6 +385,14 @@ fn open_probe<R: Runtime>(
     data: &std::path::Path,
 ) -> Result<(), ShellError> {
     let windows = SandboxWindows::new(probe_hooks());
+    if probe.forget {
+        match sandbox_window::delete_data_folder(&data.join(WEBVIEW_FOLDER), &probe.workspace) {
+            Ok(()) => tracing::info!(workspace = %probe.workspace, "sandbox window: data removed"),
+            Err(error) => {
+                tracing::warn!(workspace = %probe.workspace, %error, "sandbox window: data not removed");
+            }
+        }
+    }
     let mut origin = probe.url.clone();
     origin.set_path("/");
     origin.set_query(None);
@@ -803,6 +826,7 @@ pub(crate) mod tests {
             workspace: WorkspaceId::new("probe").unwrap(),
             url: Url::parse("http://probe.localhost:4900/attack.html").unwrap(),
             debug_port: 9444,
+            forget: false,
         };
         open_probe(app.handle(), &probe, data.path()).unwrap();
         let window = app.get_webview_window("vs-probe").unwrap();
@@ -814,14 +838,89 @@ pub(crate) mod tests {
     #[test]
     fn the_probe_needs_a_page_and_a_debug_port() {
         let page = Some("http://probe.localhost:4900/attack.html");
-        let probe = SandboxProbe::parse(page, Some("9444")).unwrap();
+        let probe = SandboxProbe::parse(page, Some("9444"), None, None).unwrap();
         assert_eq!((probe.url.path(), probe.debug_port), ("/attack.html", 9444));
-        assert_eq!(SandboxProbe::parse(None, Some("9444")), None);
-        assert_eq!(SandboxProbe::parse(page, None), None);
-        assert_eq!(SandboxProbe::parse(Some("not a url"), Some("9444")), None);
-        assert_eq!(SandboxProbe::parse(page, Some("high")), None);
+        assert_eq!(SandboxProbe::parse(None, Some("9444"), None, None), None);
+        assert_eq!(SandboxProbe::parse(page, None, None, None), None);
+        assert_eq!(
+            SandboxProbe::parse(Some("not a url"), Some("9444"), None, None),
+            None
+        );
+        assert_eq!(SandboxProbe::parse(page, Some("high"), None, None), None);
         // The environment is shared between tests: only a run with neither value set shows this.
         assert!(SandboxProbe::from_env().is_none());
+    }
+
+    #[test]
+    fn the_probe_stands_for_the_workspace_the_environment_names_and_forgets_only_when_told_to() {
+        let page = Some("http://k3x9q2ab.localhost:4900/");
+        let named = SandboxProbe::parse(page, Some("9444"), Some("k3x9q2ab"), None).unwrap();
+        assert_eq!(named.workspace.as_str(), "k3x9q2ab");
+        assert!(!named.forget);
+        assert_eq!(
+            SandboxProbe::parse(page, Some("9444"), None, None)
+                .unwrap()
+                .workspace
+                .as_str(),
+            "probe"
+        );
+        // A name that is no workspace id is no probe: it must not quietly open `probe` instead.
+        assert_eq!(
+            SandboxProbe::parse(page, Some("9444"), Some("Not An Id"), None),
+            None
+        );
+        let forgetting = |value| {
+            SandboxProbe::parse(page, Some("9444"), None, value)
+                .unwrap()
+                .forget
+        };
+        assert!(forgetting(Some("1")));
+        assert!(!forgetting(Some("0")) && !forgetting(Some("yes")) && !forgetting(None));
+    }
+
+    #[test]
+    fn a_forgetting_probe_removes_the_workspace_s_webview_data_before_it_opens() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let webview = data.path().join("webview");
+        let leftovers = [webview.join("probe"), webview.join("probe.forward")];
+        for folder in &leftovers {
+            std::fs::create_dir_all(folder).unwrap();
+            std::fs::write(folder.join("Cookies"), b"old").unwrap();
+        }
+        let probe = SandboxProbe::parse(
+            Some("http://probe.localhost:4900/"),
+            Some("9444"),
+            None,
+            Some("1"),
+        )
+        .unwrap();
+        let log = logged(|| open_probe(app.handle(), &probe, data.path()).unwrap());
+        assert!(log.contains("sandbox window: data removed"), "{log}");
+        for folder in &leftovers {
+            assert!(!folder.join("Cookies").exists(), "{folder:?} kept its data");
+        }
+    }
+
+    #[test]
+    fn a_forgetting_probe_that_cannot_remove_the_data_says_so_and_still_opens() {
+        let app = tauri::test::mock_app();
+        let data = tempfile::tempdir().unwrap();
+        let webview = data.path().join("webview");
+        std::fs::create_dir_all(&webview).unwrap();
+        // A file where the folder should be: removing it as a folder fails, which is not "absent".
+        std::fs::write(webview.join("probe"), b"not a folder").unwrap();
+        let probe = SandboxProbe::parse(
+            Some("http://probe.localhost:4900/"),
+            Some("9444"),
+            None,
+            Some("1"),
+        )
+        .unwrap();
+        let log = logged(|| {
+            let _ = open_probe(app.handle(), &probe, data.path());
+        });
+        assert!(log.contains("sandbox window: data not removed"), "{log}");
     }
 
     /// Runs `act` under a subscriber that keeps what it logs.
@@ -1026,6 +1125,8 @@ mod fixture_tests {
             sandbox_probe: SandboxProbe::parse(
                 Some("http://probe.localhost:4900/attack.html"),
                 Some("9444"),
+                None,
+                None,
             ),
             ..fixture_options()
         };

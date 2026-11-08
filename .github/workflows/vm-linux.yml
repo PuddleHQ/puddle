@@ -406,7 +406,7 @@ jobs:
           # cargo-nextest is called directly: through `cargo` it would make rustup install the
           # pinned toolchain here, which an archive run never needs.
           mkdir -p "$RUNNER_TEMP/vmx"
-          # Which tests run here is ci/vm-filter.sh (vm_machine_*, vm_radar_* and, off the nightly, vm_soak_* stay out). Each run gets its
+          # Which tests run here is ci/vm-filter.sh (vm_machine_*, vm_radar_* and, off the nightly, vm_soak_* and vm_perf_* stay out). Each run gets its
           # own prefix, so its sandbox names and private msb home never meet another run's.
           base="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           FILTER=$(ci/vm-filter.sh)

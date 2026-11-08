@@ -907,6 +907,28 @@ describe("disk space lines", () => {
     await fireEvent.change(box);
   };
 
+  it("says the lines measure the room left on the drive, not the size of the sparse disks", async () => {
+    await open();
+    const section = screen
+      .getByRole("heading", { level: 2, name: "Disk space" })
+      .closest("section");
+    expect(section).toHaveTextContent(
+      "They measure the room left on the drive, not the size of the disks",
+    );
+    expect(section).toHaveTextContent(
+      "root disk (16 GiB for a new workspace) and its volume are sparse files",
+    );
+  });
+
+  it("says the disk warning percentage is of the disk's own size, as the file takes it on the drive", async () => {
+    await open();
+    expect(
+      screen.getByText(
+        /reached the percentage below of its own size; the figure is what the disk file takes on the drive/,
+      ),
+    ).toBeVisible();
+  });
+
   it("shows Puddle's lines of 20 and 5 GB and saves a change on Save", async () => {
     await open();
     expect(warn()).toHaveValue("20");

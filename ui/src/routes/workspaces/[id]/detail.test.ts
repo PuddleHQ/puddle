@@ -1141,7 +1141,9 @@ describe("the settings tab", () => {
     ) as HTMLSelectElement;
     expect(select.value).toBe("inherit");
     expect(
-      screen.getByRole("option", { name: "Use the global setting (on)" }),
+      within(select).getByRole("option", {
+        name: "Use the global setting (on)",
+      }),
     ).toBeInTheDocument();
     await fireEvent.change(select, { target: { value: "off" } });
     await screen.findByText("Login capture saved.");
@@ -1154,6 +1156,26 @@ describe("the settings tab", () => {
     await fireEvent.change(select, { target: { value: "inherit" } });
     await vi.waitFor(() =>
       expect(api.overrides["w-demo"]?.capture_logins).toBeNull(),
+    );
+  });
+
+  it("warns about a credential Puddle did not add by default and lets the workspace turn the warning off or follow the global setting", async () => {
+    await open();
+    const select = screen.getByLabelText(
+      "Warn when a tool sends a token of its own",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("inherit");
+    expect(
+      within(select).getByRole("option", {
+        name: "Use the global setting (on)",
+      }),
+    ).toBeInTheDocument();
+    await fireEvent.change(select, { target: { value: "off" } });
+    await screen.findByText("Credential warning saved.");
+    expect(api.overrides["w-demo"]?.warn_foreign_credentials).toBe(false);
+    await fireEvent.change(select, { target: { value: "inherit" } });
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.warn_foreign_credentials).toBeNull(),
     );
   });
 

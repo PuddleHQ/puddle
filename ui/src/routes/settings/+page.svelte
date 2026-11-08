@@ -766,6 +766,39 @@
               )}
           />
         </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-foreign-warning"
+              >Warn about a credential Puddle did not add</label
+            >
+            <p class="desc" id="set-foreign-warning-desc">
+              When a tool in a workspace sends a token of its own (one you
+              pasted, or a login Puddle does not keep) to a website, Puddle lets
+              the request through as it always did and tells you: a notice, and
+              a flag in the Activity log that names the website and what kind of
+              token it looked like, never the token itself. On by default.
+              Puddle cannot tell your own token from one that leaked, so this
+              catches mistakes, not a workspace that hides what it sends. A
+              workspace can set its own switch; a change applies to the next
+              request.
+            </p>
+          </div>
+          <input
+            id="set-foreign-warning"
+            type="checkbox"
+            aria-describedby="set-foreign-warning-desc"
+            checked={layerValue(
+              "warn_foreign_credentials",
+              eff.warn_foreign_credentials.value,
+            )}
+            onchange={(e) =>
+              editLayer(
+                "warn_foreign_credentials",
+                e.currentTarget.checked,
+                eff.warn_foreign_credentials.value,
+              )}
+          />
+        </div>
       </section>
 
       <section class="card" id="s-disk" aria-labelledby="h-disk">

@@ -166,6 +166,18 @@
     captureHint = ok && workspace?.status === "running";
   }
 
+  async function saveForeignWarning(select: HTMLSelectElement) {
+    await save(
+      { warn_foreign_credentials: toggleFromChoice(select.value) },
+      "Credential warning",
+      () => {
+        select.value = toggleToChoice(
+          settings.overrides?.warn_foreign_credentials ?? null,
+        );
+      },
+    );
+  }
+
   async function saveClipboard(select: HTMLSelectElement) {
     await save(
       {
@@ -360,6 +372,40 @@
         workspaceLabel={workspace.name}
         reload={() => void kept.load(workspace.id)}
       />
+    </section>
+
+    <section class="card" aria-labelledby="foreign-h">
+      <h2 id="foreign-h">Credentials Puddle did not add</h2>
+      <div class="setting">
+        <div class="grow">
+          <label for="ws-foreign-warning"
+            >Warn when a tool sends a token of its own</label
+          >
+          <p class="desc" id="ws-foreign-warning-desc">
+            When a tool in this workspace sends a token Puddle did not add (one
+            you pasted, or a login Puddle does not keep) to a website, the
+            request goes through as it always did. With the warning on you also
+            get a notice and a flag in the Activity log that names the website
+            and what kind of token it looked like, never the token itself.
+            Puddle cannot tell your own token from one that leaked, so this
+            catches mistakes, not a workspace that hides what it sends. A change
+            applies to the next request.
+            <span class="chip"
+              >{sourceLabel(effective.warn_foreign_credentials.source)}</span
+            >
+          </p>
+        </div>
+        <select
+          id="ws-foreign-warning"
+          aria-describedby="ws-foreign-warning-desc"
+          value={toggleToChoice(overrides.warn_foreign_credentials)}
+          onchange={(e) => void saveForeignWarning(e.currentTarget)}
+        >
+          {#each switchOptions(global.warn_foreign_credentials.value) as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
     </section>
 
     <InterceptionSetting id={workspace.id} />

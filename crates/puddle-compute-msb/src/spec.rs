@@ -496,10 +496,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_spec_with_a_root_disk_makes_a_config_with_that_managed_size() {
-        let config = builder(&spec().with_root_disk(puddle_compute::DiskSize::gib(16)))
-            .build()
-            .await
-            .unwrap();
+        let config =
+            Box::pin(builder(&spec().with_root_disk(puddle_compute::DiskSize::gib(16))).build())
+                .await
+                .unwrap();
         assert_eq!(
             config.spec.image.oci_managed_root_disk_size_mib(),
             Some(16_384)
@@ -508,7 +508,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_spec_without_one_leaves_the_runtimes_default() {
-        let config = builder(&spec()).build().await.unwrap();
+        let config = Box::pin(builder(&spec()).build()).await.unwrap();
         assert_eq!(config.spec.image.oci_managed_root_disk_size_mib(), None);
     }
 

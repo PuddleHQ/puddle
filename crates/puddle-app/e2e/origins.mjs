@@ -103,6 +103,15 @@ const read = `(async () => {
   return { origin: location.origin, local: localStorage.getItem("probe"), idb, cookie: cookie ? cookie.slice(6) : null };
 })()`;
 
+const describe = `({
+  href: location.href,
+  origin: location.origin,
+  readyState: document.readyState,
+  secure: isSecureContext,
+  cookies: navigator.cookieEnabled,
+  idb: typeof indexedDB,
+})`;
+
 const listPages = async (port) => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter((t) => t.type === "page");
 
 /** One run of the shell on workspace `id` over the shared data folder. */
@@ -138,6 +147,9 @@ async function session(n, id, forget, body) {
     const page = await connect(target.webSocketDebuggerUrl);
     opened.push(page);
     await until(`${host} to load`, () => page.evaluate(`document.readyState === "complete"`));
+    // Which document each storage call will run in, printed before the first one so a storage
+    // error names its window (an error page or an opaque origin would show here).
+    console.log(`     ${host} window: ${JSON.stringify({ targetUrl: target.url, ...(await page.evaluate(describe)) })}`);
     return page;
   };
   try {
@@ -178,7 +190,11 @@ const tagOf = (id, which) => `${which}-of-${id}`;
 /** What each page holds: its origin and the three kinds of storage. */
 async function snapshot(pages) {
   const all = {};
-  for (const [which, page] of Object.entries(pages)) all[which] = await page.evaluate(read);
+  for (const [which, page] of Object.entries(pages)) {
+    all[which] = await page.evaluate(read).catch(async (err) => {
+      throw new Error(`reading the ${which} window ${JSON.stringify(await page.evaluate(describe).catch(() => null))}: ${err.message}`);
+    });
+  }
   return all;
 }
 

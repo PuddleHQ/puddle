@@ -111,6 +111,15 @@ mod story {
     const ASKPASS: &str = r#"S=$(ls -d /home/agent/.vscode-server/cli/servers/Stable-*/server | tail -n 1)
 H=$(ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1)
 [ -n "$H" ] || { echo no-git-socket; exit 0; }
+if [ -n "$PUDDLE_ASKPASS_DEBUG" ]; then
+  id; ls -la /tmp/vscode-git-* "$S"/extensions/git/dist/askpass* 2>&1; echo "H=$H S=$S"
+  echo "--- askpass.sh direct, username step"
+  VSCODE_GIT_IPC_HANDLE=$H VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js VSCODE_GIT_ASKPASS_EXTRA_ARGS= timeout 15 sh $S/extensions/git/dist/askpass.sh "Username for 'https://github.com': " 2>&1; echo "rc=$?"
+  echo "--- git credential fill, traced"
+  printf 'protocol=https\nhost=github.com\n\n' | GIT_TRACE=1 GIT_TERMINAL_PROMPT=0 timeout 15 env VSCODE_GIT_IPC_HANDLE=$H GIT_ASKPASS=$S/extensions/git/dist/askpass.sh VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js git credential fill 2>&1; echo "rc=$?"
+  echo "--- exthost logs"; grep -rhi "askpass" /home/agent/.vscode-server/data/logs 2>/dev/null | tail -n 20
+  exit 0
+fi
 printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HANDLE=$H GIT_ASKPASS=$S/extensions/git/dist/askpass.sh VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js git credential fill 2>&1 || true"#;
 
     fn ssh_exe() -> PathBuf {
@@ -356,7 +365,12 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         // `github` provider holds. Here that is the canary; with a person signed in it would be their
         // token, which is why a desktop attach makes the workspace trusted.
         let token = eventually_async("the guest's askpass gets a token", SHOWS, || async {
-            let said = shell(&runtime, &sandbox, ASKPASS).await;
+            let said = shell(
+                &runtime,
+                &sandbox,
+                &format!("PUDDLE_ASKPASS_DEBUG=1; {ASKPASS}"),
+            )
+            .await;
             // The last answer is what the failure shows.
             if said.contains("password=") {
                 Ok(said)

@@ -174,7 +174,7 @@ where
         .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         .await;
     // libssh2 (libgit2, so cargo's built-in Git) treats an accepted `none` as a failed login.
-    let libssh2 = early.windows(7).any(|w| w == b"libssh2");
+    let libssh2 = names_libssh2(&early);
     let stream = Prefixed::new(stream, early);
     let (phase, mut watching) = watch::channel(Phase::Handshake);
     let ctx = Arc::new(Ctx {
@@ -189,16 +189,11 @@ where
             phase,
         },
     });
-    let config = Arc::new(russh::server::Config {
-        server_id: russh::SshId::Standard("SSH-2.0-Puddle".into()),
-        keys: termination
+    let config = Arc::new(server_config(
+        termination
             .git_ssh_keys()
             .map_or_else(|| git.host_keys.as_ref().clone(), |own| own.keys().to_vec()),
-        auth_rejection_time: std::time::Duration::ZERO,
-        auth_rejection_time_initial: Some(std::time::Duration::ZERO),
-        inactivity_timeout: None,
-        ..Default::default()
-    });
+    ));
     let conn = Conn {
         ctx: Arc::clone(&ctx),
         libssh2,
@@ -775,6 +770,29 @@ async fn table(
     }
 }
 
+/// Bytes the pump holds in each direction between the channel and the upstream (256 KiB).
+const PUMP_BUFFER: usize = 262_144;
+
+/// Whether the bytes the guest sent with its `CONNECT` name libssh2 (its identification line
+/// does), the client behind libgit2 and so cargo's built-in Git.
+fn names_libssh2(early: &[u8]) -> bool {
+    early.windows(7).any(|w| w == b"libssh2")
+}
+
+/// The SSH server's settings: its own identification, `keys` as the host keys, a failed login
+/// answered at once (nothing to slow down: the guest has no password to guess) and no
+/// inactivity timeout (a long clone is idle on this side while the upstream works).
+fn server_config(keys: Vec<super::GitSshHostKey>) -> russh::server::Config {
+    russh::server::Config {
+        server_id: russh::SshId::Standard("SSH-2.0-Puddle".into()),
+        keys,
+        auth_rejection_time: std::time::Duration::ZERO,
+        auth_rejection_time_initial: Some(std::time::Duration::ZERO),
+        inactivity_timeout: None,
+        ..Default::default()
+    }
+}
+
 /// Records the refusal in the connection's record and words it for the guest.
 fn refused(ctx: &Ctx, service: &str, repository: &Repository, refusal: &InjectRefusal) -> Finish {
     ctx.summary().refusal(
@@ -792,7 +810,7 @@ async fn pump(
     channel: &mut Channel<Msg>,
     command: &GitSshCommand,
 ) -> Result<(), super::GitSshFailure> {
-    let (mut mine, mut theirs) = tokio::io::duplex(256 * 1024);
+    let (mut mine, mut theirs) = tokio::io::duplex(PUMP_BUFFER);
     let mut out = channel.make_writer();
     let upstream = Arc::clone(&ctx.upstream);
     let run = async move {
@@ -884,5 +902,30 @@ mod tests {
             git_protocol(&[0, 1, 2]).as_deref(),
             Some("version=1:version=2")
         );
+    }
+
+    #[test]
+    fn libssh2_is_told_by_its_name_anywhere_in_what_the_guest_sent_first() {
+        assert!(names_libssh2(b"SSH-2.0-libssh2_1.11.0\r\n"));
+        assert!(names_libssh2(b"xxlibssh2"));
+        assert!(!names_libssh2(b"SSH-2.0-OpenSSH_9.6\r\n"));
+        assert!(!names_libssh2(b"libssh"));
+        assert!(!names_libssh2(b""));
+    }
+
+    #[test]
+    fn the_server_answers_as_puddle_with_no_delays_and_no_idle_timeout() {
+        let config = server_config(Vec::new());
+        assert!(
+            matches!(&config.server_id, russh::SshId::Standard(id) if id == "SSH-2.0-Puddle"),
+            "{:?}",
+            config.server_id
+        );
+        assert_eq!(config.auth_rejection_time, std::time::Duration::ZERO);
+        assert_eq!(
+            config.auth_rejection_time_initial,
+            Some(std::time::Duration::ZERO)
+        );
+        assert_eq!(config.inactivity_timeout, None);
     }
 }

@@ -329,7 +329,13 @@ mod tests {
                 "/proj/_git/repo"
             )
         );
-        for bad in ["'org/proj/repo'", "'v2/org/proj/repo'", "'v3/org/proj'"] {
+        for bad in [
+            "'org/proj/repo'",
+            "'v2/org/proj/repo'",
+            "'v3/org/proj'",
+            "'v3/org/proj/re$po'",
+            "'v3/org/proj/..'",
+        ] {
             assert_eq!(
                 repo(&format!("git-upload-pack {bad}"), "ssh.dev.azure.com"),
                 Err(Refused::BadPath),

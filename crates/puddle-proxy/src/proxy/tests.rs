@@ -1761,6 +1761,56 @@ mod tunnel_end {
         assert!(!end.ssh && !end.token_endpoint);
     }
 
+    /// A tunnel to a Git host's name whose guest starts SSH is ended: the guest reads the `200`
+    /// and then the refusal, nothing reaches the server, and the tunnel reports SSH.
+    #[tokio::test]
+    async fn ssh_in_a_tunnel_is_reported_and_the_guest_gets_the_refusal() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let server = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut accepted, _) = listener.accept().await.unwrap();
+        let (mut peer, near) = tokio::io::duplex(4096);
+        peer.write_all(b"SSH-2.0-OpenSSH_9.6\r\n").await.unwrap();
+        let reader = ClientReader::new(Counted::new(near).0);
+        let git = request("github.com");
+        let end = tunnel(reader, server, Some(&git), None, None).await;
+        assert!(end.ssh);
+        assert!(end.http.is_none() && !end.token_endpoint);
+        let mut said = String::new();
+        tokio::io::AsyncReadExt::read_to_string(&mut peer, &mut said)
+            .await
+            .unwrap();
+        let refusal = said
+            .strip_prefix("HTTP/1.1 200 Connection Established\r\n\r\npuddle: ")
+            .expect("the 200, then the refusal as pre-banner lines");
+        assert!(refusal.ends_with("\r\n"), "{said:?}");
+        let mut nothing = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut accepted, &mut nothing)
+            .await
+            .ok();
+        assert!(
+            !nothing.starts_with(b"SSH-"),
+            "the banner was not passed on"
+        );
+    }
+
+    /// `abort` makes the server socket reset its peer instead of closing cleanly.
+    #[tokio::test]
+    async fn abort_makes_a_dropped_socket_reset_its_peer() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let server = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut accepted, _) = listener.accept().await.unwrap();
+        abort(&server);
+        drop(server);
+        let err = tokio::io::AsyncReadExt::read(&mut accepted, &mut [0_u8; 1])
+            .await
+            .expect_err("a reset, not a clean end of stream");
+        assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
+    }
+
     /// A hello that came with the `CONNECT` and asks for a token endpoint is refused before the
     /// `200`: nothing is passed on and the guest gets an alert.
     #[tokio::test]

@@ -550,6 +550,15 @@ jobs:
         run: |
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
           node crates/puddle-app/e2e/sandbox-window.mjs
+      # What the real webview keeps under a workspace's origins: storage and a cookie on
+      # `<id>.localhost` and `<port>.<id>.localhost` survive a restart on the same id, a new id
+      # starts empty, and a delete removes the data (five runs of the shell over one data folder).
+      - name: workspace origins test (WebView2)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: pwsh
+        run: |
+          $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          node crates/puddle-app/e2e/origins.mjs
       # The host needs the bundled runtime beside the program (the fork's msb.exe and libkrunfw.dll,
       # checksums pinned); no machine boots, so WHP is not needed.
       - name: desktop shell smoke test (WebView2, Puddle host)

@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
+import { connect } from "./cdp.mjs";
 
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
@@ -87,36 +88,6 @@ async function waitForTargets(what, done) {
     await sleep(400);
   }
   throw new Error(`expected ${what}, saw ${JSON.stringify(seen.map((t) => t.url))}`);
-}
-
-function connect(url) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    let next = 1;
-    const pending = new Map();
-    ws.onmessage = (e) => {
-      const m = JSON.parse(e.data);
-      const p = pending.get(m.id);
-      if (p) {
-        pending.delete(m.id);
-        m.error ? p.reject(new Error(JSON.stringify(m.error))) : p.resolve(m.result);
-      }
-    };
-    ws.onerror = () => reject(new Error("DevTools websocket failed"));
-    ws.onopen = () =>
-      resolve({
-        // `gesture`: run as if the user had clicked, so window.open is not blocked as a pop-up.
-        evaluate: async (expression, gesture = false) => {
-          const id = next++;
-          const done = new Promise((res, rej) => pending.set(id, { resolve: res, reject: rej }));
-          ws.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, returnByValue: true, awaitPromise: true, userGesture: gesture } }));
-          const r = await done;
-          if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails));
-          return r.result.value;
-        },
-        close: () => ws.close(),
-      });
-  });
 }
 
 async function attack(target, label) {

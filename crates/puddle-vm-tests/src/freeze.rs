@@ -120,10 +120,10 @@ impl Drop for FrozenProcess {
 }
 
 /// The ticks of a one-second heartbeat that ran through a pause: how many gaps longer than
-/// [`GAP_OVER`] it holds and the longest one.
+/// `GAP_OVER` it holds and the longest one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Gaps {
-    /// Gaps between two ticks of more than [`GAP_OVER`] seconds.
+    /// Gaps between two ticks of more than `GAP_OVER` seconds.
     pub count: usize,
     /// The longest gap between two ticks, in seconds (0 for fewer than two ticks).
     pub longest: i64,
@@ -149,8 +149,8 @@ impl Gaps {
         Self { count, longest }
     }
 
-    /// True for exactly one gap, as long as the pause within [`GAP_SLACK_BEFORE`] and
-    /// [`GAP_SLACK_AFTER`] seconds: the bar of a real sleep check.
+    /// True for exactly one gap, as long as the pause within `GAP_SLACK_BEFORE` and
+    /// `GAP_SLACK_AFTER` seconds: the bar of a real sleep check.
     #[must_use]
     pub fn match_pause(self, paused: i64) -> bool {
         self.count == 1

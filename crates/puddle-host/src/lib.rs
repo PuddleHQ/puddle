@@ -55,6 +55,7 @@ mod quit_trims;
 mod settings_read;
 mod shell_init;
 mod space_watch;
+mod ssh_accounts;
 mod ssh_config;
 mod ssh_login;
 mod ssh_target;

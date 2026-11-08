@@ -30,7 +30,10 @@ use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{CompanySignals, LocalAccess, NetPolicy, NoSignals, PuddleEndpoints};
 use puddle_ports::Ports;
-use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Resolver, Terminations, Upstream};
+use puddle_proxy::{
+    GitSsh, GitSshAccounts, GitSshHttps, Proxy, ProxyUrl, PullProxy, PullRoute, Resolver,
+    Terminations, Upstream,
+};
 use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
@@ -310,10 +313,10 @@ pub struct HostOptions {
     /// Holds an author rewrite back when it starts (tests, to make the rewrites of one workspace
     /// run out of order). Without one, no rewrite waits.
     pub rewrite_gate: Option<RewriteGate>,
-    /// Makes SSH host keys for each start of a workspace's sandbox and lists them in the guest's
-    /// `ssh_known_hosts` under the Git hosts, so the guest's `ssh` finds the keys of Puddle's own
-    /// SSH server for Git. Off by default: the proxy serves no SSH to Git hosts until it is given
-    /// an upstream for it.
+    /// Serves Git over SSH for the Git hosts: SSH host keys for each start of a workspace's
+    /// sandbox, listed in the guest's `ssh_known_hosts` under the Git hosts, and Puddle's own SSH
+    /// server, which carries each command out over the host's HTTPS with the workspace's
+    /// identities. On by default; off, SSH to a Git host is refused (`ssh_unsupported`).
     pub git_ssh: bool,
     /// Where new workspace ids come from. Without one, the operating system's random source
     /// ([`puddle_api::RandomIds`]); tests give [`puddle_api::NameIds`], so a workspace called
@@ -332,7 +335,7 @@ impl Default for HostOptions {
             resolver: None,
             company_signals: None,
             rewrite_gate: None,
-            git_ssh: false,
+            git_ssh: true,
             workspace_ids: None,
         }
     }
@@ -538,6 +541,13 @@ impl<R: Runtime + Clone> Host<R> {
             Arc::new(StorePins::new(store.clone())),
             events.clone() as Arc<dyn EventSink>,
         );
+        // Who `ssh -T` greets: read from the store, named once the repository reader exists.
+        let ssh_accounts = Arc::new(crate::ssh_accounts::SshAccounts::new(store.clone()));
+        let mut egress_parts =
+            EgressParts::new(injecting.termination(), &proxy_passwords, &reports, &ports);
+        if options.git_ssh {
+            egress_parts.git_ssh = Some(ssh_accounts.clone());
+        }
         let egress = Egress::build(
             &config,
             &options,
@@ -545,7 +555,7 @@ impl<R: Runtime + Clone> Host<R> {
             &endpoints,
             &connections,
             &events,
-            EgressParts::new(injecting.termination(), &proxy_passwords, &reports, &ports),
+            egress_parts,
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
         let sign_ins: Arc<dyn ProxySignInService> = Arc::new(HostProxySignIns::new(
@@ -700,7 +710,11 @@ impl<R: Runtime + Clone> Host<R> {
             HostCredentials::new(ToolPaths::resolve(), vault)
                 .with_read_log(Arc::clone(&injecting.reads)),
         ))
-        .with_repos(injecting.repos(&egress.chain, &clock, connections.clone(), &events))
+        .with_repos({
+            let repos = injecting.repos(&egress.chain, &clock, connections.clone(), &events);
+            ssh_accounts.read_with(repos.clone());
+            repos
+        })
         .with_doctor(system_doctor(
             &config.layout,
             &config.paths,
@@ -1127,6 +1141,8 @@ struct EgressParts {
     /// Where the guest agents' reports go.
     reports: Arc<ReportDesk>,
     ports: Ports,
+    /// Git over SSH, with the accounts `ssh -T` greets; `None` leaves SSH to Git hosts refused.
+    git_ssh: Option<Arc<crate::ssh_accounts::SshAccounts>>,
 }
 
 impl EgressParts {
@@ -1142,6 +1158,7 @@ impl EgressParts {
             proxy_passwords: proxy_passwords.clone(),
             reports: reports.clone(),
             ports: ports.clone(),
+            git_ssh: None,
         }
     }
 }
@@ -1178,6 +1195,7 @@ impl Egress {
             proxy_passwords,
             reports,
             ports,
+            git_ssh,
         } = parts;
         let discovery = options.discovery.clone().unwrap_or_else(|| {
             Discovery::new(
@@ -1211,6 +1229,11 @@ impl Egress {
         .with_guest_watcher(Arc::new(ports));
         if let Some(resolver) = &options.resolver {
             proxy = proxy.with_resolver(Arc::clone(resolver));
+        }
+        if let Some(accounts) = git_ssh {
+            // Each workspace serves its own start's host keys (`Injection`), so none here.
+            let https = GitSshHttps::new(accounts as Arc<dyn GitSshAccounts>);
+            proxy = proxy.with_git_ssh(GitSsh::new(Arc::new(https), Vec::new()));
         }
         let proxy = Arc::new(proxy);
         Self {

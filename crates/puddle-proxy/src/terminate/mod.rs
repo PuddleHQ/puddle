@@ -91,7 +91,7 @@ use puddle_ca::WorkspaceCa;
 use puddle_types::WorkspaceId;
 
 pub use exchange::{AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY};
-pub(crate) use guest::Prefixed;
+pub(crate) use guest::{ALPN_HTTP11, Prefixed};
 pub use inject::{
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
     NoInjection, RequestView, SecretValue, Unauthorized,

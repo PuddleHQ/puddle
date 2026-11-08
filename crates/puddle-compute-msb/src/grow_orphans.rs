@@ -267,6 +267,12 @@ mod tests {
             dir.path().join("upper.ext4"),
         )
         .unwrap();
+        // A link to nothing cannot be resolved and is left alone too.
+        std::os::unix::fs::symlink(
+            dir.path().join("missing"),
+            dir.path().join(".grow-dangling"),
+        )
+        .unwrap();
         assert!(prune(dir.path()).unwrap().is_empty());
         assert!(dir.path().join("elsewhere/data").is_file());
     }

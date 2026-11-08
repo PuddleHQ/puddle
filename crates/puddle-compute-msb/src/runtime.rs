@@ -824,6 +824,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pruning_a_sandbox_deletes_the_images_its_journal_no_longer_names() {
+        let tmp = puddle_test_kit::private_tempdir();
+        let base = tmp.path().to_path_buf();
+        let config = MsbConfig::new(
+            base.join("home"),
+            base.join("no-msb"),
+            base.join("no-libkrunfw"),
+            base.join("s"),
+        );
+        let rt = MsbRuntime::open(config).await.unwrap();
+        let dir = rt.sandbox_dir("ws");
+        std::fs::create_dir_all(dir.join(".grow-new")).unwrap();
+        std::fs::write(dir.join("upper.ext4"), b"old").unwrap();
+        std::fs::write(dir.join(".grow-new").join("upper.ext4"), b"new").unwrap();
+        let journal =
+            serde_json::json!({ "layers": [{ "path": dir.join(".grow-new").join("upper.ext4") }] });
+        std::fs::write(dir.join("root-disk.json"), journal.to_string()).unwrap();
+        rt.prune_grow_orphans("ws");
+        assert!(!dir.join("upper.ext4").exists());
+        assert!(dir.join(".grow-new").join("upper.ext4").is_file());
+    }
+
+    #[tokio::test]
     async fn open_gives_the_sdk_the_runtime_pair_and_home_as_arguments() {
         let tmp = puddle_test_kit::private_tempdir();
         let base = tmp.path().to_path_buf();

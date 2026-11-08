@@ -768,6 +768,16 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_reports_the_placement_it_was_given() {
+        let new = || entry("GH_TOKEN", GH, REAL_GH, &["api.example.com"]);
+        assert_eq!(new().placement(), &Placement::Header);
+        let query = QueryName::new("sig").unwrap();
+        let placed = new().placed(Placement::Query(query.clone()));
+        assert_eq!(placed.placement(), &Placement::Query(query));
+        assert_eq!(new().placed(Placement::Path).placement(), &Placement::Path);
+    }
+
+    #[test]
     fn a_stand_in_is_swapped_in_any_header_value_toward_its_hosts() {
         let registry = registry();
         let (headers, report) = swap(

@@ -21,7 +21,8 @@ use crate::proxy::{Proxy, WorkspaceHandler};
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 /// A route being served. Dropping it (or [`Route::shutdown`]) stops accepting and ends every
-/// session on it; open connections are reset.
+/// session on it; open connections are reset. A dropped route stops through its `stop` sender
+/// closing, the same path as a shutdown, so it needs no `Drop` of its own.
 #[derive(Debug)]
 pub struct Route {
     endpoint: Endpoint,
@@ -57,12 +58,6 @@ impl Route {
         {
             tracing::error!(workspace = %self.workspace, "route task panicked");
         }
-    }
-}
-
-impl Drop for Route {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 

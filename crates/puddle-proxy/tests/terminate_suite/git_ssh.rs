@@ -602,6 +602,9 @@ async fn a_terminal_a_subsystem_agent_x11_a_second_command_and_other_variables_a
         .await
         .unwrap();
     assert!(!collect_one(&mut env).await);
+    // A value that would do is not enough: only `GIT_PROTOCOL` is taken.
+    env.set_env(true, "LD_PRELOAD", "version=2").await.unwrap();
+    assert!(!collect_one(&mut env).await);
     env.set_env(true, "GIT_PROTOCOL", "version=2")
         .await
         .unwrap();
@@ -616,9 +619,14 @@ async fn a_terminal_a_subsystem_agent_x11_a_second_command_and_other_variables_a
         .exec(true, "git-upload-pack 'acme/web'")
         .await
         .unwrap();
+    // Once the command has started, `GIT_PROTOCOL` is too late.
+    twice
+        .set_env(true, "GIT_PROTOCOL", "version=2")
+        .await
+        .unwrap();
     twice.eof().await.unwrap();
-    let ran = collect(&mut twice, 2).await;
-    assert_eq!(ran.replies, [true, false], "{ran:?}");
+    let ran = collect(&mut twice, 3).await;
+    assert_eq!(ran.replies, [true, false, false], "{ran:?}");
     assert_eq!(ran.exit, Some(0));
     assert_eq!(t.upstream.calls().len(), 1);
 }
@@ -666,6 +674,49 @@ async fn forwarding_in_either_direction_is_refused_with_a_reason() {
         events[0].reason,
         ConnectionReason::Refused("ssh_channel_refused")
     );
+}
+
+/// Every kind of forwarding and agent request is recorded as a refusal on its own connection,
+/// so none of them passes unnoticed in the audit.
+#[tokio::test]
+async fn each_forwarding_request_is_recorded_as_a_channel_refusal() {
+    let t = SshRig::new().await;
+    for round in 0..6 {
+        let mut guest = t.git.rig.guest();
+        let mut ssh = t.client(&mut guest, "bound.test:22").await;
+        login(&mut ssh).await;
+        match round {
+            0 => {
+                let _ = ssh
+                    .channel_open_direct_tcpip("127.0.0.1", 9, "127.0.0.1", 1234)
+                    .await;
+            }
+            1 => {
+                let _ = ssh.channel_open_direct_streamlocal("/var/run/x.sock").await;
+            }
+            2 => {
+                let _ = ssh.channel_open_x11("127.0.0.1", 6000).await;
+            }
+            3 => {
+                let _ = ssh.tcpip_forward("127.0.0.1", 2222).await;
+            }
+            4 => {
+                let _ = ssh.streamlocal_forward("/tmp/guest.sock").await;
+            }
+            _ => {
+                let mut channel = ssh.channel_open_session().await.unwrap();
+                channel.agent_forward(true).await.unwrap();
+                assert!(!collect_one(&mut channel).await);
+            }
+        }
+        drop(ssh);
+        let events = t.events(round + 1).await;
+        assert_eq!(
+            events[round].reason,
+            ConnectionReason::Refused("ssh_channel_refused"),
+            "round {round}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

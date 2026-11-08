@@ -206,8 +206,11 @@ fn last_line(out: &str) -> &str {
 
 /// The last few lines of a tool's output, joined, for the log.
 fn tail(out: &str) -> String {
-    let lines: Vec<&str> = out.lines().collect();
-    lines[lines.len().saturating_sub(8)..].join(" | ")
+    let total = out.lines().count();
+    out.lines()
+        .skip(total.saturating_sub(8))
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 /// The hosts of a flow's connections that its profile does not cover.

@@ -43,7 +43,7 @@ test.describe("the checkouts on the disk", () => {
       "Not managed by Puddle: works as is",
     );
     await expect(rowOf(page, "over-ssh")).toContainText(
-      "SSH is not supported yet",
+      "its remote is an SSH address",
     );
     await expect(rowOf(page, "no-remote")).toContainText("no remote");
     await expect(rowOf(page, "broken")).toContainText("dubious ownership");

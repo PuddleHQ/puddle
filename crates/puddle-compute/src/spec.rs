@@ -283,6 +283,8 @@ pub struct SandboxSpec {
     pub volumes: Vec<VolumeMount>,
     /// Disks owned by the sandbox.
     pub owned_disks: Vec<OwnedDisk>,
+    /// The writable root disk's size; `None` = the runtime's default.
+    pub root_disk: Option<DiskSize>,
 }
 
 impl SandboxSpec {
@@ -300,7 +302,16 @@ impl SandboxSpec {
             file_mounts: Vec::new(),
             volumes: Vec::new(),
             owned_disks: Vec::new(),
+            root_disk: None,
         }
+    }
+
+    /// Sets the size of the writable root disk. The disk is sparse on the host, so the size is a
+    /// limit for the guest and costs host space only as the guest writes.
+    #[must_use]
+    pub fn with_root_disk(mut self, size: DiskSize) -> Self {
+        self.root_disk = Some(size);
+        self
     }
 
     /// Sets the guest memory.
@@ -396,6 +407,9 @@ impl SandboxSpec {
             if mount.ensure_size.is_some_and(|s| s.as_mib() == 0) {
                 return invalid(format!("volume {:?} has size 0", mount.volume.as_str()));
             }
+        }
+        if self.root_disk.is_some_and(|s| s.as_mib() == 0) {
+            return invalid("the root disk has size 0".into());
         }
         if let Some(d) = self.owned_disks.iter().find(|d| d.size.as_mib() == 0) {
             return invalid(format!("owned disk at {} has size 0", d.guest));
@@ -612,5 +626,14 @@ mod tests {
         });
         assert!(reason(&zero_owned).contains("size 0"));
         assert!(reason(&base().with_cpus(0)).contains("cpus"));
+        assert!(reason(&base().with_root_disk(DiskSize::mib(0))).contains("root disk"));
+    }
+
+    #[test]
+    fn a_root_disk_size_is_optional_and_a_real_size_is_valid() {
+        assert_eq!(base().root_disk, None, "a new spec leaves the default");
+        let sized = base().with_root_disk(DiskSize::gib(16));
+        assert_eq!(sized.root_disk, Some(DiskSize::mib(16 * 1024)));
+        sized.validate().unwrap();
     }
 }

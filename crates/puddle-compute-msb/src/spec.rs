@@ -76,6 +76,11 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "otherwise msb's default (1 vCPU); changes apply at the next start via modify().cpus().next_start()",
     ),
     set(
+        "SandboxBuilder::root_disk",
+        "spec root disk size (MiB), only when given (a workspace's sandbox: 16 GiB)",
+        "a managed sparse ext4 upper that takes host space only as the guest writes; otherwise msb's default of 4 096 MiB (maintenance sandboxes)",
+    ),
+    set(
         "SandboxBuilder::env",
         "spec env (proxy vars, git identity, ...)",
         "reaches exec, SSH and the boot hook",
@@ -142,9 +147,9 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "no pinning on a workstation",
     ),
     default(
-        "SandboxBuilder::root_disk / root_disk_with / oci_upper_size",
+        "SandboxBuilder::root_disk_with / oci_upper_size",
         "msb default writable upper",
-        "ADR 0006: workspace data lives on the named volume",
+        "both are other spellings of root_disk",
     ),
     default("SandboxBuilder::thp", "Madvise", "msb default"),
     default(
@@ -349,6 +354,9 @@ pub fn builder(spec: &SandboxSpec) -> SandboxBuilder {
     for route in &spec.routes {
         b = b.vsock(&route.host, route.guest_port);
     }
+    if let Some(size) = spec.root_disk {
+        b = b.root_disk(size.as_mib());
+    }
     for mount in &spec.file_mounts {
         b = b.volume(mount.guest.as_str(), |m| m.bind(&mount.host).readonly());
     }
@@ -477,6 +485,31 @@ mod tests {
         let runtime = include_str!("runtime.rs");
         assert_eq!(runtime.matches(&call).count(), 1);
         assert!(runtime.contains(&format!(".cpus(count){call}count)")));
+    }
+
+    fn spec() -> SandboxSpec {
+        SandboxSpec::new(
+            puddle_types::SandboxName::new("rootdisk").unwrap(),
+            puddle_types::ImageRef::new("alpine").unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_spec_with_a_root_disk_makes_a_config_with_that_managed_size() {
+        let config =
+            Box::pin(builder(&spec().with_root_disk(puddle_compute::DiskSize::gib(16))).build())
+                .await
+                .unwrap();
+        assert_eq!(
+            config.spec.image.oci_managed_root_disk_size_mib(),
+            Some(16_384)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_spec_without_one_leaves_the_runtimes_default() {
+        let config = Box::pin(builder(&spec()).build()).await.unwrap();
+        assert_eq!(config.spec.image.oci_managed_root_disk_size_mib(), None);
     }
 
     #[test]

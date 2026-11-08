@@ -410,7 +410,9 @@ fn gb(bytes: u64) -> String {
 }
 
 const DISK_WHY: &str = "Workspace volumes and root disks, package caches and builds inside a workspace all grow on this drive, \
-and a full drive stops them with errors that do not name the cause (a build that dies halfway, a tool that cannot write).";
+and a full drive stops them with errors that do not name the cause (a build that dies halfway, a tool that cannot write). \
+This check measures the room left on the drive, not the sizes of the workspaces' disks: a root disk or a volume is a sparse file, \
+so its size is a limit and takes space only as the workspace writes, and the workspaces can still grow past what is left.";
 
 fn disk_space(facts: &DiskFacts, options: &Options) -> Check {
     let id = CheckId::DiskSpace;

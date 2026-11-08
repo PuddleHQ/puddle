@@ -689,6 +689,23 @@ async fn foreign_sandboxes_dirs_and_volumes_are_listed_but_not_owned() {
 }
 
 #[tokio::test]
+async fn the_specs_root_disk_size_can_be_read_back() {
+    let rt = FakeRuntime::new();
+    let named = spec("a").with_root_disk(DiskSize::gib(16));
+    let plain = spec("b");
+    let (a, b) = (named.name.clone(), plain.name.clone());
+    assert_eq!(rt.root_disk_size(&a), None, "no such sandbox yet");
+    rt.create(named).await.unwrap();
+    rt.create(plain).await.unwrap();
+    assert_eq!(rt.root_disk_size(&a), Some(DiskSize::mib(16384)));
+    assert_eq!(
+        rt.root_disk_size(&b),
+        None,
+        "a spec with none leaves the default"
+    );
+}
+
+#[tokio::test]
 async fn the_specs_owned_disks_and_volume_mounts_can_be_read_back() {
     let rt = FakeRuntime::new();
     let s = spec("a")

@@ -3,7 +3,11 @@
 // (host and names lower-case, no `.git`, Azure DevOps `project/repo`, names decoded: `My%20Project`
 // is `my project`). The host reads addresses the same way (`RepoRef::from_https_url`); both are
 // tested against one list of cases.
-import { repoUrlProblem } from "#lib/workspaces/model.ts";
+import {
+  looksLikeSsh,
+  repoUrlProblem,
+  sshAddress,
+} from "#lib/workspaces/model.ts";
 
 export interface RepoRef {
   host: string;
@@ -64,8 +68,61 @@ function refuse(): ParsedRepo {
   return { ok: false, message: SHAPE };
 }
 
-/** The repository `raw` names, or why it can't be listed. */
-export function parseRepoUrl(raw: string): ParsedRepo {
+const SSH_SHAPE =
+  "That is not an SSH address Puddle can read. Use git@github.com:owner/repo.git or the repository's HTTPS URL.";
+const SSH_HOST =
+  "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps. For another host, use the repository's HTTPS URL.";
+
+/** The SSH names of the Git hosts Puddle serves over SSH, with the HTTPS host each one stands for
+ * (`PathForm` in the proxy's `ssh_git/grammar.rs`). */
+const SSH_HOSTS: Record<string, string> = {
+  "github.com": "github.com",
+  "ssh.github.com": "github.com",
+  "gitlab.com": "gitlab.com",
+  "altssh.gitlab.com": "gitlab.com",
+  "bitbucket.org": "bitbucket.org",
+  "altssh.bitbucket.org": "bitbucket.org",
+  "ssh.dev.azure.com": "dev.azure.com",
+  "vs-ssh.visualstudio.com": "visualstudio.com",
+};
+
+/** The HTTPS address of the repository an SSH address names, or why it can't be read. Azure DevOps
+ * writes `v3/<organisation>/<project>/<repository>`. */
+function sshAsHttps(raw: string): { url: string } | { message: string } {
+  const address = sshAddress(raw);
+  if (address === null) return { message: SSH_SHAPE };
+  const https = SSH_HOSTS[address.host];
+  if (https === undefined) return { message: SSH_HOST };
+  if (
+    https === "github.com" ||
+    https === "gitlab.com" ||
+    https === "bitbucket.org"
+  ) {
+    return { url: `https://${https}/${address.path}` };
+  }
+  const [version, org, project, repo, ...more] = address.path.split("/");
+  if (version !== "v3" || !org || !project || !repo || more.length > 0) {
+    return { message: SSH_SHAPE };
+  }
+  return https === "dev.azure.com"
+    ? { url: `https://dev.azure.com/${org}/${project}/_git/${repo}` }
+    : { url: `https://${org}.visualstudio.com/${project}/_git/${repo}` };
+}
+
+/** The repository `raw` names, or why it can't be listed. With `ssh`, an SSH address names the
+ * repository the same way its HTTPS address does and is listed under the HTTPS host (the table
+ * holds repositories, not ways to reach them); the create form leaves it off, because a workspace
+ * is still cloned over HTTPS. */
+export function parseRepoUrl(
+  raw: string,
+  options: { ssh?: boolean } = {},
+): ParsedRepo {
+  if (options.ssh === true && looksLikeSsh(raw)) {
+    const converted = sshAsHttps(raw);
+    if ("message" in converted)
+      return { ok: false, message: converted.message };
+    return parseRepoUrl(converted.url);
+  }
   const problem = repoUrlProblem(raw);
   if (problem !== null) return { ok: false, message: problem };
   const rest = raw.trim().slice("https://".length).split(/[?#]/)[0] ?? "";

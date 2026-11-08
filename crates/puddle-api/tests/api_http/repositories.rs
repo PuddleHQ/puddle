@@ -117,7 +117,10 @@ async fn the_checkouts_of_a_running_workspace_show_entries_reasons_and_missing_o
     );
     assert_eq!(by("raw")["remote_note"], "credentials_removed");
     assert_eq!(by("ssh")["remote_url"], Value::Null);
-    assert_eq!(by("ssh")["manage"]["reason"], "SSH is not supported yet");
+    assert_eq!(
+        by("ssh")["manage"]["reason"],
+        "its remote is an SSH address; Manage this needs an https:// one"
+    );
     assert!(
         by("same")["manage"]["reason"]
             .as_str()
@@ -317,7 +320,7 @@ async fn adding_a_repository_the_workspace_cannot_take_is_a_404_or_a_409_with_it
             "web",
             json!({"kind": "existing", "url": API, "directory": "ssh"}),
             409,
-            "SSH is not supported",
+            "its remote is an SSH address",
         ),
         (
             "web",

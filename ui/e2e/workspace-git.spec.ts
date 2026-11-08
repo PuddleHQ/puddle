@@ -154,10 +154,10 @@ test("refuses an address it cannot read, in the create form's words, and a repos
 }) => {
   await open(page, backend);
   const url = page.getByLabel("Add a repository");
-  await url.fill("git@github.com:acme/x.git");
+  await url.fill("git@example.com:acme/x.git");
   await page.getByRole("button", { name: "Add repository" }).click();
   await expect(page.getByRole("alert")).toContainText(
-    "SSH remotes are not supported yet",
+    "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps",
   );
   await expect(url).toBeFocused();
   await url.fill("https://github.com/acme");

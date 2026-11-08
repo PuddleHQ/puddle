@@ -8,10 +8,13 @@ ok    Test boot           a test VM booted and ran a program in 1.1 s
 FAIL  Disk space          only 3 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle), under the 5 GB line
       fix:  Workspace volumes and root disks, package caches and builds inside a workspace all
             grow on this drive, and a full drive stops them with errors that do not name the
-            cause (a build that dies halfway, a tool that cannot write). Free space before you
-            start or build anything in a workspace: delete workspaces you no longer use and
-            files you do not need. The line is the setting "Fail when free space is under" in
-            Settings.
+            cause (a build that dies halfway, a tool that cannot write). This check measures the
+            room left on the drive, not the sizes of the workspaces' disks: a root disk or a
+            volume is a sparse file, so its size is a limit and takes space only as the
+            workspace writes, and the workspaces can still grow past what is left. Free space
+            before you start or build anything in a workspace: delete workspaces you no longer
+            use and files you do not need. The line is the setting "Fail when free space is
+            under" in Settings.
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 
@@ -55,7 +58,7 @@ ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed
       "status": "fail",
       "summary": "only 3 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle), under the 5 GB line",
       "finding": "disk_space_critical",
-      "fix": "Workspace volumes and root disks, package caches and builds inside a workspace all grow on this drive, and a full drive stops them with errors that do not name the cause (a build that dies halfway, a tool that cannot write). Free space before you start or build anything in a workspace: delete workspaces you no longer use and files you do not need. The line is the setting \"Fail when free space is under\" in Settings."
+      "fix": "Workspace volumes and root disks, package caches and builds inside a workspace all grow on this drive, and a full drive stops them with errors that do not name the cause (a build that dies halfway, a tool that cannot write). This check measures the room left on the drive, not the sizes of the workspaces' disks: a root disk or a volume is a sparse file, so its size is a limit and takes space only as the workspace writes, and the workspaces can still grow past what is left. Free space before you start or build anything in a workspace: delete workspaces you no longer use and files you do not need. The line is the setting \"Fail when free space is under\" in Settings."
     },
     {
       "id": "disk_encryption",

@@ -146,7 +146,7 @@
   async function addRepo(event: SubmitEvent) {
     event.preventDefault();
     repoProblem = null;
-    const parsed = parseRepoUrl(repoUrl);
+    const parsed = parseRepoUrl(repoUrl, { ssh: true });
     if (!parsed.ok) {
       repoProblem = parsed.message;
       document.getElementById(`${fid}-url`)?.focus();
@@ -425,7 +425,9 @@
           placeholder="https://github.com/owner/repo"
           bind:value={repoUrl}
           aria-invalid={repoProblem ? "true" : undefined}
-          aria-describedby={repoProblem ? `${fid}-url-error` : undefined}
+          aria-describedby={repoProblem
+            ? `${fid}-url-error`
+            : `${fid}-url-hint`}
         />
       </div>
       <label class="choice"
@@ -439,14 +441,21 @@
     {#if repoProblem}
       <p class="error" id="{fid}-url-error" role="alert">{repoProblem}</p>
     {/if}
+    <p class="muted note" id="{fid}-url-hint">
+      The list holds for Git over HTTPS and over SSH to GitHub, GitLab,
+      Bitbucket and Azure DevOps. An address like
+      <span class="mono">git@github.com:owner/repo.git</span> is listed as the same
+      repository as its HTTPS address.
+    </p>
   </section>
 
   <p class="muted note">
-    Credentials stay on this computer: Puddle adds them to Git requests as they
-    leave the workspace, and the workspace never holds them. Opening the
-    workspace in desktop VS Code is different: code in it can then read the
-    editor's own secrets, including a signed-in GitHub token, so only attach
-    workspaces you trust. The browser editor keeps the workspace isolated.
+    Credentials stay on this computer: Puddle adds them to Git requests (over
+    HTTPS, or over SSH to a Git host Puddle serves) as they leave the workspace,
+    and the workspace never holds them. Opening the workspace in desktop VS Code
+    is different: code in it can then read the editor's own secrets, including a
+    signed-in GitHub token, so only attach workspaces you trust. The browser
+    editor keeps the workspace isolated.
   </p>
 {:else if store.status === "failed"}
   <p class="muted">Couldn't read the Git settings yet. Trying again.</p>

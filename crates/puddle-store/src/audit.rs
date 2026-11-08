@@ -1454,7 +1454,7 @@ mod tests {
             .to_line()
             .unwrap();
         let value: Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(value["reason"], "company_network_off");
+        assert_eq!(value["reason"], "toggle:company_network");
         assert_eq!(value["category"], "company_network");
         assert_eq!(value["signal"], "vpn_route");
         // Any other connection has neither field set.

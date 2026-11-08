@@ -487,17 +487,29 @@ mod tests {
         assert!(runtime.contains(&format!(".cpus(count){call}count)")));
     }
 
-    #[test]
-    fn the_root_disk_is_passed_on_only_when_the_spec_names_one() {
-        let source = include_str!("spec.rs");
-        let builder_fn = &source[source.find("pub fn builder(").unwrap()..];
-        let builder_fn = &builder_fn[..builder_fn.find("\n}\n").unwrap()];
-        assert!(
-            builder_fn.contains(
-                "if let Some(size) = spec.root_disk {\n        b = b.root_disk(size.as_mib());"
-            ),
-            "builder() must hand the spec's root disk size to the SDK in MiB, and only when given"
+    fn spec() -> SandboxSpec {
+        SandboxSpec::new(
+            puddle_types::SandboxName::new("rootdisk").unwrap(),
+            puddle_types::ImageRef::new("alpine").unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_spec_with_a_root_disk_makes_a_config_with_that_managed_size() {
+        let config = builder(&spec().with_root_disk(puddle_compute::DiskSize::gib(16)))
+            .build()
+            .await
+            .unwrap();
+        assert_eq!(
+            config.spec.image.oci_managed_root_disk_size_mib(),
+            Some(16_384)
         );
+    }
+
+    #[tokio::test]
+    async fn a_spec_without_one_leaves_the_runtimes_default() {
+        let config = builder(&spec()).build().await.unwrap();
+        assert_eq!(config.spec.image.oci_managed_root_disk_size_mib(), None);
     }
 
     #[test]

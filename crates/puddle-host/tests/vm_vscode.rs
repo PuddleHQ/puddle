@@ -123,6 +123,22 @@ if [ -n "$PUDDLE_ASKPASS_DEBUG" ]; then
 fi
 printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HANDLE=$H GIT_ASKPASS=$S/extensions/git/dist/askpass.sh VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js git credential fill 2>&1 || true"#;
 
+    /// Temporary (debugging the CI run): copies a folder of logs into the artifact folder.
+    fn copy_tree(from: &Path, to: &Path) {
+        let Ok(entries) = std::fs::read_dir(from) else {
+            return;
+        };
+        std::fs::create_dir_all(to).unwrap();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                copy_tree(&path, &to.join(entry.file_name()));
+            } else {
+                let _ = std::fs::copy(&path, to.join(entry.file_name()));
+            }
+        }
+    }
+
     fn ssh_exe() -> PathBuf {
         let root = std::env::var_os("SystemRoot").expect("SystemRoot is set");
         let ssh = PathBuf::from(root)
@@ -338,6 +354,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                         "PUDDLE_CANARY_LOG".to_owned(),
                         canary_log.display().to_string(),
                     ),
+                    ("PUDDLE_CANARY_TRACE".to_owned(), "1".to_owned()),
                 ]
             } else {
                 Vec::new()
@@ -383,6 +400,24 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         )
         .await;
         window.screenshot(&out.join("u7b-after.png")).await.unwrap();
+        // Temporary (debugging the CI run): what the window shows, its own logs, and all of the guest's.
+        let shown = window
+            .evaluate(
+                "[...document.querySelectorAll('.monaco-dialog-box, .quick-input-widget, .notification-toast, .notifications-center')].filter(e => e.offsetParent !== null || getComputedStyle(e).display !== 'none').map(e => e.className + ': ' + e.innerText).join(' | ')",
+            )
+            .await;
+        std::fs::write(out.join("u7b-shown.txt"), format!("{shown:?}")).unwrap();
+        copy_tree(
+            &scratch.path().join("vsc-user").join("logs"),
+            &out.join("vsc-logs"),
+        );
+        let remote = shell(
+            &runtime,
+            &sandbox,
+            "for f in $(find /home/agent/.vscode-server/data/logs -name '*.log'); do echo \"== $f\"; cat \"$f\"; done; echo '== sockets'; ss -xlpn 2>&1 | grep -i vscode; ls -la /run/user/*/ /tmp 2>&1; echo '== exthost env'; for p in $(pgrep -f extensionHost); do echo \"pid $p\"; tr '\\0' '\\n' < /proc/$p/environ | grep -E 'XDG|VSCODE_|TMP|USER|HOME'; done",
+        )
+        .await;
+        std::fs::write(out.join("remote-logs.txt"), &remote).unwrap();
         let logs = shell(&runtime, &sandbox, "grep -rhiE 'askpass|authentication|getSession|credential' /home/agent/.vscode-server/data/logs 2>/dev/null | tail -n 40").await;
         assert!(
             hung.contains("password="),

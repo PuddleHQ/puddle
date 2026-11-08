@@ -131,17 +131,18 @@ mod tests {
         let waiting = tokio::spawn(async move {
             let mut more = [0_u8; 1];
             let read = stream.read(&mut more).await;
-            (read, stream.write_all(b"x").await)
+            (read, stream.write_all(b"x").await, stream.flush().await)
         });
         // flake-ok: lets the read start waiting; a cut before it starts is checked at its first poll too.
         tokio::time::sleep(Duration::from_millis(50)).await;
         cutoff.cut();
-        let (read, write) = tokio::time::timeout(Duration::from_secs(5), waiting)
+        let (read, write, flush) = tokio::time::timeout(Duration::from_secs(5), waiting)
             .await
             .expect("the cut wakes the read")
             .unwrap();
         assert_eq!(read.unwrap_err().kind(), io::ErrorKind::ConnectionAborted);
         assert_eq!(write.unwrap_err().kind(), io::ErrorKind::ConnectionAborted);
+        assert_eq!(flush.unwrap_err().kind(), io::ErrorKind::ConnectionAborted);
     }
 
     #[tokio::test]

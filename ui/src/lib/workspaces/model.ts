@@ -141,6 +141,26 @@ function looksLikeScp(url: string): boolean {
   return slash < 0 || colon < slash;
 }
 
+/** Whether `raw` is written as an SSH address: `ssh://...` or the `host:path` form of `scp`. */
+export function looksLikeSsh(raw: string): boolean {
+  const url = raw.trim();
+  return /^ssh:\/\//i.test(url) || looksLikeScp(url);
+}
+
+/** The host and path of an SSH address (`git@github.com:acme/web.git`, `ssh://git@host:443/acme/web`),
+ * or `null` when it has a password, a space or no path. The user name and port are not kept: the
+ * repository is the same whichever way it is reached. */
+export function sshAddress(raw: string): { host: string; path: string } | null {
+  const url = raw.trim();
+  if (/\s/.test(url)) return null;
+  const parts = /^ssh:\/\//i.test(url)
+    ? /^ssh:\/\/(?:[^@/:]+@)?([^@/:]+)(?::\d+)?\/(.+)$/i.exec(url)
+    : /^(?:[^@/:]+@)?([^@/:]+):(.+)$/.exec(url);
+  const host = parts?.[1];
+  const path = parts?.[2]?.replace(/^\/+/, "");
+  return host && path ? { host: host.toLowerCase(), path } : null;
+}
+
 /** The reason a repository URL can't be cloned, or `null` when it can. */
 export function repoUrlProblem(raw: string): string | null {
   const url = raw.trim();

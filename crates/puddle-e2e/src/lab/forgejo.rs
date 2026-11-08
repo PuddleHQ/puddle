@@ -188,6 +188,9 @@ impl Forgejo {
         // Forgejo reads its ports from `app.ini` and takes no inherited socket, so a port cannot
         // be held across the start; a collision retries on fresh ports.
         Some(on_free_port(free_port, |http_port| {
+            // flake-ok: a taken SSH port makes Forgejo exit at once with "address already in use" in
+            // its log (tried by holding the port), which `launch` returns as `Err` and `on_free_port`
+            // retries on fresh ports; nothing can hold a port across Forgejo's own bind.
             Self::launch(&bin, name, http_port, free_port())
         }))
     }

@@ -34,7 +34,7 @@ grep -q "nothing pinned" "$tmp/err" || fail "the missing pin is not named"
 
 # The real pin file: first line is well formed (version, asset named after it, 64 hex digits).
 line=$(awk '!/^#/ && NF >= 3 { print; exit }' "$here/forgejo.sha256")
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086 # the pin line is three words, split on purpose
 set -- $line
 [ "$2" = "forgejo-$1-linux-amd64" ] || fail "the pinned asset is not forgejo-<version>-linux-amd64: $line"
 printf %s "$3" | grep -Eq '^[0-9a-f]{64}$' || fail "the pinned checksum is not 64 hex digits: $line"

@@ -186,7 +186,7 @@ pub enum BlockReason {
     /// settings lifts it; no toggle does.
     SettingsUnreadable,
     /// The destination is on the company network (found by the named signal) and its toggle is
-    /// off (`company_network_off`; the refusal header says `company_network`).
+    /// off (`toggle:company_network`).
     CompanyNetwork(CompanySignal),
 }
 
@@ -202,16 +202,6 @@ impl BlockReason {
             Self::LocalToggle(category) => category.audit_reason(),
             Self::SettingsUnreadable => "settings_unreadable",
             Self::CompanyNetwork(_) => LocalCategory::CompanyNetwork.audit_reason(),
-        }
-    }
-
-    /// The code in the refusal's `x-puddle-blocked` header: [`Self::code`], except that the
-    /// company network says `company_network`.
-    #[must_use]
-    pub fn header_code(self) -> &'static str {
-        match self {
-            Self::CompanyNetwork(_) => LocalCategory::CompanyNetwork.key(),
-            other => other.code(),
         }
     }
 }
@@ -364,19 +354,12 @@ mod tests {
     }
 
     #[test]
-    fn a_company_network_block_is_audited_as_off_and_shown_as_the_category() {
+    fn a_company_network_block_names_its_toggle_like_the_other_switches() {
         for signal in CompanySignal::ALL {
             let reason = BlockReason::CompanyNetwork(signal);
-            assert_eq!(reason.code(), "company_network_off");
-            assert_eq!(reason.to_string(), "company_network_off");
-            assert_eq!(reason.header_code(), "company_network");
+            assert_eq!(reason.code(), "toggle:company_network");
+            assert_eq!(reason.to_string(), "toggle:company_network");
         }
-        // Every other reason shows its audit code.
-        assert_eq!(BlockReason::PuddleEndpoint.header_code(), "puddle_endpoint");
-        assert_eq!(
-            BlockReason::LocalToggle(LocalCategory::Private).header_code(),
-            "toggle:private"
-        );
     }
 
     #[test]

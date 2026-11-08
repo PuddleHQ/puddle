@@ -3337,7 +3337,7 @@ mod tests {
     fn a_record_without_a_category_reads_as_none() {
         let stored = serde_json::json!({
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
-            "port": 443, "decision": "deny", "reason": "company_network_off", "rule_id": null,
+            "port": 443, "decision": "deny", "reason": "toggle:company_network", "rule_id": null,
             "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
             "method": null, "path": null, "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
         });
@@ -3345,7 +3345,7 @@ mod tests {
         let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
         assert_eq!(wire["category"], Value::Null);
         assert_eq!(wire["signal"], Value::Null);
-        assert_eq!(wire["reason"], "company_network_off");
+        assert_eq!(wire["reason"], "toggle:company_network");
     }
 
     /// The typed record serialises to the very JSON the store wrote, so the API adds no layer

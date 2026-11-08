@@ -1662,7 +1662,7 @@ mod company_network {
         assert_eq!(header(&refusal, "x-puddle-decision"), Some("blocked"));
         assert_eq!(
             header(&refusal, "x-puddle-blocked"),
-            Some("company_network")
+            Some("toggle:company_network")
         );
         assert_eq!(header(&refusal, "x-puddle-pending"), None);
         assert_eq!(
@@ -1671,11 +1671,11 @@ mod company_network {
         );
         assert_eq!(policy.pending().len(), 0);
         assert_eq!(event.decision, ConnectionDecision::Blocked);
-        assert_eq!(event.reason.to_string(), "company_network_off");
+        assert_eq!(event.reason.to_string(), "toggle:company_network");
         assert_eq!(event.company_network, Some(CompanySignal::DnsSuffix));
         assert_eq!(
             event.refused_address.map(|(a, why)| (a, why.code())),
-            Some((ip("100.64.3.7"), "company_network_off"))
+            Some((ip("100.64.3.7"), "toggle:company_network"))
         );
     }
 
@@ -1720,10 +1720,10 @@ mod company_network {
         let refusal = admitted.unwrap_err();
         assert_eq!(
             header(&refusal, "x-puddle-blocked"),
-            Some("company_network")
+            Some("toggle:company_network")
         );
         assert_eq!(policy.pending().len(), 0);
-        assert_eq!(event.reason.to_string(), "company_network_off");
+        assert_eq!(event.reason.to_string(), "toggle:company_network");
     }
 }
 

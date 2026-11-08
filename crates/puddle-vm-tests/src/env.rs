@@ -264,13 +264,7 @@ impl VmEnv {
     /// record holds no process id (the sandbox is not running).
     pub async fn process_id_of(&self, name: &str) -> Result<u32, HarnessError> {
         let handle = self.scope(Box::pin(Sandbox::get(name))).await?;
-        handle
-            .local()
-            .and_then(|local| local.pid)
-            .and_then(|pid| u32::try_from(pid).ok())
-            .ok_or_else(|| HarnessError::NoVmProcess {
-                name: name.to_owned(),
-            })
+        pid_of_record(handle.local().and_then(|local| local.pid), name)
     }
 
     /// Runs `future` with this environment's backend as the SDK default (task-local, so other
@@ -463,6 +457,15 @@ pub async fn create_from_registry<T, E: std::fmt::Display>(
         Ok(Err(e)) => Err(fail(e.to_string())),
         Err(_) => Err(fail(format!("no answer within {limit:?}"))),
     }
+}
+
+/// The process id msb recorded for a sandbox, as a `u32`; none means the sandbox is not running.
+fn pid_of_record(recorded: Option<i32>, name: &str) -> Result<u32, HarnessError> {
+    recorded
+        .and_then(|pid| u32::try_from(pid).ok())
+        .ok_or_else(|| HarnessError::NoVmProcess {
+            name: name.to_owned(),
+        })
 }
 
 #[cfg(test)]
@@ -850,6 +853,24 @@ pub(crate) mod tests {
         env.remove_home().await.unwrap();
         assert!(!settings.home().exists());
         assert!(!settings.kept_logs().exists());
+    }
+
+    #[test]
+    fn a_recorded_process_id_is_used_and_a_missing_or_negative_one_is_named() {
+        assert_eq!(pid_of_record(Some(4242), "box").unwrap(), 4242);
+        for recorded in [None, Some(-1)] {
+            let err = pid_of_record(recorded, "box").unwrap_err();
+            assert!(matches!(&err, HarnessError::NoVmProcess { name } if name == "box"));
+            assert!(err.to_string().contains("box"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_sandbox_msb_does_not_know_has_no_process_id() {
+        let (_dir, settings) = fake_settings("env-pid");
+        let env = VmEnv::new(settings).await.unwrap();
+        let err = env.process_id_of("r7-1-nothing").await.unwrap_err();
+        assert!(matches!(err, HarnessError::Sdk(_)), "{err}");
     }
 
     #[tokio::test]

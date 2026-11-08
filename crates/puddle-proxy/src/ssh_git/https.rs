@@ -43,8 +43,9 @@ const MAX_ANSWER: usize = 1024;
 /// only bounds a termination that is stuck.
 const OUTCOME_WAIT: Duration = Duration::from_secs(5);
 
-/// Git over SSH through the hosts' HTTPS: the default way Puddle reaches a Git host (see the
-/// [module](crate::ssh_git) for the guest's side). `accounts` names the account `ssh -T` greets.
+/// Git over SSH through the hosts' HTTPS: the default [`GitSshUpstream`] of a [`crate::GitSsh`].
+/// Each command becomes the smart-HTTP requests `git` sends for the HTTPS remote, through the
+/// workspace's own TLS termination. `accounts` names the account `ssh -T` greets.
 #[derive(Debug)]
 pub struct GitSshHttps {
     accounts: Arc<dyn GitSshAccounts>,

@@ -440,5 +440,5 @@ async fn push<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin>(
 }
 
 #[cfg(test)]
-#[path = "bridge_tests.rs"]
+#[path = "bridge/tests.rs"]
 mod tests;

@@ -88,8 +88,7 @@ impl LocalCategory {
         }
     }
 
-    /// The audit `reason` for a request this category's toggle blocked (R-24): `toggle:<key>`,
-    /// and `company_network_off` for the company network.
+    /// The audit `reason` for a request this category's toggle blocked (R-24): `toggle:<key>`.
     #[must_use]
     pub const fn audit_reason(self) -> &'static str {
         match self {
@@ -98,7 +97,7 @@ impl LocalCategory {
             Self::LinkLocal => "toggle:link_local",
             Self::Metadata => "toggle:metadata",
             Self::Special => "toggle:special",
-            Self::CompanyNetwork => "company_network_off",
+            Self::CompanyNetwork => "toggle:company_network",
         }
     }
 }
@@ -209,12 +208,7 @@ mod tests {
             );
             assert_eq!(c.to_string(), c.key());
             assert_eq!(c.key().parse::<LocalCategory>().unwrap(), c);
-            let reason = if c == LocalCategory::CompanyNetwork {
-                "company_network_off".to_owned()
-            } else {
-                format!("toggle:{}", c.key())
-            };
-            assert_eq!(c.audit_reason(), reason);
+            assert_eq!(c.audit_reason(), format!("toggle:{}", c.key()));
             assert_ne!(c.describe(), "");
         }
     }

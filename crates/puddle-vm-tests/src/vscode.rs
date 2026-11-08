@@ -406,6 +406,25 @@ impl VsCodeWindow {
         .map(drop)
     }
 
+    /// Answers the input box the window shows the person (an extension asking for a value), if one
+    /// shows within `within`, with Escape, and returns its text; `None` when the window asks nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`HarnessError::Browser`] when the input box stays open after Escape.
+    pub async fn dismiss_prompt(
+        &mut self,
+        within: Duration,
+    ) -> Result<Option<String>, HarnessError> {
+        let seen = self
+            .call(
+                json!({"op": "prompt", "timeoutMs": millis(within)}),
+                within * 2 + STEP,
+            )
+            .await?;
+        Ok(seen.as_str().map(str::to_owned))
+    }
+
     /// Runs Developer: Reload Window and waits until the window is attached again.
     ///
     /// # Errors
@@ -627,8 +646,13 @@ mod tests {
         std::fs::write(
             core.join("index.js"),
             "let tries = 0; let terminals = 0; const calls = [];
+             let prompts = 0;
              const chain = (name) => ({
-               waitFor: async (o) => { calls.push(name + ' waitFor ' + o.state); },
+               waitFor: async (o) => {
+                 calls.push(name + ' waitFor ' + o.state);
+                 if (name === '.quick-input-widget:visible first' && o.state === 'visible' && ++prompts % 2 === 0) throw new Error('Timeout');
+               },
+               innerText: async () => 'Git: https://github.com',
                filter: (f) => chain(name + ' filter ' + f.hasText),
                first: () => chain(name + ' first'),
                click: async () => { calls.push(name + ' click'); },
@@ -766,6 +790,43 @@ mod tests {
         assert_eq!(
             calls[3],
             r".quick-input-list .monaco-list-row .label-name filter /^\s*Terminal: Create New Terminal \(Local\)\s*$/ first click"
+        );
+        window.close().await.expect("closed");
+    }
+
+    #[tokio::test]
+    async fn a_prompt_is_read_then_answered_with_escape_and_no_prompt_is_none() {
+        let modules = stub_modules();
+        let mut window = stub_window(&modules, 9230, Duration::from_secs(30))
+            .await
+            .expect("connected");
+        let asked = window
+            .dismiss_prompt(Duration::from_secs(1))
+            .await
+            .expect("prompt");
+        assert_eq!(asked.as_deref(), Some("Git: https://github.com"));
+        let calls = window.evaluate("calls").await.expect("calls");
+        let calls: Vec<&str> = calls
+            .as_array()
+            .expect("array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                ".quick-input-widget:visible first waitFor visible",
+                "press Escape",
+                ".quick-input-widget:visible first waitFor hidden"
+            ]
+        );
+        // The stub shows no input box the second time.
+        assert_eq!(
+            window
+                .dismiss_prompt(Duration::from_secs(1))
+                .await
+                .expect("no prompt"),
+            None
         );
         window.close().await.expect("closed");
     }

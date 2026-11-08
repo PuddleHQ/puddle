@@ -100,27 +100,25 @@ mod story {
 
     const PORT: u16 = 9230;
 
+    /// The Machine settings of the guest user's VS Code server, where Puddle puts its guard settings.
+    const MACHINE: &str = "/home/agent/.vscode-server/data/Machine/settings.json";
+
+    /// How the canary log shows an ask with the scopes of the built-in GitHub extension's git
+    /// credential provider (Copilot asks for the same scopes in another order).
+    const GIT_ASK: &str = "getSessions repo,workflow,user:email,read:user";
+
     /// The guest user's VS Code server folder, as a shell variable `S`.
     const SERVER: &str =
         "S=$(ls -d /home/agent/.vscode-server/cli/servers/Stable-*/server | tail -n 1)";
 
     /// What the git extension's askpass would be asked in a terminal of the window, asked from outside
     /// it as the guest's root can: through the extension's own socket, with the extension's own
-    /// helper. It prints what `git credential fill` ends with (a `password=` line when a token came),
-    /// and waits at most 30 s: with no sign-in provider the extension asks the window for one instead.
+    /// helper, on the newest socket (a replaced server leaves its old one). It prints what `git
+    /// credential fill` ends with (a `password=` line when a token came), and waits at most 30 s:
+    /// with the GitHub sign-in off or absent the extension asks the person in the window instead.
     const ASKPASS: &str = r#"S=$(ls -d /home/agent/.vscode-server/cli/servers/Stable-*/server | tail -n 1)
-H=$(ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1)
+H=$(ls -t /tmp/vscode-git-*.sock 2>/dev/null | head -n 1)
 [ -n "$H" ] || { echo no-git-socket; exit 0; }
-if [ -n "$PUDDLE_ASKPASS_DEBUG" ]; then
-  id; ls -la /tmp/vscode-git-* "$S"/extensions/git/dist/askpass* 2>&1; echo "H=$H S=$S"
-  echo "--- askpass.sh direct, username step"
-  VSCODE_GIT_IPC_HANDLE=$H VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js VSCODE_GIT_ASKPASS_EXTRA_ARGS= timeout 15 sh $S/extensions/git/dist/askpass.sh "Username for 'https://github.com': " 2>&1; echo "rc=$?"
-  echo "--- git credential fill, traced"
-  printf 'protocol=https\nhost=github.com\n\n' | GIT_TRACE=1 GIT_TERMINAL_PROMPT=0 timeout 15 env VSCODE_GIT_IPC_HANDLE=$H GIT_ASKPASS=$S/extensions/git/dist/askpass.sh VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js git credential fill 2>&1; echo "rc=$?"
-  echo "--- logs"; find /home/agent/.vscode-server/data/logs -name '*.log' 2>&1 | head -n 30
-  for f in $(find /home/agent/.vscode-server/data/logs -name '*.log' | grep -E 'remoteexthost|Git|github|auth' | head -n 6); do echo "== $f"; tail -n 15 "$f"; done
-  exit 0
-fi
 printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HANDLE=$H GIT_ASKPASS=$S/extensions/git/dist/askpass.sh VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js git credential fill 2>&1 || true"#;
 
     /// Temporary (debugging the CI run): copies a folder of logs into the artifact folder.
@@ -136,6 +134,19 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             } else {
                 let _ = std::fs::copy(&path, to.join(entry.file_name()));
             }
+        }
+    }
+
+    /// The text of the dialogs, input boxes and notifications the window shows, for a failure message.
+    async fn window_shows(window: &mut VsCodeWindow) -> String {
+        match window
+            .evaluate(
+                "[...document.querySelectorAll('.monaco-dialog-box, .quick-input-widget, .notification-toast')].filter(e => e.offsetParent !== null).map(e => e.innerText).join(' | ')",
+            )
+            .await
+        {
+            Ok(shown) => shown.as_str().unwrap_or_default().to_owned(),
+            Err(error) => format!("(unreadable: {error})"),
         }
     }
 
@@ -379,10 +390,6 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         }
         assert!(up.title.contains("(Workspace)"), "{up:?}");
 
-        window
-            .screenshot(&out.join("u7b-before.png"))
-            .await
-            .unwrap();
         eventually_async("the git extension's socket exists", SHOWS, || async {
             let said = shell(
                 &runtime,
@@ -393,64 +400,73 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             (!said.trim().is_empty()).then_some(())
         })
         .await;
-        let hung = shell(
-            &runtime,
-            &sandbox,
-            &format!("PUDDLE_ASKPASS_DEBUG=1; {ASKPASS}"),
-        )
-        .await;
-        window.screenshot(&out.join("u7b-after.png")).await.unwrap();
-        // Temporary (debugging the CI run): what the window shows, its own logs, and all of the guest's.
-        let shown = window
-            .evaluate(
-                "[...document.querySelectorAll('.monaco-dialog-box, .quick-input-widget, .notification-toast, .notifications-center')].filter(e => e.offsetParent !== null || getComputedStyle(e).display !== 'none').map(e => e.className + ': ' + e.innerText).join(' | ')",
-            )
-            .await;
-        std::fs::write(out.join("u7b-shown.txt"), format!("{shown:?}")).unwrap();
-        copy_tree(
-            &scratch.path().join("vsc-user").join("logs"),
-            &out.join("vsc-logs"),
-        );
-        let remote = shell(
-            &runtime,
-            &sandbox,
-            "for f in $(find /home/agent/.vscode-server/data/logs -name '*.log'); do echo \"== $f\"; cat \"$f\"; done; echo '== sockets'; ss -xlpn 2>&1 | grep -i vscode; ls -la /run/user/*/ /tmp 2>&1; echo '== exthost env'; for p in $(pgrep -f extensionHost); do echo \"pid $p\"; tr '\\0' '\\n' < /proc/$p/environ | grep -E 'XDG|VSCODE_|TMP|USER|HOME'; done",
-        )
-        .await;
-        std::fs::write(out.join("remote-logs.txt"), &remote).unwrap();
-        let logs = shell(&runtime, &sandbox, "grep -rhiE 'askpass|authentication|getSession|credential' /home/agent/.vscode-server/data/logs 2>/dev/null | tail -n 40").await;
+
+        // U7b, the guard: Puddle's Machine settings turn the git extension's GitHub sign-in off, so the
+        // guest's askpass gets no token. The extension asks the person in the window instead.
+        let guarded = shell(&runtime, &sandbox, ASKPASS).await;
+        let asked = window.dismiss_prompt(SHOWS).await.expect("the input box");
         assert!(
-            hung.contains("password="),
-            "first askpass try: {hung}\nlogs:\n{logs}"
+            !guarded.contains("password="),
+            "a token reached the guest with the guard setting on: {guarded}"
+        );
+        assert!(
+            asked
+                .as_deref()
+                .is_some_and(|a| a.contains("Git: https://github.com")),
+            "the git extension did not ask the person for github.com: {asked:?}; the window shows {}",
+            window_shows(&mut window).await
+        );
+        assert!(
+            !std::fs::read_to_string(&canary_log)
+                .unwrap()
+                .contains(GIT_ASK),
+            "the window's provider was asked for the git extension's token with the guard on"
         );
 
-        // U7b: the guest's git extension asks the window for a GitHub token and gets what the window's
-        // `github` provider holds. Here that is the canary; with a person signed in it would be their
-        // token, which is why a desktop attach makes the workspace trusted.
-        let token = eventually_async("the guest's askpass gets a token", SHOWS, || async {
-            let said = shell(
-                &runtime,
-                &sandbox,
-                &format!("PUDDLE_ASKPASS_DEBUG=1; {ASKPASS}"),
-            )
-            .await;
-            // The last answer is what the failure shows.
-            if said.contains("password=") {
-                Ok(said)
-            } else {
-                Err(said)
-            }
-        })
+        // U7b, the trusted mode: the guard is only an accident guard. The guest reads the setting, so
+        // its root can turn it back on, and the next ask gets the token of the window's `github`
+        // provider: the canary here, a signed-in person's real token in use.
+        let flipped = shell(
+            &runtime,
+            &sandbox,
+            &format!(
+                "sed -i -E 's/(\"github\\.gitAuthentication\"[[:space:]]*:[[:space:]]*)false/\\1true/' {MACHINE} && grep -c '\"github.gitAuthentication\": true' {MACHINE}"
+            ),
+        )
         .await;
+        assert_eq!(
+            flipped.trim(),
+            "1",
+            "the guest could not turn the setting on: {flipped}"
+        );
+        let mut token = String::new();
+        let until = std::time::Instant::now() + SHOWS;
+        while std::time::Instant::now() < until {
+            token = shell(&runtime, &sandbox, ASKPASS).await;
+            if token.contains("password=") {
+                break;
+            }
+            // The setting had not reached the extension yet, and it asked the person: answer with nothing.
+            window
+                .dismiss_prompt(Duration::from_secs(2))
+                .await
+                .expect("the input box");
+        }
         assert!(
             token.lines().any(|l| l == format!("password={CANARY}")),
-            "the guest got something else than the canary: {token}"
+            "the guest's askpass did not get the canary: {token}; the window shows {}",
+            window_shows(&mut window).await
         );
         assert!(
             std::fs::read_to_string(&canary_log)
                 .unwrap()
-                .contains("getSessions"),
-            "the stand-in provider was never asked"
+                .contains(GIT_ASK),
+            "the canary came without the window's provider being asked for the git extension's scopes"
+        );
+        // Temporary (debugging the CI run): the window's own logs and the guest's.
+        copy_tree(
+            &scratch.path().join("vsc-user").join("logs"),
+            &out.join("vsc-logs"),
         );
 
         // U8: Reload Window ends a terminal, because the reload replaces the guest's server.
@@ -493,8 +509,9 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         assert!(!who.is_empty(), "the probe file is empty");
         window.close().await.expect("the window closes");
 
-        // U7d: in a profile with the GitHub sign-in off and nothing in its place, the guest gets no token.
-        // Its code still runs here.
+        // U7d: in a profile with the GitHub sign-in off and nothing in its place, the guest gets no token,
+        // with the guard setting still turned on by the guest above: the profile alone keeps it out. Its
+        // code still runs here.
         let second = launch(Some("puddle-test"), false);
         let mut window = second
             .start(&release, &node, &modules, &out.join("code-profile.log"))
@@ -511,10 +528,27 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             (!said.trim().is_empty()).then_some(())
         })
         .await;
-        let said = shell(&runtime, &sandbox, ASKPASS).await;
+        // The first window's server may have left its socket behind, so ask until the live extension
+        // answers by asking the person.
+        let mut asked = None;
+        let mut said = String::new();
+        let until = std::time::Instant::now() + SHOWS;
+        while asked.is_none() && std::time::Instant::now() < until {
+            said = shell(&runtime, &sandbox, ASKPASS).await;
+            assert!(
+                !said.contains("gho_") && !said.contains("password="),
+                "a token reached the guest with no GitHub provider on this side: {said}"
+            );
+            asked = window
+                .dismiss_prompt(Duration::from_secs(2))
+                .await
+                .expect("the input box");
+        }
         assert!(
-            !said.contains("gho_") && !said.contains("password="),
-            "a token reached the guest with no GitHub provider on this side: {said}"
+            asked
+                .as_deref()
+                .is_some_and(|a| a.contains("Git: https://github.com")),
+            "the git extension in the profile's window never asked the person for github.com: {asked:?}, askpass said {said}"
         );
         let who_again = hostile_code_runs_here(&mut window, &runtime, &sandbox, &probe).await;
         assert_eq!(

@@ -107,6 +107,22 @@ const terminal = async (line, timeoutMs) => {
   return null;
 };
 
+// The input box an extension opened to ask the person something (`showInputBox`): its text, then Escape, which answers it
+// with nothing. Null when the window asks nothing within the time.
+const prompt = async (timeoutMs) => {
+  const page = workbench();
+  const box = page.locator(PICKER).first();
+  try {
+    await box.waitFor({ state: "visible", timeout: timeoutMs });
+  } catch {
+    return null;
+  }
+  const text = await box.innerText();
+  await page.keyboard.press("Escape");
+  await box.waitFor({ state: "hidden", timeout: timeoutMs });
+  return text;
+};
+
 // Electron reloads the window in place: the page object stays, its document is replaced, and `load` fires for the new one.
 const reload = async (timeoutMs) => {
   const page = workbench();
@@ -128,6 +144,8 @@ const run = async (command) => {
       return palette(command.label, command.timeoutMs);
     case "terminal":
       return terminal(command.line, command.timeoutMs);
+    case "prompt":
+      return prompt(command.timeoutMs);
     case "eval":
       // A function made here and sent as a value, so the page never evaluates a string.
       return workbench().evaluate(new Function(`return (${command.expression});`));

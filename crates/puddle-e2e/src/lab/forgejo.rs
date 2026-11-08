@@ -1,0 +1,450 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! A real Forgejo as the lab's Git host: smart HTTP over TLS and its own built-in SSH server, on
+//! loopback ports, with one account, `acme`, that owns the repositories.
+//!
+//! Where [`GitHost`](super::GitHost) is Puddle's own stand-in (the real `git http-backend` behind a
+//! small TLS server), this is a real forge answering the way a hosted one does: its pkt-line
+//! answers, its token check, its refusals, its SSH server with a public key per account. It holds
+//! no outside host, account or secret: the account, its token and its SSH keys are made for the
+//! run, in a database in a folder removed when the fixture drops.
+//!
+//! Started from `PUDDLE_FORGEJO_BIN` (a Forgejo release binary; `ci/fetch-forgejo.sh` fetches the
+//! pinned one). Without it `start` skips, unless `PUDDLE_REQUIRE_FORGEJO=1` makes a missing
+//! Forgejo a failure (the lab workflow sets it). Forgejo publishes no Windows release, so the
+//! fixture is Unix only.
+//!
+//! The headless setup is the smallest that works: an `app.ini` with `INSTALL_LOCK`, SQLite, no
+//! mail, no search index, no Actions and in-memory cache and sessions; `forgejo migrate` makes the
+//! tables, `forgejo admin user create` the account, `forgejo admin user generate-access-token` its
+//! token; everything after that (repositories, keys) goes through the HTTP API with that token.
+
+use std::fs;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::Instant;
+
+use rustls::pki_types::CertificateDer;
+
+use super::git_host::issue;
+use super::{
+    LOCAL, Prefix, READY, StartCost, configured_or_skip, free_port, on_free_port, read,
+    require_file, stop, try_ready,
+};
+
+/// The account that owns every repository of the fixture.
+pub const OWNER: &str = "acme";
+
+/// A running Forgejo. Stops when dropped.
+pub struct Forgejo {
+    child: Child,
+    dir: tempfile::TempDir,
+    name: String,
+    http_port: u16,
+    ssh_port: u16,
+    root: CertificateDer<'static>,
+    root_pem: PathBuf,
+    token: String,
+    started: StartCost,
+}
+
+impl Drop for Forgejo {
+    fn drop(&mut self) {
+        stop(&mut self.child);
+    }
+}
+
+/// The `app.ini` of a headless instance whose files live under `dir`.
+fn app_ini(dir: &Path, name: &str, http_port: u16, ssh_port: u16, secrets: &Secrets) -> String {
+    let at = |p: &str| dir.join(p).display().to_string();
+    format!(
+        "APP_NAME = lab\n\
+         RUN_MODE = prod\n\
+         WORK_PATH = {work}\n\
+         [database]\n\
+         DB_TYPE = sqlite3\n\
+         PATH = {db}\n\
+         [repository]\n\
+         ROOT = {repos}\n\
+         [server]\n\
+         PROTOCOL = https\n\
+         DOMAIN = {name}\n\
+         ROOT_URL = https://{name}/\n\
+         HTTP_ADDR = {LOCAL}\n\
+         HTTP_PORT = {http_port}\n\
+         CERT_FILE = {cert}\n\
+         KEY_FILE = {key}\n\
+         APP_DATA_PATH = {data}\n\
+         START_SSH_SERVER = true\n\
+         SSH_LISTEN_HOST = {LOCAL}\n\
+         SSH_PORT = {ssh_port}\n\
+         SSH_DOMAIN = {name}\n\
+         BUILTIN_SSH_SERVER_USER = git\n\
+         OFFLINE_MODE = true\n\
+         DISABLE_ROUTER_LOG = true\n\
+         [security]\n\
+         INSTALL_LOCK = true\n\
+         INTERNAL_TOKEN = {internal}\n\
+         SECRET_KEY = {secret}\n\
+         [oauth2]\n\
+         JWT_SECRET = {jwt}\n\
+         [service]\n\
+         DISABLE_REGISTRATION = true\n\
+         [mailer]\n\
+         ENABLED = false\n\
+         [session]\n\
+         PROVIDER = memory\n\
+         [cache]\n\
+         ADAPTER = memory\n\
+         [queue]\n\
+         TYPE = level\n\
+         [indexer]\n\
+         REPO_INDEXER_ENABLED = false\n\
+         [actions]\n\
+         ENABLED = false\n\
+         [picture]\n\
+         DISABLE_GRAVATAR = true\n\
+         [log]\n\
+         MODE = console\n\
+         LEVEL = Info\n",
+        work = at(""),
+        db = at("forgejo.db"),
+        repos = at("repos"),
+        cert = at("cert.pem"),
+        key = at("key.pem"),
+        data = at("data"),
+        internal = secrets.internal,
+        secret = secrets.secret,
+        jwt = secrets.jwt,
+    )
+}
+
+/// The three secrets an instance needs, made by `forgejo generate secret`.
+struct Secrets {
+    internal: String,
+    secret: String,
+    jwt: String,
+}
+
+/// One `forgejo` command against the instance in `dir`; `Err` is its output when it fails.
+fn forgejo(bin: &std::ffi::OsStr, dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(bin)
+        .arg("--config")
+        .arg(dir.join("app.ini"))
+        .arg("--work-path")
+        .arg(dir)
+        .args(args)
+        // Forgejo writes under HOME (its own `.ssh` for authorised keys) and must not touch the
+        // runner's.
+        .env("HOME", dir.join("home"))
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(format!("forgejo {}: {text}", args.join(" ")))
+    }
+}
+
+/// `forgejo generate secret <kind>`, which needs no instance.
+fn generate_secret(bin: &std::ffi::OsStr, kind: &str) -> String {
+    let output = Command::new(bin)
+        .args(["generate", "secret", kind])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "forgejo generate secret {kind}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+impl Forgejo {
+    /// Starts Forgejo answering to `name`, or `None` (skip) when none is configured; see the
+    /// module docs. Its certificate names `name`, signed by a root made for the run.
+    ///
+    /// # Panics
+    /// When Forgejo is required but missing, or does not start.
+    #[must_use]
+    pub fn start(name: &str) -> Option<Self> {
+        let bin = std::env::var_os("PUDDLE_FORGEJO_BIN");
+        configured_or_skip(
+            bin.is_some(),
+            std::env::var_os("PUDDLE_REQUIRE_FORGEJO").is_some(),
+            "PUDDLE_REQUIRE_FORGEJO",
+            "set PUDDLE_FORGEJO_BIN to run against Forgejo (ci/fetch-forgejo.sh fetches the pinned release)",
+        )
+        .then_some(())?;
+        let bin = bin?;
+        require_file(&bin, "PUDDLE_FORGEJO_BIN");
+        // Forgejo reads its ports from `app.ini` and takes no inherited socket, so a port cannot
+        // be held across the start; a collision retries on fresh ports.
+        Some(on_free_port(free_port, |http_port| {
+            Self::launch(&bin, name, http_port, free_port())
+        }))
+    }
+
+    /// One start attempt. `Err` is Forgejo's own log when it did not come up.
+    fn launch(
+        bin: &std::ffi::OsStr,
+        name: &str,
+        http_port: u16,
+        ssh_port: u16,
+    ) -> Result<Self, String> {
+        let begun = Instant::now();
+        let prefix = Prefix::new("forgejo");
+        let dir = tempfile::Builder::new()
+            .prefix(prefix.as_str())
+            .tempdir()
+            .unwrap();
+        let root_dir = dir.path();
+        for sub in ["data", "repos", "home"] {
+            fs::create_dir_all(root_dir.join(sub)).unwrap();
+        }
+        let (ca, leaf, key) = issue("Puddle lab Forgejo root", &[name.to_owned()], (2020, 2090));
+        fs::write(root_dir.join("cert.pem"), leaf.pem()).unwrap();
+        fs::write(root_dir.join("key.pem"), key.serialize_pem()).unwrap();
+        let root_pem = root_dir.join("root.pem");
+        fs::write(&root_pem, ca.pem()).unwrap();
+        let secrets = Secrets {
+            internal: generate_secret(bin, "INTERNAL_TOKEN"),
+            secret: generate_secret(bin, "SECRET_KEY"),
+            jwt: generate_secret(bin, "JWT_SECRET"),
+        };
+        fs::write(
+            root_dir.join("app.ini"),
+            app_ini(root_dir, name, http_port, ssh_port, &secrets),
+        )
+        .unwrap();
+        forgejo(bin, root_dir, &["migrate"])?;
+        forgejo(
+            bin,
+            root_dir,
+            &[
+                "admin",
+                "user",
+                "create",
+                "--admin",
+                "--username",
+                OWNER,
+                "--random-password",
+                "--email",
+                "acme@example.org",
+                "--must-change-password=false",
+            ],
+        )?;
+        let token = forgejo(
+            bin,
+            root_dir,
+            &[
+                "admin",
+                "user",
+                "generate-access-token",
+                "--username",
+                OWNER,
+                "--token-name",
+                "lab",
+                "--scopes",
+                "all",
+                "--raw",
+            ],
+        )?
+        .trim()
+        .to_owned();
+        let log = root_dir.join("forgejo.log");
+        let mut child = Command::new(bin)
+            .arg("--config")
+            .arg(root_dir.join("app.ini"))
+            .arg("--work-path")
+            .arg(root_dir)
+            .arg("web")
+            .env("HOME", root_dir.join("home"))
+            .stdin(Stdio::null())
+            .stdout(fs::File::create(&log).unwrap())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        // Both listeners come up in the same breath; the SSH one second, so a taken SSH port
+        // shows in the log before the instance is called ready.
+        let log_text = || read(&log);
+        for port in [http_port, ssh_port] {
+            if let Err(why) = try_ready(port, Some(&mut child), READY, log_text) {
+                stop(&mut child);
+                return Err(why);
+            }
+        }
+        let started = StartCost::measure(&prefix, begun, Some(&child));
+        Ok(Self {
+            child,
+            root: ca.der().clone(),
+            root_pem,
+            dir,
+            name: name.to_owned(),
+            http_port,
+            ssh_port,
+            token,
+            started,
+        })
+    }
+
+    /// Where the HTTPS server listens.
+    #[must_use]
+    pub fn addr(&self) -> SocketAddr {
+        SocketAddr::from((LOCAL, self.http_port))
+    }
+
+    /// Where the SSH server listens.
+    #[must_use]
+    pub fn ssh_addr(&self) -> SocketAddr {
+        SocketAddr::from((LOCAL, self.ssh_port))
+    }
+
+    /// The root that signed the server's certificate.
+    #[must_use]
+    pub fn root(&self) -> &CertificateDer<'static> {
+        &self.root
+    }
+
+    /// The name the certificate and the clone URLs carry.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// A folder for the caller's own files, removed with the fixture.
+    #[must_use]
+    pub fn scratch(&self) -> &Path {
+        self.dir.path()
+    }
+
+    /// The access token of [`OWNER`], made for the run (read and write on everything the account
+    /// owns).
+    #[must_use]
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    /// What the start cost, in wall-clock and CPU time.
+    #[must_use]
+    pub fn start_cost(&self) -> StartCost {
+        self.started
+    }
+
+    /// One call to the HTTP API as [`OWNER`]: the status and the body. `path` starts after
+    /// `/api/v1`.
+    ///
+    /// # Panics
+    /// When `curl` cannot run or its answer has no status.
+    #[must_use]
+    pub fn api(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
+        let mut curl = Command::new("curl");
+        curl.args(["--silent", "--show-error", "--max-time", "60", "--cacert"])
+            .arg(&self.root_pem)
+            .arg("--resolve")
+            .arg(format!("{}:{}:{LOCAL}", self.name, self.http_port))
+            .args(["--request", method])
+            .args(["--header", "Content-Type: application/json"])
+            .args(["--header", &format!("Authorization: token {}", self.token)])
+            .args(["--write-out", "\n%{http_code}"]);
+        if let Some(body) = body {
+            curl.args(["--data", body]);
+        }
+        curl.arg(format!(
+            "https://{}:{}/api/v1{path}",
+            self.name, self.http_port
+        ));
+        let output = curl.stdin(Stdio::null()).output().unwrap();
+        // The command line holds the token, so a failure names the path and not the command.
+        assert!(
+            output.status.success(),
+            "curl {method} {path}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        let (body, status) = text.rsplit_once('\n').unwrap();
+        (status.trim().parse().unwrap(), body.to_owned())
+    }
+
+    /// Makes the repository `owner/name` of [`OWNER`] (`owner` must be [`OWNER`]) on branch `main`
+    /// with one commit holding `README.md`, `private` or not.
+    ///
+    /// # Panics
+    /// When Forgejo refuses.
+    pub fn add_repo(&self, repo: &str, private: bool) {
+        let (owner, name) = repo.split_once('/').unwrap();
+        assert_eq!(owner, OWNER, "the fixture has one account");
+        let body = format!(
+            r#"{{"name":"{name}","private":{private},"auto_init":true,"default_branch":"main"}}"#
+        );
+        let (status, answer) = self.api("POST", "/user/repos", Some(&body));
+        assert_eq!(status, 201, "create {repo}: {answer}");
+    }
+
+    /// Adds `public_key` (an `authorized_keys` line) to [`OWNER`], so a client holding the private
+    /// half signs in over SSH as `git@` the fixture's SSH address.
+    ///
+    /// # Panics
+    /// When Forgejo refuses the key.
+    pub fn add_ssh_key(&self, public_key: &str) {
+        let body = serde_json::json!({"title": "lab", "key": public_key.trim()}).to_string();
+        let (status, answer) = self.api("POST", "/user/keys", Some(&body));
+        assert_eq!(status, 201, "add key: {answer}");
+    }
+
+    /// The server's SSH host keys as `<type> <base64>` lines, as `ssh-keyscan` prints them.
+    #[must_use]
+    pub fn ssh_host_keys(&self) -> Vec<String> {
+        let Ok(entries) = fs::read_dir(self.scratch().join("data/ssh")) else {
+            return Vec::new();
+        };
+        let mut keys: Vec<String> = entries
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "pub"))
+            .filter_map(|e| fs::read_to_string(e.path()).ok())
+            .map(|line| {
+                line.split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// The commit `branch` of `repo` points at, or `None` when it has no such branch.
+    ///
+    /// # Panics
+    /// When Forgejo answers anything but the branch or `404`.
+    #[must_use]
+    pub fn branch_head(&self, repo: &str, branch: &str) -> Option<String> {
+        let (status, answer) = self.api("GET", &format!("/repos/{repo}/branches/{branch}"), None);
+        match status {
+            200 => {
+                let json: serde_json::Value = serde_json::from_str(&answer).unwrap();
+                Some(
+                    json.pointer("/commit/id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap()
+                        .to_owned(),
+                )
+            }
+            404 => None,
+            other => panic!("branch {repo}/{branch}: {other} {answer}"),
+        }
+    }
+
+    /// The server's own log so far (for a failing test to print).
+    #[must_use]
+    pub fn log(&self) -> String {
+        read(&self.scratch().join("forgejo.log"))
+    }
+}

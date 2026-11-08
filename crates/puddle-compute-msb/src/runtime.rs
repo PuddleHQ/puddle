@@ -20,7 +20,9 @@ use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, Works
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
 use crate::volume::{Mounter, holders, info, mounted_volumes, mounter};
-use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, root_disk, spec};
+use crate::{
+    MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, grow_orphans, image, logs, root_disk, spec,
+};
 
 struct Inner {
     config: MsbConfig,
@@ -271,6 +273,13 @@ impl MsbRuntime {
         self.inner.sandboxes_dir.join(name)
     }
 
+    /// Deletes the root images a grow of this stopped sandbox left behind (see [`grow_orphans`]):
+    /// call it after a grow that took the next-start path, and `start` runs it as well. A failure
+    /// is logged and never fails the caller, since the sandbox works with the orphans in place.
+    pub(crate) fn prune_grow_orphans(&self, name: &str) {
+        grow_orphans::prune_logged(name, &self.sandbox_dir(name));
+    }
+
     /// Copies the sandbox's msb logs to [`MsbConfig::keep_logs_dir`], when one is set.
     fn keep_logs(&self, name: &str) {
         if let Some(dir) = &self.inner.config.keep_logs_dir {
@@ -467,6 +476,7 @@ impl Runtime for MsbRuntime {
                     .map(|v| (v, None))
                     .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
+            self.prune_grow_orphans(name.as_str());
             match self.sdk(Sandbox::start(name.as_str())).await {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {

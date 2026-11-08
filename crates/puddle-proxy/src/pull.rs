@@ -670,18 +670,30 @@ fn blocked(
     event.decision = ConnectionDecision::Blocked;
     event.reason = ConnectionReason::Blocked(reason);
     tracing::info!(%host, port, %reason, "image pull blocked");
-    let what = match reason {
-        BlockReason::PuddleEndpoint => "one of Puddle's own endpoints".to_owned(),
-        BlockReason::LocalToggle(category) => format!("a {} address", category.describe()),
-        BlockReason::CompanyNetwork(_) => "a company network address".to_owned(),
+    let toggle = match reason {
+        BlockReason::LocalToggle(category) => Some(category),
+        BlockReason::CompanyNetwork(_) => Some(LocalCategory::CompanyNetwork),
+        _ => None,
+    };
+    let what = match (reason, toggle) {
+        (BlockReason::PuddleEndpoint, _) => "one of Puddle's own endpoints".to_owned(),
+        (BlockReason::CompanyNetwork(_), _) => "a company network address".to_owned(),
+        (_, Some(category)) => format!("a {} address", category.describe()),
         _ => "an address image pulls may not reach".to_owned(),
     };
-    Refusal::new(
-        "403 Forbidden",
-        format!("{host} is {what}; image pulls never go there"),
-    )
-    .header("x-puddle-decision", "blocked")
-    .header("x-puddle-blocked", reason.header_code())
+    // A switch can lift the refusal, so the text names it instead of saying "never".
+    let ending = toggle.map_or_else(
+        || "image pulls never go there".to_owned(),
+        |category| {
+            format!(
+                "image pulls reach it only while the '{}' switch is on in Settings",
+                category.key()
+            )
+        },
+    );
+    Refusal::new("403 Forbidden", format!("{host} is {what}; {ending}"))
+        .header("x-puddle-decision", "blocked")
+        .header("x-puddle-blocked", reason.code())
 }
 
 #[cfg(test)]
@@ -884,12 +896,44 @@ mod tests {
             ConnectionReason::PuddleRequest,
         );
         let refusal = blocked(&host, 443, &[reason], &mut event);
-        assert!(refusal.message.contains("a company network address"));
+        assert_eq!(
+            refusal.message,
+            "registry.corp.example is a company network address; image pulls reach it only while the 'company_network' switch is on in Settings"
+        );
         assert!(
             refusal
                 .headers
                 .iter()
-                .any(|(n, v)| *n == "x-puddle-blocked" && v == "company_network")
+                .any(|(n, v)| *n == "x-puddle-blocked" && v == "toggle:company_network")
+        );
+    }
+
+    #[test]
+    fn a_refusal_a_switch_can_lift_names_the_switch_and_the_others_say_never() {
+        let host = Host::parse_normalised("registry.test").unwrap();
+        let text = |reason: BlockReason| {
+            let mut event = ConnectionEvent::puddle(
+                host.clone(),
+                443,
+                ConnectionDecision::Allow,
+                ConnectionReason::PuddleRequest,
+            );
+            blocked(&host, 443, &[reason], &mut event).message
+        };
+        assert_eq!(
+            text(BlockReason::LocalToggle(LocalCategory::Private)),
+            format!(
+                "registry.test is a {} address; image pulls reach it only while the 'private' switch is on in Settings",
+                LocalCategory::Private.describe()
+            )
+        );
+        assert_eq!(
+            text(BlockReason::PuddleEndpoint),
+            "registry.test is one of Puddle's own endpoints; image pulls never go there"
+        );
+        assert_eq!(
+            text(BlockReason::LocalAddress),
+            "registry.test is an address image pulls may not reach; image pulls never go there"
         );
     }
 

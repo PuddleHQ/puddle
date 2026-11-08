@@ -1541,7 +1541,7 @@ fn block_at(request: &EgressRequest, reasons: &[BlockReason], ip: Option<IpAddr>
     };
     Refusal::new("403 Forbidden", message)
         .header("x-puddle-decision", "blocked")
-        .header("x-puddle-blocked", reason.header_code())
+        .header("x-puddle-blocked", reason.code())
 }
 
 /// The reason a block names: the first toggle or unreadable-settings reason if any (turning the

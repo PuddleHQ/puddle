@@ -301,6 +301,17 @@ pub enum Event {
         /// What is wrong.
         kind: LoginProblemKind,
     },
+    /// A request of the workspace carried a credential Puddle did not add or swap, and the
+    /// warning is on. The request went out as it was. `host` is the host it went to and `kind`
+    /// says what Puddle could tell about the credential; never a part of its value.
+    ForeignCredential {
+        /// The workspace that sent it.
+        workspace: WorkspaceId,
+        /// The host the request went to.
+        host: String,
+        /// What kind of credential it looked like.
+        kind: ForeignCredentialKind,
+    },
     /// New audit records were committed. `id` is the newest record's id, so a client that holds
     /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit,
     /// not per record. Global: every subscriber gets it.
@@ -425,6 +436,43 @@ pub enum LoginProblemKind {
     Unknown,
 }
 
+/// What Puddle can tell about a credential it did not add: by its bytes alone, never by whose it
+/// is (the user's own token and a leaked one look the same). See [`Event::ForeignCredential`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[non_exhaustive]
+pub enum ForeignCredentialKind {
+    /// A stand-in Puddle made once and no longer holds (a removed secret, a forgotten login, or
+    /// another workspace's): it cannot be swapped, so the server will refuse it.
+    StaleStandIn,
+    /// A GitHub token with a valid checksum.
+    GithubToken,
+    /// An npm token with a valid checksum.
+    NpmToken,
+    /// A GitLab token with a valid checksum.
+    GitlabToken,
+    /// An Azure DevOps personal access token of the newer, 84-character kind.
+    AzureDevopsToken,
+    /// An `Authorization` header the workspace set itself on a request to a Git repository.
+    GitAuthorization,
+}
+
+impl ForeignCredentialKind {
+    /// The name the record and the API use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StaleStandIn => "stale_stand_in",
+            Self::GithubToken => "github_token",
+            Self::NpmToken => "npm_token",
+            Self::GitlabToken => "gitlab_token",
+            Self::AzureDevopsToken => "azure_devops_token",
+            Self::GitAuthorization => "git_authorization",
+        }
+    }
+}
+
 /// How a pending request ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -523,6 +571,7 @@ impl Event {
             | Self::GitAccessDenied { workspace, .. }
             | Self::GitNoIdentity { workspace, .. }
             | Self::LoginProblem { workspace, .. }
+            | Self::ForeignCredential { workspace, .. }
             | Self::WorkspaceGitChanged { workspace }
             | Self::WorkspaceEnvChanged { workspace }
             | Self::WorkspaceEnvFailed { workspace, .. }
@@ -1001,6 +1050,15 @@ mod tests {
                     repo: "sub/web".into(),
                 },
                 r#"{"type":"git_no_identity","workspace":"box","host":"gitlab.com","owner":"group","repo":"sub/web"}"#,
+                Some(name()),
+            ),
+            (
+                Event::ForeignCredential {
+                    workspace: name(),
+                    host: "api.github.com".into(),
+                    kind: ForeignCredentialKind::GithubToken,
+                },
+                r#"{"type":"foreign_credential","workspace":"box","host":"api.github.com","kind":"github_token"}"#,
                 Some(name()),
             ),
             (

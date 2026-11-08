@@ -137,6 +137,24 @@ pub(crate) fn capture_enabled(
     })
 }
 
+/// Whether `workspace` warns about a credential Puddle did not add: its own setting, else the
+/// global one, else on. Settings that cannot be read count as on (the safer reading), with the
+/// reason logged.
+pub(crate) fn foreign_warning_enabled(
+    settings: &dyn puddle_api::SettingsRepo,
+    workspace: &WorkspaceId,
+) -> bool {
+    let read = || -> Result<bool, String> {
+        let global = settings_read::global(settings)?;
+        let own = settings_read::workspace(settings, workspace)?;
+        Ok(resolve(&global, Some(&own)).warn_foreign_credentials.value)
+    };
+    read().unwrap_or_else(|reason| {
+        tracing::warn!(%workspace, %reason, "the credential warning stays on: the settings cannot be read");
+        true
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;

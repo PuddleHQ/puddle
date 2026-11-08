@@ -48,6 +48,8 @@ pub struct Effective {
     pub direct_ssh: Resolved<bool>,
     /// Whether logins made inside the workspace are captured (the real tokens stay on the host).
     pub capture_logins: Resolved<bool>,
+    /// Whether a credential in a request that Puddle did not add raises a warning.
+    pub warn_foreign_credentials: Resolved<bool>,
 }
 
 /// The local-destination toggles in effect for one workspace.
@@ -111,6 +113,7 @@ impl Effective {
         clipboard_read: default(ClipboardRead::Ask),
         direct_ssh: default(false),
         capture_logins: default(true),
+        warn_foreign_credentials: default(true),
     };
 }
 
@@ -169,6 +172,7 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
         clipboard_read,
         direct_ssh,
         capture_logins,
+        warn_foreign_credentials,
         extra: _,
     } = s;
     let LocalToggles {
@@ -221,6 +225,11 @@ pub fn resolve(global: &GlobalSettings, workspace: Option<&WorkspaceSettings>) -
         clipboard_read: pick(*clipboard_read, g.clipboard_read, d.clipboard_read),
         direct_ssh: pick(*direct_ssh, g.direct_ssh, d.direct_ssh),
         capture_logins: pick(*capture_logins, g.capture_logins, d.capture_logins),
+        warn_foreign_credentials: pick(
+            *warn_foreign_credentials,
+            g.warn_foreign_credentials,
+            d.warn_foreign_credentials,
+        ),
     }
 }
 
@@ -240,6 +249,23 @@ mod tests {
         let e = resolve(&g, Some(&s));
         assert!(!e.direct_ssh.value);
         assert_eq!(e.direct_ssh.source, Source::Workspace);
+    }
+
+    #[test]
+    fn the_foreign_credential_warning_is_on_until_someone_turns_it_off() {
+        let mut g = GlobalSettings::default();
+        let mut s = WorkspaceSettings::default();
+        let e = resolve(&g, Some(&s));
+        assert!(e.warn_foreign_credentials.value);
+        assert_eq!(e.warn_foreign_credentials.source, Source::Default);
+        g.workspace_defaults.warn_foreign_credentials = Some(false);
+        let e = resolve(&g, Some(&s));
+        assert!(!e.warn_foreign_credentials.value);
+        assert_eq!(e.warn_foreign_credentials.source, Source::Global);
+        s.overrides.warn_foreign_credentials = Some(true);
+        let e = resolve(&g, Some(&s));
+        assert!(e.warn_foreign_credentials.value);
+        assert_eq!(e.warn_foreign_credentials.source, Source::Workspace);
     }
 
     #[test]

@@ -96,10 +96,11 @@ pub use ssh_git::{
 };
 pub use terminate::{
     AnswerHead, AnswerRewriter, BodyField, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange,
-    ExchangeRewriter, FieldKind, HeaderError, InjectContext, InjectDecision, InjectRefusal,
-    InjectedHeader, Injection, Injector, Interception, LEARNED_CAP, LEARNED_TTL, MAX_EXCHANGE_BODY,
-    NoInjection, PassThrough, PatternError, Placement, RequestRule, RequestRules, RequestView,
-    SecretValue, StandIn, StandInError, StandInOrigin, StandIns, Termination, TerminationSet,
-    TerminationSource, Terminations, TokenBody, TokenBodyError, Unauthorized, secret_stand_in,
+    ExchangeRewriter, FieldKind, ForeignCredentialWarning, HeaderError, InjectContext,
+    InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector, Interception, LEARNED_CAP,
+    LEARNED_TTL, MAX_EXCHANGE_BODY, NoInjection, PassThrough, PatternError, Placement, RequestRule,
+    RequestRules, RequestView, SecretValue, StandIn, StandInError, StandInOrigin, StandIns,
+    Termination, TerminationSet, TerminationSource, Terminations, TokenBody, TokenBodyError,
+    Unauthorized, secret_stand_in,
 };
 pub use upstream::Upstream;

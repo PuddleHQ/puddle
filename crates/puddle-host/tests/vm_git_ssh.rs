@@ -419,7 +419,6 @@ async fn vm_git_ssh_clones_fetches_and_pushes_over_ssh_and_the_guest_holds_no_ke
 /// agent socket (the variable, a socket file anywhere, `ssh-add`), the known-hosts file and the
 /// user's `.ssh`. Puddle's host keys are only public lines in `/etc/ssh/ssh_known_hosts`. The
 /// search is run again with a token planted in a file and in a process: the control that it finds.
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_hostile_hg49_after_an_ssh_clone_fetch_and_push_the_guest_finds_no_key_token_or_signature()
  {

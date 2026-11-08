@@ -837,3 +837,59 @@ async fn a_host_that_stops_taking_the_push_ends_it_whatever_the_guest_still_send
         assert_eq!(failure.message, "refused mid-body", "{frames}");
     }
 }
+
+/// As [`session`] for an input larger than the pipe: written by a task while the bridge reads.
+async fn session_big(
+    host: &mut Host2,
+    command: &GitSshCommand,
+    input: String,
+) -> Result<(), GitSshFailure> {
+    let (mut guest, mut ours) = tokio::io::duplex(1 << 20);
+    let writer = tokio::spawn(async move {
+        let _ = guest.write_all(input.as_bytes()).await;
+        guest
+    });
+    let result = carry(host, command, &mut ours).await;
+    drop(ours);
+    drop(writer.await.unwrap());
+    result
+}
+
+#[tokio::test]
+async fn a_request_that_never_flushes_stops_at_the_bound_and_nothing_is_posted() {
+    let over = MAX_REQUEST + 1;
+    let update = format!("{OLD} {NEW} refs/heads/b\n");
+    let cases = [
+        (
+            GitService::Upload,
+            Some("version=2"),
+            pkt("have 1111111111111111111111111111111111111111\n"),
+        ),
+        (
+            GitService::Upload,
+            None,
+            pkt("want 1111111111111111111111111111111111111111\n"),
+        ),
+        (GitService::Receive, None, pkt(&update)),
+    ];
+    for (service, protocol, line) in cases {
+        let mut host = Host2::answering([Reply::Ok(ADVERT_V0)]);
+        let input = line.repeat(over / line.len() + 1);
+        let failure = session_big(&mut host, &command(service, protocol), input)
+            .await
+            .unwrap_err();
+        assert!(failure.message.contains("32 MiB"), "{failure:?}");
+        assert_eq!(host.seen.len(), 1, "only the advertisement went upstream");
+    }
+}
+
+#[tokio::test]
+async fn a_v0_fetch_whose_haves_never_flush_stops_at_the_bound() {
+    let mut host = Host2::answering([Reply::Ok(ADVERT_V0), Reply::Ok(b"0008NAK\n")]);
+    let want = pkt("want 1111111111111111111111111111111111111111\n");
+    let have = pkt("have 2222222222222222222222222222222222222222\n");
+    let input = format!("{want}0000{}", have.repeat(MAX_REQUEST / have.len() + 1));
+    let result = session_big(&mut host, &command(GitService::Upload, None), input).await;
+    assert!(result.unwrap_err().message.contains("32 MiB"));
+    assert_eq!(host.seen.len(), 1, "no round was posted");
+}

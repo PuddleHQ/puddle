@@ -23,6 +23,7 @@
 //! as service and repository, with the credential's binding when the table let it through.
 
 mod bridge;
+mod cutoff;
 mod grammar;
 mod host_keys;
 mod https;

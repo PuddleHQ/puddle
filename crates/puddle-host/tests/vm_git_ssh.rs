@@ -206,6 +206,23 @@ async fn guest_status(vm: &VmHost, sandbox: &WorkspaceId, script: &str) -> (i32,
 
 /// The guest holds no token, no private key Puddle's SSH server uses and no agent socket.
 async fn assert_guest_holds_no_secret(vm: &VmHost, sandbox: &WorkspaceId) {
+    let found = search_guest(vm, sandbox).await;
+    assert!(
+        found.contains("procs=0"),
+        "a token is in a process: {found}"
+    );
+    assert!(
+        found.contains("files= ") || found.contains("files=\n"),
+        "a token is on the guest's disk: {found}"
+    );
+    assert!(found.contains("agent=0"), "an agent socket is set: {found}");
+    assert!(!found.contains("HOST KEY"), "{found}");
+}
+
+/// Searches the guest for the token (plain and as the `Basic` credential): every process's
+/// environment and command line, every file of the disk, the agent variable, and any private key
+/// that matches a public key of the known-hosts file. Prints `procs=`, `files=`, `agent=`.
+async fn search_guest(vm: &VmHost, sandbox: &WorkspaceId) -> String {
     let search = format!(
         "w={work}; printf '%s\\n' \"$w\" \"$(printf 'x-access-token:%s' \"$w\" | base64 -w0)\" > /dev/shm/.p; \
          echo procs=$(cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -cFf /dev/shm/.p); \
@@ -219,17 +236,7 @@ async fn assert_guest_holds_no_secret(vm: &VmHost, sandbox: &WorkspaceId) {
          done; rm -f /dev/shm/.k; echo done",
         work = split(WORK),
     );
-    let found = guest_within(&vm.runtime, sandbox, &search, Duration::from_secs(600)).await;
-    assert!(
-        found.contains("procs=0"),
-        "a token is in a process: {found}"
-    );
-    assert!(
-        found.contains("files= ") || found.contains("files=\n"),
-        "a token is on the guest's disk: {found}"
-    );
-    assert!(found.contains("agent=0"), "an agent socket is set: {found}");
-    assert!(!found.contains("HOST KEY"), "{found}");
+    guest_within(&vm.runtime, sandbox, &search, Duration::from_secs(600)).await
 }
 
 /// The `entries` of the workspace's connection records for the Git host.
@@ -402,6 +409,117 @@ async fn vm_git_ssh_clones_fetches_and_pushes_over_ssh_and_the_guest_holds_no_ke
     assert!(out.contains("successfully authenticated"), "{out}");
 
     assert_guest_holds_no_secret(&vm, &sandbox).await;
+    let _ = net.connects();
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// Hostile guest: after an SSH clone, fetch and push, the guest looks for a key, a token or a signature
+/// the way a hostile process would: its disk, every process's environment and command line, an
+/// agent socket (the variable, a socket file anywhere, `ssh-add`), the known-hosts file and the
+/// user's `.ssh`. Puddle's host keys are only public lines in `/etc/ssh/ssh_known_hosts`. The
+/// search is run again with a token planted in a file and in a process: the control that it finds.
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_hostile_hg49_after_an_ssh_clone_fetch_and_push_the_guest_finds_no_key_token_or_signature()
+ {
+    let fake = git_host().await;
+    let (net, vm, sandbox) = workspace(&fake, "sshx").await;
+    let out = guest(
+        &vm.runtime,
+        &sandbox,
+        "set -eu; rm -rf /tmp/s; mkdir /tmp/s; cd /tmp/s; git clone -q git@bound.invalid:acme/app.git app; \
+         git -C app rev-parse HEAD",
+    )
+    .await;
+    assert_eq!(out.trim(), head_of(&fake, "acme/app"));
+    on_host(
+        &fake,
+        "acme/app",
+        "echo server > server.txt && git add server.txt && git commit -q -m server && git push -q origin HEAD:main",
+    );
+    let pushed = guest(
+        &vm.runtime,
+        &sandbox,
+        "set -eu; cd /tmp/s/app; git fetch -q; git merge -q --ff-only origin/main; echo guest > guest.txt; \
+         git add guest.txt; git -c user.name=g -c user.email=g@example.org commit -q -m guest; \
+         git push -q origin HEAD:main; git rev-parse HEAD",
+    )
+    .await;
+    assert_eq!(head_of(&fake, "acme/app"), pushed.trim());
+
+    // The token, the key and the agent: none.
+    assert_guest_holds_no_secret(&vm, &sandbox).await;
+
+    // Key material of any kind a client could use to sign in or sign something: no private key in
+    // the user's `.ssh` or anywhere a client looks, no socket file at all that is an agent, no
+    // signature in what Git wrote (the push was not signed), and the known-hosts file holds only
+    // public lines of the form `<name> <type> <base64>`.
+    let (code, out) = guest_status(
+        &vm,
+        &sandbox,
+        "set -u; \
+         echo ssh_dir=$(ls -A ~/.ssh 2>/dev/null | grep -v -e '^known_hosts$' -e '^config$' | tr '\\n' ' '); \
+         echo identity=$(ls ~/.ssh/id_* /root/.ssh/id_* /home/*/.ssh/id_* 2>/dev/null | wc -l); \
+         echo sockets=$(find / -xdev -type s \\( -name 'agent*' -o -name 'ssh-*' -o -name '*.sock' \\) 2>/dev/null | grep -v -e '^/run/systemd' -e '^/run/dbus' | tr '\\n' ' '); \
+         echo agent_list=$(SSH_AUTH_SOCK= ssh-add -l 2>&1 | head -c 80); \
+         echo gitsig=$(git -C /tmp/s/app log -1 --format=%G? 2>/dev/null); \
+         echo sigfiles=$(grep -rla -e 'BEGIN SSH SIGNATURE' -e 'BEGIN PGP SIGNATURE' /tmp/s /root /home 2>/dev/null | wc -l); \
+         echo known_private=$(grep -c -e 'PRIVATE' /etc/ssh/ssh_known_hosts); \
+         echo known_bad=$(grep -v -e '^#' -e '^$' /etc/ssh/ssh_known_hosts | awk 'NF < 3 || $2 !~ /^(ssh-|ecdsa-|sk-)/ {print}' | wc -l); \
+         echo known_lines=$(grep -vc -e '^#' -e '^$' /etc/ssh/ssh_known_hosts)",
+    )
+    .await;
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("identity=0"), "a private key file: {out}");
+    assert!(
+        out.contains("ssh_dir= \n") || out.contains("ssh_dir=\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("sockets=\n") || out.contains("sockets= \n"),
+        "a socket: {out}"
+    );
+    assert!(
+        out.contains("agent_list=Could not open a connection to your authentication agent")
+            || out.contains("agent_list=Error connecting to agent"),
+        "{out}"
+    );
+    assert!(
+        out.contains("gitsig=N") || out.contains("gitsig=\n"),
+        "{out}"
+    );
+    assert!(out.contains("sigfiles=0"), "a signature: {out}");
+    assert!(out.contains("known_private=0"), "{out}");
+    assert!(out.contains("known_bad=0"), "{out}");
+    assert!(
+        !out.contains("known_lines=0"),
+        "the file has Puddle's keys: {out}"
+    );
+
+    // The control: the same search finds a token that is planted in a file and in a process.
+    let planted = guest_within(
+        &vm.runtime,
+        &sandbox,
+        &format!(
+            "printf '%s' {tok} > /tmp/planted-token; export P={tok}; \
+             nohup sleep 600 >/dev/null 2>&1 & echo planted",
+            tok = split(WORK)
+        ),
+        Duration::from_secs(60),
+    )
+    .await;
+    assert!(planted.contains("planted"), "{planted}");
+    let found = search_guest(&vm, &sandbox).await;
+    assert!(
+        !found.contains("procs=0"),
+        "the search missed a token in a process: {found}"
+    );
+    assert!(
+        found.contains("/tmp/planted-token"),
+        "the search missed a token in a file: {found}"
+    );
+
     let _ = net.connects();
     let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");

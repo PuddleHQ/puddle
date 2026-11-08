@@ -38,6 +38,16 @@ const REFUSAL_BYTES: usize = 4096;
 /// Largest piece of a pack read from the guest at once.
 const PIECE: usize = 65_536;
 
+/// Most bytes of one request held before it is sent: a protocol-v2 request, a v0 fetch's wants and
+/// haves, a push's command section. The guest chooses what a request holds, so it has a bound; a
+/// pack is not held at all.
+const MAX_REQUEST: usize = 32 * 1024 * 1024;
+
+/// The refusal for a request over [`MAX_REQUEST`].
+fn too_long() -> GitSshFailure {
+    GitSshFailure::new("a Git request over 32 MiB is not carried over SSH through Puddle")
+}
+
 /// The smart-HTTP endpoints of one repository, as the bridge reaches them.
 pub(crate) trait SmartHttp: Send {
     /// Sends `request` and returns the answer, or why there is none.
@@ -240,6 +250,9 @@ async fn fetch_v2<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                 }
                 Some(line) => request.extend_from_slice(&line.raw),
             }
+            if request.len() > MAX_REQUEST {
+                return Err(too_long());
+            }
         }
         round(http, command, bytes_body(Bytes::from(request)), out).await?;
     }
@@ -281,6 +294,9 @@ async fn fetch_v0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             }
             Some(_) => return Err(not_git(&unexpected())),
         }
+        if wants.len() > MAX_REQUEST {
+            return Err(too_long());
+        }
     }
     let mut haves = Vec::new();
     loop {
@@ -296,6 +312,9 @@ async fn fetch_v0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                     ..
                 }) if data == b"done\n" || data == b"done" => break true,
                 Some(line) => haves.extend_from_slice(&line.raw),
+            }
+            if wants.len() + haves.len() > MAX_REQUEST {
+                return Err(too_long());
             }
         };
         let mut body = wants.clone();
@@ -378,6 +397,9 @@ async fn section<R: AsyncRead + Unpin>(
             None => return Ok(None),
             Some(line) => {
                 into.extend_from_slice(&line.raw);
+                if into.len() > MAX_REQUEST {
+                    return Err(too_long());
+                }
                 match line.pkt {
                     Pkt::Flush => return Ok(Some(())),
                     Pkt::Data(data) => each(&data)?,

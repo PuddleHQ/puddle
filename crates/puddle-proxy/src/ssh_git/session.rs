@@ -21,6 +21,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio::time::{Instant, sleep_until, timeout_at};
 
+use super::cutoff::{CutOnDrop, Cutoff, Cuttable};
 use super::grammar::{self, Command, GitHost, Refused, Repository};
 use super::{GitSsh, GitSshCommand, GitSshContext, GitSshLimits, GitSshUpstream};
 use crate::proxy::{ClientReader, WorkspaceHandler, admit, refuse};
@@ -232,6 +233,11 @@ async fn watch_connection<S>(
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    // The connection ends when this function does: russh would not answer a disconnect during a
+    // key exchange the guest never finishes.
+    let cutoff = Arc::new(Cutoff::default());
+    let _cut = CutOnDrop(Arc::clone(&cutoff));
+    let stream = Cuttable::new(stream, cutoff);
     let handshake_ends = Instant::now() + limits.handshake;
     let started = match timeout_at(
         handshake_ends,

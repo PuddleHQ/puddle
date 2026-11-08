@@ -168,10 +168,10 @@ fn kinds_in_value(value: &[u8], git_path_authorization: bool) -> Vec<ForeignCred
     let parts = parts_of(value);
     let mut kinds: Vec<ForeignCredentialKind> = Vec::new();
     for part in &parts {
-        if let Some(kind) = kind_of_token(part) {
-            if !kinds.contains(&kind) {
-                kinds.push(kind);
-            }
+        if let Some(kind) = kind_of_token(part)
+            && !kinds.contains(&kind)
+        {
+            kinds.push(kind);
         }
     }
     if kinds.is_empty()
@@ -300,6 +300,8 @@ mod tests {
         kinds_in_headers(&headers(pairs), &[], git, &|_| false)
     }
 
+    const NONE: [ForeignCredentialKind; 0] = [];
+
     const ENTROPY: &str = "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5";
 
     #[test]
@@ -319,7 +321,10 @@ mod tests {
     #[test]
     fn a_github_token_with_a_wrong_checksum_is_not_named_here() {
         let token = format!("ghp_{ENTROPY}AAAAAA");
-        assert!(kinds(&[("authorization", &format!("token {token}"))], false).is_empty());
+        assert_eq!(
+            kinds(&[("authorization", &format!("token {token}"))], false),
+            NONE
+        );
     }
 
     #[test]
@@ -330,7 +335,10 @@ mod tests {
             [ForeignCredentialKind::GithubToken]
         );
         let short = format!("github_pat_{}_{}", "A1b2C3d4E5f6G7h8I9j0K1", "x".repeat(58));
-        assert!(kinds(&[("authorization", &format!("Bearer {short}"))], false).is_empty());
+        assert_eq!(
+            kinds(&[("authorization", &format!("Bearer {short}"))], false),
+            NONE
+        );
     }
 
     #[test]
@@ -341,7 +349,10 @@ mod tests {
             [ForeignCredentialKind::NpmToken]
         );
         let broken = format!("npm_{ENTROPY}000000");
-        assert!(kinds(&[("authorization", &format!("Bearer {broken}"))], false).is_empty());
+        assert_eq!(
+            kinds(&[("authorization", &format!("Bearer {broken}"))], false),
+            NONE
+        );
     }
 
     #[test]
@@ -355,7 +366,10 @@ mod tests {
             kinds(&[("private-token", token)], false),
             [ForeignCredentialKind::GitlabToken]
         );
-        assert!(kinds(&[("authorization", "Bearer glpat-short")], false).is_empty());
+        assert_eq!(
+            kinds(&[("authorization", "Bearer glpat-short")], false),
+            NONE
+        );
     }
 
     #[test]
@@ -370,7 +384,7 @@ mod tests {
         let mut unmarked = token.clone();
         unmarked.replace_range(AZURE_MARK_AT..AZURE_MARK_AT + 4, "ABCD");
         let basic = format!("Basic {}", STANDARD.encode(format!(":{unmarked}")));
-        assert!(kinds(&[("authorization", &basic)], false).is_empty());
+        assert_eq!(kinds(&[("authorization", &basic)], false), NONE);
     }
 
     #[test]
@@ -393,19 +407,25 @@ mod tests {
             kinds(&[("authorization", value)], true),
             [ForeignCredentialKind::GitAuthorization]
         );
-        assert!(kinds(&[("authorization", value)], false).is_empty());
+        assert_eq!(kinds(&[("authorization", value)], false), NONE);
         // Another header never counts as an Authorization.
-        assert!(kinds(&[("x-custom", value)], true).is_empty());
+        assert_eq!(kinds(&[("x-custom", value)], true), NONE);
         // Nothing to name when the value is empty.
-        assert!(kinds(&[("authorization", "")], true).is_empty());
+        assert_eq!(kinds(&[("authorization", "")], true), NONE);
     }
 
     #[test]
     fn a_stale_stand_in_is_left_to_its_own_check_and_not_counted_as_an_authorization() {
         let stale_one = "puddle-secret-API_KEY-00112233445566778899aabbccddeeff";
-        assert!(kinds(&[("authorization", &format!("Bearer {stale_one}"))], true).is_empty());
+        assert_eq!(
+            kinds(&[("authorization", &format!("Bearer {stale_one}"))], true),
+            NONE
+        );
         let wrong_sum = format!("gho_{ENTROPY}AAAAAA");
-        assert!(kinds(&[("authorization", &format!("token {wrong_sum}"))], true).is_empty());
+        assert_eq!(
+            kinds(&[("authorization", &format!("token {wrong_sum}"))], true),
+            NONE
+        );
     }
 
     #[test]
@@ -413,7 +433,7 @@ mod tests {
         let token = checksummed("ghp_", ENTROPY);
         let map = headers(&[("authorization", &format!("Bearer {token}"))]);
         let held = kinds_in_headers(&map, &[], true, &|_| true);
-        assert!(held.is_empty());
+        assert_eq!(held, NONE);
     }
 
     #[test]
@@ -421,7 +441,7 @@ mod tests {
         let token = checksummed("ghp_", ENTROPY);
         let map = headers(&[("authorization", &format!("Bearer {token}"))]);
         let skip = [&AUTHORIZATION];
-        assert!(kinds_in_headers(&map, &skip, true, &|_| false).is_empty());
+        assert_eq!(kinds_in_headers(&map, &skip, true, &|_| false), NONE);
     }
 
     #[test]
@@ -447,6 +467,6 @@ mod tests {
     #[test]
     fn a_value_over_the_limit_is_not_read() {
         let long = format!("Bearer {}", "a".repeat(MAX_VALUE));
-        assert!(kinds(&[("authorization", &long)], true).is_empty());
+        assert_eq!(kinds(&[("authorization", &long)], true), NONE);
     }
 }

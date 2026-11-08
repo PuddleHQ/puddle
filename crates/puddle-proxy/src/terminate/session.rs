@@ -23,7 +23,7 @@ use super::guest::{
     read_hello, scan_hello, server_config,
 };
 use super::inject::{
-    Forwarding, InjectContext, InjectRefusal, Injection, RequestView, Unauthorized, body_too_large,
+    Forwarding, InjectContext, InjectRefusal, RequestView, Unauthorized, body_too_large,
 };
 use super::leg::{self, BoxError, ConnectError, Connected, H1Conn, Made, UpBody};
 use super::request::{self, Parsed};
@@ -631,27 +631,19 @@ where
         if let Err(refusal) = self.ensure_upstream().await {
             return self.refuse(&refusal).await;
         }
-        let (
-            Forwarding {
-                injection,
-                unauthorized,
-                own_git_credential,
-            },
-            prefetched,
-        ) = match self.consult_injector(&parsed, &head).await {
+        let (forwarding, prefetched) = match self.consult_injector(&parsed, &head).await {
             Ok(decided) => decided,
             Err(flow) => return flow,
         };
-        let headers = match request::upstream_headers(&head, &self.cx.target, injection.as_ref()) {
+        let headers = match request::upstream_headers(
+            &head,
+            &self.cx.target,
+            forwarding.injection.as_ref(),
+        ) {
             Ok(headers) => headers,
             Err(refusal) => return self.refuse(&refusal).await,
         };
-        let (headers, target) = self.add_credentials(
-            headers,
-            &parsed.target,
-            injection.as_ref(),
-            own_git_credential,
-        );
+        let (headers, target) = self.add_credentials(headers, &parsed.target, &forwarding);
         let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
         let (headers, prefetched, mut exchange) = match self
             .begin_exchange(&parsed, &view, headers, prefetched)
@@ -666,7 +658,7 @@ where
                 .as_ref()
                 .map_or(parsed.target.as_str(), |target| target.as_str()),
             headers,
-            unauthorized.as_ref(),
+            forwarding.unauthorized.as_ref(),
             prefetched,
             exchange.as_mut(),
         )
@@ -818,9 +810,10 @@ where
         &mut self,
         mut headers: ::http::HeaderMap,
         target: &str,
-        injection: Option<&Injection>,
-        own_git_credential: bool,
+        forwarding: &Forwarding,
     ) -> (::http::HeaderMap, Option<Zeroizing<String>>) {
+        let injection = forwarding.injection.as_ref();
+        let own_git_credential = forwarding.own_git_credential;
         if let Some(injection) = injection {
             self.outcome.injected = true;
             self.outcome

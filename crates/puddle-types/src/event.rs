@@ -1053,15 +1053,6 @@ mod tests {
                 Some(name()),
             ),
             (
-                Event::ForeignCredential {
-                    workspace: name(),
-                    host: "api.github.com".into(),
-                    kind: ForeignCredentialKind::GithubToken,
-                },
-                r#"{"type":"foreign_credential","workspace":"box","host":"api.github.com","kind":"github_token"}"#,
-                Some(name()),
-            ),
-            (
                 Event::LoginProblem {
                     workspace: name(),
                     service: "Claude Code".into(),
@@ -1083,6 +1074,32 @@ mod tests {
             assert_eq!(serde_json::to_string(&event).unwrap(), json);
             assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
             assert_eq!(event.workspace(), workspace.as_ref());
+        }
+    }
+
+    #[test]
+    fn a_foreign_credential_names_the_host_and_the_kind_and_nothing_else() {
+        let event = Event::ForeignCredential {
+            workspace: name(),
+            host: "api.github.com".into(),
+            kind: ForeignCredentialKind::GithubToken,
+        };
+        let json = r#"{"type":"foreign_credential","workspace":"box","host":"api.github.com","kind":"github_token"}"#;
+        assert_eq!(serde_json::to_string(&event).unwrap(), json);
+        assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+        assert_eq!(event.workspace(), Some(&name()));
+        for kind in [
+            ForeignCredentialKind::StaleStandIn,
+            ForeignCredentialKind::GithubToken,
+            ForeignCredentialKind::NpmToken,
+            ForeignCredentialKind::GitlabToken,
+            ForeignCredentialKind::AzureDevopsToken,
+            ForeignCredentialKind::GitAuthorization,
+        ] {
+            assert_eq!(
+                serde_json::to_string(&kind).unwrap(),
+                format!("\"{}\"", kind.as_str())
+            );
         }
     }
 

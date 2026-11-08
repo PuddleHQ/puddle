@@ -44,7 +44,11 @@ fn github_token() -> String {
     let alphabet = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     let mut tail = [b'0'; 6];
     for slot in tail.iter_mut().rev() {
-        *slot = alphabet[usize::try_from(value % 62).unwrap()];
+        *slot = alphabet
+            .iter()
+            .copied()
+            .nth(usize::try_from(value % 62).unwrap())
+            .unwrap();
         value /= 62;
     }
     format!("ghp_{ENTROPY}{}", std::str::from_utf8(&tail).unwrap())
@@ -163,8 +167,8 @@ async fn any_authorization_on_a_git_path_is_flagged_and_off_a_git_path_an_unknow
         .build();
     one_request(&elsewhere, &head).await;
     let events = elsewhere.events(1).await;
-    assert!(events[0].foreign_credentials.is_empty());
-    assert!(notices(&quiet_sink).is_empty());
+    assert_eq!(events[0].foreign_credentials, Vec::<String>::new());
+    assert_eq!(notices(&quiet_sink), []);
 }
 
 #[tokio::test]
@@ -197,8 +201,8 @@ async fn a_stand_in_the_registry_holds_is_puddles_own_and_is_not_flagged() {
     );
     one_request(&rig, &head).await;
     let events = rig.events(1).await;
-    assert!(events[0].foreign_credentials.is_empty());
-    assert!(notices(&sink).is_empty());
+    assert_eq!(events[0].foreign_credentials, Vec::<String>::new());
+    assert_eq!(notices(&sink), []);
 }
 
 #[tokio::test]
@@ -253,13 +257,13 @@ async fn with_the_warning_off_the_request_still_goes_out_and_nothing_is_flagged(
         server.recorded()[0].headers_named("authorization"),
         [format!("Bearer {token}")]
     );
-    assert!(notices(&sink).is_empty());
+    assert_eq!(notices(&sink), []);
 
     // The setting is read when a credential is found, so turning it on applies to the next request.
     on.store(true, std::sync::atomic::Ordering::Relaxed);
     one_request(&rig, &head).await;
     let events = rig.events(2).await;
-    assert!(events[0].foreign_credentials.is_empty());
+    assert_eq!(events[0].foreign_credentials, Vec::<String>::new());
     assert_eq!(events[1].foreign_credentials, ["github_token"]);
     assert_eq!(notices(&sink).len(), 1);
 }

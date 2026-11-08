@@ -22,21 +22,27 @@
 //! An SSH connection is one connection record: the first refused command, else the first command,
 //! as service and repository, with the credential's binding when the table let it through.
 
+mod bridge;
 mod grammar;
 mod host_keys;
+mod https;
+mod pkt;
 mod session;
 
 use std::fmt;
-use std::sync::Arc;
+use std::net::IpAddr;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use puddle_types::Host;
+use puddle_types::{Host, WorkspaceId};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::destination::BoxFuture;
+use crate::proxy::WorkspaceHandler;
 pub use grammar::GitService;
 pub(crate) use grammar::{GitHost, PathForm, built_in, built_in_names};
 pub use host_keys::{GitSshHostKeys, GitSshKeyError};
+pub use https::GitSshHttps;
 pub(crate) use session::serve;
 
 /// The SSH names of the built-in Git hosts (`github.com`, `ssh.github.com`, `ssh.dev.azure.com`
@@ -102,27 +108,109 @@ pub struct GitSshGreeting {
     pub status: u32,
 }
 
-/// How Puddle reaches a Git host for a terminated SSH session.
+/// What `ssh -T` says to a workspace with no identity for `host`, with the status of a failed
+/// login.
+fn no_identity(host: &Host) -> GitSshGreeting {
+    GitSshGreeting {
+        message: format!(
+            "puddle: no identity on this workspace has a credential for {host}; add one on the workspace's Git tab\n"
+        ),
+        status: 255,
+    }
+}
+
+/// The connection an upstream works for: whose it is, and the workspace's own way out (its rules, termination and company-proxy route), which Puddle's
+/// upstreams use to reach the Git host.
+#[derive(Debug)]
+pub struct GitSshContext {
+    pub(crate) handler: WorkspaceHandler,
+    reached: Mutex<Option<Reached>>,
+}
+
+/// Where an upstream connection went, for the connection's record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Reached {
+    pub(crate) ip: Option<IpAddr>,
+    pub(crate) hop: Option<String>,
+}
+
+impl GitSshContext {
+    pub(crate) fn new(handler: WorkspaceHandler) -> Self {
+        Self {
+            handler,
+            reached: Mutex::new(None),
+        }
+    }
+
+    /// The workspace the connection comes from.
+    #[must_use]
+    pub fn workspace(&self) -> &WorkspaceId {
+        &self.handler.workspace
+    }
+
+    /// Keeps the first place an upstream connection reached.
+    pub(crate) fn reached(&self, reached: Reached) {
+        self.reached
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert(reached);
+    }
+
+    /// The first place an upstream connection reached, if one did.
+    pub(crate) fn first_reached(&self) -> Option<Reached> {
+        self.reached
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// How Puddle reaches a Git host for a terminated SSH session: the seam each way of reaching it
+/// ([`GitSshHttps`] is the default) sits behind.
 pub trait GitSshUpstream: Send + Sync + fmt::Debug {
-    /// Carries out `command` between `io` and the Git host. The table has allowed it already.
-    /// `Ok` is exit status 0; an error is one line for the guest and exit status 1. Dropping
-    /// `io` ends the guest's channel.
+    /// Carries out `command` between `io` and the Git host for the connection `cx`. The table
+    /// has allowed it already. `Ok` is exit status 0; an error is one line for the guest and
+    /// exit status 1. Dropping `io` ends the guest's channel.
     fn run<'a>(
         &'a self,
+        cx: &'a GitSshContext,
         command: &'a GitSshCommand,
         io: &'a mut dyn GitSshStream,
     ) -> BoxFuture<'a, Result<(), GitSshFailure>>;
 
-    /// The answer to a `shell` request on `host`. The default is the line a workspace with no
-    /// identity for the host gets.
-    fn greeting<'a>(&'a self, host: &'a Host) -> BoxFuture<'a, GitSshGreeting> {
-        Box::pin(std::future::ready(GitSshGreeting {
-            message: format!(
-                "puddle: no identity on this workspace has a credential for {host}; add one on the workspace's Git tab\n"
-            ),
-            status: 255,
-        }))
+    /// The answer to a `shell` request for the HTTPS host `host` (`github.com` for
+    /// `ssh.github.com`). The default is the line a workspace with no identity for the host gets.
+    fn greeting<'a>(
+        &'a self,
+        cx: &'a GitSshContext,
+        host: &'a Host,
+    ) -> BoxFuture<'a, GitSshGreeting> {
+        let _ = cx;
+        Box::pin(std::future::ready(no_identity(host)))
     }
+}
+
+/// Who `ssh -T` greets: the account of the identity Puddle would use on a host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GitSshAccount {
+    /// No identity on the workspace has a credential for the host.
+    NoIdentity,
+    /// An identity has one, and its account's name could not be read.
+    Unnamed,
+    /// The account's name on the host (`octocat`).
+    Named(String),
+}
+
+/// Names the account [`GitSshHttps`] greets `ssh -T` with: the identity that covers the rest of
+/// the host, else the first on the workspace's list with a credential there.
+pub trait GitSshAccounts: Send + Sync + fmt::Debug {
+    /// The account `workspace`'s `ssh -T` to the HTTPS host `host` is greeted as.
+    fn account<'a>(
+        &'a self,
+        workspace: &'a WorkspaceId,
+        host: &'a Host,
+    ) -> BoxFuture<'a, GitSshAccount>;
 }
 
 /// How long the proxy waits at each stage of a session.

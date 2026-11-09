@@ -769,7 +769,9 @@ async fn table(
     };
     match ctx.injector.decide(&context, &view).await {
         InjectDecision::Inject(injection) => Ok(Some(injection.binding_id().to_owned())),
-        InjectDecision::PassThrough | InjectDecision::PassThroughNoting(_) => Ok(None),
+        InjectDecision::PassThrough
+        | InjectDecision::PassThroughOwnCredential
+        | InjectDecision::PassThroughNoting(_) => Ok(None),
         InjectDecision::Refuse(refusal) => Err(refusal),
     }
 }

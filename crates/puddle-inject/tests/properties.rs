@@ -330,7 +330,9 @@ proptest! {
             prop_assert!(
                 matches!(
                     decision,
-                    InjectDecision::PassThrough | InjectDecision::Refuse(_)
+                    InjectDecision::PassThrough
+                        | InjectDecision::PassThroughOwnCredential
+                        | InjectDecision::Refuse(_)
                 ),
                 "{case:?}: {decision:?}"
             );

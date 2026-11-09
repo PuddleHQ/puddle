@@ -25,6 +25,7 @@ const noLayer = (): S["SettingsLayer"] => ({
   zoom_hotkeys: null,
   direct_ssh: null,
   capture_logins: null,
+  warn_foreign_credentials: null,
 });
 
 const noUi = (): S["UiPrefs"] => ({
@@ -166,6 +167,7 @@ export class FakeSettings {
         zoom_hotkeys: this.pick(l.zoom_hotkeys, true),
         direct_ssh: this.pick(l.direct_ssh),
         capture_logins: this.pick(l.capture_logins, true),
+        warn_foreign_credentials: this.pick(l.warn_foreign_credentials, true),
         clipboard_read: {
           value: l.clipboard_read ?? "ask",
           source: l.clipboard_read === null ? "default" : "global",

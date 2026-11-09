@@ -20,7 +20,8 @@ fn null_layer() -> Value {
         "zoom_hotkeys": null,
         "clipboard_read": null,
         "direct_ssh": null,
-        "capture_logins": null
+        "capture_logins": null,
+        "warn_foreign_credentials": null
     })
 }
 
@@ -63,6 +64,11 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         json!({"value": true, "source": "default"}),
         "login capture is on until someone turns it off"
     );
+    assert_eq!(
+        e["warn_foreign_credentials"],
+        json!({"value": true, "source": "default"}),
+        "the foreign credential warning is on until someone turns it off"
+    );
     // Reading wrote nothing.
     assert_eq!(api.settings.load_global().unwrap(), None);
     api.running.shutdown().await;
@@ -95,7 +101,7 @@ async fn global_and_workspace_values_resolve_in_order() {
         .send(
             "PUT",
             "/api/settings/workspaces/big",
-            Some(&json!({"overrides": {"memory": 16384, "cpus": 4, "clipboard_read": "deny", "capture_logins": false}})),
+            Some(&json!({"overrides": {"memory": 16384, "cpus": 4, "clipboard_read": "deny", "capture_logins": false, "warn_foreign_credentials": false}})),
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -112,6 +118,10 @@ async fn global_and_workspace_values_resolve_in_order() {
     assert_eq!(view["effective"]["clipboard_read"]["source"], "workspace");
     assert_eq!(
         view["effective"]["capture_logins"],
+        json!({"value": false, "source": "workspace"})
+    );
+    assert_eq!(
+        view["effective"]["warn_foreign_credentials"],
         json!({"value": false, "source": "workspace"})
     );
     assert_eq!(

@@ -331,6 +331,10 @@ pub struct ConnectionEvent {
     /// the stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),
     /// each once, at most 16.
     pub scrubbed_stand_ins: Vec<String>,
+    /// What kind of credential the requests carried that Puddle did not add or swap, each kind
+    /// once (`github_token`, `stale_stand_in`, ...; see [`crate::ForeignCredentialKind`]). Empty
+    /// when none did and when the workspace turned the warning off. It never carries a value.
+    pub foreign_credentials: Vec<String>,
     /// Method and path, when the proxy saw the request in clear.
     pub http: Option<HttpRequestLine>,
     /// Bytes from the guest.
@@ -367,6 +371,7 @@ impl ConnectionEvent {
             injected: false,
             unswapped_stand_ins: Vec::new(),
             scrubbed_stand_ins: Vec::new(),
+            foreign_credentials: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,
@@ -402,6 +407,7 @@ impl ConnectionEvent {
             injected: false,
             unswapped_stand_ins: Vec::new(),
             scrubbed_stand_ins: Vec::new(),
+            foreign_credentials: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,

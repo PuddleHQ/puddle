@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! The lab's Forgejo (`puddle_e2e::lab::Forgejo`) answers like a real forge: the real `git` clones,
+//! pushes and deletes a branch over HTTPS with its token, an anonymous or wrong-token client is
+//! refused, and the real `ssh` signs in with a key the account holds and checks the server's host
+//! key. These are the claims the VM test (`vm_radar_forgejo_*`) builds on, with no VM in between.
+//!
+//! Needs `PUDDLE_FORGEJO_BIN`; without it the tests skip unless `PUDDLE_REQUIRE_FORGEJO` is set
+//! (the lab workflow sets it).
+#![cfg(unix)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "helpers outside #[test] functions fail the test by panicking"
+)]
+
+use std::fmt::Write as _;
+use std::path::Path;
+use std::process::Output;
+
+use puddle_e2e::lab::{Forgejo, clean_git};
+
+const NAME: &str = "git.lab.test";
+
+/// `git` against `forgejo` with its root trusted and its name resolved to loopback.
+fn git(forgejo: &Forgejo, cwd: &Path, args: &[&str]) -> Output {
+    let root = forgejo.scratch().join("root.pem");
+    let resolve = format!("{NAME}:{}:127.0.0.1", forgejo.addr().port());
+    let mut command = clean_git(forgejo.scratch());
+    command
+        .current_dir(cwd)
+        .env("GIT_SSL_CAINFO", root)
+        .args(["-c", &format!("http.curloptResolve={resolve}")])
+        .args([
+            "-c",
+            "user.name=lab",
+            "-c",
+            "user.email=lab@example.org",
+            "-c",
+            "protocol.version=2",
+        ])
+        .args(args);
+    command.output().unwrap()
+}
+
+fn ok(out: &Output) -> String {
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+fn url(forgejo: &Forgejo, user: Option<(&str, &str)>, repo: &str) -> String {
+    let auth = user.map_or_else(String::new, |(u, t)| format!("{u}:{t}@"));
+    format!("https://{auth}{NAME}:{}/{repo}.git", forgejo.addr().port())
+}
+
+#[test]
+fn git_clones_pushes_and_deletes_a_branch_with_the_token_and_is_refused_without_it() {
+    let Some(forgejo) = Forgejo::start(NAME) else {
+        return;
+    };
+    forgejo.add_repo("acme/app", true);
+    let token = forgejo.token().to_owned();
+    let work = forgejo.scratch().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+
+    let with_token = url(&forgejo, Some(("x-access-token", &token)), "acme/app");
+    ok(&git(&forgejo, &work, &["clone", "-q", &with_token, "app"]));
+    let app = work.join("app");
+    assert_eq!(
+        ok(&git(&forgejo, &app, &["rev-parse", "HEAD"])),
+        forgejo.branch_head("acme/app", "main").unwrap(),
+        "the clone has the server's head"
+    );
+
+    std::fs::write(app.join("a.txt"), "a\n").unwrap();
+    ok(&git(&forgejo, &app, &["add", "a.txt"]));
+    ok(&git(&forgejo, &app, &["commit", "-q", "-m", "a"]));
+    ok(&git(
+        &forgejo,
+        &app,
+        &["push", "-q", "origin", "HEAD:refs/heads/feature"],
+    ));
+    assert_eq!(
+        forgejo.branch_head("acme/app", "feature"),
+        Some(ok(&git(&forgejo, &app, &["rev-parse", "HEAD"]))),
+        "the pushed branch is at the pushed commit"
+    );
+    ok(&git(
+        &forgejo,
+        &app,
+        &["push", "-q", "origin", "--delete", "feature"],
+    ));
+    assert_eq!(forgejo.branch_head("acme/app", "feature"), None);
+
+    // A private repository does not answer a client with no token or a wrong one.
+    for bad in [
+        None,
+        Some(("x-access-token", "0000000000000000000000000000000000000000")),
+    ] {
+        let out = git(
+            &forgejo,
+            &work,
+            &["ls-remote", &url(&forgejo, bad, "acme/app")],
+        );
+        assert!(
+            !out.status.success(),
+            "a client with {bad:?} listed the repository"
+        );
+    }
+}
+
+#[test]
+fn ssh_signs_in_with_the_key_the_account_holds_and_checks_the_servers_host_key() {
+    let Some(forgejo) = Forgejo::start(NAME) else {
+        return;
+    };
+    forgejo.add_repo("acme/app", true);
+    let dir = forgejo.scratch();
+    let key = dir.join("id");
+    let made = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "lab", "-f"])
+        .arg(&key)
+        .output()
+        .unwrap();
+    assert!(made.status.success());
+    forgejo.add_ssh_key(&std::fs::read_to_string(key.with_extension("pub")).unwrap());
+
+    let port = forgejo.ssh_addr().port();
+    let keys = forgejo.ssh_host_keys();
+    assert!(!keys.is_empty(), "the server has no host key file");
+    let known = dir.join("known_hosts");
+    let mut lines = String::new();
+    for key in &keys {
+        writeln!(lines, "[127.0.0.1]:{port} {key}").unwrap();
+    }
+    std::fs::write(&known, lines).unwrap();
+    let ssh = format!(
+        "ssh -i {} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={}",
+        key.display(),
+        known.display()
+    );
+    let remote = format!("ssh://git@127.0.0.1:{port}/acme/app.git");
+    let listed = clean_git(dir)
+        .env("GIT_SSH_COMMAND", &ssh)
+        .args(["ls-remote", &remote])
+        .output()
+        .unwrap();
+    let text = ok(&listed);
+    assert!(text.contains("refs/heads/main"), "{text}");
+
+    // A key the account does not hold is refused.
+    let other = dir.join("other");
+    let made = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&other)
+        .output()
+        .unwrap();
+    assert!(made.status.success());
+    let refused = clean_git(dir)
+        .env(
+            "GIT_SSH_COMMAND",
+            ssh.replace(&key.display().to_string(), &other.display().to_string()),
+        )
+        .args(["ls-remote", &remote])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "an unknown key signed in");
+}

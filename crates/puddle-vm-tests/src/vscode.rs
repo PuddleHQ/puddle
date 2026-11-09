@@ -850,6 +850,13 @@ mod tests {
         // Two lines typed, and one folder chosen in front of the first.
         assert_eq!(enters, 3, "{calls:?}");
         assert!(calls.contains(&"type echo one") && calls.contains(&"type echo two"));
+        // The folder question is the input's placeholder, not text of the widget.
+        assert!(
+            calls.contains(
+                &r#".quick-input-widget:visible input[placeholder*="working directory" i] waitFor visible"#
+            ),
+            "{calls:?}"
+        );
         window.close().await.expect("closed");
     }
 

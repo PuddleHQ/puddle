@@ -141,7 +141,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
     async fn window_shows(window: &mut VsCodeWindow) -> String {
         match window
             .evaluate(
-                "[...document.querySelectorAll('.monaco-dialog-box, .quick-input-widget, .notification-toast')].filter(e => e.offsetParent !== null).map(e => e.innerText).join(' | ')",
+                "[...document.querySelectorAll('.monaco-dialog-box, .quick-input-widget, .notification-toast')].filter(e => e.offsetParent !== null).map(e => [e.innerText, ...[...e.querySelectorAll('input')].map(i => i.placeholder)].join(' ')).join(' | ')",
             )
             .await
         {
@@ -470,10 +470,16 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         );
 
         // U8: Reload Window ends a terminal, because the reload replaces the guest's server.
-        window
+        if let Err(error) = window
             .terminal("echo $$ > /tmp/u8.pid; exec sleep 100000")
             .await
-            .expect("a terminal opens");
+        {
+            window.screenshot(&out.join("u8.png")).await.unwrap();
+            panic!(
+                "no terminal opened: {error}; the window shows {}",
+                window_shows(&mut window).await
+            );
+        }
         let pid = eventually_async(
             "the terminal ran its command in the guest",
             SHOWS,

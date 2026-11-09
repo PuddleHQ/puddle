@@ -89,16 +89,19 @@ const palette = async (label, timeoutMs) => {
   return null;
 };
 
-// In a multi-root workspace the new-terminal command first asks which folder the terminal starts in.
+// In a multi-root workspace the new-terminal command first asks which folder the terminal starts in. The question is the
+// placeholder of the picker's input, which is no text of the widget, so a text filter never finds it.
 const PICKER = ".quick-input-widget:visible";
+const ASKING_FOLDER = `${PICKER} input[placeholder*="working directory" i]`;
 const TERMINAL = ".terminal-wrapper .xterm-helper-textarea";
 
 const terminal = async (line, timeoutMs) => {
   const page = workbench();
   await palette("Terminal: Create New Terminal", timeoutMs);
-  const asking = page.locator(PICKER).filter({ hasText: /working directory/i });
+  const asking = page.locator(ASKING_FOLDER);
   const typing = page.locator(TERMINAL).first();
-  await Promise.race([asking.waitFor({ state: "visible", timeout: timeoutMs }), typing.waitFor({ state: "attached", timeout: timeoutMs })]);
+  // Whichever comes first; it fails only when neither came.
+  await Promise.any([asking.waitFor({ state: "visible", timeout: timeoutMs }), typing.waitFor({ state: "attached", timeout: timeoutMs })]);
   if (await asking.isVisible()) await page.keyboard.press("Enter");
   await typing.waitFor({ state: "attached", timeout: timeoutMs });
   await typing.focus({ timeout: timeoutMs });

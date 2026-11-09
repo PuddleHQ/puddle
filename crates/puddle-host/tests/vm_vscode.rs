@@ -121,6 +121,15 @@ H=$(ls -t /tmp/vscode-git-*.sock 2>/dev/null | head -n 1)
 [ -n "$H" ] || { echo no-git-socket; exit 0; }
 printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HANDLE=$H GIT_ASKPASS=$S/extensions/git/dist/askpass.sh VSCODE_GIT_ASKPASS_NODE=$S/node VSCODE_GIT_ASKPASS_MAIN=$S/extensions/git/dist/askpass-main.js git credential fill 2>&1 || true"#;
 
+    /// Whether `git credential fill` ended with a password: a `password=` line with something after
+    /// it (git prints the key empty when it gave up).
+    fn has_password(said: &str) -> bool {
+        said.lines().any(|l| {
+            l.strip_prefix("password=")
+                .is_some_and(|rest| !rest.is_empty())
+        })
+    }
+
     /// Temporary (debugging the CI run): copies a folder of logs into the artifact folder.
     fn copy_tree(from: &Path, to: &Path) {
         let Ok(entries) = std::fs::read_dir(from) else {
@@ -406,7 +415,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         let guarded = shell(&runtime, &sandbox, ASKPASS).await;
         let asked = window.dismiss_prompt(SHOWS).await.expect("the input box");
         assert!(
-            !guarded.contains("password="),
+            !has_password(&guarded),
             "a token reached the guest with the guard setting on: {guarded}"
         );
         assert!(
@@ -443,7 +452,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         let until = std::time::Instant::now() + SHOWS;
         while std::time::Instant::now() < until {
             token = shell(&runtime, &sandbox, ASKPASS).await;
-            if token.contains("password=") {
+            if has_password(&token) {
                 break;
             }
             // The setting had not reached the extension yet, and it asked the person: answer with nothing.
@@ -560,7 +569,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         while asked.is_none() && std::time::Instant::now() < until {
             said = shell(&runtime, &sandbox, ASKPASS).await;
             assert!(
-                !said.contains("gho_") && !said.contains("password="),
+                !said.contains("gho_") && !has_password(&said),
                 "a token reached the guest with no GitHub provider on this side: {said}"
             );
             asked = window

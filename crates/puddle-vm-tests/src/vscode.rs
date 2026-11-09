@@ -198,10 +198,47 @@ impl VsCodeLaunch {
         let file = user.join("settings.json");
         std::fs::write(&file, self.settings().to_string())
             .map_err(|e| HarnessError::io("write", &file, e))?;
+        self.install_remote_ssh(release, None).await
+    }
+
+    /// Gives the named profile what the default profile has: Remote-SSH, which a profile does not
+    /// inherit, and the settings. The profile must exist, which a first start with it makes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::prepare`], and [`HarnessError::Browser`] when no profile has been made yet.
+    pub async fn prepare_profile(&self, release: &VsCodeRelease) -> Result<(), HarnessError> {
+        let Some(profile) = &self.profile else {
+            return Ok(());
+        };
+        self.install_remote_ssh(release, Some(profile)).await?;
+        let profiles = self.user_data.join("User").join("profiles");
+        let dirs = std::fs::read_dir(&profiles)
+            .map_err(|e| HarnessError::io("read", &profiles, e))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir());
+        for dir in dirs {
+            let file = dir.path().join("settings.json");
+            std::fs::write(&file, self.settings().to_string())
+                .map_err(|e| HarnessError::io("write", &file, e))?;
+        }
+        Ok(())
+    }
+
+    async fn install_remote_ssh(
+        &self,
+        release: &VsCodeRelease,
+        profile: Option<&str>,
+    ) -> Result<(), HarnessError> {
         let cli = release.command_line();
-        let out = tokio::process::Command::new(&cli)
+        let mut command = tokio::process::Command::new(&cli);
+        command
             .arg(arg("--user-data-dir=", &self.user_data))
-            .arg(arg("--extensions-dir=", &self.extensions))
+            .arg(arg("--extensions-dir=", &self.extensions));
+        if let Some(profile) = profile {
+            command.arg(format!("--profile={profile}"));
+        }
+        let out = command
             .arg("--install-extension")
             .arg(release.remote_ssh())
             .stdin(Stdio::null())
@@ -998,6 +1035,40 @@ mod tests {
                 release.remote_ssh().display().to_string(),
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_profile_gets_remote_ssh_and_the_settings_of_the_default_profile() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let seen = dir.path().join("args");
+        let release = stub_release(
+            dir.path(),
+            &format!("printf '%s\\n' \"$@\" > '{}'", seen.display()),
+            "true",
+        );
+        let launch = VsCodeLaunch {
+            user_data: dir.path().join("user"),
+            extensions: dir.path().join("ext"),
+            profile: Some("puddle-test".to_owned()),
+            ..launch()
+        };
+        let made = dir.path().join("user/User/profiles/1bc81f32");
+        std::fs::create_dir_all(&made).expect("the profile folder the first start made");
+        launch.prepare_profile(&release).await.expect("prepared");
+        let args = std::fs::read_to_string(&seen).expect("the tool ran");
+        assert!(args.lines().any(|l| l == "--profile=puddle-test"), "{args}");
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(made.join("settings.json")).expect("settings"),
+        )
+        .expect("json");
+        assert_eq!(written, launch.settings());
+        // Without a profile there is nothing to do.
+        let none = VsCodeLaunch {
+            profile: None,
+            ..launch
+        };
+        none.prepare_profile(&release).await.expect("nothing");
     }
 
     #[cfg(unix)]

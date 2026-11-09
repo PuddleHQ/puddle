@@ -520,6 +520,23 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         // with the guard setting still turned on by the guest above: the profile alone keeps it out. Its
         // code still runs here.
         let second = launch(Some("puddle-test"), false);
+        // A profile starts empty and exists only once a window has opened it: open it, close it, then
+        // give it Remote-SSH, which it does not inherit.
+        let first_open = VsCodeLaunch {
+            open: Vec::new(),
+            ..second.clone()
+        }
+        .start(&release, &node, &modules, &out.join("code-profile-new.log"))
+        .await
+        .expect("VS Code makes the profile");
+        first_open
+            .close()
+            .await
+            .expect("the profile's first window closes");
+        second
+            .prepare_profile(&release)
+            .await
+            .expect("Remote-SSH installs in the profile");
         let mut window = second
             .start(&release, &node, &modules, &out.join("code-profile.log"))
             .await

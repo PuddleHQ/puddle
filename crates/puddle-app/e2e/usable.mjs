@@ -232,14 +232,17 @@ try {
   const nav = (href) => run(`document.querySelector('nav[aria-label="Main"] a[href="${href}"]')?.click(); return location.pathname;`);
   await nav("/workspaces");
   await until("the Workspaces screen", () => run(`return location.pathname === "/workspaces" && [...document.querySelectorAll("button")].some((b) => /New workspace/.test(b.textContent));`));
-  const fill = (selector, value) => run(`const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error("no ${selector}");
+  const fill = (selector, value) => run(`const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error(${JSON.stringify("no " + selector)});
     el.focus(); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", { bubbles: true })); return true;`);
   const clickByText = (selector, pattern) => run(`const b = [...document.querySelectorAll(${JSON.stringify(selector)})].find((e) => new RegExp(${JSON.stringify(pattern)}).test((e.getAttribute("aria-label") ?? e.textContent).replace(/\\s+/g, " ").trim()));
-    if (!b) throw new Error("no ${selector} like ${pattern}"); b.click(); return true;`, true);
+    if (!b) throw new Error(${JSON.stringify("no " + selector + " like " + pattern)}); b.click(); return true;`, true);
   await clickByText("button", "^New workspace");
   await until("the New workspace dialog", () => run(`return !!document.querySelector('[role="dialog"] #new-ws-name');`));
-  await clickByText('[role="dialog"] button', "^Add (another|a) repository$");
   const urlInput = `[role="dialog"] fieldset input[id$="url"]`;
+  // The form may open with a repository row already; add one only when it has none.
+  if (!(await run(`return !!document.querySelector(${JSON.stringify(urlInput)});`))) {
+    await clickByText('[role="dialog"] button', "^Add (another|a) repository$");
+  }
   await until("the repository row", () => run(`return !!document.querySelector(${JSON.stringify(urlInput)});`));
   await fill(urlInput, sshUrl);
   await fill("#new-ws-name", "ssh-refused");

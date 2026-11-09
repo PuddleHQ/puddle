@@ -275,7 +275,7 @@ jobs:
             ${{ runner.temp }}/usable-out/*.png
             ${{ runner.temp }}/usable-out/*.log
             ${{ runner.temp }}/usable-out/*.out
-            ${{ runner.temp }}/usable-out/*.json
+            ${{ runner.temp }}/usable-out/forgejo-server.log
             ${{ runner.temp }}/usable-out/runtime-logs/**
           retention-days: 14
           if-no-files-found: ignore

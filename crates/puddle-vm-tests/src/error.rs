@@ -123,6 +123,20 @@ pub enum HarnessError {
         /// What the SDK or the clock reported.
         detail: String,
     },
+    /// msb's record of a sandbox names no VM process.
+    #[error("msb records no VM process for sandbox {name}: it is not running")]
+    NoVmProcess {
+        /// The sandbox name.
+        name: String,
+    },
+    /// Freezing or thawing a VM's process failed.
+    #[error("freezing or thawing process {pid}: {detail}")]
+    Freeze {
+        /// The process id.
+        pid: u32,
+        /// The command's exit status and output.
+        detail: String,
+    },
     /// A step took longer than its budget.
     #[error("{what} took longer than {limit:?}")]
     Timeout {

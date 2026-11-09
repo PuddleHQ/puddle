@@ -262,3 +262,20 @@ codegen-units = 1
 
 [profile.dev.package.libsqlite3-sys]
 opt-level = 3
+
+# Git over SSH makes an RSA-3072 host key at every workspace start. Unoptimised, that takes seconds
+# (17 s under the coverage build on a loaded runner), longer than the tests' 20 s wait for a start.
+[profile.dev.package.crypto-bigint]
+opt-level = 3
+
+[profile.dev.package.crypto-primes]
+opt-level = 3
+
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.subtle]
+opt-level = 3

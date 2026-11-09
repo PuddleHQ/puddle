@@ -432,12 +432,45 @@ function pendingOutcome(state: string): RowView["outcome"] {
   return { label: state, tone: "neutral" };
 }
 
+/**
+ * What a record's method field holds when the connection was Git over SSH: the proxy writes the
+ * command (`git-receive-pack`) there, where HTTP writes `POST`. A command Puddle did not serve
+ * (`ssh-command`) and a refused channel request (`ssh-channel`) are written the same way. The
+ * record has no protocol field yet, and no HTTP method is spelled in lower case with a hyphen.
+ */
+const SSH_COMMANDS: Record<string, string> = {
+  "git-receive-pack": "push to",
+  "git-upload-pack": "fetch from",
+  "git-lfs-upload": "Git LFS upload to",
+  "git-lfs-download": "Git LFS download from",
+};
+const SSH_REFUSED_WORDS: Record<string, string> = {
+  "ssh-command": "command Puddle does not serve",
+  "ssh-channel": "session request",
+};
+
+/** "SSH: push to github.com/acme/app", or `null` when the record is not Git over SSH. */
+function sshLine(
+  record: Extract<AuditRecord, { type: "connection" }>,
+  method: string,
+): string | null {
+  const verb = SSH_COMMANDS[method];
+  if (verb !== undefined) {
+    return `SSH: ${verb} ${record.host ?? ""}${record.path ?? ""}`;
+  }
+  const refused = SSH_REFUSED_WORDS[method];
+  return refused === undefined ? null : `SSH: ${refused}`;
+}
+
 function connectionDetail(
   record: Extract<AuditRecord, { type: "connection" }>,
 ): string {
   const parts: string[] = [];
   if (record.method !== null) {
-    parts.push(`${record.method} ${record.path ?? ""}`.trim());
+    parts.push(
+      sshLine(record, record.method) ??
+        `${record.method} ${record.path ?? ""}`.trim(),
+    );
   }
   const failed = record.reason.startsWith(FAILED_PREFIX)
     ? record.reason.slice(FAILED_PREFIX.length)
@@ -476,6 +509,9 @@ function connectionDetail(
   if (record.unswapped_stand_ins.length > 0) {
     parts.push(unswappedNote(record.unswapped_stand_ins));
   }
+  if (record.foreign_credentials.length > 0) {
+    parts.push(foreignNote(record.foreign_credentials));
+  }
   if (record.scrubbed_stand_ins.length > 0) {
     const names = record.scrubbed_stand_ins.map(standInLabel).join(", ");
     parts.push(
@@ -483,6 +519,21 @@ function connectionDetail(
     );
   }
   return parts.join(" · ");
+}
+
+const FOREIGN_KINDS: Record<string, string> = {
+  stale_stand_in: "a stand-in Puddle no longer holds",
+  github_token: "a GitHub token",
+  npm_token: "an npm token",
+  gitlab_token: "a GitLab token",
+  azure_devops_token: "an Azure DevOps token",
+  git_authorization: "a login for a Git repository",
+};
+
+/** The kinds of credential the workspace sent that Puddle did not add; never a value. */
+function foreignNote(kinds: readonly string[]): string {
+  const names = kinds.map((k) => FOREIGN_KINDS[k] ?? k).join(", ");
+  return `the workspace sent ${names} that Puddle did not add; it went out as it was`;
 }
 
 /**

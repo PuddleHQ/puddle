@@ -463,6 +463,16 @@ impl FakeRuntime {
             .unwrap_or_default()
     }
 
+    /// The root disk size `name` was made with: `None` when there is no such sandbox or its spec
+    /// named none (the runtime's default).
+    #[must_use]
+    pub fn root_disk_size(&self, name: &SandboxName) -> Option<DiskSize> {
+        self.lock()
+            .sandboxes
+            .get(name.as_str())
+            .and_then(|r| r.spec.root_disk)
+    }
+
     /// The named volumes `name` was made with. Empty when there is no such sandbox.
     #[must_use]
     pub fn volume_mounts(&self, name: &SandboxName) -> Vec<crate::VolumeMount> {

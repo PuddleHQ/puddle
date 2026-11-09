@@ -186,7 +186,7 @@ const REPOSITORY_VARIABLES: [&str; 15] = [
     "GIT_COMMON_DIR",
 ];
 
-/// A `git` command with the repository variables of a running hook removed and no user or system
+/// A `git` command with the repository variables of a running hook removed, no askpass helper and no user or system
 /// configuration, so it behaves the same on every machine.
 #[must_use]
 pub fn clean_git(home: &Path) -> std::process::Command {
@@ -200,6 +200,10 @@ pub fn clean_git(home: &Path) -> std::process::Command {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
         .env("GIT_TERMINAL_PROMPT", "0")
+        // An editor's askpass helper, inherited from the developer's shell, would answer a
+        // refused client with a dialog instead of the refusal.
+        .env_remove("GIT_ASKPASS")
+        .env_remove("SSH_ASKPASS")
         .stdin(Stdio::null());
     command
 }
@@ -343,13 +347,13 @@ impl GitHost {
     }
 }
 
-/// A root, and a server configuration for a leaf signed by it for `name`.
-pub(super) fn tls_config(
+/// A root made for the run and a leaf for `names` signed by it, valid from the start of year
+/// `valid.0` to the start of year `valid.1`: the root, the leaf and the leaf's key.
+pub(super) fn issue(
     root_name: &str,
     names: &[String],
-    versions: Versions,
     valid: (i32, i32),
-) -> (CertificateDer<'static>, Arc<rustls::ServerConfig>) {
+) -> (rcgen::Certificate, rcgen::Certificate, rcgen::KeyPair) {
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -374,6 +378,17 @@ pub(super) fn tls_config(
     leaf.not_after = rcgen::date_time_ymd(valid.1, 1, 1);
     let key = rcgen::KeyPair::generate().unwrap();
     let cert = leaf.signed_by(&key, &issuer).unwrap();
+    (ca_cert, cert, key)
+}
+
+/// A root, and a server configuration for a leaf signed by it for `name`.
+pub(super) fn tls_config(
+    root_name: &str,
+    names: &[String],
+    versions: Versions,
+    valid: (i32, i32),
+) -> (CertificateDer<'static>, Arc<rustls::ServerConfig>) {
+    let (ca_cert, cert, key) = issue(root_name, names, valid);
     let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))

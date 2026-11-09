@@ -160,7 +160,7 @@ fn not_offered(reason: impl Into<String>) -> Manage {
 #[must_use]
 pub fn why_no_remote(note: Option<RemoteNote>) -> &'static str {
     match note {
-        Some(RemoteNote::Ssh) => "SSH is not supported yet",
+        Some(RemoteNote::Ssh) => "its remote is an SSH address; Manage this needs an https:// one",
         Some(RemoteNote::NotHttps) => "its remote is not an https:// address",
         _ => "it has no remote Puddle can use",
     }
@@ -359,7 +359,7 @@ mod tests {
         assert!(by("web").manage.offered && by("web").entry.is_none());
         assert_eq!(
             by("ssh").manage.reason.as_deref(),
-            Some("SSH is not supported yet")
+            Some("its remote is an SSH address; Manage this needs an https:// one")
         );
         assert!(
             by("old")

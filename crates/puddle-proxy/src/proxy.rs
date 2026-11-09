@@ -445,7 +445,7 @@ impl Proxy {
 
     /// The termination of `request`'s workspace, if this connection is to be terminated: a
     /// `CONNECT` to a name of the workspace's termination set on port 443.
-    fn terminating(
+    pub(crate) fn terminating(
         &self,
         request: &EgressRequest,
         from_container: bool,
@@ -583,8 +583,8 @@ impl std::fmt::Debug for TerminationConfig {
 #[derive(Debug, Clone)]
 pub struct WorkspaceHandler {
     pub(crate) proxy: Arc<Proxy>,
-    streams: Arc<Semaphore>,
-    h2_streams: Arc<Semaphore>,
+    pub(crate) streams: Arc<Semaphore>,
+    pub(crate) h2_streams: Arc<Semaphore>,
     pub(crate) lookups: Arc<Semaphore>,
     pub(crate) workspace: WorkspaceId,
 }
@@ -893,6 +893,9 @@ pub(crate) fn refuse_by_request_rule(
     Some((refusal, change))
 }
 
+/// The port SSH listens on.
+const GIT_SSH_PORT: u16 = 22;
+
 /// Decides, connects and relays one `CONNECT` whose destination is known; returns what the audit
 /// records about it (bytes are filled in by the caller once the stream is gone). Plain HTTP goes
 /// to [`plain::serve`] instead.
@@ -905,7 +908,10 @@ async fn relay(
 ) -> ConnectionEvent {
     let proxy = &handler.proxy;
     let from_container = ssh::from_container(head);
-    if request.protocol == Some(ProtocolHint::Ssh)
+    // A client that waits for the server's identification before it sends its own (`ssh-keyscan`)
+    // sends nothing that marks it as SSH. Port 22 of a Git host whose SSH Puddle serves is SSH, so
+    // such a client gets Puddle's server and its keys, as `ssh` does.
+    if (request.protocol == Some(ProtocolHint::Ssh) || request.port == GIT_SSH_PORT)
         && let Some((git, termination, host)) = proxy.git_ssh_for(request)
     {
         return crate::ssh_git::serve(handler, reader, request, git, &termination, host).await;
@@ -956,6 +962,7 @@ async fn relay(
         event.binding_id = done.binding_id;
         event.unswapped_stand_ins = done.unswapped_stand_ins;
         event.scrubbed_stand_ins = done.scrubbed_stand_ins;
+        event.foreign_credentials = done.foreign_credentials;
         return event;
     }
     let out = match connect_out(
@@ -1541,7 +1548,7 @@ fn block_at(request: &EgressRequest, reasons: &[BlockReason], ip: Option<IpAddr>
     };
     Refusal::new("403 Forbidden", message)
         .header("x-puddle-decision", "blocked")
-        .header("x-puddle-blocked", reason.header_code())
+        .header("x-puddle-blocked", reason.code())
 }
 
 /// The reason a block names: the first toggle or unreadable-settings reason if any (turning the

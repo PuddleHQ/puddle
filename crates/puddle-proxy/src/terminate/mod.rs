@@ -62,6 +62,7 @@
 mod alt_svc;
 mod body;
 mod exchange;
+mod foreign;
 mod guest;
 #[cfg(test)]
 pub(crate) use guest::test_client_hello;
@@ -91,7 +92,8 @@ use puddle_ca::WorkspaceCa;
 use puddle_types::WorkspaceId;
 
 pub use exchange::{AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY};
-pub(crate) use guest::Prefixed;
+pub use foreign::ForeignCredentialWarning;
+pub(crate) use guest::{ALPN_HTTP11, Prefixed};
 pub use inject::{
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
     NoInjection, RequestView, SecretValue, Unauthorized,
@@ -134,6 +136,7 @@ pub struct Termination {
     request_rules: RequestRules,
     git_ssh_hosts: TerminationSet,
     git_ssh_keys: Option<Arc<crate::ssh_git::GitSshHostKeys>>,
+    foreign_warning: Arc<ForeignCredentialWarning>,
 }
 
 /// How a connection to a host is decrypted.
@@ -166,7 +169,24 @@ impl Termination {
             request_rules: RequestRules::default(),
             git_ssh_hosts: TerminationSet::new(),
             git_ssh_keys: None,
+            foreign_warning: Arc::new(ForeignCredentialWarning::default()),
         }
+    }
+
+    /// Warns about a credential in a request that Puddle did not add or swap while `warning`
+    /// says so (see [`ForeignCredentialWarning`]). On by default. Shared, so a new `Termination`
+    /// for the same workspace keeps what the user was already told.
+    #[must_use]
+    pub fn with_foreign_credential_warning(
+        mut self,
+        warning: Arc<ForeignCredentialWarning>,
+    ) -> Self {
+        self.foreign_warning = warning;
+        self
+    }
+
+    pub(crate) fn foreign_warning(&self) -> &ForeignCredentialWarning {
+        &self.foreign_warning
     }
 
     /// Sets how the workspace decrypts beyond its hosts with a credential (see [`Interception`]).

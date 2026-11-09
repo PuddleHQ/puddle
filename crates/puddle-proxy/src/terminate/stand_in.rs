@@ -41,9 +41,10 @@ use base64::alphabet;
 use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
 use memchr::memmem::Finder;
-use puddle_types::{Host, QueryName};
+use puddle_types::{ForeignCredentialKind, Host, QueryName};
 use zeroize::Zeroizing;
 
+use super::foreign;
 use super::inject::{InjectedHeader, Injection, SecretValue};
 use super::set::TerminationSet;
 use super::stale;
@@ -501,6 +502,26 @@ impl StandIns {
 }
 
 impl StandIns {
+    /// The kinds of credential `headers` carry that are neither one of this registry's stand-ins
+    /// nor a header `injected` sets: what the workspace's own tools sent (see [`foreign`]).
+    /// Read before the swap, so no real value put in by it is looked at.
+    pub(crate) fn foreign_credentials(
+        &self,
+        headers: &HeaderMap,
+        injected: Option<&Injection>,
+        git_path: bool,
+    ) -> Vec<ForeignCredentialKind> {
+        let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        let skip: Vec<&HeaderName> = injected
+            .map(|i| i.headers().iter().map(InjectedHeader::name).collect())
+            .unwrap_or_default();
+        foreign::kinds_in_headers(headers, &skip, git_path, &|value| {
+            guard.iter().any(|entry| entry.finder.find(value).is_some())
+        })
+    }
+}
+
+impl StandIns {
     /// Finds the stand-ins in the request `target` (path and query), read as sent and with its
     /// percent-escapes decoded, to report them as gone out unchanged. The registry's own
     /// stand-ins are named, and a value shaped like a stand-in it does not hold is flagged as
@@ -765,6 +786,16 @@ mod tests {
         let (scheme, rest) = text.split_once(' ').unwrap();
         assert!(scheme.eq_ignore_ascii_case("basic"), "{text}");
         String::from_utf8(LENIENT_BASE64.decode(rest).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn an_entry_reports_the_placement_it_was_given() {
+        let new = || entry("GH_TOKEN", GH, REAL_GH, &["api.example.com"]);
+        assert_eq!(new().placement(), &Placement::Header);
+        let query = QueryName::new("sig").unwrap();
+        let placed = new().placed(Placement::Query(query.clone()));
+        assert_eq!(placed.placement(), &Placement::Query(query));
+        assert_eq!(new().placed(Placement::Path).placement(), &Placement::Path);
     }
 
     #[test]

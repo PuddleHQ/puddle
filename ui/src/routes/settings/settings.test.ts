@@ -862,6 +862,25 @@ describe("workspace defaults and the network", () => {
     expect(api.layer.capture_logins).toBe(true);
   });
 
+  it("warns about a credential Puddle did not add by default and turns the default off and back on", async () => {
+    await open();
+    const box = screen.getByLabelText(
+      "Warn about a credential Puddle did not add",
+    );
+    expect(box).toBeChecked();
+    await fireEvent.click(box);
+    await save();
+    expect(api.layer.warn_foreign_credentials).toBe(false);
+    expect(
+      screen.getByLabelText("Warn about a credential Puddle did not add"),
+    ).not.toBeChecked();
+    await fireEvent.click(
+      screen.getByLabelText("Warn about a credential Puddle did not add"),
+    );
+    await save();
+    expect(api.layer.warn_foreign_credentials).toBe(true);
+  });
+
   it("cancelling the global trust text changes nothing", async () => {
     await open();
     await fireEvent.click(
@@ -906,6 +925,28 @@ describe("disk space lines", () => {
     await fireEvent.input(box, { target: { value: text } });
     await fireEvent.change(box);
   };
+
+  it("says the lines measure the room left on the drive, not the size of the sparse disks", async () => {
+    await open();
+    const section = screen
+      .getByRole("heading", { level: 2, name: "Disk space" })
+      .closest("section");
+    expect(section).toHaveTextContent(
+      "They measure the room left on the drive, not the size of the disks",
+    );
+    expect(section).toHaveTextContent(
+      "root disk (16 GiB for a new workspace) and its volume are sparse files",
+    );
+  });
+
+  it("says the disk warning percentage is of the disk's own size, as the file takes it on the drive", async () => {
+    await open();
+    expect(
+      screen.getByText(
+        /reached the percentage below of its own size; the figure is what the disk file takes on the drive/,
+      ),
+    ).toBeVisible();
+  });
 
   it("shows Puddle's lines of 20 and 5 GB and saves a change on Save", async () => {
     await open();

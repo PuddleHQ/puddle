@@ -28,7 +28,7 @@ use puddle_proxy::{
     Injection, Injector, Interception, Proxy, ProxyConfig, RequestView, Resolver, Route,
     SecretValue, StandIns, Termination, TerminationSet, Terminations,
 };
-use puddle_types::{ConnectionEvent, DomainName, Host, NullSink, WorkspaceId};
+use puddle_types::{ConnectionEvent, DomainName, Host, WorkspaceId};
 use puddle_upstream::TlsClient;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -638,6 +638,10 @@ pub(crate) struct RigBuilder {
     /// Git over SSH for the bound names (off by default).
     pub(crate) git_ssh: Option<puddle_proxy::GitSsh>,
     pub(crate) git_ssh_keys: Option<Arc<puddle_proxy::GitSshHostKeys>>,
+    /// The warning about a credential Puddle did not add that `box` has (on by default).
+    pub(crate) foreign_warning: Option<Arc<puddle_proxy::ForeignCredentialWarning>>,
+    /// Where the proxy's events go.
+    pub(crate) sink: Arc<puddle_types::CollectingSink>,
 }
 
 impl RigBuilder {
@@ -658,7 +662,24 @@ impl RigBuilder {
             request_rules: puddle_proxy::RequestRules::default(),
             git_ssh: None,
             git_ssh_keys: None,
+            foreign_warning: None,
+            sink: Arc::new(puddle_types::CollectingSink::default()),
         }
+    }
+
+    /// Sets `box`'s warning about a credential Puddle did not add.
+    pub(crate) fn foreign_warning(
+        mut self,
+        warning: &Arc<puddle_proxy::ForeignCredentialWarning>,
+    ) -> Self {
+        self.foreign_warning = Some(Arc::clone(warning));
+        self
+    }
+
+    /// Collects the proxy's events in `sink`.
+    pub(crate) fn sink(mut self, sink: &Arc<puddle_types::CollectingSink>) -> Self {
+        self.sink = Arc::clone(sink);
+        self
     }
 
     /// Serves the SSH of the bound names as Git hosts.
@@ -792,6 +813,9 @@ impl RigBuilder {
         if let Some(exchanges) = self.exchanges {
             termination = termination.with_exchanges(exchanges);
         }
+        if let Some(warning) = self.foreign_warning {
+            termination = termination.with_foreign_credential_warning(warning);
+        }
         if let Some(keys) = self.git_ssh_keys {
             termination = termination.with_git_ssh_keys(keys);
         }
@@ -807,7 +831,7 @@ impl RigBuilder {
             )
             .with_stand_ins(self.stand_ins.1),
         );
-        let mut proxy = Proxy::new(policy.clone(), Arc::new(NullSink))
+        let mut proxy = Proxy::new(policy.clone(), self.sink)
             .with_connection_log(log.clone())
             .with_resolver(Arc::new(resolver))
             .with_address_check(self.address_check)

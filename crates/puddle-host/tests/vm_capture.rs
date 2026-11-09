@@ -319,9 +319,11 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     assert!(v6.contains(" failed "), "{fast}");
     assert!(field(v6, "ms=").parse::<u64>().unwrap() < 1000, "{fast}");
 
-    // SSH from a client that ignores ssh_config is refused with the message, and never asks. The
-    // message goes out as a line ahead of the identification string; OpenSSH shows such lines only
-    // at debug level (`-v`), and at the default level says just "Connection closed".
+    // SSH from a client that ignores ssh_config reaches Puddle's own server for a Git host, which
+    // the rules decide as they decide the host's HTTPS: no rule allows github.com here, so the
+    // client is refused with Puddle's message and no SSH row is asked for. The message goes out as
+    // a line ahead of the identification string; OpenSSH shows such lines only at debug level
+    // (`-v`), and at the default level says just "Connection closed".
     let ssh = run(
         "ssh -v -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=20 \
          -T git@github.com 2>&1; echo \"exit=$?\""
@@ -329,7 +331,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     )
     .await;
     eprintln!("{ssh}");
-    assert!(ssh.contains("SSH is not supported yet"), "{ssh}");
+    assert!(ssh.contains("puddle: "), "{ssh}");
     assert!(
         !open_rows(&vm, &workspace)
             .iter()

@@ -99,14 +99,14 @@ fn secret_name(run: &[u8]) -> Option<&str> {
 
 /// Whether the last six characters of `body` (36 base62 characters) are the checksum of the
 /// first thirty: the CRC-32 of those, in base62 padded with zeros.
-fn has_valid_checksum(body: &[u8]) -> bool {
+pub(crate) fn has_valid_checksum(body: &[u8]) -> bool {
     body.get(..GITHUB_ENTROPY)
         .zip(body.get(GITHUB_ENTROPY..))
         .is_some_and(|(entropy, checksum)| checksum_of(entropy) == checksum)
 }
 
 /// The six base62 characters that follow `entropy` in a real token.
-fn checksum_of(entropy: &[u8]) -> [u8; GITHUB_CHECKSUM] {
+pub(crate) fn checksum_of(entropy: &[u8]) -> [u8; GITHUB_CHECKSUM] {
     let mut value = crc32(entropy);
     let mut text = [b'0'; GITHUB_CHECKSUM];
     for slot in text.iter_mut().rev() {

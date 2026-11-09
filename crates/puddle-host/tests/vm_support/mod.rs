@@ -454,13 +454,9 @@ pub(crate) async fn guest_as(
 /// of the VMM would, and waits until the runtime sees it down.
 pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: &WorkspaceId) {
     let harness = VmEnv::new(settings.clone()).await.unwrap();
-    let handle = harness
-        .scope(Box::pin(microsandbox::Sandbox::get(sandbox.as_str())))
+    let pid = harness
+        .process_id_of(sandbox.as_str())
         .await
-        .unwrap();
-    let pid = handle
-        .local()
-        .and_then(|l| l.pid)
         .expect("msb records the VM pid");
     let status = if cfg!(windows) {
         std::process::Command::new("taskkill")

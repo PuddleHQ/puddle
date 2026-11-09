@@ -22,6 +22,7 @@ import { CredentialNotices, type IdentityLookup } from "./credentials.ts";
 import { DiskSpaceNotices } from "./disk-space.ts";
 import { LearnedNotices } from "#lib/interception/learned.ts";
 import { EnvironmentNotices } from "./environment.ts";
+import { ForeignCredentialNotices } from "./foreign-credentials.ts";
 import { LoginNotices } from "./logins.ts";
 import { InAppNotifier, type Notifier } from "./notifier.ts";
 import { ProblemNotices } from "./problems.ts";
@@ -51,6 +52,7 @@ export class NoticeWatcher {
   readonly #api: Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
   readonly #credentials: CredentialNotices;
   readonly #logins: LoginNotices;
+  readonly #foreign: ForeignCredentialNotices;
   readonly #environment: EnvironmentNotices;
   readonly #learned: LearnedNotices;
   readonly #problems: ProblemNotices;
@@ -70,6 +72,7 @@ export class NoticeWatcher {
       api: this.#api,
     });
     this.#logins = new LoginNotices(this.#notifier, this.#api);
+    this.#foreign = new ForeignCredentialNotices(this.#notifier);
     this.#environment = new EnvironmentNotices(this.#notifier);
     this.#learned = new LearnedNotices(this.#notifier, this.#api);
     this.#problems = new ProblemNotices(this.#notifier, this.#api);
@@ -100,6 +103,7 @@ export class NoticeWatcher {
     if (
       this.#credentials.handle(raw) ||
       this.#logins.handle(raw) ||
+      this.#foreign.handle(raw) ||
       this.#environment.handle(raw) ||
       this.#learned.handle(raw) ||
       this.#problems.handle(raw) ||

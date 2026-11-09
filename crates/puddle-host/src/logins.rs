@@ -137,6 +137,24 @@ pub(crate) fn capture_enabled(
     })
 }
 
+/// Whether `workspace` warns about a credential Puddle did not add: its own setting, else the
+/// global one, else on. Settings that cannot be read count as on (the safer reading), with the
+/// reason logged.
+pub(crate) fn foreign_warning_enabled(
+    settings: &dyn puddle_api::SettingsRepo,
+    workspace: &WorkspaceId,
+) -> bool {
+    let read = || -> Result<bool, String> {
+        let global = settings_read::global(settings)?;
+        let own = settings_read::workspace(settings, workspace)?;
+        Ok(resolve(&global, Some(&own)).warn_foreign_credentials.value)
+    };
+    read().unwrap_or_else(|reason| {
+        tracing::warn!(%workspace, %reason, "the credential warning stays on: the settings cannot be read");
+        true
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -268,6 +286,31 @@ mod tests {
             .unwrap();
         assert!(capture_enabled(&repo, &ws));
         assert!(!capture_enabled(&repo, &workspace("beta")));
+    }
+
+    #[test]
+    fn the_foreign_credential_warning_is_on_unless_the_workspace_or_the_global_setting_turns_it_off()
+     {
+        let repo = MemorySettings::default();
+        let ws = workspace("alpha");
+        assert!(foreign_warning_enabled(&repo, &ws));
+        repo.save_global(json!({"workspace_defaults": {"warn_foreign_credentials": false}}))
+            .unwrap();
+        assert!(!foreign_warning_enabled(&repo, &ws));
+        repo.save_workspace(
+            &ws,
+            json!({"overrides": {"warn_foreign_credentials": true}}),
+        )
+        .unwrap();
+        assert!(foreign_warning_enabled(&repo, &ws));
+        assert!(!foreign_warning_enabled(&repo, &workspace("beta")));
+    }
+
+    #[test]
+    fn settings_that_cannot_be_read_leave_the_foreign_credential_warning_on() {
+        let repo = MemorySettings::default();
+        repo.save_global(json!("not settings")).unwrap();
+        assert!(foreign_warning_enabled(&repo, &workspace("alpha")));
     }
 
     #[test]

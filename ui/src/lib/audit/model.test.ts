@@ -327,6 +327,17 @@ describe("a record as a row", () => {
     );
     expect(view.detail).not.toContain("went out unchanged (check");
   });
+  it("says which kinds of credential the workspace sent that Puddle did not add, never a value", () => {
+    const view = row(
+      connection(1, {
+        foreign_credentials: ["github_token", "git_authorization", "odd_kind"],
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "the workspace sent a GitHub token, a login for a Git repository, odd_kind that Puddle did not add; it went out as it was",
+    );
+    expect(row(connection(2, {}).record).detail).not.toContain("did not add");
+  });
   it("names the refused address of a mixed answer, apart from the one connected to", () => {
     const view = row(
       connection(1, {
@@ -414,6 +425,95 @@ describe("a record as a row", () => {
     );
     expect(detail("a_code_from_a_newer_puddle")).toBe(
       "because a_code_from_a_newer_puddle",
+    );
+  });
+  it.each([
+    ["git-receive-pack", "/acme/app", "SSH: push to github.com/acme/app"],
+    ["git-upload-pack", "/acme/app", "SSH: fetch from github.com/acme/app"],
+    [
+      "git-lfs-upload",
+      "/acme/app",
+      "SSH: Git LFS upload to github.com/acme/app",
+    ],
+    [
+      "git-lfs-download",
+      "/acme/app",
+      "SSH: Git LFS download from github.com/acme/app",
+    ],
+  ])("words a %s record as Git over SSH", (method, path, words) => {
+    const view = row(
+      connection(1, {
+        host: "github.com",
+        port: 22,
+        method,
+        path,
+        reason: "rule",
+        rule_id: null,
+        rule_set: "builtin:git",
+        injected: true,
+      }).record,
+    );
+    expect(view.destination).toBe("github.com:22");
+    expect(view.detail).toBe(
+      `${words} · rule set builtin:git · credential added`,
+    );
+  });
+  it("words a refused SSH push with the push list's reason, and leaves HTTP alone", () => {
+    const refused = row(
+      connection(1, {
+        host: "github.com",
+        port: 22,
+        method: "git-receive-pack",
+        path: "/acme/other",
+        decision: "blocked",
+        reason: "push_denied",
+        rule_id: null,
+      }).record,
+    );
+    expect(refused.outcome).toEqual({ label: "Blocked", tone: "deny" });
+    expect(refused.detail).toBe(
+      'SSH: push to github.com/acme/other · because the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+    );
+    const http = row(
+      connection(2, {
+        host: "github.com",
+        method: "POST",
+        path: "/acme/other/git-receive-pack",
+        decision: "blocked",
+        reason: "push_denied",
+        rule_id: null,
+      }).record,
+    );
+    expect(http.detail).toMatch(/^POST \/acme\/other\/git-receive-pack · /);
+  });
+  it("words a command or a channel request Puddle refused over SSH", () => {
+    const command = row(
+      connection(1, {
+        host: "github.com",
+        port: 22,
+        method: "ssh-command",
+        path: "/",
+        decision: "blocked",
+        reason: "ssh_command_unsupported",
+        rule_id: null,
+      }).record,
+    );
+    expect(command.detail).toMatch(
+      /^SSH: command Puddle does not serve · because Puddle serves only/,
+    );
+    const channel = row(
+      connection(2, {
+        host: "github.com",
+        port: 22,
+        method: "ssh-channel",
+        path: "/",
+        decision: "blocked",
+        reason: "ssh_channel_refused",
+        rule_id: null,
+      }).record,
+    );
+    expect(channel.detail).toMatch(
+      /^SSH: session request · because the SSH session asked/,
     );
   });
   it("shows a listing request of Puddle's that failed as failed, with why", () => {

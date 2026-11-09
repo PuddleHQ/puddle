@@ -8,7 +8,7 @@
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 use crate::git_support::GitRig;
-use crate::terminate_support::{Guest, Pki, RigBuilder};
+use crate::terminate_support::{Guest, Handler, Pki, Recorded, Reply, RigBuilder};
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -16,10 +16,11 @@ use std::time::Duration;
 
 use puddle_agent_proto::ssh::{PROTOCOL_HEADER, SSH};
 use puddle_proxy::{
-    BoxFuture, GitSsh, GitSshCommand, GitSshFailure, GitSshGreeting, GitSshHostKey, GitSshHostKeys,
-    GitSshLimits, GitSshStream, GitSshUpstream,
+    BoxFuture, GitSsh, GitSshAccount, GitSshAccounts, GitSshCommand, GitSshContext, GitSshFailure,
+    GitSshGreeting, GitSshHostKey, GitSshHostKeys, GitSshHttps, GitSshLimits, GitSshStream,
+    GitSshUpstream,
 };
-use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionReason, Host};
+use puddle_types::{ConnectionDecision, ConnectionEvent, ConnectionReason, Host, WorkspaceId};
 use russh::ChannelMsg;
 use russh::Preferred;
 use russh::client::{self, Handle};
@@ -78,6 +79,7 @@ impl Recording {
 impl GitSshUpstream for Recording {
     fn run<'a>(
         &'a self,
+        _: &'a GitSshContext,
         command: &'a GitSshCommand,
         io: &'a mut dyn GitSshStream,
     ) -> BoxFuture<'a, Result<(), GitSshFailure>> {
@@ -105,7 +107,11 @@ impl GitSshUpstream for Recording {
         })
     }
 
-    fn greeting<'a>(&'a self, host: &'a Host) -> BoxFuture<'a, GitSshGreeting> {
+    fn greeting<'a>(
+        &'a self,
+        _: &'a GitSshContext,
+        host: &'a Host,
+    ) -> BoxFuture<'a, GitSshGreeting> {
         if self.greet {
             return Box::pin(std::future::ready(GitSshGreeting {
                 message: format!("Hi octocat! You have authenticated to {host}.\n"),
@@ -142,19 +148,33 @@ impl SshRig {
         keys: Vec<GitSshHostKey>,
     ) -> Self {
         let upstream = Arc::new(upstream);
+        let git_ssh = GitSsh::new(
+            Arc::clone(&upstream) as Arc<dyn GitSshUpstream>,
+            keys.clone(),
+        )
+        .with_limits(limits);
+        let host: Handler = Arc::new(|_: &Recorded| Reply::ok("never asked"));
+        Self::serving(git_ssh, &keys, host, &[], upstream).await
+    }
+
+    /// A rig whose Git host answers with `host`, serving SSH with `git_ssh` and `keys`, where
+    /// `allow` names more names the rules allow.
+    async fn serving(
+        git_ssh: GitSsh,
+        keys: &[GitSshHostKey],
+        host: Handler,
+        allow: &[&'static str],
+        upstream: Arc<Recording>,
+    ) -> Self {
         let key = keys.first().expect("at least one host key").clone();
-        let git_ssh =
-            GitSsh::new(Arc::clone(&upstream) as Arc<dyn GitSshUpstream>, keys).with_limits(limits);
         let world = GitRig::world();
         let pki = Pki::new();
         let server = crate::terminate_support::FakeServer::tls(
             pki.server_config("bound.test", crate::terminate_support::Flaw::None),
-            Arc::new(|_: &crate::terminate_support::Recorded| {
-                crate::terminate_support::Reply::ok("never asked")
-            }),
+            host,
         )
         .await;
-        let rig = RigBuilder::new(&pki)
+        let mut builder = RigBuilder::new(&pki)
             .name("bound.test", server.addr)
             .name("github.com", server.addr)
             .name("ssh.github.com", server.addr)
@@ -162,8 +182,9 @@ impl SshRig {
             .name("ssh.dev.azure.com", server.addr)
             .name("elsewhere.test", server.addr)
             .injector(world.injector.clone())
-            .git_ssh(git_ssh)
-            .build();
+            .git_ssh(git_ssh);
+        builder.allow.extend_from_slice(allow);
+        let rig = builder.build();
         Self {
             git: GitRig {
                 world,
@@ -200,13 +221,28 @@ impl SshRig {
         authority: &str,
         config: client::Config,
     ) -> Result<(Handle<Trusting>, String), String> {
+        self.handshake_as(guest, authority, config, true).await
+    }
+
+    /// As [`Self::handshake`]; `announced` says whether the `CONNECT` marks itself as SSH, as the
+    /// agent's `connect` does (a captured client that waits for the server is not marked).
+    async fn handshake_as(
+        &self,
+        guest: &mut Guest,
+        authority: &str,
+        config: client::Config,
+        announced: bool,
+    ) -> Result<(Handle<Trusting>, String), String> {
         let mut stream = guest.open_stream().await;
+        let mark = if announced {
+            format!("{PROTOCOL_HEADER}: {SSH}\r\n")
+        } else {
+            String::new()
+        };
         stream
             .write_all(
-                format!(
-                    "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\n"
-                )
-                .as_bytes(),
+                format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n{mark}\r\n")
+                    .as_bytes(),
             )
             .await
             .unwrap();
@@ -234,7 +270,7 @@ impl SshRig {
             .lock()
             .unwrap()
             .clone()
-            .expect("the server showed a key");
+            .ok_or("the server showed no key")?;
         Ok((handle, shown))
     }
 
@@ -602,6 +638,9 @@ async fn a_terminal_a_subsystem_agent_x11_a_second_command_and_other_variables_a
         .await
         .unwrap();
     assert!(!collect_one(&mut env).await);
+    // A value that would do is not enough: only `GIT_PROTOCOL` is taken.
+    env.set_env(true, "LD_PRELOAD", "version=2").await.unwrap();
+    assert!(!collect_one(&mut env).await);
     env.set_env(true, "GIT_PROTOCOL", "version=2")
         .await
         .unwrap();
@@ -616,9 +655,14 @@ async fn a_terminal_a_subsystem_agent_x11_a_second_command_and_other_variables_a
         .exec(true, "git-upload-pack 'acme/web'")
         .await
         .unwrap();
+    // Once the command has started, `GIT_PROTOCOL` is too late.
+    twice
+        .set_env(true, "GIT_PROTOCOL", "version=2")
+        .await
+        .unwrap();
     twice.eof().await.unwrap();
-    let ran = collect(&mut twice, 2).await;
-    assert_eq!(ran.replies, [true, false], "{ran:?}");
+    let ran = collect(&mut twice, 3).await;
+    assert_eq!(ran.replies, [true, false, false], "{ran:?}");
     assert_eq!(ran.exit, Some(0));
     assert_eq!(t.upstream.calls().len(), 1);
 }
@@ -666,6 +710,49 @@ async fn forwarding_in_either_direction_is_refused_with_a_reason() {
         events[0].reason,
         ConnectionReason::Refused("ssh_channel_refused")
     );
+}
+
+/// Every kind of forwarding and agent request is recorded as a refusal on its own connection,
+/// so none of them passes unnoticed in the audit.
+#[tokio::test]
+async fn each_forwarding_request_is_recorded_as_a_channel_refusal() {
+    let t = SshRig::new().await;
+    for round in 0..6 {
+        let mut guest = t.git.rig.guest();
+        let mut ssh = t.client(&mut guest, "bound.test:22").await;
+        login(&mut ssh).await;
+        match round {
+            0 => {
+                let _ = ssh
+                    .channel_open_direct_tcpip("127.0.0.1", 9, "127.0.0.1", 1234)
+                    .await;
+            }
+            1 => {
+                let _ = ssh.channel_open_direct_streamlocal("/var/run/x.sock").await;
+            }
+            2 => {
+                let _ = ssh.channel_open_x11("127.0.0.1", 6000).await;
+            }
+            3 => {
+                let _ = ssh.tcpip_forward("127.0.0.1", 2222).await;
+            }
+            4 => {
+                let _ = ssh.streamlocal_forward("/tmp/guest.sock").await;
+            }
+            _ => {
+                let mut channel = ssh.channel_open_session().await.unwrap();
+                channel.agent_forward(true).await.unwrap();
+                assert!(!collect_one(&mut channel).await);
+            }
+        }
+        drop(ssh);
+        let events = t.events(round + 1).await;
+        assert_eq!(
+            events[round].reason,
+            ConnectionReason::Refused("ssh_channel_refused"),
+            "round {round}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1053,6 +1140,7 @@ struct Bare;
 impl GitSshUpstream for Bare {
     fn run<'a>(
         &'a self,
+        _: &'a GitSshContext,
         _: &'a GitSshCommand,
         _: &'a mut dyn GitSshStream,
     ) -> BoxFuture<'a, Result<(), GitSshFailure>> {
@@ -1071,14 +1159,281 @@ fn the_debug_output_names_the_number_of_keys_and_never_a_key() {
     assert!(shown.contains("channels: 3"), "{shown}");
 }
 
+fn never_asked() -> Handler {
+    Arc::new(|_: &Recorded| Reply::ok("never asked"))
+}
+
 #[tokio::test]
-async fn without_an_answer_of_its_own_a_shell_says_no_identity_and_ends_255() {
-    let host = Host::parse_normalised("github.com").unwrap();
-    let greeting = Bare.greeting(&host).await;
-    assert_eq!(greeting.status, 255);
+async fn without_an_answer_of_its_own_a_shell_says_no_identity_for_the_https_host_and_ends_255() {
+    let keys = vec![host_key()];
+    let git = GitSsh::new(Arc::new(Bare), keys.clone());
+    let t = SshRig::serving(
+        git,
+        &keys,
+        never_asked(),
+        &["ssh.github.com"],
+        Arc::default(),
+    )
+    .await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "ssh.github.com:443").await;
+    login(&mut ssh).await;
+    let mut channel = ssh.channel_open_session().await.unwrap();
+    channel.request_shell(true).await.unwrap();
+    let ran = collect(&mut channel, 1).await;
+    assert_eq!(ran.exit, Some(255));
     assert_eq!(
-        greeting.message,
+        ran.err,
         "puddle: no identity on this workspace has a credential for github.com; add one on the workspace's Git tab\n"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The HTTPS leg: each command as the smart-HTTP requests `git` sends, through the termination.
+
+/// Names one account for every workspace and host, and keeps who asked.
+#[derive(Debug)]
+struct Accounts {
+    account: GitSshAccount,
+    asked: Mutex<Vec<String>>,
+}
+
+impl GitSshAccounts for Accounts {
+    fn account<'a>(
+        &'a self,
+        workspace: &'a WorkspaceId,
+        host: &'a Host,
+    ) -> BoxFuture<'a, GitSshAccount> {
+        self.asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(format!("{workspace} {host}"));
+        Box::pin(std::future::ready(self.account.clone()))
+    }
+}
+
+/// A smart-HTTP Git host with one repository, `acme/web`: protocol v2 when asked for it, v0
+/// otherwise, and a push answered with the size of what it got.
+fn smart_host() -> Handler {
+    Arc::new(|seen: &Recorded| {
+        let path = seen.target.split('?').next().unwrap_or_default();
+        let v2 = seen
+            .header("git-protocol")
+            .is_some_and(|p| p.contains("version=2"));
+        match (seen.method.as_str(), path) {
+            ("GET", "/acme/web.git/info/refs") if v2 => {
+                Reply::ok("000eversion 2\n0013ls-refs=unborn\n0000")
+            }
+            ("GET", "/acme/web.git/info/refs") => {
+                let service = seen.target.rsplit('=').next().unwrap_or_default();
+                Reply::ok(&crate::git_support::advert(service))
+            }
+            ("POST", "/acme/web.git/git-upload-pack") => {
+                Reply::ok(&format!("0032{SHA} refs/heads/main\n0000"))
+            }
+            ("POST", "/acme/web.git/git-receive-pack") => {
+                Reply::ok(&format!("GOT {} bytes", seen.body.len()))
+            }
+            _ => Reply::status(404, "", "Repository not found"),
+        }
+    })
+}
+
+const SHA: &str = crate::git_support::SHA;
+
+impl SshRig {
+    /// A workspace whose Git over SSH goes out through the HTTPS leg to `host`, greeting as
+    /// `account`, with `allow` allowed on top of `bound.test`.
+    async fn https(
+        host: Handler,
+        account: GitSshAccount,
+        allow: &[&'static str],
+    ) -> (Self, Arc<Accounts>) {
+        let accounts = Arc::new(Accounts {
+            account,
+            asked: Mutex::new(Vec::new()),
+        });
+        let keys = vec![host_key()];
+        let upstream = GitSshHttps::new(Arc::clone(&accounts) as Arc<dyn GitSshAccounts>);
+        let git = GitSsh::new(Arc::new(upstream), keys.clone());
+        (
+            Self::serving(git, &keys, host, allow, Arc::default()).await,
+            accounts,
+        )
+    }
+}
+
+#[tokio::test]
+async fn the_https_leg_sends_a_v2_command_as_gits_requests_with_the_identitys_credential() {
+    let (t, _) = SshRig::https(smart_host(), GitSshAccount::Unnamed, &[]).await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let ran = exec(
+        &ssh,
+        &[("GIT_PROTOCOL", "version=2")],
+        "git-upload-pack 'acme/web.git'",
+        b"0014command=ls-refs\n00000000",
+    )
+    .await;
+    assert_eq!(ran.exit, Some(0), "{ran:?}");
+    assert_eq!(
+        ran.out,
+        format!("000eversion 2\n0013ls-refs=unborn\n00000032{SHA} refs/heads/main\n0000")
+    );
+    let seen = t.git.server.recorded();
+    let asked: Vec<String> = seen
+        .iter()
+        .map(|r| format!("{} {}", r.method, r.target))
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            "GET /acme/web.git/info/refs?service=git-upload-pack",
+            "POST /acme/web.git/git-upload-pack"
+        ]
+    );
+    for request in &seen {
+        assert_eq!(
+            request.headers_named("authorization"),
+            [crate::git_support::token_basic(crate::git_support::WORK)]
+        );
+        assert_eq!(request.header("git-protocol"), Some("version=2"));
+    }
+    assert_eq!(seen[1].body, b"0014command=ls-refs\n0000");
+    assert_eq!(
+        t.git
+            .server
+            .accepted
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "one connection carries a command's requests"
+    );
+    drop(ssh);
+    let events = t.events(1).await;
+    let event = &events[0];
+    assert_eq!(event.port, 22);
+    assert!(event.injected);
+    assert_eq!(event.resolved_ip, Some(t.git.server.addr.ip()), "{event:?}");
+    assert_eq!(event.http.as_ref().unwrap().method(), "git-upload-pack");
+}
+
+#[tokio::test]
+async fn the_https_leg_streams_a_push_and_returns_the_hosts_report() {
+    let (t, _) = SshRig::https(smart_host(), GitSshAccount::Unnamed, &[]).await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let update =
+        format!("{SHA} 2222222222222222222222222222222222222222 refs/heads/main\0report-status\n");
+    let mut input = format!("{:04x}{update}0000", update.len() + 4).into_bytes();
+    input.extend(std::iter::repeat_n(b'P', 300_000));
+    let ran = exec(&ssh, &[], "git-receive-pack 'acme/web.git'", &input).await;
+    assert_eq!(ran.exit, Some(0), "{ran:?}");
+    assert!(
+        ran.out.starts_with(&format!("0069{SHA} refs/heads/main\0")),
+        "{ran:?}"
+    );
+    assert!(
+        ran.out.ends_with(&format!("GOT {} bytes", input.len())),
+        "{ran:?}"
+    );
+    let seen = t.git.server.recorded();
+    assert_eq!(seen[1].body, input);
+    assert_eq!(seen[1].header("transfer-encoding"), Some("chunked"));
+}
+
+#[tokio::test]
+async fn a_host_that_answers_with_a_refusal_ends_the_command_with_its_status() {
+    let (t, _) = SshRig::https(smart_host(), GitSshAccount::Unnamed, &[]).await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let ran = exec(&ssh, &[], "git-upload-pack 'acme/gone.git'", b"").await;
+    assert_eq!(ran.exit, Some(1));
+    assert_eq!(
+        ran.err,
+        "puddle: the Git host answered 404 Not Found for bound.test/acme/gone.git\n"
+    );
+}
+
+#[tokio::test]
+async fn the_https_leg_reaches_only_a_host_the_rules_allow_and_puddle_decrypts() {
+    let (t, _) = SshRig::https(
+        smart_host(),
+        GitSshAccount::Unnamed,
+        &["gitlab.com", "ssh.github.com"],
+    )
+    .await;
+    let mut guest = t.git.rig.guest();
+    // gitlab.com is allowed but not decrypted for the workspace.
+    let mut ssh = t.client(&mut guest, "gitlab.com:22").await;
+    login(&mut ssh).await;
+    let ran = exec(&ssh, &[], "git-upload-pack 'acme/web.git'", b"").await;
+    assert_eq!(ran.exit, Some(1));
+    assert_eq!(
+        ran.err,
+        "puddle: Puddle does not decrypt gitlab.com for this workspace, so it cannot carry Git over SSH there\n"
+    );
+    // ssh.github.com is allowed, github.com (its HTTPS host) is not.
+    let mut ssh = t.client(&mut guest, "ssh.github.com:443").await;
+    login(&mut ssh).await;
+    let ran = exec(&ssh, &[], "git-upload-pack 'acme/web.git'", b"").await;
+    assert_eq!(ran.exit, Some(1));
+    assert!(
+        ran.err.starts_with("puddle: ") && ran.err.contains("github.com"),
+        "{ran:?}"
+    );
+    assert!(t.git.server.recorded().is_empty());
+}
+
+#[tokio::test]
+async fn ssh_t_through_the_https_leg_greets_the_account_puddle_would_use() {
+    let (t, accounts) = SshRig::https(
+        smart_host(),
+        GitSshAccount::Named("octocat".to_owned()),
+        &[],
+    )
+    .await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let mut channel = ssh.channel_open_session().await.unwrap();
+    channel.request_shell(true).await.unwrap();
+    let ran = collect(&mut channel, 1).await;
+    assert_eq!(ran.exit, Some(1));
+    assert_eq!(
+        ran.err,
+        "Hi octocat! You've successfully authenticated, but bound.test does not provide shell access.\n"
+    );
+    assert_eq!(*accounts.asked.lock().unwrap(), ["box bound.test"]);
+}
+
+#[tokio::test]
+async fn a_client_that_waits_for_the_server_on_port_22_gets_puddles_server() {
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    // `ssh-keyscan` sends nothing before the server's identification, so nothing marks it as SSH.
+    let (_, shown) = t
+        .handshake_as(
+            &mut guest,
+            "bound.test:22",
+            client::Config::default(),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(shown, t.key.public_key().to_openssh().unwrap());
+    // On another port such a connection is not taken for SSH.
+    assert!(
+        t.handshake_as(
+            &mut guest,
+            "bound.test:2222",
+            client::Config::default(),
+            false
+        )
+        .await
+        .is_err()
     );
 }
 
@@ -1155,9 +1510,7 @@ async fn a_workspace_with_keys_of_its_own_start_is_served_with_them_and_not_the_
     let pki = Pki::new();
     let server = crate::terminate_support::FakeServer::tls(
         pki.server_config("bound.test", crate::terminate_support::Flaw::None),
-        Arc::new(|_: &crate::terminate_support::Recorded| {
-            crate::terminate_support::Reply::ok("never asked")
-        }),
+        Arc::new(|_: &Recorded| Reply::ok("never asked")),
     )
     .await;
     let rig = RigBuilder::new(&pki)

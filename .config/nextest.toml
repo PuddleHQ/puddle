@@ -124,6 +124,20 @@ filter = "test(/a_hundred_thousand_|hostile_hg1[12]_a_hundred_thousand/)"
 test-group = "flood"
 slow-timeout = { period = "60s", terminate-after = 5 }
 
+# The edge tests of the merge engine (`merge_edges`) read files of the 4 MiB limit through every format:
+# linear work (1, 2, 4 MiB took 0.04, 0.09, 0.18 s in the instrumented build, per scan; the three limit tests
+# take 0.45 to 0.85 s alone), but with eight busy loops on one CPU they took 4 to 8 s, and on a loaded
+# coverage runner a test of this binary reached 15 s once. Hung-scanner detection stays: each test
+# that feeds a scanner unfinished input runs it under its own 30 s bound.
+[[profile.default.overrides]]
+filter = "package(puddle-types) & binary(merge_edges)"
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
+filter = "package(puddle-types) & binary(merge_edges)"
+slow-timeout = { period = "60s", terminate-after = 1 }
+# First matching override wins for a setting, so this one sits above the crate-wide 15 s one below.
+
 # `puddle-types` scans text in loops (the merge engine, the request-path decoder). A scanner that stops
 # advancing (a mutant, or a bug) hangs every test that reaches it, and with only a few test threads those
 # hung tests hold every slot, so the test that would fail fast never starts and the mutation run reports

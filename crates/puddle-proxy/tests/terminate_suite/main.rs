@@ -14,6 +14,7 @@ mod docker_login;
 mod entra_logins;
 mod everything;
 mod exchange;
+mod foreign_credentials;
 mod git_inject;
 mod git_ssh;
 mod grpc;

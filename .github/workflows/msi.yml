@@ -9,8 +9,8 @@
 # green run on the commit), and by hand. The MSI of the run is kept as an artifact.
 #
 # The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI
-# this run built, per user, starts the installed app, and drives it over the DevTools Protocol
-# (crates/puddle-app/e2e/usable.mjs): an SSH remote is refused with the explicit message, a workspace
+# this run built, per user, starts the installed app, and drives it through the REST API its screens call
+# (crates/puddle-app/e2e/usable.mjs; a release build has no DevTools port): an SSH remote is refused with the explicit message, a workspace
 # is created from the lab's own Git forge (Gitea's Windows release, pinned: Forgejo ships none; its account,
 # token and certificate are made for the run, so no outside host, account or
 # secret is used and a pull request from a fork can run it), requests are approved in the inbox, the browser
@@ -262,7 +262,7 @@ jobs:
           $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', "`"$log`"") -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec exited with $($p.ExitCode); see $log" }
           Get-ChildItem "$env:LOCALAPPDATA\Programs\Puddle" | Select-Object -First 20 Name
-      - name: the usable run (installed app, over the DevTools Protocol)
+      - name: the usable run (installed app, through its API)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         timeout-minutes: 60

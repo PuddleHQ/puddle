@@ -1,31 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The "usable" run (install, create, approve, edit, build, push), with no person: the installed, release build of the app on
-// Windows, driven over WebView2's DevTools Protocol the way a user would use it.
+// The "usable" run (install, create, approve, edit, build, push), with no person: the installed,
+// release build of the app on Windows, driven through the REST API its own screens call, with real
+// virtual machines and a real Git forge (the lab's, see below).
 //
-//   1. an SSH remote in the create form is refused with the explicit message;
-//   2. a workspace is created from the lab Forgejo's private repository (a Forgejo built for the
-//      run; its root is in the machine's certificate store, like a company root); whatever the app
-//      asks the user to approve in the inbox is approved by clicking Allow;
-//   3. the browser editor opens in its own window and shows the workbench;
+//   1. an SSH remote is refused with the explicit message;
+//   2. a workspace is created from the lab forge's private repository (its root is in the machine's
+//      certificate store, like a company root); every request the workspace raises is approved the way
+//      the inbox does it, `POST /api/pending/{id}/approve`;
+//   3. the browser editor opens in its own window (a top-level window titled "<name> - Puddle" appears)
+//      and its server runs in the guest;
 //   4. a real `apt-get install nodejs npm` (approved in the inbox) and a real `npm run build` and
 //      `npm test` run in the workspace's checkout;
-//   5. `git push` from the workspace reaches Forgejo with the credential Puddle injects, the
-//      author is the identity's, and the guest, the audit log and the API never hold the token.
+//   5. `git push` from the workspace reaches the forge with the credential Puddle injects, the author
+//      is the identity's, and the guest, the audit log and the API never hold the token.
 //
-// The app is the installed one (`puddle-app.exe` in PUDDLE_INSTALL_DIR). A release build has none of
-// the debug hooks (PUDDLE_APP_DEBUG_PORT), so the windows are reached through WebView2's own
-// environment variable, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, with `--remote-debugging-port=0` (a
-// port per browser process, each written to its DevToolsActivePort file). The checks that a person
-// does by looking (copy, layout, whether the editor "feels" right) are not here. Plain Node 24, no packages.
+// Why the REST API and not the DevTools Protocol like smoke.mjs: a release build has no debugging port
+// (the shell honours PUDDLE_APP_DEBUG_PORT in debug builds only, and WebView2 ignores its environment
+// variable once the API sets arguments, which wry always does), and the MSI holds a release build. The
+// clicks themselves (the create form, the inbox's Allow, the connect step) are the Playwright suite's
+// (ui/e2e, on the fixture backend) and smoke.mjs's on a debug shell; what a person still does is
+// to look at the real window. Plain Node 24, no packages.
 //
 // Environment: USABLE_INFO (the JSON `puddle-lab-forgejo --info` wrote), PUDDLE_INSTALL_DIR (default
 // %LOCALAPPDATA%\Programs\Puddle), USABLE_OUT (a folder for screenshots and logs; default a temp one).
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { connect } from "./cdp.mjs";
 
 const local = process.env.LOCALAPPDATA;
 if (!local) throw new Error("LOCALAPPDATA is not set: this runs on Windows");
@@ -33,7 +35,8 @@ const installDir = process.env.PUDDLE_INSTALL_DIR ?? join(local, "Programs", "Pu
 const dataDir = join(local, "puddle");
 const out = process.env.USABLE_OUT ?? join(tmpdir(), "puddle-usable");
 mkdirSync(out, { recursive: true });
-const info = JSON.parse(readFileSync(process.env.USABLE_INFO ?? (() => { throw new Error("set USABLE_INFO"); })(), "utf8"));
+if (!process.env.USABLE_INFO) throw new Error("set USABLE_INFO");
+const info = JSON.parse(readFileSync(process.env.USABLE_INFO, "utf8"));
 const forge = info.name;
 const httpsUrl = `https://${forge}/${info.owner}/${info.repo}.git`;
 const sshUrl = `git@${forge}:${info.owner}/${info.repo}.git`;
@@ -59,50 +62,10 @@ async function until(what, probe, within = 60_000, every = 500) {
   }
 }
 
-// ---- the app and its windows -------------------------------------------------------------------
+// ---- the installed app ------------------------------------------------------------------------------
 
-/** Every WebView2 browser process of the app writes its debugging port to a DevToolsActivePort file. */
-function portFiles() {
-  const found = [];
-  const walk = (dir, depth) => {
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (e.isFile() && e.name === "DevToolsActivePort") found.push(join(dir, e.name));
-      else if (e.isDirectory() && depth > 0) walk(join(dir, e.name), depth - 1);
-    }
-  };
-  walk(join(local, "be.tijsvankampen.puddle"), 3);
-  walk(join(dataDir, "webview"), 4);
-  return found;
-}
-
-/** The page targets of every browser process of the app, each with the port that serves it. */
-async function pages() {
-  const seen = new Set();
-  const all = [];
-  for (const file of portFiles()) {
-    const port = Number(readFileSync(file, "utf8").split(/\r?\n/)[0]);
-    if (!port || seen.has(port)) continue;
-    seen.add(port);
-    try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(3000) })).json();
-      for (const t of list) if (t.type === "page") all.push({ port, ...t });
-    } catch {
-      // A browser process that has gone: its file is stale.
-    }
-  }
-  return all;
-}
-
-const app = spawn(join(installDir, "puddle-app.exe"), [], {
-  stdio: ["ignore", "inherit", "pipe"],
-  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=0 --remote-allow-origins=*" },
-});
+const connectionFile = join(dataDir, "api.json");
+const app = spawn(join(installDir, "puddle-app.exe"), [], { stdio: ["ignore", "inherit", "pipe"] });
 let appLog = "";
 app.stderr.on("data", (chunk) => {
   appLog += chunk;
@@ -114,31 +77,23 @@ app.on("exit", (code) => {
   console.log(`puddle-app exited (${code})`);
 });
 
-let page;
-const run = (body, gesture = false) => page.evaluate(`(async () => { ${body} })()`, gesture);
-let shots = 0;
-async function shot(name) {
-  try {
-    const { data } = await page.send("Page.captureScreenshot", { format: "png" });
-    writeFileSync(join(out, `${String(++shots).padStart(2, "0")}-${name}.png`), Buffer.from(data, "base64"));
-  } catch (err) {
-    note(`no screenshot of ${name}: ${err}`);
-  }
-}
-
-/** The app's own REST API, called from the page the way the SPA does (the page holds the token). */
+let conn;
+/** The app's REST API, as its screens call it. */
 async function api(method, path, body) {
-  const reply = await run(`const r = await fetch(${JSON.stringify(path)}, { method: ${JSON.stringify(method)},
-    headers: { Authorization: "Bearer " + window.__PUDDLE__.token, "Content-Type": "application/json" },
-    body: ${body === undefined ? "undefined" : JSON.stringify(JSON.stringify(body))} });
-    return { status: r.status, body: await r.text() };`);
+  const response = await fetch(`${conn.url}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${conn.token}`, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
+  });
+  const text = await response.text();
   let json;
   try {
-    json = JSON.parse(reply.body);
+    json = JSON.parse(text);
   } catch {
     json = undefined;
   }
-  return { status: reply.status, body: reply.body, json };
+  return { status: response.status, body: text, json };
 }
 
 // ---- the guest, through the installed runtime's own msb -----------------------------------------
@@ -160,67 +115,112 @@ function guest(id, script, { root = false, within = 600_000 } = {}) {
   child.stdout.on("data", (c) => (text += c));
   child.stderr.on("data", (c) => (text += c));
   const timer = setTimeout(() => child.kill(), within);
-  const done = new Promise((resolve) =>
+  return new Promise((resolve) =>
     child.on("close", (code) => {
       clearTimeout(timer);
       resolve({ code, text });
     }),
   );
-  return done;
 }
 
 // ---- the inbox ------------------------------------------------------------------------------------
 
 const approved = [];
 
-/** Clicks Allow on every pending request the inbox shows, as the user does, until `done` settles. */
+/** Approves every pending request, as the inbox's Allow does, until `done` settles. */
 async function approveUntil(what, done) {
   let finished = false;
   const result = done.then((value) => {
     finished = true;
     return value;
   });
-  await run(`document.querySelector('nav[aria-label="Main"] a[href="/inbox"]')?.click(); return true;`);
+  result.catch(() => {
+    finished = true;
+  });
   while (!finished) {
-    const clicked = await run(`const hits = [...document.querySelectorAll('button[aria-label^="Allow "]')]
-        .filter((b) => /^Allow \\S+ for /.test(b.getAttribute("aria-label")));
-      const labels = hits.map((b) => b.getAttribute("aria-label"));
-      hits.forEach((b) => b.click());
-      return labels;`).catch(() => []);
-    for (const label of clicked) {
-      approved.push(label);
-      note(`approved in the inbox (${what}): ${label}`);
+    const pending = (await api("GET", "/api/pending")).json?.requests ?? [];
+    for (const row of pending.filter((r) => r.state === "requested")) {
+      const reply = await api("POST", `/api/pending/${row.id}/approve`, {});
+      approved.push(`${row.host} for ${row.workspace}`);
+      note(`approved in the inbox (${what}): ${row.host} for ${row.workspace} -> ${reply.status}`);
     }
-    await Promise.race([result, sleep(clicked.length > 0 ? 500 : 1000)]);
+    await Promise.race([result.catch(() => {}), sleep(1000)]);
   }
   return result;
+}
+
+// ---- windows and the screen -----------------------------------------------------------------------
+
+const windowScript = join(out, "windows.ps1");
+writeFileSync(
+  windowScript,
+  `Add-Type @"
+using System; using System.Collections.Generic; using System.Text; using System.Runtime.InteropServices;
+public class Wins {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll")] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  public static List<string> All() {
+    var l = new List<string>();
+    EnumWindows((h, _) => { uint pid; GetWindowThreadProcessId(h, out pid); var s = new StringBuilder(512); GetWindowText(h, s, 512);
+      if (IsWindowVisible(h) && s.Length > 0) l.Add(pid + "\\t" + s); return true; }, IntPtr.Zero);
+    return l;
+  }
+}
+"@
+[Wins]::All()
+`,
+);
+/** The titles of the visible top-level windows of the app. */
+function appWindows() {
+  const ps = spawnSync("powershell", ["-NoProfile", "-File", windowScript], { encoding: "utf8" });
+  return (ps.stdout ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.split("\t"))
+    .filter(([pid, title]) => Number(pid) === app.pid && title)
+    .map(([, title]) => title);
+}
+
+let shots = 0;
+function screenshot(name) {
+  const file = join(out, `${String(++shots).padStart(2, "0")}-${name}.png`);
+  spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b = [System.Windows.Forms.SystemInformation]::VirtualScreen; ` +
+        `$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $g = [System.Drawing.Graphics]::FromImage($bmp); ` +
+        `$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $bmp.Save('${file}')`,
+    ],
+    { stdio: "ignore" },
+  );
 }
 
 // ---- the run ---------------------------------------------------------------------------------------
 
 try {
-  // The app is up when one of its windows lists a page served from 127.0.0.1.
-  const main = await until(
-    "the main window's page in WebView2's targets (is the debugging port reaching a release build?)",
-    async () => (await pages()).find((t) => /^http:\/\/127\.0\.0\.1:\d+\//.test(t.url)),
+  await until(
+    "the installed app's connection file",
+    () => {
+      if (appExited) throw new Error("puddle-app exited before it wrote its connection file");
+      conn = JSON.parse(readFileSync(connectionFile, "utf8"));
+      return conn?.url && conn?.token;
+    },
     180_000,
     1000,
   );
-  page = await connect(main.webSocketDebuggerUrl);
-  note(`main window: ${main.url} on debugging port ${main.port}`);
-
-  // First run: skip the setup, as a user may.
-  await until("the first-run screen", () => run(`return [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === "Skip setup");`), 90_000);
-  await run(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === "Skip setup")?.click(); return true;`);
-  await until("the sidebar", () => run(`return document.querySelectorAll('nav[aria-label="Main"] a').length >= 4;`), 60_000);
-  check("the installed app opens and shows its sidebar", true);
+  await until("the API", async () => (await api("GET", "/api/health")).status === 200, 60_000);
+  check("the installed app starts and answers its API", true, conn.url);
 
   // What the settings screen and the identity forms do through the same API; the forge is on this
-  // computer, so the workspace may reach this computer's own addresses (the Loopback switch).
+  // computer, so a workspace may reach this computer's own addresses (the Loopback switch).
   const toggled = await api("PUT", "/api/settings", { workspace_defaults: { local_toggles: { loopback: true } } });
   check("the 'this computer' switch is on for new workspaces", toggled.status === 200, `${toggled.status} ${toggled.body.slice(0, 200)}`);
   const stored = await api("POST", "/api/credentials/stored", { host: forge, token: info.token });
-  check("the access token is pasted and kept", stored.status === 201 && !stored.body.includes(info.token), `${stored.status}`);
+  check("the access token is pasted and kept, never echoed", stored.status === 201 && !stored.body.includes(info.token), `${stored.status}`);
   const identity = await api("POST", "/api/identities", {
     label: "Lab",
     author: { name: "Usable Run", email: "usable@example.org" },
@@ -228,40 +228,16 @@ try {
   });
   check("an identity covers the forge's account", identity.status === 201, `${identity.status} ${identity.body.slice(0, 200)}`);
 
-  // 1. The create form: an SSH remote is refused with the explicit message.
-  const nav = (href) => run(`document.querySelector('nav[aria-label="Main"] a[href="${href}"]')?.click(); return location.pathname;`);
-  await nav("/workspaces");
-  await until("the Workspaces screen", () => run(`return location.pathname === "/workspaces" && [...document.querySelectorAll("button")].some((b) => /New workspace/.test(b.textContent));`));
-  const fill = (selector, value) => run(`const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error(${JSON.stringify("no " + selector)});
-    el.focus(); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", { bubbles: true })); return true;`);
-  const clickByText = (selector, pattern) => run(`const b = [...document.querySelectorAll(${JSON.stringify(selector)})].find((e) => new RegExp(${JSON.stringify(pattern)}).test((e.getAttribute("aria-label") ?? e.textContent).replace(/\\s+/g, " ").trim()));
-    if (!b) throw new Error(${JSON.stringify("no " + selector + " like " + pattern)}); b.click(); return true;`, true);
-  await clickByText("button", "^New workspace");
-  await until("the New workspace dialog", () => run(`return !!document.querySelector('[role="dialog"] #new-ws-name');`));
-  const urlInput = `[role="dialog"] fieldset input[id$="url"]`;
-  // The form may open with a repository row already; add one only when it has none.
-  if (!(await run(`return !!document.querySelector(${JSON.stringify(urlInput)});`))) {
-    await clickByText('[role="dialog"] button', "^Add (another|a) repository$");
-  }
-  await until("the repository row", () => run(`return !!document.querySelector(${JSON.stringify(urlInput)});`));
-  await fill(urlInput, sshUrl);
-  await fill("#new-ws-name", "ssh-refused");
-  await clickByText('[role="dialog"] button[type="submit"]', "^Create workspace");
-  const refusal = await until("the SSH refusal", () =>
-    run(`const t = [...document.querySelectorAll('[role="dialog"] [role="alert"]')].map((e) => e.textContent.trim()).join(" | "); return t || false;`),
-  );
-  check("an SSH remote is refused with the explicit message", /SSH remotes are not supported yet/.test(refusal), refusal);
-  const noneMade = await api("GET", "/api/workspaces");
-  check("the refused create made no workspace", noneMade.json?.workspaces?.length === 0, noneMade.body.slice(0, 200));
-  await shot("ssh-refused");
+  // 1. An SSH remote is refused with the explicit message, and nothing is made.
+  const ssh = await api("POST", "/api/workspaces", { name: "ssh-refused", repositories: [{ url: sshUrl }] });
+  check("an SSH remote is refused with the explicit message", ssh.status >= 400 && ssh.status < 500 && /SSH remotes are not supported yet/.test(ssh.body), `${ssh.status} ${ssh.body.slice(0, 200)}`);
+  const none = await api("GET", "/api/workspaces");
+  check("the refused create made no workspace", none.json?.workspaces?.length === 0, none.body.slice(0, 200));
 
-  // 2. The real create, from the lab Forgejo's private repository. The same form, the HTTPS address.
-  await fill(urlInput, httpsUrl);
-  await fill("#new-ws-name", WORKSPACE);
-  await clickByText('[role="dialog"] button[type="submit"]', "^Create workspace");
-  const findWorkspace = async () => (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.name === WORKSPACE);
-  const made = await until("the workspace to exist", findWorkspace, 60_000);
-  const id = made.id;
+  // 2. The real create, from the lab forge's private repository.
+  const created = await api("POST", "/api/workspaces", { name: WORKSPACE, repositories: [{ url: httpsUrl }] });
+  check("the create is accepted", created.status === 202, `${created.status} ${created.body.slice(0, 300)}`);
+  const id = created.json.id;
   note(`workspace ${WORKSPACE} has the id ${id}`);
   let started = false;
   const running = await approveUntil(
@@ -283,34 +259,26 @@ try {
       2000,
     ),
   );
-  check("a workspace made from the lab Forgejo's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
+  check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
   const full = (await api("GET", `/api/workspaces/${id}`)).json;
   check("the create cloned the repository", (full?.repositories ?? []).some((r) => r.url === httpsUrl), JSON.stringify(full?.repositories));
-  await shot("workspace-running");
 
   // 3. The browser editor opens in its own window.
-  await nav("/workspaces");
-  await until("the workspace card", () => run(`return !![...document.querySelectorAll("article")].find((a) => a.textContent.includes(${JSON.stringify(WORKSPACE)}));`));
-  await run(`const card = [...document.querySelectorAll("article")].find((a) => a.textContent.includes(${JSON.stringify(WORKSPACE)}));
-    [...card.querySelectorAll("button")].find((b) => /^Connect/.test(b.textContent.trim())).click(); return true;`, true);
-  await until("the Connect dialog", () => run(`return !![...document.querySelectorAll('[role="dialog"] button')].find((b) => /Open in the browser/.test(b.textContent));`));
-  const before = new Set((await pages()).map((t) => t.id));
-  await clickByText('[role="dialog"] button', "Open in the browser");
-  const editor = await until(
-    "an editor window on the workspace's own origin (the editor server is installed in the guest the first time)",
-    async () => (await pages()).find((t) => !before.has(t.id) && /localhost/.test(t.url) && !/^http:\/\/127\.0\.0\.1/.test(t.url)),
-    420_000,
-    2000,
-  );
-  note(`editor window: ${editor.url.replace(/\?.*$/, "")}`);
-  const win = await connect(editor.webSocketDebuggerUrl);
-  const bench = await until("the editor's workbench", () => win.evaluate(`!!document.querySelector(".monaco-workbench")`), 180_000, 2000).catch(() => false);
-  const winTitle = await win.evaluate("document.title").catch(() => "");
-  check("the browser editor opens in its own window and shows the workbench", bench === true, `${winTitle} (${editor.url.split("/")[2]})`);
-  const guarded = await win.evaluate(`(() => { const t = window.__TAURI_INTERNALS__; return !t || typeof t.invoke !== "function"; })()`).catch(() => undefined);
-  note(`editor window without a Tauri bridge: ${guarded}`);
-  win.close();
-  await shot("after-editor-open");
+  const attach = await api("POST", `/api/workspaces/${id}/attach`, { mode: "browser" });
+  check("the browser editor is opened", attach.status === 200 && attach.json?.opened === true, `${attach.status} ${attach.body.slice(0, 200)}`);
+  const title = await until("the editor window, titled with the workspace", () => appWindows().find((t) => t.startsWith(`${WORKSPACE} - `)), 120_000, 1000).catch(() => undefined);
+  check("the editor opens in its own window", title !== undefined, `windows: ${appWindows().join(" | ")}`);
+  const server = await until(
+    "the editor server in the guest",
+    async () => {
+      const r = await guest(id, "pgrep -af code-server | head -2", { root: true, within: 60_000 });
+      return r.text.includes("code-server") ? r.text : false;
+    },
+    240_000,
+    3000,
+  ).catch(() => undefined);
+  check("the editor's server runs in the guest", server !== undefined, (server ?? "").slice(0, 200));
+  screenshot("editor");
 
   // 4. A real build. Node and npm come from the distribution's own archive (an apt mirror the user approves).
   const apt = guest(id, "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs npm >/tmp/apt.log 2>&1; echo apt=$?; tail -3 /tmp/apt.log", { root: true, within: 900_000 });
@@ -333,14 +301,15 @@ try {
   check("the commit carries the identity's author", author === "usable@example.org", author);
   const onForge = await fetch(`https://${forge}/api/v1/repos/${info.owner}/${info.repo}/branches/${branch}`, { headers: { Authorization: `token ${info.token}` } });
   const forgeHead = onForge.ok ? (await onForge.json()).commit?.id : undefined;
-  check("the push reached Forgejo at the same commit", forgeHead === head, `${onForge.status} ${forgeHead}`);
+  check("the push reached the forge at the same commit", forgeHead === head, `${onForge.status} ${forgeHead}`);
 
   // The token is nowhere a guest, the API or the audit log could show it. The control comes first: a
   // token planted in a file and in a process's environment must be found, or the search proves nothing.
   const [first, second] = [info.token.slice(0, 20), info.token.slice(20)];
-  const search = `w="${first}""${second}"; printf '%s\\n' "$w" "$(printf 'x-access-token:%s' "$w" | base64 -w0)" "$(printf '%s' "$w" | base64 -w0)" > /dev/shm/.p; \
-echo procs=$(cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -cFf /dev/shm/.p); \
-echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude=.p / 2>/dev/null | grep -v '^/dev/shm/.p$' | tr '\\n' ' '); rm -f /dev/shm/.p; echo done`;
+  const search =
+    `w="${first}""${second}"; printf '%s\\n' "$w" "$(printf 'x-access-token:%s' "$w" | base64 -w0)" "$(printf '%s' "$w" | base64 -w0)" > /dev/shm/.p; ` +
+    `echo procs=$(cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -cFf /dev/shm/.p); ` +
+    `echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude=.p / 2>/dev/null | grep -v '^/dev/shm/.p$' | tr '\\n' ' '); rm -f /dev/shm/.p; echo done`;
   const planted = await guest(id, `w="${first}""${second}"; printf '%s\\n' "$w" > /root/planted.txt; env PLANTED="$w" sleep 120 & pid=$!; sleep 1; ${search}; kill $pid; rm -f /root/planted.txt`, { root: true });
   check("the token search finds a planted token (the control)", !/procs=0/.test(planted.text) && planted.text.includes("/root/planted.txt"), planted.text.replace(info.token, "<token>").slice(-300));
   const found = await guest(id, search, { root: true });
@@ -350,27 +319,19 @@ echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --excl
   const listing = await api("GET", "/api/identities");
   check("the API never gives the token back", !listing.body.includes(info.token) && !stored.body.includes(info.token));
   check("the app's log holds no token", !appLog.includes(info.token));
+  check("requests were approved in the inbox", approved.length > 0, approved.join("; "));
 
-  // The approvals were clicks in the inbox.
-  check("requests were approved by clicking in the inbox", approved.length > 0, approved.join("; "));
-
-  // Delete, as the user does at the end; no runtime process stays behind.
+  // Delete, as the user does at the end.
   const seen = await api("GET", `/api/workspaces/${id}/delete-check`);
   const gone = await api("DELETE", `/api/workspaces/${id}`, { confirm: true, fingerprint: seen.json?.fingerprint });
-  check("the workspace is deleted", gone.status === 200 || gone.status === 202 || gone.status === 204, `${gone.status} ${gone.body.slice(0, 200)}`);
-  await until("the workspace to be gone", async () => !(await findWorkspace()), 180_000, 2000).catch((err) => check("the workspace goes away", false, String(err)));
+  check("the workspace is deleted", [200, 202, 204].includes(gone.status), `${gone.status} ${gone.body.slice(0, 200)}`);
+  await until("the workspace to be gone", async () => !(await api("GET", "/api/workspaces")).json?.workspaces?.some((w) => w.id === id), 180_000, 2000).catch((err) => check("the workspace goes away", false, String(err)));
 } catch (err) {
   check("the usable run ran to the end", false, String(err?.stack ?? err));
-  await shot("failure").catch(() => {});
-  try {
-    const targets = (await pages()).map((t) => `${t.port} ${t.url.replace(/\?.*$/, "")}`);
-    note(`windows at the end: ${targets.join(" | ") || "none"}`);
-  } catch {
-    // Diagnostics only.
-  }
+  note(`windows at the end: ${appWindows().join(" | ") || "none"}`);
+  screenshot("failure");
 } finally {
   writeFileSync(join(out, "app.log"), appLog);
-  page?.close();
   if (!appExited) spawnSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore" });
 }
 

@@ -1303,6 +1303,21 @@ describe("the settings tab", () => {
     await vi.waitFor(() => expect(select.value).toBe("on"));
   });
 
+  it("puts the credential warning choice back when the save is refused", async () => {
+    await open();
+    const select = screen.getByLabelText(
+      "Warn when a tool sends a token of its own",
+    ) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: "off" } });
+    await screen.findByText("Credential warning saved.");
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
+      status: 422,
+      message: "no",
+    });
+    await fireEvent.change(select, { target: { value: "on" } });
+    await vi.waitFor(() => expect(select.value).toBe("off"));
+  });
+
   it("lists the kept logins on the settings page, forgets one after a confirmation, and ends its notice", async () => {
     api.kept["w-demo"] = {
       store_readable: true,

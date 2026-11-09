@@ -409,6 +409,106 @@ mod tests {
         );
     }
 
+    #[derive(Default)]
+    struct Seen(Mutex<Vec<Event>>);
+
+    impl EventSink for Seen {
+        fn emit(&self, event: Event) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    fn note(
+        warning: &ForeignCredentialWarning,
+        host: &str,
+        sink: &Seen,
+        flagged: &mut Vec<String>,
+        kinds: &[ForeignCredentialKind],
+    ) {
+        warning.note(
+            &WorkspaceId::new("box").unwrap(),
+            &Host::parse_normalised(host).unwrap(),
+            sink,
+            flagged,
+            kinds,
+        );
+    }
+
+    #[test]
+    fn a_finding_is_flagged_once_and_raised_once_for_each_host_and_kind() {
+        let warning = ForeignCredentialWarning::default();
+        let sink = Seen::default();
+        let mut flagged = Vec::new();
+        let kinds = [
+            ForeignCredentialKind::GithubToken,
+            ForeignCredentialKind::NpmToken,
+        ];
+        note(&warning, "a.test", &sink, &mut flagged, &kinds);
+        note(&warning, "a.test", &sink, &mut flagged, &kinds);
+        assert_eq!(flagged, ["github_token", "npm_token"]);
+        assert_eq!(sink.0.lock().unwrap().len(), 2);
+        note(&warning, "b.test", &sink, &mut flagged, &kinds[..1]);
+        assert_eq!(flagged.len(), 2);
+        assert_eq!(sink.0.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn nothing_is_noted_when_the_warning_is_off_or_nothing_was_found() {
+        let sink = Seen::default();
+        let mut flagged = Vec::new();
+        let kinds = [ForeignCredentialKind::GithubToken];
+        let off = ForeignCredentialWarning::new(|| false);
+        assert!(!off.is_on());
+        note(&off, "a.test", &sink, &mut flagged, &kinds);
+        let on = ForeignCredentialWarning::default();
+        note(&on, "a.test", &sink, &mut flagged, &[]);
+        assert!(flagged.is_empty());
+        assert!(sink.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_remembered_findings_stop_at_the_limit() {
+        let warning = ForeignCredentialWarning::default();
+        let sink = Seen::default();
+        let mut flagged = Vec::new();
+        for i in 0..=MAX_SEEN {
+            note(
+                &warning,
+                &format!("h{i}.test"),
+                &sink,
+                &mut flagged,
+                &[ForeignCredentialKind::GithubToken],
+            );
+        }
+        assert_eq!(sink.0.lock().unwrap().len(), MAX_SEEN);
+    }
+
+    #[test]
+    fn the_debug_form_names_the_type_and_nothing_else() {
+        let text = format!("{:?}", ForeignCredentialWarning::default());
+        assert!(text.contains("ForeignCredentialWarning"), "{text}");
+    }
+
+    #[test]
+    fn a_value_of_exactly_the_limit_is_read_and_one_byte_more_is_not() {
+        let token = checksummed("ghp_", ENTROPY);
+        let at_limit = format!("Bearer {token}{}", " ".repeat(MAX_VALUE - token.len() - 7));
+        assert_eq!(at_limit.len(), MAX_VALUE);
+        let named = [ForeignCredentialKind::GithubToken];
+        assert_eq!(kinds(&[("authorization", &at_limit)], false), named);
+        let over = format!("{at_limit} ");
+        assert_eq!(kinds(&[("authorization", &over)], false), NONE);
+    }
+
+    #[test]
+    fn a_checksummed_body_with_a_character_outside_base62_is_not_a_token() {
+        let token = checksummed("ghp_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o-");
+        assert_eq!(
+            kinds(&[("authorization", &format!("Bearer {token}"))], false),
+            NONE
+        );
+    }
+
     #[test]
     fn any_authorization_on_a_git_path_counts_and_off_a_git_path_it_stays_silent() {
         let value = "Bearer an-opaque-value-of-no-known-kind";

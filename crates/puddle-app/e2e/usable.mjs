@@ -127,7 +127,19 @@ function guest(id, script, { root = false, within = 600_000 } = {}) {
 
 const approved = [];
 
-/** Approves every pending request, as the inbox's Allow does, until `done` settles. */
+/** Approves every pending request, as the inbox's Allow does; how many there were. */
+async function approvePending(what) {
+  const pending = (await api("GET", "/api/pending")).json?.requests ?? [];
+  const open = pending.filter((r) => r.state === "requested");
+  for (const row of open) {
+    const reply = await api("POST", `/api/pending/${row.id}/approve`, {});
+    approved.push(`${row.host} for ${row.workspace}`);
+    note(`approved in the inbox (${what}): ${row.host} for ${row.workspace} -> ${reply.status}`);
+  }
+  return open.length;
+}
+
+/** Approves what is pending until `done` settles. */
 async function approveUntil(what, done) {
   let finished = false;
   const result = done.then((value) => {
@@ -138,15 +150,26 @@ async function approveUntil(what, done) {
     finished = true;
   });
   while (!finished) {
-    const pending = (await api("GET", "/api/pending")).json?.requests ?? [];
-    for (const row of pending.filter((r) => r.state === "requested")) {
-      const reply = await api("POST", `/api/pending/${row.id}/approve`, {});
-      approved.push(`${row.host} for ${row.workspace}`);
-      note(`approved in the inbox (${what}): ${row.host} for ${row.workspace} -> ${reply.status}`);
-    }
-    await Promise.race([result.catch(() => {}), sleep(1000)]);
+    const n = await approvePending(what);
+    await Promise.race([result.catch(() => {}), sleep(n > 0 ? 500 : 1000)]);
   }
   return result;
+}
+
+/**
+ * A command in the guest that reaches hosts nobody has allowed yet. A request that waits for approval
+ * is refused to the tool at once (a 403), so the attempt fails; the user approves it in the inbox and
+ * runs the command again, as here, until it passes or the tries are used.
+ */
+async function runApproving(what, id, script, { root = false, ok, tries = 8, within = 600_000 }) {
+  let last;
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    last = await guest(id, script, { root, within });
+    if (ok(last)) return { ...last, attempts: attempt };
+    const until = Date.now() + 10_000;
+    while (Date.now() < until && (await approvePending(what)) === 0) await sleep(1000);
+  }
+  return { ...last, attempts: tries };
 }
 
 // ---- windows and the screen -----------------------------------------------------------------------
@@ -260,8 +283,13 @@ try {
     ),
   );
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
-  const full = (await api("GET", `/api/workspaces/${id}`)).json;
-  check("the create cloned the repository", (full?.repositories ?? []).some((r) => r.url === httpsUrl), JSON.stringify(full?.repositories));
+  // The create's own clone asked for the forge before anyone had allowed it, so it was refused and the
+  // workspace came up without the checkout (a problem notice with a retry); after the approval the user retries.
+  const checkout = `/workspaces/${id}/app/.git`;
+  const retry = await api("POST", `/api/workspaces/${id}/repositories/app/clone`, {});
+  note(`clone retry -> ${retry.status} ${retry.body.slice(0, 120)}`);
+  const cloned = await until("the checkout in the guest", async () => (await guest(id, `test -d ${checkout} && echo present`, { root: true, within: 60_000 })).text.includes("present"), 300_000, 3000).catch(() => undefined);
+  check("the private repository is cloned into the workspace with the injected credential", cloned !== undefined, `${checkout}, retry ${retry.status}`);
 
   // 3. The browser editor opens in its own window.
   const attach = await api("POST", `/api/workspaces/${id}/attach`, { mode: "browser" });
@@ -281,9 +309,13 @@ try {
   screenshot("editor");
 
   // 4. A real build. Node and npm come from the distribution's own archive (an apt mirror the user approves).
-  const apt = guest(id, "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs npm >/tmp/apt.log 2>&1; echo apt=$?; tail -3 /tmp/apt.log", { root: true, within: 900_000 });
-  const aptDone = await approveUntil("apt", apt);
-  check("nodejs and npm install from the distribution's archive after the approvals", /apt=0/.test(aptDone.text), aptDone.text.slice(-300));
+  const aptDone = await runApproving(
+    "apt",
+    id,
+    "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/tmp/apt.log 2>&1 && apt-get install -y -qq --no-install-recommends nodejs npm >>/tmp/apt.log 2>&1; echo apt=$?; tail -3 /tmp/apt.log",
+    { root: true, within: 900_000, ok: (r) => /apt=0/.test(r.text) },
+  );
+  check("nodejs and npm install from the distribution's archive after the approvals", /apt=0/.test(aptDone.text), `after ${aptDone.attempts} tries: ${aptDone.text.slice(-300)}`);
   const rootDir = (await guest(id, "find /workspaces -maxdepth 3 -name package.json -not -path '*/node_modules/*' | head -1 | xargs dirname")).text.trim().split("\n").pop();
   check("the checkout is in the workspace", rootDir.startsWith("/workspaces/"), rootDir);
   const build = await guest(id, `cd ${rootDir} && node --version && npm --version && npm install --no-audit --no-fund 2>&1 | tail -2 && npm run build 2>&1 && npm test 2>&1 | tail -8 && node dist/app.js`);
@@ -299,7 +331,7 @@ try {
   const [author, head] = [lines.at(-2), lines.at(-1)];
   check("git push from the workspace succeeds", push.code === 0 && /^[0-9a-f]{40}$/.test(head ?? ""), push.text.slice(-400));
   check("the commit carries the identity's author", author === "usable@example.org", author);
-  const onForge = await fetch(`https://${forge}/api/v1/repos/${info.owner}/${info.repo}/branches/${branch}`, { headers: { Authorization: `token ${info.token}` } });
+  const onForge = await fetch(`https://${forge}/api/v1/repos/${info.owner}/${info.repo}/branches/${branch}`, { headers: { Authorization: `token ${info.token}` } }).catch((e) => ({ ok: false, status: `${e.cause?.code ?? e.cause?.message ?? e.message}` }));
   const forgeHead = onForge.ok ? (await onForge.json()).commit?.id : undefined;
   check("the push reached the forge at the same commit", forgeHead === head, `${onForge.status} ${forgeHead}`);
 

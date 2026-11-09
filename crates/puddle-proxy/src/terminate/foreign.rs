@@ -462,8 +462,8 @@ mod tests {
         note(&off, "a.test", &sink, &mut flagged, &kinds);
         let on = ForeignCredentialWarning::default();
         note(&on, "a.test", &sink, &mut flagged, &[]);
-        assert!(flagged.is_empty());
-        assert!(sink.0.lock().unwrap().is_empty());
+        assert_eq!(flagged, Vec::<String>::new());
+        assert_eq!(sink.0.lock().unwrap().len(), 0);
     }
 
     #[test]

@@ -147,6 +147,7 @@ describe("connecting", () => {
   it("keeps the other overrides of the workspace when it turns direct SSH on", async () => {
     api.overrides["w-up"] = {
       capture_logins: null,
+      warn_foreign_credentials: null,
       clipboard_read: null,
       direct_ssh: null,
       local_toggles: {

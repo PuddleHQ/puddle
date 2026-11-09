@@ -18,6 +18,10 @@ embedded-ui = ["puddle-api/embedded-ui"]
 name = "puddle-ui-fixture"
 path = "src/bin/puddle-ui-fixture.rs"
 
+[[bin]]
+name = "puddle-lab-forgejo"
+path = "src/bin/puddle-lab-forgejo.rs"
+
 [dependencies]
 axum = { workspace = true }
 base64 = { workspace = true }

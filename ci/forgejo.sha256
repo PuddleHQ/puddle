@@ -4,3 +4,4 @@
 # the version it fetches by default. The value is the SHA-256 Forgejo publishes beside the asset
 # (<asset>.sha256 on https://codeberg.org/forgejo/forgejo/releases), checked against a download.
 17.0.1 forgejo-17.0.1-linux-amd64 51a8cdf4a1252e79f4b3855d7a7891af6c6635105420768c460e2f0690385d6f
+17.0.1 forgejo-src-17.0.1.tar.gz d6b32ac77e71af0737f30613d985a0dc335b694b8b989d609a0cc88972f2fd4d

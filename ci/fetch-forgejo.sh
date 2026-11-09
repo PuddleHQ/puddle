@@ -16,7 +16,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 dest=$1
 version=${2:-}
 
-line=$(awk -v v="$version" '!/^#/ && NF >= 3 && (v == "" || $1 == v) { print; exit }' "$here/forgejo.sha256")
+line=$(awk -v v="$version" '!/^#/ && NF >= 3 && $2 !~ /^forgejo-src-/ && (v == "" || $1 == v) { print; exit }' "$here/forgejo.sha256")
 [ -n "$line" ] || { echo "fetch-forgejo: nothing pinned for ${version:-any version} in ci/forgejo.sha256" >&2; exit 1; }
 version=${line%% *}
 rest=${line#* }

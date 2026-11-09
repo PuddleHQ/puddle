@@ -55,7 +55,7 @@ function note(text) {
 async function until(what, probe, within = 60_000, every = 500) {
   const deadline = Date.now() + within;
   for (;;) {
-    const value = await Promise.resolve(probe()).catch(() => undefined);
+    const value = await Promise.resolve().then(probe).catch(() => undefined);
     if (value) return value;
     if (Date.now() > deadline) throw new Error(`timed out after ${Math.round(within / 1000)} s waiting for ${what}`);
     await sleep(every);

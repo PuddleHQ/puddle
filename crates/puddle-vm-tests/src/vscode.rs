@@ -173,7 +173,6 @@ impl VsCodeLaunch {
             "--disable-workspace-trust".into(),
             "--disable-updates".into(),
             "--skip-release-notes".into(),
-            "--log=trace".into(),
             "--disable-extension=vscode.github-authentication".into(),
         ];
         if let Some(profile) = &self.profile {

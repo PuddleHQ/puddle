@@ -6,15 +6,9 @@
 const vscode = require("vscode");
 const fs = require("node:fs");
 
-// Temporary (debugging the CI run): when and with which options each ask came.
-const trace = (line) => {
-  const file = process.env.PUDDLE_CANARY_LOG;
-  if (file && process.env.PUDDLE_CANARY_TRACE) fs.appendFileSync(`${file}.trace`, `${new Date().toISOString()} ${line}\n`);
-};
 const note = (line) => {
   const file = process.env.PUDDLE_CANARY_LOG;
   if (file) fs.appendFileSync(file, `${line}\n`);
-  trace(line);
 };
 
 exports.activate = (context) => {
@@ -34,12 +28,9 @@ exports.activate = (context) => {
       "GitHub (canary)",
       {
         onDidChangeSessions: changed.event,
-        getSessions: async (scopes, options) => {
+        getSessions: async (scopes) => {
           note(`getSessions ${(scopes ?? []).join(",")}`);
-          trace(`options ${JSON.stringify(options ?? null)}`);
-          const answer = [session(scopes ?? [])];
-          trace(`answered ${JSON.stringify(answer.map((s) => s.scopes))}`);
-          return answer;
+          return [session(scopes ?? [])];
         },
         createSession: async (scopes) => {
           note(`createSession ${scopes.join(",")}`);

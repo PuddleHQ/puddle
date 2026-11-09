@@ -130,7 +130,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         })
     }
 
-    /// Temporary (debugging the CI run): copies a folder of logs into the artifact folder.
+    /// Copies a folder of logs into the artifact folder.
     fn copy_tree(from: &Path, to: &Path) {
         let Ok(entries) = std::fs::read_dir(from) else {
             return;
@@ -374,7 +374,6 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                         "PUDDLE_CANARY_LOG".to_owned(),
                         canary_log.display().to_string(),
                     ),
-                    ("PUDDLE_CANARY_TRACE".to_owned(), "1".to_owned()),
                 ]
             } else {
                 Vec::new()
@@ -472,7 +471,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 .contains(GIT_ASK),
             "the canary came without the window's provider being asked for the git extension's scopes"
         );
-        // Temporary (debugging the CI run): the window's own logs and the guest's.
+        // The window's own logs go into the artifact: they say why a window never attached or asked.
         copy_tree(
             &scratch.path().join("vsc-user").join("logs"),
             &out.join("vsc-logs"),

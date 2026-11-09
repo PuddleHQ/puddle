@@ -107,7 +107,7 @@ mod tests {
     use super::*;
 
     /// A sandbox folder with `root-disk.json` naming `layers` (paths relative to the folder).
-    fn sandbox(layers: &[&str], extra: serde_json::Value) -> tempfile::TempDir {
+    fn sandbox(layers: &[&str], extra: &serde_json::Value) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let layers: Vec<_> = layers
             .iter()
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn a_first_grow_leaves_the_stage_and_loses_the_old_head() {
-        let dir = sandbox(&[".grow-aaa/upper.ext4"], serde_json::json!({}));
+        let dir = sandbox(&[".grow-aaa/upper.ext4"], &serde_json::json!({}));
         file(dir.path(), "upper.ext4");
         file(dir.path(), ".grow-aaa/upper.ext4");
         let removed = prune(dir.path()).unwrap();
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn a_second_grow_loses_the_first_stage_whole() {
-        let dir = sandbox(&[".grow-bbb/upper.ext4"], serde_json::json!({}));
+        let dir = sandbox(&[".grow-bbb/upper.ext4"], &serde_json::json!({}));
         file(dir.path(), ".grow-aaa/upper.ext4");
         file(dir.path(), ".grow-aaa/base.raw");
         file(dir.path(), ".grow-bbb/upper.ext4");
@@ -162,7 +162,7 @@ mod tests {
     fn a_stage_that_holds_any_named_layer_stays_whole() {
         let dir = sandbox(
             &[".grow-aaa/base.raw", ".grow-aaa/upper.ext4"],
-            serde_json::json!({}),
+            &serde_json::json!({}),
         );
         file(dir.path(), ".grow-aaa/base.raw");
         file(dir.path(), ".grow-aaa/upper.ext4");
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn an_ungrown_root_keeps_its_head_and_a_flat_head_goes_like_a_managed_one() {
-        let dir = sandbox(&["upper.ext4"], serde_json::json!({}));
+        let dir = sandbox(&["upper.ext4"], &serde_json::json!({}));
         file(dir.path(), "upper.ext4");
         file(dir.path(), "rootfs.raw");
         assert_eq!(
@@ -192,14 +192,14 @@ mod tests {
 
     #[test]
     fn other_files_and_folders_are_never_touched() {
-        let dir = sandbox(&[".grow-aaa/upper.ext4"], serde_json::json!({}));
+        let dir = sandbox(&[".grow-aaa/upper.ext4"], &serde_json::json!({}));
         file(dir.path(), ".grow-aaa/upper.ext4");
         file(dir.path(), "runtime/root-disk.json");
         file(dir.path(), "checkpoint-store/x");
         file(dir.path(), "logs/msb.log");
         file(dir.path(), ".compact-zzz/upper.ext4");
         file(dir.path(), ".grow-file");
-        assert!(prune(dir.path()).unwrap().is_empty());
+        assert_eq!(prune(dir.path()).unwrap(), Vec::<PathBuf>::new());
         assert_eq!(
             left(dir.path()),
             [
@@ -219,7 +219,7 @@ mod tests {
         // No journal.
         let dir = tempfile::tempdir().unwrap();
         file(dir.path(), "upper.ext4");
-        assert!(prune(dir.path()).unwrap().is_empty());
+        assert_eq!(prune(dir.path()).unwrap(), Vec::<PathBuf>::new());
         // Unparsable journal, no layers, a pending growth, a named layer that is missing.
         let cases: [(&[u8], &str); 4] = [
             (b"{not json", "unparsable"),
@@ -246,18 +246,18 @@ mod tests {
     fn a_pending_growth_keeps_every_file() {
         let dir = sandbox(
             &[".grow-bbb/upper.ext4"],
-            serde_json::json!({ "growth_target": 17_179_869_184_u64 }),
+            &serde_json::json!({ "growth_target": 17_179_869_184_u64 }),
         );
         file(dir.path(), "upper.ext4");
         file(dir.path(), ".grow-bbb/upper.ext4");
-        assert!(prune(dir.path()).unwrap().is_empty());
+        assert_eq!(prune(dir.path()).unwrap(), Vec::<PathBuf>::new());
         assert!(dir.path().join("upper.ext4").is_file());
     }
 
     #[cfg(unix)]
     #[test]
     fn a_symlink_is_left_alone() {
-        let dir = sandbox(&[".grow-aaa/upper.ext4"], serde_json::json!({}));
+        let dir = sandbox(&[".grow-aaa/upper.ext4"], &serde_json::json!({}));
         file(dir.path(), ".grow-aaa/upper.ext4");
         file(dir.path(), "elsewhere/data");
         std::os::unix::fs::symlink(dir.path().join("elsewhere"), dir.path().join(".grow-link"))
@@ -273,7 +273,7 @@ mod tests {
             dir.path().join(".grow-dangling"),
         )
         .unwrap();
-        assert!(prune(dir.path()).unwrap().is_empty());
+        assert_eq!(prune(dir.path()).unwrap(), Vec::<PathBuf>::new());
         assert!(dir.path().join("elsewhere/data").is_file());
     }
 
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn a_folder_that_cannot_be_emptied_is_an_error() {
         use std::os::unix::fs::PermissionsExt as _;
-        let dir = sandbox(&[".grow-aaa/upper.ext4"], serde_json::json!({}));
+        let dir = sandbox(&[".grow-aaa/upper.ext4"], &serde_json::json!({}));
         file(dir.path(), ".grow-aaa/upper.ext4");
         file(dir.path(), ".grow-old/inner/x");
         let inner = dir.path().join(".grow-old/inner");
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn the_logged_form_deletes_the_same_files_and_never_fails() {
-        let dir = sandbox(&[".grow-aaa/upper.ext4"], serde_json::json!({}));
+        let dir = sandbox(&[".grow-aaa/upper.ext4"], &serde_json::json!({}));
         file(dir.path(), "upper.ext4");
         file(dir.path(), ".grow-aaa/upper.ext4");
         prune_logged("ws", dir.path());

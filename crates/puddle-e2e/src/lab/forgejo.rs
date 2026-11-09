@@ -10,8 +10,11 @@
 //!
 //! Started from `PUDDLE_FORGEJO_BIN` (a Forgejo release binary; `ci/fetch-forgejo.sh` fetches the
 //! pinned one). Without it `start` skips, unless `PUDDLE_REQUIRE_FORGEJO=1` makes a missing
-//! Forgejo a failure (the lab workflow sets it). Forgejo publishes no Windows release, so the
-//! fixture is Unix only.
+//! Forgejo a failure (the lab workflow sets it). Forgejo publishes no Windows release (it dropped
+//! Windows support), so on Windows the same variable names Gitea's Windows release, the project
+//! Forgejo forked from (`ci/fetch-forgejo.sh <dir> "" windows`): its commands, `app.ini` and API are
+//! the ones used here. [`Forgejo::start_on`] can put the server on a fixed port (443, so a clone URL
+//! needs no port).
 //!
 //! The headless setup is the smallest that works: an `app.ini` with `INSTALL_LOCK`, SQLite, no
 //! mail, no search index, no Actions and in-memory cache and sessions; `forgejo migrate` makes the
@@ -56,7 +59,8 @@ impl Drop for Forgejo {
 
 /// The `app.ini` of a headless instance whose files live under `dir`.
 fn app_ini(dir: &Path, name: &str, http_port: u16, ssh_port: u16, secrets: &Secrets) -> String {
-    let at = |p: &str| dir.join(p).display().to_string();
+    // Forward slashes: Forgejo's ini reader takes a backslash as the start of an escape.
+    let at = |p: &str| dir.join(p).display().to_string().replace('\\', "/");
     format!(
         "APP_NAME = lab\n\
          RUN_MODE = prod\n\
@@ -137,6 +141,7 @@ fn forgejo(bin: &std::ffi::OsStr, dir: &Path, args: &[&str]) -> Result<String, S
         // Forgejo writes under HOME (its own `.ssh` for authorised keys) and must not touch the
         // runner's.
         .env("HOME", dir.join("home"))
+        .env("USERPROFILE", dir.join("home"))
         .stdin(Stdio::null())
         .output()
         .unwrap();
@@ -175,6 +180,20 @@ impl Forgejo {
     /// When Forgejo is required but missing, or does not start.
     #[must_use]
     pub fn start(name: &str) -> Option<Self> {
+        Self::start_with(name, None)
+    }
+
+    /// Like [`Self::start`], with the HTTPS server on `http_port` instead of a free one. A port
+    /// that is taken fails the start: nothing else can answer to the name.
+    ///
+    /// # Panics
+    /// As [`Self::start`], and when `http_port` is taken.
+    #[must_use]
+    pub fn start_on(name: &str, http_port: u16) -> Option<Self> {
+        Self::start_with(name, Some(http_port))
+    }
+
+    fn start_with(name: &str, fixed_port: Option<u16>) -> Option<Self> {
         let bin = std::env::var_os("PUDDLE_FORGEJO_BIN");
         configured_or_skip(
             bin.is_some(),
@@ -185,6 +204,15 @@ impl Forgejo {
         .then_some(())?;
         let bin = bin?;
         require_file(&bin, "PUDDLE_FORGEJO_BIN");
+        if let Some(http_port) = fixed_port {
+            return Some(
+                // flake-ok: the HTTP port is the caller's and fixed; the SSH port is only free-picked, and a clash
+                // fails the start with Forgejo's own "address already in use" in the panic message.
+                Self::launch(&bin, name, http_port, free_port()).unwrap_or_else(|why| {
+                    panic!("Forgejo did not start on port {http_port}\n{why}")
+                }),
+            );
+        }
         // Forgejo reads its ports from `app.ini` and takes no inherited socket, so a port cannot
         // be held across the start; a collision retries on fresh ports.
         Some(on_free_port(free_port, |http_port| {
@@ -270,6 +298,7 @@ impl Forgejo {
             .arg(root_dir)
             .arg("web")
             .env("HOME", root_dir.join("home"))
+            .env("USERPROFILE", root_dir.join("home"))
             .stdin(Stdio::null())
             .stdout(fs::File::create(&log).unwrap())
             .stderr(Stdio::null())
@@ -349,7 +378,12 @@ impl Forgejo {
     #[must_use]
     pub fn api(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
         let mut curl = Command::new("curl");
-        curl.args(["--silent", "--show-error", "--max-time", "60", "--cacert"])
+        curl.args(["--silent", "--show-error", "--max-time", "60"]);
+        // Windows' curl checks revocation through Schannel, which a private root has no answer for.
+        if cfg!(windows) {
+            curl.arg("--ssl-no-revoke");
+        }
+        curl.arg("--cacert")
             .arg(&self.root_pem)
             .arg("--resolve")
             .arg(format!("{}:{}:{LOCAL}", self.name, self.http_port))
@@ -389,6 +423,33 @@ impl Forgejo {
         );
         let (status, answer) = self.api("POST", "/user/repos", Some(&body));
         assert_eq!(status, 201, "create {repo}: {answer}");
+    }
+
+    /// Adds `content` as the file `path` on the default branch of `repo` (one commit), through the
+    /// contents API.
+    ///
+    /// # Panics
+    /// When Forgejo refuses.
+    pub fn add_file(&self, repo: &str, path: &str, content: &str) {
+        use base64::Engine as _;
+        let body = serde_json::json!({
+            "content": base64::engine::general_purpose::STANDARD.encode(content),
+            "message": format!("add {path}"),
+        })
+        .to_string();
+        let (status, answer) = self.api(
+            "POST",
+            &format!("/repos/{repo}/contents/{path}"),
+            Some(&body),
+        );
+        assert_eq!(status, 201, "add {path} to {repo}: {answer}");
+    }
+
+    /// Where the lab root's PEM file is (for a client that must trust it, such as the machine's
+    /// certificate store).
+    #[must_use]
+    pub fn root_pem(&self) -> &Path {
+        &self.root_pem
     }
 
     /// Adds `public_key` (an `authorized_keys` line) to [`OWNER`], so a client holding the private

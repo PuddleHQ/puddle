@@ -169,3 +169,35 @@ fn ssh_signs_in_with_the_key_the_account_holds_and_checks_the_servers_host_key()
         .unwrap();
     assert!(!refused.status.success(), "an unknown key signed in");
 }
+
+#[test]
+fn a_chosen_port_and_a_file_added_through_the_api_show_in_a_clone() {
+    // The port a script needs fixed (443 on the nightly's runner, so a clone URL has none). A free
+    // one stands in for it here; another process taking it in between fails the start, by design.
+    // flake-ok: the port is only picked here, and the test is one start on it, so a clash fails loudly.
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    // skip-ok: start_on fails when PUDDLE_REQUIRE_FORGEJO is set and Forgejo is missing, as start does.
+    let Some(forgejo) = Forgejo::start_on(NAME, port) else {
+        return;
+    };
+    assert_eq!(forgejo.addr().port(), port);
+    forgejo.add_repo("acme/app", true);
+    forgejo.add_file("acme/app", "src/main.js", "console.log(1);\n");
+    assert!(
+        forgejo.root_pem().is_file(),
+        "the root is on disk for a store to import"
+    );
+    let token = forgejo.token().to_owned();
+    let work = forgejo.scratch().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let with_token = url(&forgejo, Some(("x-access-token", &token)), "acme/app");
+    ok(&git(&forgejo, &work, &["clone", "-q", &with_token, "app"]));
+    assert_eq!(
+        std::fs::read_to_string(work.join("app/src/main.js")).unwrap(),
+        "console.log(1);\n"
+    );
+}

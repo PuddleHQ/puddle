@@ -21,7 +21,12 @@
 // (ui/e2e, on the fixture backend) and smoke.mjs's on a debug shell; what a person still does is
 // to look at the real window. Plain Node 24, no packages.
 //
-// Environment: USABLE_INFO (the JSON `puddle-lab-forgejo --info` wrote), PUDDLE_INSTALL_DIR (default
+// The lab forge runs as a child of this script, not of an earlier workflow step: a step's background
+// processes do not outlive it on the runner. Its root goes into the machine's store before the app starts
+// (the app reads the store then), like a company root.
+//
+// Environment: USABLE_LAB_BIN (`puddle-lab-forgejo`; PUDDLE_FORGEJO_BIN names the forge program it runs),
+// USABLE_FORGE_NAME (a name the hosts file points at this machine), PUDDLE_INSTALL_DIR (default
 // %LOCALAPPDATA%\Programs\Puddle), USABLE_OUT (a folder for screenshots and logs; default a temp one).
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -35,11 +40,11 @@ const installDir = process.env.PUDDLE_INSTALL_DIR ?? join(local, "Programs", "Pu
 const dataDir = join(local, "puddle");
 const out = process.env.USABLE_OUT ?? join(tmpdir(), "puddle-usable");
 mkdirSync(out, { recursive: true });
-if (!process.env.USABLE_INFO) throw new Error("set USABLE_INFO");
-const info = JSON.parse(readFileSync(process.env.USABLE_INFO, "utf8"));
-const forge = info.name;
-const httpsUrl = `https://${forge}/${info.owner}/${info.repo}.git`;
-const sshUrl = `git@${forge}:${info.owner}/${info.repo}.git`;
+if (!process.env.USABLE_LAB_BIN || !process.env.USABLE_FORGE_NAME) throw new Error("set USABLE_LAB_BIN and USABLE_FORGE_NAME");
+const forge = process.env.USABLE_FORGE_NAME;
+// The lab forge's account and repository (crates/puddle-e2e/src/bin/puddle-lab-forgejo.rs).
+const httpsUrl = `https://${forge}/acme/app.git`;
+const sshUrl = `git@${forge}:acme/app.git`;
 const WORKSPACE = "usable";
 
 const failures = [];
@@ -62,7 +67,45 @@ async function until(what, probe, within = 60_000, every = 500) {
   }
 }
 
+// ---- the lab forge ----------------------------------------------------------------------------------
+
+const infoFile = join(out, "forgejo.json");
+const stopFile = join(out, "forgejo.stop");
+const lab = spawn(process.env.USABLE_LAB_BIN, ["--name", forge, "--port", "443", "--info", infoFile, "--stop", stopFile], { stdio: ["ignore", "ignore", "pipe"] });
+let labLog = "";
+lab.stderr.on("data", (c) => (labLog += c));
+let labExited = false;
+lab.on("exit", () => (labExited = true));
+let info;
+let rootStored = false;
+async function startForge() {
+  info = await until(
+    "the lab forge's info file",
+    () => {
+      if (labExited) throw new Error(`the lab forge exited: ${labLog}`);
+      return JSON.parse(readFileSync(infoFile, "utf8"));
+    },
+    180_000,
+    500,
+  );
+  // LocalMachine\Root takes no dialog (the runner is an administrator).
+  const added = spawnSync("certutil", ["-addstore", "-f", "Root", info.root_pem], { encoding: "utf8" });
+  rootStored = added.status === 0;
+  note(`lab root in the machine's store: ${rootStored} ${rootStored ? "" : added.stdout}`);
+  if (!rootStored) throw new Error("the lab root could not be added to the store");
+}
+function stopForge() {
+  if (!info) return;
+  writeFileSync(stopFile, "stop");
+  if (rootStored) spawnSync("certutil", ["-delstore", "Root", "Puddle lab Forgejo root"], { stdio: "ignore" });
+}
+
 // ---- the installed app ------------------------------------------------------------------------------
+
+await startForge().catch((err) => {
+  console.error(`FAIL the lab forge did not start: ${err}`);
+  process.exit(1);
+});
 
 const connectionFile = join(dataDir, "api.json");
 const app = spawn(join(installDir, "puddle-app.exe"), [], { stdio: ["ignore", "inherit", "pipe"] });
@@ -441,6 +484,8 @@ try {
   screenshot("failure");
 } finally {
   writeFileSync(join(out, "app.log"), appLog);
+  if (info) writeFileSync(join(out, "forgejo-server.log"), forgeLog());
+  stopForge();
   if (!appExited) spawnSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore" });
 }
 

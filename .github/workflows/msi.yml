@@ -225,34 +225,20 @@ jobs:
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         run: cargo build --locked -p puddle-e2e --bin puddle-lab-forgejo
-      - name: start the lab Forgejo; trust its root like a company root
+      - name: name the forge's host; a folder for the run's output
         if: steps.whp.outputs.ok == 'true'
         shell: pwsh
         run: |
-          # The name points at this machine, as a company's internal name would through its DNS.
+          # The name points at this machine, as a company's internal name would through its DNS. The usable run
+          # starts the forge itself (a step's background processes do not outlive it) and puts its root in the
+          # machine's store before the app starts.
           Add-Content -LiteralPath "$env:SystemRoot\System32\drivers\etc\hosts" -Value "127.0.0.1 $env:FORGE_NAME"
           ipconfig /flushdns | Out-Null
           $out = Join-Path $env:RUNNER_TEMP 'usable-out'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $info = Join-Path $out 'forgejo.json'
-          $stop = Join-Path $out 'forgejo.stop'
           "USABLE_OUT=$out" >> $env:GITHUB_ENV
-          "USABLE_INFO=$info" >> $env:GITHUB_ENV
-          "FORGE_STOP=$stop" >> $env:GITHUB_ENV
-          $log = Join-Path $out 'forgejo-lab.log'
-          $p = Start-Process -FilePath 'target\debug\puddle-lab-forgejo.exe' -ArgumentList @('--name', $env:FORGE_NAME, '--port', '443', '--info', $info, '--stop', $stop) `
-            -RedirectStandardError $log -RedirectStandardOutput (Join-Path $out 'forgejo-lab.out') -PassThru -WindowStyle Hidden
-          $deadline = (Get-Date).AddSeconds(180)
-          while (-not (Test-Path -LiteralPath $info)) {
-            if ($p.HasExited) { Get-Content $log; throw "the lab Forgejo exited with $($p.ExitCode)" }
-            if ((Get-Date) -gt $deadline) { Get-Content $log; throw 'the lab Forgejo wrote no info in 180 s' }
-            Start-Sleep -Milliseconds 500
-          }
-          Get-Content $log
-          $root = (Get-Content -Raw $info | ConvertFrom-Json).root_pem
-          # LocalMachine\Root takes no dialog (the runner is an administrator); the app reads the store when it starts.
-          certutil -addstore -f Root $root
-          "NODE_EXTRA_CA_CERTS=$root" >> $env:GITHUB_ENV
+          "USABLE_FORGE_NAME=$env:FORGE_NAME" >> $env:GITHUB_ENV
+          "USABLE_LAB_BIN=$((Resolve-Path 'target\debug\puddle-lab-forgejo.exe').Path)" >> $env:GITHUB_ENV
       - name: install the MSI per user
         if: steps.whp.outputs.ok == 'true'
         shell: pwsh
@@ -271,7 +257,6 @@ jobs:
         if: ${{ always() && steps.whp.outputs.ok == 'true' }}
         shell: pwsh
         run: |
-          if ($env:FORGE_STOP) { New-Item -ItemType File -Force -Path $env:FORGE_STOP | Out-Null }
           Get-Process puddle-app, msb -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           certutil -delstore Root "Puddle lab Forgejo root" | Out-Null
           # What the app and the runtime logged, for a failed run.
@@ -290,6 +275,7 @@ jobs:
             ${{ runner.temp }}/usable-out/*.png
             ${{ runner.temp }}/usable-out/*.log
             ${{ runner.temp }}/usable-out/*.out
+            ${{ runner.temp }}/usable-out/*.json
             ${{ runner.temp }}/usable-out/runtime-logs/**
           retention-days: 14
           if-no-files-found: ignore

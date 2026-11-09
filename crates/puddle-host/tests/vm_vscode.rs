@@ -470,16 +470,17 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         );
 
         // U8: Reload Window ends a terminal, because the reload replaces the guest's server.
-        if let Err(error) = window
+        let opened = window
             .terminal("echo $$ > /tmp/u8.pid; exec sleep 100000")
-            .await
-        {
+            .await;
+        if opened.is_err() {
             window.screenshot(&out.join("u8.png")).await.unwrap();
-            panic!(
-                "no terminal opened: {error}; the window shows {}",
-                window_shows(&mut window).await
-            );
         }
+        assert!(
+            opened.is_ok(),
+            "no terminal opened: {opened:?}; the window shows {}",
+            window_shows(&mut window).await
+        );
         let pid = eventually_async(
             "the terminal ran its command in the guest",
             SHOWS,

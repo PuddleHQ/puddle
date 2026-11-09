@@ -127,16 +127,25 @@ function guest(id, script, { root = false, within = 600_000 } = {}) {
 
 const approved = [];
 
-/** Approves every pending request, as the inbox's Allow does; how many there were. */
+/** The hosts this run's workspace is meant to reach: the lab forge and the distribution's package archive. */
+const expectedHost = (host) => host === forge || /(^|\.)debian\.org$/.test(host) || /fastly/.test(host);
+
+/** Approves the expected pending requests, as the inbox's Allow does (others stay for the user); how many. */
 async function approvePending(what) {
   const pending = (await api("GET", "/api/pending")).json?.requests ?? [];
   const open = pending.filter((r) => r.state === "requested");
-  for (const row of open) {
+  for (const row of open.filter((r) => !expectedHost(r.host))) {
+    if (!approved.includes(`left: ${row.host}`)) {
+      approved.push(`left: ${row.host}`);
+      note(`not approved (not a host of this run): ${row.host} for ${row.workspace}`);
+    }
+  }
+  for (const row of open.filter((r) => expectedHost(r.host))) {
     const reply = await api("POST", `/api/pending/${row.id}/approve`, {});
     approved.push(`${row.host} for ${row.workspace}`);
     note(`approved in the inbox (${what}): ${row.host} for ${row.workspace} -> ${reply.status}`);
   }
-  return open.length;
+  return open.filter((r) => expectedHost(r.host)).length;
 }
 
 /** Approves what is pending until `done` settles. */
@@ -326,11 +335,16 @@ try {
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
   // The create's own clone asked for the forge before anyone had allowed it, so it was refused and the
   // workspace came up without the checkout (a problem notice with a retry); after the approval the user retries.
-  const checkout = `/workspaces/${id}/app/.git`;
-  const retry = await api("POST", `/api/workspaces/${id}/repositories/app/clone`, {});
-  note(`clone retry -> ${retry.status} ${retry.body.slice(0, 120)}`);
-  const cloned = await until("the checkout in the guest", async () => (await guest(id, `test -d ${checkout} && echo present`, { root: true, within: 60_000 })).text.includes("present"), 300_000, 3000).catch(() => undefined);
-  check("the private repository is cloned into the workspace with the injected credential", cloned !== undefined, `${checkout}, retry ${retry.status}`);
+  const checkout = `/workspaces/${id}/app/package.json`;
+  let cloned = false;
+  for (let attempt = 1; attempt <= 5 && !cloned; attempt++) {
+    await until("the forge request to be pending", async () => (await approvePending("clone")) > 0 || attempt > 1, 20_000, 1000).catch(() => {});
+    const retry = await api("POST", `/api/workspaces/${id}/repositories/app/clone`, {});
+    note(`clone attempt ${attempt} -> ${retry.status}`);
+    await idle(id).catch(() => {});
+    cloned = (await guest(id, `test -f ${checkout} && echo present`, { root: true, within: 60_000 })).text.includes("present");
+  }
+  check("the private repository is cloned into the workspace with the injected credential", cloned, checkout);
   const settled = await idle(id).catch(() => undefined);
   check("the workspace is idle and running after the clone", settled?.status === "running", JSON.stringify(settled));
 
@@ -383,9 +397,18 @@ try {
   const [author, head] = [lines.at(-2), lines.at(-1)];
   check("git push from the workspace succeeds", push.code === 0 && /^[0-9a-f]{40}$/.test(head ?? ""), push.text.slice(-400));
   check("the commit carries the identity's author", author === "usable@example.org", author);
-  const onForge = await fetch(`https://${forge}/api/v1/repos/${info.owner}/${info.repo}/branches/${branch}`, { headers: { Authorization: `token ${info.token}` } }).catch((e) => ({ ok: false, status: `${e.cause?.code ?? e.cause?.message ?? e.message}` }));
-  const forgeHead = onForge.ok ? (await onForge.json()).commit?.id : undefined;
-  check("the push reached the forge at the same commit", forgeHead === head, `${onForge.status} ${forgeHead}${forgeHead === head ? "" : ` forge log: ${forgeLog()}`}`);
+  const asked = spawnSync(
+    "curl.exe",
+    ["--silent", "--show-error", "--ssl-no-revoke", "--cacert", info.root_pem, "--resolve", `${forge}:${info.port}:127.0.0.1`, "-H", `Authorization: token ${info.token}`, `https://${forge}:${info.port}/api/v1/repos/${info.owner}/${info.repo}/branches/${branch}`],
+    { encoding: "utf8" },
+  );
+  let forgeHead;
+  try {
+    forgeHead = JSON.parse(asked.stdout).commit?.id;
+  } catch {
+    forgeHead = undefined;
+  }
+  check("the push reached the forge at the same commit", forgeHead === head, `${forgeHead}${forgeHead === head ? "" : ` curl: ${asked.stderr.slice(0, 200)} ${asked.stdout.slice(0, 200)} forge log: ${forgeLog()}`}`);
 
   // The token is nowhere a guest, the API or the audit log could show it. The control comes first: a
   // token planted in a file and in a process's environment must be found, or the search proves nothing.

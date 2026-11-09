@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The Forgejo releases the lab may run (crates/puddle-e2e/src/lab/forgejo.rs): `<version> <release asset> <sha256>`.
+# ci/fetch-forgejo.sh refuses a download that is not listed here or does not match. The first line is
+# the version it fetches by default. The value is the SHA-256 Forgejo publishes beside the asset
+# (<asset>.sha256 on https://codeberg.org/forgejo/forgejo/releases), checked against a download.
+17.0.1 forgejo-17.0.1-linux-amd64 51a8cdf4a1252e79f4b3855d7a7891af6c6635105420768c460e2f0690385d6f

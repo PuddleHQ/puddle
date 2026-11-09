@@ -7,6 +7,7 @@
 //! | [`Squid`] | an explicit proxy, open or with Basic authentication, with split DNS | `PUDDLE_SQUID_BIN` or `PUDDLE_SQUID_DOCKER` (Unix) |
 //! | [`Interceptor`] | a TLS-intercepting proxy with a root made for the run | `PUDDLE_MITMDUMP_BIN` |
 //! | [`NtlmProxy`] | a proxy that demands NTLM and accepts any Type 3 | `PUDDLE_MITMDUMP_BIN` |
+//! | [`Forgejo`] | a real Git forge with HTTPS and its own SSH server, one account and a token made for the run | `PUDDLE_FORGEJO_BIN` (Unix) |
 //! | [`PacServer`] | the web server that hands out a PAC file | nothing |
 //! | [`WebHost`] | a public website the test only needs to reach, over plain HTTP and TLS | nothing |
 //! | [`PrivateAccess`] | a private-access client's adapter, DNS answers and tunnel to an intranet site | nothing |
@@ -27,6 +28,8 @@
 )]
 
 mod feeds;
+#[cfg(unix)]
+mod forgejo;
 mod git_host;
 mod interceptor;
 mod pac;
@@ -45,6 +48,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 pub use feeds::{MAVEN_COORDINATES, NPM_PACKAGE, NUGET_PACKAGE, PIP_PROJECT, private_feeds};
+#[cfg(unix)]
+pub use forgejo::{Forgejo, OWNER as FORGEJO_OWNER};
 pub use git_host::{GitHost, GitHostOptions, NameProxy, Seen, Versions, clean_git, git_available};
 pub use interceptor::{Interceptor, NtlmLeg, NtlmProxy, Root};
 pub use pac::{PacServer, failover_pac};

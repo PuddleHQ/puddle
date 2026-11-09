@@ -401,6 +401,15 @@ mod tests {
     }
 
     #[test]
+    fn a_token_after_basic_that_is_not_base64_is_read_as_it_stands() {
+        let token = checksummed("ghp_", ENTROPY);
+        assert_eq!(
+            kinds(&[("authorization", &format!("Basic {token}"))], false),
+            [ForeignCredentialKind::GithubToken]
+        );
+    }
+
+    #[test]
     fn any_authorization_on_a_git_path_counts_and_off_a_git_path_it_stays_silent() {
         let value = "Bearer an-opaque-value-of-no-known-kind";
         assert_eq!(

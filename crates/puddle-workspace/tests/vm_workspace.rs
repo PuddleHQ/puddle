@@ -419,7 +419,7 @@ async fn vm_clone_through_the_route_survives_a_sandbox_rebuild() {
 }
 
 /// The VM's process id, from msb's record.
-async fn vm_pid(settings: &Settings, name: &SandboxName) -> u32 {
+async fn process_id_of(settings: &Settings, name: &SandboxName) -> u32 {
     let harness = VmEnv::new(settings.clone()).await.unwrap();
     let handle = harness
         .scope(Box::pin(SdkSandbox::get(name.as_str())))
@@ -548,7 +548,7 @@ async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
         )
         .await;
         wait_for_commits(sb.ungated(), repo, round, before + 25).await;
-        let pid = vm_pid(&settings, &name).await;
+        let pid = process_id_of(&settings, &name).await;
         kill_hard(pid);
         drop(sb);
         wait_down(rt, &name).await;
@@ -965,7 +965,7 @@ async fn kill_and_restart(
     name: &SandboxName,
     sb: GatedSandbox<puddle_compute_msb::MsbSandbox>,
 ) -> GatedSandbox<puddle_compute_msb::MsbSandbox> {
-    let pid = vm_pid(settings, name).await;
+    let pid = process_id_of(settings, name).await;
     kill_hard(pid);
     drop(sb);
     wait_down(rt, name).await;

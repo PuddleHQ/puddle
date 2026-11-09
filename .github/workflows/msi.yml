@@ -11,8 +11,8 @@
 # The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI
 # this run built, per user, starts the installed app, and drives it over the DevTools Protocol
 # (crates/puddle-app/e2e/usable.mjs): an SSH remote is refused with the explicit message, a workspace
-# is created from the lab's own Forgejo (a Forgejo built for the run from the pinned source: it ships no
-# Windows release; its account, token and certificate are made for the run, so no outside host, account or
+# is created from the lab's own Git forge (Gitea's Windows release, pinned: Forgejo ships none; its account,
+# token and certificate are made for the run, so no outside host, account or
 # secret is used and a pull request from a fork can run it), requests are approved in the inbox, the browser
 # editor opens in its own window, a real `npm run build` and `npm test` run in the workspace, and `git push`
 # reaches Forgejo with the injected credential while no token is in the guest, the audit log or the API.
@@ -38,7 +38,7 @@ on:
       - crates/puddle-app/wix/**
       - crates/puddle-app/build.rs
       - crates/puddle-app/e2e/usable.mjs
-      - ci/build-forgejo-windows.sh
+      - ci/fetch-forgejo.sh
       - ci/forgejo.sha256
       - crates/puddle-e2e/src/lab/forgejo.rs
       - crates/puddle-e2e/src/bin/puddle-lab-forgejo.rs
@@ -210,30 +210,17 @@ jobs:
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      # Forgejo has no Windows release: the pinned source is built here (Go from the runner, which fetches
-      # the toolchain go.mod asks for; a C compiler for the SQLite driver).
-      - name: Forgejo for Windows (pinned source; download, verify, build)
+      # Forgejo has no Windows release: the lab runs Gitea's (the project Forgejo forked from) through the same fixture.
+      - name: the lab's Git forge for Windows (pinned release; download, verify)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         run: |
-          if ! command -v gcc >/dev/null 2>&1; then
-            for d in /c/mingw64/bin /c/msys64/mingw64/bin /c/ProgramData/mingw64/mingw64/bin; do
-              if [ -x "$d/gcc.exe" ]; then PATH="$d:$PATH"; break; fi
-            done
-          fi
-          if ! command -v gcc >/dev/null 2>&1; then
-            choco install mingw -y --no-progress
-            PATH="/c/ProgramData/mingw64/mingw64/bin:$PATH"
-          fi
-          gcc --version | head -1
-          go version
-          # A Unix path: tar reads `D:\...` as a host name.
-          ci/build-forgejo-windows.sh "$(cygpath -u "$RUNNER_TEMP")/forgejo"
+          ci/fetch-forgejo.sh "$(cygpath -u "$RUNNER_TEMP")/forge" "" windows
           {
-            echo "PUDDLE_FORGEJO_BIN=$(cygpath -w "$RUNNER_TEMP/forgejo/forgejo.exe")"
-            echo "PUDDLE_FORGEJO_STATIC_ROOT=$(cygpath -m "$RUNNER_TEMP/forgejo/src")"
+            echo "PUDDLE_FORGEJO_BIN=$(cygpath -w "$RUNNER_TEMP/forge/forgejo.exe")"
             echo "PUDDLE_REQUIRE_FORGEJO=1"
           } >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/forge/forgejo.exe" --version
       - name: the lab Forgejo program (puddle-e2e)
         if: steps.whp.outputs.ok == 'true'
         shell: bash

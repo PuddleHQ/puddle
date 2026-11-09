@@ -7,7 +7,7 @@
 //! | [`Squid`] | an explicit proxy, open or with Basic authentication, with split DNS | `PUDDLE_SQUID_BIN` or `PUDDLE_SQUID_DOCKER` (Unix) |
 //! | [`Interceptor`] | a TLS-intercepting proxy with a root made for the run | `PUDDLE_MITMDUMP_BIN` |
 //! | [`NtlmProxy`] | a proxy that demands NTLM and accepts any Type 3 | `PUDDLE_MITMDUMP_BIN` |
-//! | [`Forgejo`] | a real Git forge with HTTPS and its own SSH server, one account and a token made for the run | `PUDDLE_FORGEJO_BIN` (a Windows build from source: `ci/build-forgejo-windows.sh`) |
+//! | [`Forgejo`] | a real Git forge with HTTPS and its own SSH server, one account and a token made for the run | `PUDDLE_FORGEJO_BIN` (Forgejo on Unix; Gitea's Windows release on Windows) |
 //! | [`PacServer`] | the web server that hands out a PAC file | nothing |
 //! | [`WebHost`] | a public website the test only needs to reach, over plain HTTP and TLS | nothing |
 //! | [`PrivateAccess`] | a private-access client's adapter, DNS answers and tunnel to an intranet site | nothing |

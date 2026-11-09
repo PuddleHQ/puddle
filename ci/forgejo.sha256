@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The Forgejo releases the lab may run (crates/puddle-e2e/src/lab/forgejo.rs): `<version> <release asset> <sha256>`.
+# Forgejo ships no Windows build (it dropped Windows support), so the Windows tier runs Gitea, the project Forgejo
+# forked from, from Gitea's own release (https://dl.gitea.com/gitea/<version>/<asset>, checksum from <asset>.sha256);
+# the fixture's commands and the app.ini it writes are the same for both.
 # ci/fetch-forgejo.sh refuses a download that is not listed here or does not match. The first line is
 # the version it fetches by default. The value is the SHA-256 Forgejo publishes beside the asset
 # (<asset>.sha256 on https://codeberg.org/forgejo/forgejo/releases), checked against a download.
 17.0.1 forgejo-17.0.1-linux-amd64 51a8cdf4a1252e79f4b3855d7a7891af6c6635105420768c460e2f0690385d6f
-17.0.1 forgejo-src-17.0.1.tar.gz d6b32ac77e71af0737f30613d985a0dc335b694b8b989d609a0cc88972f2fd4d
+28.3.0 gitea-28.3.0-windows-amd64.exe 4003c068ef0a7d8145ef8c85b8aab052bf1bbf9226f2d0058572f013e096ee06

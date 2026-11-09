@@ -10,11 +10,11 @@
 //!
 //! Started from `PUDDLE_FORGEJO_BIN` (a Forgejo release binary; `ci/fetch-forgejo.sh` fetches the
 //! pinned one). Without it `start` skips, unless `PUDDLE_REQUIRE_FORGEJO=1` makes a missing
-//! Forgejo a failure (the lab workflow sets it). Forgejo publishes no Windows release: on Windows
-//! the binary is built from the pinned source tarball (`ci/build-forgejo-windows.sh`), and
-//! [`Forgejo::start_on`] can put it on a fixed port (443, so a clone URL needs no port). That
-//! build embeds no templates or assets, so `PUDDLE_FORGEJO_STATIC_ROOT` names the source tree they
-//! are read from (`STATIC_ROOT_PATH`).
+//! Forgejo a failure (the lab workflow sets it). Forgejo publishes no Windows release (it dropped
+//! Windows support), so on Windows the same variable names Gitea's Windows release, the project
+//! Forgejo forked from (`ci/fetch-forgejo.sh <dir> "" windows`): its commands, `app.ini` and API are
+//! the ones used here. [`Forgejo::start_on`] can put the server on a fixed port (443, so a clone URL
+//! needs no port).
 //!
 //! The headless setup is the smallest that works: an `app.ini` with `INSTALL_LOCK`, SQLite, no
 //! mail, no search index, no Actions and in-memory cache and sessions; `forgejo migrate` makes the
@@ -79,7 +79,6 @@ fn app_ini(dir: &Path, name: &str, http_port: u16, ssh_port: u16, secrets: &Secr
          CERT_FILE = {cert}\n\
          KEY_FILE = {key}\n\
          APP_DATA_PATH = {data}\n\
-         {static_root}\
          START_SSH_SERVER = true\n\
          SSH_LISTEN_HOST = {LOCAL}\n\
          SSH_PORT = {ssh_port}\n\
@@ -118,9 +117,6 @@ fn app_ini(dir: &Path, name: &str, http_port: u16, ssh_port: u16, secrets: &Secr
         cert = at("cert.pem"),
         key = at("key.pem"),
         data = at("data"),
-        static_root = std::env::var("PUDDLE_FORGEJO_STATIC_ROOT")
-            .map(|p| format!("STATIC_ROOT_PATH = {}\n", p.replace('\\', "/")))
-            .unwrap_or_default(),
         internal = secrets.internal,
         secret = secrets.secret,
         jwt = secrets.jwt,

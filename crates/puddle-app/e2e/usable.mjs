@@ -26,7 +26,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const local = process.env.LOCALAPPDATA;
@@ -222,6 +222,47 @@ function screenshot(name) {
   );
 }
 
+/** The tail of the lab forge's own log, for a step that cannot reach it. */
+function forgeLog() {
+  try {
+    return readFileSync(join(dirname(info.root_pem), "forgejo.log"), "utf8").split("\n").slice(-15).join(" | ").slice(-900);
+  } catch (err) {
+    return `no forge log: ${err.message}`;
+  }
+}
+
+const answerScript = join(out, "answer-dialog.ps1");
+writeFileSync(
+  answerScript,
+  `Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$by = [System.Windows.Automation.PropertyCondition]
+$dialog = $root.FindFirst('Children', (New-Object $by ([System.Windows.Automation.AutomationElement]::NameProperty), 'Security Warning'))
+if (-not $dialog) { 'none'; exit 0 }
+$yes = $dialog.FindFirst('Descendants', (New-Object $by ([System.Windows.Automation.AutomationElement]::NameProperty), 'Yes'))
+if (-not $yes) { 'no Yes button'; exit 0 }
+$yes.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+'answered Yes'
+`,
+);
+/** Windows asks once to trust the app's own localhost certificate (the editor's origin): the user answers Yes. */
+function answerCertificateDialog() {
+  const ps = spawnSync("powershell", ["-NoProfile", "-File", answerScript], { encoding: "utf8" });
+  return (ps.stdout ?? "").trim();
+}
+
+/** Waits until the workspace has nothing in hand (a clone, a start): other calls refuse while it is busy. */
+const idle = (id) =>
+  until(
+    `workspace ${id} to be idle`,
+    async () => {
+      const w = (await api("GET", "/api/workspaces")).json?.workspaces?.find((x) => x.id === id);
+      return w && !w.busy ? w : false;
+    },
+    300_000,
+    2000,
+  );
+
 // ---- the run ---------------------------------------------------------------------------------------
 
 try {
@@ -290,11 +331,22 @@ try {
   note(`clone retry -> ${retry.status} ${retry.body.slice(0, 120)}`);
   const cloned = await until("the checkout in the guest", async () => (await guest(id, `test -d ${checkout} && echo present`, { root: true, within: 60_000 })).text.includes("present"), 300_000, 3000).catch(() => undefined);
   check("the private repository is cloned into the workspace with the injected credential", cloned !== undefined, `${checkout}, retry ${retry.status}`);
+  const settled = await idle(id).catch(() => undefined);
+  check("the workspace is idle and running after the clone", settled?.status === "running", JSON.stringify(settled));
 
   // 3. The browser editor opens in its own window.
   const attach = await api("POST", `/api/workspaces/${id}/attach`, { mode: "browser" });
   check("the browser editor is opened", attach.status === 200 && attach.json?.opened === true, `${attach.status} ${attach.body.slice(0, 200)}`);
-  const title = await until("the editor window, titled with the workspace", () => appWindows().find((t) => t.startsWith(`${WORKSPACE} - `)), 120_000, 1000).catch(() => undefined);
+  const title = await until(
+    "the editor window, titled with the workspace",
+    () => {
+      const answered = answerCertificateDialog();
+      if (answered !== "none") note(`the certificate dialog: ${answered}`);
+      return appWindows().find((t) => t.startsWith(`${WORKSPACE} - `));
+    },
+    120_000,
+    1500,
+  ).catch(() => undefined);
   check("the editor opens in its own window", title !== undefined, `windows: ${appWindows().join(" | ")}`);
   const server = await until(
     "the editor server in the guest",
@@ -333,7 +385,7 @@ try {
   check("the commit carries the identity's author", author === "usable@example.org", author);
   const onForge = await fetch(`https://${forge}/api/v1/repos/${info.owner}/${info.repo}/branches/${branch}`, { headers: { Authorization: `token ${info.token}` } }).catch((e) => ({ ok: false, status: `${e.cause?.code ?? e.cause?.message ?? e.message}` }));
   const forgeHead = onForge.ok ? (await onForge.json()).commit?.id : undefined;
-  check("the push reached the forge at the same commit", forgeHead === head, `${onForge.status} ${forgeHead}`);
+  check("the push reached the forge at the same commit", forgeHead === head, `${onForge.status} ${forgeHead}${forgeHead === head ? "" : ` forge log: ${forgeLog()}`}`);
 
   // The token is nowhere a guest, the API or the audit log could show it. The control comes first: a
   // token planted in a file and in a process's environment must be found, or the search proves nothing.
@@ -353,7 +405,9 @@ try {
   check("the app's log holds no token", !appLog.includes(info.token));
   check("requests were approved in the inbox", approved.length > 0, approved.join("; "));
 
-  // Delete, as the user does at the end.
+  // Stop and delete, as the user does at the end.
+  await api("POST", `/api/workspaces/${id}/stop`);
+  await until("the workspace to be stopped", async () => (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id)?.status === "stopped", 180_000, 2000).catch(() => {});
   const seen = await api("GET", `/api/workspaces/${id}/delete-check`);
   const gone = await api("DELETE", `/api/workspaces/${id}`, { confirm: true, fingerprint: seen.json?.fingerprint });
   check("the workspace is deleted", [200, 202, 204].includes(gone.status), `${gone.status} ${gone.body.slice(0, 200)}`);

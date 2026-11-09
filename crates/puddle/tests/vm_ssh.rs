@@ -12,6 +12,9 @@
 //! - `vm_soak_ssh_idle_15_min`: one session idle for 15 minutes still answers. Named `vm_soak_`
 //!   so the per-pull-request jobs skip it (it would add 15 minutes to a partition); the nightly
 //!   run and a manual dispatch of the VM workflows run it.
+//! - `vm_soak_host_pause_5_min`: the host half of a sleep, without suspending any machine: the VM's
+//!   process is frozen for five minutes (`SIGSTOP`, `NtSuspendProcess`) and the workspace must
+//!   come back as it was. Named `vm_soak_` for the same reason as above.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -31,7 +34,7 @@ use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_ipc::IpcRoot;
 use puddle_ssh::SshEndpoint;
 use puddle_types::{ImageRef, SandboxName};
-use puddle_vm_tests::Settings;
+use puddle_vm_tests::{FrozenProcess, Gaps, Settings, VmEnv, parse_ticks};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::Command;
@@ -41,6 +44,8 @@ use tokio::time::{sleep, timeout};
 const IMAGE: &str = "node:22-bookworm";
 const CLIENT_WAIT: Duration = Duration::from_secs(120);
 const IDLE: Duration = Duration::from_mins(15);
+/// How long the VM stays frozen: the length of the hands-on sleep check.
+const PAUSE: Duration = Duration::from_mins(5);
 
 /// The OpenSSH client tools: Windows OpenSSH by full path on Windows, `PATH` elsewhere.
 fn tool(name: &str) -> PathBuf {
@@ -426,5 +431,166 @@ async fn vm_soak_ssh_idle_15_min() {
         .await;
     assert_eq!(again.stdout, b"third\n", "{}", text(&again));
     eprintln!("idle 15 min: answered after {:?}", started.elapsed());
+    rig.finish().await;
+}
+
+/// Seconds since the epoch as the host's clock has them, with the fraction.
+fn host_epoch() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// Whole seconds since the epoch on the host's clock.
+fn host_secs() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap()
+}
+
+/// The guest's `date +%s.%N`, with the fraction.
+async fn guest_epoch(rig: &Rig) -> f64 {
+    let (code, out) = rig.guest("date +%s.%N").await;
+    assert_eq!(code, 0, "{out}");
+    out.trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("a time: {out:?}"))
+}
+
+/// The guest's monotonic clock: seconds of uptime.
+async fn guest_uptime(rig: &Rig) -> f64 {
+    let (code, out) = rig.guest("cut -d' ' -f1 /proc/uptime").await;
+    assert_eq!(code, 0, "{out}");
+    out.trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("an uptime: {out:?}"))
+}
+
+async fn guest_ticks(rig: &Rig) -> Vec<i64> {
+    parse_ticks(&rig.guest("cat /root/hb").await.1)
+}
+
+/// The VM's process is frozen for [`PAUSE`] while a session is open and a heartbeat runs in the
+/// guest, then thawed. This is the part of a host sleep that a test can do on a machine nobody
+/// minds: no CPU for the VMM, a long gap in the host's own clock. It is not a suspend, and it
+/// does not step the host clock, which would change the clock of whoever runs the test. The bars are the ones of a real
+/// sleep check: one heartbeat gap about as long as the pause, the workspace still
+/// running, the same boot, the guest's clock right within a minute, and the open session still
+/// carrying data.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_soak_host_pause_5_min() {
+    let rig = rig("pause").await;
+    let env = VmEnv::new(Settings::from_lookup(|var| std::env::var(var).ok()).unwrap())
+        .await
+        .unwrap();
+    let (code, started) = rig
+        .guest(
+            "rm -f /root/hb; setsid sh -c 'while :; do date +%s >> /root/hb; sleep 1; done' \
+             </dev/null >/dev/null 2>&1 & cat /proc/sys/kernel/random/boot_id",
+        )
+        .await;
+    assert_eq!(code, 0, "{started}");
+    let boot_id = started.trim().to_owned();
+    puddle_test_kit::eventually_async(
+        "the guest heartbeat has ticked three times",
+        Duration::from_secs(60),
+        || async { guest_ticks(&rig).await.len() >= 3 },
+    )
+    .await;
+
+    // The open session: it says it is up before the VM is frozen, and answers after the thaw.
+    let mut ssh = Command::new(tool("ssh"))
+        .current_dir(rig.dir.path())
+        .args(["-F", &rig.cfg(), "box", "echo up; read l; echo got:$l"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut stdin = ssh.stdin.take().unwrap();
+    let mut stdout = BufReader::new(ssh.stdout.take().unwrap());
+    let mut line = String::new();
+    timeout(CLIENT_WAIT, stdout.read_line(&mut line))
+        .await
+        .expect("the session says it is up")
+        .unwrap();
+    assert_eq!(line, "up\n");
+
+    let measured_from = std::time::Instant::now();
+    let uptime_before = guest_uptime(&rig).await;
+    let pid = env.process_id_of(rig.name.as_str()).await.unwrap();
+    let host_before = host_secs();
+    let mut frozen = FrozenProcess::freeze(pid).unwrap();
+    // flake-ok: the pause is the thing under test: a fixed stretch of host time with the VM stopped
+    sleep(PAUSE).await;
+    frozen.thaw().unwrap();
+    let host_after = host_secs();
+    let paused = host_after - host_before;
+
+    puddle_test_kit::eventually_async(
+        "the guest heartbeat ticks again after the thaw",
+        Duration::from_secs(60),
+        || async {
+            guest_ticks(&rig)
+                .await
+                .last()
+                .is_some_and(|tick| *tick >= host_after)
+        },
+    )
+    .await;
+    let gaps = Gaps::of(&guest_ticks(&rig).await);
+    eprintln!("heartbeat after {paused} s frozen: {gaps:?}");
+    assert!(
+        gaps.match_pause(paused),
+        "one gap about as long as the pause, saw {gaps:?} for {paused} s"
+    );
+
+    assert_eq!(
+        rig.sandbox.status().await.unwrap(),
+        puddle_types::WorkspaceStatus::Running
+    );
+    let (code, boot_after) = rig.guest("cat /proc/sys/kernel/random/boot_id").await;
+    assert_eq!(code, 0, "{boot_after}");
+    assert_eq!(boot_after.trim(), boot_id, "the guest rebooted");
+
+    // The guest's wall clock: right within a minute of the thaw, as the check's 60 s wait.
+    let first_drift = guest_epoch(&rig).await - host_epoch();
+    let settled = std::time::Instant::now();
+    puddle_test_kit::eventually_async(
+        "the guest clock is within 2 s of the host's",
+        Duration::from_secs(60),
+        || async {
+            let drift = guest_epoch(&rig).await - host_epoch();
+            ((-2.0..=2.0).contains(&drift)).then_some(drift)
+        },
+    )
+    .await;
+    let uptime_after = guest_uptime(&rig).await;
+    // Guest uptime against the time that passed here: 0 means the guest's monotonic clock went on through
+    // the freeze, minus the pause means it stood still the way it does in a real sleep.
+    let monotonic_lag = (uptime_after - uptime_before) - measured_from.elapsed().as_secs_f64();
+    eprintln!(
+        "REPORT frozen {paused} s; first guest clock drift {first_drift:.2} s, within 2 s after {:.1} s; \
+         guest uptime minus host time since the freeze {monotonic_lag:.1} s",
+        settled.elapsed().as_secs_f64()
+    );
+
+    stdin.write_all(b"after-pause\n").await.unwrap();
+    stdin.flush().await.unwrap();
+    line.clear();
+    timeout(CLIENT_WAIT, stdout.read_line(&mut line))
+        .await
+        .expect("the open session answers")
+        .unwrap();
+    assert_eq!(line, "got:after-pause\n");
+    drop(stdin);
+    let status = timeout(CLIENT_WAIT, ssh.wait()).await.unwrap().unwrap();
+    assert_eq!(status.code(), Some(0));
     rig.finish().await;
 }

@@ -210,6 +210,8 @@ impl Forgejo {
         require_file(&bin, "PUDDLE_FORGEJO_BIN");
         if let Some(http_port) = fixed_port {
             return Some(
+                // flake-ok: the HTTP port is the caller's and fixed; the SSH port is only free-picked, and a clash
+                // fails the start with Forgejo's own "address already in use" in the panic message.
                 Self::launch(&bin, name, http_port, free_port()).unwrap_or_else(|why| {
                     panic!("Forgejo did not start on port {http_port}\n{why}")
                 }),

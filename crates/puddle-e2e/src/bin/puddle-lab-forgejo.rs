@@ -123,6 +123,7 @@ fn main() -> ExitCode {
     eprintln!("puddle-lab-forgejo: ready on {}:{}", args.name, args.port);
     // A script that dies without writing the stop file must not leave this running for good.
     let until = Instant::now() + Duration::from_hours(3);
+    // flake-ok: a program waiting for the stop file its script writes, not a test waiting for a condition.
     while !args.stop.exists() && Instant::now() < until {
         std::thread::sleep(Duration::from_millis(500));
     }

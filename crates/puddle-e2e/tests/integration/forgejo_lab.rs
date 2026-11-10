@@ -36,6 +36,8 @@ fn git(forgejo: &Forgejo, cwd: &Path, args: &[&str]) -> Output {
         // switch only when the backend is named, and the system config that names it is off here.
         command.args(["-c", "http.sslBackend=schannel"]);
         command.args(["-c", "http.schannelCheckRevoke=false"]);
+        // Without this Schannel ignores the CA file and trusts only the Windows store.
+        command.args(["-c", "http.schannelUseSSLCAInfo=true"]);
     }
     command
         .args([

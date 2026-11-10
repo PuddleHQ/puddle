@@ -124,6 +124,9 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
   checkout on mbx's report counts that checkout's files too and fails the ratchet. Only those gates need
   a plain target (about 27 GB per checkout, set `CARGO_TARGET_DIR` for it and delete it when done); every
   other gate, and so `git push`, runs through mbx.
+  If an mbx run already filled `<target>/llvm-cov-target`, its outputs are read-only hard links and plain
+  rustc stops, saying the output file is not writable: the coverage gates unlink those files first
+  (`coverage_unlock` in `scripts/check.sh`; the cache keeps its copy) and cargo rebuilds them.
 
 ## 3. Workflow for agents and humans
 

@@ -1480,20 +1480,26 @@ mod tests {
         assert!(!is_maintenance_name("m---a"));
     }
 
+    async fn hold_a_loan(
+        w: &Workspaces,
+        id: &WorkspaceId,
+        sandbox: &SandboxName,
+    ) -> std::convert::Infallible {
+        w.borrow(id, sandbox).unwrap();
+        let _loan = Loan {
+            registry: &w.registry,
+            id,
+        };
+        match std::future::pending::<std::convert::Infallible>().await {}
+    }
+
     #[tokio::test]
     async fn a_dropped_request_gives_the_maintenance_loan_back() {
         let w = Workspaces::new(WorkspaceConfig::default());
         let id = WorkspaceId::new("acme").unwrap();
         let sandbox = maintenance_name(&id).unwrap();
         // What `delete` and `maintenance` do around a check that outlives the request.
-        let held = async {
-            w.borrow(&id, &sandbox).unwrap();
-            let _loan = Loan {
-                registry: &w.registry,
-                id: &id,
-            };
-            std::future::pending::<()>().await;
-        };
+        let held = hold_a_loan(&w, &id, &sandbox);
         let timed_out = tokio::time::timeout(Duration::from_millis(20), held).await;
         assert!(timed_out.is_err(), "the check never ends");
         assert!(

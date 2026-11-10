@@ -447,6 +447,25 @@ enum Warmth {
     Failed,
 }
 
+/// Waits up to `within` for the download in `warmth` to end. A download that failed is no reason
+/// to stop: the check asks for the image itself and says why it can't have it, at once.
+async fn wait_until_downloaded(
+    warmth: &mut watch::Receiver<Warmth>,
+    within: Duration,
+) -> Result<(), WorkspaceError> {
+    // Only a copy of the state: the borrow `wait_for` returns must not live across awaits.
+    let settled = tokio::time::timeout(within, warmth.wait_for(|w| *w != Warmth::Warming))
+        .await
+        .map(|r| r.map(|w| w.clone()));
+    match settled {
+        Ok(Ok(Warmth::Ready | Warmth::Failed)) => Ok(()),
+        _ => Err(WorkspaceError::Unavailable(
+            "Puddle is still downloading the image it checks a workspace with before deleting it; try again in a minute"
+                .to_owned(),
+        )),
+    }
+}
+
 /// Clears the busy mark a delete put on a workspace unless it is disarmed, so a request that is
 /// dropped before its work starts (the API's request limit, a closed connection) does not leave
 /// the workspace "deleting" for good.
@@ -1185,23 +1204,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// an answer that says what is going on; the download goes on without it.
     async fn maintenance_ready(&self) -> Result<(), WorkspaceError> {
         self.warm_maintenance_image().await;
-        let mut warmth = self.inner.maintenance_image.subscribe();
-        // Only a copy of the state: the borrow `wait_for` returns must not live across awaits.
-        let settled = tokio::time::timeout(
+        wait_until_downloaded(
+            &mut self.inner.maintenance_image.subscribe(),
             MAINTENANCE_WAIT,
-            warmth.wait_for(|w| !matches!(w, Warmth::Warming)),
         )
         .await
-        .map(|r| r.map(|w| w.clone()));
-        match settled {
-            // A failed download is no reason to stop here: the check asks for the image itself and
-            // says why it can't have it, at once.
-            Ok(Ok(Warmth::Ready | Warmth::Failed)) => Ok(()),
-            _ => Err(WorkspaceError::Unavailable(
-                "Puddle is still downloading the image it checks a workspace with before deleting it; try again in a minute"
-                    .to_owned(),
-            )),
-        }
     }
 
     /// Creates a sandbox on workspace `record`'s volume and boots it through the hook.
@@ -4048,6 +4055,38 @@ mod no_link_words {
         assert_eq!(
             early,
             "the editor has no password to sign in with yet: not started"
+        );
+    }
+}
+
+#[cfg(test)]
+mod download_wait_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_download_that_does_not_end_in_time_asks_the_user_to_try_again() {
+        let (_state, mut warmth) = watch::channel(Warmth::Warming);
+        let err = wait_until_downloaded(&mut warmth, Duration::from_millis(20))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, WorkspaceError::Unavailable(m) if m.contains("still downloading")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_download_that_ends_while_waiting_lets_the_delete_go_on() {
+        let (state, mut warmth) = watch::channel(Warmth::Warming);
+        let waiting = wait_until_downloaded(&mut warmth, Duration::from_secs(20));
+        state.send_replace(Warmth::Ready);
+        assert!(waiting.await.is_ok());
+        let (_state, mut failed) = watch::channel(Warmth::Failed);
+        assert!(
+            wait_until_downloaded(&mut failed, Duration::from_secs(20))
+                .await
+                .is_ok(),
+            "a failed download is the check's to report"
         );
     }
 }

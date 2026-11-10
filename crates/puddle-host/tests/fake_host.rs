@@ -4908,16 +4908,24 @@ async fn stopping_a_workspace_downloads_the_image_the_delete_check_boots() {
     create(&api, &mut events, "acme").await;
     // The create pulled the workspace's own image, which here is the same one.
     let before = pulls();
+    // The download fails here: the check and the delete go on, and say why themselves.
+    rig.runtime.inject(
+        Op::PullImage,
+        Fault::once(puddle_compute::ComputeError::ImagePull {
+            image: CHECK_IMAGE.into(),
+            reason: "offline".into(),
+        })
+        .only_for(CHECK_IMAGE),
+    );
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
-    for _ in 0..100 {
-        if pulls() > before {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    eventually(
+        "the check image is requested",
+        Duration::from_secs(5),
+        || pulls() > before,
+    )
+    .await;
     assert_eq!(pulls(), before + 1, "{:?}", rig.runtime.calls());
-    // The check and the delete go on whether or not the download worked.
     let check = api.get("/api/workspaces/acme/delete-check").await;
     assert_eq!(check.status, 200, "{}", check.body);
     host.shutdown().await;

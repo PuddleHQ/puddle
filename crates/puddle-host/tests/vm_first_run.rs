@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use puddle_compute::Runtime;
+use puddle_test_kit::eventually_async;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use support::{Api, Events, ended};
@@ -198,25 +199,29 @@ async fn vm_a_stopped_workspace_is_deleted_with_its_machine_and_disk() {
     // limit, never a 408, and leaves the workspace as it was.
     let confirm = json!({"confirm": true}).to_string();
     let path = format!("/api/workspaces/{name}");
-    let waited = std::time::Instant::now();
-    let gone = loop {
-        let started = std::time::Instant::now();
-        let reply = api.delete(&path, Some(&confirm)).await;
-        eprintln!(
-            "delete answered {} after {:?}",
-            reply.status,
-            started.elapsed()
-        );
-        assert_ne!(reply.status, 408, "the request limit ended the delete");
-        if reply.status != 503 {
-            break reply;
-        }
-        assert!(reply.body.contains("downloading"), "{}", reply.body);
-        let workspace = api.get(&path).await.json();
-        assert_eq!(workspace["busy"], Value::Null, "{workspace}");
-        assert!(waited.elapsed() < BATCH, "the image never arrived");
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    };
+    let (api_ref, path_ref, confirm_ref) = (&api, &path, &confirm);
+    let gone = eventually_async(
+        "the delete is accepted once the check image is downloaded",
+        Duration::from_secs(95),
+        || async move {
+            let started = std::time::Instant::now();
+            let reply = api_ref.delete(path_ref, Some(confirm_ref)).await;
+            eprintln!(
+                "delete answered {} after {:?}",
+                reply.status,
+                started.elapsed()
+            );
+            assert_ne!(reply.status, 408, "the request limit ended the delete");
+            if reply.status != 503 {
+                return Some(reply);
+            }
+            assert!(reply.body.contains("downloading"), "{}", reply.body);
+            let workspace = api_ref.get(path_ref).await.json();
+            assert_eq!(workspace["busy"], Value::Null, "{workspace}");
+            None
+        },
+    )
+    .await;
     assert_eq!(gone.status, 202, "{}", gone.body);
     let end = events.until(ended(&name), BATCH).await;
     assert_eq!(end["step"], "done", "{end}");

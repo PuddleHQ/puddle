@@ -3,7 +3,6 @@
 //! public API.
 #![expect(
     clippy::unwrap_used,
-    clippy::panic,
     reason = "test helpers outside #[test] functions fail the test by panicking"
 )]
 
@@ -62,7 +61,7 @@ fn a_fresh_store_does_not_allow_github_so_a_clone_waits_for_the_user() {
 fn peek_records_nothing() {
     let store = store();
     assert_eq!(store.peek(&ws("aaaaaaaa"), &host("github.com")), None);
-    assert!(store.inbox().unwrap().is_empty());
+    assert_eq!(store.inbox().unwrap().len(), 0);
 }
 
 #[test]
@@ -117,7 +116,7 @@ fn a_host_that_is_allowed_already_gets_no_rule_and_a_second_create_adds_none() {
     let again = store
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("gitea.example")])
         .unwrap();
-    assert!(again.is_empty());
+    assert_eq!(again.len(), 0);
 }
 
 #[test]
@@ -131,7 +130,7 @@ fn a_block_rule_is_never_overridden_by_the_create() {
             &[host("api.github.com"), host("gitlab.com")],
         )
         .unwrap();
-    assert!(made.is_empty());
+    assert_eq!(made.len(), 0);
     assert!(matches!(
         store.peek(&ws("aaaaaaaa"), &host("api.github.com")),
         Some(Decision::Deny { .. })
@@ -152,5 +151,5 @@ fn the_grant_closes_a_pending_request_it_decides() {
     store
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("github.com")])
         .unwrap();
-    assert!(store.inbox().unwrap().is_empty());
+    assert_eq!(store.inbox().unwrap().len(), 0);
 }

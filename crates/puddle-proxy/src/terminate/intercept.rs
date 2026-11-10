@@ -316,6 +316,18 @@ mod tests {
     }
 
     #[test]
+    fn learning_from_rejections_is_on_until_turned_off_and_can_be_turned_on_again() {
+        let learned = Arc::new(PassThrough::new());
+        let on = Interception::new(Arc::clone(&learned));
+        assert!(on.is_learning());
+        let off = on.learn_from_rejections(false);
+        assert!(!off.is_learning());
+        let again = off.learn_from_rejections(true);
+        assert!(again.is_learning());
+        assert!(Arc::ptr_eq(again.learned(), &learned), "same list");
+    }
+
+    #[test]
     fn a_learned_host_is_remembered_until_its_time_is_up() {
         let list = PassThrough::with_limits(Duration::from_secs(3600), 8);
         assert!(list.learn(&host("pinned.example")));

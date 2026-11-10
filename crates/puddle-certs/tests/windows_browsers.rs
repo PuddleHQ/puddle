@@ -216,6 +216,10 @@ fn a_certificate_from_dotnet_dev_certs_is_reused_without_a_dialog_and_the_browse
     trust_dialog::assert_dialog_names(&dialog, &thumbprint);
     assert!(WindowsTrust.is_trusted(&der).unwrap());
 
+    for cert in WindowsTrust.existing().unwrap() {
+        eprintln!("existing: key {:?}, trusted {}", cert.key, cert.trusted);
+    }
+
     // Puddle finds it and reuses it. A dialog of Puddle's own would hang `ensure`, so it must
     // return within a short time with nobody answering.
     let data = tempfile::tempdir().unwrap();

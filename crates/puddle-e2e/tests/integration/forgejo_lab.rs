@@ -31,9 +31,9 @@ fn git(forgejo: &Forgejo, cwd: &Path, args: &[&str]) -> Output {
         .env("GIT_SSL_CAINFO", root)
         .args(["-c", &format!("http.curloptResolve={resolve}")]);
     if cfg!(windows) {
-        // Schannel, Git for Windows' default, wants a revocation answer the lab root cannot give;
-        // OpenSSL verifies against GIT_SSL_CAINFO as given.
-        command.args(["-c", "http.sslBackend=openssl"]);
+        // The runner's Git has only Schannel, which wants a revocation answer the lab root cannot
+        // give; it still verifies the chain against GIT_SSL_CAINFO.
+        command.args(["-c", "http.schannelCheckRevoke=false"]);
     }
     command
         .args([

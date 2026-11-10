@@ -572,3 +572,73 @@ async fn vm_bootstrap_root_lives_in_the_sandbox_folder_and_goes_with_it() {
         "removing the sandbox removes its folder with the root's parent"
     );
 }
+
+/// A grow of a stopped root leaves the old image behind (msb copies the root into a `.grow-*`
+/// folder and never deletes the original); the next start deletes what the journal no longer
+/// names, and the grown disk, its files and the live grow on top of it all still work.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_a_stopped_grow_leaves_no_orphaned_root_image_after_the_next_start() {
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let harness = VmEnv::new(settings.clone()).await.unwrap();
+    let s = spec(&settings, "orphan");
+    let n = s.name.clone();
+    let dir = settings.home().join("sandboxes").join(n.as_str());
+    let sb = rt.create(s).await.expect("create");
+    let wrote = sh(&sb, "echo orphan-seed > /root/seed; sync").await;
+    assert_eq!(wrote.status.code, 0, "{}", wrote.stderr_text());
+    sb.stop().await.unwrap();
+    let disks = |dir: &Path| -> Vec<String> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == "upper.ext4" || name.starts_with(".grow-") {
+                found.push(name);
+            }
+        }
+        found.sort();
+        found
+    };
+    let mut at_most = Vec::new();
+    for mib in [8192_u32, 16384] {
+        harness
+            .scope(Box::pin(async {
+                SdkSandbox::get(n.as_str())
+                    .await?
+                    .modify()
+                    .root_disk_size(mib)
+                    .next_start()
+                    .apply()
+                    .await
+            }))
+            .await
+            .expect("grow the stopped root");
+        let grown = disks(&dir);
+        let sb = rt.start(&n).await.expect("start after the grow");
+        let size = sh(&sb, "df -k / | tail -1 | tr -s ' ' | cut -d' ' -f2").await;
+        let seed = sh(&sb, "cat /root/seed").await;
+        sb.stop().await.unwrap();
+        at_most.push((
+            mib,
+            grown,
+            disks(&dir),
+            size.stdout_text().into_owned(),
+            seed.stdout_text().into_owned(),
+        ));
+    }
+    cleanup(&rt, &[&n]).await;
+    for (mib, grown, kept, size, seed) in at_most {
+        assert!(
+            grown.len() >= 2,
+            "msb left no old image after the grow to {mib} MiB: {grown:?}"
+        );
+        assert_eq!(kept.len(), 1, "after the start at {mib} MiB: {kept:?}");
+        assert!(kept[0].starts_with(".grow-"), "{kept:?}");
+        let kib: u64 = size.trim().parse().unwrap();
+        assert!(
+            kib > u64::from(mib) * 1024 * 9 / 10,
+            "df {kib} KiB at {mib} MiB"
+        );
+        assert_eq!(seed, "orphan-seed\n");
+    }
+}

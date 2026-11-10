@@ -566,6 +566,15 @@ jobs:
         run: |
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
           node crates/puddle-app/e2e/origins.mjs
+      # What the terminal screen's key rules assume of WebView2, with
+      # real input (SendInput): Ctrl+Shift+V and Shift+Insert fire `paste`, Ctrl+R and F5 with the keydown
+      # cancelled do not reload, and Ctrl+Q is pinned as it behaves today (it does not quit). The WebKitGTK half runs in ci.yml.
+      - name: terminal paste, key-cancel and Ctrl+Q test (WebView2)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: pwsh
+        run: |
+          $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          node crates/puddle-app/e2e/terminal-keys.mjs
       # The host needs the bundled runtime beside the program (the fork's msb.exe and libkrunfw.dll,
       # checksums pinned); no machine boots, so WHP is not needed.
       - name: desktop shell smoke test (WebView2, Puddle host)

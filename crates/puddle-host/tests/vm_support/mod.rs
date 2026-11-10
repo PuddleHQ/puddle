@@ -25,9 +25,12 @@ use puddle_host::{
 use puddle_proxy::{BoxFuture, Resolver, SystemResolver};
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::MemoryStore;
+use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
+use puddle_test_kit::eventually;
 use puddle_types::{DomainName, WorkspaceId};
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig, ProxyRules};
 use puddle_vm_tests::{RuntimePair, Settings, VmEnv, test_owner};
+use serde_json::json;
 
 /// The harness has set the environment and checked the runtime pair already.
 #[derive(Default)]
@@ -517,4 +520,144 @@ pub(crate) fn ssh_bridge(endpoint: Option<&str>) -> std::process::ExitCode {
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// [`create_workspace`] with `extra` fields (an image, a memory size) in the request.
+pub(crate) async fn create_workspace_from(
+    vm: &VmHost,
+    api: &crate::support::Api,
+    tag: &str,
+    allowed: &[&str],
+    extra: serde_json::Value,
+) -> WorkspaceId {
+    let name = format!("{}-{tag}", vm.settings.prefix.as_str());
+    let workspace = WorkspaceId::new(&name).unwrap();
+    for site in allowed {
+        vm.host
+            .store()
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(workspace.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+    let mut events = api.events().await;
+    let reply = api
+        .post("/api/workspaces", &{
+            let mut body = extra;
+            body["name"] = json!(name);
+            body.to_string()
+        })
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let name: &'static str = Box::leak(name.into_boxed_str());
+    let end = events
+        .until(crate::support::ended(name), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    workspace
+}
+
+/// Shell prelude of every command the Docker test runs as the session user: a millisecond clock
+/// and a Docker config of its own, so no proxy variable from the CLI's config reaches a container.
+/// `dsudo` is `sudo docker` where the image has `sudo`, and plain `docker` (the `docker` group,
+/// which the boot grants the session user) where it has none, as `docker:dind` has not.
+pub(crate) const DOCKER_PRELUDE: &str = r#"now() { echo $(( $(date +%s%N) / 1000000 )); }
+export DOCKER_CONFIG=/tmp/docker-without-proxy
+mkdir -p "$DOCKER_CONFIG"
+dsudo() { if [ -x /usr/bin/sudo ] || [ -x /usr/local/bin/sudo ]; then sudo env DOCKER_CONFIG="$DOCKER_CONFIG" docker "$@"; else docker "$@"; fi; }
+"#;
+
+/// Builds the probe image `FROM scratch`: busybox and the loader it needs, copied from the guest's
+/// own files, and nothing else. No registry is involved.
+pub(crate) const PROBE_IMAGE: &str = r"d=/tmp/probe-image
+mkdir -p $d/rootfs/bin $d/rootfs/lib
+cp /bin/busybox $d/rootfs/bin/busybox
+for l in /lib/ld-musl-*.so.1; do cp -L $l $d/rootfs/lib/; done
+printf 'FROM scratch\nCOPY rootfs/ /\n' > $d/Dockerfile
+dsudo build -q -t probe:local $d";
+
+/// Runs `script` as `agent` (the session user) with [`DOCKER_PRELUDE`] first.
+pub(crate) async fn as_agent(vm: &VmHost, workspace: &WorkspaceId, script: &str) -> (i32, String) {
+    guest_as(
+        &vm.runtime,
+        workspace,
+        "agent",
+        &format!("{DOCKER_PRELUDE}{script}"),
+        Duration::from_secs(180),
+    )
+    .await
+}
+
+/// The value after `key=` on the first line of `text` that has it.
+pub(crate) fn field<'a>(text: &'a str, key: &str) -> &'a str {
+    text.lines()
+        .find_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix(key)))
+        .unwrap_or_else(|| panic!("no {key} in: {text}"))
+}
+
+/// How many requests the fake website saw with `Host: host`.
+pub(crate) fn reached_by_host(web: &WebHost, host: &str) -> usize {
+    web.seen()
+        .iter()
+        .filter(|r| r.headers_named("host") == [host])
+        .count()
+}
+
+/// The number of allowed connection records to `host:port` in the audit.
+pub(crate) fn allowed_connections(vm: &VmHost, host: &str, port: u16) -> usize {
+    vm.host
+        .store()
+        .audit_lines(0, 100_000)
+        .unwrap()
+        .iter()
+        .filter(|(_, line)| {
+            let record: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
+            record["type"] == "connection"
+                && record["host"] == host
+                && record["port"] == port
+                && record["decision"] == "allow"
+        })
+        .count()
+}
+
+/// Waits until the audit holds more allowed connection records to `host:port` than `before`.
+///
+/// The proxy writes a connection's record when the connection ends, which is after the guest
+/// tool that opened it has exited and the test has read its output, so reading the audit
+/// right away races the proxy's write.
+pub(crate) async fn wait_for_connection_record(vm: &VmHost, host: &str, port: u16, before: usize) {
+    eventually(
+        &format!("a connection record for {host}:{port}"),
+        Duration::from_secs(20),
+        || {
+            if allowed_connections(vm, host, port) > before {
+                return Ok(());
+            }
+            let lines: Vec<String> = vm
+                .host
+                .store()
+                .audit_lines(0, 100_000)
+                .unwrap()
+                .into_iter()
+                .map(|(_, line)| line)
+                .filter(|line| line.contains(host))
+                .collect();
+            Err(format!("audit lines naming it: {lines:#?}"))
+        },
+    )
+    .await;
+}
+
+/// A container's fetch of `url` on `network`: what proxy variables it sees, then wget's output, the
+/// exit code and the milliseconds it took.
+pub(crate) fn container_fetch(docker: &str, network: &str, url: &str) -> String {
+    format!(
+        "s=$(now); {docker} run --rm --pull=never --network {network} probe:local /bin/busybox \
+         sh -c '/bin/busybox env | /bin/busybox grep -i proxy; /bin/busybox wget -T 10 -q -O - {url}' 2>&1; \
+         echo \"exit=$? ms=$(( $(now) - s ))\""
+    )
 }

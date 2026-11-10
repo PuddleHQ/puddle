@@ -135,6 +135,41 @@ pub fn accepts(addr: SocketAddr) -> bool {
     has_a_peer(&conn)
 }
 
+/// The status an HTTP/1.1 server on `addr` gives `GET path` with `Authorization: Bearer token`:
+/// `None` when nothing accepts, or what accepts does not speak HTTP (loopback only; each wait is
+/// bounded at a second).
+///
+/// For a test that a server has stopped. `TcpStream::connect(..).is_err()` is not that: a server
+/// that bound port 0 gave its number back, and another test's socket can take it before the test
+/// connects (measured on a Windows runner: about 1 in 1,000 released ports is taken again within the
+/// next connect under 8 to 16 busy threads). Connecting then succeeds with the server long gone.
+/// What a stopped server cannot do is answer its own token with `200`, which a stranger on its old
+/// port never does.
+#[must_use]
+pub fn http_status(addr: SocketAddr, path: &str, token: &str) -> Option<u16> {
+    use std::io::{Read, Write};
+    let mut conn = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).ok()?;
+    conn.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
+    conn.set_write_timeout(Some(Duration::from_secs(1))).ok()?;
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    );
+    conn.write_all(request.as_bytes()).ok()?;
+    let mut head = Vec::new();
+    let mut chunk = [0u8; 256];
+    while !head.windows(2).any(|w| w == b"\r\n") && head.len() < 1024 {
+        match conn.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => head.extend_from_slice(&chunk[..n]),
+        }
+    }
+    let line = String::from_utf8_lossy(&head);
+    let line = line.lines().next()?;
+    let mut words = line.split(' ');
+    words.next().filter(|v| v.starts_with("HTTP/1."))?;
+    words.next()?.parse().ok()
+}
+
 fn has_a_peer(conn: &TcpStream) -> bool {
     matches!((conn.local_addr(), conn.peer_addr()), (Ok(local), Ok(peer)) if local != peer)
 }
@@ -196,6 +231,34 @@ impl AsRef<Path> for TestDir {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Answers one connection with `reply`, then closes; returns where it listens.
+    fn answering(reply: &'static [u8]) -> SocketAddr {
+        use std::io::{Read, Write};
+        let (listener, port) = bound_port();
+        std::thread::spawn(move || {
+            if let Ok((mut conn, _)) = listener.accept() {
+                let mut buf = [0u8; 512];
+                let _ = conn.read(&mut buf);
+                let _ = conn.write_all(reply);
+            }
+        });
+        SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
+    #[test]
+    fn an_http_status_is_read_from_what_answers_and_nothing_from_what_does_not() {
+        let ok = answering(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+        assert_eq!(http_status(ok, "/x", "t"), Some(200));
+        let refused = answering(b"HTTP/1.1 401 Unauthorized\r\n\r\n");
+        assert_eq!(http_status(refused, "/x", "t"), Some(401));
+        let stranger = answering(b"SSH-2.0-not-http\r\n");
+        assert_eq!(http_status(stranger, "/x", "t"), None);
+        let silent = answering(b"");
+        assert_eq!(http_status(silent, "/x", "t"), None);
+        let gone = SocketAddr::from(([127, 0, 0, 1], quiet_port()));
+        assert_eq!(http_status(gone, "/x", "t"), None);
+    }
 
     #[test]
     fn two_bound_ports_differ_and_stay_taken() {

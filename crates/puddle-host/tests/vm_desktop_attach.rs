@@ -115,11 +115,11 @@ mod attach {
             bin
         } else {
             let bin = dir.join("code");
+            let text = format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", seen.display());
             #[cfg(unix)]
-            puddle_test_kit::write_executable(
-                &bin,
-                &format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", seen.display()),
-            );
+            puddle_test_kit::write_executable(&bin, &text);
+            #[cfg(not(unix))]
+            std::fs::write(&bin, text).unwrap();
             bin
         }
     }

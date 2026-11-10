@@ -4,7 +4,7 @@
 
 use puddle_api::DisplayName;
 use puddle_api::{Found, FoundList, RemoteNote, RepoUrl, Repository, Unsaved, WorkspaceRecord};
-use puddle_types::{CheckoutDir, WorkspaceId, WorkspaceStatus};
+use puddle_types::{CheckoutDir, EntryId, WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};
 
 use crate::common::{Api, start};
@@ -14,6 +14,26 @@ const API: &str = "https://github.com/acme/api.git";
 
 fn id(name: &str) -> WorkspaceId {
     WorkspaceId::new(name).unwrap()
+}
+
+/// The entry id the seeded entry of `dir` has: derived from the directory so a test can name it,
+/// and never equal to it.
+fn entry(dir: &str) -> EntryId {
+    let mut bytes = [0_u8; 5];
+    for (slot, b) in bytes.iter_mut().zip(dir.bytes().cycle()) {
+        *slot = b;
+    }
+    EntryId::from_random(bytes)
+}
+
+/// The list of repositories of `workspace` without the generated entry ids, for comparing what
+/// was added by a call.
+fn without_entries(list: &Value) -> Value {
+    let mut list = list.clone();
+    for r in list.as_array_mut().unwrap() {
+        r.as_object_mut().unwrap().remove("entry");
+    }
+    list
 }
 
 fn found(directory: &str, remote: Option<&str>, note: Option<RemoteNote>) -> Found {
@@ -34,6 +54,7 @@ fn seed(api: &Api, name: &str, status: WorkspaceStatus, dirs: &[(&str, &str)], g
     let entries = dirs
         .iter()
         .map(|(dir, url)| Repository {
+            entry: entry(dir),
             url: RepoUrl::parse(url).unwrap(),
             directory: CheckoutDir::new(dir).unwrap(),
         })
@@ -105,7 +126,10 @@ async fn the_checkouts_of_a_running_workspace_show_entries_reasons_and_missing_o
             .unwrap()
             .clone()
     };
-    assert_eq!(by("api")["entry"], json!({"url": API, "directory": "api"}));
+    assert_eq!(
+        by("api")["entry"],
+        json!({"entry": entry("api"), "url": API, "directory": "api"})
+    );
     assert_eq!(
         by("api")["manage"],
         json!({"offered": false, "reason": "this checkout is already on the list"})
@@ -189,11 +213,16 @@ async fn a_clone_is_accepted_busy_cloning_and_lists_the_entry_with_progress() {
     let ws = reply.json();
     assert_eq!(ws["busy"], "cloning");
     assert_eq!(
-        ws["repositories"],
+        without_entries(&ws["repositories"]),
         json!([
             {"url": API, "directory": "api"},
             {"url": "https://github.com/acme/web", "directory": "site"}
         ])
+    );
+    assert_eq!(ws["repositories"][0]["entry"], json!(entry("api")));
+    assert_ne!(
+        ws["repositories"][1]["entry"],
+        ws["repositories"][0]["entry"]
     );
     assert_eq!(
         ws["identities"].as_array().unwrap().len(),
@@ -352,7 +381,7 @@ async fn adding_a_repository_the_workspace_cannot_take_is_a_404_or_a_409_with_it
     let ws = api.get("/api/workspaces/web").await.json();
     assert_eq!(
         ws["repositories"],
-        json!([{"url": API, "directory": "api"}])
+        json!([{"entry": entry("api"), "url": API, "directory": "api"}])
     );
     api.running.shutdown().await;
 }
@@ -437,7 +466,7 @@ async fn adding_a_repository_that_makes_no_sense_is_a_422_that_never_echoes_a_cr
     let ws = api.get("/api/workspaces/web").await.json();
     assert_eq!(
         ws["repositories"],
-        json!([{"url": API, "directory": "api"}])
+        json!([{"entry": entry("api"), "url": API, "directory": "api"}])
     );
     api.running.shutdown().await;
 }
@@ -547,8 +576,8 @@ async fn a_checkout_on_the_disk_is_managed_with_its_git_settings_and_changes_not
     let ws = reply.json();
     assert_eq!(ws["busy"], Value::Null);
     assert_eq!(
-        ws["repositories"][1],
-        json!({"url": "https://github.com/acme/raw", "directory": "raw"})
+        without_entries(&json!([ws["repositories"][1]])),
+        json!([{"url": "https://github.com/acme/raw", "directory": "raw"}])
     );
     // The table row exists with the toggles asked for, before any clone would have run.
     let git = api.get("/api/workspaces/web/git").await.json();
@@ -583,13 +612,17 @@ async fn cloning_an_entry_again_needs_the_directory_to_be_gone() {
         &[("api", API), ("lost", "https://github.com/acme/lost")],
         vec![found("api", Some(API), None)],
     );
-    let path = |dir: &str| format!("/api/workspaces/web/repositories/{dir}/clone");
+    let path = |entry: &str| format!("/api/workspaces/web/repositories/{entry}/clone");
+    let by = |dir: &str| path(entry(dir).as_str());
     assert_eq!(post(&api, &path("unknown"), &json!({})).await.status, 404);
     assert_eq!(post(&api, &path("a%2Fb"), &json!({})).await.status, 404);
-    let there = post(&api, &path("api"), &json!({})).await;
+    // A directory is not an id, even one that is listed.
+    assert_eq!(post(&api, &path("api"), &json!({})).await.status, 404);
+    assert_eq!(post(&api, &path("lost"), &json!({})).await.status, 404);
+    let there = post(&api, &by("api"), &json!({})).await;
     assert_eq!(there.status, 409, "{}", there.body);
     assert!(there.body.contains("already exists"), "{}", there.body);
-    let again = post(&api, &path("lost"), &json!({})).await;
+    let again = post(&api, &by("lost"), &json!({})).await;
     assert_eq!(again.status, 202, "{}", again.body);
     assert_eq!(again.json()["busy"], "cloning");
     api.workspaces.idle().await;
@@ -611,6 +644,20 @@ async fn removing_an_entry_forgets_it_and_nothing_else() {
     let gone = api
         .send("DELETE", "/api/workspaces/web/repositories/api", None)
         .await;
+    assert_eq!(
+        gone.status, 404,
+        "a directory names no entry: {}",
+        gone.body
+    );
+    let kept = api.get("/api/workspaces/web").await.json();
+    assert_eq!(kept["repositories"].as_array().unwrap().len(), 1);
+    let gone = api
+        .send(
+            "DELETE",
+            &format!("/api/workspaces/web/repositories/{}", entry("api")),
+            None,
+        )
+        .await;
     assert_eq!(gone.status, 200, "{}", gone.body);
     assert_eq!(gone.json()["repositories"], json!([]));
     stream
@@ -621,10 +668,12 @@ async fn removing_an_entry_forgets_it_and_nothing_else() {
     assert_eq!(checkouts["checkouts"][0]["directory"], "api");
     assert_eq!(checkouts["checkouts"][0]["entry"], Value::Null);
     assert_eq!(api.get("/api/workspaces/web/git").await.json(), git_before);
+    let listed = format!("/api/workspaces/web/repositories/{}", entry("api"));
+    let elsewhere = format!("/api/workspaces/nope/repositories/{}", entry("api"));
     for (path, status) in [
-        ("/api/workspaces/web/repositories/api", 404),
+        (listed.as_str(), 404),
         ("/api/workspaces/web/repositories/a%2Fb", 404),
-        ("/api/workspaces/nope/repositories/api", 404),
+        (elsewhere.as_str(), 404),
     ] {
         assert_eq!(
             api.send("DELETE", path, None).await.status,
@@ -641,9 +690,13 @@ async fn removing_an_entry_forgets_it_and_nothing_else() {
         vec![],
     );
     assert_eq!(
-        api.send("DELETE", "/api/workspaces/off/repositories/api", None)
-            .await
-            .status,
+        api.send(
+            "DELETE",
+            &format!("/api/workspaces/off/repositories/{}", entry("api")),
+            None
+        )
+        .await
+        .status,
         200
     );
     api.running.shutdown().await;
@@ -660,8 +713,14 @@ async fn removing_an_entry_is_refused_while_the_workspace_is_being_created() {
     )
     .await;
     assert_eq!(created.status, 202, "{}", created.body);
+    let listed = api.get("/api/workspaces/new").await.json();
+    let entry = listed["repositories"][0]["entry"].as_str().unwrap();
     let reply = api
-        .send("DELETE", "/api/workspaces/new/repositories/api", None)
+        .send(
+            "DELETE",
+            &format!("/api/workspaces/new/repositories/{entry}"),
+            None,
+        )
         .await;
     assert_eq!(reply.status, 409, "{}", reply.body);
     api.workspaces.release();
@@ -676,8 +735,8 @@ async fn the_contract_lists_the_new_routes_and_the_cloning_operation() {
     for part in [
         "/api/workspaces/{id}/checkouts",
         "/api/workspaces/{id}/repositories",
-        "/api/workspaces/{id}/repositories/{directory}/clone",
-        "/api/workspaces/{id}/repositories/{directory}",
+        "/api/workspaces/{id}/repositories/{entry}/clone",
+        "/api/workspaces/{id}/repositories/{entry}",
         "workspace_repositories_changed",
         "\"cloning\"",
     ] {
@@ -697,17 +756,25 @@ async fn adding_and_removing_an_entry_are_in_the_activity_log() {
     )
     .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
+    let site = reply.json()["repositories"][1]["entry"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     // Refused calls write nothing.
+    for path in [
+        "/api/workspaces/web/repositories/a0000000".to_owned(),
+        "/api/workspaces/web/repositories/site".to_owned(),
+    ] {
+        assert_eq!(api.send("DELETE", &path, None).await.status, 404, "{path}");
+    }
     assert_eq!(
-        api.send("DELETE", "/api/workspaces/web/repositories/nope", None)
-            .await
-            .status,
-        404
-    );
-    assert_eq!(
-        api.send("DELETE", "/api/workspaces/web/repositories/site", None)
-            .await
-            .status,
+        api.send(
+            "DELETE",
+            &format!("/api/workspaces/web/repositories/{site}"),
+            None
+        )
+        .await
+        .status,
         200
     );
     let page = api

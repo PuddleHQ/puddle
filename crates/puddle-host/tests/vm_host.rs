@@ -831,6 +831,15 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
         )
         .await;
     assert_eq!(added.status, 202, "{}", added.body);
+    let spoon_entry = added.json()["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["directory"] == "Spoon-Knife")
+        .unwrap()["entry"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let end = events
         .until(ended(name_static), Duration::from_mins(10))
         .await;
@@ -841,7 +850,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
     // Taking the entry off the list changes the list only.
     let removed = api
         .delete(
-            &format!("/api/workspaces/{name}/repositories/Spoon-Knife"),
+            &format!("/api/workspaces/{name}/repositories/{spoon_entry}"),
             None,
         )
         .await;

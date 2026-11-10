@@ -263,6 +263,11 @@ pub fn check_addition(entries: &[Repository], new: &Repository) -> Result<(), Wo
             "the list is full: a workspace holds at most {MAX_REPOSITORIES} repositories"
         )));
     }
+    if entries.iter().any(|e| e.entry == new.entry) {
+        return Err(WorkspaceError::Conflict(
+            "the new entry's id is already on the list; try again".into(),
+        ));
+    }
     if let Some(taken) = entries.iter().find(|e| e.directory == new.directory) {
         return Err(WorkspaceError::Conflict(format!(
             "{} is already on the list, as {}; give this one another directory",
@@ -284,6 +289,7 @@ mod tests {
 
     fn entry(url: &str, dir: &str) -> Repository {
         Repository {
+            entry: crate::new_entry_id(|_| false).unwrap(),
             url: RepoUrl::parse(url).unwrap(),
             directory: CheckoutDir::new(dir).unwrap(),
         }

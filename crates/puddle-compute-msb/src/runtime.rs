@@ -542,6 +542,7 @@ impl Runtime for MsbRuntime {
         })
     }
 
+    // Msb answers these calls only in a real VM: the VM tests cover this fn.
     fn grow_root_disk(
         &self,
         name: &SandboxName,

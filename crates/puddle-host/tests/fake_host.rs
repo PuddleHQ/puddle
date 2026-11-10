@@ -10206,6 +10206,26 @@ async fn a_restart_for_a_grow_that_fails_leaves_the_workspace_as_a_stop_or_a_sta
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_workspace_with_no_sandbox_yet_keeps_the_grown_size_for_its_first_start() {
+    let (rig, host) = host_with_listed_workspace_whose_volume_is_gone().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    rig.runtime
+        .remove(&SandboxName::new("acme").unwrap())
+        .await
+        .unwrap();
+    let end = grow_root_disk(&api, &mut events, 20_480).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "succeeded");
+    assert_eq!(
+        detail,
+        "root disk grown from 16384 MiB to 20480 MiB, for the first start"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_did_not() {
     let rig = Rig::new();
     let host = rig.start().await;

@@ -350,7 +350,12 @@ pub(crate) fn log_tail(dir: &Path, max: usize) -> String {
 fn spec_mounts(spec: &SandboxSpec) -> Vec<(String, Option<u32>)> {
     spec.volumes
         .iter()
-        .map(|m| (m.volume.to_string(), m.ensure_size.map(DiskSize::as_mib)))
+        .map(|m| {
+            (
+                m.volume.to_string(),
+                m.ensure_size.map(puddle_compute::DiskSize::as_mib),
+            )
+        })
         .collect()
 }
 
@@ -544,26 +549,13 @@ impl Runtime for MsbRuntime {
     ) -> impl Future<Output = Result<RootDiskGrowth, ComputeError>> + Send {
         Box::pin(async move {
             let record = self.existing(name).await?;
-            let mib = size.as_mib();
-            let plan = self
-                .sdk(record.modify().root_disk_size(mib).dry_run())
-                .await
-                .map_err(|e| map("plan the root disk growth of", name.as_str(), e))?;
-            match root_disk::grow_plan(&plan) {
-                root_disk::GrowPlan::Refused(reason) => Err(ComputeError::InvalidSpec { reason }),
-                root_disk::GrowPlan::Live => {
-                    self.sdk(record.modify().root_disk_size(mib).apply())
-                        .await
-                        .map_err(|e| map("grow the root disk of", name.as_str(), e))?;
-                    Ok(RootDiskGrowth::Live)
-                }
-                root_disk::GrowPlan::Deferred => {
-                    self.sdk(record.modify().root_disk_size(mib).next_start().apply())
-                        .await
-                        .map_err(|e| map("grow the root disk of", name.as_str(), e))?;
-                    Ok(RootDiskGrowth::NextStart)
-                }
-            }
+            root_disk::grow(&MsbGrow {
+                runtime: self,
+                record: &record,
+                name: name.as_str(),
+                mib: size.as_mib(),
+            })
+            .await
         })
     }
 
@@ -758,6 +750,47 @@ fn dir_names(
         out.insert(name.to_string_lossy().into_owned());
     }
     Ok(out)
+}
+
+/// The msb calls of a root-disk grow on one sandbox record.
+struct MsbGrow<'a> {
+    runtime: &'a MsbRuntime,
+    record: &'a SandboxHandle,
+    name: &'a str,
+    mib: u32,
+}
+
+impl root_disk::GrowSdk for MsbGrow<'_> {
+    async fn plan(&self) -> Result<root_disk::GrowPlan, ComputeError> {
+        let plan = self
+            .runtime
+            .sdk(self.record.modify().root_disk_size(self.mib).dry_run())
+            .await
+            .map_err(|e| map("plan the root disk growth of", self.name, e))?;
+        Ok(root_disk::grow_plan(&plan))
+    }
+
+    async fn apply_live(&self) -> Result<(), ComputeError> {
+        self.runtime
+            .sdk(self.record.modify().root_disk_size(self.mib).apply())
+            .await
+            .map_err(|e| map("grow the root disk of", self.name, e))?;
+        Ok(())
+    }
+
+    async fn apply_next_start(&self) -> Result<(), ComputeError> {
+        self.runtime
+            .sdk(
+                self.record
+                    .modify()
+                    .root_disk_size(self.mib)
+                    .next_start()
+                    .apply(),
+            )
+            .await
+            .map_err(|e| map("grow the root disk of", self.name, e))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

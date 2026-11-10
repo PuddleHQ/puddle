@@ -1687,6 +1687,7 @@ mod tests {
             Operation::ResettingRootDisk.to_string(),
             "resetting_root_disk"
         );
+        assert_eq!(Operation::GrowingRootDisk.to_string(), "growing_root_disk");
     }
 
     #[test]

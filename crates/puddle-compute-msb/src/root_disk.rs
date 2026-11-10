@@ -5,9 +5,10 @@
 //! `runtime/` is only a guard the guest cannot use), so the files it names are the host's to read.
 
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use puddle_compute::{DiskSize, RootDiskUse};
+use puddle_compute::{ComputeError, DiskSize, RootDiskGrowth, RootDiskUse};
 use serde::Deserialize;
 
 /// The journal's file name in the sandbox's folder (msb's name for it).
@@ -76,6 +77,30 @@ pub(crate) fn grow_plan(plan: &microsandbox::sandbox::SandboxModificationPlan) -
     }
 }
 
+/// The three msb calls of a root-disk grow, so the choice between them is tested without a real
+/// msb database.
+pub(crate) trait GrowSdk {
+    /// msb's dry run of the change.
+    fn plan(&self) -> impl Future<Output = Result<GrowPlan, ComputeError>> + Send;
+    /// The change on a running guest.
+    fn apply_live(&self) -> impl Future<Output = Result<(), ComputeError>> + Send;
+    /// The change at the next start.
+    fn apply_next_start(&self) -> impl Future<Output = Result<(), ComputeError>> + Send;
+}
+
+/// Grows through `sdk`: a refused plan is an invalid spec, a live plan applies now, any other at
+/// the next start.
+pub(crate) async fn grow(sdk: &impl GrowSdk) -> Result<RootDiskGrowth, ComputeError> {
+    match sdk.plan().await? {
+        GrowPlan::Refused(reason) => Err(ComputeError::InvalidSpec { reason }),
+        GrowPlan::Live => sdk.apply_live().await.map(|()| RootDiskGrowth::Live),
+        GrowPlan::Deferred => sdk
+            .apply_next_start()
+            .await
+            .map(|()| RootDiskGrowth::NextStart),
+    }
+}
+
 const MIB: u64 = 1024 * 1024;
 
 /// qcow2 files start with this magic, then the version and the backing-file fields; the virtual
@@ -116,6 +141,76 @@ fn disk_files(sandbox_dir: &Path) -> Option<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sdk that answers the plan it is given and records what was applied.
+    struct FakeSdk {
+        plan: Result<GrowPlan, ()>,
+        fail_apply: bool,
+        applied: std::sync::Mutex<Vec<&'static str>>,
+    }
+
+    impl FakeSdk {
+        fn new(plan: Result<GrowPlan, ()>, fail_apply: bool) -> Self {
+            FakeSdk {
+                plan,
+                fail_apply,
+                applied: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn apply(&self, how: &'static str) -> Result<(), ComputeError> {
+            self.applied.lock().unwrap().push(how);
+            if self.fail_apply {
+                Err(ComputeError::InvalidSpec {
+                    reason: "apply failed".into(),
+                })
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl GrowSdk for FakeSdk {
+        async fn plan(&self) -> Result<GrowPlan, ComputeError> {
+            match &self.plan {
+                Ok(GrowPlan::Refused(r)) => Ok(GrowPlan::Refused(r.clone())),
+                Ok(GrowPlan::Live) => Ok(GrowPlan::Live),
+                Ok(GrowPlan::Deferred) => Ok(GrowPlan::Deferred),
+                Err(()) => Err(ComputeError::InvalidSpec {
+                    reason: "plan failed".into(),
+                }),
+            }
+        }
+        async fn apply_live(&self) -> Result<(), ComputeError> {
+            self.apply("live")
+        }
+        async fn apply_next_start(&self) -> Result<(), ComputeError> {
+            self.apply("next start")
+        }
+    }
+
+    #[tokio::test]
+    async fn a_live_plan_applies_now_and_a_deferred_one_at_the_next_start() {
+        let live = FakeSdk::new(Ok(GrowPlan::Live), false);
+        assert_eq!(grow(&live).await.unwrap(), RootDiskGrowth::Live);
+        assert_eq!(*live.applied.lock().unwrap(), ["live"]);
+        let deferred = FakeSdk::new(Ok(GrowPlan::Deferred), false);
+        assert_eq!(grow(&deferred).await.unwrap(), RootDiskGrowth::NextStart);
+        assert_eq!(*deferred.applied.lock().unwrap(), ["next start"]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_plan_applies_nothing_and_a_failed_step_is_the_error() {
+        let refused = FakeSdk::new(Ok(GrowPlan::Refused("not above".into())), false);
+        let err = grow(&refused).await.unwrap_err();
+        assert!(matches!(err, ComputeError::InvalidSpec { ref reason } if reason == "not above"));
+        assert!(refused.applied.lock().unwrap().is_empty());
+        let no_plan = FakeSdk::new(Err(()), false);
+        assert!(grow(&no_plan).await.is_err());
+        assert!(no_plan.applied.lock().unwrap().is_empty());
+        for plan in [GrowPlan::Live, GrowPlan::Deferred] {
+            assert!(grow(&FakeSdk::new(Ok(plan), true)).await.is_err());
+        }
+    }
 
     /// A sandboxes folder with two sandboxes, `mine` (its `runtime/` folder made) and `other`
     /// (with a root disk).

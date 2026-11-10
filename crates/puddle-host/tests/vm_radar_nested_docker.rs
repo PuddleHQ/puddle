@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The nested-Docker workloads against the real registries, as the session user, through the whole
 //! stack in a real microVM: Docker CE installed from `download.docker.com` in the devcontainers .NET
-//! image (which has `sudo`, so every Docker command is `sudo docker`), a BuildKit build with a
+//! image (which has `sudo`, so every Docker command is `sudo docker`), a `BuildKit` build with a
 //! real `apk add`, a published port reached from this computer through a forward, two containers on
 //! a user bridge, Compose with two services, Testcontainers (Python) with its Ryuk reaper, and .NET
 //! Aspire (`aspire run` of the starter app, its Redis container started by Aspire in the nested
@@ -10,13 +10,12 @@
 //! Radar rules: a step fails the test when it fails or when its log shows a retry. A host that no rule
 //! allows is not silently approved: the proxy refuses it, the step fails and the message names the
 //! open inbox rows, so the list of hosts below is what these workloads really need. Live third
-//! parties: the Ubuntu and Docker apt repositories, Docker Hub, Alpine's mirror, PyPI, NuGet and
+//! parties: the Ubuntu and Docker apt repositories, Docker Hub, Alpine's mirror, `PyPI`, `NuGet` and
 //! Microsoft's download hosts. The test is named `vm_radar_*`: the per-pull-request jobs skip it and
 //! the weekly `full-test` workflow runs it. The half that needs no registry is
 //! `vm_nested_docker.rs`.
 #![expect(
     clippy::unwrap_used,
-    clippy::print_stderr,
     reason = "VM test: a failed step fails the test; what each step said goes to the log"
 )]
 
@@ -87,6 +86,10 @@ fn logged(name: &str, body: &str) -> String {
     )
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one script per step, read top to bottom"
+)]
 fn steps() -> Vec<Step> {
     let docker_install = r#"
 . /etc/os-release
@@ -115,18 +118,18 @@ sudo docker build --progress=plain -t built:real $d
 sudo docker run --rm built:real | grep -q built
 "#;
     let publish = format!(
-        r#"
+        r"
 sudo docker run -d --name web -p {PUBLISHED}:80 nginx:alpine
 for i in $(seq 1 30); do curl -fsS http://127.0.0.1:{PUBLISHED}/ | grep -q nginx && break; sleep 1; done
 curl -fsS http://127.0.0.1:{PUBLISHED}/ | grep -q nginx
-"#
+"
     );
-    let bridge = r#"
+    let bridge = r"
 sudo docker network create user-bridge
 sudo docker run -d --name backend --network user-bridge nginx:alpine
 for i in $(seq 1 30); do sudo docker run --rm --network user-bridge built:real curl -fsS http://backend/ | grep -q nginx && break; sleep 1; done
 sudo docker run --rm --network user-bridge built:real curl -fsS http://backend/ | grep -q nginx
-"#;
+";
     let compose = r#"
 d=/tmp/compose; mkdir -p $d
 cat > $d/compose.yml <<'EOF'
@@ -241,7 +244,6 @@ fn asked_for(vm: &VmHost, workspace: &puddle_types::WorkspaceId) -> Vec<String> 
         .collect()
 }
 
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_nested_docker_real_registries_testcontainers_and_aspire() {
     // No fake names: every name goes to the real internet through the company proxy.
@@ -306,6 +308,7 @@ async fn vm_radar_nested_docker_real_registries_testcontainers_and_aspire() {
                 .port();
             let put = api
                 .put(
+                    // flake-ok: an API URL path, not a file path
                     &format!("{path}/{PUBLISHED}"),
                     &json!({"host_port": host_port}).to_string(),
                 )

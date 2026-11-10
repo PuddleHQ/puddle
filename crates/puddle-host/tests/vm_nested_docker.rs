@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The workloads of a developer's Docker, run by the session user against a real `dockerd` in a real
-//! microVM, with the proxy as the only way out: a BuildKit build whose `RUN` step fetches from a
+//! microVM, with the proxy as the only way out: a `BuildKit` build whose `RUN` step fetches from a
 //! site, a container's published port reached from this computer through a forward, two containers
 //! talking on a user bridge, and Compose with two services.
 //!
@@ -13,13 +13,6 @@
 //! Which workload needs which rule is part of the bar: the two sites are allowed up front, and the
 //! container-to-container traffic of the bridge and of Compose must make no inbox row and no audit
 //! line, because it never leaves the guest.
-#![expect(
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::print_stderr,
-    reason = "VM test: a failed step fails the test; what the guest said goes to the log"
-)]
-
 mod support;
 mod vm_support;
 
@@ -183,6 +176,7 @@ async fn vm_nested_docker_build_publish_bridge_and_compose_work_through_the_prox
         .port();
     let put = api
         .put(
+            // flake-ok: an API URL path, not a file path
             &format!("{ports_path}/{PUBLISHED}"),
             &json!({"host_port": host_port}).to_string(),
         )

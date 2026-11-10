@@ -26,8 +26,6 @@
 //! proxy settings; the probes that must not use them say `env -i` or `--noproxy '*'`.
 #![expect(
     clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing,
     clippy::print_stderr,
     reason = "VM test: a failed step fails the test; what the guest said goes to the log"
 )]

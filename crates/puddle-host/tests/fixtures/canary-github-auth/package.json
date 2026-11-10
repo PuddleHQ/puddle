@@ -1,0 +1,15 @@
+{
+  "name": "canary-github-auth",
+  "displayName": "GitHub sign-in stand-in (tests only)",
+  "description": "Answers the `github` authentication provider with a canary token the test chose, so no real sign-in ever stands behind a desktop VS Code test.",
+  "publisher": "puddle-test",
+  "version": "0.0.1",
+  "license": "GPL-3.0-or-later",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "extensionKind": ["ui"],
+  "activationEvents": ["onStartupFinished", "onAuthenticationRequest:github"],
+  "contributes": {
+    "authentication": [{ "id": "github", "label": "GitHub (canary)" }]
+  }
+}

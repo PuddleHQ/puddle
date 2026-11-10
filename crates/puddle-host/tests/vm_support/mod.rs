@@ -488,3 +488,33 @@ pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: 
     )
     .await;
 }
+
+/// What `puddle ssh-bridge <endpoint>` does: relay standard input and output to the endpoint. A test binary that
+/// is its own `ProxyCommand` (the ssh config entry names it as the bridge program) calls this for `ssh-bridge <endpoint>`.
+#[expect(
+    clippy::print_stderr,
+    reason = "the bridge's own message to ssh, which shows it"
+)]
+pub(crate) fn ssh_bridge(endpoint: Option<&str>) -> std::process::ExitCode {
+    let Some(endpoint) = endpoint else {
+        eprintln!("puddle: missing endpoint");
+        return std::process::ExitCode::from(2);
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = rt.block_on(puddle_ssh::bridge::run(
+        std::path::Path::new(endpoint),
+        tokio::io::stdin(),
+        tokio::io::stdout(),
+    ));
+    rt.shutdown_background();
+    match result {
+        Ok(_) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("puddle: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}

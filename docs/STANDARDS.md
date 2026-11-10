@@ -310,6 +310,9 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   `PUDDLE_VM_RUNTIME_DIR` (msb + libkrunfw, from `ci/fetch-msb.sh`), and take `PUDDLE_VM_PREFIX`
   and `PUDDLE_VM_ROOT`; every sandbox name and the private msb home carry the prefix, so up to three
   runs share a host. Real-machine tests are named `vm_machine_*`.
+  A test that drives the pinned desktop VS Code on Remote-SSH (`VsCodeWindow` in `puddle-vm-tests`, Windows only,
+  fetched by `ci/fetch-vscode.sh`, `PUDDLE_VSCODE_DIR`) is named `vm_vscode_*`; it is in no partition
+  (`ci/vm-filter.sh`) and one nightly job of `vm-windows.yml` runs it.
   A test that drives a browser client (`BrowserClient` and `Node` in `puddle-vm-tests`: headless
   Chromium and node on the test host, beside the VM) is named `vm_browser_*`, Linux only, and needs
   `PUDDLE_VM_BROWSER_MODULES` (`ui/node_modules` after `npm ci --ignore-scripts`; Chromium from

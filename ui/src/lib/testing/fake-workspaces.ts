@@ -109,6 +109,7 @@ export function dirtyCheck(name: string): DeleteCheck {
 
 const noLayer = (): Layer => ({
   capture_logins: null,
+  warn_foreign_credentials: null,
   clipboard_read: null,
   direct_ssh: null,
   local_toggles: {
@@ -242,6 +243,10 @@ export class FakeWorkspaces {
         o.capture_logins === null
           ? resolved(true, "default")
           : resolved(o.capture_logins, "workspace"),
+      warn_foreign_credentials:
+        o.warn_foreign_credentials === null
+          ? resolved(true, "default")
+          : resolved(o.warn_foreign_credentials, "workspace"),
     };
   }
 

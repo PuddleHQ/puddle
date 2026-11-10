@@ -41,9 +41,10 @@ use base64::alphabet;
 use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
 use memchr::memmem::Finder;
-use puddle_types::{Host, QueryName};
+use puddle_types::{ForeignCredentialKind, Host, QueryName};
 use zeroize::Zeroizing;
 
+use super::foreign;
 use super::inject::{InjectedHeader, Injection, SecretValue};
 use super::set::TerminationSet;
 use super::stale;
@@ -497,6 +498,26 @@ impl StandIns {
             }
         }
         report
+    }
+}
+
+impl StandIns {
+    /// The kinds of credential `headers` carry that are neither one of this registry's stand-ins
+    /// nor a header `injected` sets: what the workspace's own tools sent (see [`foreign`]).
+    /// Read before the swap, so no real value put in by it is looked at.
+    pub(crate) fn foreign_credentials(
+        &self,
+        headers: &HeaderMap,
+        injected: Option<&Injection>,
+        git_path: bool,
+    ) -> Vec<ForeignCredentialKind> {
+        let guard = self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        let skip: Vec<&HeaderName> = injected
+            .map(|i| i.headers().iter().map(InjectedHeader::name).collect())
+            .unwrap_or_default();
+        foreign::kinds_in_headers(headers, &skip, git_path, &|value| {
+            guard.iter().any(|entry| entry.finder.find(value).is_some())
+        })
     }
 }
 

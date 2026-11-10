@@ -137,7 +137,7 @@ impl GitInjector {
         }
         if request.header("authorization").is_some() {
             self.authed.mark(owner_key(&path));
-            return InjectDecision::PassThrough;
+            return InjectDecision::PassThroughOwnCredential;
         }
         match covering(&git, &path) {
             CredentialChoice::Covered {

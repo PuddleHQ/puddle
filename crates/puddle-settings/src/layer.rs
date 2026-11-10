@@ -55,6 +55,11 @@ pub struct WorkspaceLayer {
     /// Applies at the workspace's next start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_logins: Option<bool>,
+    /// Whether Puddle warns about a request that carries a credential it did not add (a token
+    /// the user put in the workspace). Only the warning is switched: the request goes out either
+    /// way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warn_foreign_credentials: Option<bool>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -169,11 +174,12 @@ mod tests {
             clipboard_read: Some(ClipboardRead::Deny),
             direct_ssh: Some(true),
             capture_logins: Some(false),
+            warn_foreign_credentials: Some(false),
             extra: BTreeMap::new(),
         };
         assert_eq!(
             serde_json::to_string(&l).unwrap(),
-            r#"{"memory":1024,"cpus":2,"local_toggles":{"metadata":false},"wildcards_reach_local":true,"reconnection_grace":60,"zoom_hotkeys":false,"clipboard_read":"deny","direct_ssh":true,"capture_logins":false}"#
+            r#"{"memory":1024,"cpus":2,"local_toggles":{"metadata":false},"wildcards_reach_local":true,"reconnection_grace":60,"zoom_hotkeys":false,"clipboard_read":"deny","direct_ssh":true,"capture_logins":false,"warn_foreign_credentials":false}"#
         );
         assert_eq!(
             serde_json::from_str::<WorkspaceLayer>(&serde_json::to_string(&l).unwrap()).unwrap(),

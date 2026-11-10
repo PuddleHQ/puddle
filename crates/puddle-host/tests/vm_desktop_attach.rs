@@ -14,7 +14,6 @@
 //! the name does not resolve and the old endpoint says so.
 #![expect(
     clippy::unwrap_used,
-    clippy::print_stderr,
     clippy::print_stdout,
     reason = "a plain test program for a VM: a failed step fails the run; measurements go to stderr"
 )]
@@ -38,7 +37,7 @@ const CASES: &[Case] = &[];
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("ssh-bridge") {
-        return bridge(args.get(1).map(String::as_str));
+        return vm_support::ssh_bridge(args.get(1).map(String::as_str));
     }
     if args.iter().any(|a| a == "--list") {
         if !args.iter().any(|a| a == "--ignored") {
@@ -56,31 +55,6 @@ fn main() -> ExitCode {
         }
     }
     ExitCode::SUCCESS
-}
-
-/// What `puddle ssh-bridge <endpoint>` does: relay standard input and output to the endpoint.
-fn bridge(endpoint: Option<&str>) -> ExitCode {
-    let Some(endpoint) = endpoint else {
-        eprintln!("puddle: missing endpoint");
-        return ExitCode::from(2);
-    };
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let result = rt.block_on(puddle_ssh::bridge::run(
-        std::path::Path::new(endpoint),
-        tokio::io::stdin(),
-        tokio::io::stdout(),
-    ));
-    rt.shutdown_background();
-    match result {
-        Ok(_) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("puddle: {e}");
-            ExitCode::FAILURE
-        }
-    }
 }
 
 #[cfg(any(unix, windows))]

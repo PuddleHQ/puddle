@@ -10169,6 +10169,7 @@
               "injected",
               "unswapped_stand_ins",
               "scrubbed_stand_ins",
+              "foreign_credentials",
               "method",
               "path",
               "path_truncated",
@@ -10223,6 +10224,13 @@
                     "type": "null"
                   }
                 ]
+              },
+              "foreign_credentials": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The kinds of credential the requests carried that Puddle did not add or swap, each\nonce: `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`,\n`azure_devops_token` or `git_authorization`. Never a value. Records written before it\nexisted, and connections of a workspace that turned the warning off, read as empty."
               },
               "host": {
                 "type": [
@@ -12145,7 +12153,8 @@
           "zoom_hotkeys",
           "clipboard_read",
           "direct_ssh",
-          "capture_logins"
+          "capture_logins",
+          "warn_foreign_credentials"
         ],
         "properties": {
           "capture_logins": {
@@ -12175,6 +12184,10 @@
           "reconnection_grace": {
             "$ref": "#/components/schemas/ResolvedNumber",
             "description": "Reconnection grace in seconds."
+          },
+          "warn_foreign_credentials": {
+            "$ref": "#/components/schemas/ResolvedBool",
+            "description": "Whether a credential Puddle did not add raises a warning."
           },
           "wildcards_reach_local": {
             "$ref": "#/components/schemas/ResolvedBool",
@@ -13104,6 +13117,36 @@
           },
           {
             "type": "object",
+            "description": "A request of the workspace carried a credential Puddle did not add or swap, and the\nwarning is on. The request went out as it was. `host` is the host it went to and `kind`\nsays what Puddle could tell about the credential; never a part of its value.",
+            "required": [
+              "workspace",
+              "host",
+              "kind",
+              "type"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "The host the request went to."
+              },
+              "kind": {
+                "$ref": "#/components/schemas/ForeignCredentialKind",
+                "description": "What kind of credential it looked like."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "foreign_credential"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId",
+                "description": "The workspace that sent it."
+              }
+            }
+          },
+          {
+            "type": "object",
             "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit,\nnot per record. Global: every subscriber gets it.",
             "required": [
               "id",
@@ -13308,6 +13351,18 @@
           }
         },
         "additionalProperties": false
+      },
+      "ForeignCredentialKind": {
+        "type": "string",
+        "description": "What Puddle can tell about a credential it did not add: by its bytes alone, never by whose it\nis (the user's own token and a leaked one look the same). See [`Event::ForeignCredential`].",
+        "enum": [
+          "stale_stand_in",
+          "github_token",
+          "npm_token",
+          "gitlab_token",
+          "azure_devops_token",
+          "git_authorization"
+        ]
       },
       "FoundAccount": {
         "type": "object",
@@ -16321,7 +16376,8 @@
           "zoom_hotkeys",
           "clipboard_read",
           "direct_ssh",
-          "capture_logins"
+          "capture_logins",
+          "warn_foreign_credentials"
         ],
         "properties": {
           "capture_logins": {
@@ -16382,6 +16438,13 @@
             "description": "Seconds a browser VS Code session survives a disconnect (30 to 86 400).",
             "maximum": 86400,
             "minimum": 30
+          },
+          "warn_foreign_credentials": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether Puddle warns when a request carries a credential it did not add (a token the\nworkspace holds itself). The request goes out either way; this only switches the notice\nand the flag in the activity log. On by default."
           },
           "wildcards_reach_local": {
             "type": [

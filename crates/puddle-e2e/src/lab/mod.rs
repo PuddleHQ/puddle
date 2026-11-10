@@ -7,6 +7,7 @@
 //! | [`Squid`] | an explicit proxy, open or with Basic authentication, with split DNS | `PUDDLE_SQUID_BIN` or `PUDDLE_SQUID_DOCKER` (Unix) |
 //! | [`Interceptor`] | a TLS-intercepting proxy with a root made for the run | `PUDDLE_MITMDUMP_BIN` |
 //! | [`NtlmProxy`] | a proxy that demands NTLM and accepts any Type 3 | `PUDDLE_MITMDUMP_BIN` |
+//! | [`Forgejo`] | a real Git forge with HTTPS and its own SSH server, one account and a token made for the run | `PUDDLE_FORGEJO_BIN` (Forgejo on Unix; Gitea's Windows release on Windows) |
 //! | [`PacServer`] | the web server that hands out a PAC file | nothing |
 //! | [`WebHost`] | a public website the test only needs to reach, over plain HTTP and TLS | nothing |
 //! | [`PrivateAccess`] | a private-access client's adapter, DNS answers and tunnel to an intranet site | nothing |
@@ -27,6 +28,7 @@
 )]
 
 mod feeds;
+mod forgejo;
 mod git_host;
 mod interceptor;
 mod pac;
@@ -45,6 +47,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 pub use feeds::{MAVEN_COORDINATES, NPM_PACKAGE, NUGET_PACKAGE, PIP_PROJECT, private_feeds};
+pub use forgejo::{Forgejo, OWNER as FORGEJO_OWNER};
 pub use git_host::{GitHost, GitHostOptions, NameProxy, Seen, Versions, clean_git, git_available};
 pub use interceptor::{Interceptor, NtlmLeg, NtlmProxy, Root};
 pub use pac::{PacServer, failover_pac};
@@ -231,11 +234,9 @@ pub fn free_port() -> u16 {
         .port()
 }
 
-#[cfg(unix)]
 /// How many ports [`on_free_port`] tries before it gives up.
 const PORT_ATTEMPTS: u32 = 5;
 
-#[cfg(unix)]
 /// Whether a program's output says its bind failed because the port was taken (`EADDRINUSE`):
 /// mitmproxy `[Errno 98] ... address already in use`, Squid `(98) Address already in use`,
 /// Windows `WSAEADDRINUSE` / `only one usage of each socket address`.
@@ -250,7 +251,6 @@ fn is_address_in_use(output: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
-#[cfg(unix)]
 /// Starts a program that must be told its port in advance. `pick` gives a candidate port;
 /// `start` runs the program on it and returns its output when it fails. A failure whose output
 /// says the port was taken (another process bound it between the pick and the program's own

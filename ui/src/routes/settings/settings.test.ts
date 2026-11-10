@@ -862,6 +862,25 @@ describe("workspace defaults and the network", () => {
     expect(api.layer.capture_logins).toBe(true);
   });
 
+  it("warns about a credential Puddle did not add by default and turns the default off and back on", async () => {
+    await open();
+    const box = screen.getByLabelText(
+      "Warn about a credential Puddle did not add",
+    );
+    expect(box).toBeChecked();
+    await fireEvent.click(box);
+    await save();
+    expect(api.layer.warn_foreign_credentials).toBe(false);
+    expect(
+      screen.getByLabelText("Warn about a credential Puddle did not add"),
+    ).not.toBeChecked();
+    await fireEvent.click(
+      screen.getByLabelText("Warn about a credential Puddle did not add"),
+    );
+    await save();
+    expect(api.layer.warn_foreign_credentials).toBe(true);
+  });
+
   it("cancelling the global trust text changes nothing", async () => {
     await open();
     await fireEvent.click(

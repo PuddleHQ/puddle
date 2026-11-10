@@ -23,6 +23,7 @@ on:
       - stress
       - lab-override
       - live-contracts
+      - lab-forgejo
     types: [completed]
 
 permissions:

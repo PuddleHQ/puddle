@@ -208,6 +208,9 @@ readable as JSONL (one record per line).
   hosts held and that went to the workspace as the stand-in instead; empty in older records; an
   answer in a content encoding Puddle cannot read is refused with reason `answer_encoding`, one cut
   off because it held a real value in a form that cannot be replaced has reason `answer_withheld`),
+  `foreign_credentials` (the kinds of credential a request carried that Puddle did not add or swap:
+  `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`, `azure_devops_token`,
+  `git_authorization`; each once, never a value; empty in older records and when the warning is off),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
   `rule_created`, `rule_updated`, `rule_deleted`,

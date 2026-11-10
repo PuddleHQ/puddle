@@ -51,8 +51,8 @@ pub use cpus::CpuCount;
 pub use error::ValidationError;
 pub use event::DiskSpaceLevel;
 pub use event::{
-    CollectingSink, DiskKind, Event, EventSink, GitAccess, LoginProblemKind, NullSink, PendingEnd,
-    PendingSummary, WorkspaceStatus, WorkspaceStep,
+    CollectingSink, DiskKind, Event, EventSink, ForeignCredentialKind, GitAccess, LoginProblemKind,
+    NullSink, PendingEnd, PendingSummary, WorkspaceStatus, WorkspaceStep,
 };
 pub use fill::{Fill, Rgb, SET_PALETTE};
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};

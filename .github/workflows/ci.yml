@@ -261,7 +261,7 @@ jobs:
       - name: Keep the unused msvc target out of the saved entry (develop only)
         if: ${{ github.ref == 'refs/heads/develop' }}
         run: rm -rf target/x86_64-pc-windows-msvc
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-nextest@0.9.146,cargo-llvm-cov@0.9.1
       - name: Node (the coverage gate's scripts, and the tests that run Node)
@@ -297,6 +297,13 @@ jobs:
           "$RUNNER_TEMP/lab-venv/bin/pip" install --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
           "$RUNNER_TEMP/lab-venv/bin/mitmdump" --version
           echo "PUDDLE_MITMDUMP_BIN=$RUNNER_TEMP/lab-venv/bin/mitmdump" >> "$GITHUB_ENV"
+      # The lab's Git host (crates/puddle-e2e/src/lab/forgejo.rs): the pinned Forgejo release, so the fixture and its
+      # test (`forgejo_lab`) run in the coverage lane instead of skipping.
+      - name: Forgejo for the lab Git host (pinned release; download, verify)
+        run: |
+          ci/fetch-forgejo.sh "$RUNNER_TEMP/forgejo"
+          "$RUNNER_TEMP/forgejo/forgejo" --version
+          echo "PUDDLE_FORGEJO_BIN=$RUNNER_TEMP/forgejo/forgejo" >> "$GITHUB_ENV"
       # The login tests run the real Claude Code, `gh` (on the runner image) and Copilot CLI against fake
       # servers. The two npm packages are pinned in ci/login-tools/package.json and its lockfile, which
       # Dependabot bumps weekly (the npm entry for /ci/login-tools in .github/dependabot.yml): a bump PR
@@ -334,10 +341,11 @@ jobs:
           NEXTEST_PROFILE: ci
           PUDDLE_SQUID_BIN: /usr/sbin/squid
           # A test whose prerequisite is missing fails here instead of skipping (scripts/check-silent-skips.sh).
-          # Each flag names what this job provides: Squid, mitmproxy and Node 24 above, `ssh`, `git` and `python3`
+          # Each flag names what this job provides: Squid, mitmproxy, Forgejo and Node 24 above, `ssh`, `git` and `python3`
           # from the runner image, busybox above, AF_VSOCK from its kernel, and a non-root user.
           PUDDLE_REQUIRE_SQUID: "1"
           PUDDLE_REQUIRE_MITMPROXY: "1"
+          PUDDLE_REQUIRE_FORGEJO: "1"
           PUDDLE_REQUIRE_NODE: "1"
           PUDDLE_REQUIRE_SSH_CLIENTS: "1"
           PUDDLE_REQUIRE_TOOLS: "1"
@@ -431,7 +439,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/develop' }}
           # A develop run that fails after building still saves what it built, so the next run is warm.
           cache-on-failure: ${{ github.ref == 'refs/heads/develop' }}
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-deny@0.20.2,typos@1.50.3,shellcheck@0.11.0,cargo-about@0.9.2,cargo-mutants@27.1.0
       - name: Node for the API contract's TypeScript types (openapi gate, ADR 0004)
@@ -570,7 +578,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-xwin@0.23.1
       - name: llvm-rc for the msvc cross-check (tauri-winres compiles the shell's Windows resources)
@@ -644,7 +652,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the secrets gate scans the pull request's commits
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: typos@1.50.3,shellcheck@0.11.0
       - name: typos
@@ -838,7 +846,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-deny@0.20.2
       - name: cargo-deny advisories

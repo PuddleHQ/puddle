@@ -1917,6 +1917,13 @@ export interface components {
              */
             count: number | null;
             decision: components["schemas"]["ConnectionDecision"] | null;
+            /**
+             * @description The kinds of credential the requests carried that Puddle did not add or swap, each
+             *     once: `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`,
+             *     `azure_devops_token` or `git_authorization`. Never a value. Records written before it
+             *     existed, and connections of a workspace that turned the warning off, read as empty.
+             */
+            foreign_credentials: string[];
             /** @description The requested host. */
             host: string | null;
             /** @description Whether a credential was injected. */
@@ -2723,6 +2730,8 @@ export interface components {
             memory: components["schemas"]["ResolvedNumber"];
             /** @description Reconnection grace in seconds. */
             reconnection_grace: components["schemas"]["ResolvedNumber"];
+            /** @description Whether a credential Puddle did not add raises a warning. */
+            warn_foreign_credentials: components["schemas"]["ResolvedBool"];
             /** @description Whether suffix rules reach local addresses. */
             wildcards_reach_local: components["schemas"]["ResolvedBool"];
             /** @description Zoom hotkeys. */
@@ -3036,6 +3045,15 @@ export interface components {
             /** @description The workspace the login is in. */
             workspace: components["schemas"]["WorkspaceId"];
         } | {
+            /** @description The host the request went to. */
+            host: string;
+            /** @description What kind of credential it looked like. */
+            kind: components["schemas"]["ForeignCredentialKind"];
+            /** @enum {string} */
+            type: "foreign_credential";
+            /** @description The workspace that sent it. */
+            workspace: components["schemas"]["WorkspaceId"];
+        } | {
             /**
              * Format: int64
              * @description The newest audit record's id.
@@ -3109,6 +3127,12 @@ export interface components {
              */
             completed: boolean;
         };
+        /**
+         * @description What Puddle can tell about a credential it did not add: by its bytes alone, never by whose it
+         *     is (the user's own token and a leaked one look the same). See [`Event::ForeignCredential`].
+         * @enum {string}
+         */
+        ForeignCredentialKind: "stale_stand_in" | "github_token" | "npm_token" | "gitlab_token" | "azure_devops_token" | "git_authorization";
         /** @description An account that is already signed in on this computer. Names only. */
         FoundAccount: {
             /** @description The account. */
@@ -4517,6 +4541,12 @@ export interface components {
              * @description Seconds a browser VS Code session survives a disconnect (30 to 86 400).
              */
             reconnection_grace: number | null;
+            /**
+             * @description Whether Puddle warns when a request carries a credential it did not add (a token the
+             *     workspace holds itself). The request goes out either way; this only switches the notice
+             *     and the flag in the activity log. On by default.
+             */
+            warn_foreign_credentials: boolean | null;
             /** @description Whether a suffix rule may reach local addresses. */
             wildcards_reach_local: boolean | null;
             /** @description Whether the browser window's zoom hotkeys work. */

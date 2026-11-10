@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The desktop VS Code the VM tests drive (ci/fetch-vscode.sh): `<name> <version> <url> <sha256>`. The VS Code line is the
+# release server's own `sha256hash` for that exact version
+# (https://update.code.visualstudio.com/api/versions/<version>/win32-x64-archive/stable); Remote-SSH is the Marketplace
+# package of that version (the download is gzip-coded in transit; the hash is of the package itself) and its `engines.vscode`
+# must accept the VS Code line. A bump changes the hash in the same change.
+vscode 1.143.1 https://update.code.visualstudio.com/1.143.1/win32-x64-archive/stable b4f9643b8a549ca2c85a1bbc9063fc76f1e08fc0036a7f6a1a181cdc05235eca
+remote-ssh 0.128.0 https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-vscode-remote/vsextensions/remote-ssh/0.128.0/vspackage 458bfdea562840a3a4d9cb246cfe9a212c67a0c9317a8fdd0d22aeaedc82bf2c

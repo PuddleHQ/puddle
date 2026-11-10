@@ -528,7 +528,8 @@ impl<R: Runtime + Clone> Host<R> {
         let vault_sweep =
             crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
         let marks = config.paths.login_markers();
-        let injecting = Injecting::build(&options, &vault, &store, &events, &roots, marks)?;
+        let injecting =
+            Injecting::build(&options, &vault, &store, &events, &roots, marks, &settings)?;
         let proxy_passwords = ProxyPasswords::new(vault.clone());
         load_proxy_passwords(proxy_passwords.clone(), problems.clone());
 
@@ -1073,6 +1074,7 @@ impl Injecting {
         events: &Arc<EventHub>,
         roots: &CorporateRoots,
         login_markers: PathBuf,
+        settings: &Arc<dyn SettingsRepo>,
     ) -> Result<Self, HostError> {
         // The secrets read from the user's own sign-ins (`gh`, Git, the operating system's store).
         let reads = credential_read_log(events.clone() as Arc<dyn EventSink>);
@@ -1098,6 +1100,7 @@ impl Injecting {
                 Arc::clone(vault),
             )
             .with_login_markers(login_markers)
+            .with_settings(Arc::clone(settings))
             .with_git_ssh(options.git_ssh),
         );
         // The platform's roots plus the company's, as the guest is given.

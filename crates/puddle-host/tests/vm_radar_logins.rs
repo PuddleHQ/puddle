@@ -194,6 +194,30 @@ fn hosts_since(vm: &VmHost, before: usize) -> BTreeSet<(String, String)> {
         .collect()
 }
 
+/// How long the audit must stay unchanged before a flow counts as over.
+const QUIET: Duration = Duration::from_secs(5);
+
+/// Waits until the audit has written no connection record for `QUIET` and returns how many there are.
+///
+/// A record is written when its connection ends, and a tool can leave connections behind it: the
+/// proxy sees them close a moment after the tool exited (2026-11-08: a claude refresh's last
+/// `api.anthropic.com` record landed in the window of the `gh` flow that followed). Starting the
+/// next flow only after the audit is quiet keeps each flow's records in its own window.
+async fn settled(vm: &VmHost) -> usize {
+    let mut count = connections(&vm.host).len();
+    let mut quiet_since = tokio::time::Instant::now();
+    // flake-ok: waits for the absence of new records over a fixed quiet period, which `eventually` (a probe that turns true) cannot express.
+    while quiet_since.elapsed() < QUIET {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let now = connections(&vm.host).len();
+        if now != count {
+            count = now;
+            quiet_since = tokio::time::Instant::now();
+        }
+    }
+    count
+}
+
 /// Whether the profile named `profile` has `host` among the hosts it swaps stand-ins toward.
 fn in_profile(profile: &str, host: &str) -> bool {
     let profile = builtin().iter().find(|p| p.id == profile).unwrap();
@@ -272,7 +296,7 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
 
     let mut failures = Vec::new();
     for flow in flows() {
-        let before = connections(&vm.host).len();
+        let before = settled(&vm).await;
         let out = guest_within(
             &vm.runtime,
             &workspace,
@@ -281,8 +305,8 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
         )
         .await;
         // A connection's record is written when it ends, after the tool exited: wait for the one
-        // the flow must have made. Records that arrive later than that one are not seen.
-        let seen = eventually(
+        // the flow must have made.
+        eventually(
             &format!("{}: a connection record for {}", flow.name, flow.must_call),
             Duration::from_secs(60),
             || {
@@ -299,6 +323,9 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
             },
         )
         .await;
+        // Late records of this flow's own connections belong to it; the next flow starts after them.
+        settled(&vm).await;
+        let seen = hosts_since(&vm, before);
         let outside = outside_profile(flow.profile, &seen);
         eprintln!(
             "{}: {} host(s) called: {seen:?}\n  output: {}",

@@ -27,7 +27,9 @@ use puddle_proxy::{
 };
 use puddle_secrets::{Fetch, ReadLog, SecretCache, SecretStore, SourceSpec, Sources};
 use puddle_store::{Store, WorkspaceGit};
-use puddle_types::{Event, EventSink, GuestEnv, RuleId, WorkspaceId};
+use puddle_types::{
+    CURATED_PASS_THROUGH, Event, EventSink, GuestEnv, InterceptionMode, RuleId, WorkspaceId,
+};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
@@ -493,6 +495,17 @@ impl Injection {
             Duration::from_secs(u64::from(limits.ttl_secs)),
             usize::try_from(limits.cap).unwrap_or(usize::MAX),
         );
+        let settings = store
+            .interception_settings()
+            .map_err(|e| format!("cannot read the interception setting: {e}"))?;
+        let mode = own.mode.unwrap_or_else(|| settings.effective_mode());
+        let mut curated = TerminationSet::new();
+        if mode == InterceptionMode::AllExceptCurated {
+            // The list is built in and checked by a test; a bad entry is a bug, not user input.
+            if let Ok(set) = TerminationSet::parse(CURATED_PASS_THROUGH.iter().copied()) {
+                curated = set;
+            }
+        }
         let mut never = TerminationSet::new();
         for pattern in own.never_decrypt.iter().chain(&global) {
             match TerminationSet::parse([pattern.as_str()]) {
@@ -501,7 +514,9 @@ impl Injection {
             }
         }
         Ok(Interception::new(Arc::clone(learned))
-            .decrypt_all(own.decrypt_all)
+            .decrypt_all(mode.decrypts_unknown_hosts())
+            .curated(curated)
+            .learn_from_rejections(settings.learn_from_rejections)
             .never_decrypt(never))
     }
 
@@ -1012,7 +1027,9 @@ mod tests {
         let store = store();
         let (injection, terminations) = injection(&store);
         let ws = workspace("alpha");
-        store.set_decrypt_all(&ws, true).unwrap();
+        store
+            .set_workspace_mode(&ws, Some(InterceptionMode::All))
+            .unwrap();
         // The API refuses such a name; a row written by another version or by hand must not
         // switch the workspace off.
         store
@@ -1047,7 +1064,9 @@ mod tests {
                 interception.skipped(&host("global.example")),
             )
         };
-        store.set_decrypt_all(&ws, true).unwrap();
+        store
+            .set_workspace_mode(&ws, Some(InterceptionMode::All))
+            .unwrap();
         store
             .set_never_decrypt(&ws, &["bank.example".to_owned()])
             .unwrap();
@@ -1069,10 +1088,14 @@ mod tests {
                 .learned(),
         );
         learned.learn(&host("pinned.example"));
-        store.set_decrypt_all(&ws, false).unwrap();
+        store
+            .set_workspace_mode(&ws, Some(InterceptionMode::KnownOnly))
+            .unwrap();
         assert!(injection.resync(&ws).unwrap().is_some());
         assert_eq!(mode(&terminations), (false, None, None), "switched off");
-        store.set_decrypt_all(&ws, true).unwrap();
+        store
+            .set_workspace_mode(&ws, Some(InterceptionMode::All))
+            .unwrap();
         store.set_never_decrypt(&ws, &[]).unwrap();
         injection.resync(&ws).unwrap();
         assert_eq!(mode(&terminations), (true, None, Some("never_decrypt")));

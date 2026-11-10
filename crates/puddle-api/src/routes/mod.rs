@@ -262,6 +262,10 @@ fn environment_router() -> OpenApiRouter<AppState> {
             interception::put_interception
         ))
         .routes(routes!(
+            interception::get_interception_settings,
+            interception::put_interception_settings
+        ))
+        .routes(routes!(
             interception::get_global_never_decrypt,
             interception::put_global_never_decrypt
         ))

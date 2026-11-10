@@ -8,14 +8,15 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_netpolicy::normalise_host;
-use puddle_types::{Host, WorkspaceId};
+use puddle_types::{CURATED_PASS_THROUGH, Host, InterceptionMode, WorkspaceId};
 
 use crate::ApiErrorBody;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::wire::{
-    GlobalNeverDecrypt, InterceptionRequest, InterceptionView, LearnedHosts, LearnedLimits,
+    GlobalNeverDecrypt, InterceptionRequest, InterceptionSettingsRequest, InterceptionSettingsView,
+    InterceptionView, LearnedHosts, LearnedLimits, WorkspaceMode,
 };
 
 /// Most names one list may hold.
@@ -71,11 +72,34 @@ async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
     Ok(state.workspaces.get(&id).await?.id)
 }
 
+fn settings_view(state: &AppState) -> Result<InterceptionSettingsView, ApiError> {
+    let saved = state.store.interception_settings()?;
+    let mut curated: Vec<String> = CURATED_PASS_THROUGH
+        .iter()
+        .map(|n| (*n).to_owned())
+        .collect();
+    curated.sort();
+    Ok(InterceptionSettingsView {
+        mode: saved.effective_mode(),
+        chosen: saved.mode.is_some(),
+        learn_from_rejections: saved.learn_from_rejections,
+        notice_seen: saved.notice_seen,
+        curated,
+    })
+}
+
 fn view(state: &AppState, name: &WorkspaceId) -> Result<InterceptionView, ApiError> {
     let own = state.store.workspace_interception(name)?;
+    let effective_mode = own.mode.unwrap_or_else(|| {
+        state
+            .store
+            .interception_settings()
+            .map_or(InterceptionMode::EXISTING_INSTALL, |s| s.effective_mode())
+    });
     Ok(InterceptionView {
         workspace: name.clone(),
-        decrypt_all: own.decrypt_all,
+        mode: WorkspaceMode::of(own.mode),
+        effective_mode,
         never_decrypt: own.never_decrypt,
         global_never_decrypt: state.store.global_never_decrypt()?,
     })
@@ -101,7 +125,7 @@ pub(crate) async fn get_interception(
     Ok(Json(blocking(move || view(&state, &name)).await?))
 }
 
-/// Changes the switch and/or the workspace's never-decrypt names. A running workspace applies it
+/// Changes the mode and/or the workspace's never-decrypt names. A running workspace applies it
 /// at once: the next connection to a host is decrypted or passed through accordingly. A host with
 /// a credential, secret or login capture is always decrypted, whatever the list says.
 #[utoipa::path(
@@ -124,13 +148,59 @@ pub(crate) async fn put_interception(
     let name = named(&state, &id).await?;
     let never = body.never_decrypt.as_deref().map(patterns).transpose()?;
     blocking(move || {
-        if let Some(on) = body.decrypt_all {
-            state.store.set_decrypt_all(&name, on)?;
+        if let Some(choice) = body.mode {
+            state.store.set_workspace_mode(&name, choice.own())?;
         }
         if let Some(never) = never {
             state.store.set_never_decrypt(&name, &never)?;
         }
         view(&state, &name)
+    })
+    .await
+    .map(Json)
+}
+
+/// The global interception setting: the mode workspaces follow, whether the user has chosen one,
+/// learning from rejections, and the curated list.
+#[utoipa::path(
+    get,
+    path = "/api/interception",
+    tag = "interception",
+    responses((status = OK, description = "the global setting", body = InterceptionSettingsView))
+)]
+pub(crate) async fn get_interception_settings(
+    State(state): State<AppState>,
+) -> Result<Json<InterceptionSettingsView>, ApiError> {
+    Ok(Json(blocking(move || settings_view(&state)).await?))
+}
+
+/// Changes the global setting. A running workspace that follows it applies the change at once.
+#[utoipa::path(
+    put,
+    path = "/api/interception",
+    tag = "interception",
+    request_body = InterceptionSettingsRequest,
+    responses((status = OK, description = "saved; the setting now", body = InterceptionSettingsView))
+)]
+pub(crate) async fn put_interception_settings(
+    State(state): State<AppState>,
+    crate::extract::Json(body): crate::extract::Json<InterceptionSettingsRequest>,
+) -> Result<Json<InterceptionSettingsView>, ApiError> {
+    blocking(move || {
+        let mut saved = state.store.interception_settings()?;
+        if let Some(mode) = body.mode {
+            saved.mode = Some(mode);
+            // Choosing answers the notice.
+            saved.notice_seen = true;
+        }
+        if let Some(on) = body.learn_from_rejections {
+            saved.learn_from_rejections = on;
+        }
+        if let Some(seen) = body.notice_seen {
+            saved.notice_seen = seen;
+        }
+        state.store.set_interception_settings(saved)?;
+        settings_view(&state)
     })
     .await
     .map(Json)

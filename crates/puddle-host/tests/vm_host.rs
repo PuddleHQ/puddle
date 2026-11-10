@@ -317,11 +317,10 @@ async fn vm_host_grows_a_root_disk_live_and_offline_and_a_reset_keeps_the_size()
         Duration::from_secs(60),
     )
     .await;
-    if cfg!(windows) {
-        eprintln!("boot marker after the grow on Windows: {}", marker.trim());
-    } else {
-        assert_eq!(marker.trim(), "kept", "a live grow restarted the guest");
-    }
+    // Live grow on Windows waits for the libkrun fork fix (the raw disk handle keeps its old
+    // length, so the guest's online ext4 expansion fails): there the host restarts the guest.
+    let expected = if cfg!(windows) { "gone" } else { "kept" };
+    assert_eq!(marker.trim(), expected, "boot marker after the grow");
     let workspace = api.get(&format!("/api/workspaces/{name}")).await.json();
     assert_eq!(workspace["root_disk_size_mib"], 20_480, "{workspace}");
     assert_eq!(workspace["status"], "running", "{workspace}");

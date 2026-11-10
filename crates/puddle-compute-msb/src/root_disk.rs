@@ -77,6 +77,22 @@ pub(crate) fn grow_plan(plan: &microsandbox::sandbox::SandboxModificationPlan) -
     }
 }
 
+/// Whether the runtime's hypervisor can take a live grow. msb plans one on Windows too, but the
+/// pinned libkrun fork keeps the raw disk handle at its old length there, so the guest's online
+/// ext4 expansion fails with an I/O error and leaves the block device grown and the filesystem
+/// not (seen in vm-windows CI). Live grow on Windows waits for the fork fix
+/// (`upstream-issues/libkrun-windows-live-grow/`); until then the disk grows at a restart.
+pub(crate) const LIVE_GROW_WORKS: bool = !cfg!(windows);
+
+/// `plan` as this platform can carry it out: a live plan becomes a deferred one where
+/// `live_works` is false, so the host restarts the workspace instead of growing it under the guest.
+pub(crate) fn on_platform(plan: GrowPlan, live_works: bool) -> GrowPlan {
+    match plan {
+        GrowPlan::Live if !live_works => GrowPlan::Deferred,
+        other => other,
+    }
+}
+
 /// The three msb calls of a root-disk grow, so the choice between them is tested without a real
 /// msb database.
 pub(crate) trait GrowSdk {
@@ -349,6 +365,18 @@ mod tests {
             warnings: vec![],
             resize_status: vec![],
         }
+    }
+
+    #[test]
+    fn a_live_plan_defers_where_live_grow_does_not_work() {
+        assert_eq!(on_platform(GrowPlan::Live, true), GrowPlan::Live);
+        assert_eq!(on_platform(GrowPlan::Live, false), GrowPlan::Deferred);
+        assert_eq!(on_platform(GrowPlan::Deferred, false), GrowPlan::Deferred);
+        assert_eq!(
+            on_platform(GrowPlan::Refused("x".into()), false),
+            GrowPlan::Refused("x".into())
+        );
+        assert_eq!(LIVE_GROW_WORKS, !cfg!(windows));
     }
 
     #[test]

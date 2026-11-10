@@ -13,21 +13,35 @@ pub(super) fn drive_letter(path: &str) -> Option<char> {
     (chars.next() == Some(':')).then(|| letter.to_ascii_uppercase())
 }
 
-/// What the shell's `System.Volume.BitLockerProtection` value (`x` when it read nothing) means:
-/// 1, 3 and 5 are protection on, off and 4 and 2 and 0 are off; anything else is not told.
+/// What the shell's `System.Volume.BitLockerProtection` value (`x` when it read nothing) means,
+/// as measured on a Windows Server 2025 runner: 1 protection on (also while encrypting), 2 off
+/// (never encrypted, or decrypting), 3 and 4 a paused encryption or decryption, 5 suspended
+/// protection, 6 locked, and 0 for every drive when the caller is not elevated (a standard user
+/// and an administrator without elevation both get it, encrypted drive or not).
 fn bitlocker(value: &str) -> Protection {
     match value {
-        "1" | "3" | "5" => Protection::Encrypted {
+        "1" | "6" => Protection::Encrypted {
             by: "BitLocker".into(),
         },
-        "0" | "2" | "4" => Protection::NotEncrypted,
-        "x" => Protection::Unknown {
-            why: "Windows gave no BitLocker state for the drive".into(),
-        },
+        "2" => Protection::NotEncrypted,
+        "0" => unknown(
+            "Windows gives the BitLocker state only to an elevated (administrator) process, \
+             and answered 0 for the drive",
+        ),
+        "3" | "4" => unknown("BitLocker encryption or decryption of the drive is paused"),
+        "5" => unknown(
+            "BitLocker protection is suspended: the drive is encrypted but its key is stored in \
+             the clear until protection is resumed",
+        ),
+        "x" => unknown("Windows gave no BitLocker state for the drive"),
         other => Protection::Unknown {
             why: format!("Windows gave BitLocker state {other}, which this check does not know"),
         },
     }
+}
+
+fn unknown(why: &str) -> Protection {
+    Protection::Unknown { why: why.into() }
 }
 
 /// The parsed line: `puddle-encryption data=<v> pagefile-encrypted=<0|1> pagefiles=<D>:<v>,...`.
@@ -118,11 +132,52 @@ mod tests {
         let a = parse("puddle-encryption data=x pagefile-encrypted=0 pagefiles=").unwrap();
         assert!(matches!(a.data, Protection::Unknown { .. }));
         assert_eq!(a.swap, SwapFacts::None);
-        let b = parse("puddle-encryption data=9 pagefile-encrypted=0 pagefiles=C:0,D:x").unwrap();
+        let b = parse("puddle-encryption data=9 pagefile-encrypted=0 pagefiles=C:2,D:x").unwrap();
         assert!(matches!(b.data, Protection::Unknown { .. }));
         let areas = b.swap.areas();
         assert_eq!(areas[0].protection, Protection::NotEncrypted);
         assert!(matches!(areas[1].protection, Protection::Unknown { .. }));
+    }
+
+    /// Values read from a real Windows Server 2025 volume in each `BitLocker` state.
+    #[test]
+    fn each_measured_state_means_what_it_showed() {
+        let state = |v: &str| {
+            parse(&format!(
+                "puddle-encryption data={v} pagefile-encrypted=0 pagefiles="
+            ))
+            .unwrap()
+            .data
+        };
+        for on in ["1", "6"] {
+            assert!(matches!(state(on), Protection::Encrypted { .. }), "{on}");
+        }
+        assert_eq!(state("2"), Protection::NotEncrypted);
+        for told in ["0", "3", "4", "5"] {
+            assert!(matches!(state(told), Protection::Unknown { .. }), "{told}");
+        }
+    }
+
+    #[test]
+    fn a_suspended_drive_is_not_called_encrypted_and_says_why() {
+        let data = parse("puddle-encryption data=5 pagefile-encrypted=0 pagefiles=")
+            .unwrap()
+            .data;
+        assert!(
+            matches!(&data, Protection::Unknown { why } if why.contains("suspended")),
+            "{data:?}"
+        );
+    }
+
+    #[test]
+    fn a_zero_from_an_unelevated_caller_is_not_called_unencrypted() {
+        let data = parse("puddle-encryption data=0 pagefile-encrypted=0 pagefiles=D:0")
+            .unwrap()
+            .data;
+        assert!(
+            matches!(&data, Protection::Unknown { why } if why.contains("elevated")),
+            "{data:?}"
+        );
     }
 
     #[test]

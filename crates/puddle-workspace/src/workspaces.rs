@@ -783,10 +783,14 @@ impl Workspaces {
         let owner = self.existing_owner(rt, id).await?;
         let checked_in = maintenance_name(id)?;
         self.borrow(id, &checked_in)?;
+        let loan = Loan {
+            registry: &self.registry,
+            id,
+        };
         let result = self
             .delete_borrowed(rt, id, &info, confirmed, owner, checked_in)
             .await;
-        self.registry.give_back(id);
+        drop(loan);
         if result.is_ok() {
             self.registry.forget(id);
         }
@@ -1137,9 +1141,11 @@ impl Workspaces {
     ) -> Result<JobOutput, WorkspaceError> {
         let name = maintenance_name(id)?;
         self.borrow(id, &name)?;
-        let result = self.run_maintenance(rt, id, info, job).await;
-        self.registry.give_back(id);
-        result
+        let _loan = Loan {
+            registry: &self.registry,
+            id,
+        };
+        self.run_maintenance(rt, id, info, job).await
     }
 
     /// Creates the maintenance sandbox with the workspace, runs `job`, and stops and removes the
@@ -1213,6 +1219,20 @@ pub struct ImportReport {
     pub created_volume: bool,
     /// The checkouts git refused, each with git's reason; the others are on the volume.
     pub failed: Vec<(CheckoutDir, String)>,
+}
+
+/// A maintenance loan of a workspace, given back when this is dropped: also when the future that
+/// holds it is dropped mid-way (a request that timed out), which would otherwise leave the
+/// workspace borrowed until the process restarts.
+struct Loan<'a> {
+    registry: &'a Registry,
+    id: &'a WorkspaceId,
+}
+
+impl Drop for Loan<'_> {
+    fn drop(&mut self) {
+        self.registry.give_back(self.id);
+    }
 }
 
 /// The mount of `volume` at the workspace's mount point, always with kind disk and the size
@@ -1458,5 +1478,28 @@ mod tests {
         assert!(!is_maintenance_name("acme"));
         assert!(!is_maintenance_name("m--"));
         assert!(!is_maintenance_name("m---a"));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_request_gives_the_maintenance_loan_back() {
+        let w = Workspaces::new(WorkspaceConfig::default());
+        let id = WorkspaceId::new("acme").unwrap();
+        let sandbox = maintenance_name(&id).unwrap();
+        // What `delete` and `maintenance` do around a check that outlives the request.
+        let held = async {
+            w.borrow(&id, &sandbox).unwrap();
+            let _loan = Loan {
+                registry: &w.registry,
+                id: &id,
+            };
+            std::future::pending::<()>().await;
+        };
+        let timed_out = tokio::time::timeout(Duration::from_millis(20), held).await;
+        assert!(timed_out.is_err(), "the check never ends");
+        assert!(
+            w.registry.holder(&id).is_none(),
+            "the workspace is still borrowed after the request was dropped"
+        );
+        w.borrow(&id, &sandbox).unwrap();
     }
 }

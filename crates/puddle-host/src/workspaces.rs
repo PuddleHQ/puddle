@@ -312,6 +312,8 @@ struct Inner<R: Runtime + Clone> {
     live: tokio::sync::Mutex<BTreeMap<WorkspaceId, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
     running: watch::Sender<usize>,
+    /// Whether the image the delete check boots is in the cache; see [`HostWorkspaces::maintenance_ready`].
+    maintenance_image: watch::Sender<Warmth>,
     /// Workspaces whose start found their shell-init folder changed from inside, until `settle`
     /// has said so (with what the boot hook found, as one notice).
     shell_init_changed_inside: Mutex<BTreeSet<WorkspaceId>>,
@@ -426,6 +428,43 @@ fn listing(l: &puddle_workspace::Listing) -> Listing {
     out.items.clone_from(&l.items);
     out.more = l.more;
     out
+}
+
+/// How long a delete or its check waits for the image it boots to be downloaded before it asks
+/// the user to try again: under the API's 30 s request limit, so the answer is ours and not a 408.
+const MAINTENANCE_WAIT: Duration = Duration::from_secs(15);
+
+/// Where the download of the image the delete check boots stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Warmth {
+    /// Not asked for yet.
+    Cold,
+    /// A task of the service is pulling it.
+    Warming,
+    /// In the cache.
+    Ready,
+    /// The last pull failed (the log says why).
+    Failed,
+}
+
+/// Clears the busy mark a delete put on a workspace unless it is disarmed, so a request that is
+/// dropped before its work starts (the API's request limit, a closed connection) does not leave
+/// the workspace "deleting" for good.
+struct DeleteMark<'a, R: Runtime + Clone> {
+    service: &'a HostWorkspaces<R>,
+    id: &'a WorkspaceId,
+    armed: bool,
+}
+
+impl<R: Runtime + Clone> Drop for DeleteMark<'_, R> {
+    fn drop(&mut self) {
+        if self.armed
+            && let Some(slot) = self.service.state().slots.get_mut(self.id)
+        {
+            slot.record.busy = None;
+            slot.deleting = false;
+        }
+    }
 }
 
 fn delete_check(report: &puddle_workspace::DeleteReport) -> DeleteCheck {
@@ -604,6 +643,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 live: tokio::sync::Mutex::new(BTreeMap::new()),
                 tasks: tokio::sync::Mutex::new(JoinSet::new()),
                 running: watch::channel(0).0,
+                maintenance_image: watch::channel(Warmth::Cold).0,
                 shell_init_changed_inside: Mutex::new(BTreeSet::new()),
                 env_missed_while_booting: Mutex::new(BTreeSet::new()),
                 listings: Mutex::new(BTreeMap::new()),
@@ -1099,6 +1139,69 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .pull_image(image)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// Starts pulling the image the delete check boots on a task the service owns, unless it is
+    /// cached or a pull runs. The check can't go ahead without it, and the first pull of an image
+    /// that isn't the workspace's own takes minutes, longer than a request may.
+    pub(crate) async fn warm_maintenance_image(&self) {
+        let start = self.inner.maintenance_image.send_if_modified(|w| {
+            let idle = matches!(w, Warmth::Cold | Warmth::Failed);
+            if idle {
+                *w = Warmth::Warming;
+            }
+            idle
+        });
+        if !start {
+            return;
+        }
+        let this = self.clone();
+        let mut tasks = self.inner.tasks.lock().await;
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn(async move {
+            let image = this.inner.workspaces.config().maintenance_image.clone();
+            let next = match this.inner.runtime.pull_image(&image).await {
+                Ok(_) => Warmth::Ready,
+                Err(e) => {
+                    tracing::warn!(image = %image, error = %e, "the image the delete check boots was not downloaded");
+                    Warmth::Failed
+                }
+            };
+            this.inner.maintenance_image.send_replace(next);
+        });
+    }
+
+    /// [`HostWorkspaces::warm_maintenance_image`] when the service starts with workspaces
+    /// listed: one of them may be deleted at once.
+    pub(crate) async fn warm_maintenance_image_for_listed(&self) {
+        let listed = !self.state().slots.is_empty();
+        if listed {
+            self.warm_maintenance_image().await;
+        }
+    }
+
+    /// Waits (up to [`MAINTENANCE_WAIT`]) for the image the delete check boots to be in the
+    /// cache, starting the download when nothing has. A request that cannot wait that long gets
+    /// an answer that says what is going on; the download goes on without it.
+    async fn maintenance_ready(&self) -> Result<(), WorkspaceError> {
+        self.warm_maintenance_image().await;
+        let mut warmth = self.inner.maintenance_image.subscribe();
+        // Only a copy of the state: the borrow `wait_for` returns must not live across awaits.
+        let settled = tokio::time::timeout(
+            MAINTENANCE_WAIT,
+            warmth.wait_for(|w| !matches!(w, Warmth::Warming)),
+        )
+        .await
+        .map(|r| r.map(|w| w.clone()));
+        match settled {
+            // A failed download is no reason to stop here: the check asks for the image itself and
+            // says why it can't have it, at once.
+            Ok(Ok(Warmth::Ready | Warmth::Failed)) => Ok(()),
+            _ => Err(WorkspaceError::Unavailable(
+                "Puddle is still downloading the image it checks a workspace with before deleting it; try again in a minute"
+                    .to_owned(),
+            )),
+        }
     }
 
     /// Creates a sandbox on workspace `record`'s volume and boots it through the hook.
@@ -3419,6 +3522,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             )?;
             self.inner.reports.pause(&record.id);
             self.status_event(&record);
+            // A stopped workspace is the one a user deletes next: have the delete check's image
+            // ready by then.
+            self.warm_maintenance_image().await;
             let this = self.clone();
             let work = record.clone();
             self.run(&record, Operation::Stopping, async move {
@@ -3507,6 +3613,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             if !self.state().slots.contains_key(id) {
                 return Err(not_found(id));
             }
+            self.maintenance_ready().await?;
             let report = self
                 .inner
                 .workspaces
@@ -3538,7 +3645,13 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
+            let mut mark = DeleteMark {
+                service: self,
+                id,
+                armed: true,
+            };
             // The check runs before the call returns, so a refusal reaches the caller.
+            self.maintenance_ready().await?;
             let checked = self
                 .inner
                 .workspaces
@@ -3584,16 +3697,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             });
             let report = match verdict {
                 Ok(report) => report,
-                Err(e) => {
-                    if let Some(slot) = self.state().slots.get_mut(id) {
-                        slot.record.busy = None;
-                        slot.deleting = false;
-                    }
-                    return Err(e);
-                }
+                Err(e) => return Err(e),
             };
             let this = self.clone();
             let work = record.clone();
+            mark.armed = false;
             self.run(&record, Operation::Deleting, async move {
                 this.delete_work(work, report).await
             })

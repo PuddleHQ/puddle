@@ -11,9 +11,9 @@
 //!
 //! Needs `PUDDLE_FORGEJO_BIN` (`ci/fetch-forgejo.sh`); without it the test skips unless
 //! `PUDDLE_REQUIRE_FORGEJO` is set (`.github/workflows/lab-forgejo.yml` sets it). Forgejo has no
-//! Windows release, so this is the Linux tier's (`vm_radar_*` is left out of the per-pull-request
-//! VM jobs: ci/vm-filter.sh).
-#![cfg(unix)]
+//! Windows release, so the Windows runner runs Gitea's Windows release (`ci/fetch-forgejo.sh <dir>
+//! "" windows`) through the same fixture (`vm_radar_*` is left out of the per-pull-request VM jobs:
+//! ci/vm-filter.sh; lab-forgejo.yml runs it on both).
 
 mod support;
 mod vm_support;

@@ -319,7 +319,13 @@
   {/if}
 </section>
 
-<AddRepositoryDialog bind:open={addOpen} {entries} {onDisk} onSubmit={add} />
+<AddRepositoryDialog
+  bind:open={addOpen}
+  {entries}
+  {onDisk}
+  onSubmit={add}
+  workspace={wid}
+/>
 
 {#if managing}
   {@const checkout = managing}

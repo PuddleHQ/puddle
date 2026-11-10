@@ -18,6 +18,7 @@ export function workspace(
       { url: `https://github.com/acme/${name}.git`, directory: name },
     ],
     start_folder: null,
+    allowed_hosts: [],
     session_user: "agent",
     image: "mcr.microsoft.com/devcontainers/base:debian",
     memory_mib: 8192,

@@ -102,6 +102,16 @@ coverage_scrub() {
     find "$1/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
     find "$1/llvm-cov-target" -maxdepth 1 -name '*.profraw' -type f -delete 2>/dev/null || true
 }
+# Unlinks the read-only files of the instrumented directory (`<target>/llvm-cov-target`) before plain cargo builds in it.
+# mbx restores a cached output as a read-only hard link to its store object, and rustc stops with `output file ... is not
+# writable` when it must rebuild one of them. Unlinking drops only this directory's name for the file: the store object
+# and the other checkouts' links keep their mode and content (never chmod it: rustc would then write into the shared
+# object). Cargo rebuilds what is missing. A directory only plain cargo has built holds none, so this finds nothing.
+coverage_unlock() {
+    [ -d "$1/llvm-cov-target" ] || return 0
+    locked=$(find "$1/llvm-cov-target" -type f ! -perm -u+w -print -delete 2>/dev/null | grep -c . || true)
+    [ "${locked:-0}" = 0 ] || echo "coverage: unlinked $locked read-only file(s) in $1/llvm-cov-target (mbx cache links); cargo rebuilds them" >&2
+}
 # Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
 # extra arguments. Needs a base; without one it fails.
 diff_coverage() {
@@ -357,6 +367,7 @@ run_gate() {
         # coverage-baseline workflow raises the baseline in its own pull request).
         ui_install
         target=${CARGO_TARGET_DIR:-target}
+        coverage_unlock "$target"
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
@@ -432,6 +443,7 @@ run_gate() {
         target=${CARGO_TARGET_DIR:-target}
         lcov=$target/diff-coverage-fast.lcov
         echo "diff-coverage-fast: tests with coverage for:$packages"
+        coverage_unlock "$target"
         coverage_scrub "$target"
         trap 'coverage_scrub "$target"; check_tmp_cleanup' EXIT
         # The build selects the whole workspace like the `coverage` gate (a `-p` selection resolves other features

@@ -531,6 +531,10 @@ describe("settledMessage", () => {
       "Reset the root disk of w; it is made again at the next start.",
     ],
     [
+      { operation: "growing_root_disk", failed: false, detail: null },
+      "Made the root disk of w bigger.",
+    ],
+    [
       { operation: "cloning", failed: false, detail: null },
       "Cloned a repository into w.",
     ],

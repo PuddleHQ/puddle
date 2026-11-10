@@ -851,6 +851,14 @@ pub(crate) mod tests {
         );
         assert!(settings.home().join("config.json").is_file());
         assert_eq!(env.sandbox_name("smoke").unwrap().as_str(), "r7-1-smoke");
+        assert_eq!(
+            env.log_dir("r7-1-smoke"),
+            settings
+                .home()
+                .join("sandboxes")
+                .join("r7-1-smoke")
+                .join("logs")
+        );
         let builder = env.sandbox("smoke", crate::DEBIAN_DEVCONTAINER);
         assert!(builder.is_ok());
         assert!(env.sandbox("Bad_Tag", crate::DEBIAN_DEVCONTAINER).is_err());

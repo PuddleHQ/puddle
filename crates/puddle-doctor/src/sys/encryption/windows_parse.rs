@@ -160,26 +160,24 @@ mod tests {
 
     #[test]
     fn a_suspended_drive_is_not_called_encrypted_and_says_why() {
-        let Protection::Unknown { why } =
-            parse("puddle-encryption data=5 pagefile-encrypted=0 pagefiles=")
-                .unwrap()
-                .data
-        else {
-            panic!("suspended protection must be unknown");
-        };
-        assert!(why.contains("suspended"), "{why}");
+        let data = parse("puddle-encryption data=5 pagefile-encrypted=0 pagefiles=")
+            .unwrap()
+            .data;
+        assert!(
+            matches!(&data, Protection::Unknown { why } if why.contains("suspended")),
+            "{data:?}"
+        );
     }
 
     #[test]
     fn a_zero_from_an_unelevated_caller_is_not_called_unencrypted() {
-        let Protection::Unknown { why } =
-            parse("puddle-encryption data=0 pagefile-encrypted=0 pagefiles=D:0")
-                .unwrap()
-                .data
-        else {
-            panic!("0 must be unknown");
-        };
-        assert!(why.contains("elevated"), "{why}");
+        let data = parse("puddle-encryption data=0 pagefile-encrypted=0 pagefiles=D:0")
+            .unwrap()
+            .data;
+        assert!(
+            matches!(&data, Protection::Unknown { why } if why.contains("elevated")),
+            "{data:?}"
+        );
     }
 
     #[test]

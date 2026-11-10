@@ -7,8 +7,8 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_store::{RepoRef, Scope, Store};
-use puddle_types::{Decision, Host, RuleSetId, WorkspaceId};
+use puddle_store::{RepoRef, Store};
+use puddle_types::{Decision, Host, WorkspaceId};
 
 use crate::ApiErrorBody;
 use crate::error::{ApiError, ErrorCode, blocking};
@@ -42,27 +42,11 @@ pub(crate) fn hosts_of<'a>(urls: impl IntoIterator<Item = &'a str>) -> Vec<Host>
 /// Which rule or rule set blocks a host, in words, for a decision that is a deny.
 fn blocked_by(store: &Store, host: &Host, decision: Decision) -> Option<String> {
     match decision {
-        Decision::Deny { rule_id, .. } => {
-            let rule = store.rules().into_iter().find(|r| r.id == rule_id);
-            let (pattern, where_) = rule.map_or_else(
-                || (host.to_string(), "your".to_owned()),
-                |r| {
-                    let where_ = match r.scope {
-                        Scope::Workspace(_) => "your rule for this workspace",
-                        _ => "your rule for every workspace",
-                    };
-                    (r.pattern.to_string(), where_.to_owned())
-                },
-            );
-            Some(format!("{where_} {pattern} (rule {rule_id}) blocks {host}"))
-        }
+        Decision::Deny { rule_id, .. } => Some(format!("your rule {rule_id} blocks {host}")),
         Decision::SetDeny { set, .. } => {
-            let name = match set {
-                RuleSetId::System => "System managed".to_owned(),
-                other => store
-                    .rule_set(other)
-                    .map_or_else(|_| other.to_string(), |info| info.name),
-            };
+            let name = store
+                .rule_set(set)
+                .map_or_else(|_| set.to_string(), |info| info.name);
             Some(format!("the rule set {name} blocks {host}"))
         }
         _ => None,

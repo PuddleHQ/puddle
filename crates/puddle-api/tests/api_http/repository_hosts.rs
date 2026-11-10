@@ -191,3 +191,50 @@ async fn the_contract_lists_the_host_check() {
     assert!(spec["paths"]["/api/repository-hosts"]["post"].is_object());
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_rule_set_that_denies_the_host_blocks_it_by_name() {
+    let api = start().await;
+    let set = api
+        .send("POST", "/api/rule-sets", Some(&json!({"name": "Client X"})))
+        .await
+        .json();
+    let number: i64 = set["id"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("user:")
+        .unwrap()
+        .parse()
+        .unwrap();
+    block(&api, json!({"type": "set", "set": number}), "github.com").await;
+    let answer = hosts(&api, &[REPO], None).await;
+    assert_eq!(answer["hosts"][0]["state"], "blocked");
+    assert_eq!(
+        answer["hosts"][0]["blocked_by"],
+        "the rule set Client X blocks github.com"
+    );
+    assert_eq!(create(&api, "web", &[REPO]).await.status, 409);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn more_addresses_than_a_workspace_may_hold_are_refused() {
+    let api = start().await;
+    let urls: Vec<String> = (0..101)
+        .map(|n| format!("https://github.com/acme/r{n}.git"))
+        .collect();
+    let reply = api
+        .send(
+            "POST",
+            "/api/repository-hosts",
+            Some(&json!({"urls": urls})),
+        )
+        .await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    assert!(
+        reply.body.contains("too many repository addresses"),
+        "{}",
+        reply.body
+    );
+    api.running.shutdown().await;
+}

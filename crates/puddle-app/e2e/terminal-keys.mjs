@@ -160,8 +160,10 @@ try {
   await until("the main page to load", () => page.evaluate("document.readyState === 'complete' && !!document.body"));
   const focused = await clickIn(page, second, "body");
   check("a click in the main window gives it the focus", focused);
+  await page.evaluate(`window.seenKeys = []; addEventListener("keydown", (e) => window.seenKeys.push(e.key + (e.ctrlKey ? "+ctrl" : "")), true); true`);
   input("keys", "ctrl+q");
-  await Promise.race([second.done, sleep(30_000)]);
+  await Promise.race([second.done, sleep(15_000)]);
+  if (!second.exited) console.log(`     the page saw: ${JSON.stringify(await page.evaluate("window.seenKeys").catch((err) => err.message))}`);
   check("Ctrl+Q quits the program", second.exited && second.code === 0, `exited: ${second.exited}, code: ${second.code}`);
 } catch (err) {
   check("the test ran to the end", false, String(err?.stack ?? err));

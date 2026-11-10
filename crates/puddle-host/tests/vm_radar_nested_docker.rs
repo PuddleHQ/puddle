@@ -162,7 +162,7 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPE
 export PATH="$PATH:$HOME/.dotnet/tools"
 dotnet new install Aspire.ProjectTemplates
 d=/tmp/aspire-app; rm -rf $d; mkdir -p $d; cd $d
-dotnet new aspire-starter --name Probe
+dotnet new aspire-starter --name Probe --use-redis-cache
 dotnet tool install -g aspire.cli || dotnet tool update -g aspire.cli
 cd $d
 trap 'tail -n 40 /tmp/aspire-run.log' EXIT
@@ -170,13 +170,16 @@ trap 'tail -n 40 /tmp/aspire-run.log' EXIT
 for i in $(seq 1 150); do sudo docker ps --format '{{.Image}}' | grep -qi redis && break; sleep 2; done
 sudo docker ps --format '{{.Image}}' | grep -qi redis
 # The web frontend answers its weather page, which goes through the API service to Redis.
-port=""
+ok=""
 for i in $(seq 1 90); do
-  port=$(ss -ltnpH 2>/dev/null | awk '/Probe.Web/ { n = split($4, a, ":"); print a[n]; exit }')
-  [ -n "$port" ] && curl -fsS "http://localhost:$port/weather" >/dev/null && break
+  for port in $(ss -ltnpH 2>/dev/null | awk '/Probe.Web/ { n = split($4, a, ":"); print a[n] }' | sort -u); do
+    for scheme in http https; do
+      curl -fsSk "$scheme://localhost:$port/weather" 2>/dev/null | grep -qi weather && ok=1 && break 3
+    done
+  done
   sleep 2
 done
-curl -fsS "http://localhost:$port/weather" | grep -qi weather
+[ -n "$ok" ]
 "#;
     vec![
         Step {

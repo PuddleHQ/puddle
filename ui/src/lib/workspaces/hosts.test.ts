@@ -33,7 +33,9 @@ describe("checkHosts", () => {
   it("posts the addresses and the workspace and returns the hosts", async () => {
     const hosts = [{ host: "github.com", state: "new", blocked_by: null }];
     post.mockResolvedValueOnce({ data: { hosts } });
-    expect(await checkHosts(["https://github.com/a/b"], "made-1")).toEqual(hosts);
+    expect(await checkHosts(["https://github.com/a/b"], "made-1")).toEqual(
+      hosts,
+    );
     expect(post).toHaveBeenLastCalledWith("/api/repository-hosts", {
       body: { urls: ["https://github.com/a/b"], workspace: "made-1" },
     });

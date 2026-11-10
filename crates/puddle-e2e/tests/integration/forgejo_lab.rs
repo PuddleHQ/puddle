@@ -29,7 +29,13 @@ fn git(forgejo: &Forgejo, cwd: &Path, args: &[&str]) -> Output {
     command
         .current_dir(cwd)
         .env("GIT_SSL_CAINFO", root)
-        .args(["-c", &format!("http.curloptResolve={resolve}")])
+        .args(["-c", &format!("http.curloptResolve={resolve}")]);
+    if cfg!(windows) {
+        // Schannel, Git for Windows' default, wants a revocation answer the lab root cannot give;
+        // OpenSSL verifies against GIT_SSL_CAINFO as given.
+        command.args(["-c", "http.sslBackend=openssl"]);
+    }
+    command
         .args([
             "-c",
             "user.name=lab",

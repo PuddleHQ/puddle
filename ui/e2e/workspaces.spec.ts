@@ -1376,6 +1376,38 @@ test.describe("the settings tab", () => {
     await expect(page.getByText("Login capture saved.")).toBeVisible();
   });
 
+  test("an install that never chose is offered the choice once, and Settings keeps the global mode and learning", async ({
+    page,
+    backend,
+  }) => {
+    await backend.signIn(page);
+    await page.goto("/workspaces");
+    const notice = page
+      .getByRole("status")
+      .filter({ hasText: "decrypt every HTTPS host" });
+    await expect(notice).toBeVisible();
+    await notice.getByRole("button", { name: "Keep it as it is" }).click();
+    await expect(notice).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(notice).toHaveCount(0);
+
+    await page.goto("/settings");
+    const mode = page.getByLabel("Which hosts to decrypt");
+    await expect(mode).toHaveValue("known_only");
+    await mode.selectOption("all_except_curated");
+    await expect(page.getByText("Interception mode saved.")).toBeVisible();
+    await page.getByLabel("Learn from rejections").uncheck();
+    await expect(
+      page.getByText("Learning from rejections saved."),
+    ).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel("Which hosts to decrypt")).toHaveValue(
+      "all_except_curated",
+    );
+    await expect(page.getByLabel("Learn from rejections")).not.toBeChecked();
+  });
+
   test("a workspace follows the global interception mode by default; its own mode and the never-decrypt names are kept", async ({
     page,
     backend,
@@ -1388,7 +1420,7 @@ test.describe("the settings tab", () => {
     const names = page.getByLabel("Never decrypt in this workspace");
     await names.fill("Bank.example\n*.corp.test");
     await page.getByRole("button", { name: "Keep names" }).click();
-    await expect(page.getByText("Saved.")).toBeVisible();
+    await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
     await page.reload();
     await expect(page.getByLabel("Interception mode")).toHaveValue("all");
     await expect(

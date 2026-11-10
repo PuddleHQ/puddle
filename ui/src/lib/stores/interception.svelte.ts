@@ -144,3 +144,108 @@ export class GlobalNeverDecrypt {
     }
   }
 }
+
+type SettingsView = components["schemas"]["InterceptionSettingsView"];
+
+/** The global setting: the mode workspaces follow, learning, the curated list and the notice. */
+export class GlobalInterception {
+  status = $state<Status>("loading");
+  /** The mode in force; an install that has not chosen is on `known_only`. */
+  mode = $state<SettingsView["mode"]>("known_only");
+  /** Whether the user has chosen a mode. */
+  chosen = $state(false);
+  learn = $state(true);
+  noticeSeen = $state(true);
+  /** The built-in list mode 2 passes through ("System managed"). */
+  curated = $state.raw<string[]>(NO_NAMES);
+  reason = $state<string | null>(null);
+  #ticket = 0;
+  readonly #api: StoreApi;
+
+  constructor(api: StoreApi = defaultApi) {
+    this.#api = api;
+  }
+
+  #show(view: SettingsView): void {
+    this.mode = view.mode;
+    this.chosen = view.chosen;
+    this.learn = view.learn_from_rejections;
+    this.noticeSeen = view.notice_seen;
+    this.curated = view.curated;
+  }
+
+  /** Whether the app should offer the choice once, as a notice. */
+  get needsNotice(): boolean {
+    return this.status === "ready" && !this.chosen && !this.noticeSeen;
+  }
+
+  async load(): Promise<void> {
+    this.status = "loading";
+    this.reason = null;
+    const ticket = ++this.#ticket;
+    try {
+      const { data, error, response } =
+        await this.#api.GET("/api/interception");
+      if (ticket !== this.#ticket) return;
+      if (data) {
+        this.#show(data);
+        this.status = "ready";
+      } else {
+        this.status = "failed";
+        this.reason = readFailure(error, response);
+      }
+    } catch {
+      if (ticket !== this.#ticket) return;
+      this.status = "failed";
+      this.reason = SERVICE_DOWN;
+    }
+  }
+
+  setMode(mode: SettingsView["mode"]): Promise<SaveResult> {
+    return this.#put({ mode });
+  }
+
+  setLearning(on: boolean): Promise<SaveResult> {
+    return this.#put({ learn_from_rejections: on });
+  }
+
+  dismissNotice(): Promise<SaveResult> {
+    return this.#put({ notice_seen: true });
+  }
+
+  async #put(
+    body: components["schemas"]["InterceptionSettingsRequest"],
+  ): Promise<SaveResult> {
+    const ticket = ++this.#ticket;
+    try {
+      const { data, error, response } = await this.#api.PUT(
+        "/api/interception",
+        {
+          body,
+        },
+      );
+      if (!data) return { ok: false, message: readFailure(error, response) };
+      if (ticket === this.#ticket) {
+        this.#show(data);
+        this.status = "ready";
+      }
+      return { ok: true };
+    } catch {
+      return { ok: false, message: SERVICE_DOWN };
+    }
+  }
+}
+
+/**
+ * Skipping the first-run flow takes the recommended mode, unless one was chosen already. Best
+ * effort: if it fails the install stays unchosen and the notice offers the choice later.
+ */
+export async function takeRecommendedMode(
+  api: StoreApi = defaultApi,
+): Promise<void> {
+  const store = new GlobalInterception(api);
+  await store.load();
+  if (store.status === "ready" && !store.chosen) {
+    await store.setMode("all_except_curated");
+  }
+}

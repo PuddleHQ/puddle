@@ -25,6 +25,7 @@ const ROUTES = [
   "/welcome/check",
   "/welcome/certificates",
   "/welcome/connect",
+  "/welcome/interception",
   "/welcome/look",
   "/welcome/workspace",
 ] as const;

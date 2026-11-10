@@ -3,8 +3,11 @@
   import LearnedHostsList from "#lib/components/LearnedHostsList.svelte";
   import NeverDecryptEditor from "#lib/components/NeverDecryptEditor.svelte";
   import {
+    MODE_NAMES as NAMES,
+    MODE_WARNINGS as WARNINGS,
+  } from "#lib/interception/modes.ts";
+  import {
     WorkspaceInterception,
-    type EffectiveMode,
     type WorkspaceMode,
   } from "#lib/stores/interception.svelte.ts";
   import "#lib/theme/controls.css";
@@ -17,26 +20,6 @@
   const headingId = $props.id();
   let problem = $state<string | null>(null);
   let saved = $state<string | null>(null);
-
-  const NAMES: Record<EffectiveMode, string> = {
-    all: "Decrypt every host",
-    all_except_curated: "Decrypt every host except a known list",
-    known_only: "Decrypt only hosts Puddle has a reason to read",
-  };
-
-  const WARNINGS: Record<EffectiveMode, string> = {
-    all:
-      "Rules on method and path work on every host. A tool with its own " +
-      "trust store (a Java program, say) fails on first contact with a host " +
-      "until Puddle learns it.",
-    all_except_curated:
-      "Rules on method and path work on every host except a list of hosts " +
-      "known to break, which Puddle passes through. A tool that still " +
-      "doesn't trust Puddle's certificate fails once for that host.",
-    known_only:
-      "This limits the proxy: a rule on any host Puddle has no reason to " +
-      "read can only allow or deny the whole host.",
-  };
 
   $effect(() => {
     void store.load(id);

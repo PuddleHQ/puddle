@@ -256,6 +256,12 @@ impl VmEnv {
             .replace())
     }
 
+    /// The folder of msb's `runtime.log` and `kernel.log` for the sandbox `name` of this run.
+    #[must_use]
+    pub fn log_dir(&self, name: &str) -> PathBuf {
+        self.sandboxes_dir.join(name).join(MSB_LOGS_DIR)
+    }
+
     /// The id of the process that runs the VM of the sandbox `name`, from msb's own record.
     ///
     /// # Errors

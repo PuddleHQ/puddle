@@ -1022,6 +1022,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_workspace_on_the_curated_mode_decrypts_unlisted_hosts_and_passes_the_curated_ones() {
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let ws = workspace("alpha");
+        store
+            .set_workspace_mode(&ws, Some(InterceptionMode::AllExceptCurated))
+            .unwrap();
+        injection.begin(&ws, false).await.unwrap();
+        let interception = terminations
+            .termination(&ws)
+            .unwrap()
+            .interception()
+            .clone();
+        let host = |h: &str| Host::parse_normalised(h).unwrap();
+        assert!(interception.is_decrypting_all());
+        assert_eq!(interception.skipped(&host("unlisted.example")), None);
+        for name in CURATED_PASS_THROUGH.iter().filter(|n| !n.starts_with("*.")) {
+            assert_eq!(interception.skipped(&host(name)), Some("curated"), "{name}");
+        }
+    }
+
+    #[tokio::test]
     async fn a_stored_never_decrypt_name_that_does_not_parse_is_skipped_and_the_others_still_apply()
     {
         let store = store();

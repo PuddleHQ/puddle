@@ -119,6 +119,42 @@ async fn the_global_mode_is_unchosen_known_only_until_set_and_a_workspace_follow
     assert_eq!(own["mode"], "known_only");
     assert_eq!(own["effective_mode"], "known_only", "its own mode wins");
 
+    let curated = api
+        .send(
+            "PUT",
+            "/api/workspaces/shop/interception",
+            Some(&json!({"mode": "all_except_curated"})),
+        )
+        .await
+        .json();
+    assert_eq!(curated["mode"], "all_except_curated");
+    assert_eq!(curated["effective_mode"], "all_except_curated");
+    let back = api
+        .send("GET", "/api/workspaces/shop/interception", None)
+        .await
+        .json();
+    assert_eq!(
+        back["mode"], "all_except_curated",
+        "the choice is read back"
+    );
+
+    let seen = api
+        .send(
+            "PUT",
+            "/api/interception",
+            Some(&json!({"notice_seen": false})),
+        )
+        .await
+        .json();
+    assert_eq!(
+        seen["notice_seen"], false,
+        "the notice flag is its own field"
+    );
+    assert_eq!(
+        seen["mode"], "all_except_curated",
+        "and leaves the mode alone"
+    );
+
     let off = api
         .send(
             "PUT",

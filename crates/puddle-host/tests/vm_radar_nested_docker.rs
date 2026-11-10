@@ -167,7 +167,7 @@ dotnet tool install -g aspire.cli || dotnet tool update -g aspire.cli
 cd $d
 trap 'tail -n 40 /tmp/aspire-run.log' EXIT
 # Aspire talks to Docker as the session user, like Docker's post-install steps arrange: join the docker group.
-sudo usermod -aG docker "$USER"
+sudo usermod -aG docker "$(id -un)"
 sg docker -c 'docker ps >/dev/null'
 (sg docker -c "nohup aspire run --non-interactive >/tmp/aspire-run.log 2>&1" &)
 for i in $(seq 1 150); do sudo docker ps --format '{{.Image}}' | grep -qi redis && break; sleep 2; done

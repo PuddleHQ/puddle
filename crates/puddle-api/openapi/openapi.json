@@ -4069,6 +4069,97 @@
         }
       }
     },
+    "/api/repository-hosts": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Says which hosts the repositories of a create form are on and where each stands: `new` hosts\nare the ones the create would allow for the workspace, `blocked` ones refuse the create.",
+        "operationId": "repository_hosts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepositoryHostsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the hosts and where each stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryHosts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a bad workspace id or more than 100 addresses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/request-rules": {
       "get": {
         "tags": [
@@ -5543,7 +5634,7 @@
             }
           },
           "409": {
-            "description": "another workspace has that name (ignoring case), or two identities of the list cover the same place (`identity_collision`)",
+            "description": "another workspace has that name (ignoring case), two identities of the list cover the same place (`identity_collision`), or a block rule covers the host of a repository (the create never overrides a block)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8443,7 +8534,7 @@
             }
           },
           "409": {
-            "description": "the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), or the identities collide (`identity_collision`)",
+            "description": "the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), the identities collide (`identity_collision`), or a block rule covers the repository's host (clone)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9754,7 +9845,8 @@
           "cli",
           "ui",
           "api",
-          "system"
+          "system",
+          "workspace_create"
         ]
       },
       "AddRepositoryRequest": {
@@ -9857,6 +9949,25 @@
           }
         ],
         "description": "`POST /api/workspaces/{id}/repositories`: what to add."
+      },
+      "AllowedHost": {
+        "type": "object",
+        "description": "A host a create (or adding a repository) allowed for a workspace.",
+        "required": [
+          "host",
+          "rule_id"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The host."
+          },
+          "rule_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The rule that allows it, visible on the Rules screen as made by the create."
+          }
+        }
       },
       "ApiErrorBody": {
         "type": "object",
@@ -15534,6 +15645,81 @@
           "unknown"
         ]
       },
+      "RepositoryHost": {
+        "type": "object",
+        "description": "One host of the repositories.",
+        "required": [
+          "host",
+          "state",
+          "blocked_by"
+        ],
+        "properties": {
+          "blocked_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `blocked`: which rule or rule set blocks it, in words; `null` otherwise."
+          },
+          "host": {
+            "type": "string",
+            "description": "The host, lower case."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RepositoryHostState",
+            "description": "Where it stands."
+          }
+        }
+      },
+      "RepositoryHostState": {
+        "type": "string",
+        "description": "Where a repository host stands with the rules.",
+        "enum": [
+          "new",
+          "allowed",
+          "blocked"
+        ]
+      },
+      "RepositoryHosts": {
+        "type": "object",
+        "description": "The hosts of the addresses, in the order they first appear, each once.",
+        "required": [
+          "hosts"
+        ],
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepositoryHost"
+            },
+            "description": "One entry per host."
+          }
+        }
+      },
+      "RepositoryHostsRequest": {
+        "type": "object",
+        "description": "`POST /api/repository-hosts`: the repositories of a create form, or of a repository to add.",
+        "required": [
+          "urls"
+        ],
+        "properties": {
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The repository addresses. One that is not an HTTPS address of a repository has no host\nhere; the create refuses it by itself."
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workspace the repositories are for; leave it out for one that does not exist yet."
+          }
+        },
+        "additionalProperties": false
+      },
       "RequestRule": {
         "type": "object",
         "description": "A rule on method and path. It only refuses: the requests it names to a host Puddle decrypts\nare answered with a 403 and never leave the computer. The host is always decrypted for it.",
@@ -17259,9 +17445,17 @@
           "direct_ssh",
           "settings_error",
           "first_connect_notice_due",
-          "identities"
+          "identities",
+          "allowed_hosts"
         ],
         "properties": {
+          "allowed_hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowedHost"
+            },
+            "description": "The hosts creating the workspace, or adding a repository to it, allowed for it because no\nrule decided them (each is a rule made by the create, on the Rules screen). Only those\nanswers fill it; every other answer has an empty list."
+          },
           "busy": {
             "oneOf": [
               {

@@ -777,6 +777,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/repository-hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Says which hosts the repositories of a create form are on and where each stands: `new` hosts
+         *     are the ones the create would allow for the workspace, `blocked` ones refuse the create.
+         */
+        post: operations["repository_hosts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/request-rules": {
         parameters: {
             query?: never;
@@ -1705,7 +1725,7 @@ export interface components {
          * @description Who made a change.
          * @enum {string}
          */
-        Actor: "cli" | "ui" | "api" | "system";
+        Actor: "cli" | "ui" | "api" | "system" | "workspace_create";
         /** @description `POST /api/workspaces/{id}/repositories`: what to add. */
         AddRepositoryRequest: {
             /**
@@ -1746,6 +1766,16 @@ export interface components {
              *     with 409 when it names another repository.
              */
             url: string;
+        };
+        /** @description A host a create (or adding a repository) allowed for a workspace. */
+        AllowedHost: {
+            /** @description The host. */
+            host: string;
+            /**
+             * Format: int64
+             * @description The rule that allows it, visible on the Rules screen as made by the create.
+             */
+            rule_id: number;
         };
         /** @description The body of every error response. */
         ApiErrorBody: {
@@ -4139,6 +4169,35 @@ export interface components {
          * @enum {string}
          */
         RepoVisibility: "public" | "private" | "internal" | "unknown";
+        /** @description One host of the repositories. */
+        RepositoryHost: {
+            /** @description For `blocked`: which rule or rule set blocks it, in words; `null` otherwise. */
+            blocked_by: string | null;
+            /** @description The host, lower case. */
+            host: string;
+            /** @description Where it stands. */
+            state: components["schemas"]["RepositoryHostState"];
+        };
+        /**
+         * @description Where a repository host stands with the rules.
+         * @enum {string}
+         */
+        RepositoryHostState: "new" | "allowed" | "blocked";
+        /** @description The hosts of the addresses, in the order they first appear, each once. */
+        RepositoryHosts: {
+            /** @description One entry per host. */
+            hosts: components["schemas"]["RepositoryHost"][];
+        };
+        /** @description `POST /api/repository-hosts`: the repositories of a create form, or of a repository to add. */
+        RepositoryHostsRequest: {
+            /**
+             * @description The repository addresses. One that is not an HTTPS address of a repository has no host
+             *     here; the create refuses it by itself.
+             */
+            urls: string[];
+            /** @description The workspace the repositories are for; leave it out for one that does not exist yet. */
+            workspace?: string | null;
+        };
         /**
          * @description A rule on method and path. It only refuses: the requests it names to a host Puddle decrypts
          *     are answered with a 403 and never leave the computer. The host is always decrypted for it.
@@ -4847,6 +4906,12 @@ export interface components {
          *     user put there), and the sandbox that runs it.
          */
         Workspace: {
+            /**
+             * @description The hosts creating the workspace, or adding a repository to it, allowed for it because no
+             *     rule decided them (each is a rule made by the create, on the Rules screen). Only those
+             *     answers fill it; every other answer has an empty list.
+             */
+            allowed_hosts: components["schemas"]["AllowedHost"][];
             busy: components["schemas"]["WorkspaceOperation"] | null;
             /**
              * Format: int64
@@ -8499,6 +8564,84 @@ export interface operations {
             };
         };
     };
+    repository_hosts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepositoryHostsRequest"];
+            };
+        };
+        responses: {
+            /** @description the hosts and where each stands */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryHosts"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a bad workspace id or more than 100 addresses */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     list_request_rules: {
         parameters: {
             query?: {
@@ -9748,7 +9891,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description another workspace has that name (ignoring case), or two identities of the list cover the same place (`identity_collision`) */
+            /** @description another workspace has that name (ignoring case), two identities of the list cover the same place (`identity_collision`), or a block rule covers the host of a repository (the create never overrides a block) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -12103,7 +12246,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), or the identities collide (`identity_collision`) */
+            /** @description the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), the identities collide (`identity_collision`), or a block rule covers the repository's host (clone) */
             409: {
                 headers: {
                     [name: string]: unknown;

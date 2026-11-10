@@ -15,7 +15,7 @@ use crate::checkouts::AddRepository;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::workspaces::{StoreGitSetup, git_request, view, workspace_id};
-use crate::routes::{AppState, record_op};
+use crate::routes::{AppState, record_op, repository_hosts};
 use crate::wire::{AddRepositoryRequest, Checkouts, Workspace};
 
 /// The directory in a path. A string that can't be a checkout directory names no entry.
@@ -64,7 +64,7 @@ pub(crate) async fn list_checkouts(
         (status = OK, description = "the checkout is on the list now (kind `existing`)", body = Workspace),
         (status = ACCEPTED, description = "the clone started (kind `clone`)", body = Workspace),
         (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
-        (status = CONFLICT, description = "the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), or the identities collide (`identity_collision`)", body = ApiErrorBody),
+        (status = CONFLICT, description = "the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), the identities collide (`identity_collision`), or a block rule covers the repository's host (clone)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "a bad address, directory or identity", body = ApiErrorBody),
         (status = SERVICE_UNAVAILABLE, description = "the list could not be saved, nothing changed", body = ApiErrorBody)
     )
@@ -85,11 +85,13 @@ pub(crate) async fn add_repository(
             let requests: Vec<_> = git_request(new).into_iter().collect();
             let (store, name) = (state.store.clone(), record.id.clone());
             blocking(move || Ok(store.check_repository_git(Some(&name), &requests)?)).await?;
+            let hosts = repository_hosts::hosts_of(std::iter::once(new.repository.url.as_str()));
+            repository_hosts::refuse_blocked(&state.store, Some(record.id.clone()), hosts).await?;
             StatusCode::ACCEPTED
         }
         AddRepository::Existing { .. } => StatusCode::OK,
     };
-    let git = StoreGitSetup::new(state.store.clone());
+    let git = StoreGitSetup::allowing_hosts(state.store.clone());
     let directory = match &add {
         AddRepository::Clone(new) => new.repository.directory.to_string(),
         AddRepository::Existing { directory, .. } => directory.to_string(),
@@ -108,7 +110,12 @@ pub(crate) async fn add_repository(
     .await?;
     Ok((
         status,
-        Json(view(&state, record).await.with_identities(git.take())),
+        Json(
+            view(&state, record)
+                .await
+                .with_identities(git.take())
+                .with_allowed_hosts(git.take_allowed()),
+        ),
     ))
 }
 

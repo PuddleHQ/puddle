@@ -413,11 +413,7 @@ mod tests {
         let live = plan(None, Some(D::Live), "root_disk_size");
         assert_eq!(
             grow_plan(&live),
-            if cfg!(windows) {
-                GrowPlan::Deferred
-            } else {
-                GrowPlan::Live
-            }
+            on_platform(GrowPlan::Live, LIVE_GROW_WORKS)
         );
     }
 }

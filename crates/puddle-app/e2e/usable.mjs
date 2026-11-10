@@ -269,26 +269,6 @@ function forgeLog() {
   }
 }
 
-const answerScript = join(out, "answer-dialog.ps1");
-writeFileSync(
-  answerScript,
-  `Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
-$root = [System.Windows.Automation.AutomationElement]::RootElement
-$by = [System.Windows.Automation.PropertyCondition]
-$dialog = $root.FindFirst('Children', (New-Object $by ([System.Windows.Automation.AutomationElement]::NameProperty), 'Security Warning'))
-if (-not $dialog) { 'none'; exit 0 }
-$yes = $dialog.FindFirst('Descendants', (New-Object $by ([System.Windows.Automation.AutomationElement]::NameProperty), 'Yes'))
-if (-not $yes) { 'no Yes button'; exit 0 }
-$yes.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-'answered Yes'
-`,
-);
-/** Windows asks once to trust the app's own localhost certificate (the editor's origin): the user answers Yes. */
-function answerCertificateDialog() {
-  const ps = spawnSync("powershell", ["-NoProfile", "-File", answerScript], { encoding: "utf8" });
-  return (ps.stdout ?? "").trim();
-}
-
 /** Waits until the workspace has nothing in hand (a clone, a start): other calls refuse while it is busy. */
 const idle = (id) =>
   until(
@@ -352,7 +332,7 @@ async function createFromTheForm() {
 async function allowTheForgeInTheInbox() {
   await uia.click("the Inbox link", { window: MAIN, role: "link", nameRegex: "^Inbox" });
   await uia.waitFor("the Inbox heading", heading("Inbox"));
-  await uia.click("Allow for the forge", inMain("button", `Allow ${forge} for ${WORKSPACE}`));
+  await uia.click("Allow for the forge", { window: MAIN, role: "button", nameRegex: `^Allow ${forge.replace(/\./g, "\\.")} for ` });
   await until("the forge request to be allowed", async () => {
     const rows = (await api("GET", "/api/pending")).json?.requests ?? [];
     return rows.some((r) => r.host === forge && r.state !== "requested") && !rows.some((r) => r.host === forge && r.state === "requested");
@@ -376,6 +356,14 @@ try {
   await until("the API", async () => (await api("GET", "/api/health")).status === 200, 60_000);
   check("the installed app starts and answers its API", true, conn.url);
   uia = await Uia.start(app.pid);
+  // Windows asks once to trust the app's own localhost certificate (the editor's origin), whenever the
+  // app first needs it; the user answers Yes, so a poll does, for the whole run.
+  const certificate = setInterval(() => {
+    uia.call({ action: "click", window: "^Security Warning$", role: "pane", name: "Yes" }).then((r) => {
+      if (r.found) note("the Windows certificate dialog for localhost: answered Yes");
+    }, () => {});
+  }, 2000);
+  certificate.unref();
 
   // What the settings screen and the identity forms do through the same API; the forge is on this
   // computer, so a workspace may reach this computer's own addresses (the Loopback switch).
@@ -447,8 +435,6 @@ try {
   const title = await until(
     "the editor window, titled with the workspace",
     () => {
-      const answered = answerCertificateDialog();
-      if (answered !== "none") note(`the certificate dialog: ${answered}`);
       return appWindows().find((t) => t.startsWith(`${WORKSPACE} - `));
     },
     120_000,

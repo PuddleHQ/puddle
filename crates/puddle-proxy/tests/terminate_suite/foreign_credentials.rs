@@ -17,6 +17,7 @@ use puddle_proxy::{
     ForeignCredentialWarning, InjectDecision, SecretValue, StandIn, StandInOrigin, StandIns,
     TerminationSet, secret_stand_in,
 };
+use puddle_test_kit::with_checksum;
 use puddle_types::{CollectingSink, Event, ForeignCredentialKind};
 use terminate_support::h2_rig::{H2Server, Script, full, reply};
 use terminate_support::{
@@ -26,32 +27,9 @@ use terminate_support::{
 const ENTROPY: &str = "q1W2e3R4t5Y6u7I8o9P0a1S2d3F4g5";
 const REAL_KEY: &str = "sk-live-5c1d9e0a47b2";
 
-/// A made-up GitHub-shaped token with the checksum real ones carry (CRC-32 of the first thirty
-/// characters, as six base62 characters).
+/// A made-up GitHub-shaped token with the checksum real ones carry, built from `ENTROPY`.
 fn github_token() -> String {
-    let mut crc: u32 = u32::MAX;
-    for byte in ENTROPY.bytes() {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ 0xEDB8_8320
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    let mut value = u64::from(!crc);
-    let alphabet = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    let mut tail = [b'0'; 6];
-    for slot in tail.iter_mut().rev() {
-        *slot = alphabet
-            .iter()
-            .copied()
-            .nth(usize::try_from(value % 62).unwrap())
-            .unwrap();
-        value /= 62;
-    }
-    format!("ghp_{ENTROPY}{}", std::str::from_utf8(&tail).unwrap())
+    with_checksum("ghp_", ENTROPY)
 }
 
 fn ok_handler() -> Handler {

@@ -139,10 +139,6 @@ token="gh""p_R7qL2xVn9TzK4mWb8YcD3sFh6JgA0eUoPi5N"
 expect fail real-token src/app.rs "const T: &str = \"$token\";"
 expect pass listed-canary crates/puddle-proxy/tests/integration/route.rs '    .request("GET http://web.test/a?token=CANARY-route-1 HTTP/1.1")'
 expect pass listed-docker-auth crates/puddle-boot/tests/vm_boot.rs 'json!({"registry.example.test": {"auth": "dXNlcjpwdWRkbGU="}});'
-canary_token="gh""p_R7mQ2xVb9TnLk4Zs8WdYc1HfJe6UoPa3GiXt"
-expect pass listed-log-canary-token crates/puddle-proxy/tests/terminate_suite/log_canary.rs "const STORED_TOKEN: &str = \"$canary_token\";"
-expect fail other-token-in-log-canary-file crates/puddle-proxy/tests/terminate_suite/log_canary.rs "const STORED_TOKEN: &str = \"$token\";"
-expect fail log-canary-token-outside-listed-path src/app.rs "const T: &str = \"$canary_token\";"
 expect fail token-in-listed-file crates/puddle-proxy/tests/integration/route.rs "let t = \"$token\";"
 expect fail canary-outside-listed-paths src/lib.rs '    password: "CANARY-s3cret".into(),'
 

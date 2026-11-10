@@ -9901,16 +9901,19 @@ fn gib(n: u32) -> puddle_compute::DiskSize {
 /// The last `root_disk_grown` record of the activity log: (outcome, detail).
 async fn grown_record(api: &Api) -> (String, String) {
     let ops = workspace_ops("workspace=acme", api).await;
-    let last = ops
-        .iter()
+    // No record fails the callers' outcome assertion, which prints this detail.
+    ops.iter()
         .rev()
         .find(|r| r["op"] == "root_disk_grown")
-        .expect("a root_disk_grown record")
-        .clone();
-    (
-        last["outcome"].as_str().unwrap().to_owned(),
-        last["detail"].as_str().unwrap().to_owned(),
-    )
+        .map_or_else(
+            || (String::new(), "no root_disk_grown record".to_owned()),
+            |last| {
+                (
+                    last["outcome"].as_str().unwrap().to_owned(),
+                    last["detail"].as_str().unwrap().to_owned(),
+                )
+            },
+        )
 }
 
 #[tokio::test(flavor = "multi_thread")]

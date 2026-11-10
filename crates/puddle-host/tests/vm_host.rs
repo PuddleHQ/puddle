@@ -236,9 +236,7 @@ async fn guest_root_mib(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> u64 {
         Duration::from_secs(60),
     )
     .await;
-    size.trim()
-        .parse()
-        .unwrap_or_else(|_| panic!("df said {size:?}"))
+    size.trim().parse().expect("df printed a size in MiB")
 }
 
 /// A root disk grows in a real guest: live while the workspace runs (on Windows, until the libkrun
@@ -246,6 +244,7 @@ async fn guest_root_mib(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> u64 {
 /// "Reset root disk" makes the fresh one as big as the grown size. A file written to the root disk
 /// before the grow has the same checksum after each step.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 async fn vm_host_grows_a_root_disk_live_and_offline_and_a_reset_keeps_the_size() {
     let VmHost {
         host,

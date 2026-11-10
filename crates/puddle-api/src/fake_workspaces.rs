@@ -403,7 +403,7 @@ impl FakeWorkspaces {
             return;
         }
         match op {
-            Operation::Creating | Operation::Cloning => {}
+            Operation::Creating | Operation::Cloning | Operation::GrowingRootDisk => {}
             Operation::Starting => {
                 record.status = WorkspaceStatus::Running;
                 status_changed = true;
@@ -418,7 +418,6 @@ impl FakeWorkspaces {
             Operation::ResettingRootDisk => {
                 record.root_disk_used_mib = record.root_disk_size_mib.map(|_| 0);
             }
-            Operation::GrowingRootDisk => {}
             Operation::Deleting => {
                 state.entries.remove(id);
             }

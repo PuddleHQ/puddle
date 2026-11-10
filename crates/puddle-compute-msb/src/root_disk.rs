@@ -170,21 +170,21 @@ mod tests {
     }
 
     impl GrowSdk for FakeSdk {
-        async fn plan(&self) -> Result<GrowPlan, ComputeError> {
-            match &self.plan {
+        fn plan(&self) -> impl Future<Output = Result<GrowPlan, ComputeError>> + Send {
+            std::future::ready(match &self.plan {
                 Ok(GrowPlan::Refused(r)) => Ok(GrowPlan::Refused(r.clone())),
                 Ok(GrowPlan::Live) => Ok(GrowPlan::Live),
                 Ok(GrowPlan::Deferred) => Ok(GrowPlan::Deferred),
                 Err(()) => Err(ComputeError::InvalidSpec {
                     reason: "plan failed".into(),
                 }),
-            }
+            })
         }
-        async fn apply_live(&self) -> Result<(), ComputeError> {
-            self.apply("live")
+        fn apply_live(&self) -> impl Future<Output = Result<(), ComputeError>> + Send {
+            std::future::ready(self.apply("live"))
         }
-        async fn apply_next_start(&self) -> Result<(), ComputeError> {
-            self.apply("next start")
+        fn apply_next_start(&self) -> impl Future<Output = Result<(), ComputeError>> + Send {
+            std::future::ready(self.apply("next start"))
         }
     }
 

@@ -654,6 +654,15 @@ async fn the_root_disk_figures_and_warnings_follow_the_threshold_and_a_reset_emp
     api.running.shutdown().await;
 }
 
+async fn grow(api: &Api, size: u64) -> Reply {
+    api.send(
+        "POST",
+        "/api/workspaces/web/grow-root-disk",
+        Some(&json!({"size_mib": size})),
+    )
+    .await
+}
+
 #[tokio::test]
 async fn growing_the_root_disk_answers_202_and_a_size_that_is_not_bigger_is_422() {
     let api = start().await;
@@ -665,14 +674,6 @@ async fn growing_the_root_disk_answers_202_and_a_size_that_is_not_bigger_is_422(
     record.status = WorkspaceStatus::Running;
     record.root_disk_size_mib = Some(4096);
     api.workspaces.seed(record, Unsaved::default());
-    async fn grow(api: &Api, size: u64) -> Reply {
-        api.send(
-            "POST",
-            "/api/workspaces/web/grow-root-disk",
-            Some(&json!({"size_mib": size})),
-        )
-        .await
-    }
     let reply = grow(&api, 30000).await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     assert_eq!(reply.json()["busy"], "growing_root_disk");

@@ -12,8 +12,8 @@ use microsandbox::sandbox::{SandboxHandle, SandboxStatus as SdkStatus};
 use microsandbox::volume::Volume;
 use microsandbox::{Backend, LocalBackend, MicrosandboxError, Sandbox};
 use puddle_compute::{
-    Capabilities, ComputeError, DiskSize, ImageConfig, RootDiskGrowth, Runtime, SandboxInfo,
-    SandboxSpec, VolumeInfo, VolumeSpec,
+    Capabilities, ComputeError, ImageConfig, RootDiskGrowth, Runtime, SandboxInfo, SandboxSpec,
+    VolumeInfo, VolumeSpec,
 };
 use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 
@@ -545,7 +545,7 @@ impl Runtime for MsbRuntime {
     fn grow_root_disk(
         &self,
         name: &SandboxName,
-        size: DiskSize,
+        size: puddle_compute::DiskSize,
     ) -> impl Future<Output = Result<RootDiskGrowth, ComputeError>> + Send {
         Box::pin(async move {
             let record = self.existing(name).await?;

@@ -32,6 +32,13 @@ ignore = [
     # (v0.7.12-puddle.3) still depend on astral-tokio-tar 0.6, so a bump does not remove it; the
     # fix is a port to `tar-codec` in the fork. Review at each fork bump, by 2026-12-05.
     { id = "RUSTSEC-2026-0440", reason = "astral-tokio-tar unmaintained, no patched version; transitive via the msb SDK's OCI layer unpack and snapshot archive; removal: when the msb fork moves to tar-codec or a maintained tar crate" },
+    # libsqlite3-sys 0.37.0 bundles SQLite 3.53 (WAL page-size mismatch can return stale heap bytes
+    # when a process opens a crafted database plus -wal pair). The fix is libsqlite3-sys >=0.39
+    # (rusqlite 0.41), but the msb fork's sqlx-sqlite 0.9.0 (the newest sqlx release) requires
+    # libsqlite3-sys <0.38 and only one crate may link sqlite3, so no bump resolves. Puddle opens
+    # only databases it created itself under its own state directory. Review when sqlx releases
+    # a version allowing libsqlite3-sys 0.39, by 2026-12-10.
+    { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys 0.37.0 bundled SQLite WAL page-size stale-memory read; fix needs libsqlite3-sys >=0.39 but sqlx-sqlite 0.9.0 (msb fork) caps it below 0.38 (links conflict); only self-created databases are opened; removal: when sqlx allows libsqlite3-sys 0.39" },
     # Unmaintained proc macro (build time only, Linux only): glib-macros 0.18 -> gtk 0.18 -> tauri's
     # wry/tao on Linux. tauri 2 stays on gtk-rs 0.18 until tauri 3 (alpha); nothing of it
     # runs at runtime. Review at each tauri bump, by 2027-01-06.

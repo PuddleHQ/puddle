@@ -36,9 +36,15 @@ path = "junit.xml"
 [scripts.wrapper.cap-memory]
 command = { command-line = "scripts/cap-test-memory.sh", relative-to = "workspace-root" }
 
+# A mutant can also make a test spin without allocating (a scanning loop that never advances, as in
+# `Frames::observe`). cargo-mutants gives the whole test run 5 times the unmutated run (125 s for
+# `puddle-proxy`) and reports a timeout, which fails the sweep, when nextest's own limit (4 x 30 s,
+# plus the kill grace) ends the test only after that. The runaway test is killed first instead, so the
+# mutant counts as caught by a failing test (nightly 2026-11-09, `watch.rs:135`: three timeouts).
 [profile.mutants]
 inherits = "default"
 test-threads = 4
+slow-timeout = { period = "20s", terminate-after = 3, grace-period = "2s" }
 
 [[profile.mutants.scripts]]
 filter = "all()"
@@ -93,6 +99,12 @@ slow-timeout = { period = "600s", terminate-after = 6 }
 [[profile.vm.overrides]]
 filter = "test(/(^|::)vm_soak_/)"
 slow-timeout = { period = "600s", terminate-after = 3 }
+
+# The desktop VS Code story (`vm_vscode_*`) boots a VM, installs Remote-SSH and attaches the real window five times (the
+# first attach unpacks and starts VS Code's server in the guest, a reload replaces it); 25 minutes, inside the job's 30.
+[[profile.vm.overrides]]
+filter = "test(/(^|::)vm_vscode_/)"
+slow-timeout = { period = "300s", terminate-after = 5 }
 
 # The transparency suite moves a gibibyte each way and lets a reader take a minute: a slow runner
 # must not turn "finishes in 30 s" into a kill (a gibibyte each way took 250 s on four busy CPUs).

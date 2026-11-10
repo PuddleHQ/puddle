@@ -5,13 +5,14 @@
 //! key. These are the claims the VM test (`vm_radar_forgejo_*`) builds on, with no VM in between.
 //!
 //! Needs `PUDDLE_FORGEJO_BIN`; without it the tests skip unless `PUDDLE_REQUIRE_FORGEJO` is set
-//! (the lab workflow sets it).
-#![cfg(unix)]
+//! (the lab workflow sets it). On Windows it is Gitea's Windows release (Forgejo ships none); the
+//! ssh test is Unix-only (it needs `ssh-keygen` and OpenSSH paths that Windows does not share).
 #![expect(
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 
+#[cfg(unix)]
 use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Output;
@@ -112,6 +113,7 @@ fn git_clones_pushes_and_deletes_a_branch_with_the_token_and_is_refused_without_
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn ssh_signs_in_with_the_key_the_account_holds_and_checks_the_servers_host_key() {
     let Some(forgejo) = Forgejo::start(NAME) else {

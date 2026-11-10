@@ -310,6 +310,11 @@ fn start_all(
         .collect()
 }
 
+/// The grant failed: the clone waits in the inbox as it did before the create allowed hosts.
+fn warn_not_allowed(workspace: &WorkspaceId, err: &puddle_store::StoreError) {
+    tracing::warn!(%workspace, error = ?err, "could not allow the hosts of a new workspace's repositories");
+}
+
 impl GitSetup for StoreGitSetup {
     fn set_up<'a>(
         &'a self,
@@ -337,9 +342,7 @@ impl GitSetup for StoreGitSetup {
                     }
                     // The clone then waits in the inbox as it did before the create allowed
                     // hosts; the workspace is not undone for it.
-                    Err(err) => {
-                        tracing::warn!(%workspace, error = ?err, "could not allow the hosts of a new workspace's repositories");
-                    }
+                    Err(err) => warn_not_allowed(workspace, &err),
                 }
             }
         })

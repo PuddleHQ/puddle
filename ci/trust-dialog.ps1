@@ -7,13 +7,15 @@ adds a certificate to CurrentUser\Root.
 .DESCRIPTION
 Windows asks for one confirmation when a program adds a root to the current user's store, and the add
 waits for it. On a throwaway CI runner nobody clicks, so a test starts this script next to the add and
-it presses the button the test names. It uses UI Automation only: no process is started and WMI is
-not used. A dialog that never appears is a failure (exit 1), never a pass.
+it presses the button the test names. It uses UI Automation only: no process is started (-OwnerTree
+reads the process list once per poll through CIM, read-only). A dialog that never appears is a failure (exit 1), never a pass.
 
   -Action Dump   print the dialog's texts and buttons, press nothing
   -Action Yes    print them, then press Yes
   -Action No     print them, then press No
   -OwnerPid      only a dialog owned by this process counts (the process that makes the add)
+  -OwnerTree     the dialog may also be owned by a descendant of -OwnerPid: `dotnet dev-certs` is the `dotnet`
+                 muxer, which runs the tool in a child process, and that child shows the dialog
   -Seconds       how long to wait for the dialog to appear
   -Optional      no dialog is not a failure (exit 0 and "no dialog"): for a step that may or may not ask
 
@@ -27,18 +29,35 @@ param(
     [Parameter(Mandatory = $true)][int]$OwnerPid,
     [int]$Seconds = 45,
     [string]$Title = 'Security Warning',
-    [switch]$Optional
+    [switch]$Optional,
+    [switch]$OwnerTree
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
+function Get-OwnerPids {
+    if (-not $OwnerTree) { return @($OwnerPid) }
+    $all = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId)
+    $found = New-Object 'System.Collections.Generic.HashSet[int]'
+    [void]$found.Add($OwnerPid)
+    do {
+        $grew = $false
+        foreach ($p in $all) {
+            if ($found.Contains([int]$p.ParentProcessId) -and $found.Add([int]$p.ProcessId)) { $grew = $true }
+        }
+    } while ($grew)
+    return @($found)
+}
+
 function Find-Dialog {
     $root = [Windows.Automation.AutomationElement]::RootElement
     $name = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, $Title)
-    $owner = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty, $OwnerPid)
-    $both = New-Object Windows.Automation.AndCondition($name, $owner)
-    return $root.FindFirst([Windows.Automation.TreeScope]::Children, $both)
+    $pids = Get-OwnerPids
+    foreach ($w in $root.FindAll([Windows.Automation.TreeScope]::Children, $name)) {
+        if ($pids -contains $w.Current.ProcessId) { return $w }
+    }
+    return $null
 }
 
 $clock = [Diagnostics.Stopwatch]::StartNew()

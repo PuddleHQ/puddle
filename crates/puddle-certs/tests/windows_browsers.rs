@@ -125,7 +125,9 @@ fn the_browsers_warn_before_the_leaf_is_trusted_and_accept_it_after_yes() {
 }
 
 /// Runs `dotnet dev-certs https` with `args` and returns its output. `answer`, when set, presses
-/// that button in the Windows trust dialog the command opens (`--trust`), which `dotnet.exe` owns.
+/// that button in the Windows trust dialog the command opens (`--trust`). The `dotnet` muxer we
+/// start runs the tool in a child process, and that child owns the dialog (the hosted runner showed
+/// the dialog under another pid than the one spawned), so the answerer looks at the whole tree.
 fn dotnet_dev_certs(args: &[&str], answer: Option<Answer>) -> String {
     let mut child = Command::new("dotnet")
         .args(["dev-certs", "https"])
@@ -138,9 +140,10 @@ fn dotnet_dev_certs(args: &[&str], answer: Option<Answer>) -> String {
         .spawn()
         .unwrap_or_else(|e| panic!("starting dotnet (the Windows runner image has it): {e}"));
     let dialog = answer.map(|a| {
-        trust_dialog::run_answerer(
+        trust_dialog::run_answerer_for(
             a.word(),
             child.id(),
+            true,
             trust_dialog::DIALOG_WAIT.as_secs(),
             None,
         )

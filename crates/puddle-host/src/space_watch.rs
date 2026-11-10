@@ -17,8 +17,12 @@ use crate::FreeSpaceTiming;
 use crate::doctor::disk_limits;
 
 /// Where the free space comes from: the real drive, or a test's fake.
-pub(crate) trait Space: Send + Sync + 'static {
+pub trait Space: Send + Sync + 'static {
     /// Bytes free on the drive that holds the data folder.
+    ///
+    /// # Errors
+    ///
+    /// The drive's figure cannot be read.
     fn free_bytes(&self) -> io::Result<u64>;
 }
 

@@ -183,8 +183,8 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) ids: Arc<dyn puddle_api::IdSource>,
     /// The folder of the login markers, which a new id must not find one of its own in.
     pub(crate) login_markers: std::path::PathBuf,
-    /// Puddle's data folder: the drive it is on is the one a root disk grows into.
-    pub(crate) data_dir: std::path::PathBuf,
+    /// The free space of the drive that holds Puddle's data: the one a root disk grows into.
+    pub(crate) space: Arc<dyn crate::Space>,
 }
 
 struct Slot {
@@ -311,7 +311,7 @@ struct Inner<R: Runtime + Clone> {
     front_halves: Arc<dyn puddle_front::ServerHalves>,
     ids: Arc<dyn puddle_api::IdSource>,
     login_markers: std::path::PathBuf,
-    data_dir: std::path::PathBuf,
+    space: Arc<dyn crate::Space>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceId, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -622,7 +622,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 front_halves: parts.front_halves,
                 ids: parts.ids,
                 login_markers: parts.login_markers,
-                data_dir: parts.data_dir,
+                space: parts.space,
                 rewrite_gate: parts.rewrite_gate,
                 state: Mutex::new(State {
                     slots,
@@ -3722,8 +3722,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 )));
             }
             let added = (u64::from(size_mib) - current) * 1024 * 1024;
-            let dir = self.inner.data_dir.clone();
-            let free = tokio::task::spawn_blocking(move || puddle_fs::free_bytes(&dir))
+            let space = self.inner.space.clone();
+            let free = tokio::task::spawn_blocking(move || space.free_bytes())
                 .await
                 .ok()
                 .and_then(Result::ok);

@@ -10005,7 +10005,7 @@ async fn a_grow_that_adds_most_of_the_free_space_is_allowed_with_a_warning() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let free_mib = puddle_fs::free_bytes(&rig.dir.path().join("data")).unwrap() / (1024 * 1024);
+    let free_mib = support::FIXED_FREE_BYTES / (1024 * 1024);
     let size = 16_384 + free_mib * 3 / 4;
     let end = grow_root_disk(&api, &mut events, size).await;
     assert_eq!(end["step"], "done", "{end}");

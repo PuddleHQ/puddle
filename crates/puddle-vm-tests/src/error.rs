@@ -95,6 +95,14 @@ pub enum HarnessError {
         /// The folder searched.
         dir: PathBuf,
     },
+    /// The folder named by `PUDDLE_VSCODE_DIR` is not a release `ci/fetch-vscode.sh` made.
+    #[error(
+        "{dir} has no app/Code.exe and remote-ssh.vsix: make it with `ci/fetch-vscode.sh <dir>` and point PUDDLE_VSCODE_DIR at it"
+    )]
+    VsCodeRelease {
+        /// The folder searched.
+        dir: PathBuf,
+    },
     /// The browser client could not load a page or read its result.
     #[error("browser client: {detail}")]
     Browser {
@@ -113,6 +121,20 @@ pub enum HarnessError {
         /// The registry host the reference pulls from.
         registry: String,
         /// What the SDK or the clock reported.
+        detail: String,
+    },
+    /// msb's record of a sandbox names no VM process.
+    #[error("msb records no VM process for sandbox {name}: it is not running")]
+    NoVmProcess {
+        /// The sandbox name.
+        name: String,
+    },
+    /// Freezing or thawing a VM's process failed.
+    #[error("freezing or thawing process {pid}: {detail}")]
+    Freeze {
+        /// The process id.
+        pid: u32,
+        /// The command's exit status and output.
         detail: String,
     },
     /// A step took longer than its budget.
@@ -175,6 +197,8 @@ mod tests {
             value: "loud".into(),
         };
         assert!(level.to_string().contains("\"loud\": use error, warn"));
+        let release = HarnessError::VsCodeRelease { dir: "/v".into() };
+        assert!(release.to_string().starts_with("/v has no app/Code.exe"));
         let io = HarnessError::io("create", "/x", std::io::Error::other("boom"));
         assert_eq!(io.to_string(), "create /x: boom");
     }

@@ -564,6 +564,7 @@ async fn exchange(
     let Forwarding {
         injection,
         unauthorized,
+        own_git_credential,
     } = match decide(
         shared,
         &checked,
@@ -582,7 +583,13 @@ async fn exchange(
     let mut headers =
         request::upstream_headers_h2(request.headers(), &cx.target, injection.as_ref(), version)?;
     record_injection(shared, injection.as_ref());
-    let swapped_path = swap_stand_ins(shared, &mut headers, &checked.path, injection.as_ref());
+    let swapped_path = swap_stand_ins(
+        shared,
+        &mut headers,
+        &checked.path,
+        injection.as_ref(),
+        own_git_credential,
+    );
     let path = swapped_path
         .as_ref()
         .map_or(checked.path.as_str(), |path| path.as_str());
@@ -1112,8 +1119,14 @@ fn swap_stand_ins(
     headers: &mut HeaderMap,
     target: &str,
     injection: Option<&Injection>,
+    own_git_credential: bool,
 ) -> Option<Zeroizing<String>> {
     let host = &shared.cx.target.host;
+    let mut foreign = shared.cx.termination.stand_ins().foreign_credentials(
+        headers,
+        injection,
+        own_git_credential,
+    );
     let swapped = shared
         .cx
         .termination
@@ -1126,6 +1139,8 @@ fn swap_stand_ins(
         .unwrap_or_else(PoisonError::into_inner);
     outcome.record_stand_ins(host, &swapped);
     outcome.record_stand_ins(host, &in_target);
+    foreign.extend(super::session::stale_kind(&[&swapped, &in_target]));
+    outcome.record_foreign(&shared.cx, &foreign);
     if shared.cx.termination.stand_ins().scrubs_answers_from(host) {
         limit_accept_encoding(headers);
     }

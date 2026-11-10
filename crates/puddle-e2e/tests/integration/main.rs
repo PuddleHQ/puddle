@@ -10,6 +10,7 @@ mod api_unreachable;
 mod corporate_lab;
 mod corporate_lab_windows;
 mod corporate_reroute;
+mod forgejo_lab;
 mod forward_unreachable;
 mod front_unreachable;
 mod git_inject;

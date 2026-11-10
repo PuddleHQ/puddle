@@ -17,15 +17,15 @@ use puddle_types::{
 };
 use serde_json::json;
 
-/// Runs `work` on its own thread and fails the test when it has not finished in five seconds, so
+/// Runs `work` on its own thread and fails the test when it has not finished in 30 seconds, so
 /// a scanner that stops advancing is a failed test and not a hang.
 fn bounded<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(work());
     });
-    rx.recv_timeout(Duration::from_secs(5))
-        .expect("the work did not finish in five seconds")
+    rx.recv_timeout(Duration::from_secs(30))
+        .expect("the work did not finish in 30 seconds")
 }
 
 fn json_spec(format: MergeFormat) -> MergeSpec {

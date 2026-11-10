@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The lab's real Git host: a Forgejo with its own SSH server, started for the run on the runner
+# (crates/puddle-e2e/src/lab/forgejo.rs). It holds no outside host, account, token or secret: its
+# account, token and SSH keys are made for the run, so the workflow needs no secret and runs on a
+# pull request from a fork too (the `pull_request` event gives a fork a read-only token and no
+# secrets, which is all this uses).
+#   fixture   `forgejo_lab`: the real git clones, pushes and deletes a branch over HTTPS with the
+#             token and is refused without it; the real ssh signs in with a registered key and
+#             checks the server's host key (the SSH Git server the SSH leg's VM tests reuse);
+#   vm        `vm_radar_forgejo_*`: in a real microVM the guest's git clones, pushes a branch and
+#             deletes it through the host's wiring, a push to an unlisted repository is refused,
+#             and the guest is searched for the token.
+# Nightly on develop, by hand (`gh workflow run lab-forgejo.yml`), and on a pull request that touches
+# the fixture, its pin, this file or the VM test. Not a required check. A red nightly opens
+# "Nightly red: lab-forgejo" through nightly-signal.yml and a green run closes it. Never retried.
+# What it does not cover (a short hand check): the `gh` CLI, Git Credential Manager and the shape of
+# GitHub's own API answers, which only GitHub itself can answer.
+name: lab-forgejo
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - .github/workflows/lab-forgejo.yml
+      - ci/fetch-forgejo.sh
+      - ci/forgejo.sha256
+      - crates/puddle-e2e/src/lab/**
+      - crates/puddle-e2e/tests/integration/forgejo_lab.rs
+      - crates/puddle-host/tests/vm_radar_forgejo.rs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-forgejo-${{ github.event_name == 'schedule' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  PUDDLE_VM_MSB_LOG_LEVEL: debug
+
+jobs:
+  forgejo:
+    name: lab Forgejo (clone, push, delete branch, refusal, token search)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: KVM
+        run: |
+          test -e /dev/kvm || { echo "no /dev/kvm on this runner"; exit 1; }
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sleep 1
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: Forgejo (pinned release; download, verify)
+        run: |
+          ci/fetch-forgejo.sh "$RUNNER_TEMP/forgejo"
+          "$RUNNER_TEMP/forgejo/forgejo" --version
+          {
+            echo "PUDDLE_FORGEJO_BIN=$RUNNER_TEMP/forgejo/forgejo"
+            echo "PUDDLE_REQUIRE_FORGEJO=1"
+          } >> "$GITHUB_ENV"
+      - name: the fixture (git over HTTPS and ssh against Forgejo)
+        run: cargo nextest run --locked -p puddle-e2e --test integration --no-fail-fast -E 'test(forgejo_lab::)'
+      - name: msb runtime (fork tag; download, verify)
+        run: |
+          ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+          echo "PUDDLE_VM_RUNTIME_DIR=$RUNNER_TEMP/msb" >> "$GITHUB_ENV"
+          echo "PUDDLE_VM_ROOT=$RUNNER_TEMP/pvm" >> "$GITHUB_ENV"
+      - name: code-server (pinned release; download, verify)
+        run: |
+          ci/fetch-code-server.sh "$RUNNER_TEMP/code-server"
+          echo "PUDDLE_CODE_SERVER_DIR=$RUNNER_TEMP/code-server" >> "$GITHUB_ENV"
+      - name: guest agent (static musl build)
+        # build-agent.sh prints a path relative to the repository root; nextest runs each test with the
+        # crate's directory as its cwd, so the host would look for it there and report the agent missing.
+        run: echo "PUDDLE_AGENT_BIN=$PWD/$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
+      - name: the VM test (never retried)
+        run: |
+          PUDDLE_VM_PREFIX="f${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            cargo nextest run -p puddle-host --profile vm --locked --no-capture \
+              -E 'test(/(^|::)vm_radar_forgejo_/)'
+      - name: upload test results and msb logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lab-forgejo-results
+          path: |
+            target/nextest/vm/junit.xml
+            ${{ runner.temp }}/pvm/**/logs/**
+          retention-days: 14
+          if-no-files-found: ignore

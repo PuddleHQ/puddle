@@ -32,6 +32,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use puddle_logins::Logins;
+use puddle_proxy::ForeignCredentialWarning;
 
 use crate::environment::{Resolved, resolve};
 use crate::git_hosts::{SshListing, decrypt_set, ssh_credential_hosts};
@@ -101,6 +102,9 @@ struct Running {
     /// The hosts this start's tools refused the certificate for; kept across changes to the
     /// workspace's settings.
     learned: Arc<PassThrough>,
+    /// Whether this workspace wants the warning about a credential Puddle did not add, and what
+    /// it was told already; kept across changes to its settings.
+    foreign_warning: Arc<ForeignCredentialWarning>,
 }
 
 impl Running {
@@ -117,7 +121,8 @@ impl Running {
             .with_stand_ins(Arc::clone(&self.stand_ins))
             .with_exchanges(Arc::new(self.logins.clone()))
             .with_interception(interception)
-            .with_request_rules(request_rules);
+            .with_request_rules(request_rules)
+            .with_foreign_credential_warning(Arc::clone(&self.foreign_warning));
         // The keys and the names they serve change together: the guest's list names the same.
         match &self.ssh_keys {
             Some(keys) => termination
@@ -162,6 +167,8 @@ pub(crate) struct Injection {
     vault_timeout: Duration,
     /// Whether each start makes SSH host keys for Git over SSH.
     git_ssh: bool,
+    /// Where the warning setting is read; without it the warning is on.
+    settings: Option<Arc<dyn puddle_api::SettingsRepo>>,
 }
 
 impl Injection {
@@ -182,7 +189,25 @@ impl Injection {
             environment: Mutex::new(BTreeMap::new()),
             vault_timeout: VAULT_TIMEOUT,
             git_ssh: false,
+            settings: None,
         }
+    }
+
+    /// Reads the warning about a credential Puddle did not add from `settings`, global and the
+    /// workspace's own, each time one is found.
+    pub(crate) fn with_settings(mut self, settings: Arc<dyn puddle_api::SettingsRepo>) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
+    /// `workspace`'s warning: on by its setting, else the global one, else on.
+    fn foreign_warning(&self, workspace: &WorkspaceId) -> ForeignCredentialWarning {
+        let (settings, workspace) = (self.settings.clone(), workspace.clone());
+        ForeignCredentialWarning::new(move || {
+            settings
+                .as_deref()
+                .is_none_or(|settings| crate::logins::foreign_warning_enabled(settings, &workspace))
+        })
     }
 
     /// Makes SSH host keys at each start (and serves Git over SSH with them), or not.
@@ -328,6 +353,7 @@ impl Injection {
             stand_ins,
             logins,
             learned: Arc::new(self.learned_list(workspace)),
+            foreign_warning: Arc::new(self.foreign_warning(workspace)),
         };
         self.terminations.insert(
             workspace.clone(),
@@ -778,6 +804,27 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_workspace_warns_about_a_foreign_credential_by_its_setting_read_each_time() {
+        let store = store();
+        let ws = workspace("alpha");
+        let (injection, _) = injection(&store);
+        // Without settings to read the warning is on.
+        assert!(injection.foreign_warning(&ws).is_on());
+        let repo = Arc::new(puddle_api::MemorySettings::default());
+        let injection = injection.with_settings(repo.clone());
+        let warning = injection.foreign_warning(&ws);
+        assert!(warning.is_on());
+        puddle_api::SettingsRepo::save_workspace(
+            repo.as_ref(),
+            &ws,
+            serde_json::json!({"overrides": {"warn_foreign_credentials": false}}),
+        )
+        .unwrap();
+        assert!(!warning.is_on(), "a change applies to the next request");
+        assert!(injection.foreign_warning(&workspace("beta")).is_on());
     }
 
     #[tokio::test]

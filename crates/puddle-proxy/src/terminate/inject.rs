@@ -279,6 +279,10 @@ pub enum InjectDecision {
     Inject(Injection),
     /// Forward it as the guest sent it (no credential applies to it).
     PassThrough,
+    /// As [`InjectDecision::PassThrough`], for a Git request that carries an `Authorization` of
+    /// the guest's own: the proxy then warns about it (see [`crate::ForeignCredentialWarning`]),
+    /// whatever its shape.
+    PassThroughOwnCredential,
     /// As [`InjectDecision::PassThrough`], and react if the server answers `401`: an
     /// `Unauthorized::noting` callback is told and the answer is still the server's; an
     /// `Unauthorized::new` answers the guest with its refusal instead.
@@ -302,6 +306,8 @@ pub(crate) fn body_too_large(limit: usize) -> Refusal {
 pub(crate) struct Forwarding {
     pub(crate) injection: Option<Injection>,
     pub(crate) unauthorized: Option<Unauthorized>,
+    /// A Git request that carries an `Authorization` the guest set itself.
+    pub(crate) own_git_credential: bool,
 }
 
 impl InjectDecision {
@@ -311,14 +317,22 @@ impl InjectDecision {
             Self::Inject(injection) => Ok(Forwarding {
                 unauthorized: injection.unauthorized.clone(),
                 injection: Some(injection),
+                own_git_credential: false,
             }),
             Self::PassThrough => Ok(Forwarding {
                 injection: None,
                 unauthorized: None,
+                own_git_credential: false,
+            }),
+            Self::PassThroughOwnCredential => Ok(Forwarding {
+                injection: None,
+                unauthorized: None,
+                own_git_credential: true,
             }),
             Self::PassThroughNoting(unauthorized) => Ok(Forwarding {
                 injection: None,
                 unauthorized: Some(unauthorized),
+                own_git_credential: false,
             }),
             Self::Refuse(refusal) => Err(refusal),
         }

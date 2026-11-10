@@ -1101,6 +1101,13 @@ pub enum AuditRecord {
         #[serde(default)]
         #[schema(required = true)]
         scrubbed_stand_ins: Vec<String>,
+        /// The kinds of credential the requests carried that Puddle did not add or swap, each
+        /// once: `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`,
+        /// `azure_devops_token` or `git_authorization`. Never a value. Records written before it
+        /// existed, and connections of a workspace that turned the warning off, read as empty.
+        #[serde(default)]
+        #[schema(required = true)]
+        foreign_credentials: Vec<String>,
         /// HTTP method, where the proxy saw the request in clear.
         #[schema(required = true)]
         method: Option<String>,
@@ -1325,6 +1332,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             injected,
             unswapped_stand_ins,
             scrubbed_stand_ins,
+            foreign_credentials,
             method,
             path,
             path_truncated,
@@ -1355,6 +1363,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             injected,
             unswapped_stand_ins,
             scrubbed_stand_ins,
+            foreign_credentials,
             method,
             path,
             path_truncated,
@@ -1724,6 +1733,12 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true)]
     pub capture_logins: Option<bool>,
+    /// Whether Puddle warns when a request carries a credential it did not add (a token the
+    /// workspace holds itself). The request goes out either way; this only switches the notice
+    /// and the flag in the activity log. On by default.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub warn_foreign_credentials: Option<bool>,
 }
 
 impl From<&settings::WorkspaceLayer> for SettingsLayer {
@@ -1740,6 +1755,7 @@ impl From<&settings::WorkspaceLayer> for SettingsLayer {
             clipboard_read: layer.clipboard_read.map(Into::into),
             direct_ssh: layer.direct_ssh,
             capture_logins: layer.capture_logins,
+            warn_foreign_credentials: layer.warn_foreign_credentials,
         }
     }
 }
@@ -1758,6 +1774,7 @@ impl SettingsLayer {
             clipboard_read,
             direct_ssh,
             capture_logins,
+            warn_foreign_credentials,
         } = self;
         layer.memory = memory.map(MemoryMib::new).transpose().map_err(invalid)?;
         layer.cpus = cpus
@@ -1774,6 +1791,7 @@ impl SettingsLayer {
         layer.clipboard_read = clipboard_read.map(Into::into);
         layer.direct_ssh = direct_ssh;
         layer.capture_logins = capture_logins;
+        layer.warn_foreign_credentials = warn_foreign_credentials;
         Ok(())
     }
 }
@@ -2371,6 +2389,8 @@ pub struct EffectiveSettings {
     pub direct_ssh: ResolvedBool,
     /// Whether logins made inside the workspace are captured.
     pub capture_logins: ResolvedBool,
+    /// Whether a credential Puddle did not add raises a warning.
+    pub warn_foreign_credentials: ResolvedBool,
 }
 
 impl From<settings::Effective> for EffectiveSettings {
@@ -2385,6 +2405,7 @@ impl From<settings::Effective> for EffectiveSettings {
             clipboard_read,
             direct_ssh,
             capture_logins,
+            warn_foreign_credentials,
         } = e;
         let settings::EffectiveToggles {
             loopback,
@@ -2423,6 +2444,7 @@ impl From<settings::Effective> for EffectiveSettings {
             },
             direct_ssh: rb(direct_ssh),
             capture_logins: rb(capture_logins),
+            warn_foreign_credentials: rb(warn_foreign_credentials),
         }
     }
 }
@@ -2722,7 +2744,8 @@ mod tests {
                 "zoom_hotkeys": false,
                 "clipboard_read": "deny",
                 "direct_ssh": true,
-                "capture_logins": false
+                "capture_logins": false,
+                "warn_foreign_credentials": false
             }
         });
         let loaded = settings::WorkspaceSettings::from_document(doc).unwrap();
@@ -3327,13 +3350,35 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "10.0.0.9", "decision": "deny", "reason": "rule", "rule_id": 4,
             "refused_address": "10.0.0.9", "refused_reason": "ip_rule", "pending_id": null, "binding_id": null,
-            "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "method": null, "path": null,
+            "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [], "method": null, "path": null,
             "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
         });
         let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
         let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
         assert_eq!(wire["refused_address"], "10.0.0.9");
         assert_eq!(wire["refused_reason"], "ip_rule");
+    }
+
+    /// The kinds of foreign credential reach the wire as stored, and a record written before the
+    /// field existed reads as none.
+    #[test]
+    fn foreign_credential_kinds_reach_the_wire_and_an_old_record_has_none() {
+        let mut stored = serde_json::json!({
+            "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
+            "port": 443, "resolved_ip": null, "decision": "allow", "reason": "rule", "rule_id": 4,
+            "pending_id": null, "binding_id": null, "injected": false, "method": null, "path": null,
+            "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
+        });
+        let old: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();
+        let wire = serde_json::to_value(AuditRecord::from(old)).unwrap();
+        assert_eq!(wire["foreign_credentials"], serde_json::json!([]));
+        stored["foreign_credentials"] = serde_json::json!(["github_token", "git_authorization"]);
+        let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
+        let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
+        assert_eq!(
+            wire["foreign_credentials"],
+            serde_json::json!(["github_token", "git_authorization"])
+        );
     }
 
     /// A record written before the company-network fields existed reads them as `null`.
@@ -3360,7 +3405,7 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
-            "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "category": "company_network", "signal": "dns_suffix", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [],
+            "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "category": "company_network", "signal": "dns_suffix", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [],
             "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
         });

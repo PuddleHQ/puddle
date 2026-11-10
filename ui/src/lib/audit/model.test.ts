@@ -327,6 +327,17 @@ describe("a record as a row", () => {
     );
     expect(view.detail).not.toContain("went out unchanged (check");
   });
+  it("says which kinds of credential the workspace sent that Puddle did not add, never a value", () => {
+    const view = row(
+      connection(1, {
+        foreign_credentials: ["github_token", "git_authorization", "odd_kind"],
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "the workspace sent a GitHub token, a login for a Git repository, odd_kind that Puddle did not add; it went out as it was",
+    );
+    expect(row(connection(2, {}).record).detail).not.toContain("did not add");
+  });
   it("names the refused address of a mixed answer, apart from the one connected to", () => {
     const view = row(
       connection(1, {

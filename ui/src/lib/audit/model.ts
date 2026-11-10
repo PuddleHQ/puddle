@@ -513,6 +513,9 @@ function connectionDetail(
   if (record.unswapped_stand_ins.length > 0) {
     parts.push(unswappedNote(record.unswapped_stand_ins));
   }
+  if (record.foreign_credentials.length > 0) {
+    parts.push(foreignNote(record.foreign_credentials));
+  }
   if (record.scrubbed_stand_ins.length > 0) {
     const names = record.scrubbed_stand_ins.map(standInLabel).join(", ");
     parts.push(
@@ -520,6 +523,21 @@ function connectionDetail(
     );
   }
   return parts.join(" · ");
+}
+
+const FOREIGN_KINDS: Record<string, string> = {
+  stale_stand_in: "a stand-in Puddle no longer holds",
+  github_token: "a GitHub token",
+  npm_token: "an npm token",
+  gitlab_token: "a GitLab token",
+  azure_devops_token: "an Azure DevOps token",
+  git_authorization: "a login for a Git repository",
+};
+
+/** The kinds of credential the workspace sent that Puddle did not add; never a value. */
+function foreignNote(kinds: readonly string[]): string {
+  const names = kinds.map((k) => FOREIGN_KINDS[k] ?? k).join(", ");
+  return `the workspace sent ${names} that Puddle did not add; it went out as it was`;
 }
 
 /**

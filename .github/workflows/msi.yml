@@ -7,6 +7,17 @@
 # skips the boot steps with a warning, except on a pull request, where that fails (as vm-windows). Not a required check: it runs on pull requests that
 # touch the installer (paths below), nightly on develop (skipped when this workflow already has a
 # green run on the commit), and by hand. The MSI of the run is kept as an artifact.
+#
+# The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI
+# this run built, per user, starts the installed app, and drives it through the REST API its screens call
+# (crates/puddle-app/e2e/usable.mjs; a release build has no DevTools port): an SSH remote is refused with the explicit message, a workspace
+# is created from the lab's own Git forge (Gitea's Windows release, pinned: Forgejo ships none; its account,
+# token and certificate are made for the run, so no outside host, account or
+# secret is used and a pull request from a fork can run it), requests are approved in the inbox, the browser
+# editor opens in its own window, a real `npm run build` and `npm test` run in the workspace, and `git push`
+# reaches Forgejo with the injected credential while no token is in the guest, the audit log or the API.
+# What only a person can still check (SmartScreen, a company network, how it reads) is not here. A red nightly opens
+# "Nightly red: msi" through nightly-signal.yml. Never retried.
 name: msi
 
 on:
@@ -26,7 +37,17 @@ on:
       - crates/puddle-app/tauri.conf.json
       - crates/puddle-app/wix/**
       - crates/puddle-app/build.rs
+      - crates/puddle-app/e2e/usable.mjs
+      - ci/fetch-forgejo.sh
+      - ci/forgejo.sha256
+      - crates/puddle-e2e/src/lab/forgejo.rs
+      - crates/puddle-e2e/src/bin/puddle-lab-forgejo.rs
   workflow_dispatch:
+    inputs:
+      msi_run_id:
+        description: "Run only the usable job, on the MSI that this earlier run of the workflow kept (skips the build)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -43,12 +64,15 @@ env:
 jobs:
   msi:
     name: msi (build, install, upgrade, uninstall)
+    if: ${{ inputs.msi_run_id == '' }}
     runs-on: windows-2025
     timeout-minutes: 90
     # `actions: read` for ci/should-run.sh.
     permissions:
       contents: read
       actions: read
+    outputs:
+      run: ${{ steps.changed.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: install-test helpers (self-test)
@@ -64,7 +88,7 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-about@0.9.2
@@ -128,5 +152,130 @@ jobs:
         with:
           name: puddle-msi-logs
           path: ${{ runner.temp }}/msi-logs
+          retention-days: 14
+          if-no-files-found: ignore
+
+  usable:
+    name: "usable (installed app: create, approve, editor, build, push)"
+    needs: msi
+    # Runs although the install test failed: the MSI is kept by then, and the two say different things.
+    if: ${{ !cancelled() && (needs.msi.outputs.run == 'true' || inputs.msi_run_id != '') }}
+    runs-on: windows-2025
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      FORGE_NAME: forgejo.lab.test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: WHP preflight (infrastructure)
+        id: whp
+        shell: pwsh
+        run: |
+          $cs = Get-CimInstance Win32_ComputerSystem
+          $whp = (Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State
+          "HypervisorPresent=$($cs.HypervisorPresent) HypervisorPlatform=$whp"
+          if ($cs.HypervisorPresent -and "$whp" -eq 'Enabled') {
+            "ok=true" >> $env:GITHUB_OUTPUT
+          } else {
+            # Same policy as vm-windows.yml and ci/vm-skip-policy.sh.
+            $reason = "Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp)"
+            if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+              "::error title=usable cannot run::$reason; a pull request must not pass without running it"
+              exit 1
+            }
+            "::warning title=usable skipped::$reason; the run did not happen (infrastructure, not a test result)"
+            "ok=false" >> $env:GITHUB_OUTPUT
+          }
+      - name: the MSI this run built
+        if: ${{ steps.whp.outputs.ok == 'true' && inputs.msi_run_id == '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: puddle-msi
+          path: ${{ runner.temp }}/msi
+      - name: the MSI an earlier run kept (by hand, msi_run_id)
+        if: ${{ steps.whp.outputs.ok == 'true' && inputs.msi_run_id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: puddle-msi
+          path: ${{ runner.temp }}/msi
+          run-id: ${{ inputs.msi_run_id }}
+          github-token: ${{ github.token }}
+      - name: Node (the driver)
+        if: steps.whp.outputs.ok == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      # Forgejo has no Windows release: the lab runs Gitea's (the project Forgejo forked from) through the same fixture.
+      - name: the lab's Git forge for Windows (pinned release; download, verify)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: |
+          ci/fetch-forgejo.sh "$(cygpath -u "$RUNNER_TEMP")/forge" "" windows
+          {
+            echo "PUDDLE_FORGEJO_BIN=$(cygpath -w "$RUNNER_TEMP/forge/forgejo.exe")"
+            echo "PUDDLE_REQUIRE_FORGEJO=1"
+          } >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/forge/forgejo.exe" --version
+      - name: the lab Forgejo program (puddle-e2e)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: cargo build --locked -p puddle-e2e --bin puddle-lab-forgejo
+      - name: name the forge's host; a folder for the run's output
+        if: steps.whp.outputs.ok == 'true'
+        shell: pwsh
+        run: |
+          # The name points at this machine, as a company's internal name would through its DNS. The usable run
+          # starts the forge itself (a step's background processes do not outlive it) and puts its root in the
+          # machine's store before the app starts.
+          Add-Content -LiteralPath "$env:SystemRoot\System32\drivers\etc\hosts" -Value "127.0.0.1 $env:FORGE_NAME"
+          ipconfig /flushdns | Out-Null
+          $out = Join-Path $env:RUNNER_TEMP 'usable-out'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          "USABLE_OUT=$out" >> $env:GITHUB_ENV
+          "USABLE_FORGE_NAME=$env:FORGE_NAME" >> $env:GITHUB_ENV
+          "USABLE_LAB_BIN=$((Resolve-Path 'target\debug\puddle-lab-forgejo.exe').Path)" >> $env:GITHUB_ENV
+      - name: install the MSI per user
+        if: steps.whp.outputs.ok == 'true'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem "$env:RUNNER_TEMP\msi" -Filter *.msi | Select-Object -First 1
+          $log = Join-Path $env:USABLE_OUT 'msiexec.log'
+          $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', "`"$log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec exited with $($p.ExitCode); see $log" }
+          Get-ChildItem "$env:LOCALAPPDATA\Programs\Puddle" | Select-Object -First 20 Name
+      - name: the usable run (installed app, through its API)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        timeout-minutes: 60
+        run: node crates/puddle-app/e2e/usable.mjs
+      - name: stop the lab Forgejo, remove its root and hosts line
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
+        shell: pwsh
+        run: |
+          Get-Process puddle-app, msb -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          certutil -delstore Root "Puddle lab Forgejo root" | Out-Null
+          # What the app and the runtime logged, for a failed run.
+          if (-not $env:USABLE_OUT) { exit 0 }
+          $logs = Join-Path $env:USABLE_OUT 'runtime-logs'
+          New-Item -ItemType Directory -Force -Path $logs | Out-Null
+          Get-ChildItem "$env:LOCALAPPDATA\puddle" -Recurse -Filter *.log -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -lt 5MB } | Select-Object -First 60 |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $logs ($_.FullName.Substring($env:LOCALAPPDATA.Length).TrimStart('\') -replace '[\\/:]', '_')) }
+      - name: upload screenshots and logs
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: usable-run
+          path: |
+            ${{ runner.temp }}/usable-out/*.png
+            ${{ runner.temp }}/usable-out/*.log
+            ${{ runner.temp }}/usable-out/*.out
+            ${{ runner.temp }}/usable-out/forgejo-server.log
+            ${{ runner.temp }}/usable-out/runtime-logs/**
           retention-days: 14
           if-no-files-found: ignore

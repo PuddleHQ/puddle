@@ -36,6 +36,7 @@ export function connection(
       injected: false,
       unswapped_stand_ins: [],
       scrubbed_stand_ins: [],
+      foreign_credentials: [],
       refused_address: null,
       refused_reason: null,
       category: null,

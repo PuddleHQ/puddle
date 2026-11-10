@@ -24,9 +24,10 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+use crate::driver::Driver;
 use crate::error::HarnessError;
 
 /// Environment variable naming the `node_modules` folder that holds `playwright-core`.
@@ -55,7 +56,7 @@ pub struct NodeOutput {
 /// A node binary that VM tests run scripts with.
 #[derive(Debug, Clone)]
 pub struct Node {
-    program: OsString,
+    pub(crate) program: OsString,
 }
 
 impl Node {
@@ -74,7 +75,7 @@ impl Node {
     }
 
     /// `node <args>` with every standard stream piped, killed when dropped.
-    fn command<I, S>(&self, args: I) -> Command
+    pub(crate) fn command<I, S>(&self, args: I) -> Command
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -342,26 +343,16 @@ impl BrowserClient {
         &self,
         ignore_https_errors: bool,
     ) -> Result<BrowserSession, HarnessError> {
-        let mut child = self
-            .node
-            .command(["--input-type=module", "-e", DRIVER])
-            .env(BROWSER_MODULES_VAR, &self.modules)
-            .spawn()
-            .map_err(|source| {
-                HarnessError::io("start node", PathBuf::from(&self.node.program), source)
-            })?;
-        let stdin = child.stdin.take();
-        let stdout = child.stdout.take().map(|out| BufReader::new(out).lines());
-        let (Some(stdin), Some(stdout)) = (stdin, stdout) else {
-            return Err(HarnessError::Browser {
-                detail: "node gave no pipes".to_owned(),
-            });
-        };
+        let driver = Driver::spawn(
+            &self.node,
+            DRIVER,
+            &[(BROWSER_MODULES_VAR, self.modules.as_os_str())],
+            self.grace,
+            "browser client",
+            "closing the browser",
+        )?;
         let mut session = BrowserSession {
-            grace: self.grace,
-            child,
-            stdin,
-            stdout,
+            driver,
             next_page: 0,
         };
         session
@@ -385,10 +376,7 @@ pub struct PageId(u32);
 /// browser; [`BrowserSession::quit`] closes it cleanly.
 #[derive(Debug)]
 pub struct BrowserSession {
-    grace: Duration,
-    child: tokio::process::Child,
-    stdin: tokio::process::ChildStdin,
-    stdout: Lines<BufReader<tokio::process::ChildStdout>>,
+    driver: Driver,
     next_page: u32,
 }
 
@@ -467,16 +455,8 @@ impl BrowserSession {
     /// # Errors
     ///
     /// [`HarnessError::Timeout`] when it did not end in time (it is killed then).
-    pub async fn quit(mut self) -> Result<(), HarnessError> {
-        let _ = self.stdin.write_all(b"{\"op\":\"quit\"}\n").await;
-        let _ = self.stdin.flush().await;
-        match tokio::time::timeout(self.grace, self.child.wait()).await {
-            Ok(_) => Ok(()),
-            Err(_) => Err(HarnessError::Timeout {
-                what: "closing the browser",
-                limit: self.grace,
-            }),
-        }
+    pub async fn quit(self) -> Result<(), HarnessError> {
+        self.driver.quit().await
     }
 
     async fn call(
@@ -484,72 +464,8 @@ impl BrowserSession {
         command: &Value,
         budget: Duration,
     ) -> Result<PageOutcome, HarnessError> {
-        let mut line = command.to_string();
-        line.push('\n');
-        // A driver that has ended refuses the write or gives no answer; either way its stderr says why.
-        let sent = match self.stdin.write_all(line.as_bytes()).await {
-            Ok(()) => self.stdin.flush().await,
-            Err(e) => Err(e),
-        };
-        if sent.is_err() {
-            return Err(self.ended().await);
-        }
-        let limit = budget + self.grace;
-        let answer = tokio::time::timeout(limit, self.stdout.next_line())
-            .await
-            .map_err(|_| HarnessError::Timeout {
-                what: "browser client",
-                limit,
-            })?;
-        match answer {
-            Ok(Some(answer)) => parse_reply(&answer),
-            Ok(None) | Err(_) => Err(self.ended().await),
-        }
+        self.driver.call(command, budget).await
     }
-
-    /// The error for a driver that ended: what it wrote to stderr (read once).
-    async fn ended(&mut self) -> HarnessError {
-        let mut stderr = String::new();
-        if let Some(mut err) = self.child.stderr.take() {
-            let _ =
-                tokio::time::timeout(Duration::from_secs(5), err.read_to_string(&mut stderr)).await;
-        }
-        HarnessError::Browser {
-            detail: format!(
-                "the driver ended without an answer; stderr: {}",
-                stderr.trim()
-            ),
-        }
-    }
-}
-
-/// Reads one of the driver's answers.
-fn parse_reply(line: &str) -> Result<PageOutcome, HarnessError> {
-    let fail = |detail: String| HarnessError::Browser { detail };
-    let reply: Value =
-        serde_json::from_str(line).map_err(|e| fail(format!("unreadable driver answer: {e}")))?;
-    let field = |key: &str| reply.get(key).unwrap_or(&Value::Null);
-    let strings = |key: &str| -> Vec<String> {
-        field(key)
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .collect()
-    };
-    let console = strings("console");
-    let page_errors = strings("pageErrors");
-    if field("ok").as_bool() != Some(true) {
-        return Err(fail(format!(
-            "{}; console: {console:?}; page errors: {page_errors:?}",
-            field("error").as_str().unwrap_or("no reason given")
-        )));
-    }
-    Ok(PageOutcome {
-        result: field("result").clone(),
-        console,
-        page_errors,
-    })
 }
 
 /// Whether `dir` looks like a `node_modules` folder with Playwright's driver.
@@ -560,35 +476,6 @@ fn has_playwright(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_ready_page_gives_its_result_and_its_console() {
-        let outcome = parse_reply(
-            "{\"ok\":true,\"result\":{\"n\":3},\"console\":[\"log: hi\"],\"pageErrors\":[]}",
-        )
-        .expect("answer");
-        assert_eq!(outcome.result, json!({"n": 3}));
-        assert_eq!(outcome.console, ["log: hi"]);
-        assert_eq!(outcome.page_errors, Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_failed_page_names_the_reason_the_console_and_the_page_errors() {
-        let err = parse_reply(
-            "{\"ok\":false,\"error\":\"waiting failed\",\"console\":[\"error: boom\"],\"pageErrors\":[\"Error: x\"]}",
-        )
-        .expect_err("not ok");
-        let text = err.to_string();
-        assert!(text.contains("waiting failed"), "{text}");
-        assert!(text.contains("error: boom"), "{text}");
-        assert!(text.contains("Error: x"), "{text}");
-    }
-
-    #[test]
-    fn an_unreadable_answer_is_an_error_not_a_pass() {
-        let err = parse_reply("{not json").expect_err("bad json");
-        assert!(err.to_string().contains("unreadable"), "{err}");
-    }
 
     #[test]
     fn the_request_carries_the_page_and_the_budget_in_milliseconds() {

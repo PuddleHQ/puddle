@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use hyper::client::conn::http1::SendRequest;
-use puddle_types::{ConnectionOutcome, Host, HttpRequestLine, WorkspaceId};
+use puddle_types::{ConnectionOutcome, ForeignCredentialKind, Host, HttpRequestLine, WorkspaceId};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use zeroize::Zeroizing;
@@ -23,7 +23,7 @@ use super::guest::{
     read_hello, scan_hello, server_config,
 };
 use super::inject::{
-    Forwarding, InjectContext, InjectRefusal, Injection, RequestView, Unauthorized, body_too_large,
+    Forwarding, InjectContext, InjectRefusal, RequestView, Unauthorized, body_too_large,
 };
 use super::leg::{self, BoxError, ConnectError, Connected, H1Conn, Made, UpBody};
 use super::request::{self, Parsed};
@@ -93,6 +93,9 @@ pub(crate) struct Outcome {
     /// The ids of the stand-ins whose real values an answer held and got back as the stand-in,
     /// each once, at most [`MAX_UNSWAPPED_STAND_INS`].
     pub(crate) scrubbed_stand_ins: Vec<String>,
+    /// The kinds of credential the requests carried that Puddle did not add or swap, each once
+    /// (`github_token`, ...); empty when the workspace turned the warning off.
+    pub(crate) foreign_credentials: Vec<String>,
     /// The address first connected to.
     pub(crate) resolved_ip: Option<std::net::IpAddr>,
     /// The company-proxy hop that carried the first connection.
@@ -138,6 +141,18 @@ impl Outcome {
         }
     }
 
+    /// Notes the credentials a request carried that Puddle did not add or swap, unless the
+    /// workspace turned the warning off: the kinds join the record and the notice is raised.
+    pub(crate) fn record_foreign(&mut self, cx: &Context, kinds: &[ForeignCredentialKind]) {
+        cx.termination.foreign_warning().note(
+            &cx.workspace,
+            &cx.target.host,
+            cx.proxy.sink.as_ref(),
+            &mut self.foreign_credentials,
+            kinds,
+        );
+    }
+
     /// Notes what the scrub of the answers did: the stand-ins put back, and an answer cut off
     /// because it held a real value that cannot be replaced.
     pub(crate) fn record_scrubbed(&mut self, notes: &ScrubNotes) {
@@ -152,6 +167,20 @@ impl Outcome {
             self.refused.get_or_insert(ANSWER_WITHHELD);
         }
     }
+}
+
+/// The kind to warn about when the swap found a stand-in of Puddle's own that its registry does
+/// not hold (see [`super::stale`]).
+pub(crate) fn stale_kind(reports: &[&Swapped]) -> Option<ForeignCredentialKind> {
+    reports
+        .iter()
+        .any(|report| {
+            report
+                .unswapped
+                .iter()
+                .any(|id| id.starts_with("stale-stand-in:"))
+        })
+        .then_some(ForeignCredentialKind::StaleStandIn)
 }
 
 /// What a terminated connection runs on.
@@ -602,21 +631,19 @@ where
         if let Err(refusal) = self.ensure_upstream().await {
             return self.refuse(&refusal).await;
         }
-        let (
-            Forwarding {
-                injection,
-                unauthorized,
-            },
-            prefetched,
-        ) = match self.consult_injector(&parsed, &head).await {
+        let (forwarding, prefetched) = match self.consult_injector(&parsed, &head).await {
             Ok(decided) => decided,
             Err(flow) => return flow,
         };
-        let headers = match request::upstream_headers(&head, &self.cx.target, injection.as_ref()) {
+        let headers = match request::upstream_headers(
+            &head,
+            &self.cx.target,
+            forwarding.injection.as_ref(),
+        ) {
             Ok(headers) => headers,
             Err(refusal) => return self.refuse(&refusal).await,
         };
-        let (headers, target) = self.add_credentials(headers, &parsed.target, injection.as_ref());
+        let (headers, target) = self.add_credentials(headers, &parsed.target, &forwarding);
         let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
         let (headers, prefetched, mut exchange) = match self
             .begin_exchange(&parsed, &view, headers, prefetched)
@@ -631,7 +658,7 @@ where
                 .as_ref()
                 .map_or(parsed.target.as_str(), |target| target.as_str()),
             headers,
-            unauthorized.as_ref(),
+            forwarding.unauthorized.as_ref(),
             prefetched,
             exchange.as_mut(),
         )
@@ -783,8 +810,10 @@ where
         &mut self,
         mut headers: ::http::HeaderMap,
         target: &str,
-        injection: Option<&Injection>,
+        forwarding: &Forwarding,
     ) -> (::http::HeaderMap, Option<Zeroizing<String>>) {
+        let injection = forwarding.injection.as_ref();
+        let own_git_credential = forwarding.own_git_credential;
         if let Some(injection) = injection {
             self.outcome.injected = true;
             self.outcome
@@ -792,6 +821,11 @@ where
                 .get_or_insert_with(|| injection.binding_id().to_owned());
         }
         let host = &self.cx.target.host;
+        let mut foreign = self.cx.termination.stand_ins().foreign_credentials(
+            &headers,
+            injection,
+            own_git_credential,
+        );
         let swapped = self
             .cx
             .termination
@@ -800,6 +834,8 @@ where
         self.outcome.record_stand_ins(host, &swapped);
         let (target, in_target) = self.cx.termination.stand_ins().swap_target(target, host);
         self.outcome.record_stand_ins(host, &in_target);
+        foreign.extend(stale_kind(&[&swapped, &in_target]));
+        self.outcome.record_foreign(self.cx, &foreign);
         if self.cx.termination.stand_ins().scrubs_answers_from(host) {
             limit_accept_encoding(&mut headers);
         }

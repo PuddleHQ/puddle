@@ -110,6 +110,11 @@ pub struct ConnectionRecord {
     /// before it existed.
     #[serde(default)]
     pub scrubbed_stand_ins: Vec<String>,
+    /// The kinds of credential the requests carried that Puddle did not add or swap
+    /// (`github_token`, `stale_stand_in`, ...), each once; never a value. Absent in records
+    /// written before it existed.
+    #[serde(default)]
+    pub foreign_credentials: Vec<String>,
     /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
     pub method: Option<String>,
     /// HTTP path without query string, where `method` is set.
@@ -154,6 +159,7 @@ impl ConnectionRecord {
             injected: event.injected,
             unswapped_stand_ins: event.unswapped_stand_ins.clone(),
             scrubbed_stand_ins: event.scrubbed_stand_ins.clone(),
+            foreign_credentials: event.foreign_credentials.clone(),
             method,
             path,
             path_truncated: false,
@@ -207,6 +213,7 @@ impl ConnectionRecord {
             injected: false,
             unswapped_stand_ins: Vec::new(),
             scrubbed_stand_ins: Vec::new(),
+            foreign_credentials: Vec::new(),
             method: None,
             path: None,
             path_truncated: false,
@@ -1274,6 +1281,17 @@ mod tests {
             flagged.unswapped_stand_ins,
             ["stand-in:secret:A", "stand-in:secret:B"]
         );
+        assert!(matches!(
+            AuditRecord::Connection(ConnectionRecord::from_event(1, &event())),
+            AuditRecord::Connection(ConnectionRecord { foreign_credentials, .. })
+                if foreign_credentials.is_empty()
+        ));
+        let mut warned = event();
+        warned.foreign_credentials = vec!["github_token".to_owned()];
+        assert_eq!(
+            ConnectionRecord::from_event(1, &warned).foreign_credentials,
+            ["github_token"]
+        );
     }
 
     /// A line written before the field existed reads as no refused address, and an event's
@@ -1430,6 +1448,7 @@ mod tests {
             "injected",
             "unswapped_stand_ins",
             "scrubbed_stand_ins",
+            "foreign_credentials",
             "refused_address",
             "refused_reason",
             "category",

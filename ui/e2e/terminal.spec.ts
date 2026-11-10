@@ -41,8 +41,10 @@ async function run(page: Page, line: string) {
 /** What the page's paste handler sees when the user pastes `text` (the webview's paste event). */
 /** Moves the pointer onto a link: the emulator redraws its row on hover, so a locator never settles. */
 async function pointAt(page: Page, link: Locator) {
-  const box = await link.boundingBox();
-  if (!box) throw new Error("the link has no box");
+  await expect.poll(() => link.boundingBox()).not.toBeNull();
+  const box = (await link.boundingBox()) as NonNullable<
+    Awaited<ReturnType<Locator["boundingBox"]>>
+  >;
   await page.mouse.move(box.x + 6, box.y + box.height / 2);
 }
 
@@ -429,12 +431,15 @@ test("at 390 px the page scrolls only up and down", async ({
   await open(page, backend);
   await start(page);
   await run(page, "size");
-  const overflow = await page.evaluate(
-    () =>
-      document.documentElement.scrollWidth -
-      document.documentElement.clientWidth,
-  );
-  expect(overflow).toBeLessThanOrEqual(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(0);
 });
 
 const stops = axeStops([["live terminal"], ["ended terminal", "menu"]]);

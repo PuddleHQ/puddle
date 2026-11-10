@@ -65,7 +65,7 @@
   let manageOpen = $state(false);
   let managing = $state<{ directory: string; url: string } | null>(null);
   let removeOpen = $state(false);
-  let removing = $state<ListEntry | null>(null);
+  let removing = $state({ entry: "", directory: "" });
   let problem = $state<string | null>(null);
   let focusAfterManage = false;
 
@@ -123,7 +123,6 @@
 
   async function remove() {
     const gone = removing;
-    if (gone === null) return;
     problem = null;
     const result = await store.remove(gone.entry);
     if (!result.ok) {
@@ -137,7 +136,7 @@
   }
 
   function askRemove(entry: ListEntry) {
-    removing = entry;
+    removing = { entry: entry.entry, directory: entry.directory };
     removeOpen = true;
   }
 
@@ -341,7 +340,7 @@
 
 <ConfirmDialog
   bind:open={removeOpen}
-  title="Remove {removing?.directory ?? ''} from the list?"
+  title="Remove {removing.directory} from the list?"
   summary="Puddle stops managing it: the folder and its files stay in the workspace."
   detail="The checkout keeps working with plain Git. Its Git settings and identities stay as they are, and you can manage it again later."
   confirmLabel="Remove from the list"

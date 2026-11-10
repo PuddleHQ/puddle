@@ -172,12 +172,12 @@ sg docker -c 'docker ps >/dev/null'
 (sg docker -c "nohup aspire run --non-interactive >/tmp/aspire-run.log 2>&1" &)
 for i in $(seq 1 150); do sudo docker ps --format '{{.Image}}' | grep -qi redis && break; sleep 2; done
 sudo docker ps --format '{{.Image}}' | grep -qi redis
-# The web frontend answers its weather page, which goes through the API service to Redis.
+# Which port is the web frontend is not readable (the process runs with the docker group, so ss -p hides it): try them all. It answers its weather page, which goes through the API service to Redis.
 ok=""
 for i in $(seq 1 90); do
-  for port in $(ss -ltnpH 2>/dev/null | awk '/Probe.Web/ { n = split($4, a, ":"); print a[n] }' | sort -u); do
+  for port in $(ss -ltnH 2>/dev/null | awk '{ n = split($4, a, ":"); print a[n] }' | sort -un); do
     for scheme in http https; do
-      curl -fsSk "$scheme://localhost:$port/weather" 2>/dev/null | grep -qi weather && ok=1 && break 3
+      curl -fsSk --max-time 5 "$scheme://localhost:$port/weather" 2>/dev/null | grep -qi 'demonstrates showing data' && ok=1 && break 3
     done
   done
   sleep 2

@@ -5,13 +5,14 @@
 //! key. These are the claims the VM test (`vm_radar_forgejo_*`) builds on, with no VM in between.
 //!
 //! Needs `PUDDLE_FORGEJO_BIN`; without it the tests skip unless `PUDDLE_REQUIRE_FORGEJO` is set
-//! (the lab workflow sets it).
-#![cfg(unix)]
+//! (the lab workflow sets it). On Windows it is Gitea's Windows release (Forgejo ships none); the
+//! ssh test is Unix-only (it needs `ssh-keygen` and OpenSSH paths that Windows does not share).
 #![expect(
     clippy::unwrap_used,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 
+#[cfg(unix)]
 use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Output;
@@ -28,7 +29,17 @@ fn git(forgejo: &Forgejo, cwd: &Path, args: &[&str]) -> Output {
     command
         .current_dir(cwd)
         .env("GIT_SSL_CAINFO", root)
-        .args(["-c", &format!("http.curloptResolve={resolve}")])
+        .args(["-c", &format!("http.curloptResolve={resolve}")]);
+    if cfg!(windows) {
+        // The runner's Git has only Schannel, which wants a revocation answer the lab root cannot
+        // give; it still verifies the chain against GIT_SSL_CAINFO. Git reads the revocation
+        // switch only when the backend is named, and the system config that names it is off here.
+        command.args(["-c", "http.sslBackend=schannel"]);
+        command.args(["-c", "http.schannelCheckRevoke=false"]);
+        // Without this Schannel ignores the CA file and trusts only the Windows store.
+        command.args(["-c", "http.schannelUseSSLCAInfo=true"]);
+    }
+    command
         .args([
             "-c",
             "user.name=lab",
@@ -112,6 +123,7 @@ fn git_clones_pushes_and_deletes_a_branch_with_the_token_and_is_refused_without_
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn ssh_signs_in_with_the_key_the_account_holds_and_checks_the_servers_host_key() {
     let Some(forgejo) = Forgejo::start(NAME) else {

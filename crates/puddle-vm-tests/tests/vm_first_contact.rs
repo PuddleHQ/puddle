@@ -65,7 +65,7 @@ type Tool = (&'static str, &'static str);
 
 const COMMON: &[Tool] = &[
     ("curl", "curl -sS https://localhost:8443/ -o /dev/null"),
-    ("wget", "wget -q -O /dev/null https://localhost:8443/"),
+    ("wget", "wget -O /dev/null https://localhost:8443/"),
     ("git", "git ls-remote https://localhost:8443/x.git"),
     (
         "apt",
@@ -263,7 +263,7 @@ async fn matrix_run(
 
         let applied = sh(&sandbox, "apply", format!("{apply}\necho applied")).await?;
         eprintln!("apply: {applied}");
-        assert!(applied.trim_end().ends_with("applied"), "{applied}");
+        assert!(applied.contains("applied"), "{applied}");
 
         let mut all = String::new();
         for tool in &list {

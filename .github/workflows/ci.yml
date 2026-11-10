@@ -286,6 +286,14 @@ jobs:
           # The package starts its own daemon; the test runs its own Squid on a free port.
           sudo systemctl stop squid || true
           test -x /usr/sbin/squid
+      # What the terminal screen's key rules assume of WebKitGTK: paste events and
+      # cancelled Ctrl+R/F5, in WebKitGTK's own browser driven by WebKitWebDriver. WebKitGTK has no DevTools
+      # Protocol; the WebView2 half runs in windows.yml.
+      - name: terminal paste and key-cancel test (WebKitGTK, WebKitWebDriver)
+        timeout-minutes: 5
+        run: |
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends webkit2gtk-driver
+          xvfb-run -a node crates/puddle-app/e2e/terminal-keys-webkit.mjs
       # The corporate-lab fixtures (crates/puddle-e2e/src/lab) run mitmproxy as the TLS interceptor and
       # the NTLM proxy. The packages are pinned with hashes in ci/lab/requirements.txt (compiled from
       # requirements.in; Dependabot's uv entry for /ci/lab bumps them weekly), so a new release reaches

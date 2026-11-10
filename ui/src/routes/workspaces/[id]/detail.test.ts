@@ -205,6 +205,7 @@ describe("the detail layout", () => {
     expect(tabs.getAllByRole("link").map((l) => l.textContent?.trim())).toEqual(
       [
         "Overview",
+        "Terminal",
         "Network",
         "Git",
         "Environment",

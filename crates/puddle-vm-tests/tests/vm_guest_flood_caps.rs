@@ -61,8 +61,8 @@ const CONSOLE_FLOOD: &str =
 /// Only shell builtins run after the flood: once the mount's handles are gone, starting a program
 /// from it fails too. Prints the opens that worked and the shell's own words for the refusal.
 const HANDLE_FLOOD: &str = "ulimit -n 300000 || exit 9; n=0; \
-     while [ $n -lt 120000 ]; do exec {fd}</bin/true 2>/dev/null || break; n=$((n+1)); done; \
-     err=$( { : </bin/true; } 2>&1 ); echo \"opened=$n err=$err\"";
+     while [ $n -lt 120000 ]; do exec {fd}</flood/target 2>/dev/null || break; n=$((n+1)); done; \
+     err=$( { : </flood/target; } 2>&1 ); echo \"opened=$n err=$err\"";
 
 fn mib(bytes: u64) -> u64 {
     bytes / MIB
@@ -105,7 +105,22 @@ struct Seen {
 }
 
 async fn flood(env: &VmEnv) -> Result<Seen, HarnessError> {
-    let builder = env.sandbox("flood", DEBIAN_DEVCONTAINER)?;
+    // The folder the guest floods with opens: a host mount is served by the passthrough file system
+    // whose handle limit is under test.
+    let shared = tempfile::tempdir().map_err(|source| HarnessError::Io {
+        action: "create",
+        path: "a temporary folder".into(),
+        source,
+    })?;
+    let target = shared.path().join("target");
+    std::fs::write(&target, b"x").map_err(|source| HarnessError::Io {
+        action: "write",
+        path: target.clone(),
+        source,
+    })?;
+    let builder = env
+        .sandbox("flood", DEBIAN_DEVCONTAINER)?
+        .volume("/flood", |m| m.bind(shared.path()));
     // Boxed: the SDK's futures are large (clippy::large_futures).
     env.scope(Box::pin(async {
         let sandbox =

@@ -443,15 +443,13 @@ try {
     1500,
   ).catch(() => undefined);
   check("the editor opens in its own window", title !== undefined, `windows: ${appWindows().join(" | ")}`);
-  // What the window shows: the workbench with the checkout open, read through UI Automation.
-  const workbench = await step("the editor window shows the workbench with the checkout", async () => {
-    const seen = await uia.waitFor("the Explorer and the checkout's file in the editor window", { window: EDITOR, nameRegex: "package\\.json" }, 180_000);
-    return seen;
+  // What the window shows: the workbench's Explorer with the checkout's folder in it.
+  await step("the editor window shows the Explorer with the checkout's folder", async () => {
+    await uia.waitFor("the Files Explorer tree", { window: EDITOR, role: "tree", name: "Files Explorer" }, 180_000);
+    await uia.waitFor("the checkout's folder in the Explorer", { window: EDITOR, role: "treeitem", name: "app" }, 60_000);
   }).catch((err) => {
-    note(String(err));
-    return undefined;
+    check("the editor window shows the Explorer with the checkout's folder", false, err.message);
   });
-  check("the editor's window holds the checkout's files", workbench !== undefined, JSON.stringify(workbench ?? {}));
   const server = await until(
     "the editor server in the guest",
     async () => {

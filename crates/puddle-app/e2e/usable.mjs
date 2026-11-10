@@ -332,7 +332,7 @@ async function createFromTheForm() {
 async function allowTheForgeInTheInbox() {
   await uia.click("the Inbox link", { window: MAIN, role: "link", nameRegex: "^Inbox" });
   await uia.waitFor("the Inbox heading", heading("Inbox"));
-  await uia.click("Allow for the forge", { window: MAIN, role: "button", nameRegex: `^Allow ${forge.replace(/\./g, "\\.")} for ` });
+  await uia.click("Allow for the forge", { window: MAIN, role: "button", nameRegex: `^Allow ${forge.split(".").join("[.]")} for ` });
   // The row leaves the inbox's waiting list and joins "Decided just now".
   await uia.waitFor("the decision in the inbox", { window: MAIN, role: "button", nameRegex: "^Undo: Allowed " });
   await until("the forge request to be allowed", async () => {

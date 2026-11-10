@@ -686,7 +686,7 @@ impl Rig {
         let runtime = FakeRuntime::new();
         let guest = Arc::new(Guest::default());
         guest.install(&runtime);
-        Self {
+        let rig = Self {
             dev_cert: Arc::new(TestDevCert::new()),
             dir: support::scratch_dir(),
             log: Log::default(),
@@ -698,7 +698,13 @@ impl Rig {
             rewrite_gate: Mutex::new(None),
             git_ssh: AtomicBool::new(false),
             ids: Mutex::new(None),
-        }
+        };
+        // A host that restarts reuses the port its front stored. A port the first run took from
+        // port 0 is free again the moment it quits, and a parallel test's port 0 or source port can
+        // take it before the restart binds (a flaky `front-port-moved` problem), so every rig starts
+        // on a quiet port, below the ephemeral ranges.
+        store_front_port(&rig, puddle_test_kit::quiet_port());
+        rig
     }
 
     fn config(&self) -> HostConfig {
@@ -3216,6 +3222,8 @@ fn stored_front_port(rig: &Rig) -> Option<u16> {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_first_run_stores_the_port_its_front_took() {
     let rig = Rig::new();
+    // A rig starts with a stored quiet port; this one is a data folder that never ran Puddle.
+    std::fs::remove_file(HostPaths::new(rig.dir.path().join("data")).front_port_file()).unwrap();
     let host = rig.start().await;
     assert_eq!(
         stored_front_port(&rig),
@@ -3303,6 +3311,7 @@ async fn a_front_port_that_cannot_be_stored_does_not_stop_the_host() {
     let rig = Rig::new();
     // A folder where the file belongs: it cannot be read as a port or replaced by one.
     let file = HostPaths::new(rig.dir.path().join("data")).front_port_file();
+    std::fs::remove_file(&file).unwrap();
     std::fs::create_dir_all(&file).unwrap();
     let host = rig.start().await;
     let port = front_port_of(&host);
@@ -11523,11 +11532,9 @@ async fn a_pinned_forward_follows_the_workspace_through_stop_start_and_delete() 
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    // A port of this computer nobody has right now.
-    let port = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    // A port of this computer nobody has right now: a quiet one, since a port 0 port given up is free
+    // for any parallel test's port 0 or source port before the host binds it.
+    let port = puddle_test_kit::quiet_port();
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let ports = |reply: support::Reply| reply.json();
 

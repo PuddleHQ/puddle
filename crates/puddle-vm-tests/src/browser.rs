@@ -677,21 +677,15 @@ mod tests {
             )
             .await
             .expect_err("hang");
-        let HarnessError::NodeHung {
-            stage,
-            stdout,
-            stderr,
-            ..
-        } = err
-        else {
-            panic!("not a node hang: {err}");
-        };
-        assert_eq!(stdout.trim(), "out-line");
-        assert_eq!(stderr.trim(), "err-line");
-        assert_eq!(
-            stage,
-            "stdin written: done, process exited: pending, stdout closed: pending, stderr closed: pending"
-        );
+        let said = err.to_string();
+        assert!(matches!(err, HarnessError::NodeHung { .. }), "{said}");
+        for part in [
+            "stdout: \"out-line",
+            "stderr: \"err-line",
+            "stdin written: done, process exited: pending, stdout closed: pending, stderr closed: pending",
+        ] {
+            assert!(said.contains(part), "{part} not in {said}");
+        }
     }
 
     #[tokio::test]

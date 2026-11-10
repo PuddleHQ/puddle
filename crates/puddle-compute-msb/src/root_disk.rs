@@ -57,8 +57,13 @@ pub(crate) enum GrowPlan {
     Deferred,
 }
 
-/// Reads msb's dry-run `plan` of a root-disk size change.
+/// Reads msb's dry-run `plan` of a root-disk size change, as this platform can carry it out.
 pub(crate) fn grow_plan(plan: &microsandbox::sandbox::SandboxModificationPlan) -> GrowPlan {
+    on_platform(read_plan(plan), LIVE_GROW_WORKS)
+}
+
+/// What msb's dry-run `plan` says, whatever the platform.
+fn read_plan(plan: &microsandbox::sandbox::SandboxModificationPlan) -> GrowPlan {
     use microsandbox::{ModificationDisposition, PlannedChange};
     if let Some(conflict) = plan.conflicts.first() {
         return GrowPlan::Refused(conflict.message.clone());
@@ -383,26 +388,36 @@ mod tests {
     fn a_plan_reads_as_live_deferred_or_refused() {
         use microsandbox::ModificationDisposition as D;
         assert_eq!(
-            grow_plan(&plan(None, Some(D::Live), "root_disk_size")),
+            read_plan(&plan(None, Some(D::Live), "root_disk_size")),
             GrowPlan::Live
         );
         assert_eq!(
-            grow_plan(&plan(None, Some(D::NextStart), "root_disk_size")),
+            read_plan(&plan(None, Some(D::NextStart), "root_disk_size")),
             GrowPlan::Deferred
         );
         assert_eq!(
-            grow_plan(&plan(None, Some(D::RequiresRestart), "root_disk_size")),
+            read_plan(&plan(None, Some(D::RequiresRestart), "root_disk_size")),
             GrowPlan::Deferred
         );
         // A live change of some other field is not the disk.
         assert_eq!(
-            grow_plan(&plan(None, Some(D::Live), "cpus")),
+            read_plan(&plan(None, Some(D::Live), "cpus")),
             GrowPlan::Deferred
         );
-        assert_eq!(grow_plan(&plan(None, None, "")), GrowPlan::Deferred);
+        assert_eq!(read_plan(&plan(None, None, "")), GrowPlan::Deferred);
         assert_eq!(
-            grow_plan(&plan(Some("too small"), Some(D::Live), "root_disk_size")),
+            read_plan(&plan(Some("too small"), Some(D::Live), "root_disk_size")),
             GrowPlan::Refused("too small".into())
+        );
+        // What the runtime acts on: live only where live grow works.
+        let live = plan(None, Some(D::Live), "root_disk_size");
+        assert_eq!(
+            grow_plan(&live),
+            if cfg!(windows) {
+                GrowPlan::Deferred
+            } else {
+                GrowPlan::Live
+            }
         );
     }
 }

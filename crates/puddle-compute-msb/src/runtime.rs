@@ -778,10 +778,7 @@ impl root_disk::GrowSdk for MsbGrow<'_> {
             .sdk(self.record.modify().root_disk_size(self.mib).dry_run())
             .await
             .map_err(|e| map("plan the root disk growth of", self.name, e))?;
-        Ok(root_disk::on_platform(
-            root_disk::grow_plan(&plan),
-            root_disk::LIVE_GROW_WORKS,
-        ))
+        Ok(root_disk::grow_plan(&plan))
     }
 
     async fn apply_live(&self) -> Result<(), ComputeError> {

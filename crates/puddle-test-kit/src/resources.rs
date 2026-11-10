@@ -160,7 +160,7 @@ pub fn http_status(addr: SocketAddr, path: &str, token: &str) -> Option<u16> {
     while !head.windows(2).any(|w| w == b"\r\n") && head.len() < 1024 {
         match conn.read(&mut chunk) {
             Ok(0) | Err(_) => break,
-            Ok(n) => head.extend_from_slice(&chunk[..n]),
+            Ok(n) => head.extend_from_slice(chunk.get(..n).unwrap_or_default()),
         }
     }
     let line = String::from_utf8_lossy(&head);

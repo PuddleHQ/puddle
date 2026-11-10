@@ -4,6 +4,7 @@ import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import {
   FakeWorkspaces,
   checkout,
+  entryOf,
   listing,
   workspace,
 } from "#lib/testing/fake-workspaces.ts";
@@ -171,11 +172,11 @@ describe("changing the list", () => {
   });
 
   it("clones an entry again and takes one off the list", async () => {
-    expect(await store.cloneAgain("dev")).toEqual({ ok: true });
+    expect(await store.cloneAgain(entryOf("dev"))).toEqual({ ok: true });
     expect(api.calls).toContain(
-      "POST /api/workspaces/{id}/repositories/{directory}/clone",
+      "POST /api/workspaces/{id}/repositories/{entry}/clone",
     );
-    expect(await store.remove("dev")).toEqual({ ok: true });
+    expect(await store.remove(entryOf("dev"))).toEqual({ ok: true });
     expect(api.list[0]?.repositories).toEqual([]);
     expect(refreshed).toBe(2);
   });
@@ -199,7 +200,7 @@ describe("changing the list", () => {
 
   it("says when the service does not answer", async () => {
     api.down = true;
-    expect(await store.remove("dev")).toEqual({
+    expect(await store.remove(entryOf("dev"))).toEqual({
       ok: false,
       message: "Puddle's service isn't answering.",
     });

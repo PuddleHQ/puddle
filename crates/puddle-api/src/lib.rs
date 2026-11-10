@@ -110,5 +110,6 @@ pub use workspaces::{
     NoFreeId, NoGitSetup, NoWorkspaces, OpenTarget, Operation, RandomIds, RepoFindings, RepoUrl,
     Repository, RepositoryDraft, ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError,
     WorkspaceRecord, WorkspaceService, check_rename, check_repositories, check_repositories_with,
-    check_session_user_change, check_start_folder_change, label_taken,
+    check_session_user_change, check_start_folder_change, entry_id_from_text, label_taken,
+    new_entry_id,
 };

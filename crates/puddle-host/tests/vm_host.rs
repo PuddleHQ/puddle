@@ -402,6 +402,15 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
+    let missing_entry = reply.json()["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["directory"] == "missing")
+        .unwrap()["entry"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let end = events
         .until(ended(name_static), Duration::from_mins(15))
@@ -431,7 +440,7 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
         .filter(|p| p["workspace"] == name)
         .collect();
     assert_eq!(failed.len(), 1, "{problems}");
-    assert_eq!(failed[0]["key"], format!("clone:{name}:missing"));
+    assert_eq!(failed[0]["key"], format!("clone:{name}:{missing_entry}"));
     assert!(
         failed[0]["title"].as_str().unwrap().contains(&unreachable),
         "{problems}"
@@ -804,10 +813,11 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
         )
         .await;
     assert_eq!(managed.status, 200, "{}", managed.body);
-    assert_eq!(
-        managed.json()["repositories"][1],
-        json!({"url": manual, "directory": "manual"})
-    );
+    let managed = managed.json();
+    let kept = &managed["repositories"][1];
+    assert_eq!(kept["url"], manual, "{managed}");
+    assert_eq!(kept["directory"], "manual", "{managed}");
+    assert!(kept["entry"].is_string(), "{managed}");
     let ssh = api
         .post(
             &format!("/api/workspaces/{name}/repositories"),
@@ -831,6 +841,15 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
         )
         .await;
     assert_eq!(added.status, 202, "{}", added.body);
+    let spoon_entry = added.json()["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["directory"] == "Spoon-Knife")
+        .unwrap()["entry"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let end = events
         .until(ended(name_static), Duration::from_mins(10))
         .await;
@@ -841,7 +860,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
     // Taking the entry off the list changes the list only.
     let removed = api
         .delete(
-            &format!("/api/workspaces/{name}/repositories/Spoon-Knife"),
+            &format!("/api/workspaces/{name}/repositories/{spoon_entry}"),
             None,
         )
         .await;

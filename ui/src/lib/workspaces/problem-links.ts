@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Where a background problem about a workspace sends you. The host names a problem with a key
-// (`start-folder:<id>`, `clone:<id>:<directory>`), where `<id>` is the workspace's id; a missing start folder goes to the
+// (`start-folder:<id>`, `clone:<id>:<entry>`), where `<id>` is the workspace's id; a missing start folder goes to the
 // setting, every other problem about a workspace to the workspace's overview (which holds the
 // Repositories section a failed clone shows in).
 import type { components } from "#lib/api/schema.d.ts";

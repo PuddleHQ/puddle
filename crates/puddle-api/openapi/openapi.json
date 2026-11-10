@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.27.0"
+    "version": "0.28.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -8495,7 +8495,7 @@
         }
       }
     },
-    "/api/workspaces/{id}/repositories/{directory}": {
+    "/api/workspaces/{id}/repositories/{entry}": {
       "delete": {
         "tags": [
           "workspaces"
@@ -8513,9 +8513,9 @@
             }
           },
           {
-            "name": "directory",
+            "name": "entry",
             "in": "path",
-            "description": "the entry's directory",
+            "description": "the entry's id (not its directory)",
             "required": true,
             "schema": {
               "type": "string"
@@ -8606,7 +8606,7 @@
         }
       }
     },
-    "/api/workspaces/{id}/repositories/{directory}/clone": {
+    "/api/workspaces/{id}/repositories/{entry}/clone": {
       "post": {
         "tags": [
           "workspaces"
@@ -8624,9 +8624,9 @@
             }
           },
           {
-            "name": "directory",
+            "name": "entry",
             "in": "path",
-            "description": "the entry's directory",
+            "description": "the entry's id (not its directory)",
             "required": true,
             "schema": {
               "type": "string"
@@ -12236,6 +12236,14 @@
             "description": "Other special-purpose ranges."
           }
         }
+      },
+      "EntryId": {
+        "type": "string",
+        "description": "A repository entry's id: eight characters of lowercase Crockford base32, the first a letter. Unique within its workspace.",
+        "example": "a0000000",
+        "maxLength": 8,
+        "minLength": 8,
+        "pattern": "^[a-hjkmnp-tv-z][0-9a-hjkmnp-tv-z]{7}$"
       },
       "EnvKind": {
         "type": "string",
@@ -17609,6 +17617,7 @@
         "type": "object",
         "description": "One repository Puddle manages for a workspace. Its identity and its Pull and Push toggles are\nthe workspace's Git settings (`GET /api/workspaces/{id}/git`), matched in the repository\ntable's spelling.",
         "required": [
+          "entry",
           "url",
           "directory"
         ],
@@ -17616,6 +17625,10 @@
           "directory": {
             "$ref": "#/components/schemas/CheckoutDir",
             "description": "The checkout it is cloned into, directly under the volume root."
+          },
+          "entry": {
+            "$ref": "#/components/schemas/EntryId",
+            "description": "The entry's id, unique within the workspace: what `/api/workspaces/{id}/repositories/{entry}`\nand the `clone:<id>:<entry>` problem key use. It never changes while the entry is on the\nlist."
           },
           "url": {
             "type": "string",

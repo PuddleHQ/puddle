@@ -14,7 +14,8 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_store::Clock;
 use puddle_types::{
-    CheckoutDir, Event, EventSink, SessionUser, WorkspaceId, WorkspaceStatus, WorkspaceStep,
+    CheckoutDir, EntryId, Event, EventSink, SessionUser, WorkspaceId, WorkspaceStatus,
+    WorkspaceStep,
 };
 use tokio::sync::watch;
 
@@ -569,6 +570,10 @@ impl FakeWorkspaces {
                 })?;
             crate::checkouts::check_seen(directory, seen, &url)?;
             let repository = crate::workspaces::Repository {
+                entry: crate::workspaces::new_entry_id(|e| {
+                    record.repositories.iter().any(|r| r.entry == *e)
+                })
+                .map_err(WorkspaceError::Unavailable)?,
                 url,
                 directory: directory.clone(),
             };
@@ -1023,6 +1028,8 @@ impl WorkspaceService for FakeWorkspaces {
                     )));
                 };
                 let entry = crate::workspaces::Repository {
+                    entry: crate::workspaces::new_entry_id(|_| false)
+                        .map_err(WorkspaceError::Unavailable)?,
                     directory: CheckoutDir::from_url(url.as_str()),
                     url,
                 };
@@ -1247,7 +1254,7 @@ impl WorkspaceService for FakeWorkspaces {
     fn clone_again<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        directory: &'a CheckoutDir,
+        entry_id: &'a EntryId,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
@@ -1258,10 +1265,10 @@ impl WorkspaceService for FakeWorkspaces {
                     .record
                     .repositories
                     .iter()
-                    .find(|r| &r.directory == directory)
+                    .find(|r| &r.entry == entry_id)
                     .cloned()
                     .ok_or_else(|| {
-                        WorkspaceError::NotFound(format!("{directory} is not on the list"))
+                        WorkspaceError::NotFound(format!("{entry_id} is not on the list"))
                     })?
             };
             let new = NewRepository {
@@ -1278,7 +1285,7 @@ impl WorkspaceService for FakeWorkspaces {
     fn remove_repository<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        directory: &'a CheckoutDir,
+        entry_id: &'a EntryId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
             let record = {
@@ -1292,13 +1299,10 @@ impl WorkspaceService for FakeWorkspaces {
                     )));
                 }
                 let before = entry.record.repositories.len();
-                entry
-                    .record
-                    .repositories
-                    .retain(|r| &r.directory != directory);
+                entry.record.repositories.retain(|r| &r.entry != entry_id);
                 if entry.record.repositories.len() == before {
                     return Err(WorkspaceError::NotFound(format!(
-                        "{directory} is not on the list"
+                        "{entry_id} is not on the list"
                     )));
                 }
                 entry.record.clone()
@@ -1373,6 +1377,7 @@ mod tests {
             DisplayName::parse(name).unwrap(),
             vec![NewRepository {
                 repository: Repository::at_default_directory(
+                    EntryId::from_random([1; 5]),
                     RepoUrl::parse("https://example.com/a/b").unwrap(),
                 ),
                 identity: None,

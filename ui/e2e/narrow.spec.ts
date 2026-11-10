@@ -11,6 +11,7 @@ const ROUTES = [
   "/workspaces/web-shop/settings",
   "/workspaces/web-shop/network",
   "/workspaces/web-shop/ports",
+  "/workspaces/web-shop/terminal",
   "/workspaces/web-shop/git",
   "/workspaces/web-shop/environment",
   "/workspaces/web-shop/shell-init",

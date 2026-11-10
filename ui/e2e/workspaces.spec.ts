@@ -811,6 +811,7 @@ test.describe("the detail page", () => {
     const tabs = page.getByRole("navigation", { name: "Workspace sections" });
     await expect(tabs.getByRole("link")).toHaveText([
       /Overview/,
+      /Terminal/,
       /Network/,
       /Git/,
       /Environment/,

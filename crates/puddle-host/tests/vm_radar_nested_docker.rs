@@ -166,7 +166,10 @@ dotnet new aspire-starter --name Probe --use-redis-cache
 dotnet tool install -g aspire.cli || dotnet tool update -g aspire.cli
 cd $d
 trap 'tail -n 40 /tmp/aspire-run.log' EXIT
-(nohup aspire run --non-interactive >/tmp/aspire-run.log 2>&1 &)
+# Aspire talks to Docker as the session user, like Docker's post-install steps arrange: join the docker group.
+sudo usermod -aG docker "$USER"
+sg docker -c 'docker ps >/dev/null'
+(sg docker -c "nohup aspire run --non-interactive >/tmp/aspire-run.log 2>&1" &)
 for i in $(seq 1 150); do sudo docker ps --format '{{.Image}}' | grep -qi redis && break; sleep 2; done
 sudo docker ps --format '{{.Image}}' | grep -qi redis
 # The web frontend answers its weather page, which goes through the API service to Redis.
@@ -274,7 +277,7 @@ async fn vm_radar_nested_docker_real_registries_testcontainers_and_aspire() {
                 &vm.runtime,
                 &workspace,
                 "agent",
-                "tr '\\r' '\\n' </tmp/aspire-run.log | tail -n 60; sudo docker ps -a; ss -ltnp | head -30",
+                "id; tr '\\r' '\\n' </tmp/aspire-run.log | tail -n 60; sudo docker ps -a; ss -ltnp | head -30",
                 Duration::from_secs(60),
             )
             .await;

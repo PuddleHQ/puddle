@@ -111,6 +111,13 @@ mod tests {
         write_executable(&dir.path().join("missing").join("tool"), "#!/bin/sh\n");
     }
 
+    #[test]
+    #[should_panic(expected = "sh failed to write the program")]
+    fn a_folder_that_does_not_exist_fails_loudly_for_bytes_too() {
+        let dir = tempfile::tempdir().unwrap();
+        write_executable_bytes(&dir.path().join("missing").join("prog"), b"x");
+    }
+
     /// The race itself: threads that write then run a script while their siblings fork constantly.
     #[test]
     fn running_a_script_right_after_writing_it_never_hits_text_file_busy() {

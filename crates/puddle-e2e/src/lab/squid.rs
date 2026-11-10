@@ -123,14 +123,12 @@ fn remove_shared_memory(name: &str) {
 fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
     let helper = dir.join("basic-helper.sh");
     let password = basic_password();
-    fs::write(
+    puddle_test_kit::write_executable(
         &helper,
-        format!(
+        &format!(
             "#!/bin/sh\nwhile read -r user pass; do\n  if [ \"$user\" = \"{BASIC_USER}\" ] && [ \"$pass\" = \"{password}\" ]; then echo OK; else echo ERR; fi\ndone\n"
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     fs::write(
         dir.join("hosts"),
         format!("127.0.0.1 {}\n", options.names.join(" ")),

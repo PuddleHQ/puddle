@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A script a test can run straight after writing it.
 
+use std::io::Write as _;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Writes `contents` to `path` and makes it executable (mode 0755), so the caller can execute it
 /// at once without `ETXTBSY` ("Text file busy").
@@ -31,12 +32,52 @@ pub fn write_executable(path: &Path, contents: &str) {
     );
 }
 
+/// Like [`write_executable`] for contents that are not text (a stand-in binary): the bytes reach
+/// the file through the stdin of a short-lived `sh` child, so this process never holds a writable
+/// descriptor on it either.
+///
+/// # Panics
+/// When `sh` cannot run or fails to write the file.
+pub fn write_executable_bytes(path: &Path, contents: &[u8]) {
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(r#"cat > "$1" && chmod 755 "$1""#)
+        .arg("sh")
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("run sh to write a test program");
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(contents)
+        .expect("send the program to sh");
+    let status = child.wait().expect("wait for sh");
+    assert!(
+        status.success(),
+        "sh failed to write the program {}: {status}",
+        path.display()
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt as _;
     use std::thread;
 
     use super::*;
+
+    #[test]
+    fn the_bytes_version_keeps_nul_and_high_bytes_and_is_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prog");
+        let bytes: Vec<u8> = (0..=255).chain(0..=255).collect();
+        write_executable_bytes(&path, &bytes);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
+    }
 
     #[test]
     fn the_file_holds_the_exact_text_and_is_executable() {

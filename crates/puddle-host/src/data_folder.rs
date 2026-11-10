@@ -133,6 +133,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            // flake-ok: a folder's mode, nothing is executed
             fs::set_permissions(&data, fs::Permissions::from_mode(0o755)).unwrap();
             for name in ["puddle.db", "puddle.db-wal", "puddle.db-shm"] {
                 fs::set_permissions(data.join(name), fs::Permissions::from_mode(0o644)).unwrap();

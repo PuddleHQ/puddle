@@ -10,7 +10,6 @@
 )]
 
 use std::io::Write as _;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -80,8 +79,7 @@ pub(crate) fn shells() -> Vec<PathBuf> {
 }
 
 fn write_exec(path: &Path, text: &str) {
-    std::fs::write(path, text).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(path, text);
 }
 
 impl FakeRoot {

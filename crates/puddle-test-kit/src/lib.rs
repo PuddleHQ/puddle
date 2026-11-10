@@ -27,7 +27,7 @@ pub use events::{
 };
 pub use resources::{ReservedPort, TestDir, accepts, bound_port, private_tempdir, quiet_port};
 #[cfg(unix)]
-pub use script::write_executable;
+pub use script::{write_executable, write_executable_bytes};
 pub use wait::{
     MAX_WAIT, Outcome, Step, eventually, eventually_async, eventually_blocking, returns_within,
 };

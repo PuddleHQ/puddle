@@ -115,16 +115,11 @@ mod attach {
             bin
         } else {
             let bin = dir.join("code");
-            std::fs::write(
-                &bin,
-                format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", seen.display()),
-            )
-            .unwrap();
             #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt as _;
-                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            puddle_test_kit::write_executable(
+                &bin,
+                &format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", seen.display()),
+            );
             bin
         }
     }

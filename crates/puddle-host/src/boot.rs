@@ -515,6 +515,7 @@ mod tests {
         let stuck = tmp.path().join("code-server-1.0.0");
         std::fs::create_dir_all(stuck.join("inner")).unwrap();
         std::fs::write(stuck.join("inner/file"), "x").unwrap();
+        // flake-ok: a folder's mode, nothing is executed
         std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o555))
             .unwrap();
         // Root removes it anyway; the test is for a user the folder's mode binds.
@@ -523,6 +524,7 @@ mod tests {
             std::fs::create_dir(tmp.path().join(name)).unwrap();
         }
         prune_old_releases(tmp.path(), &tmp.path().join("code-server-3.0.0"));
+        // flake-ok: a folder's mode, nothing is executed
         std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
         assert!(!binds || stuck.join("inner/file").is_file());

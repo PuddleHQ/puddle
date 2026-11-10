@@ -223,6 +223,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         runtime: &MsbRuntime,
         sandbox: &WorkspaceId,
         probe: &Path,
+        out: &Path,
     ) -> String {
         let code = local_terminal_probe("/tmp/u7c-ran", &probe.display().to_string());
         shell(
@@ -236,7 +237,10 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             ),
         )
         .await;
-        let back = window.reload(UP).await.expect("the window comes back");
+        let back = window
+            .reload(UP, &out.join("u7c-reload.png"))
+            .await
+            .expect("the window comes back");
         assert!(!back.folders.is_empty(), "{back:?}");
         eventually_async("the patched extension ran in the guest", SHOWS, || async {
             let marker = shell(runtime, sandbox, "cat /tmp/u7c-ran 2>/dev/null || true").await;
@@ -511,7 +515,10 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             "the terminal's process {pid} is not running before the reload"
         );
         let before = shell(&runtime, &sandbox, SERVER_PIDS).await;
-        window.reload(UP).await.expect("the window comes back");
+        window
+            .reload(UP, &out.join("u8-reload.png"))
+            .await
+            .expect("the window comes back");
         let after = shell(&runtime, &sandbox, SERVER_PIDS).await;
         assert!(
             !alive(pid).await,
@@ -519,7 +526,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         );
 
         // U7c: guest code makes the window run a command on this computer (the documented trust).
-        let who = hostile_code_runs_here(&mut window, &runtime, &sandbox, &probe).await;
+        let who = hostile_code_runs_here(&mut window, &runtime, &sandbox, &probe, &out).await;
         window.screenshot(&out.join("u7c.png")).await.unwrap();
         assert!(!who.is_empty(), "the probe file is empty");
         window.close().await.expect("the window closes");
@@ -582,7 +589,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 .is_some_and(|a| a.contains("Git: https://github.com")),
             "the git extension in the profile's window never asked the person for github.com: {asked:?}, askpass said {said}"
         );
-        let who_again = hostile_code_runs_here(&mut window, &runtime, &sandbox, &probe).await;
+        let who_again = hostile_code_runs_here(&mut window, &runtime, &sandbox, &probe, &out).await;
         assert_eq!(
             who_again, who,
             "the same user runs the command in the profile"

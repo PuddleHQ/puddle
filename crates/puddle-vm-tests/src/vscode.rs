@@ -465,10 +465,18 @@ impl VsCodeWindow {
     ///
     /// # Errors
     ///
-    /// [`HarnessError::Browser`] when the window did not come back within `within`.
-    pub async fn reload(&mut self, within: Duration) -> Result<Attached, HarnessError> {
+    /// [`HarnessError::Browser`] when the window did not come back within `within`; it says what the
+    /// window showed, and a picture of it goes to `picture`.
+    pub async fn reload(
+        &mut self,
+        within: Duration,
+        picture: &Path,
+    ) -> Result<Attached, HarnessError> {
         let seen = self
-            .call(json!({"op": "reload", "timeoutMs": millis(within)}), within)
+            .call(
+                json!({"op": "reload", "timeoutMs": millis(within), "picture": picture.display().to_string()}),
+                within * 2 + STEP,
+            )
             .await?;
         Ok(Self::state(&seen))
     }
@@ -704,8 +712,9 @@ mod tests {
                  type: async (t) => { calls.push('type ' + t); },
                },
                locator: (sel) => chain(sel),
-               waitForEvent: async (e) => { calls.push('event ' + e); },
+               waitForFunction: async () => { calls.push('new document'); },
                evaluate: async (f) => {
+                 if (f.toString().includes('__puddleOldDocument')) { calls.push('mark old document'); return; }
                  if (f.name === 'readState') return { folders: ['api', 'web'], remote: 'SSH: x', title: 't' };
                  const text = f.toString();
                  if (text.includes('(calls)')) return calls;
@@ -897,13 +906,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_reload_listens_for_the_new_document_before_it_runs_the_command_and_then_waits_for_the_workbench()
-     {
+    async fn a_reload_marks_the_old_document_then_waits_for_a_new_one_and_then_for_the_workbench() {
         let modules = stub_modules();
         let mut window = stub_window(&modules, 9230, Duration::from_secs(30))
             .await
             .expect("connected");
-        let back = window.reload(Duration::from_secs(5)).await.expect("reload");
+        let back = window
+            .reload(Duration::from_secs(5), &modules.path().join("r.png"))
+            .await
+            .expect("reload");
         assert_eq!(back.folders, ["api", "web"]);
         let calls = window.evaluate("calls").await.expect("calls");
         let calls: Vec<&str> = calls
@@ -912,16 +923,20 @@ mod tests {
             .iter()
             .filter_map(Value::as_str)
             .collect();
-        // `load` is awaited for before the command's row is clicked, so a fast reload is not missed.
+        // The marker is set before the command's row is clicked, so a fast reload is not missed.
         let listen = calls
             .iter()
-            .position(|c| *c == "event load")
-            .expect("listens");
+            .position(|c| *c == "mark old document")
+            .expect("marks");
         let click = calls
             .iter()
             .position(|c| c.contains("Developer: Reload Window") && c.ends_with("click"))
             .expect("clicks the row");
-        assert!(listen < click, "{calls:?}");
+        let waits = calls
+            .iter()
+            .position(|c| *c == "new document")
+            .expect("waits for the new document");
+        assert!(listen < click && click < waits, "{calls:?}");
         assert!(
             calls
                 .last()

@@ -7,7 +7,7 @@
 //   {"op":"connect","port":9230,"timeoutMs":..}   connects to the window; retries a refused connection until the budget ends
 //   {"op":"attached","timeoutMs":..}               waits until the workbench shows a folder in the explorer and the remote indicator
 //                                                  says `SSH:`, then returns {folders, remote, title}
-//   {"op":"reload","timeoutMs":..}                 Developer: Reload Window, then waits as `attached` does, on the new document
+//   {"op":"reload","timeoutMs":..,"picture":".."}  Developer: Reload Window, waits for a new document, then as `attached` does; `picture` is saved on failure
 //   {"op":"palette","label":"..","timeoutMs":..}   F1, types the label, clicks the row whose label is exactly that
 //   {"op":"terminal","line":"..","timeoutMs":..}   opens a new terminal (taking the first folder when it asks which) and types `line`
 //   {"op":"eval","expression":".."}                evaluates an expression in the window
@@ -126,12 +126,23 @@ const prompt = async (timeoutMs) => {
   return text;
 };
 
-// Electron reloads the window in place: the page object stays, its document is replaced, and `load` fires for the new one.
-const reload = async (timeoutMs) => {
-  const page = workbench();
-  const loaded = page.waitForEvent("load", { timeout: timeoutMs });
+// Electron replaces the window's document in place. The `load` event is not a reliable witness for that (a run on the hosted
+// runner never saw it for a reload that happened), so the old document carries a marker the new one cannot have; the wait ends
+// when the marker is gone, and `waitForFunction` survives the navigation. A failure says what the window showed, with a picture.
+const reload = async (timeoutMs, picture) => {
+  await workbench().evaluate(() => {
+    window.__puddleOldDocument = true;
+  });
   await palette("Developer: Reload Window", timeoutMs);
-  await loaded;
+  try {
+    await workbench().waitForFunction(() => window.__puddleOldDocument !== true, null, { timeout: timeoutMs });
+  } catch (error) {
+    const text = await workbench()
+      .evaluate(() => (document.body?.innerText ?? "").slice(0, 2000))
+      .catch((e) => `(unreadable: ${e.message})`);
+    if (picture) await workbench().screenshot({ path: picture }).catch(() => {});
+    throw new Error(`the window did not replace its document: ${error.message}; it shows: ${text}`);
+  }
   return attached(timeoutMs);
 };
 
@@ -142,7 +153,7 @@ const run = async (command) => {
     case "attached":
       return attached(command.timeoutMs);
     case "reload":
-      return reload(command.timeoutMs);
+      return reload(command.timeoutMs, command.picture);
     case "palette":
       return palette(command.label, command.timeoutMs);
     case "terminal":

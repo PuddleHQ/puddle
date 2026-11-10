@@ -561,7 +561,7 @@ jobs:
           node crates/puddle-app/e2e/origins.mjs
       # What the terminal screen's key rules assume of WebView2, with
       # real input (SendInput): Ctrl+Shift+V and Shift+Insert fire `paste`, Ctrl+R and F5 with the keydown
-      # cancelled do not reload, and Ctrl+Q quits. The WebKitGTK half runs in ci.yml.
+      # cancelled do not reload, and Ctrl+Q is pinned as it behaves today (it does not quit). The WebKitGTK half runs in ci.yml.
       - name: terminal paste, key-cancel and Ctrl+Q test (WebView2)
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         shell: pwsh

@@ -149,7 +149,10 @@ impl UiService {
 /// `default-src 'self'` with the page's own inline scripts allowed by hash, and no framing.
 /// `style-src-attr 'unsafe-inline'` is for `SvelteKit`'s route announcer, which hides itself with
 /// a `style` attribute (blocked, it would show its text on screen); an inline style can't run
-/// script, and `<style>` elements and `style-src` stay locked to `'self'`.
+/// script. `style-src-elem 'self' 'unsafe-inline'` is for the terminal emulator, which writes its
+/// theme and cell sizes into `<style>` elements it creates (no nonce option; blocked, the screen
+/// draws with the wrong colours and sizes). Style text can't run script, and `default-src 'self'`
+/// still closes every way for a stylesheet to fetch from elsewhere; `style-src` stays `'self'`.
 fn content_security_policy(script_hashes: &[String]) -> HeaderValue {
     let mut scripts = String::from("'self'");
     for hash in script_hashes {
@@ -159,8 +162,8 @@ fn content_security_policy(script_hashes: &[String]) -> HeaderValue {
     }
     let policy = format!(
         "default-src 'self'; script-src {scripts}; style-src-attr 'unsafe-inline'; \
-         img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; \
-         frame-ancestors 'none'"
+         style-src-elem 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; \
+         base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
     HeaderValue::from_str(&policy)
         .unwrap_or_else(|_| HeaderValue::from_static("default-src 'self'"))
@@ -255,6 +258,11 @@ mod tests {
         assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
         assert!(csp.contains("script-src 'self' 'sha256-"), "{csp}");
         assert!(csp.contains("style-src-attr 'unsafe-inline'"), "{csp}");
+        assert!(
+            csp.contains("style-src-elem 'self' 'unsafe-inline'"),
+            "{csp}"
+        );
+        assert!(!csp.contains("style-src 'unsafe-inline'"), "{csp}");
         assert!(!csp.contains("unsafe-eval"), "{csp}");
         let r = ui.respond(&Method::GET, "/_app/immutable/x.js");
         assert_eq!(

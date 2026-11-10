@@ -618,6 +618,8 @@ async fn cloning_an_entry_again_needs_the_directory_to_be_gone() {
     assert_eq!(post(&api, &path("a%2Fb"), &json!({})).await.status, 404);
     // A directory is not an id, even one that is listed.
     assert_eq!(post(&api, &path("api"), &json!({})).await.status, 404);
+    // A well-formed id nothing has is no entry either.
+    assert_eq!(post(&api, &path("a0000000"), &json!({})).await.status, 404);
     assert_eq!(post(&api, &path("lost"), &json!({})).await.status, 404);
     let there = post(&api, &by("api"), &json!({})).await;
     assert_eq!(there.status, 409, "{}", there.body);

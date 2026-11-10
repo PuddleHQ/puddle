@@ -379,9 +379,20 @@ impl Repository {
 ///
 /// The message for the user when every draw was taken or the random source gave nothing.
 pub fn new_entry_id(taken: impl Fn(&EntryId) -> bool) -> Result<EntryId, String> {
+    draw_entry_id(
+        |bytes| getrandom::fill(bytes).map_err(|e| e.to_string()),
+        taken,
+    )
+}
+
+/// [`new_entry_id`] over any source of five bytes.
+fn draw_entry_id(
+    mut fill: impl FnMut(&mut [u8; 5]) -> Result<(), String>,
+    taken: impl Fn(&EntryId) -> bool,
+) -> Result<EntryId, String> {
     for attempt in 0..MAX_ID_DRAWS {
         let mut bytes = [0_u8; 5];
-        match getrandom::fill(&mut bytes) {
+        match fill(&mut bytes) {
             Ok(()) => {
                 let id = EntryId::from_random(bytes);
                 if !taken(&id) {
@@ -2095,6 +2106,35 @@ mod tests {
                 .clone()
                 .ok_or_else(|| "the source is empty".to_owned())
         }
+    }
+
+    #[test]
+    fn an_entry_id_is_drawn_again_while_taken_and_given_up_on_after_sixteen_draws() {
+        let calls = std::cell::Cell::new(0_u8);
+        let counting = |bytes: &mut [u8; 5]| {
+            calls.set(calls.get() + 1);
+            *bytes = [calls.get(); 5];
+            Ok(())
+        };
+        let first = EntryId::from_random([1; 5]);
+        let id = draw_entry_id(counting, |e| *e == first).unwrap();
+        assert_eq!((calls.get(), id), (2, EntryId::from_random([2; 5])));
+
+        let draws = std::cell::Cell::new(0_u32);
+        let err = draw_entry_id(
+            |_| {
+                draws.set(draws.get() + 1);
+                Ok(())
+            },
+            |_| true,
+        )
+        .unwrap_err();
+        assert_eq!(draws.get(), MAX_ID_DRAWS);
+        assert!(err.contains("no free repository entry id"), "{err}");
+
+        let empty = draw_entry_id(|_| Err("no randomness".to_owned()), |_| false).unwrap_err();
+        assert!(empty.contains("random source may be broken"), "{empty}");
+        assert!(new_entry_id(|_| false).is_ok());
     }
 
     #[test]

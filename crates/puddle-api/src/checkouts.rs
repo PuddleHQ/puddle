@@ -446,6 +446,10 @@ mod tests {
         let err =
             check_addition(&entries, &entry("https://github.com/O/API.git", "other")).unwrap_err();
         assert!(err.to_string().contains("in api"), "{err}");
+        let mut same_id = entry("https://github.com/o/web", "web");
+        same_id.entry = entries[0].entry.clone();
+        let err = check_addition(&entries, &same_id).unwrap_err();
+        assert!(err.to_string().contains("try again"), "{err}");
         let full: Vec<Repository> = (0..MAX_REPOSITORIES)
             .map(|i| entry(&format!("https://h/o/r{i}"), &format!("r{i}")))
             .collect();

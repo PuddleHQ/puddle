@@ -32,7 +32,9 @@ fn git(forgejo: &Forgejo, cwd: &Path, args: &[&str]) -> Output {
         .args(["-c", &format!("http.curloptResolve={resolve}")]);
     if cfg!(windows) {
         // The runner's Git has only Schannel, which wants a revocation answer the lab root cannot
-        // give; it still verifies the chain against GIT_SSL_CAINFO.
+        // give; it still verifies the chain against GIT_SSL_CAINFO. Git reads the revocation
+        // switch only when the backend is named, and the system config that names it is off here.
+        command.args(["-c", "http.sslBackend=schannel"]);
         command.args(["-c", "http.schannelCheckRevoke=false"]);
     }
     command

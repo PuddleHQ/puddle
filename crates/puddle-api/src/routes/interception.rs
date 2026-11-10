@@ -8,6 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_netpolicy::normalise_host;
+use puddle_store::InterceptionSettings;
 use puddle_types::{CURATED_PASS_THROUGH, Host, InterceptionMode, WorkspaceId};
 
 use crate::ApiErrorBody;
@@ -91,10 +92,10 @@ fn settings_view(state: &AppState) -> Result<InterceptionSettingsView, ApiError>
 fn view(state: &AppState, name: &WorkspaceId) -> Result<InterceptionView, ApiError> {
     let own = state.store.workspace_interception(name)?;
     let effective_mode = own.mode.unwrap_or_else(|| {
-        state
-            .store
-            .interception_settings()
-            .map_or(InterceptionMode::EXISTING_INSTALL, |s| s.effective_mode())
+        state.store.interception_settings().map_or(
+            InterceptionMode::EXISTING_INSTALL,
+            InterceptionSettings::effective_mode,
+        )
     });
     Ok(InterceptionView {
         workspace: name.clone(),

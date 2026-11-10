@@ -12,6 +12,8 @@ export class FakeInterception {
   bodies: Body[] = [];
   /** Answers every call with a failure. */
   refuse = false;
+  /** Fails like a service that is not there. */
+  down = false;
 
   static fresh(): View {
     return {
@@ -28,6 +30,7 @@ export class FakeInterception {
     this.calls = [];
     this.bodies = [];
     this.refuse = false;
+    this.down = false;
   }
 
   private answer() {
@@ -43,11 +46,13 @@ export class FakeInterception {
 
   GET = async (path: string) => {
     this.calls.push(`GET ${path}`);
+    if (this.down) throw new TypeError("down");
     return this.answer();
   };
 
   PUT = async (path: string, init: { body: Body }) => {
     this.calls.push(`PUT ${path}`);
+    if (this.down) throw new TypeError("down");
     this.bodies.push(init.body);
     if (!this.refuse) {
       const b = init.body;

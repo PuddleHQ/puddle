@@ -44,7 +44,7 @@ impl Default for InterceptionSettings {
 impl InterceptionSettings {
     /// The mode in force for a workspace that follows the global setting.
     #[must_use]
-    pub fn effective_mode(&self) -> InterceptionMode {
+    pub fn effective_mode(self) -> InterceptionMode {
         self.mode.unwrap_or(InterceptionMode::EXISTING_INSTALL)
     }
 }

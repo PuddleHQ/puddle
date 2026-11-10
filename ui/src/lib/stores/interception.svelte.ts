@@ -159,7 +159,6 @@ export class GlobalInterception {
   /** The built-in list mode 2 passes through ("System managed"). */
   curated = $state.raw<string[]>(NO_NAMES);
   reason = $state<string | null>(null);
-  #ticket = 0;
   readonly #api: StoreApi;
 
   constructor(api: StoreApi = defaultApi) {
@@ -182,11 +181,9 @@ export class GlobalInterception {
   async load(): Promise<void> {
     this.status = "loading";
     this.reason = null;
-    const ticket = ++this.#ticket;
     try {
       const { data, error, response } =
         await this.#api.GET("/api/interception");
-      if (ticket !== this.#ticket) return;
       if (data) {
         this.#show(data);
         this.status = "ready";
@@ -195,7 +192,6 @@ export class GlobalInterception {
         this.reason = readFailure(error, response);
       }
     } catch {
-      if (ticket !== this.#ticket) return;
       this.status = "failed";
       this.reason = SERVICE_DOWN;
     }
@@ -216,7 +212,6 @@ export class GlobalInterception {
   async #put(
     body: components["schemas"]["InterceptionSettingsRequest"],
   ): Promise<SaveResult> {
-    const ticket = ++this.#ticket;
     try {
       const { data, error, response } = await this.#api.PUT(
         "/api/interception",
@@ -225,10 +220,8 @@ export class GlobalInterception {
         },
       );
       if (!data) return { ok: false, message: readFailure(error, response) };
-      if (ticket === this.#ticket) {
-        this.#show(data);
-        this.status = "ready";
-      }
+      this.#show(data);
+      this.status = "ready";
       return { ok: true };
     } catch {
       return { ok: false, message: SERVICE_DOWN };

@@ -418,6 +418,16 @@ describe("interception step", () => {
     await waitFor(() => expect(radio(/only hosts Puddle has/)).toBeChecked());
   });
 
+  it("says why the setting could not be read and offers no choice", async () => {
+    h.interception.refuse = true;
+    render(Interception);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't read this setting.",
+    );
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+
   it("stays on the step and says why when the choice could not be saved", async () => {
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });

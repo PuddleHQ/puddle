@@ -57,4 +57,38 @@ describe("the global interception setting", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
     expect(select).toHaveValue("known_only");
   });
+
+  it("says why the setting could not be read, and shows no controls", async () => {
+    api.refuse = true;
+    render(GlobalInterception);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't read the interception setting.",
+    );
+    expect(screen.queryByLabelText("Which hosts to decrypt")).toBeNull();
+  });
+
+  it("puts the learning switch back and says why when it could not be saved", async () => {
+    render(GlobalInterception);
+    const box = await screen.findByLabelText("Learn from rejections");
+    api.refuse = true;
+    await fireEvent.click(box);
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(box).toBeChecked();
+  });
+
+  it("says the service did not answer when it is down", async () => {
+    render(GlobalInterception);
+    const select = await screen.findByLabelText("Which hosts to decrypt");
+    api.down = true;
+    await fireEvent.change(select, { target: { value: "all" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /answer|running|reach/i,
+    );
+  });
+
+  it("shows nothing when the service is down at the start", async () => {
+    api.down = true;
+    render(GlobalInterception);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
 });

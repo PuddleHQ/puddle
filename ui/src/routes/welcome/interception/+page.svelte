@@ -10,7 +10,7 @@
   } from "#lib/interception/modes.ts";
   import { GlobalInterception } from "#lib/stores/interception.svelte.ts";
   import StepHeading from "#lib/welcome/StepHeading.svelte";
-  import { around } from "#lib/welcome/steps.ts";
+  import { around, WELCOME_ROOT } from "#lib/welcome/steps.ts";
   import "#lib/theme/controls.css";
 
   const store = new GlobalInterception();
@@ -31,7 +31,7 @@
     problem = null;
     const result = await store.setMode(choice);
     busy = false;
-    if (result.ok) await goto(around("interception").next ?? "/workspaces");
+    if (result.ok) await goto(`${WELCOME_ROOT}/look`);
     else problem = result.message;
   }
 </script>

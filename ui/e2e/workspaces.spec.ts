@@ -1376,25 +1376,21 @@ test.describe("the settings tab", () => {
     await expect(page.getByText("Login capture saved.")).toBeVisible();
   });
 
-  test("decrypting every host is off by default; the switch and the never-decrypt names are kept", async ({
+  test("a workspace follows the global interception mode by default; its own mode and the never-decrypt names are kept", async ({
     page,
     backend,
   }) => {
     await openDetail(page, backend, "web-shop", "settings");
-    const decrypt = page.getByRole("switch", { name: "Decrypt every host" });
-    await expect(decrypt).not.toBeChecked();
-    await decrypt.check();
-    await expect(
-      page.getByText("Puddle now decrypts every host."),
-    ).toBeVisible();
+    const mode = page.getByLabel("Interception mode");
+    await expect(mode).toHaveValue("inherit");
+    await mode.selectOption("all");
+    await expect(page.getByText("Interception mode saved.")).toBeVisible();
     const names = page.getByLabel("Never decrypt in this workspace");
     await names.fill("Bank.example\n*.corp.test");
     await page.getByRole("button", { name: "Keep names" }).click();
     await expect(page.getByText("Saved.")).toBeVisible();
     await page.reload();
-    await expect(
-      page.getByRole("switch", { name: "Decrypt every host" }),
-    ).toBeChecked();
+    await expect(page.getByLabel("Interception mode")).toHaveValue("all");
     await expect(
       page.getByLabel("Never decrypt in this workspace"),
     ).toHaveValue("*.corp.test\nbank.example");

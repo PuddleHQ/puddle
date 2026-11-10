@@ -681,11 +681,10 @@ impl<R: Runtime + Clone> Host<R> {
                     .clone()
                     .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
                 login_markers: config.paths.login_markers(),
-                space: options.free_space.clone().unwrap_or_else(|| {
-                    Arc::new(crate::space_watch::DriveOf(
-                        config.paths.data().to_path_buf(),
-                    ))
-                }),
+                space: crate::space_watch::space_or_drive(
+                    options.free_space.clone(),
+                    config.paths.data(),
+                ),
             },
             stored,
             retired,

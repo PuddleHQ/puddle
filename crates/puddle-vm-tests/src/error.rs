@@ -145,6 +145,25 @@ pub enum HarnessError {
         /// Its budget.
         limit: Duration,
     },
+    /// A node process did not end within its budget (it was killed). Carries what it printed and
+    /// how far it got, so a hang on a CI runner says where it stood.
+    #[error(
+        "node process took longer than {limit:?} (pid {pid:?}, started after {spawn_took:?}): {stage}\nstdout: {stdout:?}\nstderr: {stderr:?}"
+    )]
+    NodeHung {
+        /// Its budget.
+        limit: Duration,
+        /// Its process id, when the OS gave one.
+        pid: Option<u32>,
+        /// How long `spawn` took to return.
+        spawn_took: Duration,
+        /// Which steps had finished: input written, process exited, each pipe closed.
+        stage: String,
+        /// What it had printed to standard output, lossily decoded.
+        stdout: String,
+        /// What it had printed to standard error, lossily decoded.
+        stderr: String,
+    },
 }
 
 impl HarnessError {

@@ -7,6 +7,8 @@ import type { components } from "#lib/api/schema.d.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 type View = components["schemas"]["InterceptionView"];
+export type WorkspaceMode = View["mode"];
+export type EffectiveMode = View["effective_mode"];
 type StoreApi = Pick<ApiClient, "GET" | "PUT">;
 
 export type Status = "loading" | "ready" | "failed";
@@ -16,7 +18,10 @@ const NO_NAMES: string[] = [];
 
 export class WorkspaceInterception {
   status = $state<Status>("loading");
-  decryptAll = $state(false);
+  /** The workspace's own choice; "inherit" follows the global setting. */
+  mode = $state<WorkspaceMode>("inherit");
+  /** The mode in force: the workspace's own, or the global one. */
+  effectiveMode = $state<EffectiveMode>("known_only");
   /** The names this workspace never decrypts. */
   names = $state.raw<string[]>(NO_NAMES);
   /** The names no workspace decrypts; changed on the global settings page. */
@@ -32,7 +37,8 @@ export class WorkspaceInterception {
   }
 
   #show(view: View): void {
-    this.decryptAll = view.decrypt_all;
+    this.mode = view.mode;
+    this.effectiveMode = view.effective_mode;
     this.names = view.never_decrypt;
     this.globalNames = view.global_never_decrypt;
   }
@@ -62,8 +68,8 @@ export class WorkspaceInterception {
     }
   }
 
-  setDecryptAll(on: boolean): Promise<SaveResult> {
-    return this.#put({ decrypt_all: on });
+  setMode(mode: WorkspaceMode): Promise<SaveResult> {
+    return this.#put({ mode });
   }
 
   saveNames(names: string[]): Promise<SaveResult> {

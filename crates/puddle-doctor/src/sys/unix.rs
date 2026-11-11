@@ -63,6 +63,7 @@ mod tests {
             file_access(&f).unwrap_err().kind(),
             io::ErrorKind::PermissionDenied
         );
+        // flake-ok: access(2) reads the mode bits; the file is never executed
         std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
         file_access(&f).unwrap();
         assert!(file_access(&dir.path().join("none")).is_err());

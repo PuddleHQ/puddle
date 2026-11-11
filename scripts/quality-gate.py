@@ -27,7 +27,7 @@ Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) 
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
 whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
 and dropped, a literal port bound or connected in a test (a name's authority and a URL are fakes and stay out), a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
-asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Three bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
+asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Three bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
 `status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
@@ -599,6 +599,9 @@ FLAKE_REAL_DNS = re.compile(r"\b(?:web_internet|through_company_proxy|SystemReso
 FLAKE_LOOP_HEAD = re.compile(r"^\s*(?:'\w+:\s*)?(?:(?:let\b[^=]*=\s*|break\s+)?loop\b|for\b.*\bin\b|while\b)")
 FLAKE_PAUSE = re.compile(r"\bsleep\(|\byield_now\(\)|\.tick\(\)")
 FLAKE_KIT_CALL = re.compile(r"\b(?:eventually\w*|next_event_\w+|no_event_\w+)\s*\(")
+FLAKE_EXEC_MODE = re.compile(r"from_mode\(\s*0o0*[1357][0-7]{2}\b")  # an owner-executable mode; 0o644, 0o600 and friends stay out
+FLAKE_CHMOD_X = re.compile(r'Command::new\(\s*"chmod"\s*\)')
+FLAKE_FILE_WRITE = re.compile(r"\bfs::write\(|\bFile::create\(|\.write_all\(|\bfs::copy\(|\bwrite\(\s*&?\w*(?:path|file)")
 FLAKE_CLOCK = re.compile(r"SystemTime::now\(\)|UNIX_EPOCH|as_nanos\(\)|subsec_nanos\(\)|\{nanos\}|\bnanos\b")
 FLAKE_PAGE_READ = re.compile(r"\.(evaluate|evaluateAll|boundingBox|textContent|innerText|innerHTML|getAttribute|isVisible|isHidden|isChecked|isEnabled|isDisabled|isEditable|count|inputValue|allTextContents|allInnerTexts|all)\(|\b\w+\(\s*page\b")
 
@@ -685,6 +688,12 @@ def flake_rust(f, raw, code, com, test, rows_add):
                     and not (re.search(r"\b\w*cpu\w*\s*<=?\s*Duration::from_", stmt) and not re.search(r"elapsed\(\)|Instant", stmt)
                              and any("cpu_time(" in c for c in code[max(0, i - 15):i]))):  # a bar on `puddle_test_kit::cpu_time`
                 hit("t1", i)
+        # Rule e1: a file this test wrote in the last few lines, then made executable. The write leaves a writable
+        # descriptor open in this process, a sibling test's fork copies it, and the exec fails with `Text file busy`.
+        if t and ("set_permissions(" in line or FLAKE_CHMOD_X.search(raw[i])):
+            ahead = "".join(raw[i:i + 5])
+            if (FLAKE_EXEC_MODE.search(ahead) or ("chmod" in raw[i] and "+x" in ahead)) and any(FLAKE_FILE_WRITE.search(code[k]) for k in range(max(0, i - 12), i + 1)):
+                hit("e1", i)
         if t and re.search(r"\b\w*(record|event|row|entr|audit|line)\w*\.(?:iter\(\)\.)?zip\(", line, re.I):
             hit("a1", i)
         # Rule f1: a Unix path literal that becomes a host path, or two parts joined with a `/` by hand, is a test that
@@ -1102,6 +1111,10 @@ def flake_self_test():
     case("p2 original", "p2", {"crates/x/tests/p.rs": p2_bad}, 3, 3)
     case("p2 fix: port 0, a fake authority and URL, a log line stay out; a reasoned literal counts once", "p2", {"crates/x/tests/p.rs": p2_good}, 1, 0)
     case("p2 in production code", "p2", {"crates/x/src/lib.rs": p2_bad}, 0, 0)
+    e1_bad, e1_good = read("e1-script-write.bad.rs.txt"), read("e1-script-write.good.rs.txt")
+    case("e1 original: a write then set_permissions or chmod", "e1", {"crates/x/tests/e.rs": e1_bad}, 2, 2)
+    case("e1 fix: the kit helper, a folder, a 0o644 file stay out; a reasoned site counts once", "e1", {"crates/x/tests/e.rs": e1_good}, 1, 0)
+    case("e1 in production code", "e1", {"crates/x/src/lib.rs": e1_bad}, 0, 0)
     case("p2 in a cfg(test) module", "p2", {"crates/x/src/lib.rs": "#[cfg(test)]\nmod t {\n    fn f() { let l = TcpListener::bind(\"127.0.0.1:8080\"); }\n}\n"}, 1, 1)
 
     # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The pre-push hook hands the gates a clean git environment: git exports `GIT_DIR` and the
 //! other repository variables to hooks, and every git command or test below would then act on
-//! Puddle's own repository instead of its working directory. Unix only: the stub gate script is made
-//! executable with `chmod`; the hook itself is plain `sh`, which Git for Windows also runs.
+//! Puddle's own repository instead of its working directory. Unix only: the stub gate script is written
+//! executable by `write_executable`; the hook itself is plain `sh`, which Git for Windows also runs.
 #![cfg(unix)]
 #![expect(
     clippy::unwrap_used,
@@ -40,16 +40,10 @@ fn gates_start_clean(name: &str) {
     let dir = repo.path();
     git(dir, &["init", "-q"]);
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
-    std::fs::write(
-        dir.join("scripts/check.sh"),
+    puddle_test_kit::write_executable(
+        &dir.join("scripts/check.sh"),
         "#!/bin/sh\nenv | grep '^GIT_' || true\npwd\n",
-    )
-    .unwrap();
-    Command::new("chmod")
-        .arg("+x")
-        .arg(dir.join("scripts/check.sh"))
-        .status()
-        .unwrap();
+    );
 
     // What git sets for a hook: the repository, its index, the checkout.
     let out = Command::new("sh")

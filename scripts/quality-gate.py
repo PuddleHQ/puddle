@@ -52,7 +52,7 @@ import tomllib
 from collections import Counter
 
 SKIP_DIRS = {"target", "node_modules", ".git", ".svelte-kit", "build", "corpus", "dist", "test-results",
-             "playwright-report", ".scratch"}
+             "playwright-report", ".scratch", "coverage"}  # coverage: vitest's lcov-report (ui/coverage, gitignored) ships istanbul's own eslint-disable lines
 TEST_CRATES = ("crates/puddle-e2e/", "crates/puddle-vm-tests/", "crates/puddle-test-kit/")
 TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(test\b[^\]]*|any\([^\]]*feature\s*=\s*\"testing\"[^\]]*|feature\s*=\s*\"testing\")\)\]")
 TEST_ATTR = re.compile(r"#\[(?:tokio::|rstest|test_case|test_log::)?test\b[^\]]*\]|#\[tokio::test\b")
@@ -1224,7 +1224,14 @@ def self_test():
         os.makedirs(os.path.join(d, ".github/workflows"))
         with open(os.path.join(d, ".github/workflows/ci.yml"), "w") as h:
             h.write(SELF_TEST_YAML)
+        # A local `npm test` leaves ui/coverage/ (gitignored); its HTML report carries bare eslint-disable lines.
+        os.makedirs(os.path.join(d, "ui/coverage/lcov-report"))
+        with open(os.path.join(d, "ui/coverage/lcov-report/prettify.js"), "w") as h:
+            h.write("/* eslint-disable */\n")
         rows = scan(d)
+        if any(r[2].startswith("ui/coverage/") for r in rows):
+            print("self-test FAIL generated ui/coverage was scanned")
+            return 1
         got = counts(rows)
         # The flagged directive is the bare one in the workflow, on its own line.
         flagged = [r[2] for r in rows if r[0] == "noreason" and r[2].startswith(".github/")]

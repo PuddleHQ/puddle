@@ -19,11 +19,11 @@ use crate::ApiErrorBody;
 use crate::WorkspaceRecord;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
-use crate::routes::AppState;
+use crate::routes::{AppState, repository_hosts};
 use crate::wire::{
-    AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceIdentity,
-    NewWorkspaceRequest, RenameWorkspaceRequest, SessionUserRequest, Workspace, WorkspaceList,
-    WorkspaceLookupConflict, WorkspaceMatch,
+    AllowedHost, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest,
+    NewWorkspaceIdentity, NewWorkspaceRequest, RenameWorkspaceRequest, SessionUserRequest,
+    Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
 };
 use crate::workspaces::{GitSetup, LocalSource, NewRepository};
 
@@ -228,15 +228,34 @@ pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> 
 /// settings, and its entry in the answer says so; the workspace is not undone for it.
 pub(super) struct StoreGitSetup {
     store: Arc<Store>,
+    /// Whether it also allows the hosts of the repositories no rule decides yet (a create, or
+    /// adding a repository; not a clone again or an adopted volume).
+    allow_hosts: bool,
     started: Mutex<Vec<NewWorkspaceIdentity>>,
+    allowed: Mutex<Vec<AllowedHost>>,
 }
 
 impl StoreGitSetup {
     pub(super) fn new(store: Arc<Store>) -> Self {
         Self {
             store,
+            allow_hosts: false,
             started: Mutex::new(Vec::new()),
+            allowed: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Sets up as [`Self::new`] does and, before the first clone, allows each repository's host
+    /// for the workspace unless a rule decides it already (ST-44a).
+    pub(super) fn allowing_hosts(store: Arc<Store>) -> Self {
+        Self {
+            allow_hosts: true,
+            ..Self::new(store)
+        }
+    }
+
+    pub(super) fn take_allowed(&self) -> Vec<AllowedHost> {
+        std::mem::take(&mut *self.allowed.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     pub(super) fn take(&self) -> Vec<NewWorkspaceIdentity> {
@@ -291,6 +310,11 @@ fn start_all(
         .collect()
 }
 
+/// The grant failed: the clone waits in the inbox as it did before the create allowed hosts.
+fn warn_not_allowed(workspace: &WorkspaceId, err: &puddle_store::StoreError) {
+    tracing::warn!(%workspace, error = ?err, "could not allow the hosts of a new workspace's repositories");
+}
+
 impl GitSetup for StoreGitSetup {
     fn set_up<'a>(
         &'a self,
@@ -302,6 +326,25 @@ impl GitSetup for StoreGitSetup {
             // run would leave repositories set up without the answer saying which.
             let started = start_all(&self.store, workspace, repositories);
             *self.started.lock().unwrap_or_else(PoisonError::into_inner) = started;
+            if self.allow_hosts {
+                let hosts = repository_hosts::hosts_of(
+                    repositories.iter().map(|r| r.repository.url.as_str()),
+                );
+                match self.store.allow_hosts_for_create(workspace, &hosts) {
+                    Ok(made) => {
+                        *self.allowed.lock().unwrap_or_else(PoisonError::into_inner) = made
+                            .into_iter()
+                            .map(|rule| AllowedHost {
+                                host: rule.pattern.to_string(),
+                                rule_id: rule.id.0,
+                            })
+                            .collect();
+                    }
+                    // The clone then waits in the inbox as it did before the create allowed
+                    // hosts; the workspace is not undone for it.
+                    Err(err) => warn_not_allowed(workspace, &err),
+                }
+            }
         })
     }
 }
@@ -319,7 +362,7 @@ impl GitSetup for StoreGitSetup {
     request_body = NewWorkspaceRequest,
     responses(
         (status = ACCEPTED, description = "creation started", body = Workspace),
-        (status = CONFLICT, description = "another workspace has that name (ignoring case), or two identities of the list cover the same place (`identity_collision`)", body = ApiErrorBody),
+        (status = CONFLICT, description = "another workspace has that name (ignoring case), two identities of the list cover the same place (`identity_collision`), or a block rule covers the host of a repository (the create never overrides a block)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "invalid name, repository (address, SSH remote, directory clash, the same repository twice, unknown identity, more than 100), start folder, image or memory, or `repo_url` sent", body = ApiErrorBody),
         (status = SERVICE_UNAVAILABLE, description = "workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source)", body = ApiErrorBody)
     )
@@ -353,13 +396,21 @@ pub(crate) async fn create_workspace(
     let store = state.store.clone();
     let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
     blocking(move || Ok(store.check_repository_git(None, &requests)?)).await?;
-    let git = StoreGitSetup::new(state.store.clone());
+    let hosts =
+        repository_hosts::hosts_of(new.repositories.iter().map(|r| r.repository.url.as_str()));
+    repository_hosts::refuse_blocked(&state.store, None, hosts).await?;
+    let git = StoreGitSetup::allowing_hosts(state.store.clone());
     let record = state.workspaces.create(new, &git).await?;
     // A new workspace may start with direct SSH on (the global default).
     crate::system_managed::refresh(&state).await;
     Ok((
         StatusCode::ACCEPTED,
-        Json(view(&state, record).await.with_identities(git.take())),
+        Json(
+            view(&state, record)
+                .await
+                .with_identities(git.take())
+                .with_allowed_hosts(git.take_allowed()),
+        ),
     ))
 }
 

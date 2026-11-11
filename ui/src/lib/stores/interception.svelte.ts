@@ -4,6 +4,8 @@
 // what the API answers, never what was typed.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
+import { INTERCEPTION_NOTICE_KEY } from "#lib/notify/interception.ts";
+import { notices } from "#lib/notify/notices.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 type View = components["schemas"]["InterceptionView"];
@@ -155,7 +157,6 @@ export class GlobalInterception {
   /** Whether the user has chosen a mode. */
   chosen = $state(false);
   learn = $state(true);
-  noticeSeen = $state(true);
   /** The built-in list mode 2 passes through ("System managed"). */
   curated = $state.raw<string[]>(NO_NAMES);
   reason = $state<string | null>(null);
@@ -169,13 +170,7 @@ export class GlobalInterception {
     this.mode = view.mode;
     this.chosen = view.chosen;
     this.learn = view.learn_from_rejections;
-    this.noticeSeen = view.notice_seen;
     this.curated = view.curated;
-  }
-
-  /** Whether the app should offer the choice once, as a notice. */
-  get needsNotice(): boolean {
-    return this.status === "ready" && !this.chosen && !this.noticeSeen;
   }
 
   async load(): Promise<void> {
@@ -205,10 +200,6 @@ export class GlobalInterception {
     return this.#put({ learn_from_rejections: on });
   }
 
-  dismissNotice(): Promise<SaveResult> {
-    return this.#put({ notice_seen: true });
-  }
-
   async #put(
     body: components["schemas"]["InterceptionSettingsRequest"],
   ): Promise<SaveResult> {
@@ -222,6 +213,9 @@ export class GlobalInterception {
       if (!data) return { ok: false, message: readFailure(error, response) };
       this.#show(data);
       this.status = "ready";
+      // Any answer settles the one-time notice.
+      if (data.chosen || data.notice_seen)
+        notices.resolve(INTERCEPTION_NOTICE_KEY);
       return { ok: true };
     } catch {
       return { ok: false, message: SERVICE_DOWN };

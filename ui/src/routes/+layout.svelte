@@ -5,7 +5,6 @@
   import "#lib/theme/base.css";
   import { onMount } from "svelte";
   import { page } from "$app/state";
-  import InterceptionChoiceNotice from "#lib/components/InterceptionChoiceNotice.svelte";
   import Notices from "#lib/components/Notices.svelte";
   import Sidebar from "#lib/components/Sidebar.svelte";
   import { documentTitle } from "#lib/nav.ts";
@@ -72,7 +71,6 @@
         refreshes every few seconds meanwhile.
       </p>
     {/if}
-    {#if !welcome}<InterceptionChoiceNotice />{/if}
     <Notices />
     <main id="main" tabindex="-1">
       {@render children()}

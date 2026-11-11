@@ -812,6 +812,14 @@ impl State {
         );
         self.settings
             .save_global(document)
+            .map_err(|err| err.to_string())?;
+        // A finished setup includes the interception step, so the notice for installs that
+        // predate it stays away; a test of that notice turns the flag back off.
+        self.store
+            .set_interception_settings(puddle_store::InterceptionSettings {
+                notice_seen: true,
+                ..puddle_store::InterceptionSettings::default()
+            })
             .map_err(|err| err.to_string())
     }
 

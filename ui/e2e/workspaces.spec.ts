@@ -1380,14 +1380,22 @@ test.describe("the settings tab", () => {
   test("an install that never chose is offered the choice once, and Settings keeps the global mode and learning", async ({
     page,
     backend,
+    request,
   }) => {
+    // The fixture's install has been through setup; a notice flag that is off is an install from
+    // before the choice existed.
+    const reset = await request.put("/api/interception", {
+      headers: auth(backend),
+      data: { notice_seen: false },
+    });
+    expect(reset.ok()).toBe(true);
     await backend.signIn(page);
     await page.goto("/workspaces");
     const notice = page
-      .getByRole("status")
-      .filter({ hasText: "decrypt every HTTPS host" });
+      .getByRole("region", { name: "Notices" })
+      .getByText("decrypt every HTTPS host");
     await expect(notice).toBeVisible();
-    await notice.getByRole("button", { name: "Keep it as it is" }).click();
+    await page.getByRole("button", { name: "Keep it as it is" }).click();
     await expect(notice).toHaveCount(0);
     await page.reload();
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();

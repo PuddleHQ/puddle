@@ -14,6 +14,8 @@ const api = await vi.hoisted(async () => {
 });
 vi.mock("#lib/api/client.ts", () => ({ api }));
 
+import { INTERCEPTION_NOTICE_KEY } from "#lib/notify/interception.ts";
+import { notices } from "#lib/notify/notices.svelte.ts";
 import GlobalInterception from "./GlobalInterception.svelte";
 
 beforeEach(() => api.reset());
@@ -90,5 +92,14 @@ describe("the global interception setting", () => {
     api.down = true;
     render(GlobalInterception);
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+
+  it("settles the one-time notice when a mode is chosen", async () => {
+    notices.add({ key: INTERCEPTION_NOTICE_KEY, tone: "info", title: "New" });
+    render(GlobalInterception);
+    const select = await screen.findByLabelText("Which hosts to decrypt");
+    await fireEvent.change(select, { target: { value: "all" } });
+    await screen.findByText("Interception mode saved.");
+    expect(notices.items).toEqual([]);
   });
 });

@@ -218,8 +218,9 @@ impl GitInjector {
                         access,
                     });
                 }
+                let name = &repo.repo;
                 format!(
-                    "{verb} {what} is not on this workspace's {list} list; add it, or turn off \"{switch}\" on the workspace's Git tab"
+                    "{verb} {what} is not on this workspace's {list} list yet, as with a repository the workspace just created or forked; click \"Allow {list} for {name}\" in the notice (it works at once, no restart), or turn off \"{switch}\" on the workspace's Git tab, then try again"
                 )
             }
             None => format!(

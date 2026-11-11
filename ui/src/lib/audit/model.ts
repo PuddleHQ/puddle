@@ -215,9 +215,9 @@ const REASONS: Record<string, string> = {
   settings_unreadable: "unreadable settings",
   puddle_request: "Puddle's own request",
   push_denied:
-    'the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+    'the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
   pull_denied:
-    'the fetch is not on the workspace\'s pull list (add it on its Git tab, or turn off "Only pull from listed repos")',
+    'the fetch is not on the workspace\'s pull list yet (click "Allow pull" in the notice, or turn off "Only pull from listed repos" on its Git tab)',
   bad_git_path:
     "the Git address is not one Puddle reads, or names the repository in more than one way (use owner/repository)",
   ssh_command_unsupported:

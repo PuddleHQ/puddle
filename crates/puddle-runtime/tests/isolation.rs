@@ -57,7 +57,6 @@ fn the_dev_override_variable_is_read_from_the_environment() {
 #[test]
 fn a_fake_msb_on_path_never_runs() {
     use std::ffi::OsString;
-    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
     let dir = TempDir::new("path");
@@ -76,8 +75,7 @@ fn a_fake_msb_on_path_never_runs() {
         (layout.msb_path(), "bundled"),
         (user_bin.join("msb"), "fake"),
     ] {
-        std::fs::write(&path, script(who)).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        puddle_test_kit::write_executable(&path, &script(who));
     }
 
     let mut user_env: Vec<(OsString, OsString)> = USER_VARS

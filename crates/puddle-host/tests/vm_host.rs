@@ -585,12 +585,11 @@ async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
         "pre-auto-gc",
     ] {
         let path = git_dir.join("hooks").join(hook);
-        std::fs::write(&path, format!("#!/bin/sh\n{mark}\n")).unwrap();
+        let text = format!("#!/bin/sh\n{mark}\n");
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        puddle_test_kit::write_executable(&path, &text);
+        #[cfg(not(unix))]
+        std::fs::write(&path, text).unwrap();
     }
     let before = host_files(&base);
 

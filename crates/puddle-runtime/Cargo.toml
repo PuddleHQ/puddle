@@ -23,6 +23,7 @@ dev-override = []
 
 [dev-dependencies]
 object = { workspace = true, features = ["write"] }
+puddle-test-kit = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 

@@ -147,7 +147,7 @@ pub fn accepts(addr: SocketAddr) -> bool {
 /// port never does.
 #[must_use]
 pub fn http_status(addr: SocketAddr, path: &str, token: &str) -> Option<u16> {
-    use std::io::{Read, Write};
+    use std::io::{BufRead, Read, Write};
     let mut conn = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).ok()?;
     conn.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
     conn.set_write_timeout(Some(Duration::from_secs(1))).ok()?;
@@ -156,15 +156,9 @@ pub fn http_status(addr: SocketAddr, path: &str, token: &str) -> Option<u16> {
     );
     conn.write_all(request.as_bytes()).ok()?;
     let mut head = Vec::new();
-    let mut chunk = [0u8; 256];
-    while !head.windows(2).any(|w| w == b"\r\n") && head.len() < 1024 {
-        match conn.read(&mut chunk) {
-            // A signal can cut a blocking read short (EINTR); the reply is still on its way.
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Ok(0) | Err(_) => break,
-            Ok(n) => head.extend_from_slice(chunk.get(..n).unwrap_or_default()),
-        }
-    }
+    // `read_until` retries a read a signal cut short (EINTR) and keeps what it read when a read
+    // fails or times out, so a partial status line still counts.
+    let _ = std::io::BufReader::new((&conn).take(1024)).read_until(b'\n', &mut head);
     let line = String::from_utf8_lossy(&head);
     let line = line.lines().next()?;
     let mut words = line.split(' ');

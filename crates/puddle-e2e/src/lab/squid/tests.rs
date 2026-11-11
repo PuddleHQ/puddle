@@ -81,3 +81,67 @@ fn a_squid_that_dies_at_start_shows_both_logs() {
     let why = squid.wait().unwrap_err();
     panic!("{why}");
 }
+
+/// A listener on a free port that answers each connection with `reply` (nothing when `None`) and
+/// keeps the connection open for a moment.
+fn stranger(reply: Option<&'static str>) -> (std::net::TcpListener, u16) {
+    let listener = std::net::TcpListener::bind((LOCAL, 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let serving = listener.try_clone().unwrap();
+    std::thread::spawn(move || {
+        for conn in serving.incoming() {
+            let Ok(mut conn) = conn else { return };
+            let mut request = [0_u8; 512];
+            let _ = conn.read(&mut request);
+            if let Some(reply) = reply {
+                let _ = conn.write_all(reply.as_bytes());
+            }
+        }
+    });
+    (listener, port)
+}
+
+#[test]
+fn a_listener_that_accepts_and_says_nothing_is_not_squid() {
+    let (_held, port) = stranger(None);
+    assert!(puddle_test_kit::accepts(std::net::SocketAddr::from((
+        LOCAL, port
+    ))));
+    assert!(!squid_answers(port));
+}
+
+#[test]
+fn another_web_server_is_not_squid() {
+    let (_held, port) = stranger(Some("HTTP/1.0 403 Forbidden\r\nServer: nginx\r\n\r\nno"));
+    assert!(!squid_answers(port));
+}
+
+#[test]
+fn squids_error_page_is_squid() {
+    let (_held, port) = stranger(Some(
+        "HTTP/1.1 403 Forbidden\r\nServer: squid/6.6\r\nX-Squid-Error: ERR_ACCESS_DENIED 0\r\n\r\n",
+    ));
+    assert!(squid_answers(port));
+}
+
+#[test]
+fn a_stranger_on_the_chosen_port_fails_the_start_with_the_bind_error() {
+    // The port Squid was told to bind is held by a listener that accepts connections. Squid logs
+    // its failed bind and the start must come back as `Err` with that log (so `on_free_port`
+    // retries), not take the stranger for Squid.
+    let (_held, port) = stranger(None);
+    let dir = tempfile::tempdir().unwrap();
+    let fake = dir.path().join("squid");
+    puddle_test_kit::write_executable(
+        &fake,
+        "#!/bin/sh\necho 'FATAL: (98) Address already in use' >&2\nexec sleep 60\n",
+    );
+    let started = Squid::launch(
+        Some(fake.as_os_str()),
+        None,
+        &SquidOptions::open(&[443]),
+        port,
+    );
+    let why = started.err().expect("the start took a stranger for Squid");
+    assert!(is_address_in_use(&why), "{why}");
+}

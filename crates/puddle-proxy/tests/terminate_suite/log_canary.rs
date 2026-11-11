@@ -23,13 +23,17 @@ use puddle_secrets::{
     Fetch, HostName, MemoryStore, Secret, SecretStore, SourceSpec, Sources, StoredId, TokenScope,
     ToolPaths,
 };
+use puddle_test_kit::{TokenKind, token};
 use terminate_support::{
     FakeServer, Flaw, Pki, Reply, RigBuilder, TestInjector, captured_logs, captured_scoped_logs,
     scoped_trace_subscriber,
 };
 
-/// A GitHub token a user pasted into Puddle, as long and as random as a real one.
-const STORED_TOKEN: &str = "ghp_R7mQ2xVb9TnLk4Zs8WdYc1HfJe6UoPa3GiXt";
+/// A GitHub token a user pasted into Puddle, as long and as random as a real one, shaped like one
+/// (built at run time, so no scanner sees it in source).
+fn stored_token() -> String {
+    token(TokenKind::GithubPersonal, "log canary stored token")
+}
 
 /// The places a value can hide in a log: as typed, and as the `Authorization: Basic` header or
 /// the URL's `user:token` form carries it.
@@ -64,17 +68,18 @@ async fn a_stored_secret_a_stand_in_swap_and_a_login_leave_no_value_in_the_trace
     terminate_support::capture_logs();
     let pki = Pki::new();
 
+    let stored = stored_token();
     // A stored secret, read back through the same sources the host uses.
     let store = Arc::new(MemoryStore::new());
     store
         .set(
             &StoredId::new("github-main").unwrap(),
-            &Secret::new(STORED_TOKEN.to_owned()),
+            &Secret::new(stored.clone()),
         )
         .unwrap();
     let sources = Sources::new(ToolPaths::new(None, None), store);
     let fetched = sources.fetch(&stored_spec()).await.unwrap();
-    assert_eq!(fetched.credential.secret.expose(), STORED_TOKEN);
+    assert_eq!(fetched.credential.secret.expose(), stored);
 
     // The stand-in swap: the workspace sends the stand-in, the real server gets the real value.
     let server = FakeServer::tls(
@@ -114,7 +119,7 @@ async fn a_stored_secret_a_stand_in_swap_and_a_login_leave_no_value_in_the_trace
     assert_eq!(client.response("GET").await.status, 200);
     assert_eq!(
         server.recorded()[0].headers_named("authorization"),
-        [format!("Bearer {STORED_TOKEN}")],
+        [format!("Bearer {stored}")],
         "the real value reached the server, so the swap ran"
     );
     client.close().await;
@@ -142,7 +147,7 @@ async fn a_stored_secret_a_stand_in_swap_and_a_login_leave_no_value_in_the_trace
     );
     client.close().await;
 
-    let values = [STORED_TOKEN, ACCESS_1, REFRESH_1];
+    let values = [stored.as_str(), ACCESS_1, REFRESH_1];
     let scoped = captured_scoped_logs();
     // Not an empty search: the log holds Puddle's own trace and debug lines from these requests.
     assert!(scoped.contains("reading a secret"), "{scoped}");
@@ -167,9 +172,10 @@ async fn a_stored_secret_a_stand_in_swap_and_a_login_leave_no_value_in_the_trace
 #[test]
 fn the_search_finds_a_value_a_puddle_line_prints_in_any_spelling_and_a_dependency_trace_line_is_dropped()
  {
+    let stored = stored_token();
     let sink = Arc::new(Mutex::new(Vec::new()));
     tracing::subscriber::with_default(scoped_trace_subscriber(&sink), || {
-        tracing::trace!(target: "puddle_proxy::terminate", token = %STORED_TOKEN, "swapped");
+        tracing::trace!(target: "puddle_proxy::terminate", token = %stored, "swapped");
         let basic = STANDARD.encode(format!("x-access-token:{ACCESS_1}"));
         tracing::debug!(target: "puddle_proxy::git", header = %basic, "injected");
         // A dependency's trace line is not printed at all, which is what the scoping is for.
@@ -177,11 +183,8 @@ fn the_search_finds_a_value_a_puddle_line_prints_in_any_spelling_and_a_dependenc
     });
     let logs =
         String::from_utf8(sink.lock().unwrap_or_else(PoisonError::into_inner).clone()).unwrap();
-    assert!(logs.contains(STORED_TOKEN), "{logs}");
-    assert_eq!(
-        leaked(&logs, &[STORED_TOKEN]).as_deref(),
-        Some(STORED_TOKEN)
-    );
+    assert!(logs.contains(&stored), "{logs}");
+    assert_eq!(leaked(&logs, &[&stored]).as_deref(), Some(stored.as_str()));
     assert!(
         leaked(&logs, &[ACCESS_1]).is_some(),
         "the Basic form is searched too"

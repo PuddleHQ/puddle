@@ -7,6 +7,7 @@
 //! Squid a failure (CI sets it).
 
 use std::fs;
+use std::io::{Read as _, Write as _};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     BASIC_USER, LOCAL, Prefix, READY, StartCost, basic_password, configured_or_skip, free_port,
-    on_free_port, read, require_file, stop, try_ready,
+    is_address_in_use, on_free_port, read, require_file, stop, try_answers,
 };
 
 /// How long [`Squid::access_log_with`] waits for its line (a loaded machine needs seconds).
@@ -174,7 +175,8 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
              {parent}\
              cache deny all\n\
              buffered_logs off\n\
-             access_log daemon:{access_log}\n\
+             acl readiness_probe urlpath_regex ^/{PROBE_PATH}$\n\
+             access_log daemon:{access_log} squid !readiness_probe\n\
              cache_log stdio:{cache}\n\
              pid_filename {pid}\n\
              coredump_dir {core}\n\
@@ -187,6 +189,35 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
         ),
     )
     .unwrap();
+}
+
+/// The path of the request that [`squid_answers`] sends; Squid does not log it.
+const PROBE_PATH: &str = "puddle-lab-ready";
+
+/// Whether Squid itself answers on `port`. A port that merely accepts proves nothing: a stranger
+/// holding the port Squid failed to bind accepts too, and when it lets go the next connect is
+/// refused. The probe asks for a URL on a port no lab Squid allows, so Squid denies it at once
+/// without reaching out, and only Squid's error page carries its `Server: squid` or
+/// `X-Squid-Error` header.
+fn squid_answers(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from((LOCAL, port));
+    let Ok(mut conn) = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)) else {
+        return false;
+    };
+    let timeout = Some(Duration::from_secs(2));
+    if conn.set_read_timeout(timeout).is_err() || conn.set_write_timeout(timeout).is_err() {
+        return false;
+    }
+    let request = format!("GET http://{LOCAL}:1/{PROBE_PATH} HTTP/1.0\r\n\r\n");
+    if conn.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    // HTTP/1.0: Squid closes after its answer. A stranger that stays silent ends on the timeout.
+    let mut answer = Vec::new();
+    let _ = conn.read_to_end(&mut answer);
+    let head = String::from_utf8_lossy(&answer).to_ascii_lowercase();
+    head.starts_with("http/")
+        && (head.contains("\r\nserver: squid") || head.contains("\r\nx-squid-error:"))
 }
 
 impl Squid {
@@ -306,7 +337,19 @@ impl Squid {
                 read(&dir.join("cache.log"))
             )
         };
-        try_ready(self.port, child, READY, diagnostics)?;
+        let port = self.port;
+        let logs = [dir.join("squid.stderr"), dir.join("cache.log")];
+        try_answers(
+            child,
+            READY,
+            &diagnostics,
+            || squid_answers(port),
+            // A child that dies right after something else answered is a collision too.
+            Duration::from_millis(100),
+            // Squid exits on a failed bind, but a container's exit is only seen below: its log
+            // names the cause at once.
+            || logs.iter().any(|log| is_address_in_use(&read(log))),
+        )?;
         if let Some(name) = &container {
             // Something else may answer on a taken port while the container's Squid has exited.
             let running = Command::new("docker")

@@ -45,8 +45,8 @@ use super::request_rules::{self, Refused};
 use super::session::short;
 use super::session::{Context, Outcome};
 use super::stand_in::{
-    NotScrubbed, ScrubNotes, answer_encoding_refusal, answer_failed_refusal, limit_accept_encoding,
-    scrub_answer,
+    AnswerReport, NotScrubbed, ScrubNotes, answer_encoding_refusal, answer_failed_refusal,
+    limit_accept_encoding, scan_answer, scrub_answer,
 };
 use super::streams::{
     Activity, Clock, Registry, SWEEP_INTERVAL, Step, StreamGuard, Sweeper, ended,
@@ -125,6 +125,8 @@ struct Shared {
     outcome: Mutex<Outcome>,
     /// What the scrub of the answers did; it joins the outcome when the connection ends.
     scrubbed: Arc<ScrubNotes>,
+    /// The tokens the answers held that Puddle does not hold; they join the outcome too.
+    unknown_tokens: Arc<AnswerReport>,
     streams: Arc<Registry>,
 }
 
@@ -256,6 +258,12 @@ where
         None => LegState::None,
     };
     let limit_hit: Arc<OnceLock<&'static str>> = Arc::default();
+    let unknown_tokens = Arc::new(AnswerReport::new(
+        Arc::clone(cx.termination.foreign_warning()),
+        Arc::clone(&cx.proxy.sink),
+        cx.workspace.clone(),
+        cx.target.host.clone(),
+    ));
     let shared = Arc::new(Shared {
         cx,
         leg: Mutex::new(leg),
@@ -263,6 +271,7 @@ where
         deferred: Mutex::new(deferred),
         outcome: Mutex::new(outcome),
         scrubbed: Arc::default(),
+        unknown_tokens,
         streams: Arc::new(Registry::new(Arc::clone(&limit_hit))),
     });
     let service = {
@@ -318,6 +327,7 @@ where
         .unwrap_or_else(PoisonError::into_inner);
     outcome.ended = limit_hit.get().copied();
     outcome.record_scrubbed(&shared.scrubbed);
+    outcome.record_unknown_tokens(&shared.unknown_tokens);
     std::mem::take(&mut *outcome)
 }
 
@@ -1155,7 +1165,7 @@ async fn scrub(
     head_only: bool,
 ) -> Result<Response<AnswerBody>, Refusal> {
     let cx = &shared.cx;
-    scrub_answer(
+    let scrubbed = scrub_answer(
         cx.termination.stand_ins(),
         response,
         &cx.target.host,
@@ -1167,7 +1177,13 @@ async fn scrub(
     .map_err(|why| match why {
         NotScrubbed::Encoding => answer_encoding_refusal(&cx.target.host),
         NotScrubbed::Failed => answer_failed_refusal(&cx.target.host),
-    })
+    })?;
+    Ok(scan_answer(
+        cx.termination.stand_ins(),
+        scrubbed,
+        head_only,
+        &shared.unknown_tokens,
+    ))
 }
 
 fn record_injection(shared: &Shared, injection: Option<&Injection>) {

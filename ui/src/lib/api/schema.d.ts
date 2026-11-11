@@ -2069,6 +2069,14 @@ export interface components {
             /** @enum {string} */
             type: "connection";
             /**
+             * @description The kinds of token the answers held that Puddle does not hold, each once:
+             *     `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
+             *     `azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never
+             *     a value. Records written before it existed, and connections of a workspace that turned
+             *     the warning off, read as empty.
+             */
+            unknown_tokens_in_answer: string[];
+            /**
              * @description The ids (`stand-in:<secret|login>:<name>`) of the secret stand-ins that went out
              *     unchanged, to a host outside their hosts or in the path or query. Records written
              *     before it existed read as empty.
@@ -3132,6 +3140,15 @@ export interface components {
             /** @enum {string} */
             type: "foreign_credential";
             /** @description The workspace that sent it. */
+            workspace: components["schemas"]["WorkspaceId"];
+        } | {
+            /** @description The host that answered. */
+            host: string;
+            /** @description What kind of token it looked like. */
+            kind: components["schemas"]["UnknownTokenKind"];
+            /** @enum {string} */
+            type: "unknown_token_in_answer";
+            /** @description The workspace that got the answer. */
             workspace: components["schemas"]["WorkspaceId"];
         } | {
             /**
@@ -4990,6 +5007,12 @@ export interface components {
             start_at_login: boolean | null;
             theme: components["schemas"]["ThemeChoice"] | null;
         };
+        /**
+         * @description What Puddle can tell about a token in an answer that it does not hold: by its bytes alone
+         *     (see [`Event::UnknownTokenInAnswer`]).
+         * @enum {string}
+         */
+        UnknownTokenKind: "github_token" | "github_fine_grained_token" | "gitlab_token" | "npm_token" | "azure_devops_token" | "anthropic_key" | "openai_key" | "jwt_with_refresh_token";
         /** @description Options for the VS Code server in the guest. `null` means Puddle's default. */
         VsCodeServer: {
             /** @description Whether Puddle updates the server (default on). */

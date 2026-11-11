@@ -335,6 +335,10 @@ pub struct ConnectionEvent {
     /// once (`github_token`, `stale_stand_in`, ...; see [`crate::ForeignCredentialKind`]). Empty
     /// when none did and when the workspace turned the warning off. It never carries a value.
     pub foreign_credentials: Vec<String>,
+    /// What kind of token the answers held that Puddle does not hold, each kind once
+    /// (`github_token`, `jwt_with_refresh_token`, ...; see [`crate::UnknownTokenKind`]). Empty
+    /// when none did and when the workspace turned the warning off. It never carries a value.
+    pub unknown_tokens_in_answer: Vec<String>,
     /// Method and path, when the proxy saw the request in clear.
     pub http: Option<HttpRequestLine>,
     /// Bytes from the guest.
@@ -372,6 +376,7 @@ impl ConnectionEvent {
             unswapped_stand_ins: Vec::new(),
             scrubbed_stand_ins: Vec::new(),
             foreign_credentials: Vec::new(),
+            unknown_tokens_in_answer: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,
@@ -408,6 +413,7 @@ impl ConnectionEvent {
             unswapped_stand_ins: Vec::new(),
             scrubbed_stand_ins: Vec::new(),
             foreign_credentials: Vec::new(),
+            unknown_tokens_in_answer: Vec::new(),
             http: None,
             bytes_up: 0,
             bytes_down: 0,

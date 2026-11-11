@@ -103,6 +103,18 @@ fn the_host_name_corpus_normalises_to_stable_printable_ascii_or_is_refused() {
 }
 
 #[test]
+fn the_answer_token_corpus_reads_the_same_whole_and_in_pieces() {
+    for (_, bytes) in corpus("answer_tokens") {
+        fuzzing::answer_tokens(&bytes);
+    }
+    // Made here, not kept: a run longer than any token, then a token's start, over every piece size.
+    let long = [vec![b'a'; 4200], b" ghp_".to_vec(), vec![b'b'; 40]].concat();
+    for size in 0..=255u8 {
+        fuzzing::answer_tokens(&[&[size][..], &long].concat());
+    }
+}
+
+#[test]
 fn the_agent_preamble_corpus_is_accepted_only_in_the_registered_shape() {
     for (_, bytes) in corpus("agent_preamble") {
         fuzzing::preamble(&bytes);

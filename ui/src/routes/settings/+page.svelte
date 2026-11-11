@@ -781,7 +781,8 @@
               Puddle cannot tell your own token from one that leaked, so this
               catches mistakes, not a workspace that hides what it sends. A
               workspace can set its own switch; a change applies to the next
-              request.
+              request. The same switch covers a token of a known kind that a
+              website sends the workspace in an answer and Puddle does not hold.
             </p>
           </div>
           <input

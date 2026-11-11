@@ -32,7 +32,7 @@ pub use resources::{
 #[cfg(unix)]
 pub use script::{feed_stdin, write_executable, write_executable_bytes};
 pub use token::{
-    CHECKSUMMED_ENTROPY_LEN, TokenKind, entropy, token, with_broken_checksum, with_checksum,
+    CHECKSUMMED_ENTROPY_LEN, TokenKind, entropy, jwt, token, with_broken_checksum, with_checksum,
 };
 pub use wait::{
     MAX_WAIT, Outcome, Step, eventually, eventually_async, eventually_blocking, returns_within,

@@ -517,6 +517,9 @@ function connectionDetail(
   if (record.foreign_credentials.length > 0) {
     parts.push(foreignNote(record.foreign_credentials));
   }
+  if (record.unknown_tokens_in_answer.length > 0) {
+    parts.push(unknownTokenNote(record.unknown_tokens_in_answer));
+  }
   if (record.scrubbed_stand_ins.length > 0) {
     const names = record.scrubbed_stand_ins.map(standInLabel).join(", ");
     parts.push(
@@ -539,6 +542,23 @@ const FOREIGN_KINDS: Record<string, string> = {
 function foreignNote(kinds: readonly string[]): string {
   const names = kinds.map((k) => FOREIGN_KINDS[k] ?? k).join(", ");
   return `the workspace sent ${names} that Puddle did not add; it went out as it was`;
+}
+
+const UNKNOWN_TOKEN_KINDS: Record<string, string> = {
+  github_token: "a GitHub token",
+  github_fine_grained_token: "a fine-grained GitHub token",
+  gitlab_token: "a GitLab token",
+  npm_token: "an npm token",
+  azure_devops_token: "an Azure DevOps token",
+  anthropic_key: "an Anthropic key",
+  openai_key: "an OpenAI key",
+  jwt_with_refresh_token: "a sign-in token with a refresh token",
+};
+
+/** The kinds of token the answers held that Puddle does not hold; never a value. */
+function unknownTokenNote(kinds: readonly string[]): string {
+  const names = kinds.map((k) => UNKNOWN_TOKEN_KINDS[k] ?? k).join(", ");
+  return `the answer held ${names} that Puddle does not hold; the workspace got it as it was`;
 }
 
 /**

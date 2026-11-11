@@ -45,6 +45,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "answer_tokens"
+path = "fuzz_targets/answer_tokens.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "agent_preamble"
 path = "fuzz_targets/agent_preamble.rs"
 test = false

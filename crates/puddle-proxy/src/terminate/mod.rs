@@ -114,6 +114,8 @@ pub(crate) mod h1 {
     pub(crate) use super::session::{keep_reading, send_and_pump, short};
 }
 pub use set::{PatternError, TerminationSet};
+#[cfg(feature = "fuzzing")]
+pub(crate) use stand_in::check_answer_scan;
 pub use stand_in::{Placement, StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
 pub use token_body::{BodyField, BodyFormat, FieldKind, TokenBody, TokenBodyError};
 
@@ -185,7 +187,7 @@ impl Termination {
         self
     }
 
-    pub(crate) fn foreign_warning(&self) -> &ForeignCredentialWarning {
+    pub(crate) fn foreign_warning(&self) -> &Arc<ForeignCredentialWarning> {
         &self.foreign_warning
     }
 

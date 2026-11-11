@@ -37,6 +37,7 @@ export function connection(
       unswapped_stand_ins: [],
       scrubbed_stand_ins: [],
       foreign_credentials: [],
+      unknown_tokens_in_answer: [],
       refused_address: null,
       refused_reason: null,
       category: null,

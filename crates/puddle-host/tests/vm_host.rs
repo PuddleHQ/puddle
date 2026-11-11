@@ -1365,6 +1365,135 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
+/// In the "all except curated" mode a workspace decrypts a host no credential, secret or identity
+/// names, and its guest trusts the certificate Puddle makes for it; the mode follows the global
+/// setting until the workspace picks its own, and a change applies to the next connection with no
+/// restart. (The curated list is empty, so nothing is passed through for being on it yet: the
+/// proxy and host unit tests cover that half.)
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_decrypts_an_unlisted_host_in_the_curated_mode_and_follows_the_global_setting() {
+    let internet = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_platform("curated", internet.options, &internet.platform, |_| {}).await;
+    let name = format!("{}-curated", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(SITE).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let ca_name = format!("Puddle CA for {name}");
+
+    // An install that has not chosen behaves as before: the host is spliced and shows its own issuer.
+    let before = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
+    assert!(!before.to_lowercase().contains("puddle"), "{before}");
+
+    // The user chooses the curated mode globally; the running workspace follows at once.
+    let chosen = api
+        .put(
+            "/api/interception",
+            &json!({"mode": "all_except_curated"}).to_string(),
+        )
+        .await;
+    assert_eq!(chosen.status, 200, "{}", chosen.body);
+    let view = api
+        .get(&format!("/api/workspaces/{name}/interception"))
+        .await;
+    assert!(
+        view.body
+            .contains(r#""effective_mode":"all_except_curated""#),
+        "{}",
+        view.body
+    );
+    puddle_test_kit::eventually_async(
+        "the unlisted host is decrypted with Puddle's certificate",
+        Duration::from_secs(60),
+        || async {
+            let issuer = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
+            if issuer.contains(&ca_name) {
+                Ok(())
+            } else {
+                Err(format!("issuer {issuer:?}"))
+            }
+        },
+    )
+    .await;
+
+    // The workspace's own mode wins over the global one, and going back to inherit follows it again.
+    let own = api
+        .put(
+            &format!("/api/workspaces/{name}/interception"),
+            &json!({"mode": "known_only"}).to_string(),
+        )
+        .await;
+    assert_eq!(own.status, 200, "{}", own.body);
+    puddle_test_kit::eventually_async(
+        "the host is spliced again in the workspace's own mode",
+        Duration::from_secs(60),
+        || async {
+            let issuer = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
+            if issuer.to_lowercase().contains("puddle") {
+                Err(format!("issuer {issuer:?}"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .await;
+    let inherit = api
+        .put(
+            &format!("/api/workspaces/{name}/interception"),
+            &json!({"mode": "inherit"}).to_string(),
+        )
+        .await;
+    assert_eq!(inherit.status, 200, "{}", inherit.body);
+    puddle_test_kit::eventually_async(
+        "the host is decrypted again once the workspace follows the global mode",
+        Duration::from_secs(60),
+        || async {
+            let issuer = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
+            if issuer.contains(&ca_name) {
+                Ok(())
+            } else {
+                Err(format!("issuer {issuer:?}"))
+            }
+        },
+    )
+    .await;
+
+    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
 /// A site that offers HTTP/3 (it answers `alt-svc: h3=":443"`) next to HTTP/2 over TCP: the fake
 /// website, which sends the header. The guest cannot send UDP, so the offer is never taken up.
 const H3_HOST: &str = "h3.invalid";

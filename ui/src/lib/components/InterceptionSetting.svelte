@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { onLearnedChanged } from "#lib/interception/learned.ts";
   import LearnedHostsList from "#lib/components/LearnedHostsList.svelte";
   import NeverDecryptEditor from "#lib/components/NeverDecryptEditor.svelte";
   import {
@@ -23,6 +24,10 @@
 
   $effect(() => {
     void store.load(id);
+    // Making a learned host permanent changes the names above the list.
+    return onLearnedChanged((workspace) => {
+      if (workspace === id) void store.load(id, true);
+    });
   });
 
   async function choose(select: HTMLSelectElement) {

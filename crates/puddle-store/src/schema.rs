@@ -10,11 +10,11 @@ use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 18;
+pub const SCHEMA_VERSION: u32 = 19;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -517,6 +517,20 @@ INSERT INTO workspace_interception_new (workspace_id, mode)
     FROM workspace_interception;
 DROP TABLE workspace_interception;
 ALTER TABLE workspace_interception_new RENAME TO workspace_interception;
+";
+
+/// The hosts a workspace's tools refused Puddle's certificate for, kept past the in-memory pass-through
+/// list: when a host was first and last refused and how many times, so a restart or an expired
+/// pass-through does not forget a host that keeps refusing.
+const V19: &str = r"
+CREATE TABLE learned_hosts (
+    workspace_id TEXT    NOT NULL,
+    host         TEXT    NOT NULL,
+    first_at     INTEGER NOT NULL,
+    last_at      INTEGER NOT NULL,
+    count        INTEGER NOT NULL CHECK (count >= 1),
+    PRIMARY KEY (workspace_id, host)
+) STRICT;
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.
@@ -1101,6 +1115,41 @@ mod tests {
             )
             .is_err(),
             "the table refuses a mode it does not know"
+        );
+    }
+
+    /// Version 19 adds the history of refused hosts to a database of version 18, which has none.
+    #[test]
+    fn v19_adds_an_empty_history_of_refused_hosts_and_keeps_the_rest() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_up_to(&mut conn, 18).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspace_interception (workspace_id, mode) VALUES ('a', 'all');",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 18);
+        assert_eq!(version(&conn), 19);
+        let kept: i64 = conn
+            .query_row("SELECT count(*) FROM workspace_interception", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(kept, 1);
+        let insert = |host: &str, count: i64| {
+            conn.execute(
+                "INSERT INTO learned_hosts (workspace_id, host, first_at, last_at, count)
+                 VALUES ('a', ?1, 1, 2, ?2)",
+                rusqlite::params![host, count],
+            )
+        };
+        insert("x.example", 1).unwrap();
+        assert!(
+            insert("x.example", 1).is_err(),
+            "one row per workspace and host"
+        );
+        assert!(
+            insert("y.example", 0).is_err(),
+            "a refused host was refused at least once"
         );
     }
 }

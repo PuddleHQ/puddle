@@ -260,8 +260,10 @@ async fn the_learned_hosts_are_listed_and_decrypted_again_one_at_a_time_or_all()
     assert_eq!(
         two,
         json!({"hosts": [
-            {"host": "other.example", "expires_in_secs": 60},
-            {"host": "pinned.example", "expires_in_secs": 600},
+            {"host": "other.example", "passed_through": true, "expires_in_secs": 60,
+             "first_rejected_at": 1, "last_rejected_at": 1, "count": 1},
+            {"host": "pinned.example", "passed_through": true, "expires_in_secs": 600,
+             "first_rejected_at": 1, "last_rejected_at": 1, "count": 1},
         ]}),
         "soonest to expire first"
     );
@@ -294,7 +296,19 @@ async fn the_learned_hosts_are_listed_and_decrypted_again_one_at_a_time_or_all()
         .get("/api/workspaces/shop/interception/learned")
         .await
         .json();
-    assert_eq!(left["hosts"].as_array().unwrap().len(), 1, "{left}");
+    assert_eq!(
+        left["hosts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| (
+                h["host"].as_str().unwrap(),
+                h["passed_through"].as_bool().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        [("other.example", true), ("pinned.example", false)],
+        "a host decrypted again stays listed with its history: {left}"
+    );
 
     let cleared = api
         .send("DELETE", "/api/workspaces/shop/interception/learned", None)
@@ -304,7 +318,112 @@ async fn the_learned_hosts_are_listed_and_decrypted_again_one_at_a_time_or_all()
         .get("/api/workspaces/shop/interception/learned")
         .await
         .json();
-    assert_eq!(empty, json!({"hosts": []}));
+    assert_eq!(
+        empty["hosts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["passed_through"].as_bool().unwrap())
+            .collect::<Vec<_>>(),
+        [false, false],
+        "clearing keeps the history: {empty}"
+    );
+}
+
+#[tokio::test]
+async fn a_learned_host_is_made_permanent_for_the_workspace_or_for_every_workspace() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    api.learned
+        .learn_with_history(&shop(), "pinned.example", Some(600), 3, 5_000);
+    api.learned
+        .learn_with_history(&shop(), "other.example", None, 2, 4_000);
+    let listed = api
+        .get("/api/workspaces/shop/interception/learned")
+        .await
+        .json();
+    assert_eq!(
+        listed["hosts"][0],
+        json!({"host": "pinned.example", "passed_through": true, "expires_in_secs": 600,
+               "first_rejected_at": 3_000, "last_rejected_at": 5_000, "count": 3})
+    );
+
+    let own = api
+        .send(
+            "POST",
+            "/api/workspaces/shop/interception/learned/Pinned.Example./permanent",
+            Some(&json!({"scope": "workspace"})),
+        )
+        .await;
+    assert_eq!(own.status, 204, "{}", own.body);
+    let view = api.get("/api/workspaces/shop/interception").await.json();
+    assert_eq!(view["never_decrypt"], json!(["pinned.example"]));
+    assert_eq!(view["global_never_decrypt"], json!([]));
+    let left = api
+        .get("/api/workspaces/shop/interception/learned")
+        .await
+        .json();
+    assert_eq!(
+        left["hosts"].as_array().unwrap().len(),
+        1,
+        "gone from the list: {left}"
+    );
+
+    let global = api
+        .send(
+            "POST",
+            "/api/workspaces/shop/interception/learned/other.example/permanent",
+            Some(&json!({"scope": "global"})),
+        )
+        .await;
+    assert_eq!(global.status, 204, "{}", global.body);
+    let view = api.get("/api/workspaces/shop/interception").await.json();
+    assert_eq!(view["global_never_decrypt"], json!(["other.example"]));
+    assert_eq!(
+        view["never_decrypt"],
+        json!(["pinned.example"]),
+        "the workspace's own list is kept"
+    );
+
+    for host in ["other.example", "10.0.0.1"] {
+        let reply = api
+            .send(
+                "POST",
+                &format!("/api/workspaces/shop/interception/learned/{host}/permanent"),
+                Some(&json!({"scope": "global"})),
+            )
+            .await;
+        assert_eq!(reply.status, 404, "{host}: {}", reply.body);
+    }
+}
+
+#[tokio::test]
+async fn a_full_never_decrypt_list_refuses_to_take_a_learned_host_and_keeps_it_listed() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let names: Vec<String> = (0..500).map(|n| format!("h{n}.example")).collect();
+    let put = api
+        .send(
+            "PUT",
+            "/api/workspaces/shop/interception",
+            Some(&json!({"never_decrypt": names})),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    api.learned.learn(&shop(), "pinned.example", 600);
+    let full = api
+        .send(
+            "POST",
+            "/api/workspaces/shop/interception/learned/pinned.example/permanent",
+            Some(&json!({"scope": "workspace"})),
+        )
+        .await;
+    assert_eq!(full.status, 422, "{}", full.body);
+    let listed = api
+        .get("/api/workspaces/shop/interception/learned")
+        .await
+        .json();
+    assert_eq!(listed["hosts"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -317,8 +436,15 @@ async fn the_learned_routes_refuse_a_workspace_that_does_not_exist() {
             "DELETE",
             "/api/workspaces/nope/interception/learned/a.example",
         ),
+        (
+            "POST",
+            "/api/workspaces/nope/interception/learned/a.example/permanent",
+        ),
     ] {
-        let reply = api.send(method, path, None).await;
+        let body = json!({"scope": "global"});
+        let reply = api
+            .send(method, path, (method == "POST").then_some(&body))
+            .await;
         assert_eq!(reply.status, 404, "{method} {path}: {}", reply.body);
     }
 }

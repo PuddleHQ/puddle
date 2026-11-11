@@ -154,6 +154,25 @@ describe("WorkspaceInterception", () => {
     });
   });
 
+  it("reads again quietly: what is shown stays while it reads and when it fails", async () => {
+    const store = new WorkspaceInterception(api as never);
+    await store.load("ws-1");
+    api.view = { ...api.view, never_decrypt: ["pinned.example"] };
+    const reading = store.load("ws-1", true);
+    expect(store.status).toBe("ready");
+    await reading;
+    expect(store.names).toEqual(["pinned.example"]);
+    api.refuse = { status: 500, message: "store broken" };
+    await store.load("ws-1", true);
+    expect(store.status).toBe("ready");
+    expect(store.reason).toBeNull();
+    api.refuse = null;
+    api.down = true;
+    await store.load("ws-1", true);
+    expect(store.status).toBe("ready");
+    expect(store.names).toEqual(["pinned.example"]);
+  });
+
   it("a save when the service is down reports it", async () => {
     const store = new WorkspaceInterception(api as never);
     await store.load("ws-1");

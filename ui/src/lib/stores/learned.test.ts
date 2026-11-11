@@ -10,11 +10,19 @@ type Reply = {
   response: { status: number; ok: boolean };
 };
 
+function learned(host: string, expires_in_secs: number | null) {
+  return {
+    host,
+    passed_through: expires_in_secs !== null,
+    expires_in_secs,
+    first_rejected_at: 1_000,
+    last_rejected_at: 2_000,
+    count: 1,
+  };
+}
+
 class Stub {
-  hosts = [
-    { host: "pinned.example", expires_in_secs: 600 },
-    { host: "other.example", expires_in_secs: 3000 },
-  ];
+  hosts = [learned("pinned.example", 600), learned("other.example", 3000)];
   limits = { ttl_secs: 43_200, cap: 1024 };
   calls: string[] = [];
   bodies: unknown[] = [];
@@ -42,6 +50,19 @@ class Stub {
     const reply = this.answer(init.body, `PUT ${path}`, init.body);
     if (reply.data) this.limits = init.body;
     return reply;
+  }
+
+  async POST(
+    path: string,
+    init: { params: { path: { host: string } }; body: { scope: string } },
+  ) {
+    const reply = this.answer(
+      undefined,
+      `POST ${path} ${init.params.path.host} ${init.body.scope}`,
+    );
+    if (reply.error) return reply;
+    this.hosts = this.hosts.filter((h) => h.host !== init.params.path.host);
+    return { ...reply, response: { status: 204, ok: true } };
   }
 
   async DELETE(path: string, init: { params: { path: { host?: string } } }) {
@@ -117,6 +138,38 @@ describe("LearnedList", () => {
     ]);
   });
 
+  it("makes a host permanent for the workspace or for every workspace and shows the list the API holds", async () => {
+    const list = new LearnedList(api as never);
+    await list.load("web");
+    expect(await list.makePermanent("pinned.example", "workspace")).toEqual({
+      ok: true,
+    });
+    expect(await list.makePermanent("other.example", "global")).toEqual({
+      ok: true,
+    });
+    expect(list.hosts).toEqual([]);
+    expect(api.calls.filter((c) => c.startsWith("POST"))).toEqual([
+      "POST /api/workspaces/{id}/interception/learned/{host}/permanent pinned.example workspace",
+      "POST /api/workspaces/{id}/interception/learned/{host}/permanent other.example global",
+    ]);
+  });
+
+  it("says why making a host permanent was refused and keeps the list", async () => {
+    const list = new LearnedList(api as never);
+    await list.load("web");
+    api.refuse = { status: 422, message: "the list is full" };
+    expect(await list.makePermanent("pinned.example", "workspace")).toEqual({
+      ok: false,
+      message: "The list is full.",
+    });
+    expect(list.hosts).toHaveLength(2);
+    api.refuse = null;
+    api.down = true;
+    expect((await list.makePermanent("pinned.example", "global")).ok).toBe(
+      false,
+    );
+  });
+
   it("says why a refusal happened and keeps the list", async () => {
     const list = new LearnedList(api as never);
     await list.load("web");
@@ -159,11 +212,12 @@ describe("LearnedList", () => {
     const stop = list.start("web");
     await Promise.resolve();
     expect(api.calls).toHaveLength(1);
-    api.hosts.push({ host: "new.example", expires_in_secs: 5 });
+    api.hosts.push(learned("new.example", 5));
     source.listener?.event?.({
       type: "pass_through_learned",
       workspace: "other-workspace",
       host: "x.example",
+      count: 1,
     });
     source.listener?.event?.({ type: "rules_changed" });
     expect(api.calls).toHaveLength(1);
@@ -171,6 +225,7 @@ describe("LearnedList", () => {
       type: "pass_through_learned",
       workspace: "web",
       host: "new.example",
+      count: 1,
     });
     await new Promise((r) => setTimeout(r, 0));
     expect(list.hosts.map((h) => h.host)).toContain("new.example");

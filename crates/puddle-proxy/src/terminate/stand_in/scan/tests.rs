@@ -642,3 +642,91 @@ fn only_text_like_types_are_read() {
         &HeaderValue::from_bytes(b"\xff").unwrap()
     )));
 }
+
+/// A JWT-shaped run of exactly `len` bytes.
+fn jwt_of_length(len: usize) -> String {
+    let head = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+    let signature = "s".repeat(43);
+    let claims = "e".repeat(len - head.len() - signature.len() - 2);
+    format!("{head}.{claims}.{signature}")
+}
+
+#[test]
+fn a_run_of_the_longest_length_is_read_and_one_byte_more_is_not() {
+    let refresh = r#" {"refresh_token":"x"}"#;
+    for (len, found) in [(MAX_RUN, true), (MAX_RUN + 1, false)] {
+        let signed = jwt_of_length(len);
+        assert_eq!(signed.len(), len);
+        let expected: &[UnknownTokenKind] = if found {
+            &[UnknownTokenKind::JwtWithRefreshToken]
+        } else {
+            &[]
+        };
+        // Whole, with the run ending inside the text.
+        let whole = format!("{signed}{refresh}");
+        assert_eq!(seen(&[whole.as_bytes()], &NO_ONE), expected, "{len} whole");
+        // In pieces, with the run ending a piece (it may still grow).
+        assert_eq!(
+            seen(&[signed.as_bytes(), refresh.as_bytes()], &NO_ONE),
+            expected,
+            "{len} in pieces"
+        );
+        // And the run ending the answer.
+        let before = format!(r#"{{"refresh_token":"x"}} {signed}"#);
+        assert_eq!(seen(&[before.as_bytes()], &NO_ONE), expected, "{len} last");
+    }
+}
+
+#[test]
+fn a_skipped_run_ends_at_the_first_byte_that_is_not_part_of_it() {
+    let made = token(TokenKind::GithubPersonal, "skip");
+    let long = "a".repeat(MAX_RUN + 10);
+    let (a, b) = (long.as_bytes(), b"x ");
+    let c = made.as_bytes();
+    assert_eq!(
+        seen(&[a, b, c], &NO_ONE),
+        [UnknownTokenKind::GithubToken],
+        "the space ends the skipped run, so the next piece is read"
+    );
+    let spaced = format!(" {made}");
+    assert_eq!(
+        seen(&[a, b"x", spaced.as_bytes()], &NO_ONE),
+        [UnknownTokenKind::GithubToken]
+    );
+    // A piece that ends the skipped run and starts a token after a gap.
+    let after = format!("x {made} ");
+    assert_eq!(
+        seen(&[a, after.as_bytes()], &NO_ONE),
+        [UnknownTokenKind::GithubToken]
+    );
+    // The skipped run goes on over a piece that is all run bytes, and the text after it is read.
+    assert_eq!(
+        seen(&[a, a, b"x ", c, b" "], &NO_ONE),
+        [UnknownTokenKind::GithubToken]
+    );
+}
+
+#[test]
+fn up_to_six_bytes_may_lie_between_a_field_name_and_its_value() {
+    let signed = jwt("gap", claims());
+    for (gap, pairs) in [(5, true), (6, true), (7, false)] {
+        let spaces = " ".repeat(gap);
+        let body = format!("{signed} refresh_token{spaces}:{spaces}abc");
+        let expected: &[UnknownTokenKind] = if pairs {
+            &[UnknownTokenKind::JwtWithRefreshToken]
+        } else {
+            &[]
+        };
+        assert_eq!(seen(&[body.as_bytes()], &NO_ONE), expected, "gap {gap}");
+    }
+}
+
+#[tokio::test]
+async fn the_scanned_body_ends_when_the_body_does() {
+    let rig = rig(true);
+    let response = answer(None, None, &[], b"hello".to_vec());
+    let mut body = scan_answer(&rig.stand_ins, response, false, &rig.report).into_body();
+    assert!(!body.is_end_stream());
+    while body.frame().await.is_some() {}
+    assert!(body.is_end_stream());
+}

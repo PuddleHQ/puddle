@@ -223,8 +223,8 @@ impl TokenScanner {
         let mut found = Vec::new();
         let mut keep = buf.len();
         let mut at = 0;
-        while at < buf.len() {
-            if !buf.get(at).copied().is_some_and(is_run_byte) {
+        while let Some(&byte) = buf.get(at) {
+            if !is_run_byte(byte) {
                 at += 1;
                 continue;
             }

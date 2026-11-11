@@ -107,6 +107,8 @@ fn the_answer_token_corpus_reads_the_same_whole_and_in_pieces() {
     for (_, bytes) in corpus("answer_tokens") {
         fuzzing::answer_tokens(&bytes);
     }
+    // No bytes at all has no piece size to take: nothing to check.
+    fuzzing::answer_tokens(&[]);
     // Made here, not kept: a run longer than any token, then a token's start, over every piece size.
     let long = [vec![b'a'; 4200], b" ghp_".to_vec(), vec![b'b'; 40]].concat();
     for size in 0..=255u8 {

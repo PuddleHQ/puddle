@@ -511,11 +511,8 @@ pub(crate) fn scan_answer(
     let decoder = Decoder::for_encoding(parts.headers.get(header::CONTENT_ENCODING));
     let readable =
         !no_body && is_text_type(parts.headers.get(header::CONTENT_TYPE)) && decoder.is_ok();
+    // Every header line ended with a newline, so nothing is pending that an end could add.
     if !readable {
-        let mut scanner = scanner;
-        for kind in scanner.feed(&[], true, &|run| stand_ins.holds_token(run)) {
-            report.note(kind);
-        }
         return Response::from_parts(parts, inner);
     }
     let body = ScanBody {

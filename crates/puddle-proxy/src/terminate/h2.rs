@@ -1160,7 +1160,7 @@ async fn scrub(
     head_only: bool,
 ) -> Result<Response<AnswerBody>, Refusal> {
     let cx = &shared.cx;
-    let scrubbed = scrub_answer(
+    scrub_answer(
         cx.termination.stand_ins(),
         response,
         &cx.target.host,
@@ -1169,16 +1169,18 @@ async fn scrub(
         cx.proxy.config.body_idle_timeout,
     )
     .await
+    .map(|scrubbed| {
+        scan_answer(
+            cx.termination.stand_ins(),
+            scrubbed,
+            head_only,
+            &shared.unknown_tokens,
+        )
+    })
     .map_err(|why| match why {
         NotScrubbed::Encoding => answer_encoding_refusal(&cx.target.host),
         NotScrubbed::Failed => answer_failed_refusal(&cx.target.host),
-    })?;
-    Ok(scan_answer(
-        cx.termination.stand_ins(),
-        scrubbed,
-        head_only,
-        &shared.unknown_tokens,
-    ))
+    })
 }
 
 fn record_injection(shared: &Shared, injection: Option<&Injection>) {

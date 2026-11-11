@@ -133,17 +133,12 @@ mod tests {
         // The pipe's read end is gone, so a write is the `BrokenPipe` case itself. A child another
         // test is spawning at this moment can inherit the read end for the instant before its exec
         // closes it, and a write then lands in the pipe; so write until the pipe reports closed.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        let kind = loop {
-            if let Err(e) = held.write_all(b"x") {
-                break e.kind();
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the pipe never closed"
-            );
-            thread::sleep(std::time::Duration::from_millis(5));
-        };
+        let kind = (0..2000)
+            .find_map(|_| {
+                thread::sleep(std::time::Duration::from_millis(5));
+                held.write_all(b"x").err().map(|e| e.kind())
+            })
+            .expect("the pipe never closed");
         assert_eq!(kind, std::io::ErrorKind::BrokenPipe);
         child.stdin = Some(held);
         feed_stdin(&mut child, b"never read");

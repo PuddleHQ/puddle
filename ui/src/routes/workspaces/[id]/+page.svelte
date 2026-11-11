@@ -7,6 +7,7 @@
   import EditorInstallNotice from "#lib/components/EditorInstallNotice.svelte";
   import RepositoriesSection from "#lib/components/RepositoriesSection.svelte";
   import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
+  import GrowRootDiskDialog from "#lib/components/GrowRootDiskDialog.svelte";
   import StatusChip from "#lib/components/StatusChip.svelte";
   import VolumeMissingNotice from "#lib/components/VolumeMissingNotice.svelte";
   import { api } from "#lib/api/client.ts";
@@ -20,6 +21,7 @@
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import {
     canDelete,
+    canGrowRootDisk,
     canReclaim,
     canResetRootDisk,
     diskLabel,
@@ -49,6 +51,10 @@
   let resetOpen = $state(false);
   function openReset() {
     resetOpen = true;
+  }
+  let growOpen = $state(false);
+  function openGrow() {
+    growOpen = true;
   }
   let copied = $state<"yes" | "no" | null>(null);
   async function copyId() {
@@ -123,8 +129,14 @@
           {diskPercent(workspace, "root")} % used. It holds what was installed or
           cached outside the volume. Resetting it removes that (packages reinstall
           on the next start); the volume and your work are untouched. Puddle never
-          does this by itself.
+          does this by itself. Making it bigger keeps everything and needs no reset.
         </p>
+        <button
+          type="button"
+          class="btn primary"
+          disabled={!canGrowRootDisk(workspace)}
+          onclick={openGrow}>Make root disk bigger…</button
+        >
         <button
           type="button"
           class="btn"
@@ -256,9 +268,16 @@
       <p class="hint">
         Reclaiming space gives disk the workspace no longer uses back to your
         computer. Resetting the root disk (a stopped workspace) removes what was
-        installed outside the volume.
+        installed outside the volume. Making it bigger works for a running or a
+        stopped workspace and is kept when it is reset.
       </p>
       <div class="row">
+        <button
+          type="button"
+          class="btn"
+          disabled={!canGrowRootDisk(workspace)}
+          onclick={openGrow}>Make root disk bigger…</button
+        >
         <button
           type="button"
           class="btn"
@@ -315,6 +334,11 @@
       </div>
     </section>
   </div>
+  <GrowRootDiskDialog
+    bind:open={growOpen}
+    {workspace}
+    onSubmit={(gib) => actions.growRootDisk(workspace, gib)}
+  />
   <ConfirmDialog
     bind:open={resetOpen}
     title="Reset the root disk of {workspace.name}?"
@@ -335,7 +359,7 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(24rem, 100%), 1fr));
     gap: var(--space-4);
     align-items: start;
   }
@@ -376,6 +400,7 @@
   }
   .row {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-2);
   }
   .chip {

@@ -1729,6 +1729,75 @@ test.describe("a workspace whose volume is gone", () => {
   });
 });
 
+test.describe("a workspace whose root disk is nearly full, made bigger", () => {
+  test("makes the root disk bigger from the warning, refuses a smaller size, and clears the warning", async ({
+    page,
+    backend,
+  }) => {
+    await backend.control.reset("disks-full");
+    await openDetail(page, backend, "full-root");
+    const root = page.getByTestId("disk-warning-root");
+    await expect(root).toContainText("Root disk nearly full");
+    await root.getByRole("button", { name: "Make root disk bigger…" }).click();
+    const dialog = page.getByRole("dialog");
+    const size = dialog.getByRole("textbox", { name: /New size in GiB/ });
+    await expect(size).toHaveValue("20");
+    await expect(dialog).toContainText("has the room when it starts next");
+    await expectNoAxeViolations(page, "grow dialog");
+    await size.fill("8");
+    await expect(dialog.getByRole("alert")).toContainText(
+      "A root disk only grows: choose more than 10 GiB.",
+    );
+    await expectNoAxeViolations(page, "grow dialog with a refusal");
+    await size.fill("24");
+    await dialog.getByRole("button", { name: "Make bigger" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(
+      toast(page, "Made the root disk of full-root bigger."),
+    ).toBeVisible();
+    await expect(page.getByTestId("disk-warning-root")).toHaveCount(0);
+    await expect(page.getByText("9.7 GiB of 24 GiB used")).toBeVisible();
+    await expectNoAxeViolations(page, "after the grow");
+  });
+
+  test.describe("at 390 px wide", () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+
+    test("the warning and the dialog fit without a horizontal scroll", async ({
+      page,
+      backend,
+    }) => {
+      await backend.control.reset("disks-full");
+      await openDetail(page, backend, "full-root");
+      const overflow = () =>
+        page.evaluate(() => {
+          const width = document.documentElement.clientWidth;
+          const culprits = [...document.body.querySelectorAll("*")]
+            .filter((el) => el.getBoundingClientRect().right > width + 0.5)
+            .slice(0, 6)
+            .map(
+              (el) =>
+                `${el.tagName.toLowerCase()}.${String(el.className)} right=${Math.round(el.getBoundingClientRect().right)}`,
+            );
+          return {
+            by: document.documentElement.scrollWidth - width,
+            culprits,
+          };
+        });
+      const before = await overflow();
+      expect(before.by, before.culprits.join(", ")).toBe(0);
+      await page
+        .getByTestId("disk-warning-root")
+        .getByRole("button", { name: "Make root disk bigger…" })
+        .click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      const during = await overflow();
+      expect(during.by, during.culprits.join(", ")).toBe(0);
+      await expectNoAxeViolations(page, "grow dialog at 390 px");
+    });
+  });
+});
+
 test.describe("a workspace whose disk is nearly full", () => {
   test("warns on the page and the card for the root disk and the volume, and resets only the root disk", async ({
     page,

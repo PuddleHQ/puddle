@@ -172,6 +172,25 @@ impl SandboxName {
 
 string_newtype!(SandboxName);
 
+/// The eight characters 40 random bits give (see [`WorkspaceId::from_random`]).
+fn crockford_id(bytes: [u8; 5]) -> String {
+    const LEN: usize = WorkspaceId::GENERATED_LEN;
+    let [b0, b1, b2, b3, b4] = bytes;
+    let bits = u64::from_be_bytes([0, 0, 0, b0, b1, b2, b3, b4]);
+    (0..LEN)
+        .map(|i| {
+            let five = (bits >> (5 * (LEN - 1 - i))) & 0x1f;
+            let five = usize::try_from(five).unwrap_or_default();
+            let symbol = if i == 0 {
+                DIGITS + five % LETTERS
+            } else {
+                five
+            };
+            CROCKFORD.chars().nth(symbol).unwrap_or('0')
+        })
+        .collect()
+}
+
 /// A workspace's identifier: a DNS label of at most 60 characters, so its volume name
 /// (`ws-<id>`, see [`WorkspaceId::volume_name`]) is a DNS label too.
 ///
@@ -234,21 +253,7 @@ impl WorkspaceId {
     /// ```
     #[must_use]
     pub fn from_random(bytes: [u8; 5]) -> Self {
-        let [b0, b1, b2, b3, b4] = bytes;
-        let bits = u64::from_be_bytes([0, 0, 0, b0, b1, b2, b3, b4]);
-        let id = (0..Self::GENERATED_LEN)
-            .map(|i| {
-                let five = (bits >> (5 * (Self::GENERATED_LEN - 1 - i))) & 0x1f;
-                let five = usize::try_from(five).unwrap_or_default();
-                let symbol = if i == 0 {
-                    DIGITS + five % LETTERS
-                } else {
-                    five
-                };
-                CROCKFORD.chars().nth(symbol).unwrap_or('0')
-            })
-            .collect();
-        Self(id)
+        Self(crockford_id(bytes))
     }
 
     /// The name of the sandbox that runs this workspace: the same label.
@@ -265,6 +270,65 @@ impl WorkspaceId {
 }
 
 string_newtype!(WorkspaceId);
+
+/// The identifier of a repository entry on a workspace's list: what API paths and problem keys
+/// use instead of the checkout's directory. It has the form of a generated workspace id
+/// ([`WorkspaceId::from_random`]) and is unique within its workspace only.
+///
+/// ```
+/// use puddle_types::EntryId;
+/// assert_eq!(EntryId::from_random([0; 5]).as_str(), "a0000000");
+/// assert!(EntryId::new("api").is_err());
+/// assert!(EntryId::new("a0000000").is_ok());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+#[cfg_attr(
+    feature = "openapi",
+    derive(utoipa::ToSchema),
+    schema(
+        value_type = String,
+        min_length = 8,
+        max_length = 8,
+        pattern = "^[a-hjkmnp-tv-z][0-9a-hjkmnp-tv-z]{7}$",
+        example = "a0000000",
+        description = "A repository entry's id: eight characters of lowercase Crockford base32, \
+                       the first a letter. Unique within its workspace."
+    )
+)]
+pub struct EntryId(String);
+
+impl EntryId {
+    /// Checks `id` and wraps it.
+    ///
+    /// # Errors
+    ///
+    /// When `id` is not eight Crockford base32 characters (`0-9`, `a-z` without `i`, `l`, `o`
+    /// and `u`) with a letter first: what [`EntryId::from_random`] gives.
+    pub fn new(id: &str) -> Result<Self, ValidationError> {
+        let symbol = |b: u8| CROCKFORD.bytes().any(|c| c == b);
+        let well_formed = id.len() == WorkspaceId::GENERATED_LEN
+            && id.bytes().all(symbol)
+            && id.bytes().next().is_some_and(|b| b.is_ascii_lowercase());
+        if well_formed {
+            Ok(Self(id.to_owned()))
+        } else {
+            Err(ValidationError::new(
+                "entry id",
+                id,
+                "must be eight characters of 0-9 and a-z without i, l, o and u, the first a letter",
+            ))
+        }
+    }
+
+    /// The entry id that 40 random bits give, the same way [`WorkspaceId::from_random`] does.
+    #[must_use]
+    pub fn from_random(bytes: [u8; 5]) -> Self {
+        Self(crockford_id(bytes))
+    }
+}
+
+string_newtype!(EntryId);
 
 /// A named disk volume's name: a DNS label.
 ///
@@ -499,6 +563,28 @@ mod tests {
             assert!(err.reason().contains("reserved"), "{err}");
         }
         assert!(WorkspaceId::new("tauri-app").is_ok());
+    }
+
+    #[test]
+    fn an_entry_id_takes_what_a_generated_id_looks_like_and_nothing_else() {
+        for bytes in [[0; 5], [0xff; 5], [0x12, 0x34, 0x56, 0x78, 0x9a]] {
+            let id = EntryId::from_random(bytes);
+            assert_eq!(EntryId::new(id.as_str()).unwrap(), id);
+            assert_eq!(id.as_str(), WorkspaceId::from_random(bytes).as_str());
+        }
+        for bad in [
+            "",
+            "api",
+            "shop-api",
+            "0aaaaaaa",
+            "A0000000",
+            "a000000",
+            "a00000000",
+            "i0000000",
+            "a000000u",
+        ] {
+            assert!(EntryId::new(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -5,13 +5,35 @@ use puddle_api::DisplayName;
 use puddle_api::{
     Listing, Operation, RepoFindings, RepoUrl, Repository, SettingsRepo, Unsaved, WorkspaceRecord,
 };
-use puddle_types::{WorkspaceId, WorkspaceStatus};
+use puddle_types::{EntryId, WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};
 
 use crate::common::{Api, START_MS, start, start_without_workspaces};
 use crate::events::Stream;
 
 const REPO: &str = "https://github.com/acme/api.git";
+
+/// The list of repositories without its generated entry ids, after checking that each has a
+/// well-formed one and that no two are alike.
+fn without_entries(list: &Value) -> Value {
+    let mut list = list.clone();
+    let entries: Vec<EntryId> = list
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .map(|r| {
+            let entry = r.as_object_mut().unwrap().remove("entry").unwrap();
+            EntryId::new(entry.as_str().unwrap()).unwrap()
+        })
+        .collect();
+    let distinct: std::collections::BTreeSet<_> = entries.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        entries.len(),
+        "each entry has an id of its own"
+    );
+    list
+}
 
 async fn create(api: &Api, name: &str) -> Value {
     let reply = api
@@ -52,6 +74,7 @@ fn seed(api: &Api, name: &str, status: WorkspaceStatus, unsaved: Unsaved) {
         WorkspaceId::new(name).unwrap(),
         DisplayName::parse(name).unwrap(),
         vec![Repository::at_default_directory(
+            EntryId::from_random([7; 5]),
             RepoUrl::parse(REPO).unwrap(),
         )],
     );
@@ -100,7 +123,11 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
         json!({
             "id": "web",
             "name": "web",
-            "repositories": [{"url": REPO, "directory": "api"}],
+            "repositories": [{
+                "entry": ws["repositories"][0]["entry"],
+                "url": REPO,
+                "directory": "api"
+            }],
             "start_folder": null,
             "session_user": "agent",
             "image": puddle_api::DEFAULT_IMAGE,
@@ -251,8 +278,9 @@ async fn create_with_three_repositories_sets_each_up_and_answers_their_identitie
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     let ws = reply.json();
+    let list = without_entries(&ws["repositories"]);
     assert_eq!(
-        ws["repositories"],
+        list,
         json!([
             {"url": "https://github.com/acme/web.git", "directory": "web"},
             {"url": "https://github.com/me/notes", "directory": "my-notes"},

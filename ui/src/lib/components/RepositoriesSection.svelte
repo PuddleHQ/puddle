@@ -65,7 +65,7 @@
   let manageOpen = $state(false);
   let managing = $state<{ directory: string; url: string } | null>(null);
   let removeOpen = $state(false);
-  let removing = $state("");
+  let removing = $state({ entry: "", directory: "" });
   let problem = $state<string | null>(null);
   let focusAfterManage = false;
 
@@ -116,27 +116,27 @@
 
   async function cloneAgain(entry: ListEntry) {
     problem = null;
-    const result = await store.cloneAgain(entry.directory);
+    const result = await store.cloneAgain(entry.entry);
     if (!result.ok) problem = result.message;
     else toasts.push(`Cloning ${entry.directory} again.`);
   }
 
   async function remove() {
-    const directory = removing;
+    const gone = removing;
     problem = null;
-    const result = await store.remove(directory);
+    const result = await store.remove(gone.entry);
     if (!result.ok) {
       problem = result.message;
       return;
     }
     toasts.push(
-      `Removed ${directory} from the list. Its files stay in the workspace.`,
+      `Removed ${gone.directory} from the list. Its files stay in the workspace.`,
     );
     await focusHeading();
   }
 
   function askRemove(entry: ListEntry) {
-    removing = entry.directory;
+    removing = { entry: entry.entry, directory: entry.directory };
     removeOpen = true;
   }
 
@@ -346,7 +346,7 @@
 
 <ConfirmDialog
   bind:open={removeOpen}
-  title="Remove {removing} from the list?"
+  title="Remove {removing.directory} from the list?"
   summary="Puddle stops managing it: the folder and its files stay in the workspace."
   detail="The checkout keeps working with plain Git. Its Git settings and identities stay as they are, and you can manage it again later."
   confirmLabel="Remove from the list"

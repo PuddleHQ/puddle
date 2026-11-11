@@ -208,15 +208,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn clone_entry_again(
         &self,
         id: &WorkspaceId,
-        directory: &CheckoutDir,
+        entry: &EntryId,
         git: &dyn GitSetup,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         let repository = self
             .get_record(id)?
             .repositories
             .into_iter()
-            .find(|r| &r.directory == directory)
-            .ok_or_else(|| WorkspaceError::NotFound(format!("{directory} is not on the list")))?;
+            .find(|r| &r.entry == entry)
+            .ok_or_else(|| WorkspaceError::NotFound(format!("{entry} is not on the list")))?;
         let new = NewRepository {
             repository,
             identity: None,
@@ -293,7 +293,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     ) -> Result<(), String> {
         let gated = self.gated(&record.id).await?;
         self.progress_cloning(&record.id, repository);
-        let key = clone_problem_key(&record.id, &repository.directory);
+        let key = clone_problem_key(&record.id, &repository.entry);
         let cloned = self
             .inner
             .workspaces
@@ -319,7 +319,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     s.record
                         .repositories
                         .iter()
-                        .any(|r| r.directory == repository.directory)
+                        .any(|r| r.entry == repository.entry)
                 });
                 tracing::warn!(workspace = %record.id, url = %repository.url, %reason, "a repository was not cloned");
                 if listed {
@@ -348,7 +348,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         self.inner.problems.raise(
             Problem::new(
-                clone_problem_key(&record.id, &repository.directory),
+                clone_problem_key(&record.id, &repository.entry),
                 format!(
                     "Puddle could not clone {} into {}",
                     repository.url,
@@ -401,8 +401,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         };
         check_seen(directory, seen, &url)?;
+        let entry = puddle_api::new_entry_id(|e| record.repositories.iter().any(|r| r.entry == *e))
+            .map_err(WorkspaceError::Unavailable)?;
         let new = NewRepository {
             repository: Repository {
+                entry,
                 url,
                 directory: directory.clone(),
             },
@@ -427,12 +430,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(record)
     }
 
-    /// Takes the entry for `directory` off the list; the checkout, the table row and the
-    /// identities stay.
+    /// Takes the entry `entry` off the list; the checkout, the table row and the identities
+    /// stay.
     pub(super) fn remove_entry(
         &self,
         id: &WorkspaceId,
-        directory: &CheckoutDir,
+        entry: &EntryId,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         let record = {
             let mut state = self.state();
@@ -444,12 +447,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 )));
             }
             let before = slot.record.repositories.clone();
-            slot.record
-                .repositories
-                .retain(|r| &r.directory != directory);
+            slot.record.repositories.retain(|r| &r.entry != entry);
             if slot.record.repositories.len() == before.len() {
                 return Err(WorkspaceError::NotFound(format!(
-                    "{directory} is not on the list"
+                    "{entry} is not on the list"
                 )));
             }
             let record = slot.record.clone();
@@ -458,7 +459,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         self.inner
             .problems
-            .clear(&clone_problem_key(&record.id, directory));
+            .clear(&clone_problem_key(&record.id, entry));
         self.repositories_changed(&record.id);
         Ok(record)
     }

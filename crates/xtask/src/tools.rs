@@ -307,22 +307,19 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn inventory_asks_tree_and_about_for_the_same_targets() {
-        use std::os::unix::fs::PermissionsExt;
         // A fake cargo: `tree` lists one package, `about` reports it under MIT; both log their
         // arguments so the test sees which targets each was asked for.
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("args.log");
         let script = dir.path().join("cargo");
         let report = r#"{"licenses":[{"name":"MIT","id":"MIT","text":"t","used_by":[{"crate":{"name":"dep","version":"1.0.0","repository":null},"path":""}]}]}"#;
-        std::fs::write(
+        puddle_test_kit::write_executable(
             &script,
-            format!(
+            &format!(
                 "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1\" in\n  tree) echo 'dep v1.0.0' ;;\n  about) echo '{report}' ;;\nesac\n",
                 log.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let cargo = Cargo {
             program: script.into_os_string(),
             offline: false,

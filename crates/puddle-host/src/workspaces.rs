@@ -48,8 +48,9 @@ use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, WorkspaceSetti
 use puddle_ssh::SshEndpoint;
 use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
-    CheckoutDir, CpuCount, DiskKind, Event, EventSink, GuestEnv, GuestFile, GuestPath, ImageRef,
-    MemoryMib, Problem, Problems, SessionUser, WorkspaceId, WorkspaceStatus, WorkspaceStep,
+    CheckoutDir, CpuCount, DiskKind, EntryId, Event, EventSink, GuestEnv, GuestFile, GuestPath,
+    ImageRef, MemoryMib, Problem, Problems, SessionUser, WorkspaceId, WorkspaceStatus,
+    WorkspaceStep,
 };
 
 use crate::ssh_config::{SshSetup, ssh_host};
@@ -395,8 +396,8 @@ fn problem_key(kind: &str, name: &WorkspaceId) -> String {
 }
 
 /// The key of the problem about one repository of a workspace that could not be cloned.
-fn clone_problem_key(name: &WorkspaceId, directory: &CheckoutDir) -> String {
-    format!("{}:{directory}", problem_key("clone", name))
+fn clone_problem_key(name: &WorkspaceId, entry: &EntryId) -> String {
+    format!("{}:{entry}", problem_key("clone", name))
 }
 
 fn not_found(id: &WorkspaceId) -> WorkspaceError {
@@ -2813,7 +2814,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             any_cloned = true;
             self.progress_cloning(&record.id, repository);
-            let key = clone_problem_key(&record.id, &repository.directory);
+            let key = clone_problem_key(&record.id, &repository.entry);
             let cloned = workspaces
                 .clone_checkout(
                     sandbox,
@@ -3964,18 +3965,18 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn clone_again<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        directory: &'a CheckoutDir,
+        entry: &'a EntryId,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async move { self.clone_entry_again(id, directory, git).await })
+        Box::pin(async move { self.clone_entry_again(id, entry, git).await })
     }
 
     fn remove_repository<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        directory: &'a CheckoutDir,
+        entry: &'a EntryId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async move { self.remove_entry(id, directory) })
+        Box::pin(async move { self.remove_entry(id, entry) })
     }
 
     fn settings_changed(&self) -> BoxFuture<'_, ()> {

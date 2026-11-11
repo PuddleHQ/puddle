@@ -6281,6 +6281,7 @@ dependencies = [
  "puddle-fs",
  "puddle-runtime",
  "puddle-ssh-agent",
+ "puddle-test-kit",
  "rustix",
  "serde",
  "serde_json",
@@ -6659,6 +6660,7 @@ version = "0.0.0"
 dependencies = [
  "object",
  "puddle-fs",
+ "puddle-test-kit",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
@@ -10938,6 +10940,7 @@ dependencies = [
  "object",
  "puddle-api",
  "puddle-runtime",
+ "puddle-test-kit",
  "serde",
  "serde_json",
  "sha2 0.11.1",

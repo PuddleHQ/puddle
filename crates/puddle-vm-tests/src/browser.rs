@@ -21,10 +21,12 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::driver::Driver;
@@ -95,8 +97,8 @@ impl Node {
     ///
     /// # Errors
     ///
-    /// [`HarnessError::Io`] when node can't be started, [`HarnessError::Timeout`] when the budget
-    /// runs out. A non-zero exit is not an error here: it is [`NodeOutput::success`].
+    /// [`HarnessError::Io`] when node can't be started, [`HarnessError::NodeHung`] when the budget
+    /// runs out (it says what node had printed and which steps had finished). A non-zero exit is not an error here: it is [`NodeOutput::success`].
     pub async fn run<I, S>(
         &self,
         args: I,
@@ -111,31 +113,139 @@ impl Node {
         let mut command = self.command(args);
         command.envs(envs.iter().copied());
         let program = PathBuf::from(&self.program);
+        let spawn_began = Instant::now();
         let mut child = command
             .spawn()
             .map_err(|source| HarnessError::io("start node", &program, source))?;
+        let spawn_took = spawn_began.elapsed();
+        let pid = child.id();
+        let progress = Arc::new(Progress::default());
         // A script that never reads its input closes the pipe early: that is not this call's error.
         let feed = child.stdin.take().map(|mut pipe| {
             let input = stdin.to_owned();
+            let progress = Arc::clone(&progress);
             tokio::spawn(async move {
                 let _ = pipe.write_all(input.as_bytes()).await;
+                progress.stdin_done.store(true, Ordering::SeqCst);
             })
         });
-        let waited = tokio::time::timeout(budget, child.wait_with_output()).await;
+        let out = child
+            .stdout
+            .take()
+            .map(|pipe| progress.drain(pipe, Stream::Out));
+        let err = child
+            .stderr
+            .take()
+            .map(|pipe| progress.drain(pipe, Stream::Err));
+        let waited = tokio::time::timeout(budget, async {
+            let status = child.wait().await;
+            progress.exited.store(true, Ordering::SeqCst);
+            // The output ends when every holder of the pipe's write end has closed it: a process
+            // node started that outlives it keeps the pipe open past node's own exit.
+            for reader in [out, err].into_iter().flatten() {
+                let _ = reader.await;
+            }
+            status
+        })
+        .await;
         if let Some(feed) = feed {
             feed.abort();
         }
-        let output = waited
-            .map_err(|_| HarnessError::Timeout {
-                what: "node process",
+        let Ok(status) = waited else {
+            let stage = progress.stage();
+            let _ = child.start_kill();
+            return Err(HarnessError::NodeHung {
                 limit: budget,
-            })?
-            .map_err(|source| HarnessError::io("wait for node", &program, source))?;
+                pid,
+                spawn_took,
+                stage,
+                stdout: progress.text(Stream::Out),
+                stderr: progress.text(Stream::Err),
+            });
+        };
+        let status =
+            status.map_err(|source| HarnessError::io("wait for node", &program, source))?;
         Ok(NodeOutput {
-            success: output.status.success(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            success: status.success(),
+            stdout: progress.text(Stream::Out),
+            stderr: progress.text(Stream::Err),
         })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Stream {
+    Out,
+    Err,
+}
+
+/// What a running node process has done so far: the output read from each pipe and which steps
+/// finished, so a timeout can report both.
+#[derive(Default)]
+struct Progress {
+    stdin_done: AtomicBool,
+    exited: AtomicBool,
+    out_closed: AtomicBool,
+    err_closed: AtomicBool,
+    out: Mutex<Vec<u8>>,
+    err: Mutex<Vec<u8>>,
+}
+
+impl Progress {
+    /// Reads `pipe` to its end into the buffer, on its own task.
+    fn drain<R>(self: &Arc<Self>, mut pipe: R, stream: Stream) -> tokio::task::JoinHandle<()>
+    where
+        R: AsyncReadExt + Unpin + Send + 'static,
+    {
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut chunk = [0_u8; 4096];
+            while let Ok(read) = pipe.read(&mut chunk).await {
+                let Some(got) = chunk.get(..read).filter(|got| !got.is_empty()) else {
+                    break;
+                };
+                this.buffer(stream)
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .extend_from_slice(got);
+            }
+            match stream {
+                Stream::Out => this.out_closed.store(true, Ordering::SeqCst),
+                Stream::Err => this.err_closed.store(true, Ordering::SeqCst),
+            }
+        })
+    }
+
+    fn buffer(&self, stream: Stream) -> &Mutex<Vec<u8>> {
+        match stream {
+            Stream::Out => &self.out,
+            Stream::Err => &self.err,
+        }
+    }
+
+    fn text(&self, stream: Stream) -> String {
+        let bytes = self
+            .buffer(stream)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn stage(&self) -> String {
+        let flag = |done: &AtomicBool| {
+            if done.load(Ordering::SeqCst) {
+                "done"
+            } else {
+                "pending"
+            }
+        };
+        format!(
+            "stdin written: {}, process exited: {}, stdout closed: {}, stderr closed: {}",
+            flag(&self.stdin_done),
+            flag(&self.exited),
+            flag(&self.out_closed),
+            flag(&self.err_closed),
+        )
     }
 }
 
@@ -550,7 +660,32 @@ mod tests {
             )
             .await
             .expect_err("hang");
-        assert!(matches!(err, HarnessError::Timeout { .. }), "{err}");
+        assert!(matches!(err, HarnessError::NodeHung { .. }), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_hung_node_reports_what_it_printed_and_how_far_it_got() {
+        let err = Node::from_env()
+            .run(
+                [
+                    "-e",
+                    "console.log('out-line'); console.error('err-line'); setInterval(()=>{},1000)",
+                ],
+                &[],
+                "",
+                Duration::from_secs(3),
+            )
+            .await
+            .expect_err("hang");
+        let said = err.to_string();
+        assert!(matches!(err, HarnessError::NodeHung { .. }), "{said}");
+        for part in [
+            "stdout: \"out-line",
+            "stderr: \"err-line",
+            "stdin written: done, process exited: pending, stdout closed: pending, stderr closed: pending",
+        ] {
+            assert!(said.contains(part), "{part} not in {said}");
+        }
     }
 
     #[tokio::test]
@@ -694,19 +829,13 @@ mod tests {
         // The variable reaches only the driver's process, through a wrapper around node.
         let node = Node::from_env().program;
         let wrapper = modules.path().join("no-launch.sh");
-        std::fs::write(
+        puddle_test_kit::write_executable(
             &wrapper,
-            format!(
+            &format!(
                 "#!/bin/sh\nSTUB_NO_LAUNCH=1 exec '{}' \"$@\"\n",
                 node.to_string_lossy()
             ),
-        )
-        .expect("wrapper");
-        std::fs::set_permissions(
-            &wrapper,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .expect("chmod");
+        );
         let err = BrowserClient::new(Node::new(&wrapper), modules.path().join("node_modules"))
             .expect("client")
             .session()
@@ -721,16 +850,10 @@ mod tests {
     async fn a_driver_that_dies_says_so_with_its_stderr() {
         let modules = stub_modules();
         let wrapper = modules.path().join("dies.sh");
-        std::fs::write(
+        puddle_test_kit::write_executable(
             &wrapper,
             "#!/bin/sh\necho 'Cannot find module' >&2\nexit 1\n",
-        )
-        .expect("wrapper");
-        std::fs::set_permissions(
-            &wrapper,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .expect("chmod");
+        );
         let err = BrowserClient::new(Node::new(&wrapper), modules.path().join("node_modules"))
             .expect("client")
             .session()

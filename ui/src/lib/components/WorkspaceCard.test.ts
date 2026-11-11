@@ -82,6 +82,7 @@ describe("WorkspaceCard", () => {
 
   it("shows the first repository and how many more, or that there is none", () => {
     const repo = (n: string) => ({
+      entry: `e-${n}`,
       url: `https://github.com/acme/${n}.git`,
       directory: n,
     });
@@ -104,6 +105,7 @@ describe("WorkspaceCard", () => {
 
   it("says which clone of how many is running", () => {
     const repositories = ["api", "web", "cli"].map((n) => ({
+      entry: `e-${n}`,
       url: `https://github.com/acme/${n}.git`,
       directory: n,
     }));

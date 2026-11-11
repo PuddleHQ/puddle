@@ -43,6 +43,7 @@ mod problems;
 mod proxy_sign_in;
 mod repos;
 mod repositories;
+mod repository_hosts;
 mod request_rules;
 mod rule_sets;
 mod rules;
@@ -153,6 +154,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::grow_root_disk))
         .routes(routes!(workspaces::delete_check))
         .routes(routes!(workspaces::attach_workspace))
+        .routes(routes!(repository_hosts::repository_hosts))
         .routes(routes!(repositories::list_checkouts))
         .routes(routes!(repositories::add_repository))
         .routes(routes!(repositories::clone_again))

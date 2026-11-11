@@ -2,6 +2,7 @@
 // What the activity screen shows of an audit record, and how its filters turn into an API query
 // and a page address. Pure: nothing here touches the page or the network.
 import type { components } from "#lib/api/schema.d.ts";
+import { actorLabel } from "#lib/rules/model.ts";
 
 type Schemas = components["schemas"];
 export type AuditEntry = Schemas["AuditEntry"];
@@ -655,7 +656,7 @@ export function describe(record: AuditRecord): RowView {
           ? `${ruleLabel(record.rule)}, by ${record.actor}, ${record.reason}`
           : record.type === "rule_updated"
             ? `${ruleLabel(record.rule)}, by ${record.actor}`
-            : `${ruleLabel(record.rule)}${record.type === "rule_created" ? `, by ${record.rule.created_by}` : ""}`;
+            : `${ruleLabel(record.rule)}${record.type === "rule_created" ? `, by ${actorLabel(record.rule.created_by)}` : ""}`;
       return {
         ts: record.ts,
         workspace: record.rule.workspace_id,
@@ -670,7 +671,7 @@ export function describe(record: AuditRecord): RowView {
       const detail =
         record.type === "request_rule_deleted"
           ? `${requestRuleLabel(record.rule)}, by ${record.actor}, ${record.reason}`
-          : `${requestRuleLabel(record.rule)}, by ${record.rule.created_by}`;
+          : `${requestRuleLabel(record.rule)}, by ${actorLabel(record.rule.created_by)}`;
       return {
         ts: record.ts,
         workspace: record.rule.workspace_id,

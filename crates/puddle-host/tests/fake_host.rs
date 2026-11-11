@@ -4976,6 +4976,48 @@ async fn a_workspace_list_with_a_bad_name_stops_the_start() {
     assert!(rig.runtime.calls().is_empty());
 }
 
+/// The delete check boots an image of its own, and the first pull of that image takes longer than
+/// a request may: it is downloaded when a workspace stops, not when the delete asks for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_workspace_downloads_the_image_the_delete_check_boots() {
+    const CHECK_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian";
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    let pulls = || {
+        rig.runtime
+            .calls()
+            .iter()
+            .filter(|c| c.op == Op::PullImage && c.target.as_deref() == Some(CHECK_IMAGE))
+            .count()
+    };
+    create(&api, &mut events, "acme").await;
+    // The create pulled the workspace's own image, which here is the same one.
+    let before = pulls();
+    // The download fails here: the check and the delete go on, and say why themselves.
+    rig.runtime.inject(
+        Op::PullImage,
+        Fault::once(puddle_compute::ComputeError::ImagePull {
+            image: CHECK_IMAGE.into(),
+            reason: "offline".into(),
+        })
+        .only_for(CHECK_IMAGE),
+    );
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    eventually(
+        "the check image is requested",
+        Duration::from_secs(5),
+        || pulls() > before,
+    )
+    .await;
+    assert_eq!(pulls(), before + 1, "{:?}", rig.runtime.calls());
+    let check = api.get("/api/workspaces/acme/delete-check").await;
+    assert_eq!(check.status, 200, "{}", check.body);
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_is_refused_when_the_workspace_list_cannot_be_saved() {
     let rig = Rig::new();

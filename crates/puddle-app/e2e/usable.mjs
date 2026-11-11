@@ -328,20 +328,6 @@ async function createFromTheForm() {
   await uia.click("Create workspace", inMain("button", "Create workspace"));
 }
 
-/** The inbox: opens it from the sidebar and presses Allow on the forge's row, as the user does. */
-async function allowTheForgeInTheInbox() {
-  await uia.click("the Inbox link", { window: MAIN, role: "link", nameRegex: "^Inbox" });
-  await uia.waitFor("the Inbox heading", heading("Inbox"));
-  await uia.click("Allow for the forge", { window: MAIN, role: "button", nameRegex: `^Allow ${forge.split(".").join("[.]")} for ` });
-  // The row leaves the inbox's waiting list and joins "Decided just now".
-  await uia.waitFor("the decision in the inbox", { window: MAIN, role: "button", nameRegex: "^Undo: Allowed " });
-  await until("the forge request to be allowed", async () => {
-    const rows = (await api("GET", "/api/pending")).json?.requests ?? [];
-    return !rows.some((r) => r.host === forge && r.state === "requested");
-  }, 30_000, 1000);
-  approved.push(`${forge} for ${WORKSPACE} (the Allow button)`);
-}
-
 // ---- the run ---------------------------------------------------------------------------------------
 
 try {
@@ -410,19 +396,13 @@ try {
     2000,
   );
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
-  // The create's own clone asked for the forge before anyone had allowed it, so it was refused and the
-  // workspace came up without the checkout (a problem notice with a retry). The user opens the inbox,
-  // presses Allow, and retries the clone.
-  await until("the forge request to be pending", async () => ((await api("GET", "/api/pending")).json?.requests ?? []).some((r) => r.host === forge && r.state === "requested"), 120_000, 1000);
-  await step("the forge's request is allowed with the inbox's Allow button", allowTheForgeInTheInbox);
+  // The create allowed the forge itself before the first clone, so nobody approves it and nobody
+  // clones again: the checkout is there and the rule says who made it.
   const checkout = `/workspaces/${id}/app/package.json`;
-  let cloned = false;
-  for (let attempt = 1; attempt <= 5 && !cloned; attempt++) {
-    const retry = await api("POST", `/api/workspaces/${id}/repositories/app/clone`, {});
-    note(`clone attempt ${attempt} -> ${retry.status}`);
-    await idle(id).catch(() => {});
-    cloned = (await guest(id, `test -f ${checkout} && echo present`, { root: true, within: 60_000 })).text.includes("present");
-  }
+  const rules = (await api("GET", "/api/rules")).json?.rules ?? [];
+  const grant = rules.find((r) => r.pattern === forge && r.effect === "allow" && r.workspace_id === id);
+  check("the create made an allow rule for the forge, marked as made by the create", grant?.created_by === "workspace_create", JSON.stringify(grant));
+  const cloned = (await guest(id, `test -f ${checkout} && echo present`, { root: true, within: 60_000 })).text.includes("present");
   check("the private repository is cloned into the workspace with the injected credential", cloned, checkout);
   const settled = await idle(id).catch(() => undefined);
   check("the workspace is idle and running after the clone", settled?.status === "running", JSON.stringify(settled));

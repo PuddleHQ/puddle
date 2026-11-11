@@ -608,6 +608,15 @@ describe("a record as a row", () => {
       ).toMatchObject({ detail });
     }
   });
+  it("says a rule made by a workspace create was made by the create", () => {
+    expect(
+      row({
+        ts: 1,
+        type: "rule_created",
+        rule: { ...rule, created_by: "workspace_create" },
+      } as AuditRecord),
+    ).toMatchObject({ detail: "allow for workspace shop, by the create" });
+  });
   it("shows rule changes by pattern and scope, with no outcome", () => {
     const base = { ts: 1, rule };
     expect(row({ ...base, type: "rule_created" } as AuditRecord)).toMatchObject(

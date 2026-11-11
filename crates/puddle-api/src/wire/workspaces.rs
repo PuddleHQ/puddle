@@ -142,6 +142,12 @@ pub struct Workspace {
     #[serde(default)]
     #[schema(required = true)]
     pub identities: Vec<crate::wire::NewWorkspaceIdentity>,
+    /// The hosts creating the workspace, or adding a repository to it, allowed for it because no
+    /// rule decided them (each is a rule made by the create, on the Rules screen). Only those
+    /// answers fill it; every other answer has an empty list.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub allowed_hosts: Vec<crate::wire::AllowedHost>,
 }
 
 impl Workspace {
@@ -186,6 +192,7 @@ impl Workspace {
             settings_error: None,
             first_connect_notice_due: false,
             identities: Vec::new(),
+            allowed_hosts: Vec::new(),
         }
     }
 
@@ -200,6 +207,13 @@ impl Workspace {
     #[must_use]
     pub fn with_identities(mut self, identities: Vec<crate::wire::NewWorkspaceIdentity>) -> Self {
         self.identities = identities;
+        self
+    }
+
+    /// The same workspace, with the hosts its create allowed.
+    #[must_use]
+    pub fn with_allowed_hosts(mut self, hosts: Vec<crate::wire::AllowedHost>) -> Self {
+        self.allowed_hosts = hosts;
         self
     }
 

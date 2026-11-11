@@ -27,6 +27,7 @@ export function workspace(
       },
     ],
     start_folder: null,
+    allowed_hosts: [],
     session_user: "agent",
     image: "mcr.microsoft.com/devcontainers/base:debian",
     memory_mib: 8192,

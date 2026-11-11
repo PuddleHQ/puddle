@@ -4,6 +4,8 @@
   import { goto } from "$app/navigation";
   import FormDialog from "./FormDialog.svelte";
   import RepoPicker from "./RepoPicker.svelte";
+  import RepositoryHostsNotice from "./RepositoryHostsNotice.svelte";
+  import { allowedNotice, type HostCheck } from "#lib/workspaces/hosts.ts";
   import { covering, type Identity } from "#lib/identities/model.ts";
   import { previewIdentity, type Preview } from "#lib/identities/preview.ts";
   import { parseRepoUrl } from "#lib/identities/repo.ts";
@@ -52,6 +54,7 @@
     identities = identityStore,
     prefill = null,
     onCreated,
+    hostCheck = undefined,
   }: {
     open?: boolean;
     store?: Pick<WorkspaceStore, "create">;
@@ -65,7 +68,10 @@
     prefill?: { url: string; identity: number | null } | null;
     /** Called with the new workspace (still being created) once the service accepted it. */
     onCreated?: (workspace: Workspace) => void;
+    /** For tests: the host check. */
+    hostCheck?: HostCheck;
   } = $props();
+  let hostBlocked = $state(false);
 
   type FormField = Exclude<Field, "repo_url">;
 
@@ -301,6 +307,8 @@
       open = false;
       reset();
       warnAboutIdentities(result.value);
+      const allowed = allowedNotice(result.value.allowed_hosts);
+      if (allowed) toasts.push(allowed, { ms: 10_000 });
       onCreated?.(result.value);
       return;
     }
@@ -721,6 +729,12 @@
       </div>
     </details>
 
+    <RepositoryHostsNotice
+      urls={rows.map((row) => row.url)}
+      {...hostCheck ? { check: hostCheck } : {}}
+      onBlocked={(b) => (hostBlocked = b)}
+    />
+
     {#if errors.form}
       <p class="error" role="alert">{errors.form}</p>
     {/if}
@@ -734,7 +748,11 @@
           reset();
         }}>Cancel</button
       >
-      <button type="submit" class="btn primary" disabled={working}>
+      <button
+        type="submit"
+        class="btn primary"
+        disabled={working || hostBlocked}
+      >
         {working ? "Creating…" : "Create workspace"}
       </button>
     </div>

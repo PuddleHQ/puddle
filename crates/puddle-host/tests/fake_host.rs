@@ -3481,10 +3481,11 @@ async fn the_front_serves_code_server_without_the_key_cookie_and_closes_with_the
     assert!(!answer.contains("puddle-secret-half="), "{answer}");
     host.shutdown().await;
     let port: u16 = origin.rsplit(':').next().unwrap().parse().unwrap();
-    assert!(
-        tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_err(),
+    // Not "the port refuses connections": the front's number can be another test's by now. The front
+    // answered this request with the editor's 200 above; a stranger on its old port does not.
+    assert_ne!(
+        puddle_test_kit::http_status(([127, 0, 0, 1], port).into(), "/", ""),
+        Some(200),
         "the front's listener is gone after shutdown"
     );
 }
@@ -3708,13 +3709,15 @@ async fn shutdown_runs_the_steps_in_order_and_trims_then_stops_every_sandbox() {
         assert!(info.status.is_down(), "{info:?}");
     }
     // The API is gone, and a second shutdown returns the first result.
-    assert!(
-        tokio::net::TcpStream::connect((
-            host.url().host_str().unwrap(),
-            host.url().port().unwrap()
-        ))
-        .await
-        .is_err()
+    // Not "the port refuses connections": the API's number can be another test's by now. A stopped
+    // host no longer answers its own token.
+    assert_ne!(
+        puddle_test_kit::http_status(
+            ([127, 0, 0, 1], host.url().port().unwrap()).into(),
+            "/api/workspaces",
+            host.token()
+        ),
+        Some(200)
     );
     assert_eq!(host.shutdown().await, down);
     assert_eq!(

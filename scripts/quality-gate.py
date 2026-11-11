@@ -634,6 +634,8 @@ def flake_rust(f, raw, code, com, test, rows_add):
             hit("w3", i)
 
     pickers = {}
+    picker_ranges = [(i, item_end(code, i)[0]) for i, line in enumerate(code)
+                     if re.search(r"\bfn\s+\w+[^{;]*->\s*u16\b", line)]
     real_dns = f.startswith("crates/puddle-vm-tests/") or (("/tests/" in f or f.startswith("tests/")) and any(FLAKE_REAL_DNS.search(c) for c in code))
     for i, line in enumerate(code):
         t = test[i]
@@ -650,6 +652,9 @@ def flake_rust(f, raw, code, com, test, rows_add):
                 hit("p1", i)
         elif re.search(r"bind\([^;]*\)[^;]*\.local_addr\(\)[^;]*\.port\(\)", line) and not re.search(r"\blet\s+\w+\s*=\s*\w*Listener", line):
             hit("p1", i)
+        if t:
+            flake_dropped_port(code, raw, i, hit, picker_ranges)
+            flake_refused_after_stop(code, i, hit)
         if t and re.search(r"\b\w*file\w*\.lock(?:_exclusive|_shared)?\(\)", line, re.I):
             hit("w2", i)
         m = FLAKE_WAIT_NAME.match(line)
@@ -694,6 +699,64 @@ def flake_rust(f, raw, code, com, test, rows_add):
                     FLAKE_PATH_FORMAT.search(raw[i]) and FLAKE_PATH_WORD.search(raw[i])):
                 hit("f1", i)
     return pickers
+
+
+FLAKE_SOCKET_BIND = re.compile(r"\b(?:TcpListener|UdpSocket)::bind\(")
+FLAKE_HELD_PORT = re.compile(r"\b(?:quiet_port|ReservedPort|refused_port|reserved)\b")
+FLAKE_FN_HEAD = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s")
+
+
+def statement_from(code, i, span=8):
+    """The text of the statement that starts on line i: up to the first `;`, or a closing brace line, within `span` lines."""
+    out = []
+    for k in range(i, min(len(code), i + span)):
+        out.append(code[k])
+        if ";" in code[k] or code[k].strip() == "}":
+            break
+    return "\n".join(out).split(";")[0]
+
+
+def flake_dropped_port(code, raw, i, hit, picker_ranges):
+    """Rule p1 beyond a picker fn: a listener bound to port 0 whose port is read and then given up (a chain
+    that drops the listener in the same statement, or `drop(listener)` after `listener.local_addr()`)."""
+    line = code[i]
+    if not FLAKE_SOCKET_BIND.search(line) or re.search(r"\blet\s*\(", line) or any(a <= i <= b for a, b in picker_ranges):
+        return
+    stmt = statement_from(code, i)
+    after_bind = FLAKE_SOCKET_BIND.split(stmt, maxsplit=1)[-1]
+    if "local_addr(" in after_bind:
+        hit("p1", i)
+        return
+    m = re.search(r"\blet\s+(?:mut\s+)?(\w+)\s*=", line)
+    if not m:
+        return
+    name = m.group(1)
+    end = item_end(code, max(range(i + 1), key=lambda k: k if FLAKE_FN_HEAD.match(code[k]) else -1))[0]
+    ports = set()  # variables that took the listener's address or port
+    for j in range(i + 1, min(end, i + 60) + 1):
+        if re.search(rf"\b{name}\.local_addr\(\)", code[j]):
+            taken = re.match(r"\s*let\s+(?:mut\s+)?(\w+)\s*=", code[j])
+            if taken:
+                ports.add(taken.group(1))
+        if re.search(rf"\bdrop\(\s*{name}\s*\)", code[j]):
+            if any(re.search(rf"\b{v}\b", c) for v in ports for c in raw[j + 1:end + 1]):  # the number is used after the listener is gone
+                hit("p1", i)
+            return
+
+
+def flake_refused_after_stop(code, i, hit):
+    """Rule p3: a connect that must fail because a server stopped or never was. The port is a stranger's by then
+    unless the test holds it (a port from `quiet_port` or `ReservedPort`)."""
+    line = code[i]
+    if not re.search(r"\bTcpStream::connect\(", line):
+        return
+    stmt = statement_from(code, i)
+    if not re.search(r"\.is_err\(\)|\.unwrap_err\(\)|\.expect_err\(", stmt.partition("connect(")[2]):
+        return
+    start = max((k for k in range(i + 1) if FLAKE_FN_HEAD.match(code[k])), default=0)
+    if any(FLAKE_HELD_PORT.search(code[k]) for k in range(start, i + 1)):
+        return
+    hit("p3", i)
 
 
 FLAKE_NET_CALL = re.compile(r"\b(?:bind|connect)\w*\s*\(|\blisten\s*\(|\b(?:Tcp(?:Listener|Stream)|UdpSocket)\b")
@@ -1029,6 +1092,14 @@ def flake_self_test():
     case("p1 fix", "p1", {mod_rs: reasoned(read("p1-free-port.bad.rs.txt"), "pub fn free_port"), call_good: read("p1-free-port-call.good.rs.txt")}, 1, 0)
     case("p1 a picker that keeps its listener is not one", "p1", {mod_rs: "pub fn serve() -> u16 {\n    let l = TcpListener::bind((LOCAL, 0)).unwrap();\n    let port = l.local_addr().unwrap().port();\n    tokio::spawn(async move { l.accept().await });\n    port\n}\n"}, 0, 0)
     case("p1 a held listener is not one", "p1", {mod_rs: "fn t() { let listener = TcpListener::bind((LOCAL, 0)).unwrap(); let port = listener.local_addr().unwrap().port(); }\n"}, 0, 0)
+    dropped, held = read("p1-dropped-listener.bad.rs.txt"), read("p1-dropped-listener.good.rs.txt")
+    case("p1 a dead port made by a dropped listener", "p1", {FLAKE_HOST: dropped}, 2, 2)
+    case("p1 a dead port held for the test", "p1", {FLAKE_HOST: held}, 0, 0)
+    case("p1 a dropped listener reasoned", "p1", {FLAKE_HOST: reasoned(reasoned(dropped, "let closed"), "let gone")}, 2, 0)
+    case("p3 original", "p3", {FLAKE_HOST: read("p3-refused-connect.bad.rs.txt")}, 2, 2)
+    case("p3 fix", "p3", {FLAKE_HOST: read("p3-refused-connect.good.rs.txt")}, 0, 0)
+    case("p3 reasoned", "p3", {FLAKE_HOST: reasoned(read("p3-refused-connect.bad.rs.txt"), "TcpStream::connect")}, 2, 0)
+    case("p3 in production code", "p3", {"crates/x/src/lib.rs": read("p3-refused-connect.bad.rs.txt")}, 0, 0)
     case("a1 original", "a1", {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.bad.rs.txt")}, 1, 1)
     case("a1 fix", "a1", {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.good.rs.txt")}, 0, 0)
     store = "crates/puddle-store/tests/events_and_audit_query.rs"

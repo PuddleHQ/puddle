@@ -10,7 +10,7 @@ use std::time::Duration;
 use puddle_agent::config::OomSources;
 use puddle_types::Event;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 
 #[tokio::test]
 async fn a_guest_oom_kill_becomes_one_event_on_the_hosts_sink_within_2_s() {
@@ -69,11 +69,8 @@ async fn a_guest_oom_kill_becomes_one_event_on_the_hosts_sink_within_2_s() {
     assert_eq!(event, Event::oom_kill(common::workspace(), 4040, "node"));
 
     // The agent still relays: the host answers a CONNECT to a closed port with 502.
-    let gone = TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
+    let closed = puddle_test_kit::ReservedPort::new();
+    let gone = std::net::SocketAddr::from(([127, 0, 0, 1], closed.port()));
     let mut conn = TcpStream::connect(rig.agent.local_addr()).await.unwrap();
     conn.write_all(format!("CONNECT {gone} HTTP/1.1\r\n\r\n").as_bytes())
         .await

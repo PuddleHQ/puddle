@@ -1,0 +1,20 @@
+// Original code, kept as it was; puddle-proxy tests/integration/pull.rs at 629fced84: "the listener is closed" asserted by a refused connect to the number the proxy gave back.
+async fn shutting_the_route_closes_its_listener() {
+    let addr = route.local_addr();
+    route.shutdown().await;
+    assert!(
+        std::net::TcpStream::connect(addr).is_err(),
+        "the listener is closed"
+    );
+}
+
+// Original code, kept as it was; puddle-host tests/fake_host.rs at 629fced84.
+async fn the_front_closes_with_the_host() {
+    host.shutdown().await;
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err(),
+        "the front's listener is gone after shutdown"
+    );
+}

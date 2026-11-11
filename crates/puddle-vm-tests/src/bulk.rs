@@ -286,9 +286,18 @@ mod tests {
         let addr = host.addr();
         drop(host);
         puddle_test_kit::eventually_async(
-            "the port refusing connections",
+            "the host no longer answering",
             std::time::Duration::from_secs(5),
-            || async { TcpStream::connect(addr).await.is_err() },
+            // Not "the port refuses connections": the host bound port 0 and gave the number back, so another
+            // test's socket can hold it by now. A request the host would answer with 400 shows it is gone.
+            || async move {
+                let status = tokio::task::spawn_blocking(move || {
+                    puddle_test_kit::http_status(addr, "/", "")
+                })
+                .await
+                .unwrap();
+                (status != Some(400)).then_some(())
+            },
         )
         .await;
     }

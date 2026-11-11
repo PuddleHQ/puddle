@@ -4490,14 +4490,7 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
 
     // A forward from this computer's loopback reaches the guest server, on each address it
     // listens on; the agent's own proxy port is refused.
-    let free = || {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
-    };
-    let (pinned_port, plain_port) = (free(), free());
+    let (pinned_port, plain_port) = (puddle_test_kit::quiet_port(), puddle_test_kit::quiet_port());
     let put = api
         .put(
             &format!("{path}/8000"),
@@ -4514,7 +4507,7 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
     assert_eq!(put.status, 200, "{}", put.body);
     assert_eq!(greeting(pinned_port).await, "hello from loopback\n");
     assert_eq!(greeting(plain_port).await, "hello from wildcard\n");
-    let proxy_port = free();
+    let proxy_port = puddle_test_kit::quiet_port();
     api.put(
         &format!("{path}/3128"),
         &json!({"host_port": proxy_port}).to_string(),

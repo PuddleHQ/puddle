@@ -117,8 +117,8 @@ mod tests {
 
     #[test]
     fn the_system_names_a_program_that_listens_and_has_nothing_to_say_about_a_free_port() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let port = puddle_test_kit::quiet_port();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
         let name = SystemPrograms.program(port);
         assert!(
             name.as_deref().is_some_and(|n| !n.is_empty()),

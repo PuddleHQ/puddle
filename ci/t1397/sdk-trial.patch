@@ -1,0 +1,345 @@
+diff --git a/sdk/rust/Cargo.toml b/sdk/rust/Cargo.toml
+index c25a1e07..3925b70e 100644
+--- a/sdk/rust/Cargo.toml
++++ b/sdk/rust/Cargo.toml
+@@ -143,7 +143,7 @@ keyring = { version = "3.6.3", features = ["apple-native"], optional = true }
+ 
+ [target.'cfg(target_os = "windows")'.dependencies]
+ keyring = { version = "3.6.3", features = ["windows-native"], optional = true }
+-windows-sys = { version = "0.61.2", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Com", "Win32_UI_Shell"] }
++windows-sys = { version = "0.61.2", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Com", "Win32_UI_Shell", "Win32_Security_Authorization", "Win32_Security_Isolation", "Win32_System_Diagnostics_ToolHelp"] }
+ 
+ [target.'cfg(target_os = "linux")'.dependencies]
+ # Transitive dep via keyring's Secret Service backend; declared here only to force the `vendored` feature
+diff --git a/sdk/rust/lib/runtime/handle.rs b/sdk/rust/lib/runtime/handle.rs
+index 713509ab..c62a63a2 100644
+--- a/sdk/rust/lib/runtime/handle.rs
++++ b/sdk/rust/lib/runtime/handle.rs
+@@ -441,6 +441,15 @@ impl WindowsJob {
+ 
+         let mut limits = unsafe { std::mem::zeroed::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() };
+         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
++        let trial_limits = crate::runtime::sandbox_trial::job_limits();
++        if trial_limits.iter().any(|l| l == "active1") {
++            limits.BasicLimitInformation.LimitFlags |= 8; // JOB_OBJECT_LIMIT_ACTIVE_PROCESS
++            limits.BasicLimitInformation.ActiveProcessLimit = 1;
++        }
++        if trial_limits.iter().any(|l| l == "ui") {
++            let ui: u32 = 0x1ff; // JOB_OBJECT_UILIMIT_ALL
++            unsafe { SetInformationJobObject(handle, 4, (&ui as *const u32).cast(), 4) };
++        }
+ 
+         let result = unsafe {
+             SetInformationJobObject(
+diff --git a/sdk/rust/lib/runtime/mod.rs b/sdk/rust/lib/runtime/mod.rs
+index 04a864fc..35b7cbc4 100644
+--- a/sdk/rust/lib/runtime/mod.rs
++++ b/sdk/rust/lib/runtime/mod.rs
+@@ -21,6 +21,8 @@ pub(crate) mod protected_state;
+ #[cfg_attr(not(windows), allow(dead_code))]
+ pub(crate) mod reap;
+ pub(crate) mod spawn;
++#[cfg(windows)]
++pub(crate) mod sandbox_trial;
+ 
+ //--------------------------------------------------------------------------------------------------
+ // Re-Exports
+diff --git a/sdk/rust/lib/runtime/sandbox_trial.rs b/sdk/rust/lib/runtime/sandbox_trial.rs
+new file mode 100644
+index 00000000..ef9aff66
+--- /dev/null
++++ b/sdk/rust/lib/runtime/sandbox_trial.rs
+@@ -0,0 +1,265 @@
++//! RESEARCH ONLY (never shipped): start the sandbox runtime under a candidate sandbox control,
++//! chosen by the environment variable PUDDLE_SANDBOX_TRIAL:
++//!   restricted | rsids | low | lowbox:<appcontainer name>:<capability>[,<capability>...]
++//! The child is created suspended, its primary token is replaced before its first instruction,
++//! then its threads are resumed. PUDDLE_SANDBOX_TRIAL_JOB=ui,active1 adds job limits.
++
++use std::ffi::OsStr;
++use std::os::windows::ffi::OsStrExt;
++
++use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
++use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
++use windows_sys::Win32::Security::Isolation::{
++    CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
++};
++use windows_sys::Win32::Security::*;
++use windows_sys::Win32::System::Diagnostics::ToolHelp::{
++    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
++};
++use windows_sys::Win32::System::Threading::{
++    GetCurrentProcess, OpenProcessToken, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
++};
++
++#[link(name = "ntdll", kind = "raw-dylib")]
++unsafe extern "system" {
++    fn NtSetInformationProcess(h: HANDLE, class: u32, info: *const core::ffi::c_void, len: u32) -> i32;
++    fn NtCreateLowBoxToken(
++        out: *mut HANDLE,
++        existing: HANDLE,
++        access: u32,
++        oa: *const core::ffi::c_void,
++        package: PSID,
++        ncap: u32,
++        caps: *const SID_AND_ATTRIBUTES,
++        nh: u32,
++        h: *const HANDLE,
++    ) -> i32;
++    fn DeriveCapabilitySidsFromName(
++        name: *const u16,
++        groups: *mut *mut PSID,
++        ngroups: *mut u32,
++        caps: *mut *mut PSID,
++        ncaps: *mut u32,
++    ) -> i32;
++}
++
++pub(crate) fn mode() -> Option<String> {
++    std::env::var("PUDDLE_SANDBOX_TRIAL")
++        .ok()
++        .filter(|s| !s.is_empty())
++}
++
++pub(crate) fn job_limits() -> Vec<String> {
++    std::env::var("PUDDLE_SANDBOX_TRIAL_JOB")
++        .unwrap_or_default()
++        .split(',')
++        .filter(|s| !s.is_empty())
++        .map(str::to_owned)
++        .collect()
++}
++
++fn w(s: &str) -> Vec<u16> {
++    OsStr::new(s).encode_wide().chain(Some(0)).collect()
++}
++
++fn err(what: &str) -> std::io::Error {
++    let e = std::io::Error::last_os_error();
++    std::io::Error::other(format!("sandbox trial: {what}: {e}"))
++}
++
++unsafe fn sid(s: &str) -> std::io::Result<PSID> {
++    let mut out: PSID = std::ptr::null_mut();
++    if s.starts_with("S-") {
++        if unsafe { ConvertStringSidToSidW(w(s).as_ptr(), &mut out) } == 0 {
++            return Err(err("ConvertStringSidToSidW"));
++        }
++        return Ok(out);
++    }
++    let (mut g, mut ng, mut c, mut nc) = (std::ptr::null_mut(), 0u32, std::ptr::null_mut(), 0u32);
++    if unsafe { DeriveCapabilitySidsFromName(w(s).as_ptr(), &mut g, &mut ng, &mut c, &mut nc) } == 0
++        || nc == 0
++    {
++        return Err(err("DeriveCapabilitySidsFromName"));
++    }
++    Ok(unsafe { *c })
++}
++
++unsafe fn token_info(tok: HANDLE, class: i32) -> Vec<u8> {
++    let mut len = 0u32;
++    unsafe { GetTokenInformation(tok, class, std::ptr::null_mut(), 0, &mut len) };
++    let mut buf = vec![0u8; len as usize];
++    unsafe { GetTokenInformation(tok, class, buf.as_mut_ptr().cast(), len, &mut len) };
++    buf
++}
++
++unsafe fn make_token(mode: &str) -> std::io::Result<HANDLE> {
++    let mut tok: HANDLE = std::ptr::null_mut();
++    if unsafe {
++        OpenProcessToken(
++            GetCurrentProcess(),
++            TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT,
++            &mut tok,
++        )
++    } == 0
++    {
++        return Err(err("OpenProcessToken"));
++    }
++    if let Some(rest) = mode.strip_prefix("lowbox:") {
++        let (name, caps) = rest.split_once(':').unwrap_or((rest, ""));
++        let mut ac: PSID = std::ptr::null_mut();
++        // Registers the profile once per user (AppContainer processes need it).
++        unsafe {
++            CreateAppContainerProfile(
++                w(name).as_ptr(),
++                w(name).as_ptr(),
++                w(name).as_ptr(),
++                std::ptr::null(),
++                0,
++                &mut ac,
++            )
++        };
++        if unsafe { DeriveAppContainerSidFromAppContainerName(w(name).as_ptr(), &mut ac) } < 0 {
++            return Err(err("DeriveAppContainerSidFromAppContainerName"));
++        }
++        let mut cap_attrs = Vec::new();
++        for c in caps.split(',').filter(|c| !c.is_empty()) {
++            cap_attrs.push(SID_AND_ATTRIBUTES {
++                Sid: unsafe { sid(c)? },
++                Attributes: 4, // SE_GROUP_ENABLED
++            });
++        }
++        let mut out: HANDLE = std::ptr::null_mut();
++        let st = unsafe {
++            NtCreateLowBoxToken(
++                &mut out,
++                tok,
++                0xF01FF,
++                std::ptr::null(),
++                ac,
++                cap_attrs.len() as u32,
++                cap_attrs.as_ptr(),
++                0,
++                std::ptr::null(),
++            )
++        };
++        if st < 0 {
++            return Err(std::io::Error::other(format!(
++                "sandbox trial: NtCreateLowBoxToken status 0x{st:08x}"
++            )));
++        }
++        return Ok(out);
++    }
++    let mut deny = Vec::new();
++    for s in ["S-1-5-32-544", "S-1-5-114", "S-1-5-32-578"] {
++        deny.push(SID_AND_ATTRIBUTES { Sid: unsafe { sid(s)? }, Attributes: 0 });
++    }
++    let mut restrict = Vec::new();
++    let mut keep = Vec::new();
++    if mode == "rsids" {
++        let user = unsafe { token_info(tok, TokenUser) };
++        let tu = unsafe { &*(user.as_ptr() as *const TOKEN_USER) };
++        restrict.push(SID_AND_ATTRIBUTES { Sid: tu.User.Sid, Attributes: 0 });
++        let logon = unsafe { token_info(tok, TokenLogonSid) };
++        if !logon.is_empty() {
++            let tg = unsafe { &*(logon.as_ptr() as *const TOKEN_GROUPS) };
++            if tg.GroupCount > 0 {
++                restrict.push(SID_AND_ATTRIBUTES { Sid: tg.Groups[0].Sid, Attributes: 0 });
++            }
++        }
++        keep.push(user);
++        keep.push(logon);
++        for s in ["S-1-1-0", "S-1-5-32-545", "S-1-5-11", "S-1-5-12", "S-1-5-4"] {
++            restrict.push(SID_AND_ATTRIBUTES { Sid: unsafe { sid(s)? }, Attributes: 0 });
++        }
++    }
++    let mut out: HANDLE = std::ptr::null_mut();
++    if unsafe {
++        CreateRestrictedToken(
++            tok,
++            DISABLE_MAX_PRIVILEGE,
++            deny.len() as u32,
++            deny.as_ptr(),
++            0,
++            std::ptr::null(),
++            restrict.len() as u32,
++            if restrict.is_empty() { std::ptr::null() } else { restrict.as_ptr() },
++            &mut out,
++        )
++    } == 0
++    {
++        return Err(err("CreateRestrictedToken"));
++    }
++    if mode == "low" {
++        let label = TOKEN_MANDATORY_LABEL {
++            Label: SID_AND_ATTRIBUTES { Sid: unsafe { sid("S-1-16-4096")? }, Attributes: 0x20 },
++        };
++        let len = std::mem::size_of::<TOKEN_MANDATORY_LABEL>() as u32
++            + unsafe { GetLengthSid(label.Label.Sid) };
++        if unsafe {
++            SetTokenInformation(
++                out,
++                TokenIntegrityLevel,
++                (&label as *const TOKEN_MANDATORY_LABEL).cast(),
++                len,
++            )
++        } == 0
++        {
++            return Err(err("SetTokenInformation(IntegrityLevel)"));
++        }
++    }
++    drop(keep);
++    Ok(out)
++}
++
++/// Swap the suspended child's primary token, then resume its threads.
++pub(crate) fn apply(process: HANDLE, pid: u32, mode: &str) -> std::io::Result<()> {
++    unsafe {
++        let tok = make_token(mode)?;
++        #[repr(C)]
++        struct ProcessAccessToken {
++            token: HANDLE,
++            thread: HANDLE,
++        }
++        let pat = ProcessAccessToken { token: tok, thread: std::ptr::null_mut() };
++        let st = NtSetInformationProcess(
++            process,
++            9,
++            (&pat as *const ProcessAccessToken).cast(),
++            std::mem::size_of::<ProcessAccessToken>() as u32,
++        );
++        CloseHandle(tok);
++        if st < 0 {
++            return Err(std::io::Error::other(format!(
++                "sandbox trial: NtSetInformationProcess(ProcessAccessToken) status 0x{st:08x}"
++            )));
++        }
++        eprintln!("sandbox trial: runtime pid {pid} runs with token mode {mode}");
++        resume(pid)
++    }
++}
++
++pub(crate) fn resume(pid: u32) -> std::io::Result<()> {
++    unsafe {
++        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
++        let mut te: THREADENTRY32 = std::mem::zeroed();
++        te.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
++        let mut ok = Thread32First(snap, &mut te);
++        let mut resumed = 0;
++        while ok != 0 {
++            if te.th32OwnerProcessID == pid {
++                let th = OpenThread(THREAD_SUSPEND_RESUME, 0, te.th32ThreadID);
++                if !th.is_null() {
++                    ResumeThread(th);
++                    CloseHandle(th);
++                    resumed += 1;
++                }
++            }
++            ok = Thread32Next(snap, &mut te);
++        }
++        CloseHandle(snap);
++        if resumed == 0 {
++            return Err(std::io::Error::other("sandbox trial: no thread to resume"));
++        }
++        Ok(())
++    }
++}
+diff --git a/sdk/rust/lib/runtime/spawn.rs b/sdk/rust/lib/runtime/spawn.rs
+index 4ccec1c3..89c72d7d 100644
+--- a/sdk/rust/lib/runtime/spawn.rs
++++ b/sdk/rust/lib/runtime/spawn.rs
+@@ -1065,6 +1065,23 @@ fn spawn_runtime_command(
+     } else {
+         None
+     };
++    #[cfg(windows)]
++    if let Some(mode) = super::sandbox_trial::mode() {
++        use std::os::windows::process::CommandExt;
++        cmd.as_std_mut().creation_flags(
++            super::launcher_isolation::creation_flags(_mode)
++                | windows_sys::Win32::System::Threading::CREATE_SUSPENDED,
++        );
++        let child = cmd.spawn()?;
++        let pid = child.id().unwrap_or(0);
++        let handle = child.raw_handle().unwrap_or(std::ptr::null_mut());
++        if let Err(e) = super::sandbox_trial::apply(handle as _, pid, &mode) {
++            eprintln!("{e}");
++            let _ = super::sandbox_trial::resume(pid);
++            return Err(e);
++        }
++        return Ok(child);
++    }
+     cmd.spawn()
+ }
+ 

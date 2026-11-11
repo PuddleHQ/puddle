@@ -126,19 +126,25 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
+      - name: research only - patch the msb SDK with the sandbox trial spawner
+        if: steps.changed.outputs.run == 'true'
+        shell: bash
+        run: |
+          cfg=$(ci/t1397/patch-sdk.sh "$RUNNER_TEMP")
+          echo "TRIAL_PATCH_CFG=$cfg" >> "$GITHUB_ENV"
       - name: build the VM tests once (nextest archive)
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/bundle"
-          cargo nextest archive $VM_CRATES --profile vm --locked --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
+          cargo nextest archive $VM_CRATES --profile vm --config "$TRIAL_PATCH_CFG" --archive-file "$RUNNER_TEMP/bundle/vm-tests.tar.zst"
       # The tests this run will execute, which the partition jobs split by measured time (ci/vm-partition.sh).
       # Listed from the build that was just archived, so the list and the archive cannot differ.
       - name: list the VM tests for the partition jobs
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: |
-          cargo nextest list $VM_CRATES --profile vm --locked --color never -E "$(ci/vm-filter.sh)" \
+          cargo nextest list $VM_CRATES --profile vm --config "$TRIAL_PATCH_CFG" --color never -E "$(ci/vm-filter.sh)" \
             --message-format oneline > "$RUNNER_TEMP/bundle/vm-tests.list"
           wc -l < "$RUNNER_TEMP/bundle/vm-tests.list"
       - name: share the archive and the test list with the test jobs
@@ -196,7 +202,7 @@ jobs:
         uses: ./.github/actions/cancel-group
 
   tests:
-    name: vm-windows tests (partition ${{ matrix.partition }} of 12)
+    name: vm-windows tests (${{ matrix.trial }}, partition ${{ matrix.partition }} of 4)
     needs: [build, agent]
     if: ${{ needs.build.outputs.run == 'true' && !inputs.vscode_only }}
     permissions:
@@ -214,7 +220,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        trial: [base, strong, restricted, rsids, low, lowbox]
+        partition: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: WHP preflight (infrastructure)
@@ -263,7 +270,11 @@ jobs:
         with:
           name: vm-windows-agent
           path: ${{ runner.temp }}/bundle
-      - name: VM tests (tier W, partition ${{ matrix.partition }} of 12)
+      - name: research only - sandbox trial ${{ matrix.trial }}
+        if: steps.whp.outputs.ok == 'true'
+        shell: pwsh
+        run: ci/t1397/trial.ps1 -Trial ${{ matrix.trial }}
+      - name: VM tests (tier W, partition ${{ matrix.partition }} of 4)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 52 || 32 }}
@@ -280,7 +291,7 @@ jobs:
           # Which tests run here is ci/vm-filter.sh (vm_machine_*, vm_radar_* and, off the nightly, vm_soak_* and vm_perf_* stay out).
           FILTER=$(ci/vm-filter.sh)
           # This partition's share by measured time; the hash split, with a warning, when that data is unusable.
-          sel=$(ci/vm-partition.sh args "${{ matrix.partition }}" "${{ strategy.job-total }}" \
+          sel=$(ci/vm-partition.sh args "${{ matrix.partition }}" 4 \
             "$(cygpath -u "$RUNNER_TEMP")/bundle/vm-tests.list" ci/vm-test-timings-windows.tsv "$FILTER") || exit 1
           mapfile -t part <<<"$sel"
           # At the deadline nextest stops the test still running, names it and writes junit.xml.
@@ -325,7 +336,7 @@ jobs:
         if: ${{ always() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vm-windows-results-${{ matrix.partition }}
+          name: vm-windows-results-${{ matrix.trial }}-${{ matrix.partition }}
           path: |
             ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
             target/nextest/vm/junit.xml
@@ -346,7 +357,7 @@ jobs:
   # Needs the runner's desktop session (an Electron window); no secret and no sign-in: the GitHub token the test shows
   # reaching the guest is a canary a test extension hands out.
   vscode:
-    name: vm-windows desktop VS Code (nightly)
+    name: vm-windows desktop VS Code (${{ matrix.trial }})
     needs: [build, agent]
     if: ${{ needs.build.outputs.run == 'true' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) }}
     permissions:
@@ -354,6 +365,10 @@ jobs:
       actions: write
     runs-on: windows-2025
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [base, strong, restricted]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: WHP preflight (infrastructure)
@@ -408,6 +423,10 @@ jobs:
         with:
           name: vm-windows-agent
           path: ${{ runner.temp }}/bundle
+      - name: research only - sandbox trial ${{ matrix.trial }}
+        if: steps.whp.outputs.ok == 'true'
+        shell: pwsh
+        run: ci/t1397/trial.ps1 -Trial ${{ matrix.trial }}
       - name: desktop VS Code tests (vm_vscode_*)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
@@ -426,7 +445,7 @@ jobs:
         if: ${{ always() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vm-windows-vscode-results
+          name: vm-windows-vscode-results-${{ matrix.trial }}
           path: |
             ${{ runner.temp }}/vscode-out/**
             ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
@@ -437,6 +456,96 @@ jobs:
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true
         uses: ./.github/actions/cancel-group
+
+  # Research only: the sandbox controls one by one on this runner (WHP probe, msb CLI boots, IFEO mitigations).
+  probe:
+    name: sandbox probe (research)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: tools and msb runtime
+        shell: bash
+        run: |
+          cargo build --release --manifest-path ci/t1397/tools/Cargo.toml --target-dir "$RUNNER_TEMP/tt"
+          ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
+      - name: probe
+        shell: pwsh
+        run: ci/t1397/probe.ps1 -Tools "$env:RUNNER_TEMP\tt\release" -Msb "$env:RUNNER_TEMP\msb" -Out "$env:RUNNER_TEMP\probe"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: sandbox-probe
+          path: ${{ runner.temp }}/probe
+          retention-days: 14
+
+  # Research only: what msb.exe opens during the feature tests (Process Monitor, msb.exe events only).
+  trace:
+    name: msb trace (research)
+    needs: [build, agent]
+    if: ${{ needs.build.outputs.run == 'true' }}
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: msb runtime
+        shell: bash
+        run: |
+          dir=$(cygpath -w "$RUNNER_TEMP")
+          ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
+          echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
+          echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-build
+          path: ${{ runner.temp }}/bundle
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-agent
+          path: ${{ runner.temp }}/bundle
+      - name: Process Monitor
+        shell: pwsh
+        run: |
+          python -m pip install --quiet procmon-parser==0.4.0
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\pm", "$env:RUNNER_TEMP\trace" | Out-Null
+          curl.exe -fsSL -o "$env:RUNNER_TEMP\pm\pm.zip" https://download.sysinternals.com/files/ProcessMonitor.zip
+          Expand-Archive "$env:RUNNER_TEMP\pm\pm.zip" "$env:RUNNER_TEMP\pm"
+          python ci/t1397/trace.py mkcfg "$env:RUNNER_TEMP\pm\msb.pmc"
+          Start-Process "$env:RUNNER_TEMP\pm\Procmon64.exe" -ArgumentList '/AcceptEula','/Quiet','/Minimized','/LoadConfig',"$env:RUNNER_TEMP\pm\msb.pmc",'/BackingFile',"$env:RUNNER_TEMP\trace\msb.pml"
+          Start-Sleep 10
+      - name: feature tests under the trace
+        shell: bash
+        continue-on-error: true
+        run: |
+          export PUDDLE_AGENT_BIN
+          PUDDLE_AGENT_BIN=$(cygpath -w "$RUNNER_TEMP/bundle/puddle-agent")
+          mkdir -p "$RUNNER_TEMP/vmx"
+          PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            cargo-nextest nextest run --profile vm \
+            --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/vm-tests.tar.zst" \
+            --extract-to "$(cygpath -m "$RUNNER_TEMP")/vmx" --workspace-remap . --no-fail-fast \
+            -E 'test(/vm_host_grows_a_root_disk_live_and_offline|vm_host_ports_are_listed_forwarded|vm_capture_reaches_what_a_rule_allows|vm_git_clone_and_push_with_no_proxy|vm_ssh_through_the_bridge|vm_host_memory_drops_after_the_guest_frees|memory_change_applies_at_next_start|root_disk_survives_restart_not_remove|vm_trim_returns_deleted|vm_a_checkout_mount_is_read_only|vm_hostile_hg44|vm_bootstrap_root_lives/)' 2>&1 | tee "$RUNNER_TEMP/trace/tests.log"
+      - name: stop Process Monitor and summarise
+        if: always()
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\pm\Procmon64.exe" /AcceptEula /Terminate
+          Start-Sleep 15
+          Get-ChildItem "$env:RUNNER_TEMP\trace" | Format-Table Name, Length | Out-Host
+          python ci/t1397/trace.py summary "$env:RUNNER_TEMP\trace\msb.pml" "$env:RUNNER_TEMP\trace\msb-summary.tsv"
+          Compress-Archive "$env:RUNNER_TEMP\trace\msb*.pml" "$env:RUNNER_TEMP\trace\msb-pml.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: msb-trace
+          path: |
+            ${{ runner.temp }}/trace/msb-summary.tsv
+            ${{ runner.temp }}/trace/tests.log
+            ${{ runner.temp }}/trace/msb-pml.zip
+          retention-days: 14
 
   # One stable result for the build and every partition.
   # The develop ruleset requires it by this name: a rename changes the ruleset in the same change.

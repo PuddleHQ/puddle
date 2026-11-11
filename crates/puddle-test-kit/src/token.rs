@@ -15,6 +15,10 @@ const CHECKSUM_LEN: usize = 6;
 const FINE_GRAINED_ID_LEN: usize = 22;
 const FINE_GRAINED_SECRET_LEN: usize = 59;
 const GITLAB_BODY_LEN: usize = 20;
+const ANTHROPIC_BODY_LEN: usize = 93;
+const OPENAI_BODY_LEN: usize = 120;
+const AZURE_LEN: usize = 84;
+const AZURE_MARK_AT: usize = 76;
 
 /// A kind of token whose shape [`token`] builds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +39,13 @@ pub enum TokenKind {
     Npm,
     /// `glpat-`: GitLab personal access token, by prefix and length (no published checksum).
     Gitlab,
+    /// `sk-ant-api03-`: Anthropic API key, by prefix and length.
+    Anthropic,
+    /// `sk-proj-`: `OpenAI` project key, by prefix and length.
+    OpenaiProject,
+    /// The newer Azure DevOps personal access token: 84 base62 characters with `AZDO` at 76.
+    /// It has no prefix.
+    AzureDevops,
 }
 
 impl TokenKind {
@@ -59,6 +70,9 @@ impl TokenKind {
             Self::GithubFineGrained => "github_pat_",
             Self::Npm => "npm_",
             Self::Gitlab => "glpat-",
+            Self::Anthropic => "sk-ant-api03-",
+            Self::OpenaiProject => "sk-proj-",
+            Self::AzureDevops => "",
         }
     }
 }
@@ -94,8 +108,46 @@ pub fn token(kind: TokenKind, seed: &str) -> String {
             entropy(&format!("{seed}/secret"), FINE_GRAINED_SECRET_LEN)
         ),
         TokenKind::Gitlab => format!("{prefix}{}", entropy(seed, GITLAB_BODY_LEN)),
+        TokenKind::Anthropic => format!("{prefix}{}AA", entropy(seed, ANTHROPIC_BODY_LEN)),
+        TokenKind::OpenaiProject => format!("{prefix}{}", entropy(seed, OPENAI_BODY_LEN)),
+        TokenKind::AzureDevops => format!(
+            "{}AZDO{}",
+            entropy(seed, AZURE_MARK_AT),
+            entropy(&format!("{seed}/tail"), AZURE_LEN - AZURE_MARK_AT - 4)
+        ),
         _ => with_checksum(prefix, &entropy(seed, CHECKSUMMED_ENTROPY_LEN)),
     }
+}
+
+/// A made-up JSON Web Token: the header of an `HS256` token, `claims` (a JSON object as text),
+/// and a signature of random-looking text derived from `seed`. Only the shape is real: the
+/// signature verifies nothing.
+#[must_use]
+pub fn jwt(seed: &str, claims: &str) -> String {
+    format!(
+        "{}.{}.{}",
+        base64url(br#"{"alg":"HS256","typ":"JWT"}"#),
+        base64url(claims.as_bytes()),
+        entropy(seed, 43)
+    )
+}
+
+/// Base64 with the URL-safe alphabet and no padding.
+fn base64url(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let mut block = [0u8; 3];
+        for (slot, byte) in block.iter_mut().zip(chunk) {
+            *slot = *byte;
+        }
+        let bits = u32::from(block[0]) << 16 | u32::from(block[1]) << 8 | u32::from(block[2]);
+        for index in 0..=chunk.len() {
+            let pick = usize::try_from((bits >> (18 - 6 * index)) & 0x3f).unwrap_or(0);
+            out.push(char::from(ALPHABET.get(pick).copied().unwrap_or(b'A')));
+        }
+    }
+    out
 }
 
 /// `prefix`, the 30 characters of `entropy`, then their checksum: for a test that needs a body
@@ -179,12 +231,48 @@ mod tests {
             (TokenKind::Npm, 4 + 36),
             (TokenKind::GithubFineGrained, 11 + 22 + 1 + 59),
             (TokenKind::Gitlab, 6 + 20),
+            (TokenKind::Anthropic, 13 + 93 + 2),
+            (TokenKind::OpenaiProject, 8 + 120),
+            (TokenKind::AzureDevops, 84),
         ];
         for (kind, len) in lengths {
             let made = token(kind, "len");
             assert!(made.starts_with(kind.prefix()), "{made}");
             assert_eq!(made.len(), len, "{made}");
         }
+    }
+
+    #[test]
+    fn an_azure_devops_token_carries_its_mark_at_76() {
+        let made = token(TokenKind::AzureDevops, "az");
+        assert_eq!(made.get(76..80), Some("AZDO"));
+        assert!(made.bytes().all(|b| b.is_ascii_alphanumeric()), "{made}");
+    }
+
+    #[test]
+    fn a_jwt_has_three_segments_and_the_claims_it_was_given() {
+        let made = jwt("j", r#"{"sub":"a"}"#);
+        let parts: Vec<&str> = made.split('.').collect();
+        assert_eq!(parts.len(), 3, "{made}");
+        assert_eq!(parts[0], "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
+        assert_eq!(parts[1], "eyJzdWIiOiJhIn0");
+        assert_eq!(parts[2].len(), 43);
+    }
+
+    #[test]
+    fn base64url_matches_the_standard_vectors() {
+        for (plain, encoded) in [
+            ("", ""),
+            ("f", "Zg"),
+            ("fo", "Zm8"),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg"),
+            ("fooba", "Zm9vYmE"),
+            ("foobar", "Zm9vYmFy"),
+        ] {
+            assert_eq!(base64url(plain.as_bytes()), encoded, "{plain:?}");
+        }
+        assert_eq!(base64url(&[0xfb, 0xff]), "-_8");
     }
 
     #[test]

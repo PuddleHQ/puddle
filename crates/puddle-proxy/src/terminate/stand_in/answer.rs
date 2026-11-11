@@ -519,7 +519,7 @@ impl Scrubber {
 }
 
 /// A content decoder fed pieces of an encoded body.
-enum Decoder {
+pub(super) enum Decoder {
     Gzip(flate2::write::MultiGzDecoder<Vec<u8>>),
     /// Waits for the first two bytes to tell zlib (what the standard says `deflate` is) from a
     /// raw deflate stream (what some servers send).
@@ -533,7 +533,7 @@ enum Decoder {
 impl Decoder {
     /// The decoder for a `Content-Encoding` value; `Ok(None)` for none or `identity`, `Err` for
     /// one Puddle does not read (an unknown one, or several in a row).
-    fn for_encoding(value: Option<&HeaderValue>) -> Result<Option<Self>, ()> {
+    pub(super) fn for_encoding(value: Option<&HeaderValue>) -> Result<Option<Self>, ()> {
         let Some(value) = value else { return Ok(None) };
         let text = value.to_str().map_err(|_| ())?.trim().to_ascii_lowercase();
         let codings: Vec<&str> = text
@@ -562,7 +562,7 @@ impl Decoder {
     }
 
     /// Decodes `input`, appending the plain bytes to `out`.
-    fn push(&mut self, input: &[u8], out: &mut Vec<u8>) -> io::Result<()> {
+    pub(super) fn push(&mut self, input: &[u8], out: &mut Vec<u8>) -> io::Result<()> {
         if let Self::DeflateStart(held) = self {
             held.extend_from_slice(input);
             let [cmf, flg, ..] = held[..] else {
@@ -586,7 +586,7 @@ impl Decoder {
     }
 
     /// Ends the body: what the decoder still holds, or an error when the body stopped short.
-    fn finish(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
+    pub(super) fn finish(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
         match self {
             Self::DeflateStart(held) if held.is_empty() => return Ok(()),
             Self::DeflateStart(_) => return Err(io::Error::other("a deflate body ended at once")),

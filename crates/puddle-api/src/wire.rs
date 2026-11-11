@@ -1116,6 +1116,14 @@ pub enum AuditRecord {
         #[serde(default)]
         #[schema(required = true)]
         foreign_credentials: Vec<String>,
+        /// The kinds of token the answers held that Puddle does not hold, each once:
+        /// `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
+        /// `azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never
+        /// a value. Records written before it existed, and connections of a workspace that turned
+        /// the warning off, read as empty.
+        #[serde(default)]
+        #[schema(required = true)]
+        answer_credentials: Vec<String>,
         /// HTTP method, where the proxy saw the request in clear.
         #[schema(required = true)]
         method: Option<String>,
@@ -1341,6 +1349,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             unswapped_stand_ins,
             scrubbed_stand_ins,
             foreign_credentials,
+            answer_credentials,
             method,
             path,
             path_truncated,
@@ -1372,6 +1381,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             unswapped_stand_ins,
             scrubbed_stand_ins,
             foreign_credentials,
+            answer_credentials,
             method,
             path,
             path_truncated,
@@ -3358,7 +3368,7 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "10.0.0.9", "decision": "deny", "reason": "rule", "rule_id": 4,
             "refused_address": "10.0.0.9", "refused_reason": "ip_rule", "pending_id": null, "binding_id": null,
-            "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [], "method": null, "path": null,
+            "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [], "answer_credentials": [], "method": null, "path": null,
             "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
         });
         let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
@@ -3389,6 +3399,24 @@ mod tests {
         );
     }
 
+    /// The kinds of unknown token reach the wire as stored, and an old record has none.
+    #[test]
+    fn unknown_token_kinds_reach_the_wire_and_an_old_record_has_none() {
+        let mut stored = serde_json::json!({
+            "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
+            "port": 443, "resolved_ip": null, "decision": "allow", "reason": "rule", "rule_id": 4,
+            "pending_id": null, "binding_id": null, "injected": false, "method": null, "path": null,
+            "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
+        });
+        let old: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();
+        let wire = serde_json::to_value(AuditRecord::from(old)).unwrap();
+        assert_eq!(wire["answer_credentials"], serde_json::json!([]));
+        stored["answer_credentials"] = serde_json::json!(["npm_token"]);
+        let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
+        let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
+        assert_eq!(wire["answer_credentials"], serde_json::json!(["npm_token"]));
+    }
+
     /// A record written before the company-network fields existed reads them as `null`.
     #[test]
     fn a_record_without_a_category_reads_as_none() {
@@ -3413,7 +3441,7 @@ mod tests {
             "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
             "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
             "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
-            "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "category": "company_network", "signal": "dns_suffix", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [],
+            "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "category": "company_network", "signal": "dns_suffix", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [], "answer_credentials": [],
             "method": "GET", "path": "/",
             "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
         });

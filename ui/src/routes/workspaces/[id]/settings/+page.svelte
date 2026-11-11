@@ -388,8 +388,10 @@
             get a notice and a flag in the Activity log that names the website
             and what kind of token it looked like, never the token itself.
             Puddle cannot tell your own token from one that leaked, so this
-            catches mistakes, not a workspace that hides what it sends. A change
-            applies to the next request.
+            catches mistakes, not a workspace that hides what it sends. The same
+            switch covers a token of a known kind that a website sends this
+            workspace in an answer and Puddle does not hold. A change applies to
+            the next request.
             <span class="chip"
               >{sourceLabel(effective.warn_foreign_credentials.source)}</span
             >

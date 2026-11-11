@@ -963,6 +963,7 @@ async fn relay(
         event.unswapped_stand_ins = done.unswapped_stand_ins;
         event.scrubbed_stand_ins = done.scrubbed_stand_ins;
         event.foreign_credentials = done.foreign_credentials;
+        event.answer_credentials = done.answer_credentials;
         return event;
     }
     let out = match connect_out(

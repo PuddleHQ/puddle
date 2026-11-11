@@ -211,6 +211,10 @@ readable as JSONL (one record per line).
   `foreign_credentials` (the kinds of credential a request carried that Puddle did not add or swap:
   `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`, `azure_devops_token`,
   `git_authorization`; each once, never a value; empty in older records and when the warning is off),
+  `answer_credentials` (the kinds of token an answer held that Puddle does not hold, read as the
+  workspace gets it: `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
+  `azure_devops_token`, `anthropic_key`, `openai_key`, `jwt_with_refresh_token`; each once, never a
+  value; the same setting turns it off; empty in older records),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
   `rule_created`, `rule_updated`, `rule_deleted`,

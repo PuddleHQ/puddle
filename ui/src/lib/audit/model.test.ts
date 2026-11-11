@@ -338,6 +338,21 @@ describe("a record as a row", () => {
     );
     expect(row(connection(2, {}).record).detail).not.toContain("did not add");
   });
+  it("says which kinds of token the answer held that Puddle does not hold, never a value", () => {
+    const view = row(
+      connection(1, {
+        answer_credentials: [
+          "github_token",
+          "jwt_with_refresh_token",
+          "odd_kind",
+        ],
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "the answer held a GitHub token, a sign-in token with a refresh token, odd_kind that Puddle does not hold; the workspace got it as it was",
+    );
+    expect(row(connection(2, {}).record).detail).not.toContain("does not hold");
+  });
   it("names the refused address of a mixed answer, apart from the one connected to", () => {
     const view = row(
       connection(1, {

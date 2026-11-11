@@ -53,7 +53,7 @@ pub use error::ValidationError;
 pub use event::DiskSpaceLevel;
 pub use event::{
     CollectingSink, DiskKind, Event, EventSink, ForeignCredentialKind, GitAccess, LoginProblemKind,
-    NullSink, PendingEnd, PendingSummary, WorkspaceStatus, WorkspaceStep,
+    NullSink, PendingEnd, PendingSummary, UnknownTokenKind, WorkspaceStatus, WorkspaceStep,
 };
 pub use fill::{Fill, Rgb, SET_PALETTE};
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};

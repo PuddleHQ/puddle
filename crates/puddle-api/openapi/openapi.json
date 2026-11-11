@@ -10627,6 +10627,7 @@
               "unswapped_stand_ins",
               "scrubbed_stand_ins",
               "foreign_credentials",
+              "answer_credentials",
               "method",
               "path",
               "path_truncated",
@@ -10636,6 +10637,13 @@
               "type"
             ],
             "properties": {
+              "answer_credentials": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The kinds of token the answers held that Puddle does not hold, each once:\n`github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,\n`azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never\na value. Records written before it existed, and connections of a workspace that turned\nthe warning off, read as empty."
+              },
               "binding_id": {
                 "type": [
                   "string",
@@ -13614,6 +13622,36 @@
               "workspace": {
                 "$ref": "#/components/schemas/WorkspaceId",
                 "description": "The workspace that sent it."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An answer to a request of the workspace held a token of a known kind that Puddle does not\nhold, and the warning is on. The answer went to the workspace as it was. `host` is the\nhost that sent it and `kind` says what the token looked like; never a part of its value.",
+            "required": [
+              "workspace",
+              "host",
+              "kind",
+              "type"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "The host that answered."
+              },
+              "kind": {
+                "$ref": "#/components/schemas/UnknownTokenKind",
+                "description": "What kind of token it looked like."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unknown_token_in_answer"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId",
+                "description": "The workspace that got the answer."
               }
             }
           },
@@ -17897,6 +17935,20 @@
           }
         },
         "additionalProperties": false
+      },
+      "UnknownTokenKind": {
+        "type": "string",
+        "description": "What Puddle can tell about a token in an answer that it does not hold: by its bytes alone\n(see [`Event::UnknownTokenInAnswer`]).",
+        "enum": [
+          "github_token",
+          "github_fine_grained_token",
+          "gitlab_token",
+          "npm_token",
+          "azure_devops_token",
+          "anthropic_key",
+          "openai_key",
+          "jwt_with_refresh_token"
+        ]
       },
       "VsCodeServer": {
         "type": "object",

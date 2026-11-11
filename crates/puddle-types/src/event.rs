@@ -316,6 +316,17 @@ pub enum Event {
         /// What kind of credential it looked like.
         kind: ForeignCredentialKind,
     },
+    /// An answer to a request of the workspace held a token of a known kind that Puddle does not
+    /// hold, and the warning is on. The answer went to the workspace as it was. `host` is the
+    /// host that sent it and `kind` says what the token looked like; never a part of its value.
+    UnknownTokenInAnswer {
+        /// The workspace that got the answer.
+        workspace: WorkspaceId,
+        /// The host that answered.
+        host: String,
+        /// What kind of token it looked like.
+        kind: UnknownTokenKind,
+    },
     /// New audit records were committed. `id` is the newest record's id, so a client that holds
     /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit,
     /// not per record. Global: every subscriber gets it.
@@ -477,6 +488,48 @@ impl ForeignCredentialKind {
     }
 }
 
+/// What Puddle can tell about a token in an answer that it does not hold: by its bytes alone
+/// (see [`Event::UnknownTokenInAnswer`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[non_exhaustive]
+pub enum UnknownTokenKind {
+    /// A GitHub token with a valid checksum (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`).
+    GithubToken,
+    /// A fine-grained GitHub token (`github_pat_`).
+    GithubFineGrainedToken,
+    /// A GitLab token (`glpat-`).
+    GitlabToken,
+    /// An npm token with a valid checksum.
+    NpmToken,
+    /// An Azure DevOps personal access token of the 84-character kind.
+    AzureDevopsToken,
+    /// An Anthropic API key or sign-in token (`sk-ant-`).
+    AnthropicKey,
+    /// An `OpenAI` project key (`sk-proj-`).
+    OpenaiKey,
+    /// A JSON Web Token in an answer that also has a `refresh_token` field.
+    JwtWithRefreshToken,
+}
+
+impl UnknownTokenKind {
+    /// The name the record and the API use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GithubToken => "github_token",
+            Self::GithubFineGrainedToken => "github_fine_grained_token",
+            Self::GitlabToken => "gitlab_token",
+            Self::NpmToken => "npm_token",
+            Self::AzureDevopsToken => "azure_devops_token",
+            Self::AnthropicKey => "anthropic_key",
+            Self::OpenaiKey => "openai_key",
+            Self::JwtWithRefreshToken => "jwt_with_refresh_token",
+        }
+    }
+}
+
 /// How a pending request ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -578,6 +631,7 @@ impl Event {
             | Self::GitNoIdentity { workspace, .. }
             | Self::LoginProblem { workspace, .. }
             | Self::ForeignCredential { workspace, .. }
+            | Self::UnknownTokenInAnswer { workspace, .. }
             | Self::WorkspaceGitChanged { workspace }
             | Self::WorkspaceEnvChanged { workspace }
             | Self::WorkspaceEnvFailed { workspace, .. }
@@ -1111,6 +1165,38 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_token_in_an_answer_names_the_host_and_the_kind_and_nothing_else() {
+        let event = Event::UnknownTokenInAnswer {
+            workspace: name(),
+            host: "login.example.invalid".into(),
+            kind: UnknownTokenKind::JwtWithRefreshToken,
+        };
+        let json = r#"{"type":"unknown_token_in_answer","workspace":"box","host":"login.example.invalid","kind":"jwt_with_refresh_token"}"#;
+        assert_eq!(serde_json::to_string(&event).unwrap(), json);
+        assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+        assert_eq!(event.workspace(), Some(&name()));
+        for (kind, text) in [
+            (UnknownTokenKind::GithubToken, "github_token"),
+            (
+                UnknownTokenKind::GithubFineGrainedToken,
+                "github_fine_grained_token",
+            ),
+            (UnknownTokenKind::GitlabToken, "gitlab_token"),
+            (UnknownTokenKind::NpmToken, "npm_token"),
+            (UnknownTokenKind::AzureDevopsToken, "azure_devops_token"),
+            (UnknownTokenKind::AnthropicKey, "anthropic_key"),
+            (UnknownTokenKind::OpenaiKey, "openai_key"),
+            (
+                UnknownTokenKind::JwtWithRefreshToken,
+                "jwt_with_refresh_token",
+            ),
+        ] {
+            assert_eq!(kind.as_str(), text);
+            assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{text}\""));
+        }
+    }
+
+    #[test]
     fn a_repository_list_change_carries_only_the_workspace() {
         let event = Event::WorkspaceRepositoriesChanged { workspace: name() };
         let json = r#"{"type":"workspace_repositories_changed","workspace":"box"}"#;
@@ -1205,6 +1291,7 @@ mod tests {
                 "git_no_identity",
                 "login_problem",
                 "foreign_credential",
+                "unknown_token_in_answer",
                 "audit_appended",
                 "network_changed",
                 "proxy_sign_in_failed",

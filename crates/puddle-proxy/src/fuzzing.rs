@@ -138,3 +138,14 @@ pub fn preamble(bytes: &[u8]) {
         Err(PreambleError::Malformed) => {}
     }
 }
+
+/// Reads `bytes` as an answer for tokens Puddle does not hold, whole and in pieces: the first byte
+/// sets the piece size.
+///
+/// # Panics
+///
+/// When the pieces find other kinds than the whole, a kind is found twice, or more than one run
+/// is kept between pieces.
+pub fn answer_tokens(bytes: &[u8]) {
+    crate::terminate::check_answer_scan(bytes);
+}

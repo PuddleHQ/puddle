@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use ::http::header::HeaderMap;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use puddle_types::{Event, EventSink, ForeignCredentialKind, Host, WorkspaceId};
+use puddle_types::{Event, EventSink, ForeignCredentialKind, Host, UnknownTokenKind, WorkspaceId};
 use zeroize::Zeroizing;
 
 use super::stale;
@@ -47,6 +47,7 @@ const MAX_SEEN: usize = 256;
 pub struct ForeignCredentialWarning {
     enabled: Arc<dyn Fn() -> bool + Send + Sync>,
     told: Mutex<HashSet<(String, ForeignCredentialKind)>>,
+    told_answers: Mutex<HashSet<(String, UnknownTokenKind)>>,
 }
 
 impl ForeignCredentialWarning {
@@ -56,6 +57,7 @@ impl ForeignCredentialWarning {
         Self {
             enabled: Arc::new(enabled),
             told: Mutex::new(HashSet::new()),
+            told_answers: Mutex::new(HashSet::new()),
         }
     }
 
@@ -84,10 +86,7 @@ impl ForeignCredentialWarning {
             if !flagged.iter().any(|seen| seen == name) {
                 flagged.push(name.to_owned());
             }
-            let first = {
-                let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-                told.len() < MAX_SEEN && told.insert((host.to_string(), *kind))
-            };
+            let first = first_sight(&self.told, host, *kind);
             if first {
                 tracing::info!(%workspace, %host, kind = name, "a request carried a credential Puddle did not add");
                 sink.emit(Event::ForeignCredential {
@@ -98,6 +97,48 @@ impl ForeignCredentialWarning {
             }
         }
     }
+}
+
+impl ForeignCredentialWarning {
+    /// Notes that an answer from `host` held a token of `kind` that Puddle does not hold: the
+    /// kind joins `flagged` (the connection record's list) once, and the first sight of a host
+    /// and kind raises the notice. Nothing when the warning is off. Only the host and the kind
+    /// are read, logged or sent. The same setting turns this and the warning about requests off.
+    pub(crate) fn note_answer(
+        &self,
+        workspace: &WorkspaceId,
+        host: &Host,
+        sink: &dyn EventSink,
+        flagged: &mut Vec<String>,
+        kind: UnknownTokenKind,
+    ) {
+        if !self.is_on() {
+            return;
+        }
+        let name = kind.as_str();
+        if !flagged.iter().any(|seen| seen == name) {
+            flagged.push(name.to_owned());
+        }
+        if first_sight(&self.told_answers, host, kind) {
+            tracing::info!(%workspace, %host, kind = name, "an answer held a token Puddle does not hold");
+            sink.emit(Event::UnknownTokenInAnswer {
+                workspace: workspace.clone(),
+                host: host.to_string(),
+                kind,
+            });
+        }
+    }
+}
+
+/// Whether this is the first time `host` and `kind` are seen, remembering them (up to
+/// [`MAX_SEEN`] pairs: past that nothing is new, so the list cannot grow without bound).
+fn first_sight<K: std::hash::Hash + Eq>(
+    told: &Mutex<HashSet<(String, K)>>,
+    host: &Host,
+    kind: K,
+) -> bool {
+    let mut told = told.lock().unwrap_or_else(PoisonError::into_inner);
+    told.len() < MAX_SEEN && told.insert((host.to_string(), kind))
 }
 
 impl Default for ForeignCredentialWarning {
@@ -238,12 +279,18 @@ fn has_checksummed_body(token: &[u8], prefix: &[u8]) -> bool {
 }
 
 fn is_github(token: &[u8]) -> bool {
-    if GITHUB_PREFIXES
+    is_github_checksummed(token) || is_fine_grained(token)
+}
+
+/// A classic GitHub token: a prefix, then 36 base62 characters ending in their checksum.
+pub(super) fn is_github_checksummed(token: &[u8]) -> bool {
+    GITHUB_PREFIXES
         .iter()
         .any(|prefix| has_checksummed_body(token, prefix))
-    {
-        return true;
-    }
+}
+
+/// A fine-grained GitHub token, read by its shape.
+pub(super) fn is_fine_grained(token: &[u8]) -> bool {
     token.strip_prefix(FINE_GRAINED_PREFIX).is_some_and(|body| {
         body.len() == FINE_GRAINED_ID + 1 + FINE_GRAINED_SECRET
             && body.get(FINE_GRAINED_ID) == Some(&b'_')
@@ -252,11 +299,11 @@ fn is_github(token: &[u8]) -> bool {
     })
 }
 
-fn is_npm(token: &[u8]) -> bool {
+pub(super) fn is_npm(token: &[u8]) -> bool {
     has_checksummed_body(token, NPM_PREFIX)
 }
 
-fn is_gitlab(token: &[u8]) -> bool {
+pub(super) fn is_gitlab(token: &[u8]) -> bool {
     token.strip_prefix(GITLAB_PREFIX).is_some_and(|body| {
         (GITLAB_MIN_BODY..=GITLAB_MAX_BODY).contains(&body.len())
             && body
@@ -265,7 +312,7 @@ fn is_gitlab(token: &[u8]) -> bool {
     })
 }
 
-fn is_azure_devops(token: &[u8]) -> bool {
+pub(super) fn is_azure_devops(token: &[u8]) -> bool {
     token.len() == AZURE_LEN
         && is_base62(token)
         && token.get(AZURE_MARK_AT..AZURE_MARK_AT + AZURE_MARK.len()) == Some(AZURE_MARK)

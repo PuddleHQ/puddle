@@ -33,7 +33,7 @@ use puddle_types::Host;
 
 use super::inject::InjectRefusal;
 use super::leg::BoxError;
-use super::stand_in::{ScrubBody, StandIns, Swapped};
+use super::stand_in::{ScanBody, ScrubBody, StandIns, Swapped};
 use super::token_body::TokenBody;
 use super::wiped::Wiped;
 use crate::destination::BoxFuture;
@@ -201,6 +201,8 @@ pub(crate) enum AnswerBody {
     },
     /// One of the above with the real values in it put back as stand-ins.
     Scrubbed(Box<ScrubBody>),
+    /// One of the above, read for tokens Puddle does not hold as it passes unchanged.
+    Scanned(Box<ScanBody>),
 }
 
 fn boxed(err: hyper::Error) -> BoxError {
@@ -223,6 +225,7 @@ impl Body for AnswerBody {
                 None => Pin::new(rest).poll_frame(cx).map_err(boxed),
             },
             Self::Scrubbed(body) => Pin::new(&mut **body).poll_frame(cx),
+            Self::Scanned(body) => Pin::new(&mut **body).poll_frame(cx),
         }
     }
 
@@ -232,6 +235,7 @@ impl Body for AnswerBody {
             Self::Buffered(bytes) => bytes.is_none(),
             Self::Rejoined { .. } => false,
             Self::Scrubbed(body) => body.is_end_stream(),
+            Self::Scanned(body) => body.is_end_stream(),
         }
     }
 
@@ -253,6 +257,7 @@ impl Body for AnswerBody {
                 hint
             }
             Self::Scrubbed(body) => body.size_hint(),
+            Self::Scanned(body) => body.size_hint(),
         }
     }
 }

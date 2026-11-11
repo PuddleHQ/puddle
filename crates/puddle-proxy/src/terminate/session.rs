@@ -29,8 +29,8 @@ use super::leg::{self, BoxError, ConnectError, Connected, H1Conn, Made, UpBody};
 use super::request::{self, Parsed};
 use super::request_rules::{self, Refused};
 use super::stand_in::{
-    ANSWER_WITHHELD, NotScrubbed, ScrubNotes, Swapped, answer_encoding_refusal,
-    answer_failed_refusal, limit_accept_encoding, scrub_answer,
+    ANSWER_WITHHELD, AnswerReport, NotScrubbed, ScrubNotes, Swapped, answer_encoding_refusal,
+    answer_failed_refusal, limit_accept_encoding, scan_answer, scrub_answer,
 };
 use super::streams::Activity;
 use super::{Mode, Termination, h2, response, ws};
@@ -96,6 +96,9 @@ pub(crate) struct Outcome {
     /// The kinds of credential the requests carried that Puddle did not add or swap, each once
     /// (`github_token`, ...); empty when the workspace turned the warning off.
     pub(crate) foreign_credentials: Vec<String>,
+    /// The kinds of token the answers held that Puddle does not hold, each once
+    /// (`github_token`, ...); empty when the workspace turned the warning off.
+    pub(crate) answer_credentials: Vec<String>,
     /// The address first connected to.
     pub(crate) resolved_ip: Option<std::net::IpAddr>,
     /// The company-proxy hop that carried the first connection.
@@ -151,6 +154,16 @@ impl Outcome {
             &mut self.foreign_credentials,
             kinds,
         );
+    }
+
+    /// Notes the kinds of token the answers held that Puddle does not hold (see
+    /// [`scan_answer`]).
+    pub(crate) fn record_unknown_tokens(&mut self, report: &AnswerReport) {
+        for kind in report.kinds() {
+            if !self.answer_credentials.contains(&kind) {
+                self.answer_credentials.push(kind);
+            }
+        }
     }
 
     /// Notes what the scrub of the answers did: the stand-ins put back, and an answer cut off
@@ -325,6 +338,7 @@ where
                 upstream,
                 deferred,
                 outcome,
+                unknown_tokens: Arc::new(AnswerReport::of(&cx)),
                 first: true,
             };
             conn.serve().await;
@@ -526,6 +540,8 @@ struct Conn<'a, R, W> {
     /// Why the real server could not be used at the handshake; answered by the first request.
     deferred: Option<Refusal>,
     outcome: Outcome,
+    /// The tokens the answers held that Puddle does not hold; they join the outcome too.
+    unknown_tokens: Arc<AnswerReport>,
     first: bool,
 }
 
@@ -1108,7 +1124,15 @@ where
         )
         .await;
         let written = match scrubbed {
-            Ok(response) => self.write_response(response, parsed, &config).await,
+            Ok(response) => {
+                let response = scan_answer(
+                    self.cx.termination.stand_ins(),
+                    response,
+                    parsed.method.eq_ignore_ascii_case("HEAD"),
+                    &self.unknown_tokens,
+                );
+                self.write_response(response, parsed, &config).await
+            }
             Err(why) => {
                 self.upstream = None;
                 let refusal = match why {
@@ -1119,6 +1143,7 @@ where
             }
         };
         self.outcome.record_scrubbed(&notes);
+        self.outcome.record_unknown_tokens(&self.unknown_tokens);
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,
             Ok(_) => {

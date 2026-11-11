@@ -6,6 +6,7 @@
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
+  import GlobalInterception from "#lib/components/GlobalInterception.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
   import ProxySignIn from "#lib/components/ProxySignIn.svelte";
@@ -952,6 +953,7 @@
           />
         </div>
 
+        <GlobalInterception />
         <GlobalNeverDecrypt />
         <LearnedLimitsSetting />
       </section>

@@ -64,8 +64,8 @@ pub use identities::{
     WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
 pub use interception::{
-    GlobalNeverDecrypt, InterceptionRequest, InterceptionView, LearnedHost, LearnedHosts,
-    LearnedLimits,
+    GlobalNeverDecrypt, InterceptionRequest, InterceptionSettingsRequest, InterceptionSettingsView,
+    InterceptionView, LearnedHost, LearnedHosts, LearnedLimits, WorkspaceMode,
 };
 pub use logins::{KeptLoginList, KeptLoginView};
 pub use network_health::{

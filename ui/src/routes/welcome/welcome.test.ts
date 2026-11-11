@@ -27,6 +27,8 @@ const h = await vi.hoisted(async () => {
   const first = await import("#lib/testing/fake-first-run.ts");
   const settings = await import("#lib/testing/fake-settings.ts");
   const ws = await import("#lib/testing/fake-workspaces.ts");
+  const icept = await import("#lib/testing/fake-interception.ts");
+  const interception = new icept.FakeInterception();
   const firstRun = new first.FakeFirstRun();
   const prefs = new settings.FakeSettings();
   const workspaces = new ws.FakeWorkspaces();
@@ -34,21 +36,25 @@ const h = await vi.hoisted(async () => {
   // One client over the three fakes, by path, like the one API.
   const api = {
     GET: (path: string, init?: unknown) =>
-      first_run_paths.includes(path)
-        ? firstRun.GET(path)
-        : path.startsWith("/api/workspaces")
-          ? workspaces.GET(path, init as never)
-          : prefs.GET(path),
+      path === "/api/interception"
+        ? interception.GET(path)
+        : first_run_paths.includes(path)
+          ? firstRun.GET(path)
+          : path.startsWith("/api/workspaces")
+            ? workspaces.GET(path, init as never)
+            : prefs.GET(path),
     PUT: (path: string, init: { body: unknown }) =>
-      path === "/api/first-run"
-        ? firstRun.PUT(path, init)
-        : prefs.PUT(path, init as never),
+      path === "/api/interception"
+        ? interception.PUT(path, init as never)
+        : path === "/api/first-run"
+          ? firstRun.PUT(path, init)
+          : prefs.PUT(path, init as never),
     POST: (path: string, init: never) =>
       path === "/api/dev-certificate/trust"
         ? firstRun.POST(path)
         : workspaces.POST(path, init),
   };
-  return { api, firstRun, prefs, workspaces };
+  return { api, firstRun, interception, prefs, workspaces };
 });
 vi.mock("#lib/api/client.ts", () => ({ api: h.api }));
 
@@ -72,6 +78,7 @@ import { theme } from "#lib/theme/theme.svelte.ts";
 import Layout from "./+layout.svelte";
 import Welcome from "./+page.svelte";
 import Certificates from "./certificates/+page.svelte";
+import Interception from "./interception/+page.svelte";
 import Look from "./look/+page.svelte";
 import Workspace from "./workspace/+page.svelte";
 
@@ -95,6 +102,7 @@ beforeEach(() => {
     dev_certificate: "not_checked",
   };
   h.prefs.reset();
+  h.interception.reset();
   h.workspaces.list = [];
   // The create form checks a name against the store's list, which an earlier test filled.
   workspaceStore.list = [];
@@ -134,8 +142,9 @@ describe("the flow's frame", () => {
       "2 System check, done",
       "3 Certificates, done",
       "4 Connect",
-      "5 Look",
-      "6 First workspace",
+      "5 Interception",
+      "6 Look",
+      "7 First workspace",
     ]);
     expect(
       items.filter((li) => li.getAttribute("aria-current") === "step"),
@@ -170,6 +179,28 @@ describe("welcome step", () => {
     expect(h.firstRun.bodies).toEqual([{ completed: true }]);
     expect(h.firstRun.state.completed).toBe(true);
     expect(toasts.items).toEqual([]);
+  });
+
+  it("skipping the setup takes the recommended interception mode when none was chosen", async () => {
+    render(Welcome);
+    await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
+    expect(h.interception.view.mode).toBe("all_except_curated");
+    expect(h.interception.view.chosen).toBe(true);
+  });
+
+  it("skipping the setup leaves a mode that was already chosen", async () => {
+    h.interception.view = {
+      ...h.interception.view,
+      mode: "all",
+      chosen: true,
+      notice_seen: true,
+    };
+    render(Welcome);
+    await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
+    expect(h.interception.view.mode).toBe("all");
+    expect(h.interception.bodies).toEqual([]);
   });
 
   it("opens the workspace list even when it could not keep that, and says so", async () => {
@@ -346,6 +377,67 @@ describe("certificates step", () => {
   });
 });
 
+describe("interception step", () => {
+  const radio = (name: RegExp) => screen.getByRole("radio", { name });
+
+  it("preselects the recommended mode on a first visit and saves nothing until Continue", async () => {
+    render(Interception);
+    await screen.findByRole("group", { name: "Interception" });
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "Which hosts should Puddle decrypt?",
+      }),
+    ).toHaveFocus();
+    expect(radio(/except a known list/)).toBeChecked();
+    expect(screen.getByText("recommended")).toBeInTheDocument();
+    expect(h.interception.bodies).toEqual([]);
+    expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
+      "href",
+      "/welcome/connect",
+    );
+  });
+
+  it("saves the chosen mode and goes to the next step", async () => {
+    render(Interception);
+    await screen.findByRole("group", { name: "Interception" });
+    await fireEvent.click(radio(/^Decrypt every host\b(?! except)/));
+    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/welcome/look"));
+    expect(h.interception.bodies).toEqual([{ mode: "all" }]);
+  });
+
+  it("shows the mode chosen before when the step is opened again", async () => {
+    h.interception.view = {
+      ...h.interception.view,
+      mode: "known_only",
+      chosen: true,
+    };
+    render(Interception);
+    await screen.findByRole("group", { name: "Interception" });
+    await waitFor(() => expect(radio(/only hosts Puddle has/)).toBeChecked());
+  });
+
+  it("says why the setting could not be read and offers no choice", async () => {
+    h.interception.refuse = true;
+    render(Interception);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't read this setting.",
+    );
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+
+  it("stays on the step and says why when the choice could not be saved", async () => {
+    render(Interception);
+    await screen.findByRole("group", { name: "Interception" });
+    h.interception.refuse = true;
+    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(nav.goto).not.toHaveBeenCalled();
+  });
+});
+
 describe("look step", () => {
   const radio = (name: string) =>
     screen.getByRole("radio", { name: new RegExp(`^${name}`) });
@@ -363,7 +455,7 @@ describe("look step", () => {
     );
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
       "href",
-      "/welcome/connect",
+      "/welcome/interception",
     );
   });
 

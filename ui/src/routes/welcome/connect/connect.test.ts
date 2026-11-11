@@ -61,7 +61,7 @@ describe("connect step", () => {
     );
     expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute(
       "href",
-      "/welcome/look",
+      "/welcome/interception",
     );
   });
 

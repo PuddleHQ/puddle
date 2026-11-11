@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { takeRecommendedMode } from "#lib/stores/interception.svelte.ts";
   import { finishFlow } from "#lib/welcome/finish.ts";
   import StepHeading from "#lib/welcome/StepHeading.svelte";
   import { around } from "#lib/welcome/steps.ts";
@@ -10,6 +11,7 @@
   /** Ends the flow here: it is not shown again. The check and the settings stay reachable. */
   async function skip() {
     leaving = true;
+    await takeRecommendedMode();
     await finishFlow();
   }
 </script>
@@ -21,7 +23,8 @@
 </p>
 <p class="body">
   The next steps take about a minute: a check of this computer, certificates,
-  how you want to connect, and your first workspace.
+  how you want to connect, which hosts Puddle decrypts, and your first
+  workspace.
 </p>
 <div class="actions">
   <button

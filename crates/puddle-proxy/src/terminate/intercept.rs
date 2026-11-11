@@ -214,6 +214,8 @@ impl PassThrough {
 pub struct Interception {
     pub(crate) decrypt_all: bool,
     pub(crate) never: TerminationSet,
+    pub(crate) curated: TerminationSet,
+    pub(crate) learning: bool,
     pub(crate) learned: std::sync::Arc<PassThrough>,
 }
 
@@ -224,8 +226,32 @@ impl Interception {
         Self {
             decrypt_all: false,
             never: TerminationSet::new(),
+            curated: TerminationSet::new(),
+            learning: true,
             learned,
         }
+    }
+
+    /// The hosts passed through without being tried, because tools are known to refuse
+    /// Puddle's certificate for them (the built-in curated list, in the mode that has one).
+    #[must_use]
+    pub fn curated(mut self, curated: TerminationSet) -> Self {
+        self.curated = curated;
+        self
+    }
+
+    /// Whether a host whose tool refused Puddle's certificate is learned and passed through
+    /// (on unless the user turned it off).
+    #[must_use]
+    pub fn learn_from_rejections(mut self, on: bool) -> Self {
+        self.learning = on;
+        self
+    }
+
+    /// Whether a refused certificate makes the host learned.
+    #[must_use]
+    pub fn is_learning(&self) -> bool {
+        self.learning
     }
 
     /// Turns "decrypt every host" on or off.
@@ -269,6 +295,8 @@ impl Interception {
         }
         if self.never.contains(host) {
             Some("never_decrypt")
+        } else if self.curated.contains(host) {
+            Some("curated")
         } else if self.learned.contains(host) {
             Some("learned")
         } else {
@@ -285,6 +313,18 @@ mod tests {
 
     fn host(text: &str) -> Host {
         Host::parse_normalised(text).unwrap()
+    }
+
+    #[test]
+    fn learning_from_rejections_is_on_until_turned_off_and_can_be_turned_on_again() {
+        let learned = Arc::new(PassThrough::new());
+        let on = Interception::new(Arc::clone(&learned));
+        assert!(on.is_learning());
+        let off = on.learn_from_rejections(false);
+        assert!(!off.is_learning());
+        let again = off.learn_from_rejections(true);
+        assert!(again.is_learning());
+        assert!(Arc::ptr_eq(again.learned(), &learned), "same list");
     }
 
     #[test]
@@ -403,5 +443,25 @@ mod tests {
             "an IP is never decrypted"
         );
         assert!(Arc::ptr_eq(on.learned(), &learned));
+    }
+
+    #[test]
+    fn a_curated_host_is_passed_through_after_the_never_decrypt_names_and_before_learning() {
+        let learned = Arc::new(PassThrough::new());
+        let curated = TerminationSet::parse(["*.docker.example", "bank.example"]).unwrap();
+        let never = TerminationSet::parse(["bank.example"]).unwrap();
+        let on = Interception::new(Arc::clone(&learned))
+            .decrypt_all(true)
+            .never_decrypt(never)
+            .curated(curated);
+        assert_eq!(on.skipped(&host("bank.example")), Some("never_decrypt"));
+        assert_eq!(on.skipped(&host("a.docker.example")), Some("curated"));
+        assert_eq!(on.skipped(&host("other.example")), None);
+        learned.learn(&host("a.docker.example"));
+        assert_eq!(on.skipped(&host("a.docker.example")), Some("curated"));
+        let off = on.clone().decrypt_all(false);
+        assert_eq!(off.skipped(&host("a.docker.example")), None, "switch off");
+        assert!(on.is_learning());
+        assert!(!on.learn_from_rejections(false).is_learning());
     }
 }

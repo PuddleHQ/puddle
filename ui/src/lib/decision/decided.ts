@@ -36,13 +36,19 @@ export function expiryPhrase(expiresAt: number | null, locale?: string) {
 }
 
 /** "Allowed *.example.com for every workspace, permanently". */
-export function decidedSentence(d: Decided, locale?: string): string {
+export function decidedSentence(
+  d: Decided,
+  locale?: string,
+  workspaceLabel: (id: string) => string = (id) => id,
+): string {
   const verb = d.effect === "allow" ? "Allowed" : "Denied";
   const when = expiryPhrase(d.expiresAt, locale);
   if (d.ruleSet !== null) {
     return `${verb} ${decidedPattern(d)} in rule set ${d.ruleSet}, ${when}`;
   }
   const who =
-    d.workspace === null ? "every workspace" : `workspace ${d.workspace}`;
+    d.workspace === null
+      ? "every workspace"
+      : `workspace ${workspaceLabel(d.workspace)}`;
   return `${verb} ${decidedPattern(d)} for ${who}, ${when}`;
 }

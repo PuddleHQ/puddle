@@ -126,6 +126,16 @@ export class WorkspaceStore {
     return this.byId(id)?.name ?? id;
   }
 
+  /**
+   * `labelOf` for a sentence a person hears (an accessible name, a toast): the display name alone,
+   * and only when another listed workspace shares it, followed by the id so the two can be told apart.
+   */
+  spokenLabelOf(id: string): string {
+    const name = this.labelOf(id);
+    const clash = this.list.some((w) => w.id !== id && w.name === name);
+    return clash ? `${name} (${id})` : name;
+  }
+
   /** Reads the list; never throws. Calls that overlap share one run, and one more follows. */
   refresh(): Promise<void> {
     if (this.#refreshing) {

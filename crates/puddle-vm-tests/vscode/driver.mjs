@@ -80,12 +80,39 @@ const attached = async (timeoutMs) => {
 // wrong row is what broke the first hands-on run.
 const exact = (label) => new RegExp(`^\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`);
 
-const palette = async (label, timeoutMs) => {
+// What the window shows when the palette's row cannot be clicked: whether the picker is still there, what holds the focus, and
+// what the window says. The picker closes when something else takes the focus or asks a question in its place.
+const describePalette = () => {
+  const widget = document.querySelector(".quick-input-widget");
+  const active = document.activeElement;
+  const text = (selector) => [...document.querySelectorAll(selector)].map((e) => e.innerText).join(" | ").slice(0, 600);
+  return {
+    pickerDisplay: widget ? getComputedStyle(widget).display : "(none)",
+    pickerText: widget ? widget.innerText.slice(0, 600) : "",
+    focus: active ? `${active.tagName}.${active.className}`.slice(0, 200) : "(none)",
+    notifications: text(".notifications-toasts, .notification-list-item"),
+    dialogs: text(".monaco-dialog-box"),
+    body: (document.body?.innerText ?? "").slice(0, 600),
+  };
+};
+
+const CLICK_MS = 15_000;
+
+const palette = async (label, timeoutMs, picture) => {
   const page = workbench();
   await page.keyboard.press("F1");
   await page.locator(".quick-input-widget input").waitFor({ state: "visible", timeout: timeoutMs });
   await page.keyboard.insertText(label);
-  await page.locator(".quick-input-list .monaco-list-row .label-name").filter({ hasText: exact(label) }).first().click({ timeout: timeoutMs });
+  const row = page.locator(".quick-input-list .monaco-list-row .label-name").filter({ hasText: exact(label) }).first();
+  await row.waitFor({ state: "visible", timeout: timeoutMs });
+  try {
+    // The row is on screen: a click that does not land within seconds means the picker went away, not that it is slow.
+    await row.click({ timeout: CLICK_MS });
+  } catch (error) {
+    const seen = await page.evaluate(describePalette).catch((e) => `(unreadable: ${e.message})`);
+    if (picture) await page.screenshot({ path: picture }).catch(() => {});
+    throw new Error(`the palette row "${label}" could not be clicked: ${error.message.split("\n")[0]}; the window shows ${JSON.stringify(seen)}`);
+  }
   return null;
 };
 
@@ -133,7 +160,7 @@ const reload = async (timeoutMs, picture) => {
   await workbench().evaluate(() => {
     window.__puddleOldDocument = true;
   });
-  await palette("Developer: Reload Window", timeoutMs);
+  await palette("Developer: Reload Window", timeoutMs, picture);
   try {
     await workbench().waitForFunction(() => window.__puddleOldDocument !== true, null, { timeout: timeoutMs });
   } catch (error) {
@@ -155,7 +182,7 @@ const run = async (command) => {
     case "reload":
       return reload(command.timeoutMs, command.picture);
     case "palette":
-      return palette(command.label, command.timeoutMs);
+      return palette(command.label, command.timeoutMs, command.picture);
     case "terminal":
       return terminal(command.line, command.timeoutMs);
     case "prompt":

@@ -225,6 +225,21 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         probe: &Path,
         out: &Path,
     ) -> String {
+        // The patch is read when the git extension starts, so it must not be written while the window is still
+        // starting after the reload before this one: the extension would load it at once, run the probe in a
+        // local terminal that takes the focus, and close the palette the next reload is driven through. The
+        // extension serves its socket once it runs; a socket file left by the server the reload replaced is
+        // not listening, so the kernel's list of bound sockets is the witness.
+        eventually_async("the git extension is running", SHOWS, || async {
+            let said = shell(
+                runtime,
+                sandbox,
+                "grep -o '/tmp/vscode-git-[^ ]*\\.sock' /proc/net/unix | head -n 1",
+            )
+            .await;
+            (!said.trim().is_empty()).then_some(())
+        })
+        .await;
         let code = local_terminal_probe("/tmp/u7c-ran", &probe.display().to_string());
         shell(
             runtime,

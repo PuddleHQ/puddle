@@ -486,12 +486,59 @@ impl Store {
                 return Err(StoreError::ExpiryNotInFuture);
             }
             let rule = insert_rule(tx, new, now, None)?;
-            close_decided_rows(tx, &rule, None, new.created_by, now, fx)?;
+            // A pending row's `decided_by` takes the people's actors and `system`, so a rule
+            // made by a workspace create closes the rows it decides as Puddle itself.
+            let decider = match new.created_by {
+                Actor::WorkspaceCreate => Actor::System,
+                actor => actor,
+            };
+            close_decided_rows(tx, &rule, None, decider, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(rule)
         })?;
         tracing::info!(rule = %rule.id, pattern = %rule.pattern, effect = rule.effect.as_str(), "rule created");
         Ok(rule)
+    }
+
+    /// What the rules say about `host` for `workspace` right now, without recording anything:
+    /// the same answer [`Store::decide`] gives, but `None` where that would open a pending row.
+    /// A workspace that does not exist yet sees only the global rules and the sets' defaults.
+    #[must_use]
+    pub fn peek(&self, workspace: &WorkspaceId, host: &Host) -> Option<Decision> {
+        self.match_rules(
+            &EgressRequest::new(workspace.clone(), host.clone(), 443),
+            self.clock.now_ms(),
+            SuffixAllows::Count,
+        )
+    }
+
+    /// Allows each of `hosts` for `workspace` that no rule decides yet, with an exact allow rule
+    /// made by [`Actor::WorkspaceCreate`] (a create names the hosts of its repositories, and the
+    /// clone that follows would otherwise wait in the inbox). A host that is allowed already, or
+    /// that a deny decides, gets no rule: a create never overrides a block. Returns the rules
+    /// made.
+    ///
+    /// # Errors
+    /// A database error; the rules made before it stay.
+    pub fn allow_hosts_for_create(
+        &self,
+        workspace: &WorkspaceId,
+        hosts: &[Host],
+    ) -> Result<Vec<Rule>, StoreError> {
+        let mut made = Vec::new();
+        for host in hosts {
+            if self.peek(workspace, host).is_some() {
+                continue;
+            }
+            made.push(self.add_rule(&NewRule {
+                scope: Scope::Workspace(workspace.clone()),
+                pattern: Pattern::Exact(host.clone()),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::WorkspaceCreate,
+            })?);
+        }
+        Ok(made)
     }
 
     /// Deletes a rule.

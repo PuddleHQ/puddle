@@ -10,11 +10,11 @@ use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 17;
+pub const SCHEMA_VERSION: u32 = 18;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -464,11 +464,44 @@ CREATE TABLE workspace_names (
 ALTER TABLE audit ADD COLUMN workspace_name TEXT;
 ";
 
+/// A rule may be made by a workspace create (`workspace_create`): the create allows the host of a
+/// new workspace's repositories. SQLite cannot change a `CHECK`, so the table is rebuilt (as in
+/// version 4) with the `AUTOINCREMENT` high-water mark carried over.
+const V17: &str = r"
+CREATE TABLE rules_v17 (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope             TEXT    NOT NULL CHECK (scope IN ('global', 'workspace', 'set')),
+    workspace_id      TEXT,
+    set_id            INTEGER REFERENCES rule_sets (id),
+    pattern_kind      TEXT    NOT NULL CHECK (pattern_kind IN ('exact', 'suffix')),
+    pattern           TEXT    NOT NULL,
+    effect            TEXT    NOT NULL CHECK (effect IN ('allow', 'deny')),
+    expires_at        INTEGER,
+    created_at        INTEGER NOT NULL,
+    created_by        TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api', 'workspace_create')),
+    source_pending_id INTEGER,
+    CHECK ((scope = 'workspace') = (workspace_id IS NOT NULL)),
+    CHECK ((scope = 'set') = (set_id IS NOT NULL))
+) STRICT;
+INSERT INTO rules_v17 (id, scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
+                       created_at, created_by, source_pending_id)
+    SELECT id, scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
+           created_at, created_by, source_pending_id
+    FROM rules;
+DELETE FROM sqlite_sequence WHERE name = 'rules_v17';
+INSERT INTO sqlite_sequence (name, seq) SELECT 'rules_v17', seq FROM sqlite_sequence WHERE name = 'rules';
+DROP TABLE rules;
+ALTER TABLE rules_v17 RENAME TO rules;
+CREATE INDEX rules_workspace ON rules (workspace_id);
+CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
+";
+
 /// Three interception modes instead of one switch. A global row holds the user's mode
 /// (`NULL` until they choose: the install then behaves as before) and the learning switch; a
 /// workspace's own mode is `NULL` to follow it. Each workspace row of the old switch keeps what
 /// it did: on is `all` (every host, learned hosts passed through), off is `known_only`.
-const V17: &str = r"
+const V18: &str = r"
 CREATE TABLE interception_settings (
     id          INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
     mode        TEXT CHECK (mode IN ('all', 'all_except_curated', 'known_only')),
@@ -978,19 +1011,69 @@ mod tests {
         assert_eq!(b_exists, 0);
     }
 
+    /// A rule made by a workspace create is stored; every older rule keeps its row, its id and
+    /// the `AUTOINCREMENT` high-water mark, and the guards of the rebuilt table still hold.
+    #[test]
+    fn v17_lets_a_workspace_create_make_a_rule_and_keeps_the_older_rules() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_up_to(&mut conn, 16).unwrap();
+        conn.execute_batch(
+            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
+                VALUES ('global', 'exact', 'a.example', 'allow', 1, 'cli');
+             INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by)
+                VALUES ('workspace', 'box', 'exact', 'b.example', 'deny', 2, 'ui');
+             DELETE FROM rules WHERE id = 2;",
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
+                 VALUES ('global', 'exact', 'c.example', 'allow', 3, 'workspace_create')",
+                [],
+            )
+            .is_err(),
+            "version 16 does not know the actor"
+        );
+        assert_eq!(migrate(&mut conn).unwrap(), 16);
+        assert_eq!(version(&conn), SCHEMA_VERSION);
+        let survivors: Vec<(i64, String)> = conn
+            .prepare("SELECT id, pattern FROM rules")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(survivors, [(1, "a.example".to_owned())]);
+        conn.execute(
+            "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by)
+             VALUES ('workspace', 'box', 'exact', 'github.com', 'allow', 3, 'workspace_create')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(conn.last_insert_rowid(), 3, "the deleted id 2 stays used");
+        for bad in [
+            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
+             VALUES ('global', 'exact', 'x.example', 'allow', 4, 'system')",
+            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
+             VALUES ('workspace', 'exact', 'x.example', 'allow', 4, 'cli')",
+        ] {
+            assert!(conn.execute(bad, []).is_err(), "{bad}");
+        }
+    }
+
     /// A database from before the three modes: a workspace whose switch was on keeps decrypting
     /// every host, one whose switch was off stays off, and no global mode is set, so the install
     /// behaves as it did until the user chooses.
     #[test]
-    fn v17_keeps_what_each_old_switch_did_and_leaves_the_global_mode_unchosen() {
+    fn v18_keeps_what_each_old_switch_did_and_leaves_the_global_mode_unchosen() {
         let mut conn = Connection::open_in_memory().unwrap();
-        migrate_up_to(&mut conn, 16).unwrap();
+        migrate_up_to(&mut conn, 17).unwrap();
         conn.execute_batch(
             "INSERT INTO workspace_interception (workspace_id, decrypt_all) VALUES ('on', 1), ('off', 0);
              INSERT INTO never_decrypt (workspace_id, pattern) VALUES ('on', 'bank.example');",
         )
         .unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 16);
+        assert_eq!(migrate(&mut conn).unwrap(), 17);
         let mode = |name: &str| -> Option<String> {
             conn.query_row(
                 "SELECT mode FROM workspace_interception WHERE workspace_id = ?1",

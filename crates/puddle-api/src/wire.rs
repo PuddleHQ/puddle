@@ -37,6 +37,7 @@ mod ports;
 mod proxy_sign_in;
 mod repos;
 mod repositories;
+mod repository_hosts;
 mod request_rules;
 mod rule_sets;
 mod shell_init;
@@ -81,6 +82,9 @@ pub use repos::{
     RepoVisibility,
 };
 pub use repositories::{AddRepositoryRequest, Checkout, CheckoutManage, Checkouts, RemoteNote};
+pub use repository_hosts::{
+    AllowedHost, RepositoryHost, RepositoryHostState, RepositoryHosts, RepositoryHostsRequest,
+};
 pub use request_rules::{NewRequestRuleRequest, RequestRule, RequestRuleList};
 pub use rule_sets::{
     NewRuleSetRequest, RuleSetEntry, RuleSetKind, RuleSetList, RuleSetOverride,
@@ -159,6 +163,8 @@ pub enum Actor {
     Api,
     /// Puddle itself (expiry, workspace deletion).
     System,
+    /// A workspace create, or adding a repository: it allows the host of the repository.
+    WorkspaceCreate,
 }
 
 impl Actor {
@@ -168,6 +174,7 @@ impl Actor {
             store::Actor::Ui => Self::Ui,
             store::Actor::Api => Self::Api,
             store::Actor::System => Self::System,
+            store::Actor::WorkspaceCreate => Self::WorkspaceCreate,
             other => {
                 return Err(ApiError::internal(&format_args!(
                     "unmapped actor {other:?}"

@@ -316,27 +316,53 @@ fn try_ready(
     ready: Duration,
     diagnostics: impl Fn() -> String,
 ) -> Result<(), String> {
+    try_answers(
+        child,
+        ready,
+        &diagnostics,
+        || puddle_test_kit::accepts(SocketAddr::from((LOCAL, port))),
+        // A child that dies right after something else answered is a collision too.
+        Duration::from_millis(100),
+        || false,
+    )
+}
+
+/// Like [`try_ready`], with the caller's own `answers`: whether the program (and not a stranger on
+/// its port) is serving. A program that exits first is a failure, even when `answers` says yes,
+/// and so is one that `failed` says is alive but broken (a program that logs its failed bind and
+/// stays up).
+///
+/// For a program that binds its port late, an accepting port proves nothing: another process can
+/// hold the port the program failed to bind, and let go of it again, so a connect succeeds and the
+/// next one is refused. `answers` must be something only the program can do.
+fn try_answers(
+    mut child: Option<&mut Child>,
+    ready: Duration,
+    diagnostics: &dyn Fn() -> String,
+    mut answers: impl FnMut() -> bool,
+    settle: Duration,
+    mut failed: impl FnMut() -> bool,
+) -> Result<(), String> {
     let deadline = Instant::now() + ready;
-    let mut child = child;
+    let exited_early = |child: &mut Option<&mut Child>| {
+        child
+            .as_deref_mut()
+            .map(Child::try_wait)
+            .and_then(Result::ok)
+            .flatten()
+            .map(|status| format!("the fixture exited early ({status})\n{}", diagnostics()))
+    };
     // flake-ok: a timeout must come back as `Err` for the caller (squid retries on it); the kit's waits panic.
     while Instant::now() < deadline {
-        let exited = child.as_deref_mut().map(Child::try_wait);
-        if let Some(Ok(Some(status))) = exited {
-            return Err(format!(
-                "the fixture exited early ({status})\n{}",
-                diagnostics()
-            ));
+        if let Some(why) = exited_early(&mut child) {
+            return Err(why);
         }
-        if puddle_test_kit::accepts(SocketAddr::from((LOCAL, port))) {
-            // A child that dies right after something else answered is a collision too.
-            std::thread::sleep(Duration::from_millis(100));
-            if let Some(Ok(Some(status))) = child.as_deref_mut().map(Child::try_wait) {
-                return Err(format!(
-                    "the fixture exited early ({status})\n{}",
-                    diagnostics()
-                ));
-            }
-            return Ok(());
+        if failed() {
+            return Err(format!("the fixture failed to start\n{}", diagnostics()));
+        }
+        if answers() {
+            std::thread::sleep(settle);
+            return exited_early(&mut child).map_or(Ok(()), Err);
         }
         std::thread::sleep(Duration::from_millis(50));
     }

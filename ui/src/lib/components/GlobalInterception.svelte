@@ -120,6 +120,23 @@
   label {
     font-weight: 600;
   }
+  /* The page's scoped select rule doesn't reach this component; without a cap the longest mode
+     name sets the select's width and pushes the settings page past a phone's width. */
+  select {
+    min-height: var(--control-size);
+    max-width: 18rem;
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font: inherit;
+  }
+  input[type="checkbox"] {
+    width: 1.5rem;
+    height: 1.5rem;
+    flex: none;
+  }
   .desc,
   .muted {
     margin: 0;

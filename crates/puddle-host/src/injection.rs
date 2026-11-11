@@ -1240,6 +1240,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_store_that_cannot_keep_the_history_still_passes_the_host_through_and_lists_it() {
+        use puddle_api::LearnedService;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("puddle.db");
+        let store = Arc::new(
+            Store::open(&path, Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap(),
+        );
+        let (injection, terminations, _, events) = injection_with_events(&store);
+        let service =
+            crate::learned::HostLearned::new(Arc::clone(&terminations), Arc::clone(&store));
+        let ws = workspace("alpha");
+        injection.begin(&ws, false).await.unwrap();
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("DROP TABLE learned_hosts")
+            .unwrap();
+
+        let learned = Arc::clone(
+            terminations
+                .termination(&ws)
+                .unwrap()
+                .interception()
+                .learned(),
+        );
+        learned.learn(&Host::parse_normalised("pinned.example").unwrap());
+        assert!(
+            learned.contains(&Host::parse_normalised("pinned.example").unwrap()),
+            "the host is passed through whether or not its history was written"
+        );
+        assert_eq!(
+            told(&events),
+            [Event::PassThroughLearned {
+                workspace: ws.clone(),
+                host: "pinned.example".to_owned(),
+                count: 1,
+            }],
+            "the user is told, with a count of one"
+        );
+        let listed = service.list(&ws);
+        assert_eq!(
+            listed
+                .iter()
+                .map(|h| (h.host.as_str(), h.passed_through, h.count))
+                .collect::<Vec<_>>(),
+            [("pinned.example", true, 1)],
+            "a host passed through is listed even without its history"
+        );
+        assert!(
+            !service.discard(&ws, "not a host"),
+            "not a name: nothing to discard"
+        );
+        assert!(
+            service.discard(&ws, "pinned.example"),
+            "it was passed through, so it is discarded although its history cannot be dropped"
+        );
+        assert!(!learned.contains(&Host::parse_normalised("pinned.example").unwrap()));
+    }
+
+    #[tokio::test]
     async fn the_history_of_a_refused_host_outlives_the_workspace_run_but_the_pass_through_does_not()
      {
         use puddle_api::LearnedService;

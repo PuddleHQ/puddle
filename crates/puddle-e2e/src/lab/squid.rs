@@ -200,24 +200,23 @@ const PROBE_PATH: &str = "puddle-lab-ready";
 /// without reaching out, and only Squid's error page carries its `Server: squid` or
 /// `X-Squid-Error` header.
 fn squid_answers(port: u16) -> bool {
-    let addr = std::net::SocketAddr::from((LOCAL, port));
-    let Ok(mut conn) = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)) else {
-        return false;
+    let probe = || -> std::io::Result<String> {
+        let addr = std::net::SocketAddr::from((LOCAL, port));
+        let mut conn = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1))?;
+        let timeout = Some(Duration::from_secs(2));
+        conn.set_read_timeout(timeout)?;
+        conn.set_write_timeout(timeout)?;
+        conn.write_all(format!("GET http://{LOCAL}:1/{PROBE_PATH} HTTP/1.0\r\n\r\n").as_bytes())?;
+        // HTTP/1.0: Squid closes after its answer. A stranger that stays silent ends on the
+        // read timeout, which is an error and so not an answer.
+        let mut answer = Vec::new();
+        conn.read_to_end(&mut answer)?;
+        Ok(String::from_utf8_lossy(&answer).to_ascii_lowercase())
     };
-    let timeout = Some(Duration::from_secs(2));
-    if conn.set_read_timeout(timeout).is_err() || conn.set_write_timeout(timeout).is_err() {
-        return false;
-    }
-    let request = format!("GET http://{LOCAL}:1/{PROBE_PATH} HTTP/1.0\r\n\r\n");
-    if conn.write_all(request.as_bytes()).is_err() {
-        return false;
-    }
-    // HTTP/1.0: Squid closes after its answer. A stranger that stays silent ends on the timeout.
-    let mut answer = Vec::new();
-    let _ = conn.read_to_end(&mut answer);
-    let head = String::from_utf8_lossy(&answer).to_ascii_lowercase();
-    head.starts_with("http/")
-        && (head.contains("\r\nserver: squid") || head.contains("\r\nx-squid-error:"))
+    probe().is_ok_and(|head| {
+        head.starts_with("http/")
+            && (head.contains("\r\nserver: squid") || head.contains("\r\nx-squid-error:"))
+    })
 }
 
 impl Squid {

@@ -1,0 +1,24 @@
+fn run_hook(plan: &[u8]) -> Output {
+    let mut child = Command::new("sh").stdin(Stdio::piped()).spawn().unwrap();
+    puddle_test_kit::feed_stdin(&mut child, plan);
+    child.wait_with_output().unwrap()
+}
+
+async fn run_client(bytes: &[u8]) {
+    let mut child = tokio::process::Command::new("ssh").stdin(Stdio::piped()).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    // the child's exit decides; a closed pipe is its outcome, not a write error
+    let _ = stdin.write_all(bytes).await;
+    stdin.shutdown().await.ok();
+}
+
+async fn not_a_child(mut socket: TcpStream, mut file: File, buf: &[u8]) {
+    socket.write_all(buf).await.unwrap();
+    file.write_all(buf).unwrap();
+}
+
+fn sha_of(check: &[u8]) {
+    let mut child = Command::new("sha1sum").stdin(Stdio::piped()).spawn().unwrap();
+    // flake-ok: sha1sum reads its whole input before it answers
+    child.stdin.take().unwrap().write_all(check).unwrap();
+}

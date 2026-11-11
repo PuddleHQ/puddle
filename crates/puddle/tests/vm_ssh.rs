@@ -414,6 +414,7 @@ async fn vm_soak_ssh_idle_15_min() {
         );
         eprintln!("idle {} min", started.elapsed().as_secs() / 60);
     }
+    // flake-ok: the session was proven up a line above; a closed pipe here is the failure this test exists to catch
     stdin.write_all(b"after-idle\n").await.unwrap();
     stdin.flush().await.unwrap();
     let mut line = String::new();
@@ -581,6 +582,7 @@ async fn vm_soak_host_pause_5_min() {
         settled.elapsed().as_secs_f64()
     );
 
+    // flake-ok: the open session is asserted alive just above; a closed pipe here is the failure this test exists to catch
     stdin.write_all(b"after-pause\n").await.unwrap();
     stdin.flush().await.unwrap();
     line.clear();

@@ -27,7 +27,7 @@ Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) 
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
 whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
 and dropped, a literal port bound or connected in a test (a name's authority and a URL are fakes and stay out), a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
-asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Three bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
+asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`, BrokenPipe: use `puddle_test_kit::feed_stdin`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Three bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
 `status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
@@ -637,6 +637,7 @@ def flake_rust(f, raw, code, com, test, rows_add):
             hit("w3", i)
 
     pickers = {}
+    stdin_pipes = set()  # names bound to a child's `stdin.take()` earlier in the file (rule s1)
     real_dns = f.startswith("crates/puddle-vm-tests/") or (("/tests/" in f or f.startswith("tests/")) and any(FLAKE_REAL_DNS.search(c) for c in code))
     for i, line in enumerate(code):
         t = test[i]
@@ -694,6 +695,22 @@ def flake_rust(f, raw, code, com, test, rows_add):
             ahead = "".join(raw[i:i + 5])
             if (FLAKE_EXEC_MODE.search(ahead) or ("chmod" in raw[i] and "+x" in ahead)) and any(FLAKE_FILE_WRITE.search(code[k]) for k in range(max(0, i - 12), i + 1)):
                 hit("e1", i)
+        # Rule s1: a test that writes a child's piped stdin and unwraps the result. A child that exits before it reads
+        # (the script failed, the hook refused the plan) closes the pipe, the write returns `BrokenPipe`, and the test panics
+        # on that instead of reading the child's own outcome. `puddle_test_kit::feed_stdin` treats that as the child's result.
+        if t and "write_all(" in line:
+            k = i
+            while k > 0 and i - k < 6 and code[k - 1].strip() and not code[k - 1].rstrip().endswith((";", "{", "}")):
+                k -= 1
+            stmt = "".join(code[k:min(len(code), i + 4)]).partition(";")[0]
+            head, _, tail = stmt.partition("write_all(")
+            taken = re.search(r"\.stdin\s*\.take\(\)", head) or any(re.search(rf"(?<![\w.]){v}\s*\.\s*$", head) for v in stdin_pipes)
+            checked = re.search(r"\)\s*(?:\.await\s*)?(?:\.unwrap\(\)|\.expect\(|\?)", tail) and not re.match(r"\s*let\s+_\b", stmt)
+            if taken and checked:
+                hit("s1", k)
+        mp = re.search(r"\blet\s+(?:mut\s+)?(\w+)\s*=\s*\w+(?:\.\w+)*\.stdin\s*\.take\(\)", line)
+        if mp:
+            stdin_pipes.add(mp.group(1))
         if t and re.search(r"\b\w*(record|event|row|entr|audit|line)\w*\.(?:iter\(\)\.)?zip\(", line, re.I):
             hit("a1", i)
         # Rule f1: a Unix path literal that becomes a host path, or two parts joined with a `/` by hand, is a test that
@@ -1115,6 +1132,10 @@ def flake_self_test():
     case("e1 original: a write then set_permissions or chmod", "e1", {"crates/x/tests/e.rs": e1_bad}, 2, 2)
     case("e1 fix: the kit helper, a folder, a 0o644 file stay out; a reasoned site counts once", "e1", {"crates/x/tests/e.rs": e1_good}, 1, 0)
     case("e1 in production code", "e1", {"crates/x/src/lib.rs": e1_bad}, 0, 0)
+    s1_bad, s1_good = read("s1-child-stdin-write.bad.rs.txt"), read("s1-child-stdin-write.good.rs.txt")
+    case("s1 original: a one-line chain, a split chain, a variable taken from stdin", "s1", {"crates/x/tests/s.rs": s1_bad}, 3, 3)
+    case("s1 fix: feed_stdin, a discarded result, a socket or file stay out; a reasoned site counts once", "s1", {"crates/x/tests/s.rs": s1_good}, 1, 0)
+    case("s1 in production code", "s1", {"crates/x/src/lib.rs": s1_bad}, 0, 0)
     case("p2 in a cfg(test) module", "p2", {"crates/x/src/lib.rs": "#[cfg(test)]\nmod t {\n    fn f() { let l = TcpListener::bind(\"127.0.0.1:8080\"); }\n}\n"}, 1, 1)
 
     # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.

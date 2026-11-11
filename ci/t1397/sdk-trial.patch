@@ -46,10 +46,10 @@ index 04a864fc..35b7cbc4 100644
  // Re-Exports
 diff --git a/sdk/rust/lib/runtime/sandbox_trial.rs b/sdk/rust/lib/runtime/sandbox_trial.rs
 new file mode 100644
-index 00000000..ef9aff66
+index 00000000..e2a57333
 --- /dev/null
 +++ b/sdk/rust/lib/runtime/sandbox_trial.rs
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,258 @@
 +//! RESEARCH ONLY (never shipped): start the sandbox runtime under a candidate sandbox control,
 +//! chosen by the environment variable PUDDLE_SANDBOX_TRIAL:
 +//!   restricted | rsids | low | lowbox:<appcontainer name>:<capability>[,<capability>...]
@@ -85,13 +85,6 @@ index 00000000..ef9aff66
 +        caps: *const SID_AND_ATTRIBUTES,
 +        nh: u32,
 +        h: *const HANDLE,
-+    ) -> i32;
-+    fn DeriveCapabilitySidsFromName(
-+        name: *const u16,
-+        groups: *mut *mut PSID,
-+        ngroups: *mut u32,
-+        caps: *mut *mut PSID,
-+        ncaps: *mut u32,
 +    ) -> i32;
 +}
 +

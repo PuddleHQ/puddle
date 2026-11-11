@@ -173,6 +173,7 @@ fn every_kind_of_change_to_the_host_files_is_flagged() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        // flake-ok: only the mode bits are compared; the script is never executed
         changed("mode", &|| {
             std::fs::set_permissions(path("agent-supervise.sh"), PermissionsExt::from_mode(0o755))
                 .unwrap();

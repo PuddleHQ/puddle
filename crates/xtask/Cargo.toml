@@ -22,6 +22,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 object = { workspace = true, features = ["write"] }
+puddle-test-kit = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

@@ -11,7 +11,6 @@
 
 use crate::common;
 
-use std::os::unix::fs::PermissionsExt;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -67,8 +66,7 @@ async fn rig() -> Rig {
         ("out/pty", PTY_HOST),
     ] {
         let file = release.join(path);
-        std::fs::write(&file, script).unwrap();
-        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        puddle_test_kit::write_executable(&file, script);
     }
     let mut server = EditorServer::new(
         dir.path().join("data").to_string_lossy(),
@@ -252,15 +250,13 @@ const COMMIT_2: &str = "2222222222222222222222222222222222222222";
 fn build(builds: &std::path::Path, commit: &str, name: &str, log: &std::path::Path) {
     let program = builds.join(commit).join("bin/code-server");
     std::fs::create_dir_all(program.parent().unwrap()).unwrap();
-    std::fs::write(
+    puddle_test_kit::write_executable(
         &program,
-        format!(
+        &format!(
             "#!/bin/sh\necho {name} >>{}\nexec sleep 600\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     std::fs::write(builds.join(commit).join(".puddle-installed"), "").unwrap();
 }
 

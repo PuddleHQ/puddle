@@ -829,19 +829,13 @@ mod tests {
         // The variable reaches only the driver's process, through a wrapper around node.
         let node = Node::from_env().program;
         let wrapper = modules.path().join("no-launch.sh");
-        std::fs::write(
+        puddle_test_kit::write_executable(
             &wrapper,
-            format!(
+            &format!(
                 "#!/bin/sh\nSTUB_NO_LAUNCH=1 exec '{}' \"$@\"\n",
                 node.to_string_lossy()
             ),
-        )
-        .expect("wrapper");
-        std::fs::set_permissions(
-            &wrapper,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .expect("chmod");
+        );
         let err = BrowserClient::new(Node::new(&wrapper), modules.path().join("node_modules"))
             .expect("client")
             .session()
@@ -856,16 +850,10 @@ mod tests {
     async fn a_driver_that_dies_says_so_with_its_stderr() {
         let modules = stub_modules();
         let wrapper = modules.path().join("dies.sh");
-        std::fs::write(
+        puddle_test_kit::write_executable(
             &wrapper,
             "#!/bin/sh\necho 'Cannot find module' >&2\nexit 1\n",
-        )
-        .expect("wrapper");
-        std::fs::set_permissions(
-            &wrapper,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .expect("chmod");
+        );
         let err = BrowserClient::new(Node::new(&wrapper), modules.path().join("node_modules"))
             .expect("client")
             .session()

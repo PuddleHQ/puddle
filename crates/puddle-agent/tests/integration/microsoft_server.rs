@@ -478,8 +478,7 @@ async fn a_half_made_build_is_not_a_build() {
 /// A script that stands in for `curl` or `wget`.
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&path, &format!("#!/bin/sh\n{body}\n"));
     path
 }
 

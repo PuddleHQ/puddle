@@ -1004,7 +1004,6 @@ mod tests {
     /// Unix only: the stand-ins for `code.cmd` and `Code.exe` are shell scripts.
     #[cfg(unix)]
     fn stub_release(dir: &Path, code_cmd: &str, code_exe: &str) -> VsCodeRelease {
-        use std::os::unix::fs::PermissionsExt as _;
         let app = dir.join("app");
         std::fs::create_dir_all(app.join("bin")).expect("mkdir");
         std::fs::write(dir.join("remote-ssh.vsix"), "").expect("vsix");
@@ -1012,8 +1011,7 @@ mod tests {
             (app.join("bin").join("code.cmd"), code_cmd),
             (app.join("Code.exe"), code_exe),
         ] {
-            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("script");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            puddle_test_kit::write_executable(&path, &format!("#!/bin/sh\n{body}\n"));
         }
         VsCodeRelease::new(dir.to_owned()).expect("a complete release")
     }

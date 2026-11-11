@@ -49,8 +49,7 @@ fn fixture() -> Fixture {
     let script = release.join("bin/code-server");
     let out = dir.path().join("out");
     std::fs::create_dir(&out).unwrap();
-    std::fs::write(&script, FAKE.replace("OUT", &out.to_string_lossy())).unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&script, &FAKE.replace("OUT", &out.to_string_lossy()));
     let mut server = EditorServer::new(
         dir.path().join("data").to_string_lossy(),
         dir.path().join("work").to_string_lossy(),

@@ -14,12 +14,13 @@
 //   5. `git push` from the workspace reaches the forge with the credential Puddle injects, the author
 //      is the identity's, and the guest, the audit log and the API never hold the token.
 //
-// Why the REST API and not the DevTools Protocol like smoke.mjs: a release build has no debugging port
-// (the shell honours PUDDLE_APP_DEBUG_PORT in debug builds only, and WebView2 ignores its environment
-// variable once the API sets arguments, which wry always does), and the MSI holds a release build. The
-// clicks themselves (the create form, the inbox's Allow, the connect step) are the Playwright suite's
-// (ui/e2e, on the fixture backend) and smoke.mjs's on a debug shell; what a person still does is
-// to look at the real window. Plain Node 24, no packages.
+// Why UI Automation (uia.mjs) and not the DevTools Protocol like smoke.mjs: a release build has no
+// debugging port (the shell honours PUDDLE_APP_DEBUG_PORT in debug builds only, and WebView2 ignores its
+// environment variable once the API sets arguments, which wry always does), and the MSI holds a release
+// build. So the real window is clicked the way a person does it: the first-run steps, the create form,
+// the inbox's Allow, the Connect step and the editor window's content. The REST API still sets up what a
+// person would paste (the token, the identity), asks for what no screen shows (the ids, the guest) and
+// retries the clone. Plain Node 24, no packages.
 //
 // The lab forge runs as a child of this script, not of an earlier workflow step: a step's background
 // processes do not outlive it on the runner. Its root goes into the machine's store before the app starts
@@ -33,6 +34,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Uia } from "./uia.mjs";
 
 const local = process.env.LOCALAPPDATA;
 if (!local) throw new Error("LOCALAPPDATA is not set: this runs on Windows");
@@ -121,6 +123,7 @@ app.on("exit", (code) => {
 });
 
 let conn;
+let uia;
 /** The app's REST API, as its screens call it. */
 async function api(method, path, body) {
   const response = await fetch(`${conn.url}${path}`, {
@@ -189,23 +192,6 @@ async function approvePending(what) {
     note(`approved in the inbox (${what}): ${row.host} for ${row.workspace} -> ${reply.status}`);
   }
   return open.filter((r) => expectedHost(r.host)).length;
-}
-
-/** Approves what is pending until `done` settles. */
-async function approveUntil(what, done) {
-  let finished = false;
-  const result = done.then((value) => {
-    finished = true;
-    return value;
-  });
-  result.catch(() => {
-    finished = true;
-  });
-  while (!finished) {
-    const n = await approvePending(what);
-    await Promise.race([result.catch(() => {}), sleep(n > 0 ? 500 : 1000)]);
-  }
-  return result;
 }
 
 /**
@@ -283,26 +269,6 @@ function forgeLog() {
   }
 }
 
-const answerScript = join(out, "answer-dialog.ps1");
-writeFileSync(
-  answerScript,
-  `Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
-$root = [System.Windows.Automation.AutomationElement]::RootElement
-$by = [System.Windows.Automation.PropertyCondition]
-$dialog = $root.FindFirst('Children', (New-Object $by ([System.Windows.Automation.AutomationElement]::NameProperty), 'Security Warning'))
-if (-not $dialog) { 'none'; exit 0 }
-$yes = $dialog.FindFirst('Descendants', (New-Object $by ([System.Windows.Automation.AutomationElement]::NameProperty), 'Yes'))
-if (-not $yes) { 'no Yes button'; exit 0 }
-$yes.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-'answered Yes'
-`,
-);
-/** Windows asks once to trust the app's own localhost certificate (the editor's origin): the user answers Yes. */
-function answerCertificateDialog() {
-  const ps = spawnSync("powershell", ["-NoProfile", "-File", answerScript], { encoding: "utf8" });
-  return (ps.stdout ?? "").trim();
-}
-
 /** Waits until the workspace has nothing in hand (a clone, a start): other calls refuse while it is busy. */
 const idle = (id) =>
   until(
@@ -314,6 +280,67 @@ const idle = (id) =>
     300_000,
     2000,
   );
+
+// ---- the real window ------------------------------------------------------------------------------
+
+const MAIN = "^(?!usable - )"; // the app's main window; the editor's window is "<name> - Puddle"
+const EDITOR = `^${WORKSPACE} - `;
+const inMain = (role, name) => ({ window: MAIN, role, name });
+const heading = (name) => ({ window: MAIN, localized: "heading", name });
+let dumps = 0;
+
+/** One thing a person does in the window; a failure leaves the window's tree and a screenshot behind. */
+async function step(what, action) {
+  try {
+    const result = await action();
+    check(what, true);
+    return result;
+  } catch (err) {
+    const lines = await uia.dump(".").catch((e) => [`dump failed: ${e}`]);
+    writeFileSync(join(out, `uia-tree-${String(++dumps).padStart(2, "0")}.txt`), lines.join("\n"));
+    screenshot("uia-failure");
+    throw new Error(`${what}: ${err.message}`);
+  }
+}
+
+/** The first-run flow, step by step, ending with the create form on the last step. */
+async function firstRunToCreateForm() {
+  await uia.waitFor("the welcome heading", heading("Welcome to Puddle"), 120_000);
+  await uia.click("Get started", inMain("link", "Get started"));
+  const pages = ["System check", "Certificates", "How do you want to connect?", "Look", "Your first workspace"];
+  await uia.waitFor(`the "${pages[0]}" heading`, heading(pages[0]));
+  for (const page of pages.slice(1)) {
+    await uia.click(`Continue (to ${page})`, inMain("link", "Continue"));
+    await uia.waitFor(`the "${page}" heading`, heading(page));
+    if (page === "How do you want to connect?") {
+      const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "code-server \\(bundled\\)" });
+      check("code-server is preselected on the Connect step", code.checked === true, JSON.stringify(code));
+    }
+  }
+}
+
+/** Fills the New workspace form as a person does and presses Create. */
+async function createFromTheForm() {
+  await uia.click("Create a workspace", inMain("button", "Create a workspace"));
+  await uia.waitFor("the New workspace dialog", { window: MAIN, localized: "dialog", name: "New workspace" });
+  await uia.fill("the repository address", { window: MAIN, role: "edit", nameRegex: "^Git repository \\(HTTPS" }, httpsUrl);
+  await uia.fill("the name", { window: MAIN, role: "edit", name: "Name" }, WORKSPACE);
+  await uia.click("Create workspace", inMain("button", "Create workspace"));
+}
+
+/** The inbox: opens it from the sidebar and presses Allow on the forge's row, as the user does. */
+async function allowTheForgeInTheInbox() {
+  await uia.click("the Inbox link", { window: MAIN, role: "link", nameRegex: "^Inbox" });
+  await uia.waitFor("the Inbox heading", heading("Inbox"));
+  await uia.click("Allow for the forge", { window: MAIN, role: "button", nameRegex: `^Allow ${forge.split(".").join("[.]")} for ` });
+  // The row leaves the inbox's waiting list and joins "Decided just now".
+  await uia.waitFor("the decision in the inbox", { window: MAIN, role: "button", nameRegex: "^Undo: Allowed " });
+  await until("the forge request to be allowed", async () => {
+    const rows = (await api("GET", "/api/pending")).json?.requests ?? [];
+    return !rows.some((r) => r.host === forge && r.state === "requested");
+  }, 30_000, 1000);
+  approved.push(`${forge} for ${WORKSPACE} (the Allow button)`);
+}
 
 // ---- the run ---------------------------------------------------------------------------------------
 
@@ -330,6 +357,15 @@ try {
   );
   await until("the API", async () => (await api("GET", "/api/health")).status === 200, 60_000);
   check("the installed app starts and answers its API", true, conn.url);
+  uia = await Uia.start(app.pid);
+  // Windows asks once to trust the app's own localhost certificate (the editor's origin), whenever the
+  // app first needs it; the user answers Yes, so a poll does, for the whole run.
+  const certificate = setInterval(() => {
+    uia.call({ action: "click", window: "^Security Warning$", role: "pane", name: "Yes" }).then((r) => {
+      if (r.found) note("the Windows certificate dialog for localhost: answered Yes");
+    }, () => {});
+  }, 2000);
+  certificate.unref();
 
   // What the settings screen and the identity forms do through the same API; the forge is on this
   // computer, so a workspace may reach this computer's own addresses (the Loopback switch).
@@ -350,38 +386,38 @@ try {
   const none = await api("GET", "/api/workspaces");
   check("the refused create made no workspace", none.json?.workspaces?.length === 0, none.body.slice(0, 200));
 
-  // 2. The real create, from the lab forge's private repository.
-  const created = await api("POST", "/api/workspaces", { name: WORKSPACE, repositories: [{ url: httpsUrl }] });
-  check("the create is accepted", created.status === 202, `${created.status} ${created.body.slice(0, 300)}`);
-  const id = created.json.id;
+  // 2. The real create, through the window: the first-run steps, then the New workspace form.
+  await step("the first-run steps lead to the first workspace's form", firstRunToCreateForm);
+  await step("the New workspace form is filled and sent", createFromTheForm);
+  const created = await until("the workspace to be listed", async () => (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.name === WORKSPACE), 60_000, 1000);
+  const id = created.id;
   note(`workspace ${WORKSPACE} has the id ${id}`);
   let started = false;
-  const running = await approveUntil(
-    "create",
-    until(
-      `workspace ${id} to run (the create clones the private repository, then the image is pulled and the machine boots)`,
-      async () => {
-        const w = (await api("GET", "/api/workspaces")).json?.workspaces?.find((x) => x.id === id);
-        if (!w) throw new Error("the workspace vanished");
-        if (["crashed", "volume_missing"].includes(w.status)) throw new Error(`the workspace is ${w.status}`);
-        if (w.status === "running" && !w.busy) return w;
-        if (!started && !w.busy && ["created", "stopped"].includes(w.status)) {
-          started = true;
-          await api("POST", `/api/workspaces/${id}/start`);
-        }
-        return false;
-      },
-      900_000,
-      2000,
-    ),
+  const running = await until(
+    `workspace ${id} to run (the create clones the private repository, then the image is pulled and the machine boots)`,
+    async () => {
+      const w = (await api("GET", "/api/workspaces")).json?.workspaces?.find((x) => x.id === id);
+      if (!w) throw new Error("the workspace vanished");
+      if (["crashed", "volume_missing"].includes(w.status)) throw new Error(`the workspace is ${w.status}`);
+      if (w.status === "running" && !w.busy) return w;
+      if (!started && !w.busy && ["created", "stopped"].includes(w.status)) {
+        started = true;
+        await api("POST", `/api/workspaces/${id}/start`);
+      }
+      return false;
+    },
+    900_000,
+    2000,
   );
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
   // The create's own clone asked for the forge before anyone had allowed it, so it was refused and the
-  // workspace came up without the checkout (a problem notice with a retry); after the approval the user retries.
+  // workspace came up without the checkout (a problem notice with a retry). The user opens the inbox,
+  // presses Allow, and retries the clone.
+  await until("the forge request to be pending", async () => ((await api("GET", "/api/pending")).json?.requests ?? []).some((r) => r.host === forge && r.state === "requested"), 120_000, 1000);
+  await step("the forge's request is allowed with the inbox's Allow button", allowTheForgeInTheInbox);
   const checkout = `/workspaces/${id}/app/package.json`;
   let cloned = false;
   for (let attempt = 1; attempt <= 5 && !cloned; attempt++) {
-    await until("the forge request to be pending", async () => (await approvePending("clone")) > 0 || attempt > 1, 20_000, 1000).catch(() => {});
     const retry = await api("POST", `/api/workspaces/${id}/repositories/app/clone`, {});
     note(`clone attempt ${attempt} -> ${retry.status}`);
     await idle(id).catch(() => {});
@@ -391,20 +427,29 @@ try {
   const settled = await idle(id).catch(() => undefined);
   check("the workspace is idle and running after the clone", settled?.status === "running", JSON.stringify(settled));
 
-  // 3. The browser editor opens in its own window.
-  const attach = await api("POST", `/api/workspaces/${id}/attach`, { mode: "browser" });
-  check("the browser editor is opened", attach.status === 200 && attach.json?.opened === true, `${attach.status} ${attach.body.slice(0, 200)}`);
+  // 3. The browser editor opens in its own window, from the Connect step of the workspace list.
+  await step("the Connect step opens the browser editor", async () => {
+    await uia.click("the Workspaces link", { window: MAIN, role: "link", nameRegex: "^Workspaces" });
+    await uia.click(`Connect to ${WORKSPACE}`, inMain("button", `Connect to ${WORKSPACE}`));
+    await uia.waitFor("the Connect step", { window: MAIN, localized: "dialog", name: `Connect to ${WORKSPACE}` });
+    await uia.click("Open in the browser", inMain("button", "Open in the browser"));
+  });
   const title = await until(
     "the editor window, titled with the workspace",
     () => {
-      const answered = answerCertificateDialog();
-      if (answered !== "none") note(`the certificate dialog: ${answered}`);
       return appWindows().find((t) => t.startsWith(`${WORKSPACE} - `));
     },
     120_000,
     1500,
   ).catch(() => undefined);
   check("the editor opens in its own window", title !== undefined, `windows: ${appWindows().join(" | ")}`);
+  // What the window shows: the workbench's Explorer with the checkout's folder in it.
+  await step("the editor window shows the Explorer with the checkout's folder", async () => {
+    await uia.waitFor("the Files Explorer tree", { window: EDITOR, role: "tree", name: "Files Explorer" }, 180_000);
+    await uia.waitFor("the checkout's folder in the Explorer", { window: EDITOR, role: "treeitem", name: "app" }, 60_000);
+  }).catch((err) => {
+    check("the editor window shows the Explorer with the checkout's folder", false, err.message);
+  });
   const server = await until(
     "the editor server in the guest",
     async () => {
@@ -485,6 +530,7 @@ try {
 } finally {
   writeFileSync(join(out, "app.log"), appLog);
   if (info) writeFileSync(join(out, "forgejo-server.log"), forgeLog());
+  uia?.close();
   stopForge();
   if (!appExited) spawnSync("taskkill", ["/PID", String(app.pid), "/T", "/F"], { stdio: "ignore" });
 }

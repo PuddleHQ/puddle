@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use puddle_api::{RepoUrl, Repository, SettingsRepo, SettingsRepoError, StartFolder};
-use puddle_types::{CheckoutDir, SessionUser, WorkspaceId};
+use puddle_types::{CheckoutDir, EntryId, SessionUser, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -261,8 +261,12 @@ const fn root() -> SessionUser {
     SessionUser::Root
 }
 
+/// A repository row of versions 1 to 3. `entry` is missing in a list written before entries
+/// had ids: a read gives such an entry a fresh id and the next save writes it.
 #[derive(Debug, Serialize, Deserialize)]
 struct RepositoryV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entry: Option<String>,
     url: String,
     directory: String,
 }
@@ -333,6 +337,7 @@ impl From<EntryV1> for EntryV2 {
             name: v1.name,
             display_name: v1.display_name,
             repositories: vec![RepositoryV2 {
+                entry: None,
                 url: v1.repo_url,
                 directory: directory.clone(),
             }],
@@ -354,18 +359,31 @@ impl EntryV3 {
         let id = WorkspaceId::new(&self.id).map_err(|e| at("has a bad id", &e))?;
         let name =
             puddle_api::DisplayName::parse(&self.name).map_err(|e| at("has a bad name", &e))?;
-        let repositories = self
-            .repositories
-            .iter()
-            .map(|r| {
-                Ok(Repository {
-                    url: RepoUrl::parse(&r.url)
-                        .map_err(|e| at("has a bad repository address", &e))?,
-                    directory: CheckoutDir::new(&r.directory)
-                        .map_err(|e| at("has a bad checkout directory", &e))?,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let mut taken: Vec<EntryId> = Vec::new();
+        for given in self.repositories.iter().filter_map(|r| r.entry.as_deref()) {
+            let entry = EntryId::new(given).map_err(|e| at("has a bad repository entry id", &e))?;
+            if taken.contains(&entry) {
+                return Err(at("lists one repository entry id twice", &entry));
+            }
+            taken.push(entry);
+        }
+        let mut repositories = Vec::with_capacity(self.repositories.len());
+        for r in &self.repositories {
+            let entry = if let Some(given) = &r.entry {
+                EntryId::new(given).map_err(|e| at("has a bad repository entry id", &e))?
+            } else {
+                let fresh = puddle_api::new_entry_id(|e| taken.contains(e))
+                    .map_err(|e| at("could not give a repository an id", &e))?;
+                taken.push(fresh.clone());
+                fresh
+            };
+            repositories.push(Repository {
+                entry,
+                url: RepoUrl::parse(&r.url).map_err(|e| at("has a bad repository address", &e))?,
+                directory: CheckoutDir::new(&r.directory)
+                    .map_err(|e| at("has a bad checkout directory", &e))?,
+            });
+        }
         let start_folder = self
             .start_folder
             .as_deref()
@@ -396,6 +414,7 @@ impl From<Stored> for EntryV3 {
                 .repositories
                 .into_iter()
                 .map(|r| RepositoryV2 {
+                    entry: Some(r.entry.to_string()),
                     url: r.url.as_str().to_owned(),
                     directory: r.directory.to_string(),
                 })
@@ -543,8 +562,18 @@ mod tests {
 
     use super::*;
 
+    /// An entry id the directory picks, so two lists name the same entry alike.
+    fn entry_for(dir: &str) -> EntryId {
+        let mut bytes = [0_u8; 5];
+        for (slot, b) in bytes.iter_mut().zip(dir.bytes().cycle()) {
+            *slot = b;
+        }
+        EntryId::from_random(bytes)
+    }
+
     fn repository(url: &str, dir: &str) -> Repository {
         Repository {
+            entry: entry_for(dir),
             url: RepoUrl::parse(url).unwrap(),
             directory: CheckoutDir::new(dir).unwrap(),
         }
@@ -943,8 +972,11 @@ mod tests {
         let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(written["version"], 3);
         assert_eq!(written["workspaces"][0]["name"], "Web shop");
+        let mut saved = written["workspaces"][0]["repositories"].clone();
+        let entry = saved[0].as_object_mut().unwrap().remove("entry").unwrap();
+        assert!(EntryId::new(entry.as_str().unwrap()).is_ok(), "{entry}");
         assert_eq!(
-            written["workspaces"][0]["repositories"],
+            saved,
             json!([{"url": "https://github.com/acme/shop.git", "directory": "shop"}])
         );
         assert_eq!(written["workspaces"][0]["start_folder"], "shop");
@@ -1060,6 +1092,63 @@ mod tests {
         let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(written["workspaces"][1]["repositories"], json!([]));
         assert_eq!(written["workspaces"][1]["start_folder"], Value::Null);
+    }
+
+    #[test]
+    fn entries_of_an_older_list_get_ids_on_read_and_keep_them_once_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workspaces.json");
+        let old = include_str!("../tests/fixtures/workspaces-v2.json");
+        std::fs::write(&path, old).unwrap();
+        let book = WorkspaceBook::new(&path);
+        let first = book.load().unwrap().workspaces;
+        let ids: Vec<&EntryId> = first
+            .iter()
+            .flat_map(|s| s.repositories.iter().map(|r| &r.entry))
+            .collect();
+        let unique: BTreeSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "one id per entry, none twice");
+        assert_ne!(ids.len(), 0);
+        book.save(first.clone(), &BTreeSet::new()).unwrap();
+        assert_eq!(
+            book.load().unwrap().workspaces,
+            first,
+            "saved ids are read back"
+        );
+        let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(written["version"], 3);
+        assert_eq!(
+            written["workspaces"][0]["repositories"][0]["entry"],
+            first[0].repositories[0].entry.as_str()
+        );
+    }
+
+    #[test]
+    fn a_list_with_a_bad_or_repeated_entry_id_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workspaces.json");
+        let book = WorkspaceBook::new(&path);
+        for (entries, why) in [
+            (
+                json!([
+                    {"entry": "a0000000", "url": "https://h/a/b", "directory": "b"},
+                    {"entry": "a0000000", "url": "https://h/a/c", "directory": "c"}
+                ]),
+                "one repository entry id twice",
+            ),
+            (
+                json!([{"entry": "b", "url": "https://h/a/b", "directory": "b"}]),
+                "bad repository entry id",
+            ),
+        ] {
+            let bad = json!({"version": 3, "workspaces": [{
+                "id": "a", "name": "a", "repositories": entries, "start_folder": null,
+                "image": "i", "memory_mib": 512, "created_at": 0, "disk_size_mib": 1
+            }]});
+            std::fs::write(&path, bad.to_string()).unwrap();
+            let err = book.load().unwrap_err().to_string();
+            assert!(err.contains(why), "{err}");
+        }
     }
 
     #[test]

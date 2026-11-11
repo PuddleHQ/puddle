@@ -1,0 +1,4 @@
+status: failing
+fixture: e1-script-write.bad.rs.txt
+as: crates/puddle-boot/tests/x.rs
+fix: a test that writes a script in-process and then makes it executable races a sibling test's fork: the fork copies the writable descriptor and the exec fails with `Text file busy` (ETXTBSY). Write it with `puddle_test_kit::write_executable(path, text)` (`write_executable_bytes` for a binary; the file is written by a short-lived `sh` child), or `flake-ok: <why this file is never executed while other tests fork>`

@@ -1467,7 +1467,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspaces/{id}/repositories/{directory}": {
+    "/api/workspaces/{id}/repositories/{entry}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1488,7 +1488,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspaces/{id}/repositories/{directory}/clone": {
+    "/api/workspaces/{id}/repositories/{entry}/clone": {
         parameters: {
             query?: never;
             header?: never;
@@ -2752,6 +2752,11 @@ export interface components {
             /** @description Other special-purpose ranges. */
             special: components["schemas"]["ResolvedBool"];
         };
+        /**
+         * @description A repository entry's id: eight characters of lowercase Crockford base32, the first a letter. Unique within its workspace.
+         * @example a0000000
+         */
+        EntryId: string;
         /**
          * @description What a variable is.
          * @enum {string}
@@ -5031,6 +5036,12 @@ export interface components {
         WorkspaceRepository: {
             /** @description The checkout it is cloned into, directly under the volume root. */
             directory: components["schemas"]["CheckoutDir"];
+            /**
+             * @description The entry's id, unique within the workspace: what `/api/workspaces/{id}/repositories/{entry}`
+             *     and the `clone:<id>:<entry>` problem key use. It never changes while the entry is on the
+             *     list.
+             */
+            entry: components["schemas"]["EntryId"];
             /** @description The HTTPS address it is cloned from, without credentials. */
             url: string;
         };
@@ -12157,8 +12168,8 @@ export interface operations {
             path: {
                 /** @description workspace id */
                 id: string;
-                /** @description the entry's directory */
-                directory: string;
+                /** @description the entry's id (not its directory) */
+                entry: string;
             };
             cookie?: never;
         };
@@ -12245,8 +12256,8 @@ export interface operations {
             path: {
                 /** @description workspace id */
                 id: string;
-                /** @description the entry's directory */
-                directory: string;
+                /** @description the entry's id (not its directory) */
+                entry: string;
             };
             cookie?: never;
         };

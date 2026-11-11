@@ -46,13 +46,11 @@ fn runtime_dir(root: &Path, version: &str) -> std::path::PathBuf {
     let dir = root.join(RUNTIME_DIR_NAME);
     std::fs::create_dir_all(&dir).unwrap();
     let msb = dir.join(MSB_FILE_NAME);
+    #[cfg(unix)]
+    puddle_test_kit::write_executable_bytes(&msb, &fake_msb(version));
+    #[cfg(not(unix))]
     std::fs::write(&msb, fake_msb(version)).unwrap();
     std::fs::write(dir.join(LIBKRUNFW_FILE_NAME), b"firmware").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&msb, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
     dir
 }
 

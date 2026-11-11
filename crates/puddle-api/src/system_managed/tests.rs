@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+use puddle_settings::{Consent, ConsentKind, MICROSOFT_TERMS_VERSION, TermsVersion, UnixMillis};
+
+use super::*;
+
+fn microsoft(consent: bool) -> GlobalSettings {
+    let mut global = GlobalSettings::default();
+    global.vscode_server.server = Some(ServerChoice::Microsoft);
+    if consent {
+        global.consents.set(
+            ConsentKind::VsCodeServer,
+            Consent::Granted {
+                at: UnixMillis(1),
+                terms_version: TermsVersion::new(MICROSOFT_TERMS_VERSION).unwrap(),
+            },
+        );
+    }
+    global
+}
+
+#[test]
+fn r41_code_server_by_default_gives_open_vsx_only() {
+    let plan = plan(&GlobalSettings::default(), &[]);
+    assert_eq!(
+        plan.everywhere.into_iter().collect::<Vec<_>>(),
+        [SystemReason::CodeServer]
+    );
+    assert_eq!(plan.workspaces.len(), 0);
+}
+
+#[test]
+fn r41_microsoft_server_needs_the_consent() {
+    let with = plan(&microsoft(true), &[]);
+    assert_eq!(
+        with.everywhere.into_iter().collect::<Vec<_>>(),
+        [SystemReason::MicrosoftServer]
+    );
+    // Chosen without a consent: the editor runs code-server, so that is what is allowed.
+    assert_eq!(
+        plan(&microsoft(false), &[]),
+        plan(&GlobalSettings::default(), &[])
+    );
+}
+
+#[test]
+fn r41_a_consent_to_other_terms_does_not_open_microsofts_hosts() {
+    let mut global = microsoft(true);
+    global.consents.set(
+        ConsentKind::VsCodeServer,
+        Consent::Granted {
+            at: UnixMillis(1),
+            terms_version: TermsVersion::new("https://example.test/older-terms").unwrap(),
+        },
+    );
+    let plan = plan(&global, &[]);
+    assert!(!plan.everywhere.contains(&SystemReason::MicrosoftServer));
+    assert!(plan.everywhere.contains(&SystemReason::CodeServer));
+}
+
+#[test]
+fn r41_direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
+    let ssh = WorkspaceId::new("ssh").unwrap();
+    let plan = plan(&GlobalSettings::default(), std::slice::from_ref(&ssh));
+    assert_eq!(
+        plan.workspaces
+            .get(&ssh)
+            .map(|r| r.iter().copied().collect::<Vec<_>>()),
+        Some(DIRECT_SSH_REASONS.to_vec())
+    );
+    assert!(!plan.everywhere.contains(&SystemReason::DirectSsh));
+}

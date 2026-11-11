@@ -287,7 +287,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 | Tier | What | Where it lives | Runs |
 |---|---|---|---|
 | L0 static | fmt, clippy (Linux + msvc), deny (bans, licences, sources), advisories (RustSec, and npm as `ui-audit`; neither on pull requests to `develop`), typos, SPDX, shellcheck, secrets (gitleaks), standalone (no planning-note references, "Puddle" capitalised in prose), git-pins (no dependency pinned by a branch), mutants-exclusions (no stale mutation exclusion), silent skips, rustdoc, API contract | `scripts/check.sh` | every push, every PR |
-| L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | `#[cfg(test)] mod tests` in the same file | every push (Linux); Windows: every PR that changes Rust, the merge queue, nightly, PRs to `main` |
+| L1 unit | one module's logic: parsers, rules, state machines, address classifier, path handling | a sibling `<module>/tests.rs`, declared `#[cfg(test)] mod tests;` (see the placement rule below) | every push (Linux); Windows: every PR that changes Rust, the merge queue, nightly, PRs to `main` |
 | L2 integration, no VM | real proxy + real agent over a Unix socket / named pipe, fake guest client, fake upstreams; API over loopback; the hostile-guest **tier P** | `crates/<crate>/tests/*.rs`; cross-crate ones in `crates/puddle-e2e/tests/` | every push |
 | L3 Linux KVM e2e (**K**) | a real msb microVM; the product's behaviours; hostile-guest **tier V** | `crates/puddle-vm-tests/tests/`, functions or files named `vm_*` | `vm-linux.yml`: every pull request to `develop`, by hand on any branch, nightly on `develop` |
 | L4 Windows e2e (**W**) | the L3 scenarios on WHP plus Windows-only paths; hostile-guest **tier W** | same crate, same names | `vm-windows.yml` on the hosted `windows-2025` runner: every pull request to `develop`, by hand on any branch, nightly on `develop` |
@@ -298,6 +298,12 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 
 - **New behaviour is tested at the lowest tier that can catch its bug, plus the tier that proves it
   works end to end.** A bug fix starts with a test that reproduces it.
+- **Unit tests live in a sibling file, never inline.** A module `foo.rs` keeps its unit tests in
+  `foo/tests.rs`, declared `#[cfg(test)] mod tests;` (a `lib.rs`, `main.rs` or `mod.rs` takes `tests.rs`
+  beside it). No `#[path]`; the sibling still sees the module's private items. A test helper module gets
+  its own sibling the same way (`foo/<helper>.rs`). An inline `#[cfg(test)] mod name { }` block of any size
+  is not allowed: `scripts/check.sh quality` fails it and names the sibling form. Coverage tools skip
+  `tests.rs` files, so their lines are not in the coverage totals.
 - **Hostile-guest cases** (the hostile-guest suite): every case is a named test (`hostile_<id>_…`)
   asserting on the audit log, the API and the fake upstream's record. Write the tier P version
   with the feature; V and W follow as VM tests on the `puddle-vm-tests` harness, named

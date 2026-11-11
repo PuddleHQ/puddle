@@ -1,5 +1,6 @@
-# Rust
-target/
+# Rust (cargo output at the root and in the fuzz crate; a source module may be named `target`)
+/target/
+/fuzz/target/
 **/*.rs.bk
 *.pdb
 

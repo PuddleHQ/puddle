@@ -60,11 +60,4 @@ pub(crate) fn is_worker() -> bool {
 }
 
 #[cfg(all(test, not(windows)))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn outside_windows_every_process_is_the_worker() {
-        assert_eq!(supervise().unwrap(), Role::Worker);
-    }
-}
+mod tests;

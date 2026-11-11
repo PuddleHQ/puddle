@@ -72,10 +72,8 @@ use crate::injection::Injection;
 use crate::kubernetes::{kubernetes_key, kubernetes_problem};
 use crate::merge_notice::{merge_notice_prefix, settle_merge_notices};
 
-#[path = "repositories.rs"]
 mod repositories;
 
-#[path = "orphans.rs"]
 pub(crate) mod orphans;
 
 impl<R: Runtime + Clone> crate::editor_updates::Builds for HostWorkspaces<R> {
@@ -4276,101 +4274,13 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
 }
 
 #[cfg(test)]
-mod room_for_a_grow {
-    use super::*;
-
-    #[test]
-    fn room_is_plenty_up_to_half_of_what_is_free_tight_up_to_all_of_it_and_too_big_past_it() {
-        assert_eq!(room(0, 100), Room::Plenty);
-        assert_eq!(room(50, 100), Room::Plenty);
-        assert_eq!(room(51, 100), Room::Tight);
-        assert_eq!(room(100, 100), Room::Tight);
-        assert_eq!(room(101, 100), Room::TooBig);
-        assert_eq!(room(1, 0), Room::TooBig);
-    }
-}
+mod room_for_a_grow;
 
 #[cfg(test)]
-mod kept_login_rows {
-    use super::*;
-
-    #[test]
-    fn a_row_carries_the_short_name_the_display_name_and_the_time() {
-        let row = kept_login_row(&puddle_logins::KeptLogin {
-            profile: "claude",
-            name: "Claude Code",
-            since_ms: Some(1_761_480_000_000),
-        });
-        assert_eq!(
-            row,
-            KeptLogin {
-                service: "claude".to_owned(),
-                name: "Claude Code".to_owned(),
-                since: Some(1_761_480_000_000),
-            }
-        );
-    }
-}
+mod kept_login_rows;
 
 #[cfg(test)]
-mod no_link_words {
-    use super::*;
-
-    #[test]
-    fn a_running_workspace_whose_agent_is_late_is_not_called_stopped_and_the_user_is_not_blamed() {
-        let acme = WorkspaceId::new("acme").unwrap();
-        assert_eq!(
-            no_link_message(&acme, NoLink::NotRunning),
-            "acme is not running; start it first"
-        );
-        let late = no_link_message(&acme, NoLink::NotConnected);
-        assert!(late.starts_with("acme is running"));
-        assert!(late.contains("open the editor again in a moment"));
-    }
-
-    #[test]
-    fn an_image_the_editor_cannot_run_in_is_named_not_waited_for() {
-        let musl = puddle_front::Unreachable(NEEDS_GLIBC.to_owned());
-        let said = editor_login_failure(&musl);
-        assert!(said.starts_with(NEEDS_GLIBC));
-        assert!(said.contains("desktop VS Code over direct SSH"));
-        assert!(!said.contains("yet"));
-        let early = editor_login_failure(&puddle_front::Unreachable("not started".to_owned()));
-        assert_eq!(
-            early,
-            "the editor has no password to sign in with yet: not started"
-        );
-    }
-}
+mod no_link_words;
 
 #[cfg(test)]
-mod download_wait_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn a_download_that_does_not_end_in_time_asks_the_user_to_try_again() {
-        let (_state, mut warmth) = watch::channel(Warmth::Warming);
-        let err = wait_until_downloaded(&mut warmth, Duration::from_millis(20))
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(&err, WorkspaceError::Unavailable(m) if m.contains("still downloading")),
-            "{err:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_download_that_ends_while_waiting_lets_the_delete_go_on() {
-        let (state, mut warmth) = watch::channel(Warmth::Warming);
-        let waiting = wait_until_downloaded(&mut warmth, Duration::from_secs(20));
-        state.send_replace(Warmth::Ready);
-        assert!(waiting.await.is_ok());
-        let (_state, mut failed) = watch::channel(Warmth::Failed);
-        assert!(
-            wait_until_downloaded(&mut failed, Duration::from_secs(20))
-                .await
-                .is_ok(),
-            "a failed download is the check's to report"
-        );
-    }
-}
+mod download_wait_tests;

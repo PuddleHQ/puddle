@@ -7,7 +7,7 @@
 # stops at its first failure; a gate that needs another waits for it and is skipped when it failed;
 # PUDDLE_CHECK_SERIAL=1 and a single stream run inline in order; the serial prefix stops the run.
 # What it cannot see: real gates (each has its own CI step), the timing of a loaded host (the
-# overlap check allows generous slack), a signal reaching the gates' children.
+# overlap check is a rendezvous, so it does not depend on speed), a signal reaching the gates' children.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/gate-sched-test.XXXXXX")
@@ -21,8 +21,11 @@ fail() {
 unset $(git rev-parse --local-env-vars)
 
 # scenario <name> <serial gates> <gate>...: runs the scheduler with stub gates in the background.
-# A gate's behaviour is the file $tmp/<name>/spec/<gate>: "<seconds> <exit status>". The stub prints a
-# line, waits, prints another; it records its start and end times.
+# A gate's behaviour is the file $tmp/<name>/spec/<gate>: "<seconds> <exit status> [<rendezvous>]". The
+# stub prints a line, waits, prints another; it records its start and end times. With a rendezvous count N
+# it also waits, after it started, until N gates of the scenario have started: that happens only when
+# they run at the same time, whatever the host's speed. A scheduler that ran them one after another
+# would never get there, so the wait gives up after 120 s and the gate fails.
 scenario() {
     name=$1 serial=$2
     shift 2
@@ -34,9 +37,15 @@ scenario() {
         . "$here/scripts/gate-sched.sh"
         run_gate() {
             echo "==> $1"
-            read -r secs rc <"$d/spec/$1"
+            read -r secs rc meet <"$d/spec/$1"
             date +%s >"$d/start.$1"
             echo "$1 begins"
+            tries=0
+            while [ -n "${meet:-}" ] && [ "$(find "$d" -name 'start.*' | wc -l)" -lt "$meet" ]; do
+                tries=$((tries + 1))
+                [ "$tries" -le 120 ] || return 99
+                sleep 1
+            done
             sleep "$secs"
             echo "$1 ends"
             date +%s >"$d/end.$1"
@@ -49,10 +58,10 @@ scenario() {
 }
 spec() { printf '%s\n' "$3" >"$tmp/$1/spec/$2"; } # spec <scenario> <gate> "<seconds> <status>"
 
-# S1: three streams of 2 s each overlap, and each gate's lines stay together.
+# S1: three streams overlap (each gate waits for the other two to have started), and each gate's lines
+# stay together.
 mkdir -p "$tmp/s1/spec"
-for g in clippy ui notices; do spec s1 $g "2 0"; done
-start=$(date +%s)
+for g in clippy ui notices; do spec s1 $g "0 0 3"; done
 scenario s1 "" clippy ui notices
 # S2: two failures in two streams; a stream stops at its first failure; the third stream completes.
 mkdir -p "$tmp/s2/spec"
@@ -83,14 +92,13 @@ lines_of() { grep -c "$2" "$tmp/$1/out" || true; }
 for g in clippy ui notices; do
     [ "$(lines_of s1 "^==> $g\$")" = 1 ] || fail "s1: $g's ==> line is not there exactly once"
     # begins, ends and the ok line follow the header with nothing between them
-    [ "$(grep -A3 "^==> $g\$" "$tmp/s1/out" | tail -n 3 | tr '\n' '|')" = "$g begins|$g ends|-- $g: ok, 2 s|" ] ||
-        [ "$(grep -A3 "^==> $g\$" "$tmp/s1/out" | tail -n 3 | tr '\n' '|')" = "$g begins|$g ends|-- $g: ok, 3 s|" ] ||
+    grep -A3 "^==> $g\$" "$tmp/s1/out" | tail -n 3 | tr '\n' '|' | grep -q "^$g begins|$g ends|-- $g: ok, [0-9]* s|\$" ||
         fail "s1: the output of $g is split or incomplete"
 done
-s1_secs=$(sed -n 's/^check: .* wall \([0-9]*\) s.*/\1/p' "$tmp/s1/out")
-[ -n "$s1_secs" ] && [ "$s1_secs" -le 4 ] || fail "s1: three 2 s gates took ${s1_secs:-?} s: they did not overlap"
+for g in clippy ui notices; do
+    [ -e "$tmp/s1/start.$g" ] || fail "s1: $g never started: the gates did not overlap"
+done
 grep -q '^check: 3 streams' "$tmp/s1/out" || fail "s1: no summary line"
-: "$start"
 
 # S2
 [ "$(rc_of s2)" = 3 ] || fail "s2: exit $(rc_of s2), expected the earliest failure's 3 (doc)"

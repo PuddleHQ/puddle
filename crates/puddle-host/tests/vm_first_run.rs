@@ -14,6 +14,8 @@ mod vm_support;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use puddle_compute::Runtime;
+use puddle_test_kit::eventually_async;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use support::{Api, Events, ended};
@@ -163,6 +165,81 @@ async fn vm_three_workspaces_created_at_once_are_three_machines_and_stop_at_once
             "{name} is listed as stopped: {listed}"
         );
     }
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// A user stops a workspace and deletes it: the delete is accepted within the request limit, ends
+/// `done`, and leaves no sandbox and no volume of the workspace behind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_a_stopped_workspace_is_deleted_with_its_machine_and_disk() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("delete").await;
+    let name = format!("{}-gone", settings.prefix.as_str());
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+
+    let body = json!({"name": name, "repositories": [], "image": "alpine:3", "memory_mib": 512});
+    let reply = api.post("/api/workspaces", &body.to_string()).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events.until(ended(&name), BATCH).await;
+    assert_eq!(end["step"], "done", "{end}");
+    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = events.until(ended(&name), BATCH).await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    // The image the delete check boots (not this workspace's own) is downloaded when the workspace
+    // stops. A delete that comes before it is in answers with a retry message within the request
+    // limit, never a 408, and leaves the workspace as it was.
+    let confirm = json!({"confirm": true}).to_string();
+    let path = format!("/api/workspaces/{name}");
+    let (api_ref, path_ref, confirm_ref) = (&api, &path, &confirm);
+    let gone = eventually_async(
+        "the delete is accepted once the check image is downloaded",
+        Duration::from_secs(95),
+        || async move {
+            let started = std::time::Instant::now();
+            let reply = api_ref.delete(path_ref, Some(confirm_ref)).await;
+            eprintln!(
+                "delete answered {} after {:?}",
+                reply.status,
+                started.elapsed()
+            );
+            assert_ne!(reply.status, 408, "the request limit ended the delete");
+            if reply.status != 503 {
+                return Some(reply);
+            }
+            assert!(reply.body.contains("downloading"), "{}", reply.body);
+            let workspace = api_ref.get(path_ref).await.json();
+            assert_eq!(workspace["busy"], Value::Null, "{workspace}");
+            None
+        },
+    )
+    .await;
+    assert_eq!(gone.status, 202, "{}", gone.body);
+    let end = events.until(ended(&name), BATCH).await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    assert_eq!(
+        api.get(&format!("/api/workspaces/{name}")).await.status,
+        404
+    );
+    let volumes = runtime.list_volumes().await.unwrap();
+    assert!(
+        volumes.iter().all(|v| !v.name.contains(&name)),
+        "{volumes:?}"
+    );
+    let sandboxes = runtime.list().await.unwrap();
+    assert!(
+        sandboxes.iter().all(|s| !s.name.contains(&name)),
+        "{sandboxes:?}"
+    );
 
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");

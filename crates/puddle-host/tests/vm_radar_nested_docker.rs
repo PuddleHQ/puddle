@@ -301,11 +301,7 @@ async fn vm_radar_nested_docker_real_registries_testcontainers_and_aspire() {
                 },
             )
             .await;
-            let host_port = std::net::TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port();
+            let host_port = puddle_test_kit::quiet_port();
             let put = api
                 .put(
                     // flake-ok: an API URL path, not a file path

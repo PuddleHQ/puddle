@@ -125,9 +125,8 @@ async fn winhttp_evaluates_a_local_pac_per_url_with_the_full_failover_list() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreachable_pac_is_an_error_not_a_hang() {
     let _exclusive = exclusive();
-    let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = fresh_pac_url(closed.local_addr().unwrap());
-    drop(closed);
+    let closed = puddle_test_kit::ReservedPort::new();
+    let url = fresh_pac_url(SocketAddr::from(([127, 0, 0, 1], closed.port())));
     let started = Instant::now();
     let err = resolve(query(&url, "https://github.com/"))
         .await

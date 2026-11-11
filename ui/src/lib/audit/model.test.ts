@@ -776,6 +776,38 @@ describe("a record as a row", () => {
       expect(op({ op: kind }).detail).toMatch(/^[A-Z][a-z ]+, by api$/);
     }
   });
+  it("words a root disk grow with both sizes, and a failed one with its reason", () => {
+    const op = (fields: Record<string, unknown>) =>
+      row({
+        type: "workspace_op",
+        ts: 5,
+        workspace_id: "shop",
+        op: "root_disk_grown",
+        outcome: "succeeded",
+        actor: "api",
+        detail: null,
+        ...fields,
+      } as AuditRecord);
+    expect(
+      op({
+        detail: "root disk grown from 10240 MiB to 20480 MiB, while it ran",
+      }),
+    ).toMatchObject({
+      outcome: { label: "Succeeded", tone: "allow" },
+      detail:
+        "Root disk made bigger: root disk grown from 10240 MiB to 20480 MiB, while it ran, by api",
+    });
+    expect(
+      op({
+        outcome: "failed",
+        detail: "root disk not grown from 10240 MiB to 20480 MiB: no room",
+      }),
+    ).toMatchObject({
+      outcome: { label: "Failed", tone: "deny" },
+      detail:
+        "Making the root disk bigger failed: root disk not grown from 10240 MiB to 20480 MiB: no room, by api",
+    });
+  });
   it("filters on the workspace operation type and its two outcomes", () => {
     const filter = {
       ...NO_FILTER,

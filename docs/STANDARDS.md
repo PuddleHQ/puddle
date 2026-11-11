@@ -729,6 +729,8 @@ and in `ci.yml` (Linux); every one but `ui-e2e` is also in the `pre-push` set; `
 | `ui-licences` | every npm package in the bundle is MIT, ISC, Apache-2.0, BSD-2/3-Clause, 0BSD or OFL-1.1, and is in `ui/THIRD-PARTY-NOTICES.txt` (`cd ui && npm run build && npm run licences` rewrites it) |
 | `ui-audit` | `npm audit --omit=dev --audit-level=moderate`, minus `ui/audit-exceptions.json` (id, reason, review-by date); not run on pull requests to `develop` (section 12) |
 
+- **No HTML injection sinks.** `ui/src` has no `{@html`, `innerHTML`, `outerHTML`, `insertAdjacentHTML` or `document.write` outside tests (`ban-html-sink`, a failing kind of the quality gate with no reason escape): the style policy lets the terminal emulator add `<style>` elements, which injected markup could otherwise reach. Render text with `{value}` interpolation or a component.
+
 - **The fixture backend** (`puddle-ui-fixture`, `crates/puddle-e2e/src/ui_fixture/`) is the real
   `puddle-api` router on an in-memory store, a manual clock and in-memory settings, seeded from a JSON
   scenario (`ui/e2e/fixtures/*.json`: built-ins `default`, `empty`, `lived-in`, `corporate-network`, `network-trouble`, or any file) and driven by

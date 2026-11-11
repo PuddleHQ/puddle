@@ -41,11 +41,14 @@ async function run(page: Page, line: string) {
 /** What the page's paste handler sees when the user pastes `text` (the webview's paste event). */
 /** Moves the pointer onto a link: the emulator redraws its row on hover, so a locator never settles. */
 async function pointAt(page: Page, link: Locator) {
-  await expect.poll(() => link.boundingBox()).not.toBeNull();
-  const box = (await link.boundingBox()) as NonNullable<
-    Awaited<ReturnType<Locator["boundingBox"]>>
-  >;
-  await page.mouse.move(box.x + 6, box.y + box.height / 2);
+  // Read the box and move in one retried step: the emulator can replace the span between two reads,
+  // so a box read in a separate step after the wait can come back null.
+  await expect(async () => {
+    const box = await link.boundingBox();
+    expect(box, "the link is rendered").not.toBeNull();
+    const { x, y, height } = box as NonNullable<typeof box>;
+    await page.mouse.move(x + 6, y + height / 2);
+  }).toPass();
 }
 
 async function paste(page: Page, text: string) {

@@ -47,18 +47,16 @@ pub fn write_executable_bytes(path: &Path, contents: &[u8]) {
         .stdin(Stdio::piped())
         .spawn()
         .expect("run sh to write a test program");
-    child
-        .stdin
-        .take()
-        .expect("piped stdin")
-        .write_all(contents)
-        .expect("send the program to sh");
+    // `sh` that fails (an unwritable path) exits before it reads, and the write then meets a closed
+    // pipe: the exit status is the better report, so the write error is raised only when `sh` succeeded.
+    let sent = child.stdin.take().expect("piped stdin").write_all(contents);
     let status = child.wait().expect("wait for sh");
     assert!(
         status.success(),
         "sh failed to write the program {}: {status}",
         path.display()
     );
+    sent.expect("send the program to sh");
 }
 
 #[cfg(test)]

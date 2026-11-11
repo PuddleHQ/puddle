@@ -5,6 +5,11 @@ import type { components } from "#lib/api/schema.d.ts";
 
 export type Rule = components["schemas"]["Rule"];
 
+/** Who made a rule or a decision, in words: the create of a workspace is not a person's click. */
+export function actorLabel(actor: string): string {
+  return actor === "workspace_create" ? "the create" : actor;
+}
+
 export type SortKey = "pattern" | "effect" | "scope" | "expires" | "created";
 export type SortDirection = "asc" | "desc";
 export interface Sort {

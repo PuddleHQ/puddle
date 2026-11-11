@@ -148,7 +148,9 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
                 "identity": null,
                 "basis": "none",
                 "warning": ws["identities"][0]["warning"]
-            }]
+            }],
+            // Nothing allowed github.com yet, so the create did, with the first rule of the store.
+            "allowed_hosts": [{"host": "github.com", "rule_id": 1}]
         })
     );
     assert!(ws["identities"][0]["warning"].is_string());

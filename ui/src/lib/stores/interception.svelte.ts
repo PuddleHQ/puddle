@@ -45,10 +45,13 @@ export class WorkspaceInterception {
     this.globalNames = view.global_never_decrypt;
   }
 
-  async load(id: string): Promise<void> {
+  /** Reads the workspace's settings. `quiet` keeps what is shown while it reads and when it fails. */
+  async load(id: string, quiet = false): Promise<void> {
     this.#id = id;
-    this.status = "loading";
-    this.reason = null;
+    if (!quiet) {
+      this.status = "loading";
+      this.reason = null;
+    }
     const ticket = ++this.#ticket;
     try {
       const { data, error, response } = await this.#api.GET(
@@ -59,12 +62,12 @@ export class WorkspaceInterception {
       if (data) {
         this.#show(data);
         this.status = "ready";
-      } else {
+      } else if (!quiet) {
         this.status = "failed";
         this.reason = readFailure(error, response);
       }
     } catch {
-      if (ticket !== this.#ticket) return;
+      if (ticket !== this.#ticket || quiet) return;
       this.status = "failed";
       this.reason = SERVICE_DOWN;
     }

@@ -1440,12 +1440,15 @@ test.describe("the settings tab", () => {
     await expect(page.getByRole("alert")).toContainText("10.0.0.1");
   });
 
-  test("a host a tool refused Puddle's certificate for is announced, listed and decrypted again", async ({
+  test("a host a tool keeps refusing is listed with its history, announced from the third time and made permanent", async ({
     page,
     backend,
   }) => {
     await openDetail(page, backend, "web-shop", "settings");
     const notice = page.getByRole("region", { name: "Notices" });
+    const group = page.getByRole("group", {
+      name: "Hosts a tool refused Puddle's certificate for",
+    });
     // The event stream may connect after the page loaded, so ask again until it is heard.
     await expect(async () => {
       await backend.control.step({
@@ -1454,19 +1457,70 @@ test.describe("the settings tab", () => {
         host: "pinned.example",
         expires_in_secs: 600,
       });
+      await expect(group).toContainText("pinned.example", { timeout: 500 });
+    }).toPass();
+    await expect(group).toContainText("refused once");
+    await expect(group).toContainText("in 10 minutes");
+    await expect(notice).not.toContainText("pinned.example");
+    await expect(async () => {
+      await backend.control.step({
+        do: "learned",
+        workspace: "web-shop",
+        host: "pinned.example",
+        expires_in_secs: 600,
+        count: 3,
+      });
       await expect(notice).toContainText(
-        "Puddle stopped decrypting pinned.example: its client refused Puddle's certificate.",
+        "A tool keeps refusing Puddle's certificate for pinned.example",
         { timeout: 500 },
       );
     }).toPass();
-    const group = page.getByRole("group", {
-      name: "Left alone after a tool refused Puddle's certificate",
-    });
-    await expect(group).toContainText("pinned.example");
-    await expect(group).toContainText("in 10 minutes");
-    await notice.getByRole("button", { name: "Decrypt again" }).click();
+    await expect(group).toContainText("refused 3 times");
+    await notice.getByRole("button", { name: "Never decrypt it here" }).click();
     await expect(group).toContainText("None.");
     await expect(notice).not.toContainText("pinned.example");
+    await expect(
+      page.getByLabel("Never decrypt in this workspace"),
+    ).toHaveValue("pinned.example");
+  });
+
+  test("a refused host is tried again from the list and made permanent everywhere", async ({
+    page,
+    backend,
+  }) => {
+    await openDetail(page, backend, "web-shop", "settings");
+    const group = page.getByRole("group", {
+      name: "Hosts a tool refused Puddle's certificate for",
+    });
+    await expect(async () => {
+      await backend.control.step({
+        do: "learned",
+        workspace: "web-shop",
+        host: "pinned.example",
+        expires_in_secs: 600,
+        count: 2,
+      });
+      await expect(group).toContainText("pinned.example", { timeout: 500 });
+    }).toPass();
+    await group
+      .getByRole("button", { name: "Try decrypting pinned.example again" })
+      .click();
+    await expect(group).toContainText("pinned.example");
+    await expect(group).toContainText("refused 2 times");
+    await expect(
+      group.getByRole("button", {
+        name: "Try decrypting pinned.example again",
+      }),
+    ).toHaveCount(0);
+    await group
+      .getByRole("button", {
+        name: "Never decrypt pinned.example in any workspace",
+      })
+      .click();
+    await expect(group).toContainText("None.");
+    await expect(
+      page.getByText(/Never decrypted in any workspace/),
+    ).toContainText("pinned.example");
   });
 
   test("a refused save says why and puts the choice back", async ({

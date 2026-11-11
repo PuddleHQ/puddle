@@ -735,7 +735,10 @@ impl<R: Runtime + Clone> Host<R> {
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
         .with_terminals(Arc::new(service.clone()))
-        .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
+        .with_learned(Arc::new(HostLearned::new(
+            injecting.terminations.clone(),
+            Arc::clone(&store),
+        )))
         .with_proxy_sign_ins(sign_ins)
         .with_company_signals(signals)
         .with_endpoints(endpoints.clone());

@@ -7865,7 +7865,7 @@
         "tags": [
           "interception"
         ],
-        "summary": "The hosts the running workspace's tools refused Puddle's certificate for, which Puddle now\npasses through untouched. The list is empty for a workspace that is not running. A client\nrefetches on the `pass_through_learned` event.",
+        "summary": "The hosts the workspace's tools refused Puddle's certificate for, with when each was first\nand last refused and how many times, and whether Puddle passes it through now. A workspace\nthat is not running passes nothing through. A client refetches on the\n`pass_through_learned` event.",
         "operationId": "list_learned",
         "parameters": [
           {
@@ -7945,7 +7945,7 @@
         "tags": [
           "interception"
         ],
-        "summary": "Decrypts every learned host of the workspace again from the next connection. Connections\nalready open keep going as they are.",
+        "summary": "Decrypts every host the workspace passes through again from the next connection. Connections\nalready open keep going as they are; the history of refusals stays.",
         "operationId": "clear_learned",
         "parameters": [
           {
@@ -8020,7 +8020,7 @@
         "tags": [
           "interception"
         ],
-        "summary": "Decrypts one learned host again from the next connection. If the tool still refuses\nPuddle's certificate, the host is learned again, and the user is told again.",
+        "summary": "Decrypts one learned host again from the next connection; its history stays. If the tool\nstill refuses Puddle's certificate, the host is learned again, and the user is told again.",
         "operationId": "forget_learned",
         "parameters": [
           {
@@ -8067,7 +8067,7 @@
             }
           },
           "404": {
-            "description": "no such workspace, or the host is not on the list",
+            "description": "no such workspace, or the host is not passed through",
             "content": {
               "application/json": {
                 "schema": {
@@ -8078,6 +8078,110 @@
           },
           "421": {
             "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/interception/learned/{host}/permanent": {
+      "post": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "Never decrypts a learned host again, in this workspace or in every workspace: the host joins\nthat never-decrypt list and leaves the learned list, history included.",
+        "operationId": "make_permanent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "path",
+            "description": "the learned host name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MakePermanentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "the host is on the never-decrypt list and off the learned list"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace, or the host is not on the learned list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the never-decrypt list is full",
             "content": {
               "application/json": {
                 "schema": {
@@ -13327,9 +13431,16 @@
             "required": [
               "workspace",
               "host",
+              "count",
               "type"
             ],
             "properties": {
+              "count": {
+                "type": "integer",
+                "format": "int32",
+                "description": "How many times Puddle has stopped decrypting this host in this workspace because a\ntool refused its certificate, this one included. The app raises a notice from the\nthird time.",
+                "minimum": 0
+              },
               "host": {
                 "type": "string",
                 "description": "The host, lower case."
@@ -14580,27 +14691,56 @@
       },
       "LearnedHost": {
         "type": "object",
-        "description": "A host Puddle stopped decrypting in a workspace because a tool there refused Puddle's\ncertificate for it.",
+        "description": "A host a tool in a workspace refused Puddle's certificate for.",
         "required": [
           "host",
-          "expires_in_secs"
+          "passed_through",
+          "expires_in_secs",
+          "first_rejected_at",
+          "last_rejected_at",
+          "count"
         ],
         "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many times Puddle stopped decrypting the host after a refusal. From the third time on\nthe app suggests making the host permanent.",
+            "minimum": 0
+          },
           "expires_in_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds until Puddle decrypts the host again by itself; `null` unless `passed_through`.",
+            "minimum": 0
+          },
+          "first_rejected_at": {
             "type": "integer",
             "format": "int64",
-            "description": "Seconds until Puddle decrypts the host again by itself.",
+            "description": "When a tool first refused the certificate for this host, milliseconds since the epoch.",
             "minimum": 0
           },
           "host": {
             "type": "string",
             "description": "The host name, lower case."
+          },
+          "last_rejected_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When a tool last refused it, milliseconds since the epoch.",
+            "minimum": 0
+          },
+          "passed_through": {
+            "type": "boolean",
+            "description": "Whether Puddle passes the host through now. `false` once the time is up or the user\ndecrypted it again (the host stays listed with its history), and for a workspace that is\nnot running: nothing is passed through then."
           }
         }
       },
       "LearnedHosts": {
         "type": "object",
-        "description": "The hosts a running workspace passes through because its tools refused Puddle's certificate.",
+        "description": "The hosts a workspace's tools refused Puddle's certificate for.",
         "required": [
           "hosts"
         ],
@@ -14610,7 +14750,7 @@
             "items": {
               "$ref": "#/components/schemas/LearnedHost"
             },
-            "description": "Soonest to expire first. Empty for a workspace that is not running: the list is kept in\nmemory and a start begins with none."
+            "description": "The hosts passed through now first, soonest to expire first; then the others, the most\nrecently refused first. The history is kept in the database; the pass-through is held in\nmemory by the running workspace, so a start begins with none passed through."
           }
         }
       },
@@ -14718,6 +14858,19 @@
           "capture_off",
           "unknown"
         ]
+      },
+      "MakePermanentRequest": {
+        "type": "object",
+        "description": "Makes a learned host permanent.",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/PermanentScope",
+            "description": "Which never-decrypt list gets the host."
+          }
+        }
       },
       "NetworkHealth": {
         "type": "object",
@@ -15269,6 +15422,14 @@
             "description": "The workspace that asked."
           }
         }
+      },
+      "PermanentScope": {
+        "type": "string",
+        "description": "Where a learned host is never decrypted from now on.",
+        "enum": [
+          "workspace",
+          "global"
+        ]
       },
       "PortEntry": {
         "type": "object",

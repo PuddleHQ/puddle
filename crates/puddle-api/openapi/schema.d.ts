@@ -1365,16 +1365,17 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The hosts the running workspace's tools refused Puddle's certificate for, which Puddle now
-         *     passes through untouched. The list is empty for a workspace that is not running. A client
-         *     refetches on the `pass_through_learned` event.
+         * The hosts the workspace's tools refused Puddle's certificate for, with when each was first
+         *     and last refused and how many times, and whether Puddle passes it through now. A workspace
+         *     that is not running passes nothing through. A client refetches on the
+         *     `pass_through_learned` event.
          */
         get: operations["list_learned"];
         put?: never;
         post?: never;
         /**
-         * Decrypts every learned host of the workspace again from the next connection. Connections
-         *     already open keep going as they are.
+         * Decrypts every host the workspace passes through again from the next connection. Connections
+         *     already open keep going as they are; the history of refusals stays.
          */
         delete: operations["clear_learned"];
         options?: never;
@@ -1393,10 +1394,30 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Decrypts one learned host again from the next connection. If the tool still refuses
-         *     Puddle's certificate, the host is learned again, and the user is told again.
+         * Decrypts one learned host again from the next connection; its history stays. If the tool
+         *     still refuses Puddle's certificate, the host is learned again, and the user is told again.
          */
         delete: operations["forget_learned"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/interception/learned/{host}/permanent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Never decrypts a learned host again, in this workspace or in every workspace: the host joins
+         *     that never-decrypt list and leaves the learned list, history included.
+         */
+        post: operations["make_permanent"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3078,6 +3099,13 @@ export interface components {
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceId"];
         } | {
+            /**
+             * Format: int32
+             * @description How many times Puddle has stopped decrypting this host in this workspace because a
+             *     tool refused its certificate, this one included. The app raises a notice from the
+             *     third time.
+             */
+            count: number;
             /** @description The host, lower case. */
             host: string;
             /** @enum {string} */
@@ -3582,24 +3610,44 @@ export interface components {
             /** @description True when the source gave a value. */
             readable: boolean;
         };
-        /**
-         * @description A host Puddle stopped decrypting in a workspace because a tool there refused Puddle's
-         *     certificate for it.
-         */
+        /** @description A host a tool in a workspace refused Puddle's certificate for. */
         LearnedHost: {
             /**
-             * Format: int64
-             * @description Seconds until Puddle decrypts the host again by itself.
+             * Format: int32
+             * @description How many times Puddle stopped decrypting the host after a refusal. From the third time on
+             *     the app suggests making the host permanent.
              */
-            expires_in_secs: number;
+            count: number;
+            /**
+             * Format: int64
+             * @description Seconds until Puddle decrypts the host again by itself; `null` unless `passed_through`.
+             */
+            expires_in_secs: number | null;
+            /**
+             * Format: int64
+             * @description When a tool first refused the certificate for this host, milliseconds since the epoch.
+             */
+            first_rejected_at: number;
             /** @description The host name, lower case. */
             host: string;
+            /**
+             * Format: int64
+             * @description When a tool last refused it, milliseconds since the epoch.
+             */
+            last_rejected_at: number;
+            /**
+             * @description Whether Puddle passes the host through now. `false` once the time is up or the user
+             *     decrypted it again (the host stays listed with its history), and for a workspace that is
+             *     not running: nothing is passed through then.
+             */
+            passed_through: boolean;
         };
-        /** @description The hosts a running workspace passes through because its tools refused Puddle's certificate. */
+        /** @description The hosts a workspace's tools refused Puddle's certificate for. */
         LearnedHosts: {
             /**
-             * @description Soonest to expire first. Empty for a workspace that is not running: the list is kept in
-             *     memory and a start begins with none.
+             * @description The hosts passed through now first, soonest to expire first; then the others, the most
+             *     recently refused first. The history is kept in the database; the pass-through is held in
+             *     memory by the running workspace, so a start begins with none passed through.
              */
             hosts: components["schemas"]["LearnedHost"][];
         };
@@ -3649,6 +3697,11 @@ export interface components {
          * @enum {string}
          */
         LoginProblemKind: "store_unavailable" | "unexpected_answer" | "unusable_token" | "bound_token" | "unnamed_token" | "unreadable" | "capture_off" | "unknown";
+        /** @description Makes a learned host permanent. */
+        MakePermanentRequest: {
+            /** @description Which never-decrypt list gets the host. */
+            scope: components["schemas"]["PermanentScope"];
+        };
         /** @description `GET /api/network-health`: everything Puddle knows about how it reaches the internet. */
         NetworkHealth: {
             /**
@@ -3937,6 +3990,11 @@ export interface components {
             /** @description The workspace that asked. */
             workspace: components["schemas"]["WorkspaceId"];
         };
+        /**
+         * @description Where a learned host is never decrypted from now on.
+         * @enum {string}
+         */
+        PermanentScope: "workspace" | "global";
         /** @description One port of a workspace. */
         PortEntry: {
             /** @description A forward to it is open now: connecting to `host_port` on this computer reaches it. */
@@ -11984,7 +12042,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description no such workspace, or the host is not on the list */
+            /** @description no such workspace, or the host is not passed through */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11995,6 +12053,87 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    make_permanent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the learned host name */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MakePermanentRequest"];
+            };
+        };
+        responses: {
+            /** @description the host is on the never-decrypt list and off the learned list */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace, or the host is not on the learned list */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the never-decrypt list is full */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

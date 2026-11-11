@@ -1679,6 +1679,28 @@ async fn a_scenario_with_a_bad_rule_on_method_and_path_fails_to_start_and_names_
 }
 
 #[tokio::test]
+async fn a_learned_step_carries_how_often_the_host_was_refused() {
+    let run = start("environment").await;
+    let body = json!({"do": "learned", "workspace": "web-shop", "host": "again.example", "expires_in_secs": 120, "count": 3});
+    let mut events = run.events().await;
+    let step = run.control("POST", "/control/step", Some(&body)).await;
+    assert_eq!(step.status, 204, "{}", step.body);
+    let seen = read_until(&mut events, |text| text.contains("again.example")).await;
+    assert!(seen.contains(r#""count":3"#), "{seen}");
+    let learned = run
+        .get("/api/workspaces/web-shop/interception/learned")
+        .await
+        .json();
+    let again = &learned["hosts"][0];
+    assert_eq!(again["host"], "again.example", "{learned}");
+    assert_eq!(again["count"], 3, "{learned}");
+    assert!(
+        again["first_rejected_at"].as_u64().unwrap() < again["last_rejected_at"].as_u64().unwrap(),
+        "{learned}"
+    );
+}
+
+#[tokio::test]
 async fn steps_change_what_listens_and_what_the_shell_init_check_says() {
     let run = start("environment").await;
     let step = |body: Value| {
@@ -1710,9 +1732,17 @@ async fn steps_change_what_listens_and_what_the_shell_init_check_says() {
         .get("/api/workspaces/web-shop/interception/learned")
         .await
         .json();
+    let hosts = learned["hosts"].as_array().unwrap();
+    assert_eq!(hosts.len(), 1, "{learned}");
     assert_eq!(
-        learned,
-        json!({"hosts": [{"host": "pinned.example", "expires_in_secs": 90}]})
+        (
+            hosts[0]["host"].as_str(),
+            hosts[0]["passed_through"].as_bool(),
+            hosts[0]["expires_in_secs"].as_u64(),
+            hosts[0]["count"].as_u64()
+        ),
+        (Some("pinned.example"), Some(true), Some(90), Some(1)),
+        "{learned}"
     );
     assert_eq!(
         step(json!({"do": "learned", "workspace": "web-shop", "host": "other.example"}))
@@ -1724,7 +1754,13 @@ async fn steps_change_what_listens_and_what_the_shell_init_check_says() {
         .get("/api/workspaces/web-shop/interception/learned")
         .await
         .json();
-    assert_eq!(learned["hosts"][1]["expires_in_secs"], 43_200, "{learned}");
+    let default = learned["hosts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["host"] == "other.example")
+        .unwrap();
+    assert_eq!(default["expires_in_secs"], 43_200, "{learned}");
 
     let put = |content: &str| {
         let run = &run;

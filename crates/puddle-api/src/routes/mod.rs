@@ -277,6 +277,7 @@ fn environment_router() -> OpenApiRouter<AppState> {
             interception::clear_learned
         ))
         .routes(routes!(interception::forget_learned))
+        .routes(routes!(interception::make_permanent))
         .routes(routes!(
             interception::get_learned_limits,
             interception::put_learned_limits

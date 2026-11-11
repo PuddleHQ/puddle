@@ -17,7 +17,8 @@ use crate::extract::Path;
 use crate::routes::AppState;
 use crate::wire::{
     GlobalNeverDecrypt, InterceptionRequest, InterceptionSettingsRequest, InterceptionSettingsView,
-    InterceptionView, LearnedHosts, LearnedLimits, WorkspaceMode,
+    InterceptionView, LearnedHosts, LearnedLimits, MakePermanentRequest, PermanentScope,
+    WorkspaceMode,
 };
 
 /// Most names one list may hold.
@@ -253,9 +254,10 @@ const MAX_TTL_SECS: u32 = 30 * 24 * 3600;
 /// Most hosts a workspace may remember.
 const MAX_CAP: u32 = 10_000;
 
-/// The hosts the running workspace's tools refused Puddle's certificate for, which Puddle now
-/// passes through untouched. The list is empty for a workspace that is not running. A client
-/// refetches on the `pass_through_learned` event.
+/// The hosts the workspace's tools refused Puddle's certificate for, with when each was first
+/// and last refused and how many times, and whether Puddle passes it through now. A workspace
+/// that is not running passes nothing through. A client refetches on the
+/// `pass_through_learned` event.
 #[utoipa::path(
     get,
     path = "/api/workspaces/{id}/interception/learned",
@@ -276,8 +278,8 @@ pub(crate) async fn list_learned(
     }))
 }
 
-/// Decrypts every learned host of the workspace again from the next connection. Connections
-/// already open keep going as they are.
+/// Decrypts every host the workspace passes through again from the next connection. Connections
+/// already open keep going as they are; the history of refusals stays.
 #[utoipa::path(
     delete,
     path = "/api/workspaces/{id}/interception/learned",
@@ -297,8 +299,8 @@ pub(crate) async fn clear_learned(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Decrypts one learned host again from the next connection. If the tool still refuses
-/// Puddle's certificate, the host is learned again, and the user is told again.
+/// Decrypts one learned host again from the next connection; its history stays. If the tool
+/// still refuses Puddle's certificate, the host is learned again, and the user is told again.
 #[utoipa::path(
     delete,
     path = "/api/workspaces/{id}/interception/learned/{host}",
@@ -309,7 +311,7 @@ pub(crate) async fn clear_learned(
     ),
     responses(
         (status = NO_CONTENT, description = "the host is decrypted again"),
-        (status = NOT_FOUND, description = "no such workspace, or the host is not on the list", body = ApiErrorBody)
+        (status = NOT_FOUND, description = "no such workspace, or the host is not passed through", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn forget_learned(
@@ -325,9 +327,64 @@ pub(crate) async fn forget_learned(
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found(format!(
-            "{host:?} is not on the learned list of {name}"
+            "{host:?} is not passed through in {name}"
         )))
     }
+}
+
+/// Never decrypts a learned host again, in this workspace or in every workspace: the host joins
+/// that never-decrypt list and leaves the learned list, history included.
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{id}/interception/learned/{host}/permanent",
+    tag = "interception",
+    params(
+        ("id" = String, Path, description = "workspace id"),
+        ("host" = String, Path, description = "the learned host name")
+    ),
+    request_body = MakePermanentRequest,
+    responses(
+        (status = NO_CONTENT, description = "the host is on the never-decrypt list and off the learned list"),
+        (status = NOT_FOUND, description = "no such workspace, or the host is not on the learned list", body = ApiErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "the never-decrypt list is full", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn make_permanent(
+    State(state): State<AppState>,
+    Path((id, host)): Path<(String, String)>,
+    crate::extract::Json(body): crate::extract::Json<MakePermanentRequest>,
+) -> Result<StatusCode, ApiError> {
+    let name = named(&state, &id).await?;
+    let learned = match normalise_host(&host).map(puddle_netpolicy::Target::into_host) {
+        Ok(Host::Name(host)) => host.to_string(),
+        _ => String::new(),
+    };
+    if learned.is_empty() || !state.learned.list(&name).iter().any(|h| h.host == learned) {
+        return Err(ApiError::not_found(format!(
+            "{host:?} is not on the learned list of {name}"
+        )));
+    }
+    blocking({
+        let (state, name, learned) = (state.clone(), name.clone(), learned.clone());
+        move || {
+            match body.scope {
+                PermanentScope::Workspace => {
+                    let mut names = state.store.workspace_interception(&name)?.never_decrypt;
+                    names.push(learned);
+                    state.store.set_never_decrypt(&name, &patterns(&names)?)?;
+                }
+                PermanentScope::Global => {
+                    let mut names = state.store.global_never_decrypt()?;
+                    names.push(learned);
+                    state.store.set_global_never_decrypt(&patterns(&names)?)?;
+                }
+            }
+            Ok(())
+        }
+    })
+    .await?;
+    state.learned.discard(&name, &learned);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// How long and how many hosts Puddle passes through after a tool refused its certificate.

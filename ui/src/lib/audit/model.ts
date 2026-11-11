@@ -376,6 +376,10 @@ const WORKSPACE_OPS: Record<
     done: "Repository removed",
     failed: "Removing a repository failed",
   },
+  root_disk_grown: {
+    done: "Root disk made bigger",
+    failed: "Making the root disk bigger failed",
+  },
   git_repaired: {
     done: "Git repaired after a crash",
     failed: "Repairing git after a crash failed",

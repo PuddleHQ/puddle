@@ -389,6 +389,7 @@ impl FakeWorkspaces {
                 }
                 Operation::Reclaiming
                 | Operation::ResettingRootDisk
+                | Operation::GrowingRootDisk
                 | Operation::Cloning
                 | Operation::Deleting => {}
             }
@@ -403,7 +404,7 @@ impl FakeWorkspaces {
             return;
         }
         match op {
-            Operation::Creating | Operation::Cloning => {}
+            Operation::Creating | Operation::Cloning | Operation::GrowingRootDisk => {}
             Operation::Starting => {
                 record.status = WorkspaceStatus::Running;
                 status_changed = true;
@@ -896,6 +897,37 @@ impl WorkspaceService for FakeWorkspaces {
                 &record,
                 Operation::ResettingRootDisk,
                 vec![(WorkspaceStep::ResettingRootDisk, None, None)],
+            );
+            Ok(record)
+        })
+    }
+
+    fn grow_root_disk<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        size_mib: u32,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let record = self.accept(
+                id,
+                Operation::GrowingRootDisk,
+                |r| match r.root_disk_size_mib {
+                    Some(current) if u64::from(size_mib) <= current => {
+                        Err(WorkspaceError::Invalid(format!(
+                            "a root disk only grows: {size_mib} MiB is not above {current} MiB"
+                        )))
+                    }
+                    _ => Ok(()),
+                },
+                |r| {
+                    r.root_disk_size_mib = Some(u64::from(size_mib));
+                    r.root_disk_grown_mib = Some(size_mib);
+                },
+            )?;
+            self.run(
+                &record,
+                Operation::GrowingRootDisk,
+                vec![(WorkspaceStep::GrowingRootDisk, None, None)],
             );
             Ok(record)
         })

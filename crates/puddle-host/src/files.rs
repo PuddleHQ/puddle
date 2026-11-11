@@ -228,6 +228,8 @@ pub(crate) struct Stored {
     pub(crate) memory_mib: u32,
     pub(crate) created_at: u64,
     pub(crate) disk_size_mib: u64,
+    /// The size in MiB the user grew the root disk to; `None` when it was never grown.
+    pub(crate) root_disk_grown_mib: Option<u32>,
     /// Set from the moment a create starts until it finishes. A record still marked after a
     /// restart is an interrupted create: its volume is an orphan for reconcile to remove.
     pub(crate) creating: bool,
@@ -253,6 +255,9 @@ struct EntryV3 {
     memory_mib: u32,
     created_at: u64,
     disk_size_mib: u64,
+    /// Missing in an entry of a workspace whose root disk was never grown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root_disk_grown_mib: Option<u32>,
     #[serde(default)]
     creating: bool,
 }
@@ -321,6 +326,7 @@ impl From<EntryV2> for EntryV3 {
             memory_mib: v2.memory_mib,
             created_at: v2.created_at,
             disk_size_mib: v2.disk_size_mib,
+            root_disk_grown_mib: None,
             creating: v2.creating,
         }
     }
@@ -400,6 +406,7 @@ impl EntryV3 {
             memory_mib: self.memory_mib,
             created_at: self.created_at,
             disk_size_mib: self.disk_size_mib,
+            root_disk_grown_mib: self.root_disk_grown_mib,
             creating: self.creating,
         })
     }
@@ -425,6 +432,7 @@ impl From<Stored> for EntryV3 {
             memory_mib: s.memory_mib,
             created_at: s.created_at,
             disk_size_mib: s.disk_size_mib,
+            root_disk_grown_mib: s.root_disk_grown_mib,
             creating: s.creating,
         }
     }
@@ -593,6 +601,7 @@ mod tests {
             memory_mib: 1024,
             created_at: 7,
             disk_size_mib: 2048,
+            root_disk_grown_mib: Some(32_768),
             creating: false,
         }
     }

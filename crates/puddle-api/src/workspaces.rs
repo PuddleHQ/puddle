@@ -37,6 +37,8 @@ pub enum Operation {
     Reclaiming,
     /// Removing the sandbox so the next start makes a fresh root disk.
     ResettingRootDisk,
+    /// Making the root disk bigger.
+    GrowingRootDisk,
     /// Cloning one repository into a running workspace.
     Cloning,
     /// Checking for unsaved work and removing the workspace.
@@ -51,6 +53,7 @@ impl fmt::Display for Operation {
             Self::Stopping => "stopping",
             Self::Reclaiming => "reclaiming",
             Self::ResettingRootDisk => "resetting_root_disk",
+            Self::GrowingRootDisk => "growing_root_disk",
             Self::Cloning => "cloning",
             Self::Deleting => "deleting",
         })
@@ -91,6 +94,9 @@ pub struct WorkspaceRecord {
     pub root_disk_size_mib: Option<u64>,
     /// What the root disk holds now in MiB, when known.
     pub root_disk_used_mib: Option<u64>,
+    /// The size in MiB the user grew the root disk to, kept so a reset makes the fresh root disk
+    /// this big; `None` when it was never grown.
+    pub root_disk_grown_mib: Option<u32>,
 }
 
 impl WorkspaceRecord {
@@ -112,6 +118,7 @@ impl WorkspaceRecord {
             disk_used_mib: None,
             root_disk_size_mib: None,
             root_disk_used_mib: None,
+            root_disk_grown_mib: None,
         }
     }
 }
@@ -1174,6 +1181,17 @@ pub trait WorkspaceService: Send + Sync {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
+    /// Makes the workspace's root disk `size_mib` big. A root disk only grows, so the size must
+    /// be above the current one. A running workspace has the room at once when the runtime can
+    /// grow a disk under a running guest, and is otherwise restarted (nothing is lost); a
+    /// stopped one has it at its next start. The size is kept: a reset of the root disk makes
+    /// the fresh one this big. Refused when the added room is more than the computer has free.
+    fn grow_root_disk<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        size_mib: u32,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
+
     /// Looks for what deleting the workspace would lose. Works on a running or a stopped
     /// workspace.
     fn delete_check<'a>(
@@ -1597,6 +1615,13 @@ impl WorkspaceService for NoWorkspaces {
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
+    fn grow_root_disk<'a>(
+        &'a self,
+        _: &'a WorkspaceId,
+        _: u32,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        unavailable()
+    }
     fn delete_check<'a>(
         &'a self,
         _: &'a WorkspaceId,
@@ -1720,6 +1745,7 @@ mod tests {
             Operation::ResettingRootDisk.to_string(),
             "resetting_root_disk"
         );
+        assert_eq!(Operation::GrowingRootDisk.to_string(), "growing_root_disk");
     }
 
     #[test]

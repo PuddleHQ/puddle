@@ -437,6 +437,9 @@ pub enum WorkspaceOpKind {
     RepoRemoved,
     /// A zero-filled or corrupt git file (`HEAD`, the index) of a checkout rebuilt at boot.
     GitRepaired,
+    /// A workspace's root disk made bigger, or the attempt failed; `detail` says from what size
+    /// to what size and how it took effect.
+    RootDiskGrown,
 }
 
 /// How a workspace operation ended.

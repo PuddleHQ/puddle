@@ -7262,6 +7262,118 @@
         }
       }
     },
+    "/api/workspaces/{id}/grow-root-disk": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Makes the workspace's root disk bigger. The root disk holds the home directory, tool caches\nand installed packages, and only ever grows. A running workspace has the room at once when\nthe runtime can grow a disk under a running guest; otherwise Puddle restarts it, which loses\nnothing that was saved to disk. A stopped workspace has the room at its next start. The size\nis kept when the root disk is reset. Answers 202; the workspace is busy\n(`growing_root_disk`) until it is done.",
+        "operationId": "grow_root_disk",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrowRootDiskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "growing started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "busy, or starting or stopping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not above the current size, or more than this computer has free",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/identities": {
       "put": {
         "tags": [
@@ -13914,6 +14026,22 @@
           }
         }
       },
+      "GrowRootDiskRequest": {
+        "type": "object",
+        "description": "`POST /api/workspaces/{id}/grow-root-disk`.",
+        "required": [
+          "size_mib"
+        ],
+        "properties": {
+          "size_mib": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The new root disk size in MiB. It must be above the current size: a root disk only grows.\nRequired.",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "Health": {
         "type": "object",
         "description": "The API's identity, for a client to check it reached Puddle.",
@@ -17986,7 +18114,8 @@
           "repo_added",
           "repo_switched",
           "repo_removed",
-          "git_repaired"
+          "git_repaired",
+          "root_disk_grown"
         ]
       },
       "WorkspaceOpOutcome": {
@@ -18006,6 +18135,7 @@
           "stopping",
           "reclaiming",
           "resetting_root_disk",
+          "growing_root_disk",
           "cloning",
           "deleting"
         ]
@@ -18123,6 +18253,7 @@
           "checking",
           "reclaiming",
           "resetting_root_disk",
+          "growing_root_disk",
           "stopping",
           "removing",
           "done",

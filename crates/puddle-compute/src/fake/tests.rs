@@ -84,6 +84,7 @@ async fn every_operation_can_fail() {
         Op::Get,
         Op::SetMemory,
         Op::SetCpus,
+        Op::GrowRootDisk,
         Op::List,
         Op::Remove,
         Op::StaleDirs,
@@ -114,6 +115,7 @@ async fn every_operation_can_fail() {
         rt.get(&n).await.err(),
         rt.set_memory(&n, MemoryMib::MIN).await.err(),
         rt.set_cpus(&n, CpuCount::MIN).await.err(),
+        rt.grow_root_disk(&n, DiskSize::mib(99_999)).await.err(),
         rt.list().await.err(),
         rt.remove(&n).await.err(),
         rt.stale_dirs().await.err(),
@@ -725,4 +727,73 @@ async fn the_specs_owned_disks_and_volume_mounts_can_be_read_back() {
     let volumes = rt.volume_mounts(&name);
     assert_eq!(volumes.len(), 1);
     assert_eq!(volumes[0].guest, path("/w"));
+}
+
+#[tokio::test]
+async fn a_running_root_disk_grows_live_and_a_stopped_one_at_the_next_start() {
+    let rt = FakeRuntime::new();
+    let n = name("a");
+    let sb = rt
+        .create(spec("a").with_root_disk(DiskSize::mib(1_000)))
+        .await
+        .unwrap();
+    rt.set_root_disk_use(&n, DiskSize::mib(1_000), DiskSize::mib(10));
+    let live = rt.grow_root_disk(&n, DiskSize::mib(2_000)).await.unwrap();
+    assert_eq!(live, RootDiskGrowth::Live);
+    assert_eq!(rt.root_disk_size(&n), Some(DiskSize::mib(2_000)));
+    let listed = |rt: &FakeRuntime| {
+        let rt = rt.clone();
+        async move { rt.list().await.unwrap()[0].root_disk.unwrap() }
+    };
+    assert_eq!(listed(&rt).await.size, DiskSize::mib(2_000));
+    assert_eq!(listed(&rt).await.used, DiskSize::mib(10));
+    sb.stop().await.unwrap();
+    let off = rt.grow_root_disk(&n, DiskSize::mib(3_000)).await.unwrap();
+    assert_eq!(off, RootDiskGrowth::NextStart);
+    assert_eq!(listed(&rt).await.size, DiskSize::mib(3_000));
+}
+
+#[tokio::test]
+async fn a_runtime_that_cannot_grow_live_waits_for_the_boot() {
+    let rt = FakeRuntime::new();
+    rt.set_live_root_grow(false);
+    let n = name("a");
+    let sb = rt
+        .create(spec("a").with_root_disk(DiskSize::mib(1_000)))
+        .await
+        .unwrap();
+    rt.set_root_disk_use(&n, DiskSize::mib(1_000), DiskSize::mib(10));
+    let got = rt.grow_root_disk(&n, DiskSize::mib(2_000)).await.unwrap();
+    assert_eq!(got, RootDiskGrowth::NextStart);
+    assert_eq!(
+        rt.list().await.unwrap()[0].root_disk.unwrap().size,
+        DiskSize::mib(1_000)
+    );
+    sb.stop().await.unwrap();
+    rt.start(&n).await.unwrap();
+    assert_eq!(
+        rt.list().await.unwrap()[0].root_disk.unwrap().size,
+        DiskSize::mib(2_000)
+    );
+}
+
+#[tokio::test]
+async fn a_root_disk_never_shrinks_and_an_unknown_sandbox_is_not_found() {
+    let rt = FakeRuntime::new();
+    let n = name("a");
+    rt.create(spec("a").with_root_disk(DiskSize::mib(1_000)))
+        .await
+        .unwrap();
+    for size in [500, 1_000] {
+        let err = rt
+            .grow_root_disk(&n, DiskSize::mib(size))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ComputeError::InvalidSpec { .. }), "{err:?}");
+    }
+    let err = rt
+        .grow_root_disk(&name("nope"), DiskSize::mib(5_000))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ComputeError::NotFound { .. }), "{err:?}");
 }

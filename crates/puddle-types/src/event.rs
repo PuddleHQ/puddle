@@ -523,6 +523,8 @@ pub enum WorkspaceStep {
     Reclaiming,
     /// Removing the sandbox, and with it the root disk, so the next start makes a fresh one.
     ResettingRootDisk,
+    /// Making the root disk bigger.
+    GrowingRootDisk,
     /// Shutting the virtual machine down.
     Stopping,
     /// Removing the volume and the workspace.
@@ -764,6 +766,7 @@ mod tests {
             (WorkspaceStep::Checking, "checking"),
             (WorkspaceStep::Reclaiming, "reclaiming"),
             (WorkspaceStep::ResettingRootDisk, "resetting_root_disk"),
+            (WorkspaceStep::GrowingRootDisk, "growing_root_disk"),
             (WorkspaceStep::Stopping, "stopping"),
             (WorkspaceStep::Removing, "removing"),
             (WorkspaceStep::Done, "done"),

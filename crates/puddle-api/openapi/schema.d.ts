@@ -1267,6 +1267,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/grow-root-disk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes the workspace's root disk bigger. The root disk holds the home directory, tool caches
+         *     and installed packages, and only ever grows. A running workspace has the room at once when
+         *     the runtime can grow a disk under a running guest; otherwise Puddle restarts it, which loses
+         *     nothing that was saved to disk. A stopped workspace has the room at its next start. The size
+         *     is kept when the root disk is reset. Answers 202; the workspace is busy
+         *     (`growing_root_disk`) until it is done.
+         */
+        post: operations["grow_root_disk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/identities": {
         parameters: {
             query?: never;
@@ -3341,6 +3365,15 @@ export interface components {
             /** @description Defaults for every workspace. */
             workspace_defaults: components["schemas"]["SettingsLayer"];
         };
+        /** @description `POST /api/workspaces/{id}/grow-root-disk`. */
+        GrowRootDiskRequest: {
+            /**
+             * Format: int32
+             * @description The new root disk size in MiB. It must be above the current size: a root disk only grows.
+             *     Required.
+             */
+            size_mib: number;
+        };
         /** @description The API's identity, for a client to check it reached Puddle. */
         Health: {
             /** @description The API contract's version ([`crate::API_VERSION`]). */
@@ -5193,7 +5226,7 @@ export interface components {
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired" | "root_disk_grown";
         /**
          * @description How a workspace operation ended.
          * @enum {string}
@@ -5204,7 +5237,7 @@ export interface components {
          *     `workspace_progress` events.
          * @enum {string}
          */
-        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "resetting_root_disk" | "cloning" | "deleting";
+        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "cloning" | "deleting";
         /** @description What a workspace's Ports tab lists. */
         WorkspacePorts: {
             /** @description The ports, by number: the ones that listen, the ones forwarded, the ones pinned. */
@@ -5257,7 +5290,7 @@ export interface components {
          * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
          * @enum {string}
          */
-        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "stopping" | "removing" | "done" | "failed";
+        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
         /** @description Changes a workspace's two switches; a switch left out stays as it is. */
         WorkspaceSwitchesRequest: {
             /** @description "Only pull from listed repos": the workspace's own value. */
@@ -11337,6 +11370,96 @@ export interface operations {
                 };
             };
             /** @description a switch is both set and sent back to the default */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    grow_root_disk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrowRootDiskRequest"];
+            };
+        };
+        responses: {
+            /** @description growing started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description busy, or starting or stopping */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not above the current size, or more than this computer has free */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -39,7 +39,8 @@ use puddle_api::{EndReason, TerminalError, TerminalLink, TerminalService, Termin
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
 use puddle_compute::{
-    ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _, StartRefusal,
+    ComputeError, DiskSize, ExecRequest, ImageConfig, RootDiskGrowth, Runtime, Sandbox as _,
+    StartRefusal,
 };
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
@@ -60,7 +61,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::HostError;
-use crate::boot::{BootKit, GuestInputs};
+use crate::boot::{BootKit, GuestInputs, root_disk_size};
 use crate::files::{Stored, WorkspaceBook};
 use crate::front::Flavours;
 use crate::git_hosts::{
@@ -183,6 +184,8 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) ids: Arc<dyn puddle_api::IdSource>,
     /// The folder of the login markers, which a new id must not find one of its own in.
     pub(crate) login_markers: std::path::PathBuf,
+    /// The free space of the drive that holds Puddle's data: the one a root disk grows into.
+    pub(crate) space: Arc<dyn crate::Space>,
 }
 
 struct Slot {
@@ -309,6 +312,7 @@ struct Inner<R: Runtime + Clone> {
     front_halves: Arc<dyn puddle_front::ServerHalves>,
     ids: Arc<dyn puddle_api::IdSource>,
     login_markers: std::path::PathBuf,
+    space: Arc<dyn crate::Space>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceId, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
@@ -391,6 +395,28 @@ fn with_leftovers(reason: String, leftovers: &[String]) -> String {
 }
 
 /// The key of a problem about one workspace.
+/// How the room a root-disk grow adds compares with the free space of the drive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Room {
+    /// Less than half of what is free.
+    Plenty,
+    /// More than half of what is free, but it fits: allowed, with a warning.
+    Tight,
+    /// More than is free: refused.
+    TooBig,
+}
+
+/// Judges `added` bytes of room against `free` bytes free.
+fn room(added: u64, free: u64) -> Room {
+    if added > free {
+        Room::TooBig
+    } else if added > free / 2 {
+        Room::Tight
+    } else {
+        Room::Plenty
+    }
+}
+
 fn problem_key(kind: &str, name: &WorkspaceId) -> String {
     format!("{kind}:{name}")
 }
@@ -622,6 +648,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             })?;
             record.created_at = stored.created_at;
             record.disk_size_mib = stored.disk_size_mib;
+            record.root_disk_grown_mib = stored.root_disk_grown_mib;
             record.status = match status.get(&id) {
                 Some(WorkspaceStatus::Crashed) => WorkspaceStatus::Crashed,
                 Some(WorkspaceStatus::VolumeMissing) => WorkspaceStatus::VolumeMissing,
@@ -654,6 +681,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 front_halves: parts.front_halves,
                 ids: parts.ids,
                 login_markers: parts.login_markers,
+                space: parts.space,
                 rewrite_gate: parts.rewrite_gate,
                 state: Mutex::new(State {
                     slots,
@@ -702,6 +730,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 memory_mib: slot.record.memory.get(),
                 created_at: slot.record.created_at,
                 disk_size_mib: slot.record.disk_size_mib,
+                root_disk_grown_mib: slot.record.root_disk_grown_mib,
                 creating: slot.creating,
             })
             .collect();
@@ -1050,6 +1079,30 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             )
             | (Ok(()), Operation::Reclaiming | Operation::ResettingRootDisk)
             | (_, Operation::Cloning) => {}
+            (Ok(()), Operation::GrowingRootDisk) => {
+                // A grow that had to restart the workspace ends with it running again.
+                if slot.record.status == WorkspaceStatus::Starting {
+                    slot.record.status = WorkspaceStatus::Running;
+                    status_changed = true;
+                }
+            }
+            (Err(_), Operation::GrowingRootDisk) => match slot.record.status {
+                // The restart failed in its start, or in its stop.
+                WorkspaceStatus::Starting => {
+                    slot.record.status = if std::mem::take(&mut slot.volume_missing) {
+                        WorkspaceStatus::VolumeMissing
+                    } else {
+                        WorkspaceStatus::Crashed
+                    };
+                    status_changed = true;
+                }
+                WorkspaceStatus::Draining => {
+                    slot.record.status = WorkspaceStatus::Running;
+                    status_changed = true;
+                    self.inner.reports.resume(&name);
+                }
+                _ => {}
+            },
             (Ok(()), Operation::Creating | Operation::Starting) => {
                 slot.record.status = WorkspaceStatus::Running;
                 slot.creating = false;
@@ -1291,6 +1344,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 inner
                     .kit
                     .spec(name, image, record.memory, &env, &route)
+                    .with_root_disk(root_disk_size(record.root_disk_grown_mib))
                     .with_cpus(self.cpus(name).get()),
             )
             .with_file_mount(inner.kit.shell_init().mount(id));
@@ -2920,9 +2974,158 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .map_err(|e| e.to_string())?;
             self.inner.workspaces.sandbox_removed(&sandbox);
         }
+        self.inner.problems.clear(&problem_key("root-copy", name));
         // A route left from an earlier boot belongs to a sandbox that no longer exists.
         self.quiesce(name, true).await;
         Ok(())
+    }
+
+    /// Sets the workspace's status and tells the windows.
+    fn set_status(&self, id: &WorkspaceId, status: WorkspaceStatus) {
+        let record = {
+            let mut state = self.state();
+            let Some(slot) = state.slots.get_mut(id) else {
+                return;
+            };
+            slot.record.status = status;
+            slot.record.clone()
+        };
+        self.status_event(&record);
+    }
+
+    /// Makes the workspace's root disk `size` big and writes what came of it into the audit log.
+    /// `from_mib` is the size it had; `room` how the added room compares with the free space.
+    async fn grow_root_disk_work(
+        &self,
+        record: WorkspaceRecord,
+        from_mib: u64,
+        size: DiskSize,
+        room: Room,
+    ) -> Result<(), String> {
+        let result = self.grow_root_disk_steps(&record, size).await;
+        let (outcome, detail) = match &result {
+            Ok(how) => (
+                WorkspaceOpOutcome::Succeeded,
+                format!(
+                    "root disk grown from {from_mib} MiB to {} MiB, {how}",
+                    size.as_mib()
+                ),
+            ),
+            Err(reason) => (
+                WorkspaceOpOutcome::Failed,
+                format!(
+                    "root disk not grown from {from_mib} MiB to {} MiB: {reason}",
+                    size.as_mib()
+                ),
+            ),
+        };
+        self.record_op(
+            WorkspaceOpKind::RootDiskGrown,
+            &record.id,
+            outcome,
+            Some(detail),
+        );
+        let key = problem_key("root-room", &record.id);
+        if result.is_ok() && room == Room::Tight {
+            self.inner.problems.raise(
+                Problem::new(
+                    key,
+                    format!(
+                        "{}'s root disk is bigger than most of the free space left",
+                        record.name
+                    ),
+                    format!(
+                        "Its root disk can now hold {} GiB. The file only takes room on this \
+                         computer as the workspace writes to it, so nothing more is used yet, \
+                         but a workspace that fills it would use most of what is free.",
+                        size.as_mib() / 1024
+                    ),
+                )
+                .about(record.id.clone()),
+            );
+        } else {
+            self.inner.problems.clear(&key);
+        }
+        result.map(|_| ())
+    }
+
+    /// The grow itself; on success says how it took effect, for the audit entry.
+    async fn grow_root_disk_steps(
+        &self,
+        record: &WorkspaceRecord,
+        size: DiskSize,
+    ) -> Result<&'static str, String> {
+        let inner = &self.inner;
+        let name = &record.id;
+        self.progress(name, WorkspaceStep::GrowingRootDisk, None);
+        let sandbox = name.sandbox_name();
+        let exists = inner
+            .runtime
+            .list()
+            .await
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|s| s.name == sandbox.as_str());
+        let growth = if exists {
+            Some(
+                inner
+                    .runtime
+                    .grow_root_disk(&sandbox, size)
+                    .await
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
+        // Saved only now: the size is a promise that the disk has the room (or will at its next
+        // start), so a refused grow leaves the old one.
+        {
+            let mut state = self.state();
+            if let Some(slot) = state.slots.get_mut(name) {
+                slot.record.root_disk_grown_mib = Some(size.as_mib());
+            }
+            self.persist(&state)
+                .map_err(|e| format!("{e}; {SAVE_HINT}"))?;
+        }
+        match growth {
+            None => Ok("for the first start"),
+            Some(RootDiskGrowth::Live) => Ok("while it ran"),
+            Some(RootDiskGrowth::NextStart) if record.status == WorkspaceStatus::Running => {
+                self.progress(
+                    name,
+                    WorkspaceStep::GrowingRootDisk,
+                    Some(
+                        "this computer cannot make a running disk bigger, so the workspace is \
+                         restarted; what was saved to disk stays"
+                            .to_owned(),
+                    ),
+                );
+                self.set_status(name, WorkspaceStatus::Draining);
+                inner.reports.pause(name);
+                self.stop_work(record.clone()).await?;
+                self.set_status(name, WorkspaceStatus::Starting);
+                self.start_work(record.clone()).await?;
+                Ok("with a restart")
+            }
+            Some(RootDiskGrowth::NextStart) => {
+                inner.problems.raise(
+                    Problem::new(
+                        problem_key("root-copy", name),
+                        format!(
+                            "{}'s old root disk file is still on this computer",
+                            record.name
+                        ),
+                        "Growing a stopped workspace's root disk makes a bigger copy of the file \
+                         and leaves the old one behind, so for now the workspace takes room on \
+                         this computer twice. Resetting the root disk or deleting the \
+                         workspace frees it."
+                            .to_owned(),
+                    )
+                    .about(name.clone()),
+                );
+                Ok("at its next start")
+            }
+        }
     }
 
     async fn start_work(&self, record: WorkspaceRecord) -> Result<(), String> {
@@ -3613,6 +3816,71 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         })
     }
 
+    fn grow_root_disk<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        size_mib: u32,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let size = DiskSize::mib(size_mib);
+            let current = {
+                let state = self.state();
+                let slot = state.slots.get(id).ok_or_else(|| not_found(id))?;
+                slot.record.root_disk_size_mib.unwrap_or_else(|| {
+                    u64::from(root_disk_size(slot.record.root_disk_grown_mib).as_mib())
+                })
+            };
+            if u64::from(size_mib) <= current {
+                return Err(WorkspaceError::Invalid(format!(
+                    "a root disk only grows: {size_mib} MiB is not above its {current} MiB"
+                )));
+            }
+            let added = (u64::from(size_mib) - current) * 1024 * 1024;
+            let space = self.inner.space.clone();
+            let free = tokio::task::spawn_blocking(move || space.free_bytes())
+                .await
+                .ok()
+                .and_then(Result::ok);
+            let room = match free {
+                Some(free) => room(added, free),
+                None => Room::Plenty,
+            };
+            if room == Room::TooBig {
+                return Err(WorkspaceError::Invalid(format!(
+                    "this computer has {} GiB free, which is less than the {} GiB this adds to \
+                     the root disk; choose a smaller size or free some space",
+                    free.unwrap_or(0) / (1024 * 1024 * 1024),
+                    added / (1024 * 1024 * 1024)
+                )));
+            }
+            let record = self.accept(
+                id,
+                Operation::GrowingRootDisk,
+                |r| {
+                    if matches!(
+                        r.status,
+                        WorkspaceStatus::Starting | WorkspaceStatus::Draining
+                    ) {
+                        Err(WorkspaceError::Conflict(format!(
+                            "{} is {}; try again in a moment",
+                            r.name, r.status
+                        )))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_| {},
+            )?;
+            let this = self.clone();
+            let work = record.clone();
+            self.run(&record, Operation::GrowingRootDisk, async move {
+                this.grow_root_disk_work(work, current, size, room).await
+            })
+            .await;
+            Ok(record)
+        })
+    }
+
     fn delete_check<'a>(
         &'a self,
         id: &'a WorkspaceId,
@@ -4004,6 +4272,21 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
         service: login.profile.to_owned(),
         name: login.name.to_owned(),
         since: login.since_ms,
+    }
+}
+
+#[cfg(test)]
+mod room_for_a_grow {
+    use super::*;
+
+    #[test]
+    fn room_is_plenty_up_to_half_of_what_is_free_tight_up_to_all_of_it_and_too_big_past_it() {
+        assert_eq!(room(0, 100), Room::Plenty);
+        assert_eq!(room(50, 100), Room::Plenty);
+        assert_eq!(room(51, 100), Room::Tight);
+        assert_eq!(room(100, 100), Room::Tight);
+        assert_eq!(room(101, 100), Room::TooBig);
+        assert_eq!(room(1, 0), Room::TooBig);
     }
 }
 

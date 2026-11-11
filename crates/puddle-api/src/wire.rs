@@ -97,9 +97,9 @@ pub use start_folder::{StartFolderRequest, StartFolderSet};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
-    NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest, RepoFindings,
-    SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
-    WorkspaceOperation, WorkspaceRepository,
+    GrowRootDiskRequest, NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest,
+    RepoFindings, SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict,
+    WorkspaceMatch, WorkspaceOperation, WorkspaceRepository,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -964,6 +964,9 @@ pub enum WorkspaceOpKind {
     RepoRemoved,
     /// A zero-filled or corrupt git file (`HEAD`, the index) of a checkout rebuilt at boot.
     GitRepaired,
+    /// A workspace's root disk made bigger (or the attempt failed; the detail says from what
+    /// size to what size and how it took effect).
+    RootDiskGrown,
 }
 
 impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
@@ -985,6 +988,7 @@ impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
             K::RepoSwitched => Self::RepoSwitched,
             K::RepoRemoved => Self::RepoRemoved,
             K::GitRepaired => Self::GitRepaired,
+            K::RootDiskGrown => Self::RootDiskGrown,
         }
     }
 }

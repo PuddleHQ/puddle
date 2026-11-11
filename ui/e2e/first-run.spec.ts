@@ -37,6 +37,7 @@ const STEPS = [
   ["/welcome/check", "System check"],
   ["/welcome/certificates", "Certificates"],
   ["/welcome/connect", "How do you want to connect?"],
+  ["/welcome/interception", "Which hosts should Puddle decrypt?"],
   ["/welcome/look", "Look"],
   ["/welcome/workspace", "Your first workspace"],
 ] as const;
@@ -105,6 +106,24 @@ test("a fresh install is led through every step and then opens on the workspaces
   ).json()) as { effective: { direct_ssh: { value: boolean } } };
   expect(settings.effective.direct_ssh.value).toBe(true);
   await page.getByRole("link", { name: "Continue" }).click();
+
+  // Interception: the recommended mode is preselected and Continue keeps it.
+  await expect(
+    heading(page, "Which hosts should Puddle decrypt?"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("radio", { name: /except a known list/ }),
+  ).toBeChecked();
+  const kept = page.waitForResponse(
+    (r) =>
+      r.request().method() === "PUT" && r.url().endsWith("/api/interception"),
+  );
+  await page.getByRole("button", { name: "Continue" }).click();
+  await kept;
+  const mode = (await (
+    await request.get("/api/interception", { headers: auth(backend) })
+  ).json()) as { mode: string; chosen: boolean };
+  expect(mode).toMatchObject({ mode: "all_except_curated", chosen: true });
 
   // Look: a dark theme and compact spacing apply at once.
   await expect(heading(page, "Look")).toBeVisible();
@@ -355,6 +374,11 @@ for (const scheme of ["light", "dark"] as const) {
       if (path === "/welcome/connect") {
         await expect(
           page.getByRole("radio", { name: /code-server/ }),
+        ).toBeVisible();
+      }
+      if (path === "/welcome/interception") {
+        await expect(
+          page.getByRole("radio", { name: /except a known list/ }),
         ).toBeVisible();
       }
       await expectNoAxeViolations(page, path);

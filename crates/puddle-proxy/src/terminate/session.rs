@@ -214,7 +214,7 @@ fn note_handshake_failure(
     } else if let Some(alert) = super::handshake::rejected_certificate(err) {
         outcome.certificate_refused = true;
         tracing::info!(workspace = %cx.workspace, host = %cx.target.host, alert, "the client in the workspace did not accept Puddle's certificate for this host");
-        if cx.mode == Mode::Everything {
+        if cx.mode == Mode::Everything && cx.termination.interception().is_learning() {
             outcome.learned = true;
             cx.termination
                 .interception()

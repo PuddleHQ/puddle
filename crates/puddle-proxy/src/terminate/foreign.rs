@@ -275,15 +275,9 @@ fn is_azure_devops(token: &[u8]) -> bool {
 mod tests {
     use ::http::header::{AUTHORIZATION, HeaderName, HeaderValue};
 
-    use super::*;
+    use puddle_test_kit::{TokenKind, token, with_broken_checksum, with_checksum};
 
-    /// A made-up 36-character body whose last six characters are the checksum of the first
-    /// thirty, built with the same function the check uses.
-    fn checksummed(prefix: &str, entropy: &str) -> String {
-        assert_eq!(entropy.len(), 30);
-        let tail = stale::checksum_of(entropy.as_bytes());
-        format!("{prefix}{entropy}{}", std::str::from_utf8(&tail).unwrap())
-    }
+    use super::*;
 
     fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut map = HeaderMap::new();
@@ -306,8 +300,9 @@ mod tests {
 
     #[test]
     fn a_github_token_with_a_valid_checksum_is_named_on_any_path() {
-        for prefix in ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"] {
-            let token = checksummed(prefix, ENTROPY);
+        for kind in TokenKind::GITHUB_CHECKSUMMED {
+            let prefix = kind.prefix();
+            let token = with_checksum(prefix, ENTROPY);
             for git in [false, true] {
                 assert_eq!(
                     kinds(&[("authorization", &format!("Bearer {token}"))], git),
@@ -320,7 +315,7 @@ mod tests {
 
     #[test]
     fn a_github_token_with_a_wrong_checksum_is_not_named_here() {
-        let token = format!("ghp_{ENTROPY}AAAAAA");
+        let token = with_broken_checksum(&with_checksum("ghp_", ENTROPY));
         assert_eq!(
             kinds(&[("authorization", &format!("token {token}"))], false),
             NONE
@@ -329,12 +324,12 @@ mod tests {
 
     #[test]
     fn a_fine_grained_github_token_is_read_by_its_shape() {
-        let token = format!("github_pat_{}_{}", "A1b2C3d4E5f6G7h8I9j0K1", "x".repeat(59));
+        let token = token(TokenKind::GithubFineGrained, "fine");
         assert_eq!(
             kinds(&[("authorization", &format!("Bearer {token}"))], false),
             [ForeignCredentialKind::GithubToken]
         );
-        let short = format!("github_pat_{}_{}", "A1b2C3d4E5f6G7h8I9j0K1", "x".repeat(58));
+        let short = token.get(..token.len() - 1).unwrap().to_owned();
         assert_eq!(
             kinds(&[("authorization", &format!("Bearer {short}"))], false),
             NONE
@@ -343,12 +338,12 @@ mod tests {
 
     #[test]
     fn an_npm_token_with_a_valid_checksum_is_named() {
-        let token = checksummed("npm_", ENTROPY);
+        let token = with_checksum("npm_", ENTROPY);
         assert_eq!(
             kinds(&[("authorization", &format!("Bearer {token}"))], false),
             [ForeignCredentialKind::NpmToken]
         );
-        let broken = format!("npm_{ENTROPY}000000");
+        let broken = with_broken_checksum(&token);
         assert_eq!(
             kinds(&[("authorization", &format!("Bearer {broken}"))], false),
             NONE
@@ -357,7 +352,8 @@ mod tests {
 
     #[test]
     fn a_gitlab_token_is_read_by_prefix_and_shape_including_the_private_token_header() {
-        let token = "glpat-AbCdEfGhIjKlMnOpQrSt";
+        let token = token(TokenKind::Gitlab, "lab");
+        let token = token.as_str();
         assert_eq!(
             kinds(&[("authorization", &format!("Bearer {token}"))], false),
             [ForeignCredentialKind::GitlabToken]
@@ -389,7 +385,7 @@ mod tests {
 
     #[test]
     fn a_known_token_as_the_password_of_basic_credentials_is_named() {
-        let token = checksummed("ghp_", ENTROPY);
+        let token = with_checksum("ghp_", ENTROPY);
         let basic = format!(
             "Basic {}",
             STANDARD.encode(format!("x-access-token:{token}"))
@@ -402,7 +398,7 @@ mod tests {
 
     #[test]
     fn a_token_after_basic_that_is_not_base64_is_read_as_it_stands() {
-        let token = checksummed("ghp_", ENTROPY);
+        let token = with_checksum("ghp_", ENTROPY);
         assert_eq!(
             kinds(&[("authorization", &format!("Basic {token}"))], false),
             [ForeignCredentialKind::GithubToken]
@@ -491,7 +487,7 @@ mod tests {
 
     #[test]
     fn a_value_of_exactly_the_limit_is_read_and_one_byte_more_is_not() {
-        let token = checksummed("ghp_", ENTROPY);
+        let token = with_checksum("ghp_", ENTROPY);
         let at_limit = format!("Bearer {token}{}", " ".repeat(MAX_VALUE - token.len() - 7));
         assert_eq!(at_limit.len(), MAX_VALUE);
         let named = [ForeignCredentialKind::GithubToken];
@@ -502,7 +498,7 @@ mod tests {
 
     #[test]
     fn a_checksummed_body_with_a_character_outside_base62_is_not_a_token() {
-        let token = checksummed("ghp_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o-");
+        let token = with_checksum("ghp_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o-");
         assert_eq!(
             kinds(&[("authorization", &format!("Bearer {token}"))], false),
             NONE
@@ -539,7 +535,7 @@ mod tests {
 
     #[test]
     fn a_header_that_holds_one_of_the_workspaces_stand_ins_is_not_looked_at() {
-        let token = checksummed("ghp_", ENTROPY);
+        let token = with_checksum("ghp_", ENTROPY);
         let map = headers(&[("authorization", &format!("Bearer {token}"))]);
         let held = kinds_in_headers(&map, &[], true, &|_| true);
         assert_eq!(held, NONE);
@@ -547,7 +543,7 @@ mod tests {
 
     #[test]
     fn a_header_puddle_injected_is_not_looked_at() {
-        let token = checksummed("ghp_", ENTROPY);
+        let token = with_checksum("ghp_", ENTROPY);
         let map = headers(&[("authorization", &format!("Bearer {token}"))]);
         let skip = [&AUTHORIZATION];
         assert_eq!(kinds_in_headers(&map, &skip, true, &|_| false), NONE);
@@ -555,12 +551,13 @@ mod tests {
 
     #[test]
     fn each_kind_is_named_once_and_in_header_order() {
-        let github = checksummed("ghp_", ENTROPY);
-        let npm = checksummed("npm_", ENTROPY);
+        let github = with_checksum("ghp_", ENTROPY);
+        let npm = with_checksum("npm_", ENTROPY);
+        let gitlab = token(TokenKind::Gitlab, "lab");
         let map = headers(&[
             ("authorization", &format!("Bearer {github}")),
             ("authorization", &format!("Bearer {github}")),
-            ("private-token", "glpat-AbCdEfGhIjKlMnOpQrSt"),
+            ("private-token", &gitlab),
             ("authorization", &format!("Bearer {npm}")),
         ]);
         assert_eq!(

@@ -2612,6 +2612,136 @@
         }
       }
     },
+    "/api/interception": {
+      "get": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "The global interception setting: the mode workspaces follow, whether the user has chosen one,\nlearning from rejections, and the curated list.",
+        "operationId": "get_interception_settings",
+        "responses": {
+          "200": {
+            "description": "the global setting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterceptionSettingsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "Changes the global setting. A running workspace that follows it applies the change at once.",
+        "operationId": "put_interception_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterceptionSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "saved; the setting now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterceptionSettingsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/interception/learned-limits": {
       "get": {
         "tags": [
@@ -7132,6 +7262,118 @@
         }
       }
     },
+    "/api/workspaces/{id}/grow-root-disk": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Makes the workspace's root disk bigger. The root disk holds the home directory, tool caches\nand installed packages, and only ever grows. A running workspace has the room at once when\nthe runtime can grow a disk under a running guest; otherwise Puddle restarts it, which loses\nnothing that was saved to disk. A stopped workspace has the room at its next start. The size\nis kept when the root disk is reset. Answers 202; the workspace is busy\n(`growing_root_disk`) until it is done.",
+        "operationId": "grow_root_disk",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrowRootDiskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "growing started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "busy, or starting or stopping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not above the current size, or more than this computer has free",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/identities": {
       "put": {
         "tags": [
@@ -7521,7 +7763,7 @@
         "tags": [
           "interception"
         ],
-        "summary": "Changes the switch and/or the workspace's never-decrypt names. A running workspace applies it\nat once: the next connection to a host is decrypted or passed through accordingly. A host with\na credential, secret or login capture is always decrypted, whatever the list says.",
+        "summary": "Changes the mode and/or the workspace's never-decrypt names. A running workspace applies it\nat once: the next connection to a host is decrypted or passed through accordingly. A host with\na credential, secret or login capture is always decrypted, whatever the list says.",
         "operationId": "put_interception",
         "parameters": [
           {
@@ -13784,6 +14026,22 @@
           }
         }
       },
+      "GrowRootDiskRequest": {
+        "type": "object",
+        "description": "`POST /api/workspaces/{id}/grow-root-disk`.",
+        "required": [
+          "size_mib"
+        ],
+        "properties": {
+          "size_mib": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The new root disk size in MiB. It must be above the current size: a root disk only grows.\nRequired.",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "Health": {
         "type": "object",
         "description": "The API's identity, for a client to check it reached Puddle.",
@@ -14076,16 +14334,29 @@
           }
         }
       },
+      "InterceptionMode": {
+        "type": "string",
+        "description": "Which hosts on port 443 Puddle decrypts, beyond the ones with a credential, secret, login\ncapture profile or rule on method and path (those are always decrypted).",
+        "enum": [
+          "all",
+          "all_except_curated",
+          "known_only"
+        ]
+      },
       "InterceptionRequest": {
         "type": "object",
         "description": "A change to a workspace's interception. A field that is absent stays as it is.",
         "properties": {
-          "decrypt_all": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Turns decrypting every host on or off. It applies to the running workspace at once."
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceMode",
+                "description": "Sets the workspace's own mode. It applies to the running workspace at once."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "never_decrypt": {
             "type": [
@@ -14099,19 +14370,87 @@
           }
         }
       },
+      "InterceptionSettingsRequest": {
+        "type": "object",
+        "description": "A change to the global interception setting. A field that is absent stays as it is.",
+        "properties": {
+          "learn_from_rejections": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Turns learning from rejections on or off."
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InterceptionMode",
+                "description": "Chooses the mode."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notice_seen": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Records that the user has seen the notice."
+          }
+        }
+      },
+      "InterceptionSettingsView": {
+        "type": "object",
+        "description": "The global interception setting.",
+        "required": [
+          "mode",
+          "chosen",
+          "learn_from_rejections",
+          "notice_seen",
+          "curated"
+        ],
+        "properties": {
+          "chosen": {
+            "type": "boolean",
+            "description": "Whether the user has chosen a mode. While `false`, the app offers the choice once."
+          },
+          "curated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The curated list passed through in `all_except_curated`: built in, \"System managed\",\nsorted."
+          },
+          "learn_from_rejections": {
+            "type": "boolean",
+            "description": "Whether a host whose tool refuses Puddle's certificate is passed through for a while and\nput on the learned list. Meaningful in the modes that decrypt unlisted hosts. On unless\nturned off."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/InterceptionMode",
+            "description": "The mode every workspace without its own follows. An install that has not chosen is on\n`known_only`."
+          },
+          "notice_seen": {
+            "type": "boolean",
+            "description": "Whether the user has seen the notice that offers the choice (existing installs)."
+          }
+        }
+      },
       "InterceptionView": {
         "type": "object",
-        "description": "How a workspace decrypts hosts beyond the ones it has a credential for.",
+        "description": "How a workspace decrypts hosts beyond the ones it has a credential, secret, login capture or\nrule on method and path for.",
         "required": [
           "workspace",
-          "decrypt_all",
+          "mode",
+          "effective_mode",
           "never_decrypt",
           "global_never_decrypt"
         ],
         "properties": {
-          "decrypt_all": {
-            "type": "boolean",
-            "description": "Whether Puddle decrypts every host on port 443, not only the hosts with a credential,\nsecret or login capture. Off unless turned on."
+          "effective_mode": {
+            "$ref": "#/components/schemas/InterceptionMode",
+            "description": "The mode in force: the workspace's own, or the global one."
           },
           "global_never_decrypt": {
             "type": "array",
@@ -14120,12 +14459,16 @@
             },
             "description": "The names no workspace decrypts, sorted. Changed through the global route."
           },
+          "mode": {
+            "$ref": "#/components/schemas/WorkspaceMode",
+            "description": "The workspace's own choice; `inherit` follows the global setting."
+          },
           "never_decrypt": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The names this workspace never decrypts while the switch is on (`example.com`,\n`*.example.com`), sorted."
+            "description": "The names this workspace never decrypts while it decrypts unlisted hosts (`example.com`,\n`*.example.com`), sorted."
           },
           "workspace": {
             "$ref": "#/components/schemas/WorkspaceId",
@@ -17743,6 +18086,16 @@
           }
         }
       },
+      "WorkspaceMode": {
+        "type": "string",
+        "description": "A workspace's own choice of interception mode.",
+        "enum": [
+          "inherit",
+          "all",
+          "all_except_curated",
+          "known_only"
+        ]
+      },
       "WorkspaceOpKind": {
         "type": "string",
         "description": "What a `workspace_op` record is about.",
@@ -17761,7 +18114,8 @@
           "repo_added",
           "repo_switched",
           "repo_removed",
-          "git_repaired"
+          "git_repaired",
+          "root_disk_grown"
         ]
       },
       "WorkspaceOpOutcome": {
@@ -17781,6 +18135,7 @@
           "stopping",
           "reclaiming",
           "resetting_root_disk",
+          "growing_root_disk",
           "cloning",
           "deleting"
         ]
@@ -17898,6 +18253,7 @@
           "checking",
           "reclaiming",
           "resetting_root_disk",
+          "growing_root_disk",
           "stopping",
           "removing",
           "done",

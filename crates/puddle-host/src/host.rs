@@ -322,6 +322,9 @@ pub struct HostOptions {
     /// ([`puddle_api::RandomIds`]); tests give [`puddle_api::NameIds`], so a workspace called
     /// `acme` gets the id `acme`.
     pub workspace_ids: Option<Arc<dyn puddle_api::IdSource>>,
+    /// Where a root disk grow reads the free space of the data folder's drive. Without one, the
+    /// real drive; tests give a fixed figure so a grow never depends on the machine's disk.
+    pub free_space: Option<Arc<dyn crate::Space>>,
 }
 
 impl Default for HostOptions {
@@ -337,6 +340,7 @@ impl Default for HostOptions {
             rewrite_gate: None,
             git_ssh: true,
             workspace_ids: None,
+            free_space: None,
         }
     }
 }
@@ -677,6 +681,10 @@ impl<R: Runtime + Clone> Host<R> {
                     .clone()
                     .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
                 login_markers: config.paths.login_markers(),
+                space: crate::space_watch::space_or_drive(
+                    options.free_space.clone(),
+                    config.paths.data(),
+                ),
             },
             stored,
             retired,

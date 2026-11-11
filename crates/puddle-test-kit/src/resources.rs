@@ -147,7 +147,7 @@ pub fn accepts(addr: SocketAddr) -> bool {
 /// port never does.
 #[must_use]
 pub fn http_status(addr: SocketAddr, path: &str, token: &str) -> Option<u16> {
-    use std::io::{Read, Write};
+    use std::io::{BufRead, Read, Write};
     let mut conn = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).ok()?;
     conn.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
     conn.set_write_timeout(Some(Duration::from_secs(1))).ok()?;
@@ -156,13 +156,9 @@ pub fn http_status(addr: SocketAddr, path: &str, token: &str) -> Option<u16> {
     );
     conn.write_all(request.as_bytes()).ok()?;
     let mut head = Vec::new();
-    let mut chunk = [0u8; 256];
-    while !head.windows(2).any(|w| w == b"\r\n") && head.len() < 1024 {
-        match conn.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => head.extend_from_slice(chunk.get(..n).unwrap_or_default()),
-        }
-    }
+    // `read_until` retries a read a signal cut short (EINTR) and keeps what it read when a read
+    // fails or times out, so a partial status line still counts.
+    let _ = std::io::BufReader::new((&conn).take(1024)).read_until(b'\n', &mut head);
     let line = String::from_utf8_lossy(&head);
     let line = line.lines().next()?;
     let mut words = line.split(' ');
@@ -256,7 +252,9 @@ mod tests {
         assert_eq!(http_status(stranger, "/x", "t"), None);
         let silent = answering(b"");
         assert_eq!(http_status(silent, "/x", "t"), None);
-        let gone = SocketAddr::from(([127, 0, 0, 1], quiet_port()));
+        // Reserved, not freed: nothing can answer there, and no parallel test can take the number.
+        let reserved = ReservedPort::new();
+        let gone = SocketAddr::from(([127, 0, 0, 1], reserved.port()));
         assert_eq!(http_status(gone, "/x", "t"), None);
     }
 
@@ -278,23 +276,11 @@ mod tests {
         // dropped listener leaves open.
         let squatter = tokio::net::TcpSocket::new_v4().unwrap();
         assert!(squatter.bind(addr).is_err(), "a plain bind took the port");
-        // The test's own server binds with SO_REUSEADDR like a real one (serve.rs). std's plain
-        // bind would be refused on Windows, where only two sockets that both set it can share.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let server = rt.block_on(async {
-            let socket = tokio::net::TcpSocket::new_v4().unwrap();
-            socket.set_reuseaddr(true).unwrap();
-            socket
-                .bind(addr)
-                .expect("the test's own server can answer there");
-            socket.listen(8).unwrap()
-        });
+        let rt = runtime();
+        let server = listen_reusing(&rt, addr);
         assert!(accepts(addr), "the test's own server answers");
         drop(server);
-        assert!(!accepts(addr), "and be dropped again");
+        refused_soon(addr); // and be dropped again
         let other = ReservedPort::default();
         assert_ne!(other.port(), reserved.port());
     }
@@ -303,8 +289,14 @@ mod tests {
     fn a_quiet_port_is_below_the_ephemeral_ranges_and_can_be_bound_plainly() {
         let port = quiet_port();
         assert!((20_000..32_000).contains(&port), "{port}");
-        let socket = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)));
-        assert!(socket.is_ok(), "a plain bind takes it");
+        // The probe that found the port closed its socket, but a forking test thread can hold a copy
+        // of it until the child execs (see `refused_soon`), so a bind straight after can see it taken.
+        let bound = crate::wait::eventually_blocking(
+            "a plain bind takes the quiet port",
+            Duration::from_secs(10),
+            || TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))),
+        );
+        drop(bound);
     }
 
     #[test]
@@ -313,26 +305,60 @@ mod tests {
         assert_eq!(free_port_in(port, 1), None);
     }
 
+    /// Waits until nothing answers on `addr`. A listener that was just dropped can still answer for a
+    /// moment: another test thread that forks (`Command::spawn`) copies every open descriptor, the
+    /// listening socket among them, and the child keeps its copy until it execs. The socket is closed
+    /// for good a moment later, so "refused after the drop" holds eventually, not at once.
+    fn refused_soon(addr: SocketAddr) {
+        crate::wait::eventually_blocking(
+            "nothing answers on a dropped listener's port",
+            Duration::from_secs(10),
+            || !accepts(addr),
+        );
+    }
+
+    /// A current-thread runtime for the tests that need a tokio socket.
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// A listener on a [`ReservedPort`]'s number, bound with `SO_REUSEADDR` like a real server
+    /// (serve.rs): std's plain bind would be refused on Windows, where only two sockets that both set
+    /// it can share. Drop it and the port is refused again, still the reservation's.
+    fn listen_reusing(rt: &tokio::runtime::Runtime, addr: SocketAddr) -> tokio::net::TcpListener {
+        rt.block_on(async {
+            let socket = tokio::net::TcpSocket::new_v4().unwrap();
+            socket.set_reuseaddr(true).unwrap();
+            socket
+                .bind(addr)
+                .expect("the test's own server can answer there");
+            socket.listen(8).unwrap()
+        })
+    }
+
     #[test]
     fn a_listener_is_accepted_and_a_closed_port_refused() {
-        let (listener, port) = bound_port();
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        // The port stays reserved while the listener comes and goes: a freed port (`bound_port` then
+        // drop) is open to any parallel test's port 0 bind between the drop and the check.
+        let reserved = ReservedPort::new();
+        let addr = SocketAddr::from(([127, 0, 0, 1], reserved.port()));
+        let rt = runtime();
+        let listener = listen_reusing(&rt, addr);
         assert!(accepts(addr));
         drop(listener);
-        assert!(!accepts(addr));
+        refused_soon(addr);
     }
 
     #[test]
     fn a_socket_connected_to_itself_is_not_accepted() {
         // The kernel's simultaneous open: bind to a port, then connect to that same port with
         // nothing listening. The connect succeeds, to nobody; `is_ok()` on it would read "open".
-        let (listener, port) = bound_port();
-        drop(listener);
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
+        let reserved = ReservedPort::new();
+        let addr = SocketAddr::from(([127, 0, 0, 1], reserved.port()));
+        let rt = runtime();
         let joined = rt.block_on(async {
             let socket = tokio::net::TcpSocket::new_v4().unwrap();
             socket.set_reuseaddr(true).unwrap();

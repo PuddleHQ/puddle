@@ -32,6 +32,7 @@ mod fill;
 pub mod fixture;
 mod guest;
 mod host;
+mod interception;
 mod local;
 mod memory;
 mod merge;
@@ -57,6 +58,7 @@ pub use event::{
 pub use fill::{Fill, Rgb, SET_PALETTE};
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
+pub use interception::{CURATED_PASS_THROUGH, InterceptionMode};
 pub use local::{CompanySignal, LocalCategory};
 pub use memory::MemoryMib;
 pub use merge::{

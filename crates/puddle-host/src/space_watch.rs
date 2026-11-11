@@ -17,8 +17,12 @@ use crate::FreeSpaceTiming;
 use crate::doctor::disk_limits;
 
 /// Where the free space comes from: the real drive, or a test's fake.
-pub(crate) trait Space: Send + Sync + 'static {
+pub trait Space: Send + Sync + 'static {
     /// Bytes free on the drive that holds the data folder.
+    ///
+    /// # Errors
+    ///
+    /// The drive's figure cannot be read.
     fn free_bytes(&self) -> io::Result<u64>;
 }
 
@@ -30,6 +34,14 @@ impl Space for DriveOf {
     fn free_bytes(&self) -> io::Result<u64> {
         puddle_fs::free_bytes(&self.0)
     }
+}
+
+/// The given space, or the real drive that holds `data`.
+pub(crate) fn space_or_drive(
+    given: Option<Arc<dyn Space>>,
+    data: &std::path::Path,
+) -> Arc<dyn Space> {
+    given.unwrap_or_else(|| Arc::new(DriveOf(data.to_path_buf())))
 }
 
 /// What the watch remembers between reads: the level it last said.
@@ -363,6 +375,21 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(40)).await;
         assert_eq!(events.take(), [changed(DiskSpaceLevel::Ok, 50 * 1024)]);
         task.abort();
+    }
+
+    #[test]
+    fn no_given_space_means_the_real_drive_and_a_given_one_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(space_or_drive(None, dir.path()).free_bytes().unwrap() > 0);
+        let fake = Arc::new(Fake::default());
+        fake.set(7);
+        let fixed: Arc<dyn Space> = Arc::new(fake);
+        assert_eq!(
+            space_or_drive(Some(fixed), dir.path())
+                .free_bytes()
+                .unwrap(),
+            7
+        );
     }
 
     #[test]

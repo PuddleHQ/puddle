@@ -12,8 +12,8 @@ use microsandbox::sandbox::{SandboxHandle, SandboxStatus as SdkStatus};
 use microsandbox::volume::Volume;
 use microsandbox::{Backend, LocalBackend, MicrosandboxError, Sandbox};
 use puddle_compute::{
-    Capabilities, ComputeError, ImageConfig, Runtime, SandboxInfo, SandboxSpec, VolumeInfo,
-    VolumeSpec,
+    Capabilities, ComputeError, ImageConfig, RootDiskGrowth, Runtime, SandboxInfo, SandboxSpec,
+    VolumeInfo, VolumeSpec,
 };
 use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 
@@ -622,6 +622,24 @@ impl Runtime for MsbRuntime {
         })
     }
 
+    // Msb answers these calls only in a real VM: the VM tests cover this fn.
+    fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: puddle_compute::DiskSize,
+    ) -> impl Future<Output = Result<RootDiskGrowth, ComputeError>> + Send {
+        Box::pin(async move {
+            let record = self.existing(name).await?;
+            root_disk::grow(&MsbGrow {
+                runtime: self,
+                record: &record,
+                name: name.as_str(),
+                mib: size.as_mib(),
+            })
+            .await
+        })
+    }
+
     fn list(&self) -> impl Future<Output = Result<Vec<SandboxInfo>, ComputeError>> + Send {
         Box::pin(async move {
             let mut out: Vec<SandboxInfo> = self
@@ -813,6 +831,47 @@ fn dir_names(
         out.insert(name.to_string_lossy().into_owned());
     }
     Ok(out)
+}
+
+/// The msb calls of a root-disk grow on one sandbox record.
+struct MsbGrow<'a> {
+    runtime: &'a MsbRuntime,
+    record: &'a SandboxHandle,
+    name: &'a str,
+    mib: u32,
+}
+
+impl root_disk::GrowSdk for MsbGrow<'_> {
+    async fn plan(&self) -> Result<root_disk::GrowPlan, ComputeError> {
+        let plan = self
+            .runtime
+            .sdk(self.record.modify().root_disk_size(self.mib).dry_run())
+            .await
+            .map_err(|e| map("plan the root disk growth of", self.name, e))?;
+        Ok(root_disk::grow_plan(&plan))
+    }
+
+    async fn apply_live(&self) -> Result<(), ComputeError> {
+        self.runtime
+            .sdk(self.record.modify().root_disk_size(self.mib).apply())
+            .await
+            .map_err(|e| map("grow the root disk of", self.name, e))?;
+        Ok(())
+    }
+
+    async fn apply_next_start(&self) -> Result<(), ComputeError> {
+        self.runtime
+            .sdk(
+                self.record
+                    .modify()
+                    .root_disk_size(self.mib)
+                    .next_start()
+                    .apply(),
+            )
+            .await
+            .map_err(|e| map("grow the root disk of", self.name, e))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -151,6 +151,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::stop_workspace))
         .routes(routes!(workspaces::reclaim_workspace))
         .routes(routes!(workspaces::reset_root_disk))
+        .routes(routes!(workspaces::grow_root_disk))
         .routes(routes!(workspaces::delete_check))
         .routes(routes!(workspaces::attach_workspace))
         .routes(routes!(repository_hosts::repository_hosts))
@@ -262,6 +263,10 @@ fn environment_router() -> OpenApiRouter<AppState> {
         .routes(routes!(
             interception::get_interception,
             interception::put_interception
+        ))
+        .routes(routes!(
+            interception::get_interception_settings,
+            interception::put_interception_settings
         ))
         .routes(routes!(
             interception::get_global_never_decrypt,

@@ -213,3 +213,31 @@ fn a_chosen_port_and_a_file_added_through_the_api_show_in_a_clone() {
         "console.log(1);\n"
     );
 }
+
+#[test]
+fn a_stranger_on_the_chosen_port_fails_the_start_and_is_never_taken_for_forgejo() {
+    // Another process holds the port Forgejo was told to bind (a parallel test's listener that was
+    // handed the same free port): Forgejo exits with "address already in use" while the stranger
+    // still accepts connections. The start must fail with Forgejo's own log; a start that calls
+    // the stranger Forgejo returns a fixture whose API is refused once the stranger lets go.
+    // flake-ok: the stranger is the point; the port is held for the whole test.
+    let stranger = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = stranger.local_addr().unwrap().port();
+    let started = std::panic::catch_unwind(|| Forgejo::start_on(NAME, port));
+    match started {
+        // Forgejo is not configured: start_on already failed the test when it is required.
+        Ok(None) => {}
+        Ok(Some(_)) => panic!("the start took a stranger on port {port} for Forgejo"),
+        Err(panic) => {
+            let why = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            assert!(
+                why.contains("address already in use") || why.contains("only one usage"),
+                "the start failed, but not with Forgejo's own bind error: {why}"
+            );
+        }
+    }
+}

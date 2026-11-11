@@ -10,11 +10,11 @@ use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 17;
+pub const SCHEMA_VERSION: u32 = 18;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -452,7 +452,6 @@ pub(crate) fn migrate(conn: &mut Connection) -> Result<u32, StoreError> {
     migrate_with(conn, MIGRATIONS)
 }
 
-/// Migrates only up to `version`, to build the database an older Puddle left behind.
 /// The name a workspace had when an audit record was written, so a record of a renamed or
 /// deleted workspace still reads as the user knew it. `workspace_names` holds the current name
 /// of each workspace (the host keeps it up to date); a new audit row copies it. Rows written
@@ -498,6 +497,29 @@ CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
 ";
 
+/// Three interception modes instead of one switch. A global row holds the user's mode
+/// (`NULL` until they choose: the install then behaves as before) and the learning switch; a
+/// workspace's own mode is `NULL` to follow it. Each workspace row of the old switch keeps what
+/// it did: on is `all` (every host, learned hosts passed through), off is `known_only`.
+const V18: &str = r"
+CREATE TABLE interception_settings (
+    id          INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    mode        TEXT CHECK (mode IN ('all', 'all_except_curated', 'known_only')),
+    learn       INTEGER NOT NULL CHECK (learn IN (0, 1)),
+    notice_seen INTEGER NOT NULL CHECK (notice_seen IN (0, 1))
+) STRICT;
+CREATE TABLE workspace_interception_new (
+    workspace_id TEXT NOT NULL PRIMARY KEY,
+    mode         TEXT CHECK (mode IN ('all', 'all_except_curated', 'known_only'))
+) STRICT;
+INSERT INTO workspace_interception_new (workspace_id, mode)
+    SELECT workspace_id, CASE decrypt_all WHEN 1 THEN 'all' ELSE 'known_only' END
+    FROM workspace_interception;
+DROP TABLE workspace_interception;
+ALTER TABLE workspace_interception_new RENAME TO workspace_interception;
+";
+
+/// Migrates only up to `version`, to build the database an older Puddle left behind.
 #[cfg(test)]
 pub(crate) fn migrate_up_to(conn: &mut Connection, version: usize) -> Result<u32, StoreError> {
     migrate_with(conn, &MIGRATIONS[..version])
@@ -1037,5 +1059,48 @@ mod tests {
         ] {
             assert!(conn.execute(bad, []).is_err(), "{bad}");
         }
+    }
+
+    /// A database from before the three modes: a workspace whose switch was on keeps decrypting
+    /// every host, one whose switch was off stays off, and no global mode is set, so the install
+    /// behaves as it did until the user chooses.
+    #[test]
+    fn v18_keeps_what_each_old_switch_did_and_leaves_the_global_mode_unchosen() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_up_to(&mut conn, 17).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspace_interception (workspace_id, decrypt_all) VALUES ('on', 1), ('off', 0);
+             INSERT INTO never_decrypt (workspace_id, pattern) VALUES ('on', 'bank.example');",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 17);
+        let mode = |name: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT mode FROM workspace_interception WHERE workspace_id = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(mode("on").as_deref(), Some("all"));
+        assert_eq!(mode("off").as_deref(), Some("known_only"));
+        let globals: i64 = conn
+            .query_row("SELECT count(*) FROM interception_settings", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(globals, 0, "no global mode until the user chooses");
+        let kept: i64 = conn
+            .query_row("SELECT count(*) FROM never_decrypt", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kept, 1);
+        assert!(
+            conn.execute(
+                "INSERT INTO workspace_interception (workspace_id, mode) VALUES ('x', 'most')",
+                []
+            )
+            .is_err(),
+            "the table refuses a mode it does not know"
+        );
     }
 }

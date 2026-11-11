@@ -51,11 +51,17 @@ function Boot($label, $homeDir, $tmp, [string[]]$spec, [int]$n) {
   }
   $env:TEMP = $oldTemp; $env:TMP = $oldTmp
 }
-function ClearIfeo { Set-ProcessMitigation -Name msb.exe -Remove -ErrorAction SilentlyContinue | Out-Null }
+function ClearIfeo { Remove-Item -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\msb.exe' -Recurse -Force -ErrorAction SilentlyContinue }
 Say "## msb run alpine (CLI + runtime under the control); first run pulls the image"
 Boot 'base' $homeBase $null @('--token','full') 11
 Boot 'restricted' $homeBase $null @('--token','restricted') 11
 Boot 'rsids' $homeBase $null @('--token','rsids') 11
+# An administrator's folders grant Administrators, which these tokens hold deny-only: grant the user SID.
+$homeUser = "$env:RUNNER_TEMP\t-home-user"
+New-Item -ItemType Directory -Force $homeUser | Out-Null
+icacls $homeUser /grant "$($env:USERNAME):(OI)(CI)F" | Out-Null
+Boot 'restricted (home granted to the user SID)' $homeUser $null @('--token','restricted') 11
+Boot 'rsids (home granted to the user SID)' $homeUser $null @('--token','rsids') 11
 Boot 'low (home+temp low-labelled)' $homeLow "$homeLow\tmp" @('--token','low') 11
 Boot 'low (home medium)' $homeBase $null @('--token','low') 1
 Boot 'untrusted' $homeLow "$homeLow\tmp" @('--token','untrusted') 1
@@ -67,18 +73,21 @@ $sets = [ordered]@{
   'storesigned' = @('MicrosoftSignedOnly','AllowStoreSignedBinaries'); 'win32k' = @('DisableWin32kSystemCalls');
   'extpoint' = @('DisableExtensionPoints'); 'imageload' = @('BlockRemoteImageLoads','BlockLowLabelImageLoads','PreferSystem32');
   'font' = @('DisableNonSystemFonts'); 'strictcfg' = @('CFG','StrictCFG'); 'cetstrict' = @('UserShadowStack','UserShadowStackStrictMode');
-  'strong' = @('DisallowChildProcessCreation','BlockDynamicCode','DisableExtensionPoints','DisableNonSystemFonts','BlockRemoteImageLoads','BlockLowLabelImageLoads','PreferSystem32','StrictHandle','ForceRelocateImages','BottomUp','HighEntropy','SEHOP','TerminateOnError','UserShadowStack','UserShadowStackStrictMode','CFG','StrictCFG')
+  'cfg' = @('CFG'); 'strict-handle' = @('StrictHandle'); 'aslr' = @('ForceRelocateImages','BottomUp','HighEntropy'); 'sehop-heap' = @('SEHOP','TerminateOnError');
+  'strong-no-child' = @('BlockDynamicCode','DisableExtensionPoints','DisableNonSystemFonts','BlockRemoteImageLoads','BlockLowLabelImageLoads','PreferSystem32','StrictHandle','ForceRelocateImages','BottomUp','HighEntropy','SEHOP','TerminateOnError','UserShadowStack','UserShadowStackStrictMode')
 }
 foreach ($k in $sets.Keys) {
   ClearIfeo
   Set-ProcessMitigation -Name msb.exe -Enable $sets[$k]
-  Boot "ifeo $k" $homeBase $null @('--token','full') $(if ($k -eq 'strong') { 11 } else { 1 })
+  Say ("ifeo set {0}: {1}" -f $k, ((Get-ProcessMitigation -Name msb.exe | Out-String -Width 300) -split "`n" | Where-Object { $_ -match ':\s+ON' } | ForEach-Object { $_.Trim() }) -join ', ')
+  Boot "ifeo $k" $homeBase $null @('--token','full') $(if ($k -eq 'strong-no-child') { 11 } else { 1 })
 }
 ClearIfeo
-Set-ProcessMitigation -Name msb.exe -Enable $sets['strong']
-Boot 'ifeo strong + restricted token' $homeBase $null @('--token','restricted') 11
-Boot 'ifeo strong + low token' $homeLow "$homeLow\tmp" @('--token','low') 11
+Set-ProcessMitigation -Name msb.exe -Enable $sets['strong-no-child']
+Boot 'ifeo strong-no-child + restricted token' $homeUser $null @('--token','restricted') 11
+Boot 'ifeo strong-no-child + low token' $homeLow "$homeLow\tmp" @('--token','low') 11
 ClearIfeo
+Boot 'base after ifeo' $homeBase $null @('--token','full') 11
 Say "## code integrity / mitigation events naming msb"
 Get-WinEvent -LogName 'Microsoft-Windows-Security-Mitigations/KernelMode','Microsoft-Windows-Security-Mitigations/UserMode','Microsoft-Windows-CodeIntegrity/Operational' -MaxEvents 200 -ErrorAction SilentlyContinue |
   Where-Object { $_.Message -match 'msb' } | Select-Object -First 15 | ForEach-Object { $m = $_.Message -replace "`r?`n", ' '; Say ("event {0} {1}: {2}" -f $_.Id, $_.ProviderName, $m.Substring(0, [Math]::Min(300, $m.Length))) }

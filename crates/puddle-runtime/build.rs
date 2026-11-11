@@ -28,6 +28,11 @@ fn main() {
             lock_path.display()
         ))
     });
+    // Research dispatch only: the trial build patches the SDK to a local path.
+    if let Ok(version) = std::env::var("PUDDLE_TRIAL_BUILT_FOR") {
+        println!("cargo::rustc-env=PUDDLE_MSB_BUILT_FOR={version}");
+        return;
+    }
     match built_for(&lock) {
         Ok(version) => println!("cargo::rustc-env=PUDDLE_MSB_BUILT_FOR={version}"),
         Err(message) => fail(&message),

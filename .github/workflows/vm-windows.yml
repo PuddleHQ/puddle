@@ -132,6 +132,7 @@ jobs:
         run: |
           cfg=$(ci/t1397/patch-sdk.sh "$RUNNER_TEMP")
           echo "TRIAL_PATCH_CFG=$cfg" >> "$GITHUB_ENV"
+          echo "PUDDLE_TRIAL_BUILT_FOR=$(ci/msb-tag.sh | sed 's/^v//')" >> "$GITHUB_ENV"
       - name: build the VM tests once (nextest archive)
         if: steps.changed.outputs.run == 'true'
         shell: bash

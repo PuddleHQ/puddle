@@ -1074,7 +1074,16 @@ mod fixture_tests {
         let stopped = stop(app.handle()).unwrap();
         assert_eq!(stopped.steps, [puddle_host::Step::ApiStopped]);
         let port = backend.url().port().unwrap();
-        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
+        // The port was the system's pick and another test can take it at once, so the check is
+        // that the API no longer answers its token, not that nothing accepts.
+        assert_ne!(
+            puddle_test_kit::http_status(
+                ([127, 0, 0, 1], port).into(),
+                "/api/pending",
+                backend.token()
+            ),
+            Some(200)
+        );
         // The hook can run again (a second Exit event, or no backend at all).
         assert_eq!(stop(app.handle()), None);
     }

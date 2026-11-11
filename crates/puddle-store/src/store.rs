@@ -42,7 +42,8 @@ mod sets;
 mod shell_init;
 
 pub use interception::{
-    DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, LearnedLimits, WorkspaceInterception,
+    DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings, LearnedLimits,
+    WorkspaceInterception,
 };
 pub use ports::PinnedPort;
 pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};

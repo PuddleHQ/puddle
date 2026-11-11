@@ -162,11 +162,17 @@ export class FakeWorkspaces {
       store_readable: boolean;
     }
   > = {};
-  /** How each workspace decrypts hosts, by id; the default (off, no names) when unset. */
+  /** How each workspace decrypts hosts, by id; the default (inherit, no names) when unset. */
   interception: Record<
     string,
-    { decrypt_all: boolean; never_decrypt: string[] }
+    {
+      mode: components["schemas"]["WorkspaceMode"];
+      never_decrypt: string[];
+    }
   > = {};
+  /** The global interception mode the workspaces that inherit follow. */
+  globalInterceptionMode: components["schemas"]["InterceptionMode"] =
+    "known_only";
   /** The names no workspace decrypts. */
   globalNeverDecrypt: string[] = [];
   /** The hosts each workspace's tools refused Puddle's certificate for, by workspace id. */
@@ -505,12 +511,14 @@ export class FakeWorkspaces {
 
   private interceptionView(w: Workspace) {
     const own = this.interception[w.id] ?? {
-      decrypt_all: false,
+      mode: "inherit" as const,
       never_decrypt: [],
     };
     return {
       workspace: w.id,
-      decrypt_all: own.decrypt_all,
+      mode: own.mode,
+      effective_mode:
+        own.mode === "inherit" ? this.globalInterceptionMode : own.mode,
       never_decrypt: own.never_decrypt,
       global_never_decrypt: this.globalNeverDecrypt,
     };
@@ -536,13 +544,16 @@ export class FakeWorkspaces {
     if (path === "/api/workspaces/{id}/interception") {
       const asked = init as unknown as {
         params: { path: { id: string } };
-        body: { decrypt_all?: boolean; never_decrypt?: string[] };
+        body: {
+          mode?: components["schemas"]["WorkspaceMode"];
+          never_decrypt?: string[];
+        };
       };
       const found = this.find(asked.params.path.id);
       if (!found) return this.reply(404, undefined, "no such workspace");
       const before = this.interceptionView(found);
       this.interception[found.id] = {
-        decrypt_all: asked.body.decrypt_all ?? before.decrypt_all,
+        mode: asked.body.mode ?? before.mode,
         never_decrypt: asked.body.never_decrypt
           ? [...asked.body.never_decrypt].sort()
           : before.never_decrypt,

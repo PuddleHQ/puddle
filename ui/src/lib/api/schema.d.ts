@@ -489,6 +489,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/interception": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The global interception setting: the mode workspaces follow, whether the user has chosen one,
+         *     learning from rejections, and the curated list.
+         */
+        get: operations["get_interception_settings"];
+        /** Changes the global setting. A running workspace that follows it applies the change at once. */
+        put: operations["put_interception_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/interception/learned-limits": {
         parameters: {
             query?: never;
@@ -1300,7 +1321,7 @@ export interface paths {
          */
         get: operations["get_interception"];
         /**
-         * Changes the switch and/or the workspace's never-decrypt names. A running workspace applies it
+         * Changes the mode and/or the workspace's never-decrypt names. A running workspace applies it
          *     at once: the next connection to a host is decrypted or passed through accordingly. A host with
          *     a credential, secret or login capture is always decrypted, whatever the list says.
          */
@@ -3412,27 +3433,65 @@ export interface components {
             /** @description Open requests, most recent first. */
             requests: components["schemas"]["PendingRequest"][];
         };
+        /**
+         * @description Which hosts on port 443 Puddle decrypts, beyond the ones with a credential, secret, login
+         *     capture profile or rule on method and path (those are always decrypted).
+         * @enum {string}
+         */
+        InterceptionMode: "all" | "all_except_curated" | "known_only";
         /** @description A change to a workspace's interception. A field that is absent stays as it is. */
         InterceptionRequest: {
-            /** @description Turns decrypting every host on or off. It applies to the running workspace at once. */
-            decrypt_all?: boolean | null;
+            mode?: components["schemas"]["WorkspaceMode"] | null;
             /**
              * @description Replaces the workspace's never-decrypt names. Each is a host name or `*.` followed by a
              *     domain with at least two labels; no IP addresses. At most 500.
              */
             never_decrypt?: string[] | null;
         };
-        /** @description How a workspace decrypts hosts beyond the ones it has a credential for. */
-        InterceptionView: {
+        /** @description A change to the global interception setting. A field that is absent stays as it is. */
+        InterceptionSettingsRequest: {
+            /** @description Turns learning from rejections on or off. */
+            learn_from_rejections?: boolean | null;
+            mode?: components["schemas"]["InterceptionMode"] | null;
+            /** @description Records that the user has seen the notice. */
+            notice_seen?: boolean | null;
+        };
+        /** @description The global interception setting. */
+        InterceptionSettingsView: {
+            /** @description Whether the user has chosen a mode. While `false`, the app offers the choice once. */
+            chosen: boolean;
             /**
-             * @description Whether Puddle decrypts every host on port 443, not only the hosts with a credential,
-             *     secret or login capture. Off unless turned on.
+             * @description The curated list passed through in `all_except_curated`: built in, "System managed",
+             *     sorted.
              */
-            decrypt_all: boolean;
+            curated: string[];
+            /**
+             * @description Whether a host whose tool refuses Puddle's certificate is passed through for a while and
+             *     put on the learned list. Meaningful in the modes that decrypt unlisted hosts. On unless
+             *     turned off.
+             */
+            learn_from_rejections: boolean;
+            /**
+             * @description The mode every workspace without its own follows. An install that has not chosen is on
+             *     `known_only`.
+             */
+            mode: components["schemas"]["InterceptionMode"];
+            /** @description Whether the user has seen the notice that offers the choice (existing installs). */
+            notice_seen: boolean;
+        };
+        /**
+         * @description How a workspace decrypts hosts beyond the ones it has a credential, secret, login capture or
+         *     rule on method and path for.
+         */
+        InterceptionView: {
+            /** @description The mode in force: the workspace's own, or the global one. */
+            effective_mode: components["schemas"]["InterceptionMode"];
             /** @description The names no workspace decrypts, sorted. Changed through the global route. */
             global_never_decrypt: string[];
+            /** @description The workspace's own choice; `inherit` follows the global setting. */
+            mode: components["schemas"]["WorkspaceMode"];
             /**
-             * @description The names this workspace never decrypts while the switch is on (`example.com`,
+             * @description The names this workspace never decrypts while it decrypts unlisted hosts (`example.com`,
              *     `*.example.com`), sorted.
              */
             never_decrypt: string[];
@@ -5067,6 +5126,11 @@ export interface components {
             /** @description The workspace's name. */
             name: string;
         };
+        /**
+         * @description A workspace's own choice of interception mode.
+         * @enum {string}
+         */
+        WorkspaceMode: "inherit" | "all" | "all_except_curated" | "known_only";
         /**
          * @description What a `workspace_op` record is about.
          * @enum {string}
@@ -7305,6 +7369,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Inbox"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_interception_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the global setting */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterceptionSettingsView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_interception_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InterceptionSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description saved; the setting now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterceptionSettingsView"];
                 };
             };
             /** @description missing or wrong bearer token */

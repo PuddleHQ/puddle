@@ -130,11 +130,17 @@ mod tests {
         let mut child = Command::new("true").stdin(Stdio::piped()).spawn().unwrap();
         let mut held = child.stdin.take().unwrap();
         child.wait().unwrap();
-        // The pipe's read end is gone, so this write is the `BrokenPipe` case itself.
-        assert_eq!(
-            held.write_all(b"never read").unwrap_err().kind(),
-            std::io::ErrorKind::BrokenPipe
-        );
+        // The pipe's read end is gone, so a write is the `BrokenPipe` case itself. A child another
+        // test is spawning at this moment can inherit the read end for the instant before its exec
+        // closes it, and a write then lands in the pipe; so write until the pipe reports closed.
+        let kind = (0..2000)
+            .find_map(|_| {
+                thread::sleep(std::time::Duration::from_millis(5));
+                // flake-ok: this test is the BrokenPipe case itself; the result is read as data and retried until the pipe closes, never unwrapped.
+                held.write_all(b"x").err().map(|e| e.kind())
+            })
+            .expect("the pipe never closed");
+        assert_eq!(kind, std::io::ErrorKind::BrokenPipe);
         child.stdin = Some(held);
         feed_stdin(&mut child, b"never read");
     }

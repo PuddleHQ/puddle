@@ -3,7 +3,13 @@
 // Back and Continue links agree.
 
 export type StepId =
-  "welcome" | "check" | "certificates" | "connect" | "look" | "workspace";
+  | "welcome"
+  | "check"
+  | "certificates"
+  | "connect"
+  | "interception"
+  | "look"
+  | "workspace";
 
 export interface Step {
   id: StepId;
@@ -23,6 +29,11 @@ export const STEPS: readonly Step[] = [
     label: "Certificates",
   },
   { id: "connect", href: `${WELCOME_ROOT}/connect`, label: "Connect" },
+  {
+    id: "interception",
+    href: `${WELCOME_ROOT}/interception`,
+    label: "Interception",
+  },
   { id: "look", href: `${WELCOME_ROOT}/look`, label: "Look" },
   {
     id: "workspace",

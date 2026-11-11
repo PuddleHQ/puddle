@@ -1189,15 +1189,23 @@ describe("the settings tab", () => {
     );
   });
 
-  it("turns decrypting every host on and off at once and saves the never-decrypt names", async () => {
+  it("sets the interception mode at once and saves the never-decrypt names", async () => {
     await open();
-    const box = (await screen.findByRole("switch", {
-      name: "Decrypt every host",
-    })) as HTMLInputElement;
-    expect(box.checked).toBe(false);
-    await fireEvent.click(box);
-    await screen.findByText("Puddle now decrypts every host.");
-    expect(api.interception["w-demo"]?.decrypt_all).toBe(true);
+    const select = (await screen.findByLabelText(
+      "Interception mode",
+    )) as HTMLSelectElement;
+    expect(select.value).toBe("inherit");
+    expect(
+      within(select).getByRole("option", {
+        name: "Use the global setting (Decrypt only hosts Puddle has a reason to read)",
+      }),
+    ).toBeInTheDocument();
+    await fireEvent.change(select, { target: { value: "all" } });
+    await screen.findByText("Interception mode saved.");
+    expect(api.interception["w-demo"]?.mode).toBe("all");
+    expect(
+      screen.getByText(/fails on first contact with a host until Puddle/),
+    ).toBeInTheDocument();
     const names = screen.getByRole("textbox", {
       name: "Never decrypt in this workspace",
     });
@@ -1210,17 +1218,18 @@ describe("the settings tab", () => {
       "*.corp.test",
       "bank.example",
     ]);
-    await fireEvent.click(box);
-    await screen.findByText("Puddle decrypts only hosts with a credential.");
-    expect(api.interception["w-demo"]?.decrypt_all).toBe(false);
+    await fireEvent.change(select, { target: { value: "inherit" } });
+    await vi.waitFor(() =>
+      expect(api.interception["w-demo"]?.mode).toBe("inherit"),
+    );
   });
 
-  it("names the global never-decrypt list read-only, and puts the switch back when the save is refused", async () => {
+  it("names the global never-decrypt list read-only, and puts the mode back when the save is refused", async () => {
     api.globalNeverDecrypt = ["bank.example"];
     await open();
-    const box = (await screen.findByRole("switch", {
-      name: "Decrypt every host",
-    })) as HTMLInputElement;
+    const select = (await screen.findByLabelText(
+      "Interception mode",
+    )) as HTMLSelectElement;
     expect(
       screen.getByText(/Never decrypted in any workspace/),
     ).toHaveTextContent("bank.example");
@@ -1228,9 +1237,9 @@ describe("the settings tab", () => {
       status: 500,
       message: "disk full",
     });
-    await fireEvent.click(box);
+    await fireEvent.change(select, { target: { value: "all" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("Disk full.");
-    expect(box.checked).toBe(false);
+    expect(select.value).toBe("inherit");
   });
 
   it("lists the hosts a tool refused Puddle's certificate for and decrypts them again", async () => {

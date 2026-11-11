@@ -45,6 +45,8 @@ vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
   };
 });
 
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { FakeSettings } from "#lib/testing/fake-settings.ts";
 import { pending, slices } from "#lib/stores/pending.svelte.ts";
@@ -65,6 +67,7 @@ function reset() {
   pending.openLimit = Number.POSITIVE_INFINITY;
   pending.decided = [];
   pending.toggles = {};
+  workspaces.list = [];
   pending.status = "loading";
   setsApi.sets = [];
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
@@ -304,6 +307,43 @@ describe("the inbox page", () => {
 });
 
 describe("deciding with the buttons", () => {
+  it("names a workspace by its display name, never its id, in Allow, Deny and Undo", async () => {
+    // The request's workspace is the id; the name is what a person chose.
+    workspaces.list = [{ ...fakeWorkspace("Shop"), id: "g07jxx5q" }];
+    inbox.add(
+      request(1, { host: "a.example.com", workspace: "g07jxx5q" }),
+      "example.com",
+    );
+    await ready();
+    expect(
+      screen.getByRole("button", { name: "Deny a.example.com for Shop" }),
+    ).toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Allow a.example.com for Shop" }),
+    );
+    const undo = await screen.findByRole("button", {
+      name: /^Undo: Allowed a\.example\.com for workspace Shop, permanently/,
+    });
+    expect(undo.getAttribute("aria-label")).not.toContain("g07jxx5q");
+  });
+
+  it("adds the id only when two workspaces share a name", async () => {
+    workspaces.list = [
+      { ...fakeWorkspace("Shop"), id: "g07jxx5q" },
+      { ...fakeWorkspace("Shop"), id: "h19kyy6r" },
+    ];
+    inbox.add(
+      request(1, { host: "a.example.com", workspace: "g07jxx5q" }),
+      "example.com",
+    );
+    await ready();
+    expect(
+      screen.getByRole("button", {
+        name: "Allow a.example.com for Shop (g07jxx5q)",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("allows one host for one workspace with one click, announces it, and closes the row", async () => {
     seed();
     await ready();

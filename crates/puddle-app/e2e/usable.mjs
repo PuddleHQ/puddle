@@ -307,11 +307,20 @@ async function step(what, action) {
 async function firstRunToCreateForm() {
   await uia.waitFor("the welcome heading", heading("Welcome to Puddle"), 120_000);
   await uia.click("Get started", inMain("link", "Get started"));
-  const pages = ["System check", "Certificates", "How do you want to connect?", "Look", "Your first workspace"];
+  const pages = ["System check", "Certificates", "How do you want to connect?", "Which hosts should Puddle decrypt?", "Look", "Your first workspace"];
   await uia.waitFor(`the "${pages[0]}" heading`, heading(pages[0]));
   for (const page of pages.slice(1)) {
-    await uia.click(`Continue (to ${page})`, inMain("link", "Continue"));
+    if (page === "Look") {
+      // The interception step saves its choice with a button, not a link: the person keeps the recommended mode.
+      await uia.click(`Continue (to ${page})`, inMain("button", "Continue"));
+    } else {
+      await uia.click(`Continue (to ${page})`, inMain("link", "Continue"));
+    }
     await uia.waitFor(`the "${page}" heading`, heading(page));
+    if (page === "Which hosts should Puddle decrypt?") {
+      const mode = await uia.waitFor("the recommended interception mode", { window: MAIN, role: "radio", nameRegex: "except a known list" });
+      check("the recommended interception mode is preselected", mode.checked === true, JSON.stringify(mode));
+    }
     if (page === "How do you want to connect?") {
       const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "code-server \\(bundled\\)" });
       check("code-server is preselected on the Connect step", code.checked === true, JSON.stringify(code));
@@ -400,8 +409,8 @@ try {
   // clones again: the checkout is there and the rule says who made it.
   const checkout = `/workspaces/${id}/app/package.json`;
   const rules = (await api("GET", "/api/rules")).json?.rules ?? [];
-  const grant = rules.find((r) => r.pattern === forge && r.effect === "allow" && r.workspace_id === id);
-  check("the create made an allow rule for the forge, marked as made by the create", grant?.created_by === "workspace_create", JSON.stringify(grant));
+  const grant = rules.find((r) => r.pattern === forge && r.effect === "allow" && r.scope?.type === "workspace" && r.scope.workspace === id);
+  check("the create made an allow rule for the forge, marked as made by the create", grant?.created_by === "workspace_create", JSON.stringify(grant ?? rules));
   const cloned = (await guest(id, `test -f ${checkout} && echo present`, { root: true, within: 60_000 })).text.includes("present");
   check("the private repository is cloned into the workspace with the injected credential", cloned, checkout);
   const settled = await idle(id).catch(() => undefined);

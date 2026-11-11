@@ -146,7 +146,7 @@ async fn a_push_to_a_repository_that_is_not_listed_is_refused_and_says_how_to_ad
     assert_eq!((status, code), (403, "push_denied"));
     assert_eq!(
         message,
-        "push to github.com/acme/other is not on this workspace's push list; add it, or turn off \"Only push to listed repos\" on the workspace's Git tab"
+        "push to github.com/acme/other is not on this workspace's push list yet, as with a repository the workspace just created or forked; click \"Allow push for other\" in the notice (it works at once, no restart), or turn off \"Only push to listed repos\" on the workspace's Git tab, then try again"
     );
     assert_eq!(
         w.events.take(),
@@ -232,7 +232,10 @@ async fn an_azure_devops_project_with_a_space_can_be_listed_and_is_refused_with_
         message.contains("dev.azure.com/org/my project/the repo"),
         "{message}"
     );
-    assert!(message.contains("add it"), "{message}");
+    assert!(
+        message.contains("Allow push for my project/the repo"),
+        "{message}"
+    );
     assert_eq!(
         w.events.take(),
         [Event::GitAccessDenied {
@@ -362,7 +365,7 @@ async fn a_fetch_from_anywhere_is_allowed_until_the_pull_list_is_turned_on() {
     assert_eq!((status, code), (403, "pull_denied"));
     assert_eq!(
         message,
-        "pull from github.com/someone/private is not on this workspace's pull list; add it, or turn off \"Only pull from listed repos\" on the workspace's Git tab"
+        "pull from github.com/someone/private is not on this workspace's pull list yet, as with a repository the workspace just created or forked; click \"Allow pull for private\" in the notice (it works at once, no restart), or turn off \"Only pull from listed repos\" on the workspace's Git tab, then try again"
     );
     assert!(matches!(
         w.events.take().as_slice(),

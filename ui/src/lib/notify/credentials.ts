@@ -102,7 +102,7 @@ export class CredentialNotices {
       key: deniedKey(event),
       tone: "warning",
       title: `${workspaces.labelOf(event.workspace)}: ${refused} ${name} was refused.`,
-      detail: `${failure ? `${failure} ` : ""}It is not on the workspace's ${event.access} list. Allow ${event.access} for it, or turn the list off on the workspace's Git tab.`,
+      detail: `${failure ? `${failure} ` : ""}It is not on the workspace's ${event.access} list yet, as with a repository the workspace just created or forked. Click the button to allow ${event.access} for it (it works at once, no restart), or turn the list off on the workspace's Git tab.`,
       action: {
         label: `Allow ${event.access} for ${event.repo}`,
         run: () => this.#allow(event),

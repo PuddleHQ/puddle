@@ -22,6 +22,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { connect } from "./cdp.mjs";
+import { onChildEnd } from "./child-end.mjs";
 
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
@@ -62,7 +63,7 @@ function start(env) {
     process.stderr.write(chunk);
   });
   state.done = new Promise((resolve) =>
-    app.on("exit", (code) => {
+    onChildEnd(app, (code) => {
       state.exited = true;
       state.code = code;
       resolve();

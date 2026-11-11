@@ -10,11 +10,11 @@ use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 19;
+pub const SCHEMA_VERSION: u32 = 20;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -531,6 +531,134 @@ CREATE TABLE learned_hosts (
     count        INTEGER NOT NULL CHECK (count >= 1),
     PRIMARY KEY (workspace_id, host)
 ) STRICT;
+";
+
+/// Users, their devices and who owns what (storage spec, users and ownership).
+///
+/// - `users`: one owner (the operator, user 1, made here and owning everything that exists) and
+///   any number of plain users. No credential lives in this table or in `devices`.
+/// - `account_passwords`, `account_invites`: the sign-in secrets (a password's hash, an invite's
+///   digest), read and written only through `AccountSecrets`, never through `Store`.
+/// - `workspace_owners`: the user of each workspace made by a user other than the owner. A
+///   workspace with no row is the owner's; rows stay when the workspace is deleted (ids are never
+///   reused), so its pending requests and audit records keep their user.
+/// - `user_id` on the rows that are not tied to one workspace (global and set rules, rule sets,
+///   their switches, rules on method and path, identities, environment variables, the Git
+///   defaults, audit records), every existing row the owner's; names and the one default identity
+///   become unique per user. `identities` is rebuilt for that (its label was `UNIQUE` inline); the
+///   workspaces' identity lists are kept aside meanwhile, because dropping the table would cascade
+///   into them. `git_defaults` is rebuilt keyed by user.
+const V20: &str = r"
+CREATE TABLE users (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    role       TEXT    NOT NULL CHECK (role IN ('owner', 'user')),
+    name       TEXT    NOT NULL COLLATE NOCASE UNIQUE CHECK (length(name) BETWEEN 1 AND 64),
+    created_at INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX users_one_owner ON users (role) WHERE role = 'owner';
+INSERT INTO users (id, role, name, created_at)
+    VALUES (1, 'owner', 'owner', CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+CREATE TRIGGER users_owner_kept
+BEFORE DELETE ON users
+WHEN OLD.role = 'owner'
+BEGIN
+    SELECT RAISE(ABORT, 'the owner is never deleted');
+END;
+CREATE TRIGGER users_role_fixed
+BEFORE UPDATE OF id, role ON users
+WHEN NEW.id IS NOT OLD.id OR NEW.role IS NOT OLD.role
+BEGIN
+    SELECT RAISE(ABORT, 'a user''s id and role never change');
+END;
+
+CREATE TABLE devices (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    name         TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
+    created_at   INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    revoked_at   INTEGER
+) STRICT;
+CREATE INDEX devices_user ON devices (user_id);
+
+CREATE TABLE account_passwords (
+    user_id    INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    hash       TEXT    NOT NULL CHECK (hash <> ''),
+    changed_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE account_invites (
+    user_id    INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    digest     BLOB    NOT NULL UNIQUE CHECK (length(digest) >= 16),
+    expires_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE workspace_owners (
+    workspace_id TEXT    NOT NULL PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users (id)
+) STRICT;
+CREATE INDEX workspace_owners_user ON workspace_owners (user_id);
+CREATE TRIGGER workspace_owner_fixed
+BEFORE UPDATE ON workspace_owners
+BEGIN
+    SELECT RAISE(ABORT, 'a workspace''s user never changes');
+END;
+
+ALTER TABLE rules ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE request_rules ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE audit ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE rule_sets ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+DROP INDEX rule_sets_name;
+CREATE UNIQUE INDEX rule_sets_name ON rule_sets (user_id, name COLLATE NOCASE);
+
+ALTER TABLE rule_set_switches ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+DROP INDEX rule_set_switches_key;
+CREATE UNIQUE INDEX rule_set_switches_key
+    ON rule_set_switches (user_id, rule_set, ifnull(workspace_id, ''));
+
+ALTER TABLE env_vars ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+DROP INDEX env_vars_key;
+CREATE UNIQUE INDEX env_vars_key ON env_vars (user_id, ifnull(workspace_id, ''), name);
+
+CREATE TEMP TABLE workspace_identities_kept AS SELECT * FROM workspace_identities;
+CREATE TABLE identities_v20 (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL DEFAULT 1 REFERENCES users (id),
+    label        TEXT    NOT NULL COLLATE NOCASE,
+    author_name  TEXT    NOT NULL,
+    author_email TEXT    NOT NULL,
+    credentials  TEXT    NOT NULL,
+    signing      TEXT    NOT NULL DEFAULT 'none' CHECK (signing IN ('none')),
+    position     INTEGER NOT NULL,
+    is_default   INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    created_at   INTEGER NOT NULL,
+    changed_at   INTEGER NOT NULL,
+    UNIQUE (user_id, label)
+) STRICT;
+INSERT INTO identities_v20 (id, user_id, label, author_name, author_email, credentials, signing,
+                            position, is_default, created_at, changed_at)
+    SELECT id, 1, label, author_name, author_email, credentials, signing, position, is_default,
+           created_at, changed_at
+    FROM identities;
+DELETE FROM sqlite_sequence WHERE name = 'identities_v20';
+INSERT INTO sqlite_sequence (name, seq)
+    SELECT 'identities_v20', seq FROM sqlite_sequence WHERE name = 'identities';
+DROP TABLE identities;
+ALTER TABLE identities_v20 RENAME TO identities;
+CREATE UNIQUE INDEX identities_one_default ON identities (user_id) WHERE is_default = 1;
+DELETE FROM workspace_identities;
+INSERT INTO workspace_identities SELECT * FROM workspace_identities_kept;
+DROP TABLE workspace_identities_kept;
+
+CREATE TABLE git_defaults_v20 (
+    user_id          INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    only_push_listed INTEGER NOT NULL CHECK (only_push_listed IN (0, 1)),
+    only_pull_listed INTEGER NOT NULL CHECK (only_pull_listed IN (0, 1))
+) STRICT;
+INSERT INTO git_defaults_v20 SELECT 1, only_push_listed, only_pull_listed FROM git_defaults;
+DROP TABLE git_defaults;
+ALTER TABLE git_defaults_v20 RENAME TO git_defaults;
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.

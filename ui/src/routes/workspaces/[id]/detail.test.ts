@@ -322,8 +322,16 @@ describe("the detail layout", () => {
       workspace("demo", {
         status: "stopped",
         repositories: [
-          { url: "https://github.com/acme/web.git", directory: "web" },
-          { url: "https://github.com/acme/api.git", directory: "api" },
+          {
+            entry: "e-web",
+            url: "https://github.com/acme/web.git",
+            directory: "web",
+          },
+          {
+            entry: "e-api",
+            url: "https://github.com/acme/api.git",
+            directory: "api",
+          },
         ],
       }),
     ];
@@ -400,6 +408,7 @@ describe("the overview", () => {
     ];
     inbox.add(request(1, { workspace: "w-demo" as never }), "example.com");
     const entry = {
+      entry: "e-demo",
       url: "https://github.com/acme/demo.git",
       directory: "demo",
     };

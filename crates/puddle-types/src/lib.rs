@@ -65,7 +65,7 @@ pub use merge::{
     MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,
 };
 pub use name::{
-    CheckoutDir, ImageRef, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
+    CheckoutDir, EntryId, ImageRef, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
     WORKSPACE_VOLUME_PREFIX, WorkspaceId,
 };
 

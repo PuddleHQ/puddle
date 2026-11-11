@@ -28,9 +28,9 @@ use puddle_api::{
     DoctorService, EventHub, FakeCredentials, FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned,
     FakeNetworkHealth, FakePorts, FakeProxySignIns, FakeTerminals, FakeWorkspaces, Found,
     FoundList, Launcher, LearnedService, Listing, MemorySettings, NetworkHealthService, Operation,
-    PortsService, ProxySignInService, RemoteNote, RepoFindings, RepoService, RepositoryDraft,
-    RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord,
-    check_repositories,
+    PortsService, ProxySignInService, RemoteNote, RepoFindings, RepoService, Repository,
+    RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved,
+    WorkspaceRecord, check_repositories, entry_id_from_text,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -841,7 +841,10 @@ impl State {
         let repositories = check_repositories(&drafts, |_| false)
             .map_err(|err| at(&err))?
             .into_iter()
-            .map(|r| r.repository)
+            .map(|r| Repository {
+                entry: entry_id_from_text(&format!("{}:{}", seed.name, r.repository.directory)),
+                ..r.repository
+            })
             .collect();
         let mut record = WorkspaceRecord::new(id.clone(), name, repositories);
         record.start_folder = seed

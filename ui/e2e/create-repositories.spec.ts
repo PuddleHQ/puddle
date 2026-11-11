@@ -23,7 +23,15 @@ const auth = (backend: Backend) => ({
 interface Made {
   name: string;
   start_folder: string | null;
-  repositories: { url: string; directory: string }[];
+  repositories: { entry: string; url: string; directory: string }[];
+}
+
+/** The list without its generated entry ids, after checking each has one and no two share it. */
+function listed(made: Made): { url: string; directory: string }[] {
+  const ids = made.repositories.map((r) => r.entry);
+  expect(new Set(ids).size).toBe(ids.length);
+  for (const id of ids) expect(id).toMatch(/^[0-9a-hjkmnp-tv-z]{8}$/);
+  return made.repositories.map(({ url, directory }) => ({ url, directory }));
 }
 
 async function workspace(
@@ -144,7 +152,7 @@ test.describe("the list of repositories", () => {
     await backend.control.step({ do: "release_workspaces" });
     await expect(created).toContainText("Not started");
     const made = await workspace(request, backend, "api");
-    expect(made.repositories).toEqual([
+    expect(listed(made)).toEqual([
       { url: API, directory: "api" },
       { url: CLI, directory: "cli-tool" },
       { url: DOCS, directory: "docs" },
@@ -168,9 +176,7 @@ test.describe("the list of repositories", () => {
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog).toHaveCount(0);
     await expect(card(page, "scratch")).toContainText("No repository");
-    expect((await workspace(request, backend, "scratch")).repositories).toEqual(
-      [],
-    );
+    expect(listed(await workspace(request, backend, "scratch"))).toEqual([]);
   });
 
   test("a directory two rows share is flagged before the submit, with a free name, and clears when one changes", async ({
@@ -489,7 +495,7 @@ test.describe("a checkout on this computer", () => {
       await expect(dialogOf(page)).toHaveCount(0);
       await expect(card(page, "shop")).toBeVisible();
       const made = await workspace(request, backend, "shop");
-      expect(made.repositories).toEqual([
+      expect(listed(made)).toEqual([
         { url: "https://github.com/acme/shop.git", directory: "shop" },
       ]);
     } finally {

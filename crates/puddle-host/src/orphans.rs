@@ -58,11 +58,16 @@ fn entries_for(
 ) -> Result<Vec<Repository>, WorkspaceError> {
     let mut found: Vec<Repository> = Vec::new();
     for checkout in &list.checkouts {
-        let Some(entry) = readable(checkout) else {
+        let Some((url, directory)) = readable(checkout) else {
             continue;
         };
-        if !found.iter().any(|f| f.url == entry.url) {
-            found.push(entry);
+        if !found.iter().any(|f| f.url == url) {
+            let entry = fresh_entry(&found)?;
+            found.push(Repository {
+                entry,
+                url,
+                directory,
+            });
         }
     }
     if !found.is_empty() {
@@ -82,18 +87,29 @@ fn entries_for(
         (Some(only), None, 0) => only,
         _ => CheckoutDir::from_url(url.as_str()),
     };
-    Ok(vec![Repository { url, directory }])
+    let entry = fresh_entry(&[])?;
+    Ok(vec![Repository {
+        entry,
+        url,
+        directory,
+    }])
 }
 
-/// The entry for a checkout whose remote address Puddle could read and use.
-fn readable(checkout: &FoundCheckout) -> Option<Repository> {
+/// A new entry id that none of `found` has.
+fn fresh_entry(found: &[Repository]) -> Result<EntryId, WorkspaceError> {
+    puddle_api::new_entry_id(|e| found.iter().any(|f| f.entry == *e))
+        .map_err(WorkspaceError::Unavailable)
+}
+
+/// The address and directory of a checkout whose remote address Puddle could read and use.
+fn readable(checkout: &FoundCheckout) -> Option<(RepoUrl, CheckoutDir)> {
     if checkout.unreadable.is_some() {
         return None;
     }
-    Some(Repository {
-        url: RepoUrl::parse(checkout.remote_url.as_deref()?).ok()?,
-        directory: CheckoutDir::new(&checkout.dir).ok()?,
-    })
+    Some((
+        RepoUrl::parse(checkout.remote_url.as_deref()?).ok()?,
+        CheckoutDir::new(&checkout.dir).ok()?,
+    ))
 }
 
 /// The name a restored disk's entry gets: `base` (its first checkout's folder, else its id), or

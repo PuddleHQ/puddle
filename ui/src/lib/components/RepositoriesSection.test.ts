@@ -75,13 +75,22 @@ import { identities } from "#lib/stores/identities.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { credential, identity } from "#lib/testing/fake-identities.ts";
-import { checkout, listing, workspace } from "#lib/testing/fake-workspaces.ts";
+import {
+  checkout,
+  entryOf,
+  listing,
+  workspace,
+} from "#lib/testing/fake-workspaces.ts";
 import type { Workspace } from "#lib/workspaces/model.ts";
 import RepositoriesSection from "./RepositoriesSection.svelte";
 
 const { identities: idApi, workspaces: api } = h;
 
-const own = { url: "https://github.com/acme/api.git", directory: "api" };
+const own = {
+  entry: entryOf("api"),
+  url: "https://github.com/acme/api.git",
+  directory: "api",
+};
 
 beforeEach(() => {
   api.list = [];
@@ -320,7 +329,7 @@ describe("removing and cloning again", () => {
     );
     await waitFor(() =>
       expect(api.calls).toContain(
-        "DELETE /api/workspaces/{id}/repositories/{directory}",
+        "DELETE /api/workspaces/{id}/repositories/{entry}",
       ),
     );
     await waitFor(() =>
@@ -338,7 +347,7 @@ describe("removing and cloning again", () => {
     );
     await waitFor(() =>
       expect(api.calls).toContain(
-        "POST /api/workspaces/{id}/repositories/{directory}/clone",
+        "POST /api/workspaces/{id}/repositories/{entry}/clone",
       ),
     );
     await waitFor(() =>
@@ -348,7 +357,7 @@ describe("removing and cloning again", () => {
 
   it("shows the refusal of a removal as an alert", async () => {
     await mount();
-    api.refuse.set("DELETE /api/workspaces/{id}/repositories/{directory}", {
+    api.refuse.set("DELETE /api/workspaces/{id}/repositories/{entry}", {
       status: 409,
       message: "the workspace is busy",
     });
@@ -375,7 +384,7 @@ describe("refusals and changes", () => {
 
   it("shows why a clone again was refused", async () => {
     await mount({}, listing([], { missing: ["api"] }));
-    api.refuse.set("POST /api/workspaces/{id}/repositories/{directory}/clone", {
+    api.refuse.set("POST /api/workspaces/{id}/repositories/{entry}/clone", {
       status: 409,
       message: "the workspace is busy",
     });

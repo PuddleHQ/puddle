@@ -832,10 +832,10 @@ mod tests {
         assert_eq!(calls[2], "insert Terminal: Create New Terminal (Local)");
         // The row filter is an exact match with the label's regex characters escaped: a prefix of
         // another label, or a label with parentheses, picks no other row.
-        assert_eq!(
-            calls[3],
-            r".quick-input-list .monaco-list-row .label-name filter /^\s*Terminal: Create New Terminal \(Local\)\s*$/ first click"
-        );
+        let row = r".quick-input-list .monaco-list-row .label-name filter /^\s*Terminal: Create New Terminal \(Local\)\s*$/ first";
+        // The row is shown first, then clicked: a click that cannot land says what the window shows.
+        assert_eq!(calls[3], format!("{row} waitFor visible"));
+        assert_eq!(calls[4], format!("{row} click"));
         window.close().await.expect("closed");
     }
 

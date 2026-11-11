@@ -271,17 +271,27 @@ async fn vm_host_grows_a_root_disk_live_and_offline_and_a_reset_keeps_the_size()
     let before = guest_root_mib(&runtime, &sandbox).await;
     assert!((15_000..=16_384).contains(&before), "df {before} MiB");
 
-    // Data on the root disk, and a marker on the memory-backed /tmp that only a restart removes.
+    // Data on the root disk, and the kernel's boot id, which only a restart changes (/tmp is on
+    // the root disk here, so a file there survives a restart and proves nothing).
     let sum = guest_within(
         &runtime,
         &sandbox,
-        "dd if=/dev/urandom of=/seed bs=1M count=64 2>/dev/null && sync && touch /tmp/boot-marker \
-         && sha256sum /seed | cut -d' ' -f1",
+        "dd if=/dev/urandom of=/seed bs=1M count=64 2>/dev/null && sync && sha256sum /seed | cut -d' ' -f1",
         Duration::from_secs(120),
     )
     .await;
     let sum = sum.trim().to_owned();
     assert_eq!(sum.len(), 64, "{sum:?}");
+    let boot_id = || {
+        guest_within(
+            &runtime,
+            &sandbox,
+            "cat /proc/sys/kernel/random/boot_id",
+            Duration::from_secs(60),
+        )
+    };
+    let boot_before = boot_id().await.trim().to_owned();
+    assert!(!boot_before.is_empty(), "no boot id");
     let seed_sum = || {
         guest_within(
             &runtime,
@@ -310,17 +320,15 @@ async fn vm_host_grows_a_root_disk_live_and_offline_and_a_reset_keeps_the_size()
         "df {grown} MiB after growing to 20480"
     );
     assert_eq!(seed_sum().await.trim(), sum, "the file changed");
-    let marker = guest_within(
-        &runtime,
-        &sandbox,
-        "test -e /tmp/boot-marker && echo kept || echo gone",
-        Duration::from_secs(60),
-    )
-    .await;
+    let boot_after = boot_id().await.trim().to_owned();
+    eprintln!("boot id before {boot_before} after {boot_after}");
     // Live grow on Windows waits for the libkrun fork fix (the raw disk handle keeps its old
     // length, so the guest's online ext4 expansion fails): there the host restarts the guest.
-    let expected = if cfg!(windows) { "gone" } else { "kept" };
-    assert_eq!(marker.trim(), expected, "boot marker after the grow");
+    assert_eq!(
+        boot_before == boot_after,
+        !cfg!(windows),
+        "the guest restarted exactly when the grow is not live"
+    );
     let workspace = api.get(&format!("/api/workspaces/{name}")).await.json();
     assert_eq!(workspace["root_disk_size_mib"], 20_480, "{workspace}");
     assert_eq!(workspace["status"], "running", "{workspace}");

@@ -66,9 +66,10 @@ async fn a_shut_down_pull_proxy_has_closed_its_listener_and_its_tunnels_on_retur
 
     route.shutdown().await;
 
+    let rebound = std::net::TcpListener::bind(addr);
     assert!(
-        std::net::TcpStream::connect(addr).is_err(),
-        "the listener must be closed when shutdown returns"
+        rebound.is_ok(),
+        "the address must be free again when shutdown returns: {rebound:?}"
     );
     let ended = tokio::time::timeout(Duration::from_secs(5), tunnel.read(&mut back))
         .await

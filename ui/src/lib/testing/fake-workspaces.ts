@@ -176,7 +176,7 @@ export class FakeWorkspaces {
   /** The names no workspace decrypts. */
   globalNeverDecrypt: string[] = [];
   /** The hosts each workspace's tools refused Puddle's certificate for, by workspace id. */
-  learned: Record<string, { host: string; expires_in_secs: number }[]> = {};
+  learned: Record<string, components["schemas"]["LearnedHost"][]> = {};
   /** The background problems the host lists. */
   problems: {
     key: string;
@@ -389,6 +389,26 @@ export class FakeWorkspaces {
     const id = init.params?.path?.["id"];
     const found = this.find(id);
     if (!found) return this.reply(404, undefined, "no such workspace");
+    if (path === "/api/workspaces/{id}/interception/learned/{host}/permanent") {
+      const host = String(init.params?.path?.["host"]);
+      const had = this.learned[found.id] ?? [];
+      if (!had.some((l) => l.host === host))
+        return this.reply(404, undefined, "not on the learned list");
+      if (init.body?.["scope"] === "global") {
+        this.globalNeverDecrypt = [...this.globalNeverDecrypt, host].sort();
+      } else {
+        const own = this.interception[found.id] ?? {
+          mode: "inherit" as const,
+          never_decrypt: [],
+        };
+        this.interception[found.id] = {
+          ...own,
+          never_decrypt: [...own.never_decrypt, host].sort(),
+        };
+      }
+      this.learned[found.id] = had.filter((l) => l.host !== host);
+      return { data: undefined, response: { status: 204, ok: true } };
+    }
     if (path === "/api/workspaces/{id}/repositories") {
       const body = init.body ?? {};
       const url = String(body["url"]);
@@ -475,13 +495,22 @@ export class FakeWorkspaces {
     if (path === "/api/workspaces/{id}/interception/learned/{host}") {
       const gone = (init.params.path as { host?: string }).host;
       const had = this.learned[found.id] ?? [];
-      this.learned[found.id] = had.filter((l) => l.host !== gone);
-      return had.some((l) => l.host === gone)
+      const live = had.some((l) => l.host === gone && l.passed_through);
+      this.learned[found.id] = had.map((l) =>
+        l.host === gone
+          ? { ...l, passed_through: false, expires_in_secs: null }
+          : l,
+      );
+      return live
         ? { data: undefined, response: { status: 204, ok: true } }
-        : this.reply(404, undefined, "not on the list");
+        : this.reply(404, undefined, "not passed through");
     }
     if (path === "/api/workspaces/{id}/interception/learned") {
-      this.learned[found.id] = [];
+      this.learned[found.id] = (this.learned[found.id] ?? []).map((l) => ({
+        ...l,
+        passed_through: false,
+        expires_in_secs: null,
+      }));
       return { data: undefined, response: { status: 204, ok: true } };
     }
     if (path === "/api/workspaces/{id}/logins/{service}") {

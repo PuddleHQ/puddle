@@ -112,22 +112,73 @@ pub struct GlobalNeverDecrypt {
     pub never_decrypt: Vec<String>,
 }
 
-/// A host Puddle stopped decrypting in a workspace because a tool there refused Puddle's
-/// certificate for it.
+/// A host a tool in a workspace refused Puddle's certificate for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LearnedHost {
     /// The host name, lower case.
     pub host: String,
-    /// Seconds until Puddle decrypts the host again by itself.
-    pub expires_in_secs: u64,
+    /// Whether Puddle passes the host through now. `false` once the time is up or the user
+    /// decrypted it again (the host stays listed with its history), and for a workspace that is
+    /// not running: nothing is passed through then.
+    pub passed_through: bool,
+    /// Seconds until Puddle decrypts the host again by itself; `null` unless `passed_through`.
+    #[schema(required = true)]
+    pub expires_in_secs: Option<u64>,
+    /// When a tool first refused the certificate for this host, milliseconds since the epoch.
+    pub first_rejected_at: u64,
+    /// When a tool last refused it, milliseconds since the epoch.
+    pub last_rejected_at: u64,
+    /// How many times Puddle stopped decrypting the host after a refusal. From the third time on
+    /// the app suggests making the host permanent.
+    pub count: u32,
 }
 
-/// The hosts a running workspace passes through because its tools refused Puddle's certificate.
+impl LearnedHost {
+    /// A host with the history of its refusals; `expires_in_secs` is `Some` while the host is
+    /// passed through.
+    #[must_use]
+    pub fn new(
+        host: String,
+        expires_in_secs: Option<u64>,
+        first_rejected_at: u64,
+        last_rejected_at: u64,
+        count: u32,
+    ) -> Self {
+        Self {
+            host,
+            passed_through: expires_in_secs.is_some(),
+            expires_in_secs,
+            first_rejected_at,
+            last_rejected_at,
+            count,
+        }
+    }
+}
+
+/// The hosts a workspace's tools refused Puddle's certificate for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LearnedHosts {
-    /// Soonest to expire first. Empty for a workspace that is not running: the list is kept in
-    /// memory and a start begins with none.
+    /// The hosts passed through now first, soonest to expire first; then the others, the most
+    /// recently refused first. The history is kept in the database; the pass-through is held in
+    /// memory by the running workspace, so a start begins with none passed through.
     pub hosts: Vec<LearnedHost>,
+}
+
+/// Where a learned host is never decrypted from now on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PermanentScope {
+    /// In this workspace only: the host joins the workspace's never-decrypt names.
+    Workspace,
+    /// In every workspace: the host joins the global never-decrypt names.
+    Global,
+}
+
+/// Makes a learned host permanent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct MakePermanentRequest {
+    /// Which never-decrypt list gets the host.
+    pub scope: PermanentScope,
 }
 
 /// How long and how many hosts Puddle passes through after a tool refused its certificate. The

@@ -251,6 +251,10 @@ pub enum Event {
         workspace: WorkspaceId,
         /// The host, lower case.
         host: String,
+        /// How many times Puddle has stopped decrypting this host in this workspace because a
+        /// tool refused its certificate, this one included. The app raises a notice from the
+        /// third time.
+        count: u32,
     },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
     /// or the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in
@@ -1261,8 +1265,9 @@ mod tests {
         let event = Event::PassThroughLearned {
             workspace: WorkspaceId::new("box").unwrap(),
             host: "pinned.example".into(),
+            count: 3,
         };
-        let json = r#"{"type":"pass_through_learned","workspace":"box","host":"pinned.example"}"#;
+        let json = r#"{"type":"pass_through_learned","workspace":"box","host":"pinned.example","count":3}"#;
         assert_eq!(serde_json::to_string(&event).unwrap(), json);
         assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
         assert_eq!(event.workspace(), Some(&WorkspaceId::new("box").unwrap()));

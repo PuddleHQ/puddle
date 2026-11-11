@@ -7,6 +7,7 @@ import {
   within,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { components } from "#lib/api/schema.d.ts";
 
 const url = vi.hoisted(() => ({
   pathname: "/workspaces/w-demo",
@@ -1242,33 +1243,108 @@ describe("the settings tab", () => {
     expect(select.value).toBe("inherit");
   });
 
-  it("lists the hosts a tool refused Puddle's certificate for and decrypts them again", async () => {
+  const seen = (
+    host: string,
+    expires_in_secs: number | null,
+    count = 1,
+  ): components["schemas"]["LearnedHost"] => ({
+    host,
+    passed_through: expires_in_secs !== null,
+    expires_in_secs,
+    first_rejected_at: Date.now() - 3 * 3_600_000,
+    last_rejected_at: Date.now() - 5 * 60_000,
+    count,
+  });
+
+  it("lists the hosts a tool refused Puddle's certificate for with their history and tries decrypting them again", async () => {
     api.learned["w-demo"] = [
-      { host: "pinned.example", expires_in_secs: 600 },
-      { host: "other.example", expires_in_secs: 7200 },
+      seen("pinned.example", 600, 3),
+      seen("other.example", 7200),
+      seen("old.example", null, 2),
     ];
     await open();
     const group = await screen.findByRole("group", {
-      name: "Left alone after a tool refused Puddle's certificate",
+      name: "Hosts a tool refused Puddle's certificate for",
     });
     await screen.findByText("pinned.example");
+    expect(group).toHaveTextContent("refused 3 times, first 3 hours ago");
+    expect(group).toHaveTextContent("last 5 minutes ago");
     expect(group).toHaveTextContent("decrypted again by itself in 10 minutes");
     expect(group).toHaveTextContent("2 hours");
+    expect(group).toHaveTextContent("refused once");
+    expect(
+      screen.queryByRole("button", {
+        name: "Try decrypting old.example again",
+      }),
+      "a host that is not passed through has nothing to try again",
+    ).toBeNull();
     await fireEvent.click(
-      screen.getByRole("button", { name: "Decrypt pinned.example again" }),
+      screen.getByRole("button", {
+        name: "Try decrypting pinned.example again",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("button", {
+          name: "Try decrypting pinned.example again",
+        }),
+      ).toBeNull(),
+    );
+    expect(group).toHaveTextContent("pinned.example");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Try decrypting all again" }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Try decrypting all again" }),
+      ).toBeNull(),
+    );
+    expect(group).toHaveTextContent("other.example");
+  });
+
+  it("makes a refused host permanent for the workspace or for every workspace", async () => {
+    api.learned["w-demo"] = [
+      seen("pinned.example", 600, 3),
+      seen("other.example", null, 2),
+    ];
+    await open();
+    const group = await screen.findByRole("group", {
+      name: "Hosts a tool refused Puddle's certificate for",
+    });
+    await screen.findByText("pinned.example");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Never decrypt pinned.example in this workspace",
+      }),
     );
     await vi.waitFor(() =>
       expect(group).not.toHaveTextContent("pinned.example"),
     );
-    expect(group).toHaveTextContent("other.example");
+    expect(api.interception["w-demo"]?.never_decrypt).toEqual([
+      "pinned.example",
+    ]);
+    await vi.waitFor(() =>
+      expect(
+        screen.getByLabelText("Never decrypt in this workspace"),
+        "the names above the list show the new one",
+      ).toHaveValue("pinned.example"),
+    );
     await fireEvent.click(
-      screen.getByRole("button", { name: "Decrypt all again" }),
+      screen.getByRole("button", {
+        name: "Never decrypt other.example in any workspace",
+      }),
     );
     await vi.waitFor(() => expect(group).toHaveTextContent("None."));
+    expect(api.globalNeverDecrypt).toContain("other.example");
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText(/Never decrypted in any workspace/),
+      ).toHaveTextContent("other.example"),
+    );
   });
 
-  it("says why a host could not be decrypted again and keeps the list", async () => {
-    api.learned["w-demo"] = [{ host: "pinned.example", expires_in_secs: 600 }];
+  it("says why a host could not be tried again and keeps the list", async () => {
+    api.learned["w-demo"] = [seen("pinned.example", 600)];
     await open();
     await screen.findByText("pinned.example");
     api.refuse.set("DELETE /api/workspaces/{id}/interception/learned/{host}", {
@@ -1276,7 +1352,9 @@ describe("the settings tab", () => {
       message: "the list is locked",
     });
     await fireEvent.click(
-      screen.getByRole("button", { name: "Decrypt pinned.example again" }),
+      screen.getByRole("button", {
+        name: "Try decrypting pinned.example again",
+      }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The list is locked.",

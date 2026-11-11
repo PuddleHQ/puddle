@@ -837,6 +837,10 @@ pub enum Step {
         /// Seconds the host stays passed through; 12 hours when left out.
         #[serde(default)]
         expires_in_secs: Option<u64>,
+        /// How many times the host has been refused, this one included; once when left out. From
+        /// the third time the app raises a notice.
+        #[serde(default)]
+        count: Option<u32>,
     },
     /// Makes the throwaway-shell check of a shell init refuse with this text (what the script
     /// printed), or pass again when it is left out. Only a running workspace is checked.

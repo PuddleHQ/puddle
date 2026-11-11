@@ -461,14 +461,26 @@ impl Injection {
         Ok(Some(git))
     }
 
-    /// An empty learned list for `workspace` that tells the user about each host it learns.
+    /// An empty learned list for `workspace` that writes each host it learns to the history in
+    /// the store and tells the user, with how many times that host has now been refused.
     fn learned_list(&self, workspace: &WorkspaceId) -> PassThrough {
         let events = Arc::clone(&self.inputs.events);
+        let store = Arc::clone(&self.inputs.store);
         let workspace = workspace.clone();
         PassThrough::new().observed(move |host| {
+            let name = host.to_string();
+            let count = match store.record_rejection(&workspace, &name) {
+                Ok(row) => row.count,
+                Err(e) => {
+                    // The host is passed through all the same; only its history is lost.
+                    tracing::warn!(%workspace, host = %name, error = %e, "cannot record the refused host");
+                    1
+                }
+            };
             events.emit(Event::PassThroughLearned {
                 workspace: workspace.clone(),
-                host: host.to_string(),
+                host: name,
+                count,
             });
         })
     }
@@ -1133,18 +1145,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_host_a_tool_refused_is_announced_once_and_listed_forgotten_and_cleared_through_the_service()
-     {
+    async fn a_host_a_tool_refused_is_announced_with_its_count_and_listed_with_its_history() {
         use puddle_api::LearnedService;
 
         let store = store();
         let (injection, terminations, _, events) = injection_with_events(&store);
-        let service = crate::learned::HostLearned::new(Arc::clone(&terminations));
+        let service =
+            crate::learned::HostLearned::new(Arc::clone(&terminations), Arc::clone(&store));
         let ws = workspace("alpha");
         let host = |h: &str| Host::parse_normalised(h).unwrap();
-        assert_eq!(service.list(&ws).len(), 0, "not running: nothing learned");
+        assert_eq!(service.list(&ws).len(), 0, "nothing learned yet");
         assert!(!service.forget(&ws, "pinned.example"));
         assert_eq!(service.clear(&ws), 0);
+        assert!(!service.discard(&ws, "pinned.example"));
 
         injection.begin(&ws, false).await.unwrap();
         let learned = Arc::clone(
@@ -1157,15 +1170,16 @@ mod tests {
         learned.learn(&host("pinned.example"));
         learned.learn(&host("pinned.example"));
         learned.learn(&host("other.example"));
-        let learned_event = |h: &str| Event::PassThroughLearned {
+        let learned_event = |h: &str, count: u32| Event::PassThroughLearned {
             workspace: ws.clone(),
             host: h.to_owned(),
+            count,
         };
         assert_eq!(
             told(&events),
             [
-                learned_event("pinned.example"),
-                learned_event("other.example")
+                learned_event("pinned.example", 1),
+                learned_event("other.example", 1)
             ],
             "each new host once, renewing says nothing"
         );
@@ -1173,17 +1187,94 @@ mod tests {
         let listed = service.list(&ws);
         assert_eq!(listed.len(), 2);
         assert!(
-            listed
-                .iter()
-                .all(|h| (43_199..=43_200).contains(&h.expires_in_secs)),
+            listed.iter().all(|h| h.passed_through
+                && h.count == 1
+                && h.first_rejected_at == h.last_rejected_at
+                && h.expires_in_secs
+                    .is_some_and(|s| (43_199..=43_200).contains(&s))),
             "{listed:?}: the time is the built-in twelve hours, rounded up"
         );
         assert!(!service.forget(&ws, "never.example"));
         assert!(!service.forget(&ws, "not a host"));
         assert!(service.forget(&ws, "pinned.example"));
         assert!(!learned.contains(&host("pinned.example")));
-        assert_eq!(service.clear(&ws), 1);
+        assert!(
+            !service.forget(&ws, "pinned.example"),
+            "no longer passed through"
+        );
+
+        let after = service.list(&ws);
+        assert_eq!(
+            after
+                .iter()
+                .map(|h| (h.host.as_str(), h.passed_through))
+                .collect::<Vec<_>>(),
+            [("other.example", true), ("pinned.example", false)],
+            "the host decrypted again stays listed with its history, after the passed through one"
+        );
+
+        // It refuses again: the count rises and the user is told again.
+        learned.learn(&host("pinned.example"));
+        assert_eq!(
+            told(&events).last(),
+            Some(&learned_event("pinned.example", 2)),
+            "the count rises with each refusal after the host was decrypted again"
+        );
+        assert_eq!(
+            service
+                .list(&ws)
+                .iter()
+                .find(|h| h.host == "pinned.example")
+                .map(|h| h.count),
+            Some(2)
+        );
+
+        assert_eq!(service.clear(&ws), 2);
+        assert_eq!(service.list(&ws).len(), 2, "clearing keeps the history");
+        assert!(service.discard(&ws, "pinned.example"));
+        assert!(!service.discard(&ws, "pinned.example"));
+        assert_eq!(service.list(&ws).len(), 1);
+        assert!(!learned.contains(&host("other.example")));
+        assert!(service.discard(&ws, "other.example"));
         assert_eq!(service.list(&ws).len(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_history_of_a_refused_host_outlives_the_workspace_run_but_the_pass_through_does_not()
+     {
+        use puddle_api::LearnedService;
+
+        let store = store();
+        let (injection, terminations) = injection(&store);
+        let service =
+            crate::learned::HostLearned::new(Arc::clone(&terminations), Arc::clone(&store));
+        let ws = workspace("alpha");
+        injection.begin(&ws, false).await.unwrap();
+        terminations
+            .termination(&ws)
+            .unwrap()
+            .interception()
+            .learned()
+            .learn(&Host::parse_normalised("pinned.example").unwrap());
+        assert!(service.list(&ws)[0].passed_through);
+        injection.end(&ws);
+        let kept = service.list(&ws);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            (
+                kept[0].host.as_str(),
+                kept[0].passed_through,
+                kept[0].expires_in_secs,
+                kept[0].count
+            ),
+            ("pinned.example", false, None, 1),
+            "a stopped workspace passes nothing through but remembers"
+        );
+        injection.begin(&ws, false).await.unwrap();
+        assert!(
+            !service.list(&ws)[0].passed_through,
+            "a start begins with none passed through"
+        );
     }
 
     #[tokio::test]

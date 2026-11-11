@@ -5,8 +5,9 @@
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import {
+  announceLearnedChange,
   asPassThroughLearned,
-  onDecryptedAgain,
+  onLearnedChanged,
 } from "#lib/interception/learned.ts";
 import { sentence } from "#lib/rules/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
@@ -16,7 +17,7 @@ export type LearnedHost = components["schemas"]["LearnedHost"];
 export type Limits = components["schemas"]["LearnedLimits"];
 export type Status = "loading" | "ready" | "failed";
 export type Result = { ok: true } | { ok: false; message: string };
-type StoreApi = Pick<ApiClient, "GET" | "PUT" | "DELETE">;
+type StoreApi = Pick<ApiClient, "GET" | "PUT" | "POST" | "DELETE">;
 
 const NONE: LearnedHost[] = [];
 
@@ -76,8 +77,8 @@ export class LearnedList {
       },
       resync: () => void this.load(id, true),
     });
-    // The notice's own button decrypts a host without an event, so it says so here.
-    const stopNotice = onDecryptedAgain((workspace) => {
+    // The notice's own button changes the list without an event, so it says so here.
+    const stopNotice = onLearnedChanged((workspace) => {
       if (workspace === id) void this.load(id, true);
     });
     return () => {
@@ -88,23 +89,41 @@ export class LearnedList {
 
   /** Decrypts one host again from the next connection. A host already gone counts as done. */
   async decryptAgain(host: string): Promise<Result> {
-    return this.#delete(
+    return this.#change(
       this.#api.DELETE("/api/workspaces/{id}/interception/learned/{host}", {
         params: { path: { id: this.#id, host } },
       }),
     );
   }
 
+  /** Puts `host` on the never-decrypt names (this workspace's or every workspace's) and off the list. */
+  async makePermanent(
+    host: string,
+    scope: components["schemas"]["PermanentScope"],
+  ): Promise<Result> {
+    const result = await this.#change(
+      this.#api.POST(
+        "/api/workspaces/{id}/interception/learned/{host}/permanent",
+        { params: { path: { id: this.#id, host } }, body: { scope } },
+      ),
+    );
+    // The never-decrypt names changed too: the settings card above reads them again.
+    if (result.ok) announceLearnedChange(this.#id);
+    return result;
+  }
+
   /** Decrypts every learned host again. */
   async decryptAll(): Promise<Result> {
-    return this.#delete(
+    return this.#change(
       this.#api.DELETE("/api/workspaces/{id}/interception/learned", {
         params: { path: { id: this.#id } },
       }),
     );
   }
 
-  async #delete(call: ReturnType<StoreApi["DELETE"]>): Promise<Result> {
+  async #change(
+    call: ReturnType<StoreApi["DELETE"]> | ReturnType<StoreApi["POST"]>,
+  ): Promise<Result> {
     try {
       const { error, response } = await call;
       if (!response.ok && response.status !== 404) {

@@ -763,13 +763,21 @@ impl State {
                 workspace: name,
                 host,
                 expires_in_secs,
+                count,
             } => {
                 let name = workspace(name)?;
-                self.learned
-                    .learn(&name, host, expires_in_secs.unwrap_or(12 * 3600));
+                let count = count.unwrap_or(1);
+                self.learned.learn_with_history(
+                    &name,
+                    host,
+                    Some(expires_in_secs.unwrap_or(12 * 3600)),
+                    count,
+                    now,
+                );
                 self.events.emit(Event::PassThroughLearned {
                     workspace: name,
                     host: host.clone(),
+                    count,
                 });
             }
             Step::ShellInitCheck { refuses } => self.workspaces.set_shell_init_check(

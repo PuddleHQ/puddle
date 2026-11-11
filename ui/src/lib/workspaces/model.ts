@@ -36,6 +36,43 @@ export const canReclaim = (w: Workspace): boolean =>
 export const canResetRootDisk = (w: Workspace): boolean =>
   isIdle(w) && (w.status === "stopped" || w.status === "crashed");
 
+/**
+ * A root disk can grow while the workspace runs, or waits for its next start when it is down;
+ * only a start or stop in progress (and any other operation) holds it back.
+ */
+export const canGrowRootDisk = (w: Workspace): boolean =>
+  isIdle(w) &&
+  w.root_disk_size_mib !== null &&
+  w.status !== "starting" &&
+  w.status !== "draining" &&
+  w.status !== "volume_missing";
+
+/** The largest root disk size the API takes, in whole GiB (its size is an `i32` of MiB). */
+export const MAX_ROOT_DISK_GIB = 2047;
+
+/** What the grow form offers first: ten GiB above the current size, in whole GiB. */
+export const suggestedRootDiskGib = (w: Workspace): number =>
+  Math.min(
+    MAX_ROOT_DISK_GIB,
+    Math.floor((w.root_disk_size_mib ?? 0) / 1024) + 10,
+  );
+
+/**
+ * Why `text` (whole GiB) can't be the new root disk size of `w`, or `null` when it can. The
+ * service has the last word: it also refuses a size this computer has no room for.
+ */
+export function rootDiskGrowProblem(text: string, w: Workspace): string | null {
+  const shown = text.trim();
+  if (!/^\d+$/.test(shown)) return "Enter a whole number of GiB.";
+  const gib = Number(shown);
+  const current = w.root_disk_size_mib ?? 0;
+  if (gib * 1024 <= current)
+    return `A root disk only grows: choose more than ${formatMib(current)}.`;
+  if (gib > MAX_ROOT_DISK_GIB)
+    return `Choose at most ${MAX_ROOT_DISK_GIB} GiB.`;
+  return null;
+}
+
 const STATUS_WORDS: Record<Status, string> = {
   created: "Not started",
   starting: "Starting",

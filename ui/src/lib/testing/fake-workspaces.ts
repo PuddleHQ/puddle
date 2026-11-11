@@ -437,6 +437,24 @@ export class FakeWorkspaces {
       this.list = this.list.map((w) => (w.id === found.id ? next : w));
       return this.reply(202, next);
     }
+    if (path === "/api/workspaces/{id}/grow-root-disk") {
+      const size = Number(init.body?.["size_mib"]);
+      const current = found.root_disk_size_mib ?? 0;
+      if (size <= current)
+        return this.reply(
+          400,
+          undefined,
+          `a root disk only grows: ${size} MiB is not above its ${current} MiB`,
+        );
+      const next: Workspace = {
+        ...found,
+        busy: "growing_root_disk",
+        root_disk_size_mib: size,
+        disk_warnings: found.disk_warnings.filter((k) => k !== "root"),
+      };
+      this.list = this.list.map((w) => (w.id === found.id ? next : w));
+      return this.reply(202, next);
+    }
     const verb = path.split("/").pop();
     if (verb === "attach") return this.reply(200, this.attachReply);
     const next: Workspace =

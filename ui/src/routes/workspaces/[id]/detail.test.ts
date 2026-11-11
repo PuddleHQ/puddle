@@ -551,6 +551,65 @@ describe("the overview", () => {
     );
   });
 
+  it("makes the root disk bigger from the warning of a running workspace, without a reset", async () => {
+    api.list = [
+      workspace("demo", {
+        status: "running",
+        root_disk_size_mib: 4096,
+        root_disk_used_mib: 4000,
+        disk_warnings: ["root"],
+      }),
+    ];
+    await load();
+    render(Overview);
+    const banner = await screen.findByTestId("disk-warning-root");
+    await fireEvent.click(
+      within(banner).getByRole("button", { name: "Make root disk bigger…" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Make the root disk of demo bigger");
+    const input = within(dialog).getByRole("textbox", {
+      name: /New size in GiB/,
+    });
+    expect(input).toHaveValue("14");
+    await fireEvent.input(input, { target: { value: "16" } });
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Make bigger" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.calls).toContain("POST /api/workspaces/{id}/grow-root-disk"),
+    );
+    expect(api.bodies.at(-1)).toEqual({ size_mib: 16_384 });
+    expect(api.calls).not.toContain(
+      "POST /api/workspaces/{id}/reset-root-disk",
+    );
+  });
+
+  it("offers the grow in the resources card, and not while the workspace is busy", async () => {
+    api.list = [
+      workspace("demo", { status: "stopped", root_disk_size_mib: 4096 }),
+    ];
+    await load();
+    render(Overview);
+    const grow = await screen.findByRole("button", {
+      name: "Make root disk bigger…",
+    });
+    expect(grow).toBeEnabled();
+    api.list = [
+      workspace("demo", {
+        status: "stopped",
+        root_disk_size_mib: 4096,
+        busy: "reclaiming",
+      }),
+    ];
+    await workspaces.refresh();
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Make root disk bigger…" }),
+      ).toBeDisabled(),
+    );
+  });
+
   it("offers the reset next to Reclaim space even when no disk is nearly full", async () => {
     api.list = [workspace("demo", { status: "stopped" })];
     await load();

@@ -22,7 +22,6 @@ use puddle_types::{
 use pull_support::{LOCAL, connect, echo, http_server, pull_proxy, pull_proxy_logged, send};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
 #[tokio::test]
 async fn the_listener_is_loopback_only_and_registered_while_it_serves() {
@@ -242,9 +241,8 @@ async fn unresolvable_and_unreachable_registries_are_502() {
     .await;
     assert!(head.starts_with("HTTP/1.1 502 "), "{head}");
     // A loopback port nothing listens on.
-    let closed = TcpListener::bind((LOCAL, 0)).await.unwrap();
-    let port = closed.local_addr().unwrap().port();
-    drop(closed);
+    let closed = puddle_test_kit::ReservedPort::new();
+    let port = closed.port();
     let (head, _) = send(
         route.local_addr(),
         &connect(&format!("127.0.0.1:{port}"), Some(&auth)),
@@ -506,8 +504,11 @@ async fn shutdown_returns_only_when_the_listener_and_its_connections_are_gone() 
         matches!(open.try_read(&mut buf), Ok(0) | Err(_)),
         "the open connection is closed"
     );
-    assert!(
-        std::net::TcpStream::connect(addr).is_err(),
+    // Not "the port refuses connections": the proxy bound port 0, and another test's socket can hold
+    // that number by now. The proxy answers a request with a wrong token 407; a stranger does not.
+    assert_ne!(
+        puddle_test_kit::http_status(addr, "/", "wrong"),
+        Some(407),
         "the listener is closed"
     );
 }

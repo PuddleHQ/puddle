@@ -34,6 +34,7 @@ type Store = Pick<
   | "stopWorkspace"
   | "reclaim"
   | "resetRootDisk"
+  | "growRootDisk"
   | "rename"
   | "attach"
   | "setDirectSsh"
@@ -141,6 +142,15 @@ export class WorkspaceActions {
   resetRootDisk = async (w: Workspace): Promise<void> => {
     const result = await this.#store.resetRootDisk(w.id);
     if (!result.ok) this.#fail(result.message);
+  };
+
+  /**
+   * Makes the root disk `gib` GiB big. Returns the refusal as text for the dialog, or `null` when
+   * Puddle took it (the workspace is then busy and the finished toast follows).
+   */
+  growRootDisk = async (w: Workspace, gib: number): Promise<string | null> => {
+    const result = await this.#store.growRootDisk(w.id, gib * 1024);
+    return result.ok ? null : result.message;
   };
 
   openRename = (w: Workspace): void => {

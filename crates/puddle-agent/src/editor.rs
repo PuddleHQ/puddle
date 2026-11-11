@@ -1099,8 +1099,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_port_with_a_listener_is_taken_and_a_free_one_is_not() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let port = puddle_test_kit::quiet_port();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .unwrap();
         assert!(port_taken(port).await);
         drop(listener);
         assert!(!port_taken(port).await);
@@ -1111,9 +1113,7 @@ mod tests {
     async fn a_connect_that_reached_only_itself_is_not_a_taken_port() {
         // The kernel's simultaneous open: bind a port, then connect to that same port with nothing
         // listening. The connect succeeds, to nobody.
-        let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = probe.local_addr().unwrap();
-        drop(probe);
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], puddle_test_kit::quiet_port()));
         let socket = tokio::net::TcpSocket::new_v4().unwrap();
         socket.set_reuseaddr(true).unwrap();
         socket.bind(addr).unwrap();

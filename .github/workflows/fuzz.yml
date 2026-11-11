@@ -39,12 +39,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [head_parser, connect_target, normalise_host, agent_preamble, resolve_line, resolve_line_grammar, dns_message, dns_message_grammar, resolve_ask, dns_udp_datagram, dns_tcp_stream]
+        target: [head_parser, connect_target, normalise_host, agent_preamble, answer_tokens, resolve_line, resolve_line_grammar, dns_message, dns_message_grammar, resolve_ask, dns_udp_datagram, dns_tcp_stream]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Nightly toolchain
         run: rustup toolchain install nightly --profile minimal && rustc +nightly --version
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-fuzz@0.13.2
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3

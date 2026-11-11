@@ -14,8 +14,9 @@
 //! of requests to the profile's hosts, and nowhere else.
 //!
 //! If a login cannot be captured (the answer is not in a form Puddle reads, the token is bound to
-//! a key, the credential store is not there) the answer goes to the tool as it is, so the tool
-//! keeps working, and the user is told that this login is not protected.
+//! a key, the credential store is not there, the answer carries a token the profile does not
+//! name) the login fails: the tool gets a `502` that names the reason, never the real answer, and
+//! the user is told. A real token never reaches the workspace by this path.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
@@ -25,8 +26,9 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use puddle_proxy::{
-    AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY, SecretValue,
-    StandIn, StandInError, StandInOrigin, StandIns, TerminationSet, TokenBody,
+    AnswerHead, AnswerRewriter, BodyField, Exchange, ExchangeRewriter, FieldKind, InjectRefusal,
+    MAX_EXCHANGE_BODY, SecretValue, StandIn, StandInError, StandInOrigin, StandIns, TerminationSet,
+    TokenBody,
 };
 use puddle_secrets::SecretStore;
 use puddle_types::{Host, WorkspaceId};
@@ -42,17 +44,19 @@ use crate::vault::{STORE_TIMEOUT, Vault, VaultError};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Problem {
-    /// The operating system's credential store did not take the token, so the answer went to the
-    /// tool as it was.
+    /// The operating system's credential store did not take the token, so the login failed.
     StoreUnavailable,
     /// The service's answer was not in a form Puddle reads (not JSON or a form, compressed, or
-    /// larger than a token answer is), so it went to the tool as it was.
+    /// larger than a token answer is), so the login failed.
     UnexpectedAnswer,
-    /// A token cannot be copied: a length or a character a stand-in cannot have.
+    /// A token cannot be copied: a length or a character a stand-in cannot have. The login failed.
     UnusableToken,
     /// The service ties its tokens to a key of the tool's own (`DPoP`), which a stand-in cannot
-    /// stand in for.
+    /// stand in for. The login failed.
     BoundToken,
+    /// The answer carries a token in a field the profile does not name (a new `id_token`, a
+    /// repeated field, a nested one), so Puddle could not keep it and the login failed.
+    UnnamedToken,
     /// A login Puddle kept earlier could not be read back at the workspace's start; the tool will
     /// ask for a new sign-in.
     Unreadable,
@@ -183,6 +187,29 @@ pub(crate) fn canonical_path(path: &str) -> String {
     format!("/{}", segments.join("/"))
 }
 
+/// The built-in token endpoint a request to `host` with `method` and `path` is for, as the
+/// proxy reads it (the path in any spelling `canonical_path` collapses). A test that stands in
+/// for a service uses it to know which of its answers capture will read.
+#[must_use]
+pub fn token_endpoint_of(
+    host: &str,
+    method: &str,
+    path: &str,
+) -> Option<(&'static Profile, &'static Endpoint)> {
+    let path = canonical_path(path);
+    crate::profile::builtin().iter().find_map(|profile| {
+        profile
+            .endpoints
+            .iter()
+            .find(|e| {
+                e.host.eq_ignore_ascii_case(host)
+                    && e.method.accepts(method)
+                    && path_matches(&canonical_path(e.path), &path)
+            })
+            .map(|endpoint| (profile, endpoint))
+    })
+}
+
 impl Logins {
     /// The captured logins of `workspace`, for the profiles `profiles`.
     ///
@@ -272,7 +299,7 @@ impl Logins {
             workspace = %self.inner.workspace,
             profile = profile.id,
             ?problem,
-            "a login is not protected"
+            "a login was refused"
         );
         self.inner
             .notices
@@ -611,14 +638,28 @@ impl Logins {
         let (profile, endpoint) = route;
         let mut parsed =
             TokenBody::parse(content_type, body).map_err(|_| Problem::UnexpectedAnswer)?;
-        let found: Vec<(&'static Field, Zeroizing<String>)> = endpoint
-            .fields
-            .iter()
-            .filter_map(|field| {
-                let text = parsed.text_at(field.path)?;
-                (!text.is_empty()).then(|| (field, Zeroizing::new(text.into_owned())))
-            })
-            .collect();
+        if holds_unnamed_token(endpoint, &parsed.fields()) {
+            return Err(Problem::UnnamedToken);
+        }
+        let mut found: Vec<(&'static Field, Zeroizing<String>)> = Vec::new();
+        for field in endpoint.fields {
+            // The first field that takes the token is the one used for its answer field. Fields
+            // with an audience share a path on purpose (one per resource): `by_audience` picks.
+            if field.audience == Audience::Any
+                && found
+                    .iter()
+                    .any(|(taken, _)| taken.path == field.path && taken.audience == Audience::Any)
+            {
+                continue;
+            }
+            let Some(text) = parsed.text_at(field.path).filter(|text| !text.is_empty()) else {
+                continue;
+            };
+            if field.only_prefixed && !field.prefixes.iter().any(|p| text.starts_with(p)) {
+                continue;
+            }
+            found.push((field, Zeroizing::new(text.into_owned())));
+        }
         if found.is_empty() {
             // A pending device code, an error, a refusal: nothing to keep.
             return Ok(None);
@@ -751,11 +792,86 @@ pub enum ForgetError {
     Store,
 }
 
+/// The shortest text in a token-like field that counts as a token: shorter ones are lifetimes,
+/// counts and flags that happen to carry the word in their name.
+const MIN_TOKEN_LEN: usize = 16;
+
+/// Name endings of fields that carry a count, a kind or an address, not a credential.
+const NOT_TOKENS: [&str; 8] = [
+    "_type",
+    "_in",
+    "_at",
+    "_url",
+    "_uri",
+    "_endpoint",
+    "_scope",
+    "_label",
+];
+
+/// Whether a field's name says it holds a credential.
+fn token_like(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if NOT_TOKENS.iter().any(|suffix| name.ends_with(suffix)) {
+        return false;
+    }
+    name.contains("token")
+        || name.contains("secret")
+        || name.contains("password")
+        || name.ends_with("key")
+}
+
+/// Whether the answer holds a credential Puddle would not replace: a token-like text in a field
+/// the endpoint does not name (at any depth), or a named field that is repeated or structured
+/// (the tool may read the one Puddle did not).
+fn holds_unnamed_token(endpoint: &Endpoint, fields: &[BodyField]) -> bool {
+    let named = |field: &BodyField| endpoint.fields.iter().any(|f| f.path == field.path);
+    fields.iter().any(|field| {
+        if named(field) {
+            let repeated = fields.iter().filter(|f| f.path == field.path).count() > 1;
+            return repeated || field.kind == FieldKind::Structured;
+        }
+        matches!(field.kind, FieldKind::Text(n) if n >= MIN_TOKEN_LEN) && token_like(&field.name)
+    })
+}
+
+/// What the tool is told when its login is refused: the reason, and what to do.
+fn refusal_for(profile: &Profile, problem: Problem) -> InjectRefusal {
+    let why = match problem {
+        Problem::StoreUnavailable => {
+            "the credential store is not available (locked or not running); unlock it or start it and sign in again"
+        }
+        Problem::UnexpectedAnswer => {
+            "the sign-in answer is in a form Puddle does not read (compressed, too large or not JSON or a form)"
+        }
+        Problem::UnusableToken => "the token has a form Puddle cannot give a stand-in for",
+        Problem::BoundToken => "the service ties its token to a key of the tool's own",
+        Problem::UnnamedToken => "the answer carries a token in a field Puddle does not know",
+        _ => "Puddle could not keep it",
+    };
+    InjectRefusal::new(
+        502,
+        "login_not_kept",
+        format!(
+            "Puddle did not let the {} sign-in through: {why}. Nothing reached this workspace; Puddle's notice says what to do.",
+            profile.name
+        ),
+    )
+}
+
 /// The answer of one token endpoint, being captured.
 struct Capture {
     logins: Logins,
     profile: &'static Profile,
     endpoint: &'static Endpoint,
+    /// Set when the answer could not be kept: the tool then gets this and not the answer.
+    refusal: Option<InjectRefusal>,
+}
+
+impl Capture {
+    fn refuse(&mut self, problem: Problem) {
+        self.logins.notify(self.profile, problem);
+        self.refusal = Some(refusal_for(self.profile, problem));
+    }
 }
 
 impl AnswerRewriter for Capture {
@@ -773,8 +889,16 @@ impl AnswerRewriter for Capture {
         if TokenBody::reads(head.content_type) && identity && small {
             return true;
         }
-        self.logins.notify(self.profile, Problem::UnexpectedAnswer);
+        self.refuse(Problem::UnexpectedAnswer);
         false
+    }
+
+    fn too_large(&mut self) {
+        self.refuse(Problem::UnexpectedAnswer);
+    }
+
+    fn refusal(&mut self) -> Option<InjectRefusal> {
+        self.refusal.take()
     }
 
     fn rewrite<'a>(
@@ -790,7 +914,7 @@ impl AnswerRewriter for Capture {
             {
                 Ok(replaced) => replaced,
                 Err(problem) => {
-                    self.logins.notify(self.profile, problem);
+                    self.refuse(problem);
                     None
                 }
             }
@@ -820,13 +944,22 @@ impl ExchangeRewriter for Logins {
         let route = on_host
             .find(|route| route.method.accepts(method) && path_matches(&route.path, &path))?;
         let mut exchange = Exchange::new();
-        if let Some(field) = route.endpoint.refresh_field {
-            exchange = exchange.swapping(field);
+        for field in route.endpoint.request_fields {
+            exchange = exchange.swapping(*field);
+        }
+        // An endpoint with no token fields (a revoke) is only a request to swap in: its answer
+        // is not read, so an empty `200` is not an unexpected answer.
+        if route.endpoint.fields.is_empty() {
+            return Some(exchange);
         }
         Some(exchange.answered_by(Box::new(Capture {
             logins: self.clone(),
             profile: route.profile,
             endpoint: route.endpoint,
+            refusal: None,
         })))
     }
 }
+
+#[cfg(test)]
+mod refusal_tests;

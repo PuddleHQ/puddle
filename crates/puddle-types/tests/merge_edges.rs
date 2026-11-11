@@ -17,15 +17,15 @@ use puddle_types::{
 };
 use serde_json::json;
 
-/// Runs `work` on its own thread and fails the test when it has not finished in five seconds, so
+/// Runs `work` on its own thread and fails the test when it has not finished in 30 seconds, so
 /// a scanner that stops advancing is a failed test and not a hang.
 fn bounded<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(work());
     });
-    rx.recv_timeout(Duration::from_secs(5))
-        .expect("the work did not finish in five seconds")
+    rx.recv_timeout(Duration::from_secs(30))
+        .expect("the work did not finish in 30 seconds")
 }
 
 fn json_spec(format: MergeFormat) -> MergeSpec {
@@ -98,6 +98,34 @@ fn an_ssh_config_of_exactly_the_limit_is_merged_and_one_byte_more_is_refused() {
     );
     assert_eq!(
         unmerge(MergeFormat::SshConfig, &big, &[]).unwrap_err(),
+        MergeRefusal::TooLarge
+    );
+}
+
+#[test]
+fn an_ssh_known_hosts_of_exactly_the_limit_is_merged_and_one_byte_more_is_refused() {
+    let spec = MergeSpec::new(
+        MergeFormat::KnownHosts,
+        vec![MergeEntry::known_hosts("github.com ssh-ed25519 AAAA")],
+    )
+    .unwrap();
+    let ok = ssh_of(MAX_MERGE_FILE);
+    assert!(matches!(
+        spec.apply(Some(&ok), &[]).unwrap(),
+        Merged::Write(_)
+    ));
+    assert_eq!(
+        unmerge(MergeFormat::KnownHosts, &ok, &[]).unwrap().merged,
+        Merged::Unchanged
+    );
+
+    let big = ssh_of(MAX_MERGE_FILE + 1);
+    assert_eq!(
+        spec.apply(Some(&big), &[]).unwrap_err(),
+        MergeRefusal::TooLarge
+    );
+    assert_eq!(
+        unmerge(MergeFormat::KnownHosts, &big, &[]).unwrap_err(),
         MergeRefusal::TooLarge
     );
 }

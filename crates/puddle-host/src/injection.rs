@@ -22,19 +22,22 @@ use std::time::Duration;
 use puddle_ca::{CaBuilder, CaCertificate, WorkspaceCa};
 use puddle_inject::{CredentialSource, GitInjector, StoreSettings};
 use puddle_proxy::{
-    Injector, Interception, PassThrough, RequestRule, RequestRules, StandInOrigin, StandIns,
-    Termination, TerminationSet, TerminationSource, Terminations,
+    GitSshHostKeys, Injector, Interception, PassThrough, RequestRule, RequestRules, StandInOrigin,
+    StandIns, Termination, TerminationSet, TerminationSource, Terminations,
 };
 use puddle_secrets::{Fetch, ReadLog, SecretCache, SecretStore, SourceSpec, Sources};
 use puddle_store::{Store, WorkspaceGit};
-use puddle_types::{Event, EventSink, GuestEnv, RuleId, WorkspaceId};
+use puddle_types::{
+    CURATED_PASS_THROUGH, Event, EventSink, GuestEnv, InterceptionMode, RuleId, WorkspaceId,
+};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use puddle_logins::Logins;
+use puddle_proxy::ForeignCredentialWarning;
 
 use crate::environment::{Resolved, resolve};
-use crate::git_hosts::decrypt_set;
+use crate::git_hosts::{SshListing, decrypt_set, ssh_credential_hosts};
 use crate::logins::LoginKeeper;
 
 /// What an injector is built from.
@@ -81,6 +84,8 @@ pub(crate) struct Began {
     pub(crate) certificate: CaCertificate,
     /// The workspace's Git settings as they were when its CA was made.
     pub(crate) git: WorkspaceGit,
+    /// This start's SSH host keys and the names they are listed under, when Git over SSH is on.
+    pub(crate) ssh: Option<SshListing>,
     /// The variables the guest starts with: the workspace's own and the global ones, each secret
     /// as its stand-in.
     pub(crate) env: GuestEnv,
@@ -91,12 +96,17 @@ pub(crate) struct Began {
 #[derive(Clone)]
 struct Running {
     ca: Arc<WorkspaceCa>,
+    /// This start's SSH host keys; only when Git over SSH is on.
+    ssh_keys: Option<Arc<GitSshHostKeys>>,
     injector: Arc<dyn Injector>,
     stand_ins: Arc<StandIns>,
     logins: Logins,
     /// The hosts this start's tools refused the certificate for; kept across changes to the
     /// workspace's settings.
     learned: Arc<PassThrough>,
+    /// Whether this workspace wants the warning about a credential Puddle did not add, and what
+    /// it was told already; kept across changes to its settings.
+    foreign_warning: Arc<ForeignCredentialWarning>,
 }
 
 impl Running {
@@ -104,15 +114,24 @@ impl Running {
     /// (secrets and captured logins share it) and the reading of its login exchanges.
     fn termination(
         &self,
+        git: &WorkspaceGit,
         set: TerminationSet,
         interception: Interception,
         request_rules: RequestRules,
     ) -> Termination {
-        Termination::new(set, Arc::clone(&self.ca), Arc::clone(&self.injector))
+        let termination = Termination::new(set, Arc::clone(&self.ca), Arc::clone(&self.injector))
             .with_stand_ins(Arc::clone(&self.stand_ins))
             .with_exchanges(Arc::new(self.logins.clone()))
             .with_interception(interception)
             .with_request_rules(request_rules)
+            .with_foreign_credential_warning(Arc::clone(&self.foreign_warning));
+        // The keys and the names they serve change together: the guest's list names the same.
+        match &self.ssh_keys {
+            Some(keys) => termination
+                .with_git_ssh_keys(Arc::clone(keys))
+                .with_git_ssh_hosts(ssh_credential_hosts(git)),
+            None => termination,
+        }
     }
 }
 
@@ -148,6 +167,10 @@ pub(crate) struct Injection {
     /// store that is slow for one workspace's secrets holds up no other workspace.
     environment: Mutex<BTreeMap<WorkspaceId, Arc<tokio::sync::Mutex<()>>>>,
     vault_timeout: Duration,
+    /// Whether each start makes SSH host keys for Git over SSH.
+    git_ssh: bool,
+    /// Where the warning setting is read; without it the warning is on.
+    settings: Option<Arc<dyn puddle_api::SettingsRepo>>,
 }
 
 impl Injection {
@@ -167,7 +190,32 @@ impl Injection {
             syncing: Mutex::new(()),
             environment: Mutex::new(BTreeMap::new()),
             vault_timeout: VAULT_TIMEOUT,
+            git_ssh: false,
+            settings: None,
         }
+    }
+
+    /// Reads the warning about a credential Puddle did not add from `settings`, global and the
+    /// workspace's own, each time one is found.
+    pub(crate) fn with_settings(mut self, settings: Arc<dyn puddle_api::SettingsRepo>) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
+    /// `workspace`'s warning: on by its setting, else the global one, else on.
+    fn foreign_warning(&self, workspace: &WorkspaceId) -> ForeignCredentialWarning {
+        let (settings, workspace) = (self.settings.clone(), workspace.clone());
+        ForeignCredentialWarning::new(move || {
+            settings
+                .as_deref()
+                .is_none_or(|settings| crate::logins::foreign_warning_enabled(settings, &workspace))
+        })
+    }
+
+    /// Makes SSH host keys at each start (and serves Git over SSH with them), or not.
+    pub(crate) fn with_git_ssh(mut self, on: bool) -> Self {
+        self.git_ssh = on;
+        self
     }
 
     /// Keeps each workspace's login marker in `dir`.
@@ -247,7 +295,24 @@ impl Injection {
             .login_keeper
             .logins(workspace, capture, Arc::clone(&stand_ins));
         logins.load().await;
-        self.register(workspace, resolved, stand_ins, logins)
+        let ssh_keys = self.host_keys_for(workspace).await?;
+        self.register(workspace, resolved, stand_ins, logins, ssh_keys)
+    }
+
+    /// This start's SSH host keys, when Git over SSH is on. The RSA key takes a moment, so it is
+    /// made off the async threads.
+    async fn host_keys_for(
+        &self,
+        workspace: &WorkspaceId,
+    ) -> Result<Option<Arc<GitSshHostKeys>>, String> {
+        if !self.git_ssh {
+            return Ok(None);
+        }
+        let made = tokio::task::spawn_blocking(GitSshHostKeys::generate)
+            .await
+            .map_err(|e| format!("cannot make {workspace}'s SSH host keys: {e}"))?;
+        made.map(|keys| Some(Arc::new(keys)))
+            .map_err(|e| format!("{workspace}: {e}"))
     }
 
     fn register(
@@ -256,6 +321,7 @@ impl Injection {
         resolved: Resolved,
         stand_ins: Arc<StandIns>,
         logins: Logins,
+        ssh_keys: Option<Arc<GitSshHostKeys>>,
     ) -> Result<Began, String> {
         let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
         let git = self.git(workspace)?;
@@ -281,26 +347,32 @@ impl Injection {
         // The registry and the list of running CAs change together, under the list's lock, so a
         // `resync` or an `end` never sees one without the other.
         let mut running = self.running();
+        let now_keys = ssh_keys.clone();
         let now = Running {
             ca,
+            ssh_keys,
             injector,
             stand_ins,
             logins,
             learned: Arc::new(self.learned_list(workspace)),
+            foreign_warning: Arc::new(self.foreign_warning(workspace)),
         };
         self.terminations.insert(
             workspace.clone(),
             now.termination(
+                &git,
                 decrypted(&git, &now.stand_ins, &now.logins),
                 self.interception(workspace, &now.learned)?,
                 self.request_rules(workspace)?,
             ),
         );
         running.insert(workspace.clone(), now);
+        let ssh = now_keys.map(|keys| SshListing::for_git(keys, &git));
         drop(running);
         Ok(Began {
             certificate,
             git,
+            ssh,
             env: guest,
         })
     }
@@ -379,6 +451,7 @@ impl Injection {
         self.terminations.insert(
             workspace.clone(),
             now.termination(
+                &git,
                 decrypted(&git, &now.stand_ins, &now.logins),
                 self.interception(workspace, &now.learned)?,
                 self.request_rules(workspace)?,
@@ -388,14 +461,26 @@ impl Injection {
         Ok(Some(git))
     }
 
-    /// An empty learned list for `workspace` that tells the user about each host it learns.
+    /// An empty learned list for `workspace` that writes each host it learns to the history in
+    /// the store and tells the user, with how many times that host has now been refused.
     fn learned_list(&self, workspace: &WorkspaceId) -> PassThrough {
         let events = Arc::clone(&self.inputs.events);
+        let store = Arc::clone(&self.inputs.store);
         let workspace = workspace.clone();
         PassThrough::new().observed(move |host| {
+            let name = host.to_string();
+            let count = match store.record_rejection(&workspace, &name) {
+                Ok(row) => row.count,
+                Err(e) => {
+                    // The host is passed through all the same; only its history is lost.
+                    tracing::warn!(%workspace, host = %name, error = %e, "cannot record the refused host");
+                    1
+                }
+            };
             events.emit(Event::PassThroughLearned {
                 workspace: workspace.clone(),
-                host: host.to_string(),
+                host: name,
+                count,
             });
         })
     }
@@ -422,6 +507,17 @@ impl Injection {
             Duration::from_secs(u64::from(limits.ttl_secs)),
             usize::try_from(limits.cap).unwrap_or(usize::MAX),
         );
+        let settings = store
+            .interception_settings()
+            .map_err(|e| format!("cannot read the interception setting: {e}"))?;
+        let mode = own.mode.unwrap_or_else(|| settings.effective_mode());
+        let mut curated = TerminationSet::new();
+        if mode == InterceptionMode::AllExceptCurated {
+            // The list is built in and checked by a test; a bad entry is a bug, not user input.
+            if let Ok(set) = TerminationSet::parse(CURATED_PASS_THROUGH.iter().copied()) {
+                curated = set;
+            }
+        }
         let mut never = TerminationSet::new();
         for pattern in own.never_decrypt.iter().chain(&global) {
             match TerminationSet::parse([pattern.as_str()]) {
@@ -430,7 +526,9 @@ impl Injection {
             }
         }
         Ok(Interception::new(Arc::clone(learned))
-            .decrypt_all(own.decrypt_all)
+            .decrypt_all(mode.decrypts_unknown_hosts())
+            .curated(curated)
+            .learn_from_rejections(settings.learn_from_rejections)
             .never_decrypt(never))
     }
 

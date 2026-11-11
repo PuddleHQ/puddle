@@ -7,8 +7,10 @@ import {
 } from "#lib/testing/fake-workspaces.ts";
 import {
   MAX_NAME_LENGTH,
+  MAX_ROOT_DISK_GIB,
   canAttach,
   canDelete,
+  canGrowRootDisk,
   canReclaim,
   canStart,
   canStop,
@@ -16,7 +18,9 @@ import {
   diskLabel,
   diskPercent,
   diskWarned,
+  rootDiskGrowProblem,
   rootDiskLabel,
+  suggestedRootDiskGib,
   formatMib,
   isDown,
   losses,
@@ -306,6 +310,53 @@ describe("memory", () => {
     expect(
       canResetRootDisk(workspace("w", { status: "stopped", busy: "starting" })),
     ).toBe(false);
+  });
+});
+
+describe("growing the root disk", () => {
+  it("is offered to an idle workspace with a root disk, running or down, but not while it starts or stops", () => {
+    const base = { root_disk_size_mib: 10_240 };
+    for (const status of ["running", "stopped", "crashed", "created"] as const)
+      expect(canGrowRootDisk(workspace("w", { ...base, status }))).toBe(true);
+    for (const status of ["starting", "draining", "volume_missing"] as const)
+      expect(canGrowRootDisk(workspace("w", { ...base, status }))).toBe(false);
+    expect(
+      canGrowRootDisk(workspace("w", { ...base, busy: "reclaiming" })),
+    ).toBe(false);
+    expect(canGrowRootDisk(workspace("w", { root_disk_size_mib: null }))).toBe(
+      false,
+    );
+  });
+
+  it("suggests ten GiB more, never past what the API takes", () => {
+    expect(
+      suggestedRootDiskGib(workspace("w", { root_disk_size_mib: 10_240 })),
+    ).toBe(20);
+    expect(
+      suggestedRootDiskGib(workspace("w", { root_disk_size_mib: 10_752 })),
+    ).toBe(20);
+    expect(
+      suggestedRootDiskGib(
+        workspace("w", { root_disk_size_mib: MAX_ROOT_DISK_GIB * 1024 }),
+      ),
+    ).toBe(MAX_ROOT_DISK_GIB);
+    expect(
+      suggestedRootDiskGib(workspace("w", { root_disk_size_mib: null })),
+    ).toBe(10);
+  });
+
+  it("names what is wrong with a size and accepts a bigger whole number", () => {
+    const w = workspace("w", { root_disk_size_mib: 10_240 });
+    expect(rootDiskGrowProblem("", w)).toBe("Enter a whole number of GiB.");
+    expect(rootDiskGrowProblem("2.5", w)).toBe("Enter a whole number of GiB.");
+    expect(rootDiskGrowProblem("-3", w)).toBe("Enter a whole number of GiB.");
+    expect(rootDiskGrowProblem("10", w)).toBe(
+      "A root disk only grows: choose more than 10 GiB.",
+    );
+    expect(rootDiskGrowProblem("3", w)).toContain("choose more than 10 GiB");
+    expect(rootDiskGrowProblem("2048", w)).toBe("Choose at most 2047 GiB.");
+    expect(rootDiskGrowProblem(" 11 ", w)).toBeNull();
+    expect(rootDiskGrowProblem("2047", w)).toBeNull();
   });
 });
 

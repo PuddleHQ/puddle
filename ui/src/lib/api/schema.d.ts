@@ -489,6 +489,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/interception": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The global interception setting: the mode workspaces follow, whether the user has chosen one,
+         *     learning from rejections, and the curated list.
+         */
+        get: operations["get_interception_settings"];
+        /** Changes the global setting. A running workspace that follows it applies the change at once. */
+        put: operations["put_interception_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/interception/learned-limits": {
         parameters: {
             query?: never;
@@ -777,6 +798,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/repository-hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Says which hosts the repositories of a create form are on and where each stands: `new` hosts
+         *     are the ones the create would allow for the workspace, `blocked` ones refuse the create.
+         */
+        post: operations["repository_hosts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/request-rules": {
         parameters: {
             query?: never;
@@ -988,7 +1029,8 @@ export interface paths {
          *     The list is checked whole before anything exists. Each repository's identity joins the
          *     workspace and its repository table row is made before the first clone. A clone that fails
          *     fails only its repository: a background problem names it and the create still ends `done`.
-         *     Answers 202; follow it with `workspace_progress` events.
+         *     Puddle picks the new workspace's id (eight random characters, never one used before); the
+         *     answer carries it. Answers 202; follow it with `workspace_progress` events.
          */
         post: operations["create_workspace"];
         delete?: never;
@@ -1225,6 +1267,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/grow-root-disk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes the workspace's root disk bigger. The root disk holds the home directory, tool caches
+         *     and installed packages, and only ever grows. A running workspace has the room at once when
+         *     the runtime can grow a disk under a running guest; otherwise Puddle restarts it, which loses
+         *     nothing that was saved to disk. A stopped workspace has the room at its next start. The size
+         *     is kept when the root disk is reset. Answers 202; the workspace is busy
+         *     (`growing_root_disk`) until it is done.
+         */
+        post: operations["grow_root_disk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/identities": {
         parameters: {
             query?: never;
@@ -1279,7 +1345,7 @@ export interface paths {
          */
         get: operations["get_interception"];
         /**
-         * Changes the switch and/or the workspace's never-decrypt names. A running workspace applies it
+         * Changes the mode and/or the workspace's never-decrypt names. A running workspace applies it
          *     at once: the next connection to a host is decrypted or passed through accordingly. A host with
          *     a credential, secret or login capture is always decrypted, whatever the list says.
          */
@@ -1299,16 +1365,17 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The hosts the running workspace's tools refused Puddle's certificate for, which Puddle now
-         *     passes through untouched. The list is empty for a workspace that is not running. A client
-         *     refetches on the `pass_through_learned` event.
+         * The hosts the workspace's tools refused Puddle's certificate for, with when each was first
+         *     and last refused and how many times, and whether Puddle passes it through now. A workspace
+         *     that is not running passes nothing through. A client refetches on the
+         *     `pass_through_learned` event.
          */
         get: operations["list_learned"];
         put?: never;
         post?: never;
         /**
-         * Decrypts every learned host of the workspace again from the next connection. Connections
-         *     already open keep going as they are.
+         * Decrypts every host the workspace passes through again from the next connection. Connections
+         *     already open keep going as they are; the history of refusals stays.
          */
         delete: operations["clear_learned"];
         options?: never;
@@ -1327,10 +1394,30 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Decrypts one learned host again from the next connection. If the tool still refuses
-         *     Puddle's certificate, the host is learned again, and the user is told again.
+         * Decrypts one learned host again from the next connection; its history stays. If the tool
+         *     still refuses Puddle's certificate, the host is learned again, and the user is told again.
          */
         delete: operations["forget_learned"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/interception/learned/{host}/permanent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Never decrypts a learned host again, in this workspace or in every workspace: the host joins
+         *     that never-decrypt list and leaves the learned list, history included.
+         */
+        post: operations["make_permanent"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1466,7 +1553,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspaces/{id}/repositories/{directory}": {
+    "/api/workspaces/{id}/repositories/{entry}": {
         parameters: {
             query?: never;
             header?: never;
@@ -1487,7 +1574,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspaces/{id}/repositories/{directory}/clone": {
+    "/api/workspaces/{id}/repositories/{entry}/clone": {
         parameters: {
             query?: never;
             header?: never;
@@ -1704,7 +1791,7 @@ export interface components {
          * @description Who made a change.
          * @enum {string}
          */
-        Actor: "cli" | "ui" | "api" | "system";
+        Actor: "cli" | "ui" | "api" | "system" | "workspace_create";
         /** @description `POST /api/workspaces/{id}/repositories`: what to add. */
         AddRepositoryRequest: {
             /**
@@ -1745,6 +1832,16 @@ export interface components {
              *     with 409 when it names another repository.
              */
             url: string;
+        };
+        /** @description A host a create (or adding a repository) allowed for a workspace. */
+        AllowedHost: {
+            /** @description The host. */
+            host: string;
+            /**
+             * Format: int64
+             * @description The rule that allows it, visible on the Rules screen as made by the create.
+             */
+            rule_id: number;
         };
         /** @description The body of every error response. */
         ApiErrorBody: {
@@ -1893,6 +1990,14 @@ export interface components {
          *     fields added since, which read as `null`.
          */
         AuditRecord: {
+            /**
+             * @description The kinds of token the answers held that Puddle does not hold, each once:
+             *     `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
+             *     `azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never
+             *     a value. Records written before it existed, and connections of a workspace that turned
+             *     the warning off, read as empty.
+             */
+            answer_credentials: string[];
             /** @description The credential binding, by id. */
             binding_id: string | null;
             /**
@@ -1916,6 +2021,13 @@ export interface components {
              */
             count: number | null;
             decision: components["schemas"]["ConnectionDecision"] | null;
+            /**
+             * @description The kinds of credential the requests carried that Puddle did not add or swap, each
+             *     once: `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`,
+             *     `azure_devops_token` or `git_authorization`. Never a value. Records written before it
+             *     existed, and connections of a workspace that turned the warning off, read as empty.
+             */
+            foreign_credentials: string[];
             /** @description The requested host. */
             host: string | null;
             /** @description Whether a credential was injected. */
@@ -2722,6 +2834,8 @@ export interface components {
             memory: components["schemas"]["ResolvedNumber"];
             /** @description Reconnection grace in seconds. */
             reconnection_grace: components["schemas"]["ResolvedNumber"];
+            /** @description Whether a credential Puddle did not add raises a warning. */
+            warn_foreign_credentials: components["schemas"]["ResolvedBool"];
             /** @description Whether suffix rules reach local addresses. */
             wildcards_reach_local: components["schemas"]["ResolvedBool"];
             /** @description Zoom hotkeys. */
@@ -2742,6 +2856,11 @@ export interface components {
             /** @description Other special-purpose ranges. */
             special: components["schemas"]["ResolvedBool"];
         };
+        /**
+         * @description A repository entry's id: eight characters of lowercase Crockford base32, the first a letter. Unique within its workspace.
+         * @example a0000000
+         */
+        EntryId: string;
         /**
          * @description What a variable is.
          * @enum {string}
@@ -2988,6 +3107,13 @@ export interface components {
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceId"];
         } | {
+            /**
+             * Format: int32
+             * @description How many times Puddle has stopped decrypting this host in this workspace because a
+             *     tool refused its certificate, this one included. The app raises a notice from the
+             *     third time.
+             */
+            count: number;
             /** @description The host, lower case. */
             host: string;
             /** @enum {string} */
@@ -3033,6 +3159,24 @@ export interface components {
             /** @enum {string} */
             type: "login_problem";
             /** @description The workspace the login is in. */
+            workspace: components["schemas"]["WorkspaceId"];
+        } | {
+            /** @description The host the request went to. */
+            host: string;
+            /** @description What kind of credential it looked like. */
+            kind: components["schemas"]["ForeignCredentialKind"];
+            /** @enum {string} */
+            type: "foreign_credential";
+            /** @description The workspace that sent it. */
+            workspace: components["schemas"]["WorkspaceId"];
+        } | {
+            /** @description The host that answered. */
+            host: string;
+            /** @description What kind of token it looked like. */
+            kind: components["schemas"]["UnknownTokenKind"];
+            /** @enum {string} */
+            type: "unknown_token_in_answer";
+            /** @description The workspace that got the answer. */
             workspace: components["schemas"]["WorkspaceId"];
         } | {
             /**
@@ -3108,6 +3252,12 @@ export interface components {
              */
             completed: boolean;
         };
+        /**
+         * @description What Puddle can tell about a credential it did not add: by its bytes alone, never by whose it
+         *     is (the user's own token and a leaked one look the same). See [`Event::ForeignCredential`].
+         * @enum {string}
+         */
+        ForeignCredentialKind: "stale_stand_in" | "github_token" | "npm_token" | "gitlab_token" | "azure_devops_token" | "git_authorization";
         /** @description An account that is already signed in on this computer. Names only. */
         FoundAccount: {
             /** @description The account. */
@@ -3232,6 +3382,15 @@ export interface components {
             /** @description Defaults for every workspace. */
             workspace_defaults: components["schemas"]["SettingsLayer"];
         };
+        /** @description `POST /api/workspaces/{id}/grow-root-disk`. */
+        GrowRootDiskRequest: {
+            /**
+             * Format: int32
+             * @description The new root disk size in MiB. It must be above the current size: a root disk only grows.
+             *     Required.
+             */
+            size_mib: number;
+        };
         /** @description The API's identity, for a client to check it reached Puddle. */
         Health: {
             /** @description The API contract's version ([`crate::API_VERSION`]). */
@@ -3352,27 +3511,65 @@ export interface components {
             /** @description Open requests, most recent first. */
             requests: components["schemas"]["PendingRequest"][];
         };
+        /**
+         * @description Which hosts on port 443 Puddle decrypts, beyond the ones with a credential, secret, login
+         *     capture profile or rule on method and path (those are always decrypted).
+         * @enum {string}
+         */
+        InterceptionMode: "all" | "all_except_curated" | "known_only";
         /** @description A change to a workspace's interception. A field that is absent stays as it is. */
         InterceptionRequest: {
-            /** @description Turns decrypting every host on or off. It applies to the running workspace at once. */
-            decrypt_all?: boolean | null;
+            mode?: components["schemas"]["WorkspaceMode"] | null;
             /**
              * @description Replaces the workspace's never-decrypt names. Each is a host name or `*.` followed by a
              *     domain with at least two labels; no IP addresses. At most 500.
              */
             never_decrypt?: string[] | null;
         };
-        /** @description How a workspace decrypts hosts beyond the ones it has a credential for. */
-        InterceptionView: {
+        /** @description A change to the global interception setting. A field that is absent stays as it is. */
+        InterceptionSettingsRequest: {
+            /** @description Turns learning from rejections on or off. */
+            learn_from_rejections?: boolean | null;
+            mode?: components["schemas"]["InterceptionMode"] | null;
+            /** @description Records that the user has seen the notice. */
+            notice_seen?: boolean | null;
+        };
+        /** @description The global interception setting. */
+        InterceptionSettingsView: {
+            /** @description Whether the user has chosen a mode. While `false`, the app offers the choice once. */
+            chosen: boolean;
             /**
-             * @description Whether Puddle decrypts every host on port 443, not only the hosts with a credential,
-             *     secret or login capture. Off unless turned on.
+             * @description The curated list passed through in `all_except_curated`: built in, "System managed",
+             *     sorted.
              */
-            decrypt_all: boolean;
+            curated: string[];
+            /**
+             * @description Whether a host whose tool refuses Puddle's certificate is passed through for a while and
+             *     put on the learned list. Meaningful in the modes that decrypt unlisted hosts. On unless
+             *     turned off.
+             */
+            learn_from_rejections: boolean;
+            /**
+             * @description The mode every workspace without its own follows. An install that has not chosen is on
+             *     `known_only`.
+             */
+            mode: components["schemas"]["InterceptionMode"];
+            /** @description Whether the user has seen the notice that offers the choice (existing installs). */
+            notice_seen: boolean;
+        };
+        /**
+         * @description How a workspace decrypts hosts beyond the ones it has a credential, secret, login capture or
+         *     rule on method and path for.
+         */
+        InterceptionView: {
+            /** @description The mode in force: the workspace's own, or the global one. */
+            effective_mode: components["schemas"]["InterceptionMode"];
             /** @description The names no workspace decrypts, sorted. Changed through the global route. */
             global_never_decrypt: string[];
+            /** @description The workspace's own choice; `inherit` follows the global setting. */
+            mode: components["schemas"]["WorkspaceMode"];
             /**
-             * @description The names this workspace never decrypts while the switch is on (`example.com`,
+             * @description The names this workspace never decrypts while it decrypts unlisted hosts (`example.com`,
              *     `*.example.com`), sorted.
              */
             never_decrypt: string[];
@@ -3430,24 +3627,44 @@ export interface components {
             /** @description True when the source gave a value. */
             readable: boolean;
         };
-        /**
-         * @description A host Puddle stopped decrypting in a workspace because a tool there refused Puddle's
-         *     certificate for it.
-         */
+        /** @description A host a tool in a workspace refused Puddle's certificate for. */
         LearnedHost: {
             /**
-             * Format: int64
-             * @description Seconds until Puddle decrypts the host again by itself.
+             * Format: int32
+             * @description How many times Puddle stopped decrypting the host after a refusal. From the third time on
+             *     the app suggests making the host permanent.
              */
-            expires_in_secs: number;
+            count: number;
+            /**
+             * Format: int64
+             * @description Seconds until Puddle decrypts the host again by itself; `null` unless `passed_through`.
+             */
+            expires_in_secs: number | null;
+            /**
+             * Format: int64
+             * @description When a tool first refused the certificate for this host, milliseconds since the epoch.
+             */
+            first_rejected_at: number;
             /** @description The host name, lower case. */
             host: string;
+            /**
+             * Format: int64
+             * @description When a tool last refused it, milliseconds since the epoch.
+             */
+            last_rejected_at: number;
+            /**
+             * @description Whether Puddle passes the host through now. `false` once the time is up or the user
+             *     decrypted it again (the host stays listed with its history), and for a workspace that is
+             *     not running: nothing is passed through then.
+             */
+            passed_through: boolean;
         };
-        /** @description The hosts a running workspace passes through because its tools refused Puddle's certificate. */
+        /** @description The hosts a workspace's tools refused Puddle's certificate for. */
         LearnedHosts: {
             /**
-             * @description Soonest to expire first. Empty for a workspace that is not running: the list is kept in
-             *     memory and a start begins with none.
+             * @description The hosts passed through now first, soonest to expire first; then the others, the most
+             *     recently refused first. The history is kept in the database; the pass-through is held in
+             *     memory by the running workspace, so a start begins with none passed through.
              */
             hosts: components["schemas"]["LearnedHost"][];
         };
@@ -3496,7 +3713,12 @@ export interface components {
          * @description What is wrong with a login, as [`Event::LoginProblem`] reports it.
          * @enum {string}
          */
-        LoginProblemKind: "store_unavailable" | "unexpected_answer" | "unusable_token" | "bound_token" | "unreadable" | "capture_off" | "unknown";
+        LoginProblemKind: "store_unavailable" | "unexpected_answer" | "unusable_token" | "bound_token" | "unnamed_token" | "unreadable" | "capture_off" | "unknown";
+        /** @description Makes a learned host permanent. */
+        MakePermanentRequest: {
+            /** @description Which never-decrypt list gets the host. */
+            scope: components["schemas"]["PermanentScope"];
+        };
         /** @description `GET /api/network-health`: everything Puddle knows about how it reaches the internet. */
         NetworkHealth: {
             /**
@@ -3785,6 +4007,11 @@ export interface components {
             /** @description The workspace that asked. */
             workspace: components["schemas"]["WorkspaceId"];
         };
+        /**
+         * @description Where a learned host is never decrypted from now on.
+         * @enum {string}
+         */
+        PermanentScope: "workspace" | "global";
         /** @description One port of a workspace. */
         PortEntry: {
             /** @description A forward to it is open now: connecting to `host_port` on this computer reaches it. */
@@ -4114,6 +4341,35 @@ export interface components {
          * @enum {string}
          */
         RepoVisibility: "public" | "private" | "internal" | "unknown";
+        /** @description One host of the repositories. */
+        RepositoryHost: {
+            /** @description For `blocked`: which rule or rule set blocks it, in words; `null` otherwise. */
+            blocked_by: string | null;
+            /** @description The host, lower case. */
+            host: string;
+            /** @description Where it stands. */
+            state: components["schemas"]["RepositoryHostState"];
+        };
+        /**
+         * @description Where a repository host stands with the rules.
+         * @enum {string}
+         */
+        RepositoryHostState: "new" | "allowed" | "blocked";
+        /** @description The hosts of the addresses, in the order they first appear, each once. */
+        RepositoryHosts: {
+            /** @description One entry per host. */
+            hosts: components["schemas"]["RepositoryHost"][];
+        };
+        /** @description `POST /api/repository-hosts`: the repositories of a create form, or of a repository to add. */
+        RepositoryHostsRequest: {
+            /**
+             * @description The repository addresses. One that is not an HTTPS address of a repository has no host
+             *     here; the create refuses it by itself.
+             */
+            urls: string[];
+            /** @description The workspace the repositories are for; leave it out for one that does not exist yet. */
+            workspace?: string | null;
+        };
         /**
          * @description A rule on method and path. It only refuses: the requests it names to a host Puddle decrypts
          *     are answered with a 403 and never leave the computer. The host is always decrypted for it.
@@ -4516,6 +4772,12 @@ export interface components {
              * @description Seconds a browser VS Code session survives a disconnect (30 to 86 400).
              */
             reconnection_grace: number | null;
+            /**
+             * @description Whether Puddle warns when a request carries a credential it did not add (a token the
+             *     workspace holds itself). The request goes out either way; this only switches the notice
+             *     and the flag in the activity log. On by default.
+             */
+            warn_foreign_credentials: boolean | null;
             /** @description Whether a suffix rule may reach local addresses. */
             wildcards_reach_local: boolean | null;
             /** @description Whether the browser window's zoom hotkeys work. */
@@ -4803,6 +5065,12 @@ export interface components {
             start_at_login: boolean | null;
             theme: components["schemas"]["ThemeChoice"] | null;
         };
+        /**
+         * @description What Puddle can tell about a token in an answer that it does not hold: by its bytes alone
+         *     (see [`Event::UnknownTokenInAnswer`]).
+         * @enum {string}
+         */
+        UnknownTokenKind: "github_token" | "github_fine_grained_token" | "gitlab_token" | "npm_token" | "azure_devops_token" | "anthropic_key" | "openai_key" | "jwt_with_refresh_token";
         /** @description Options for the VS Code server in the guest. `null` means Puddle's default. */
         VsCodeServer: {
             /** @description Whether Puddle updates the server (default on). */
@@ -4816,6 +5084,12 @@ export interface components {
          *     user put there), and the sandbox that runs it.
          */
         Workspace: {
+            /**
+             * @description The hosts creating the workspace, or adding a repository to it, allowed for it because no
+             *     rule decided them (each is a rule made by the create, on the Rules screen). Only those
+             *     answers fill it; every other answer has an empty list.
+             */
+            allowed_hosts: components["schemas"]["AllowedHost"][];
             busy: components["schemas"]["WorkspaceOperation"] | null;
             /**
              * Format: int64
@@ -4967,10 +5241,15 @@ export interface components {
             name: string;
         };
         /**
+         * @description A workspace's own choice of interception mode.
+         * @enum {string}
+         */
+        WorkspaceMode: "inherit" | "all" | "all_except_curated" | "known_only";
+        /**
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_repaired" | "root_disk_grown";
         /**
          * @description How a workspace operation ended.
          * @enum {string}
@@ -4981,7 +5260,7 @@ export interface components {
          *     `workspace_progress` events.
          * @enum {string}
          */
-        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "resetting_root_disk" | "cloning" | "deleting";
+        WorkspaceOperation: "creating" | "starting" | "stopping" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "cloning" | "deleting";
         /** @description What a workspace's Ports tab lists. */
         WorkspacePorts: {
             /** @description The ports, by number: the ones that listen, the ones forwarded, the ones pinned. */
@@ -5000,6 +5279,12 @@ export interface components {
         WorkspaceRepository: {
             /** @description The checkout it is cloned into, directly under the volume root. */
             directory: components["schemas"]["CheckoutDir"];
+            /**
+             * @description The entry's id, unique within the workspace: what `/api/workspaces/{id}/repositories/{entry}`
+             *     and the `clone:<id>:<entry>` problem key use. It never changes while the entry is on the
+             *     list.
+             */
+            entry: components["schemas"]["EntryId"];
             /** @description The HTTPS address it is cloned from, without credentials. */
             url: string;
         };
@@ -5028,7 +5313,7 @@ export interface components {
          * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
          * @enum {string}
          */
-        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "stopping" | "removing" | "done" | "failed";
+        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
         /** @description Changes a workspace's two switches; a switch left out stays as it is. */
         WorkspaceSwitchesRequest: {
             /** @description "Only pull from listed repos": the workspace's own value. */
@@ -7238,6 +7523,122 @@ export interface operations {
             };
         };
     };
+    get_interception_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the global setting */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterceptionSettingsView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_interception_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InterceptionSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description saved; the setting now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InterceptionSettingsView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     get_learned_limits: {
         parameters: {
             query?: never;
@@ -8459,6 +8860,84 @@ export interface operations {
             };
             /** @description not available in this build */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    repository_hosts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepositoryHostsRequest"];
+            };
+        };
+        responses: {
+            /** @description the hosts and where each stands */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryHosts"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description a bad workspace id or more than 100 addresses */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9717,7 +10196,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description another workspace has that name (ignoring case), or the id it would get is taken, or two identities of the list cover the same place (`identity_collision`) */
+            /** @description another workspace has that name (ignoring case), two identities of the list cover the same place (`identity_collision`), or a block rule covers the host of a repository (the create never overrides a block) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -9753,7 +10232,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description workspaces are not available */
+            /** @description workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source) */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -10933,6 +11412,96 @@ export interface operations {
             };
         };
     };
+    grow_root_disk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrowRootDiskRequest"];
+            };
+        };
+        responses: {
+            /** @description growing started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description busy, or starting or stopping */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not above the current size, or more than this computer has free */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     set_workspace_identities: {
         parameters: {
             query?: never;
@@ -11496,7 +12065,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description no such workspace, or the host is not on the list */
+            /** @description no such workspace, or the host is not passed through */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11507,6 +12076,87 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    make_permanent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the learned host name */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MakePermanentRequest"];
+            };
+        };
+        responses: {
+            /** @description the host is on the never-decrypt list and off the learned list */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace, or the host is not on the learned list */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the never-decrypt list is full */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12072,7 +12722,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), or the identities collide (`identity_collision`) */
+            /** @description the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), the identities collide (`identity_collision`), or a block rule covers the repository's host (clone) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -12126,8 +12776,8 @@ export interface operations {
             path: {
                 /** @description workspace id */
                 id: string;
-                /** @description the entry's directory */
-                directory: string;
+                /** @description the entry's id (not its directory) */
+                entry: string;
             };
             cookie?: never;
         };
@@ -12214,8 +12864,8 @@ export interface operations {
             path: {
                 /** @description workspace id */
                 id: string;
-                /** @description the entry's directory */
-                directory: string;
+                /** @description the entry's id (not its directory) */
+                entry: string;
             };
             cookie?: never;
         };

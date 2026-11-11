@@ -84,7 +84,8 @@ fn full_layer() -> settings::WorkspaceLayer {
             "zoom_hotkeys": false,
             "clipboard_read": "deny",
             "direct_ssh": true,
-            "capture_logins": false
+            "capture_logins": false,
+            "warn_foreign_credentials": false
         }
     });
     let loaded = settings::WorkspaceSettings::from_document(doc).unwrap();
@@ -688,7 +689,7 @@ fn an_ip_rule_refusal_reaches_the_wire() {
         "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
         "port": 443, "resolved_ip": "10.0.0.9", "decision": "deny", "reason": "rule", "rule_id": 4,
         "refused_address": "10.0.0.9", "refused_reason": "ip_rule", "pending_id": null, "binding_id": null,
-        "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "method": null, "path": null,
+        "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [], "answer_credentials": [], "method": null, "path": null,
         "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
     });
     let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
@@ -697,12 +698,52 @@ fn an_ip_rule_refusal_reaches_the_wire() {
     assert_eq!(wire["refused_reason"], "ip_rule");
 }
 
+/// The kinds of foreign credential reach the wire as stored, and a record written before the
+/// field existed reads as none.
+#[test]
+fn foreign_credential_kinds_reach_the_wire_and_an_old_record_has_none() {
+    let mut stored = serde_json::json!({
+        "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
+        "port": 443, "resolved_ip": null, "decision": "allow", "reason": "rule", "rule_id": 4,
+        "pending_id": null, "binding_id": null, "injected": false, "method": null, "path": null,
+        "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
+    });
+    let old: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();
+    let wire = serde_json::to_value(AuditRecord::from(old)).unwrap();
+    assert_eq!(wire["foreign_credentials"], serde_json::json!([]));
+    stored["foreign_credentials"] = serde_json::json!(["github_token", "git_authorization"]);
+    let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
+    let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
+    assert_eq!(
+        wire["foreign_credentials"],
+        serde_json::json!(["github_token", "git_authorization"])
+    );
+}
+
+/// The kinds of unknown token reach the wire as stored, and an old record has none.
+#[test]
+fn unknown_token_kinds_reach_the_wire_and_an_old_record_has_none() {
+    let mut stored = serde_json::json!({
+        "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
+        "port": 443, "resolved_ip": null, "decision": "allow", "reason": "rule", "rule_id": 4,
+        "pending_id": null, "binding_id": null, "injected": false, "method": null, "path": null,
+        "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
+    });
+    let old: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();
+    let wire = serde_json::to_value(AuditRecord::from(old)).unwrap();
+    assert_eq!(wire["answer_credentials"], serde_json::json!([]));
+    stored["answer_credentials"] = serde_json::json!(["npm_token"]);
+    let record: store::AuditRecord = serde_json::from_value(stored).unwrap();
+    let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
+    assert_eq!(wire["answer_credentials"], serde_json::json!(["npm_token"]));
+}
+
 /// A record written before the company-network fields existed reads them as `null`.
 #[test]
 fn a_record_without_a_category_reads_as_none() {
     let stored = serde_json::json!({
         "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
-        "port": 443, "decision": "deny", "reason": "company_network_off", "rule_id": null,
+        "port": 443, "decision": "deny", "reason": "toggle:company_network", "rule_id": null,
         "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [],
         "method": null, "path": null, "path_truncated": false, "bytes_up": 0, "bytes_down": 0, "count": null
     });
@@ -710,7 +751,7 @@ fn a_record_without_a_category_reads_as_none() {
     let wire = serde_json::to_value(AuditRecord::from(record)).unwrap();
     assert_eq!(wire["category"], Value::Null);
     assert_eq!(wire["signal"], Value::Null);
-    assert_eq!(wire["reason"], "company_network_off");
+    assert_eq!(wire["reason"], "toggle:company_network");
 }
 
 /// The typed record serialises to the very JSON the store wrote, so the API adds no layer
@@ -721,7 +762,7 @@ fn typed_audit_records_serialise_as_stored() {
         "type": "connection", "ts": 5, "workspace_id": "box", "origin": "workspace", "host": "example.com",
         "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
         "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
-        "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "category": "company_network", "signal": "dns_suffix", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [],
+        "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "category": "company_network", "signal": "dns_suffix", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [], "answer_credentials": [],
         "method": "GET", "path": "/",
         "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
     });

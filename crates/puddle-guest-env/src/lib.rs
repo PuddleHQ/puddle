@@ -37,7 +37,7 @@ mod settings;
 pub use error::ConfigError;
 pub use render::{
     APT_CONF_GUEST, GRADLE_INIT_RELATIVE, GuestProxyConfig, MAVEN_SETTINGS_GUEST, SSH_CONFIG_GUEST,
-    SUDOERS_GUEST, guest_proxy_config,
+    SSH_KNOWN_HOSTS_GUEST, SUDOERS_GUEST, guest_proxy_config, ssh_known_hosts_file,
 };
 pub use settings::{
     DEFAULT_AGENT, DEFAULT_CONTAINER_PROXY, DEFAULT_HOME, DEFAULT_PROXY, NoProxyEntry,

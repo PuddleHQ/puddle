@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { actorLabel } from "#lib/rules/model.ts";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
   import {
@@ -16,12 +17,21 @@
     rules,
     now,
     onDelete,
+    selected,
   }: {
     rules: RequestRule[];
     now: number;
     /** Left out, the table is read-only. */
     onDelete?: ((rule: RequestRule) => void) | undefined;
+    /** The rule a link named (from the Activity screen): marked, scrolled to and given focus. */
+    selected?: number | undefined;
   } = $props();
+
+  function reveal(row: HTMLElement, isSelected: boolean) {
+    if (!isSelected) return;
+    row.focus({ preventScroll: true });
+    row.scrollIntoView({ block: "center" });
+  }
 </script>
 
 <div class="wrap">
@@ -41,7 +51,13 @@
     </thead>
     <tbody>
       {#each rules as rule (rule.id)}
-        <tr data-request-rule-id={rule.id}>
+        <tr
+          data-request-rule-id={rule.id}
+          class:selected={rule.id === selected}
+          aria-current={rule.id === selected ? "true" : undefined}
+          tabindex={rule.id === selected ? -1 : undefined}
+          {@attach (row) => reveal(row, rule.id === selected)}
+        >
           <td class="host">
             <span class="mono">{rule.host}</span>
             {#if rule.host.startsWith("*.")}
@@ -68,8 +84,9 @@
           <td>
             <time
               datetime={new Date(rule.created_at).toISOString()}
-              title="{absoluteTime(rule.created_at)} by {rule.created_by}"
-              >{relativeTime(rule.created_at, now)}</time
+              title="{absoluteTime(rule.created_at)} by {actorLabel(
+                rule.created_by,
+              )}">{relativeTime(rule.created_at, now)}</time
             >
           </td>
           {#if onDelete}
@@ -112,6 +129,11 @@
   th {
     color: var(--color-text-muted);
     font-weight: 600;
+  }
+  tr.selected {
+    background: var(--color-accent-subtle);
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
   }
   tbody tr:last-child td {
     border-bottom: 0;

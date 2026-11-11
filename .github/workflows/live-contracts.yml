@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Contract tests against live third-party services, with credentials made up for the test (no account, no
+# secret). They check what the services really answer, which the scripted tests cannot:
+#   azure-devops  the real Azure DevOps refusing a made-up token (crates/puddle-repos/tests/live_azure.rs,
+#                 `#[ignore]`d tests: the repository list must read the answer as `token_rejected`);
+#   login-tools   the real Claude Code, GitHub CLI and Copilot CLI signing in and refreshing in a real microVM,
+#                 and which hosts each one calls (crates/puddle-host/tests/vm_radar_logins.rs): a host outside
+#                 the login profile is a login capture would stop seeing.
+# Nightly on develop and by hand (`gh workflow run live-contracts.yml`; a branch's copy only once the file is on develop), never on a
+# pull request: a third party's outage must not stop a merge. A red run opens "Nightly red: live-contracts"
+# through nightly-signal.yml and a green run closes it. Never retried: an outage is told from a change by the
+# log, which prints every answer and every host.
+name: live-contracts
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-contracts-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  PUDDLE_VM_MSB_LOG_LEVEL: debug
+
+jobs:
+  azure-devops:
+    name: Azure DevOps answers a bad token
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: live_azure, ignored tests only
+        run: cargo nextest run --locked -p puddle-repos --test live_azure --run-ignored only --no-capture
+
+  login-tools:
+    name: real login tools in a microVM (KVM)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: KVM
+        run: |
+          test -e /dev/kvm || { echo "no /dev/kvm on this runner"; exit 1; }
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sleep 1
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: msb runtime (fork tag; download, verify)
+        run: |
+          ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+          echo "PUDDLE_VM_RUNTIME_DIR=$RUNNER_TEMP/msb" >> "$GITHUB_ENV"
+          echo "PUDDLE_VM_ROOT=$RUNNER_TEMP/pvm" >> "$GITHUB_ENV"
+      - name: code-server (pinned release; download, verify)
+        run: |
+          ci/fetch-code-server.sh "$RUNNER_TEMP/code-server"
+          echo "PUDDLE_CODE_SERVER_DIR=$RUNNER_TEMP/code-server" >> "$GITHUB_ENV"
+      - name: guest agent (static musl build)
+        # build-agent.sh prints a path relative to the repository root; nextest runs each test with the
+        # crate's directory as its cwd, so the host would look for it there and report the agent missing.
+        run: echo "PUDDLE_AGENT_BIN=$PWD/$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
+      - name: the login tools (never retried)
+        run: |
+          PUDDLE_VM_PREFIX="l${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            cargo nextest run -p puddle-host --profile vm --locked --no-capture \
+              -E 'test(/(^|::)vm_radar_login_tools_/)'
+      - name: upload test results and msb logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: live-contracts-results
+          path: |
+            target/nextest/vm/junit.xml
+            ${{ runner.temp }}/pvm/**/logs/**
+          retention-days: 14
+          if-no-files-found: ignore

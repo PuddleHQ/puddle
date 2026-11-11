@@ -29,6 +29,7 @@ mod problems;
 mod proxy_sign_in;
 mod repos;
 mod repositories;
+mod repository_hosts;
 mod request_rules;
 mod routes;
 mod rule_sets;

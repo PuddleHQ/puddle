@@ -37,6 +37,7 @@ mod ports;
 mod proxy_sign_in;
 mod repos;
 mod repositories;
+mod repository_hosts;
 mod request_rules;
 mod rule_sets;
 mod shell_init;
@@ -63,8 +64,9 @@ pub use identities::{
     WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
 pub use interception::{
-    GlobalNeverDecrypt, InterceptionRequest, InterceptionView, LearnedHost, LearnedHosts,
-    LearnedLimits,
+    GlobalNeverDecrypt, InterceptionRequest, InterceptionSettingsRequest, InterceptionSettingsView,
+    InterceptionView, LearnedHost, LearnedHosts, LearnedLimits, MakePermanentRequest,
+    PermanentScope, WorkspaceMode,
 };
 pub use logins::{KeptLoginList, KeptLoginView};
 pub use network_health::{
@@ -81,6 +83,9 @@ pub use repos::{
     RepoVisibility,
 };
 pub use repositories::{AddRepositoryRequest, Checkout, CheckoutManage, Checkouts, RemoteNote};
+pub use repository_hosts::{
+    AllowedHost, RepositoryHost, RepositoryHostState, RepositoryHosts, RepositoryHostsRequest,
+};
 pub use request_rules::{NewRequestRuleRequest, RequestRule, RequestRuleList};
 pub use rule_sets::{
     NewRuleSetRequest, RuleSetEntry, RuleSetKind, RuleSetList, RuleSetOverride,
@@ -92,9 +97,9 @@ pub use start_folder::{StartFolderRequest, StartFolderSet};
 
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
-    NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest, RepoFindings,
-    SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
-    WorkspaceOperation, WorkspaceRepository,
+    GrowRootDiskRequest, NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest,
+    RepoFindings, SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict,
+    WorkspaceMatch, WorkspaceOperation, WorkspaceRepository,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -159,6 +164,8 @@ pub enum Actor {
     Api,
     /// Puddle itself (expiry, workspace deletion).
     System,
+    /// A workspace create, or adding a repository: it allows the host of the repository.
+    WorkspaceCreate,
 }
 
 impl Actor {
@@ -168,6 +175,7 @@ impl Actor {
             store::Actor::Ui => Self::Ui,
             store::Actor::Api => Self::Api,
             store::Actor::System => Self::System,
+            store::Actor::WorkspaceCreate => Self::WorkspaceCreate,
             other => {
                 return Err(ApiError::internal(&format_args!(
                     "unmapped actor {other:?}"
@@ -956,6 +964,9 @@ pub enum WorkspaceOpKind {
     RepoRemoved,
     /// A zero-filled or corrupt git file (`HEAD`, the index) of a checkout rebuilt at boot.
     GitRepaired,
+    /// A workspace's root disk made bigger (or the attempt failed; the detail says from what
+    /// size to what size and how it took effect).
+    RootDiskGrown,
 }
 
 impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
@@ -977,6 +988,7 @@ impl From<store::WorkspaceOpKind> for WorkspaceOpKind {
             K::RepoSwitched => Self::RepoSwitched,
             K::RepoRemoved => Self::RepoRemoved,
             K::GitRepaired => Self::GitRepaired,
+            K::RootDiskGrown => Self::RootDiskGrown,
         }
     }
 }
@@ -1097,6 +1109,21 @@ pub enum AuditRecord {
         #[serde(default)]
         #[schema(required = true)]
         scrubbed_stand_ins: Vec<String>,
+        /// The kinds of credential the requests carried that Puddle did not add or swap, each
+        /// once: `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`,
+        /// `azure_devops_token` or `git_authorization`. Never a value. Records written before it
+        /// existed, and connections of a workspace that turned the warning off, read as empty.
+        #[serde(default)]
+        #[schema(required = true)]
+        foreign_credentials: Vec<String>,
+        /// The kinds of token the answers held that Puddle does not hold, each once:
+        /// `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
+        /// `azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never
+        /// a value. Records written before it existed, and connections of a workspace that turned
+        /// the warning off, read as empty.
+        #[serde(default)]
+        #[schema(required = true)]
+        answer_credentials: Vec<String>,
         /// HTTP method, where the proxy saw the request in clear.
         #[schema(required = true)]
         method: Option<String>,
@@ -1321,6 +1348,8 @@ impl From<store::ConnectionRecord> for AuditRecord {
             injected,
             unswapped_stand_ins,
             scrubbed_stand_ins,
+            foreign_credentials,
+            answer_credentials,
             method,
             path,
             path_truncated,
@@ -1351,6 +1380,8 @@ impl From<store::ConnectionRecord> for AuditRecord {
             injected,
             unswapped_stand_ins,
             scrubbed_stand_ins,
+            foreign_credentials,
+            answer_credentials,
             method,
             path,
             path_truncated,
@@ -1720,6 +1751,12 @@ pub struct SettingsLayer {
     #[serde(default)]
     #[schema(required = true)]
     pub capture_logins: Option<bool>,
+    /// Whether Puddle warns when a request carries a credential it did not add (a token the
+    /// workspace holds itself). The request goes out either way; this only switches the notice
+    /// and the flag in the activity log. On by default.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub warn_foreign_credentials: Option<bool>,
 }
 
 impl From<&settings::WorkspaceLayer> for SettingsLayer {
@@ -1736,6 +1773,7 @@ impl From<&settings::WorkspaceLayer> for SettingsLayer {
             clipboard_read: layer.clipboard_read.map(Into::into),
             direct_ssh: layer.direct_ssh,
             capture_logins: layer.capture_logins,
+            warn_foreign_credentials: layer.warn_foreign_credentials,
         }
     }
 }
@@ -1754,6 +1792,7 @@ impl SettingsLayer {
             clipboard_read,
             direct_ssh,
             capture_logins,
+            warn_foreign_credentials,
         } = self;
         layer.memory = memory.map(MemoryMib::new).transpose().map_err(invalid)?;
         layer.cpus = cpus
@@ -1770,6 +1809,7 @@ impl SettingsLayer {
         layer.clipboard_read = clipboard_read.map(Into::into);
         layer.direct_ssh = direct_ssh;
         layer.capture_logins = capture_logins;
+        layer.warn_foreign_credentials = warn_foreign_credentials;
         Ok(())
     }
 }
@@ -2367,6 +2407,8 @@ pub struct EffectiveSettings {
     pub direct_ssh: ResolvedBool,
     /// Whether logins made inside the workspace are captured.
     pub capture_logins: ResolvedBool,
+    /// Whether a credential Puddle did not add raises a warning.
+    pub warn_foreign_credentials: ResolvedBool,
 }
 
 impl From<settings::Effective> for EffectiveSettings {
@@ -2381,6 +2423,7 @@ impl From<settings::Effective> for EffectiveSettings {
             clipboard_read,
             direct_ssh,
             capture_logins,
+            warn_foreign_credentials,
         } = e;
         let settings::EffectiveToggles {
             loopback,
@@ -2419,6 +2462,7 @@ impl From<settings::Effective> for EffectiveSettings {
             },
             direct_ssh: rb(direct_ssh),
             capture_logins: rb(capture_logins),
+            warn_foreign_credentials: rb(warn_foreign_credentials),
         }
     }
 }

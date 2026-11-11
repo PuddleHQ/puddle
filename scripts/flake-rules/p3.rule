@@ -1,0 +1,4 @@
+status: failing
+fixture: p3-refused-connect.bad.rs.txt
+as: crates/puddle-proxy/tests/x.rs
+fix: a connect that must fail because a server stopped is answered by a stranger when another test takes the freed port: hold the port for the whole test (`puddle_test_kit::ReservedPort` for a dead address, `quiet_port()` when the code under test binds it itself), or for a server that picked its own port check what it answers (`puddle_test_kit::http_status`), or `flake-ok: <why no stranger can hold this port>`

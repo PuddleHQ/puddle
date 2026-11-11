@@ -5,13 +5,13 @@
 //! missing file is a fresh install; one that exists but cannot be read or parsed is an error, so
 //! a damaged file is never mistaken for an empty one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use puddle_api::{RepoUrl, Repository, SettingsRepo, SettingsRepoError, StartFolder};
-use puddle_types::{CheckoutDir, SessionUser, WorkspaceId};
+use puddle_types::{CheckoutDir, EntryId, SessionUser, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -228,6 +228,8 @@ pub(crate) struct Stored {
     pub(crate) memory_mib: u32,
     pub(crate) created_at: u64,
     pub(crate) disk_size_mib: u64,
+    /// The size in MiB the user grew the root disk to; `None` when it was never grown.
+    pub(crate) root_disk_grown_mib: Option<u32>,
     /// Set from the moment a create starts until it finishes. A record still marked after a
     /// restart is an interrupted create: its volume is an orphan for reconcile to remove.
     pub(crate) creating: bool,
@@ -235,7 +237,7 @@ pub(crate) struct Stored {
 
 /// The version the book is written in. Version 1 held one `repo_url` per workspace; version 2
 /// holds a list of repositories and a start folder; version 3 holds the display text as `name`
-/// and has no `display_name`.
+/// and has no `display_name`, and lists the ids of deleted workspaces as `retired_ids`.
 const BOOK_VERSION: u32 = 3;
 
 /// A version 3 entry as it is on disk.
@@ -253,6 +255,9 @@ struct EntryV3 {
     memory_mib: u32,
     created_at: u64,
     disk_size_mib: u64,
+    /// Missing in an entry of a workspace whose root disk was never grown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root_disk_grown_mib: Option<u32>,
     #[serde(default)]
     creating: bool,
 }
@@ -261,8 +266,12 @@ const fn root() -> SessionUser {
     SessionUser::Root
 }
 
+/// A repository row of versions 1 to 3. `entry` is missing in a list written before entries
+/// had ids: a read gives such an entry a fresh id and the next save writes it.
 #[derive(Debug, Serialize, Deserialize)]
 struct RepositoryV2 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entry: Option<String>,
     url: String,
     directory: String,
 }
@@ -317,6 +326,7 @@ impl From<EntryV2> for EntryV3 {
             memory_mib: v2.memory_mib,
             created_at: v2.created_at,
             disk_size_mib: v2.disk_size_mib,
+            root_disk_grown_mib: None,
             creating: v2.creating,
         }
     }
@@ -333,6 +343,7 @@ impl From<EntryV1> for EntryV2 {
             name: v1.name,
             display_name: v1.display_name,
             repositories: vec![RepositoryV2 {
+                entry: None,
                 url: v1.repo_url,
                 directory: directory.clone(),
             }],
@@ -354,18 +365,31 @@ impl EntryV3 {
         let id = WorkspaceId::new(&self.id).map_err(|e| at("has a bad id", &e))?;
         let name =
             puddle_api::DisplayName::parse(&self.name).map_err(|e| at("has a bad name", &e))?;
-        let repositories = self
-            .repositories
-            .iter()
-            .map(|r| {
-                Ok(Repository {
-                    url: RepoUrl::parse(&r.url)
-                        .map_err(|e| at("has a bad repository address", &e))?,
-                    directory: CheckoutDir::new(&r.directory)
-                        .map_err(|e| at("has a bad checkout directory", &e))?,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let mut taken: Vec<EntryId> = Vec::new();
+        for given in self.repositories.iter().filter_map(|r| r.entry.as_deref()) {
+            let entry = EntryId::new(given).map_err(|e| at("has a bad repository entry id", &e))?;
+            if taken.contains(&entry) {
+                return Err(at("lists one repository entry id twice", &entry));
+            }
+            taken.push(entry);
+        }
+        let mut repositories = Vec::with_capacity(self.repositories.len());
+        for r in &self.repositories {
+            let entry = if let Some(given) = &r.entry {
+                EntryId::new(given).map_err(|e| at("has a bad repository entry id", &e))?
+            } else {
+                let fresh = puddle_api::new_entry_id(|e| taken.contains(e))
+                    .map_err(|e| at("could not give a repository an id", &e))?;
+                taken.push(fresh.clone());
+                fresh
+            };
+            repositories.push(Repository {
+                entry,
+                url: RepoUrl::parse(&r.url).map_err(|e| at("has a bad repository address", &e))?,
+                directory: CheckoutDir::new(&r.directory)
+                    .map_err(|e| at("has a bad checkout directory", &e))?,
+            });
+        }
         let start_folder = self
             .start_folder
             .as_deref()
@@ -382,6 +406,7 @@ impl EntryV3 {
             memory_mib: self.memory_mib,
             created_at: self.created_at,
             disk_size_mib: self.disk_size_mib,
+            root_disk_grown_mib: self.root_disk_grown_mib,
             creating: self.creating,
         })
     }
@@ -396,6 +421,7 @@ impl From<Stored> for EntryV3 {
                 .repositories
                 .into_iter()
                 .map(|r| RepositoryV2 {
+                    entry: Some(r.entry.to_string()),
                     url: r.url.as_str().to_owned(),
                     directory: r.directory.to_string(),
                 })
@@ -406,6 +432,7 @@ impl From<Stored> for EntryV3 {
             memory_mib: s.memory_mib,
             created_at: s.created_at,
             disk_size_mib: s.disk_size_mib,
+            root_disk_grown_mib: s.root_disk_grown_mib,
             creating: s.creating,
         }
     }
@@ -420,6 +447,17 @@ struct Version {
 struct BookFile<E> {
     version: u32,
     workspaces: Vec<E>,
+    /// The ids of deleted workspaces, kept for good so no new workspace gets one (version 3;
+    /// none in an older book).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    retired_ids: Vec<String>,
+}
+
+/// What the book holds: the workspaces, and the ids no new workspace may get.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Book {
+    pub(crate) workspaces: Vec<Stored>,
+    pub(crate) retired: BTreeSet<WorkspaceId>,
 }
 
 /// The workspace book: a JSON file with one entry per workspace.
@@ -444,9 +482,9 @@ impl WorkspaceBook {
     /// volume: reconcile keeps every workspace volume the book doesn't name, and the host logs it.
     /// A version 1 or 2 book is read as version 3 and stays on disk as it is until the next save; a
     /// book newer than this Puddle knows is refused, so it is never read wrongly or overwritten.
-    pub(crate) fn load(&self) -> Result<Vec<Stored>, HostError> {
+    pub(crate) fn load(&self) -> Result<Book, HostError> {
         let Some(value) = read_json(&self.path).map_err(Self::error)? else {
-            return Ok(Vec::new());
+            return Ok(Book::default());
         };
         let not_a_list = |e: serde_json::Error| {
             Self::error(format!(
@@ -455,23 +493,28 @@ impl WorkspaceBook {
             ))
         };
         let version = Version::deserialize(&value).map_err(not_a_list)?.version;
-        let entries: Vec<EntryV3> = match version {
-            1 => BookFile::<EntryV1>::deserialize(&value)
-                .map_err(not_a_list)?
-                .workspaces
-                .into_iter()
-                .map(|e| EntryV3::from(EntryV2::from(e)))
-                .collect(),
-            2 => BookFile::<EntryV2>::deserialize(&value)
-                .map_err(not_a_list)?
-                .workspaces
-                .into_iter()
-                .map(EntryV3::from)
-                .collect(),
-            BOOK_VERSION => {
-                BookFile::<EntryV3>::deserialize(&value)
+        let (entries, retired): (Vec<EntryV3>, Vec<String>) = match version {
+            1 => (
+                BookFile::<EntryV1>::deserialize(&value)
                     .map_err(not_a_list)?
                     .workspaces
+                    .into_iter()
+                    .map(|e| EntryV3::from(EntryV2::from(e)))
+                    .collect(),
+                Vec::new(),
+            ),
+            2 => (
+                BookFile::<EntryV2>::deserialize(&value)
+                    .map_err(not_a_list)?
+                    .workspaces
+                    .into_iter()
+                    .map(EntryV3::from)
+                    .collect(),
+                Vec::new(),
+            ),
+            BOOK_VERSION => {
+                let file = BookFile::<EntryV3>::deserialize(&value).map_err(not_a_list)?;
+                (file.workspaces, file.retired_ids)
             }
             newer if newer > BOOK_VERSION => {
                 return Err(Self::error(format!(
@@ -486,19 +529,35 @@ impl WorkspaceBook {
                 )));
             }
         };
-        entries
+        let workspaces = entries
             .into_iter()
             .map(|entry| entry.check().map_err(Self::error))
-            .collect()
+            .collect::<Result<_, _>>()?;
+        let retired = retired
+            .iter()
+            .map(|id| {
+                WorkspaceId::new(id)
+                    .map_err(|e| Self::error(format!("retired id {id:?} is not an id: {e}")))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Book {
+            workspaces,
+            retired,
+        })
     }
 
-    pub(crate) fn save(&self, workspaces: Vec<Stored>) -> Result<(), HostError> {
+    pub(crate) fn save(
+        &self,
+        workspaces: Vec<Stored>,
+        retired: &BTreeSet<WorkspaceId>,
+    ) -> Result<(), HostError> {
         let file = BookFile {
             version: BOOK_VERSION,
             workspaces: workspaces
                 .into_iter()
                 .map(EntryV3::from)
                 .collect::<Vec<_>>(),
+            retired_ids: retired.iter().map(ToString::to_string).collect(),
         };
         let value = serde_json::to_value(&file).map_err(|e| Self::error(e.to_string()))?;
         write_json(&self.path, &value).map_err(Self::error)

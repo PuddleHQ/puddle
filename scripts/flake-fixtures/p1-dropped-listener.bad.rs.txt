@@ -1,0 +1,19 @@
+// Original code, kept as it was; puddle-proxy tests/integration/pull.rs and puddle-e2e tests/integration/name_proxy.rs at 629fced84: a "dead" port made by binding port 0 and dropping the listener.
+async fn a_dead_name_gets_a_502() {
+    // A loopback port nothing listens on.
+    let closed = TcpListener::bind((LOCAL, 0)).await.unwrap();
+    let port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let (head, _) = send(route.local_addr(), &connect(&format!("127.0.0.1:{port}"), Some(&auth))).await;
+    assert!(head.starts_with("HTTP/1.1 502 "), "{head}");
+}
+
+// Original code, kept as it was; puddle-agent tests/integration/oom.rs at 629fced84: the same pick as a chain, the listener a temporary.
+async fn the_agent_still_relays() {
+    let gone = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    conn.write_all(format!("CONNECT {gone} HTTP/1.1\r\n\r\n").as_bytes()).await.unwrap();
+}

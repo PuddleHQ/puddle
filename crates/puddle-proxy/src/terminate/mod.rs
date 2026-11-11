@@ -62,6 +62,7 @@
 mod alt_svc;
 mod body;
 mod exchange;
+mod foreign;
 mod guest;
 #[cfg(test)]
 pub(crate) use guest::test_client_hello;
@@ -91,6 +92,8 @@ use puddle_ca::WorkspaceCa;
 use puddle_types::WorkspaceId;
 
 pub use exchange::{AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY};
+pub use foreign::ForeignCredentialWarning;
+pub(crate) use guest::{ALPN_HTTP11, Prefixed};
 pub use inject::{
     HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
     NoInjection, RequestView, SecretValue, Unauthorized,
@@ -111,8 +114,10 @@ pub(crate) mod h1 {
     pub(crate) use super::session::{keep_reading, send_and_pump, short};
 }
 pub use set::{PatternError, TerminationSet};
+#[cfg(feature = "fuzzing")]
+pub(crate) use stand_in::check_answer_scan;
 pub use stand_in::{Placement, StandIn, StandInError, StandInOrigin, StandIns, secret_stand_in};
-pub use token_body::{BodyFormat, TokenBody, TokenBodyError};
+pub use token_body::{BodyField, BodyFormat, FieldKind, TokenBody, TokenBodyError};
 
 /// Hosts Puddle decrypts by default: GitHub and Azure DevOps, for git and Git LFS. Not
 /// `api.github.com` (the `gh` CLI and gists would become an exfiltration channel with a
@@ -131,6 +136,9 @@ pub struct Termination {
     exchanges: Option<Arc<dyn ExchangeRewriter>>,
     interception: Interception,
     request_rules: RequestRules,
+    git_ssh_hosts: TerminationSet,
+    git_ssh_keys: Option<Arc<crate::ssh_git::GitSshHostKeys>>,
+    foreign_warning: Arc<ForeignCredentialWarning>,
 }
 
 /// How a connection to a host is decrypted.
@@ -161,7 +169,26 @@ impl Termination {
             exchanges: None,
             interception: Interception::default(),
             request_rules: RequestRules::default(),
+            git_ssh_hosts: TerminationSet::new(),
+            git_ssh_keys: None,
+            foreign_warning: Arc::new(ForeignCredentialWarning::default()),
         }
+    }
+
+    /// Warns about a credential in a request that Puddle did not add or swap while `warning`
+    /// says so (see [`ForeignCredentialWarning`]). On by default. Shared, so a new `Termination`
+    /// for the same workspace keeps what the user was already told.
+    #[must_use]
+    pub fn with_foreign_credential_warning(
+        mut self,
+        warning: Arc<ForeignCredentialWarning>,
+    ) -> Self {
+        self.foreign_warning = warning;
+        self
+    }
+
+    pub(crate) fn foreign_warning(&self) -> &Arc<ForeignCredentialWarning> {
+        &self.foreign_warning
     }
 
     /// Sets how the workspace decrypts beyond its hosts with a credential (see [`Interception`]).
@@ -178,6 +205,37 @@ impl Termination {
         self.set.extend(&rules.hosts());
         self.request_rules = rules;
         self
+    }
+
+    /// Also ends SSH to `hosts` itself (the hosts of the workspace's Git credentials: an
+    /// enterprise server), on top of the Git hosts every workspace has (see
+    /// [`crate::GitSsh`]). Not part of [`Self::set`]: a name there that has no Git credential
+    /// (a login endpoint, a registry) is no Git host.
+    #[must_use]
+    pub fn with_git_ssh_hosts(mut self, hosts: TerminationSet) -> Self {
+        self.git_ssh_hosts = hosts;
+        self
+    }
+
+    /// Serves Git over SSH to this workspace with `keys`, the host keys of this start, instead of
+    /// the keys the proxy's [`crate::GitSsh`] holds. They are the ones the guest's
+    /// `ssh_known_hosts` lists.
+    #[must_use]
+    pub fn with_git_ssh_keys(mut self, keys: Arc<crate::ssh_git::GitSshHostKeys>) -> Self {
+        self.git_ssh_keys = Some(keys);
+        self
+    }
+
+    /// The keys of this start, when it has its own.
+    #[must_use]
+    pub fn git_ssh_keys(&self) -> Option<&crate::ssh_git::GitSshHostKeys> {
+        self.git_ssh_keys.as_deref()
+    }
+
+    /// The hosts whose SSH is ended for Git, beyond the built-in ones.
+    #[must_use]
+    pub fn git_ssh_hosts(&self) -> &TerminationSet {
+        &self.git_ssh_hosts
     }
 
     /// The workspace's rules on method and path.

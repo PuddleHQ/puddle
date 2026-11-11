@@ -19,11 +19,11 @@ use crate::ApiErrorBody;
 use crate::WorkspaceRecord;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
-use crate::routes::AppState;
+use crate::routes::{AppState, repository_hosts};
 use crate::wire::{
-    AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, NewWorkspaceIdentity,
-    NewWorkspaceRequest, RenameWorkspaceRequest, SessionUserRequest, Workspace, WorkspaceList,
-    WorkspaceLookupConflict, WorkspaceMatch,
+    AllowedHost, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest,
+    GrowRootDiskRequest, NewWorkspaceIdentity, NewWorkspaceRequest, RenameWorkspaceRequest,
+    SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
 };
 use crate::workspaces::{GitSetup, LocalSource, NewRepository};
 
@@ -228,15 +228,34 @@ pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> 
 /// settings, and its entry in the answer says so; the workspace is not undone for it.
 pub(super) struct StoreGitSetup {
     store: Arc<Store>,
+    /// Whether it also allows the hosts of the repositories no rule decides yet (a create, or
+    /// adding a repository; not a clone again or an adopted volume).
+    allow_hosts: bool,
     started: Mutex<Vec<NewWorkspaceIdentity>>,
+    allowed: Mutex<Vec<AllowedHost>>,
 }
 
 impl StoreGitSetup {
     pub(super) fn new(store: Arc<Store>) -> Self {
         Self {
             store,
+            allow_hosts: false,
             started: Mutex::new(Vec::new()),
+            allowed: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Sets up as [`Self::new`] does and, before the first clone, allows each repository's host
+    /// for the workspace unless a rule decides it already (ST-44a).
+    pub(super) fn allowing_hosts(store: Arc<Store>) -> Self {
+        Self {
+            allow_hosts: true,
+            ..Self::new(store)
+        }
+    }
+
+    pub(super) fn take_allowed(&self) -> Vec<AllowedHost> {
+        std::mem::take(&mut *self.allowed.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     pub(super) fn take(&self) -> Vec<NewWorkspaceIdentity> {
@@ -291,6 +310,11 @@ fn start_all(
         .collect()
 }
 
+/// The grant failed: the clone waits in the inbox as it did before the create allowed hosts.
+fn warn_not_allowed(workspace: &WorkspaceId, err: &puddle_store::StoreError) {
+    tracing::warn!(%workspace, error = ?err, "could not allow the hosts of a new workspace's repositories");
+}
+
 impl GitSetup for StoreGitSetup {
     fn set_up<'a>(
         &'a self,
@@ -302,6 +326,25 @@ impl GitSetup for StoreGitSetup {
             // run would leave repositories set up without the answer saying which.
             let started = start_all(&self.store, workspace, repositories);
             *self.started.lock().unwrap_or_else(PoisonError::into_inner) = started;
+            if self.allow_hosts {
+                let hosts = repository_hosts::hosts_of(
+                    repositories.iter().map(|r| r.repository.url.as_str()),
+                );
+                match self.store.allow_hosts_for_create(workspace, &hosts) {
+                    Ok(made) => {
+                        *self.allowed.lock().unwrap_or_else(PoisonError::into_inner) = made
+                            .into_iter()
+                            .map(|rule| AllowedHost {
+                                host: rule.pattern.to_string(),
+                                rule_id: rule.id.0,
+                            })
+                            .collect();
+                    }
+                    // The clone then waits in the inbox as it did before the create allowed
+                    // hosts; the workspace is not undone for it.
+                    Err(err) => warn_not_allowed(workspace, &err),
+                }
+            }
         })
     }
 }
@@ -310,7 +353,8 @@ impl GitSetup for StoreGitSetup {
 /// The list is checked whole before anything exists. Each repository's identity joins the
 /// workspace and its repository table row is made before the first clone. A clone that fails
 /// fails only its repository: a background problem names it and the create still ends `done`.
-/// Answers 202; follow it with `workspace_progress` events.
+/// Puddle picks the new workspace's id (eight random characters, never one used before); the
+/// answer carries it. Answers 202; follow it with `workspace_progress` events.
 #[utoipa::path(
     post,
     path = "/api/workspaces",
@@ -318,9 +362,9 @@ impl GitSetup for StoreGitSetup {
     request_body = NewWorkspaceRequest,
     responses(
         (status = ACCEPTED, description = "creation started", body = Workspace),
-        (status = CONFLICT, description = "another workspace has that name (ignoring case), or the id it would get is taken, or two identities of the list cover the same place (`identity_collision`)", body = ApiErrorBody),
+        (status = CONFLICT, description = "another workspace has that name (ignoring case), two identities of the list cover the same place (`identity_collision`), or a block rule covers the host of a repository (the create never overrides a block)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "invalid name, repository (address, SSH remote, directory clash, the same repository twice, unknown identity, more than 100), start folder, image or memory, or `repo_url` sent", body = ApiErrorBody),
-        (status = SERVICE_UNAVAILABLE, description = "workspaces are not available", body = ApiErrorBody)
+        (status = SERVICE_UNAVAILABLE, description = "workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source)", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn create_workspace(
@@ -349,26 +393,24 @@ pub(crate) async fn create_workspace(
     })
     .await?;
     let new = body.into_new(|id| known.contains(&id), &locals)?;
-    let existing: BTreeSet<WorkspaceId> = state
-        .workspaces
-        .list()
-        .await?
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let planned = new
-        .id(|id| existing.contains(id))
-        .map_err(|e| ApiError::invalid(format!("this name can't be a workspace: {e}")))?;
     let store = state.store.clone();
     let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
-    blocking(move || Ok(store.check_repository_git(&planned, &requests)?)).await?;
-    let git = StoreGitSetup::new(state.store.clone());
+    blocking(move || Ok(store.check_repository_git(None, &requests)?)).await?;
+    let hosts =
+        repository_hosts::hosts_of(new.repositories.iter().map(|r| r.repository.url.as_str()));
+    repository_hosts::refuse_blocked(&state.store, None, hosts).await?;
+    let git = StoreGitSetup::allowing_hosts(state.store.clone());
     let record = state.workspaces.create(new, &git).await?;
     // A new workspace may start with direct SSH on (the global default).
     crate::system_managed::refresh(&state).await;
     Ok((
         StatusCode::ACCEPTED,
-        Json(view(&state, record).await.with_identities(git.take())),
+        Json(
+            view(&state, record)
+                .await
+                .with_identities(git.take())
+                .with_allowed_hosts(git.take_allowed()),
+        ),
     ))
 }
 
@@ -532,6 +574,37 @@ pub(crate) async fn reset_root_disk(
     Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
 }
 
+/// Makes the workspace's root disk bigger. The root disk holds the home directory, tool caches
+/// and installed packages, and only ever grows. A running workspace has the room at once when
+/// the runtime can grow a disk under a running guest; otherwise Puddle restarts it, which loses
+/// nothing that was saved to disk. A stopped workspace has the room at its next start. The size
+/// is kept when the root disk is reset. Answers 202; the workspace is busy
+/// (`growing_root_disk`) until it is done.
+#[utoipa::path(
+    post,
+    path = "/api/workspaces/{id}/grow-root-disk",
+    tag = "workspaces",
+    params(("id" = String, Path, description = "workspace id")),
+    request_body = GrowRootDiskRequest,
+    responses(
+        (status = ACCEPTED, description = "growing started", body = Workspace),
+        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
+        (status = CONFLICT, description = "busy, or starting or stopping", body = ApiErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "not above the current size, or more than this computer has free", body = ApiErrorBody)
+    )
+)]
+pub(crate) async fn grow_root_disk(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    crate::extract::Json(body): crate::extract::Json<GrowRootDiskRequest>,
+) -> Result<(StatusCode, Json<Workspace>), ApiError> {
+    let record = state
+        .workspaces
+        .grow_root_disk(&workspace_id(&id)?, body.size_mib)
+        .await?;
+    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+}
+
 /// What deleting the workspace would lose: uncommitted changes, unpushed commits, stashes and
 /// data outside any checkout. Can take a while (it looks inside the workspace).
 #[utoipa::path(
@@ -635,77 +708,4 @@ pub(crate) async fn attach_workspace(
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_store::{Limits, ManualClock};
-
-    use super::*;
-    use crate::workspaces::{RepoUrl, Repository};
-
-    fn at(url: &str, identity: Option<i64>) -> NewRepository {
-        NewRepository {
-            repository: Repository::at_default_directory(RepoUrl::parse(url).unwrap()),
-            identity: identity.map(IdentityId),
-            pull: true,
-            push: true,
-            local: None,
-        }
-    }
-
-    #[test]
-    fn a_list_the_store_cannot_set_up_is_cloned_without_and_every_entry_says_why() {
-        let store =
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let ws = WorkspaceId::new("w").unwrap();
-        // The second repository's identity is gone by the time the create sets it up: the first
-        // is not set up either, as the list is one transaction.
-        let list = [
-            at("https://github.com/acme/web", None),
-            at("https://github.com/acme/api", Some(42)),
-        ];
-        let answers = start_all(&store, &ws, &list);
-        assert_eq!(answers.len(), 2);
-        for (answer, url) in answers
-            .iter()
-            .zip(["https://github.com/acme/web", "https://github.com/acme/api"])
-        {
-            assert_eq!(answer.identity, None);
-            let warning = answer.warning.as_deref().unwrap();
-            assert!(
-                warning.starts_with(&format!(
-                    "Puddle could not set up the Git settings of {url} ("
-                )),
-                "{warning}"
-            );
-            assert!(warning.ends_with("Set them on the Git tab."), "{warning}");
-        }
-        assert_eq!(store.workspace_git(&ws).unwrap().repos, []);
-    }
-
-    #[test]
-    fn a_repository_the_table_cannot_hold_is_skipped_and_the_rest_are_set_up() {
-        let store =
-            Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
-        let ws = WorkspaceId::new("w").unwrap();
-        let list = [
-            at("https://github.com/a/b/c", None),
-            at("https://github.com/acme/web", None),
-        ];
-        let answers = start_all(&store, &ws, &list);
-        assert!(
-            answers[0]
-                .warning
-                .as_deref()
-                .unwrap()
-                .contains("cannot tell which repository https://github.com/a/b/c is")
-        );
-        // The second was set up: its notice is about the missing identity, not a failed set-up.
-        assert!(
-            answers[1]
-                .warning
-                .as_deref()
-                .unwrap()
-                .starts_with("No identity covers github.com/acme")
-        );
-        assert_eq!(store.workspace_git(&ws).unwrap().repos.len(), 1);
-    }
-}
+mod tests;

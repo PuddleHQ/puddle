@@ -288,10 +288,11 @@ impl Events {
 }
 
 /// Matches the `workspace_progress` event of `workspace` that ends an operation.
-pub(crate) fn ended(workspace: &'static str) -> impl Fn(&Value) -> bool {
+pub(crate) fn ended(workspace: &str) -> impl Fn(&Value) -> bool + use<> {
+    let workspace = workspace.to_owned();
     move |e| {
         e["type"] == "workspace_progress"
-            && e["workspace"] == workspace
+            && e["workspace"] == workspace.as_str()
             && matches!(e["step"].as_str(), Some("done" | "failed"))
     }
 }
@@ -427,8 +428,26 @@ impl puddle_api::DevCertService for NoDevCert {
     }
 }
 
+/// Options that touch nothing of this machine's. A workspace's id is made from its name (`acme`
+/// gets `acme`), so a test can name its paths; a test about generated ids sets
+/// `workspace_ids` back to `None`.
 pub(crate) fn hermetic_options() -> HostOptions {
     let mut options = HostOptions::default();
     options.dev_cert = Some(Arc::new(NoDevCert));
+    options.workspace_ids = Some(Arc::new(puddle_api::NameIds));
+    options.free_space = Some(Arc::new(FixedSpace(FIXED_FREE_BYTES)));
     options
+}
+
+/// The free space every hermetic host sees on its drive: a test about a grow never depends on
+/// the machine it runs on.
+pub(crate) const FIXED_FREE_BYTES: u64 = 512 * 1024 * 1024 * 1024;
+
+/// A drive with a fixed figure of free space.
+pub(crate) struct FixedSpace(pub(crate) u64);
+
+impl puddle_host::Space for FixedSpace {
+    fn free_bytes(&self) -> std::io::Result<u64> {
+        Ok(self.0)
+    }
 }

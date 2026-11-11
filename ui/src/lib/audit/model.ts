@@ -2,6 +2,7 @@
 // What the activity screen shows of an audit record, and how its filters turn into an API query
 // and a page address. Pure: nothing here touches the page or the network.
 import type { components } from "#lib/api/schema.d.ts";
+import { actorLabel } from "#lib/rules/model.ts";
 
 type Schemas = components["schemas"];
 export type AuditEntry = Schemas["AuditEntry"];
@@ -174,6 +175,28 @@ export interface RowView {
   outcome: { label: string; tone: Tone } | null;
   /** What else is worth a glance: why, how much, which rule. */
   detail: string;
+  /** The rule on method and path that refused a connection; its name is part of `detail`. */
+  requestRule?: number;
+}
+
+/** How a rule on method and path reads inside a connection's detail. */
+export function requestRuleName(id: number): string {
+  return `method and path rule ${id}`;
+}
+
+/** A detail line cut around the name of its rule, so the name can be a link. */
+export function splitDetail(
+  detail: string,
+  id: number,
+): { before: string; name: string; after: string } {
+  const name = requestRuleName(id);
+  const at = detail.indexOf(name);
+  if (at < 0) return { before: detail, name: "", after: "" };
+  return {
+    before: detail.slice(0, at),
+    name,
+    after: detail.slice(at + name.length),
+  };
 }
 
 const REASONS: Record<string, string> = {
@@ -195,7 +218,12 @@ const REASONS: Record<string, string> = {
     'the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
   pull_denied:
     'the fetch is not on the workspace\'s pull list (add it on its Git tab, or turn off "Only pull from listed repos")',
-  bad_git_path: "the Git address names the repository in more than one way",
+  bad_git_path:
+    "the Git address is not one Puddle reads, or names the repository in more than one way (use owner/repository)",
+  ssh_command_unsupported:
+    "Puddle serves only git-upload-pack and git-receive-pack over SSH, and this command was neither",
+  ssh_channel_refused:
+    "the SSH session asked for something Puddle does not allow (a terminal, a subsystem, forwarding or a second command)",
   credential_rejected:
     "the Git host did not accept the credential Puddle added",
   credential_unavailable: "the Git credential could not be read",
@@ -348,6 +376,10 @@ const WORKSPACE_OPS: Record<
     done: "Repository removed",
     failed: "Removing a repository failed",
   },
+  root_disk_grown: {
+    done: "Root disk made bigger",
+    failed: "Making the root disk bigger failed",
+  },
   git_repaired: {
     done: "Git repaired after a crash",
     failed: "Repairing git after a crash failed",
@@ -405,12 +437,45 @@ function pendingOutcome(state: string): RowView["outcome"] {
   return { label: state, tone: "neutral" };
 }
 
+/**
+ * What a record's method field holds when the connection was Git over SSH: the proxy writes the
+ * command (`git-receive-pack`) there, where HTTP writes `POST`. A command Puddle did not serve
+ * (`ssh-command`) and a refused channel request (`ssh-channel`) are written the same way. The
+ * record has no protocol field yet, and no HTTP method is spelled in lower case with a hyphen.
+ */
+const SSH_COMMANDS: Record<string, string> = {
+  "git-receive-pack": "push to",
+  "git-upload-pack": "fetch from",
+  "git-lfs-upload": "Git LFS upload to",
+  "git-lfs-download": "Git LFS download from",
+};
+const SSH_REFUSED_WORDS: Record<string, string> = {
+  "ssh-command": "command Puddle does not serve",
+  "ssh-channel": "session request",
+};
+
+/** "SSH: push to github.com/acme/app", or `null` when the record is not Git over SSH. */
+function sshLine(
+  record: Extract<AuditRecord, { type: "connection" }>,
+  method: string,
+): string | null {
+  const verb = SSH_COMMANDS[method];
+  if (verb !== undefined) {
+    return `SSH: ${verb} ${record.host ?? ""}${record.path ?? ""}`;
+  }
+  const refused = SSH_REFUSED_WORDS[method];
+  return refused === undefined ? null : `SSH: ${refused}`;
+}
+
 function connectionDetail(
   record: Extract<AuditRecord, { type: "connection" }>,
 ): string {
   const parts: string[] = [];
   if (record.method !== null) {
-    parts.push(`${record.method} ${record.path ?? ""}`.trim());
+    parts.push(
+      sshLine(record, record.method) ??
+        `${record.method} ${record.path ?? ""}`.trim(),
+    );
   }
   const failed = record.reason.startsWith(FAILED_PREFIX)
     ? record.reason.slice(FAILED_PREFIX.length)
@@ -423,7 +488,7 @@ function connectionDetail(
   const set = setLabel(record.rule_set);
   if (set !== null) parts.push(set);
   if (record.request_rule !== null) {
-    parts.push(`method and path rule ${record.request_rule}`);
+    parts.push(requestRuleName(record.request_rule));
   } else if (record.rule_id !== null) parts.push(`rule ${record.rule_id}`);
   else if (set === null && note === undefined) parts.push(`because ${reason}`);
   if (note !== undefined) parts.push(note);
@@ -449,6 +514,12 @@ function connectionDetail(
   if (record.unswapped_stand_ins.length > 0) {
     parts.push(unswappedNote(record.unswapped_stand_ins));
   }
+  if (record.foreign_credentials.length > 0) {
+    parts.push(foreignNote(record.foreign_credentials));
+  }
+  if (record.answer_credentials.length > 0) {
+    parts.push(unknownTokenNote(record.answer_credentials));
+  }
   if (record.scrubbed_stand_ins.length > 0) {
     const names = record.scrubbed_stand_ins.map(standInLabel).join(", ");
     parts.push(
@@ -456,6 +527,38 @@ function connectionDetail(
     );
   }
   return parts.join(" · ");
+}
+
+const FOREIGN_KINDS: Record<string, string> = {
+  stale_stand_in: "a stand-in Puddle no longer holds",
+  github_token: "a GitHub token",
+  npm_token: "an npm token",
+  gitlab_token: "a GitLab token",
+  azure_devops_token: "an Azure DevOps token",
+  git_authorization: "a login for a Git repository",
+};
+
+/** The kinds of credential the workspace sent that Puddle did not add; never a value. */
+function foreignNote(kinds: readonly string[]): string {
+  const names = kinds.map((k) => FOREIGN_KINDS[k] ?? k).join(", ");
+  return `the workspace sent ${names} that Puddle did not add; it went out as it was`;
+}
+
+const UNKNOWN_TOKEN_KINDS: Record<string, string> = {
+  github_token: "a GitHub token",
+  github_fine_grained_token: "a fine-grained GitHub token",
+  gitlab_token: "a GitLab token",
+  npm_token: "an npm token",
+  azure_devops_token: "an Azure DevOps token",
+  anthropic_key: "an Anthropic key",
+  openai_key: "an OpenAI key",
+  jwt_with_refresh_token: "a sign-in token with a refresh token",
+};
+
+/** The kinds of token the answers held that Puddle does not hold; never a value. */
+function unknownTokenNote(kinds: readonly string[]): string {
+  const names = kinds.map((k) => UNKNOWN_TOKEN_KINDS[k] ?? k).join(", ");
+  return `the answer held ${names} that Puddle does not hold; the workspace got it as it was`;
 }
 
 /**
@@ -525,6 +628,9 @@ export function describe(record: AuditRecord): RowView {
         destination: endpoint(record.host, record.port),
         outcome: connectionOutcome(record),
         detail: connectionDetail(record),
+        ...(record.request_rule === null
+          ? {}
+          : { requestRule: record.request_rule }),
       };
     case "pending_created":
     case "pending_decided":
@@ -570,7 +676,7 @@ export function describe(record: AuditRecord): RowView {
           ? `${ruleLabel(record.rule)}, by ${record.actor}, ${record.reason}`
           : record.type === "rule_updated"
             ? `${ruleLabel(record.rule)}, by ${record.actor}`
-            : `${ruleLabel(record.rule)}${record.type === "rule_created" ? `, by ${record.rule.created_by}` : ""}`;
+            : `${ruleLabel(record.rule)}${record.type === "rule_created" ? `, by ${actorLabel(record.rule.created_by)}` : ""}`;
       return {
         ts: record.ts,
         workspace: record.rule.workspace_id,
@@ -585,7 +691,7 @@ export function describe(record: AuditRecord): RowView {
       const detail =
         record.type === "request_rule_deleted"
           ? `${requestRuleLabel(record.rule)}, by ${record.actor}, ${record.reason}`
-          : `${requestRuleLabel(record.rule)}, by ${record.rule.created_by}`;
+          : `${requestRuleLabel(record.rule)}, by ${actorLabel(record.rule.created_by)}`;
       return {
         ts: record.ts,
         workspace: record.rule.workspace_id,

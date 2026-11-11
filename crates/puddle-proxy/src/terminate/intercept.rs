@@ -214,6 +214,8 @@ impl PassThrough {
 pub struct Interception {
     pub(crate) decrypt_all: bool,
     pub(crate) never: TerminationSet,
+    pub(crate) curated: TerminationSet,
+    pub(crate) learning: bool,
     pub(crate) learned: std::sync::Arc<PassThrough>,
 }
 
@@ -224,8 +226,32 @@ impl Interception {
         Self {
             decrypt_all: false,
             never: TerminationSet::new(),
+            curated: TerminationSet::new(),
+            learning: true,
             learned,
         }
+    }
+
+    /// The hosts passed through without being tried, because tools are known to refuse
+    /// Puddle's certificate for them (the built-in curated list, in the mode that has one).
+    #[must_use]
+    pub fn curated(mut self, curated: TerminationSet) -> Self {
+        self.curated = curated;
+        self
+    }
+
+    /// Whether a host whose tool refused Puddle's certificate is learned and passed through
+    /// (on unless the user turned it off).
+    #[must_use]
+    pub fn learn_from_rejections(mut self, on: bool) -> Self {
+        self.learning = on;
+        self
+    }
+
+    /// Whether a refused certificate makes the host learned.
+    #[must_use]
+    pub fn is_learning(&self) -> bool {
+        self.learning
     }
 
     /// Turns "decrypt every host" on or off.
@@ -269,6 +295,8 @@ impl Interception {
         }
         if self.never.contains(host) {
             Some("never_decrypt")
+        } else if self.curated.contains(host) {
+            Some("curated")
         } else if self.learned.contains(host) {
             Some("learned")
         } else {
@@ -278,130 +306,4 @@ impl Interception {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::*;
-
-    fn host(text: &str) -> Host {
-        Host::parse_normalised(text).unwrap()
-    }
-
-    #[test]
-    fn a_learned_host_is_remembered_until_its_time_is_up() {
-        let list = PassThrough::with_limits(Duration::from_secs(3600), 8);
-        assert!(list.learn(&host("pinned.example")));
-        assert!(!list.learn(&host("pinned.example")), "renewing is not new");
-        assert!(list.contains(&host("pinned.example")));
-        assert!(!list.contains(&host("other.example")));
-        assert_eq!(list.list().len(), 1);
-        list.age(&host("pinned.example"), Duration::from_secs(3599));
-        assert!(list.contains(&host("pinned.example")), "a second left");
-        list.age(&host("pinned.example"), Duration::from_secs(2));
-        assert!(!list.contains(&host("pinned.example")));
-        assert_eq!(list.list(), []);
-        assert!(
-            list.learn(&host("pinned.example")),
-            "new again after expiry"
-        );
-    }
-
-    #[test]
-    fn a_full_list_drops_its_oldest_host_and_a_forgotten_host_is_gone() {
-        let list = PassThrough::with_limits(Duration::from_secs(60), 2);
-        list.learn(&host("a.example"));
-        list.age(&host("a.example"), Duration::from_secs(10));
-        list.learn(&host("b.example"));
-        list.age(&host("b.example"), Duration::from_secs(5));
-        list.learn(&host("c.example"));
-        assert!(!list.contains(&host("a.example")));
-        assert!(list.contains(&host("b.example")) && list.contains(&host("c.example")));
-        list.forget(&host("b.example"));
-        assert!(!list.contains(&host("b.example")));
-        assert_eq!(list.list().len(), 1);
-    }
-
-    #[test]
-    fn forgetting_says_whether_the_host_was_remembered_and_clearing_counts_the_live_ones() {
-        let list = PassThrough::with_limits(Duration::from_secs(60), 8);
-        list.learn(&host("a.example"));
-        list.learn(&host("b.example"));
-        list.learn(&host("c.example"));
-        list.age(&host("c.example"), Duration::from_secs(61));
-        assert!(list.forget(&host("a.example")));
-        assert!(!list.forget(&host("a.example")), "already gone");
-        assert!(
-            !list.forget(&host("c.example")),
-            "expired is not remembered"
-        );
-        assert_eq!(list.clear(), 1, "only b.example was still live");
-        assert_eq!(list.list(), []);
-        assert_eq!(list.clear(), 0);
-    }
-
-    #[test]
-    fn new_limits_apply_to_the_hosts_already_remembered() {
-        let list = PassThrough::with_limits(Duration::from_secs(3600), 8);
-        for (name, age) in [("a", 30), ("b", 20), ("c", 10)] {
-            let h = host(&format!("{name}.example"));
-            list.learn(&h);
-            list.age(&h, Duration::from_secs(age));
-        }
-        list.set_limits(Duration::from_secs(3600), 2);
-        assert!(!list.contains(&host("a.example")), "the oldest made room");
-        assert_eq!(list.list().len(), 2);
-        list.set_limits(Duration::from_secs(15), 0);
-        assert_eq!(list.cap(), 1, "a cap of zero is one");
-        assert_eq!(list.ttl(), Duration::from_secs(15));
-        assert_eq!(
-            list.list()
-                .iter()
-                .map(|(n, _)| n.as_str())
-                .collect::<Vec<_>>(),
-            ["c.example"],
-            "a shorter time expired b at once"
-        );
-    }
-
-    #[test]
-    fn the_observer_hears_each_new_host_once() {
-        let heard = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&heard);
-        let list = PassThrough::new().observed(move |h| sink.lock().unwrap().push(h.to_string()));
-        list.learn(&host("a.example"));
-        list.learn(&host("a.example"));
-        list.learn(&host("b.example"));
-        assert_eq!(*heard.lock().unwrap(), ["a.example", "b.example"]);
-        assert!(format!("{list:?}").contains("PassThrough"));
-    }
-
-    #[test]
-    fn the_defaults_are_twelve_hours_and_a_thousand_hosts() {
-        let list = PassThrough::new();
-        assert_eq!(list.ttl(), Duration::from_hours(12));
-        assert_eq!(list.cap(), 1024);
-        assert_eq!(PassThrough::with_limits(Duration::ZERO, 0).cap(), 1);
-    }
-
-    #[test]
-    fn only_a_decrypting_workspace_skips_hosts_and_it_says_why() {
-        let learned = Arc::new(PassThrough::new());
-        learned.learn(&host("pinned.example"));
-        let never = TerminationSet::parse(["bank.example", "*.health.example"]).unwrap();
-        let off = Interception::new(Arc::clone(&learned)).never_decrypt(never.clone());
-        assert!(!off.is_decrypting_all());
-        assert_eq!(off.skipped(&host("bank.example")), None, "switch off");
-        let on = off.clone().decrypt_all(true);
-        assert!(on.is_decrypting_all() && on.never().contains(&host("bank.example")));
-        assert_eq!(on.skipped(&host("bank.example")), Some("never_decrypt"));
-        assert_eq!(on.skipped(&host("a.health.example")), Some("never_decrypt"));
-        assert_eq!(on.skipped(&host("pinned.example")), Some("learned"));
-        assert_eq!(on.skipped(&host("registry.npmjs.org")), None);
-        assert_eq!(
-            on.skipped(&host("140.82.112.3")),
-            None,
-            "an IP is never decrypted"
-        );
-        assert!(Arc::ptr_eq(on.learned(), &learned));
-    }
-}
+mod tests;

@@ -186,7 +186,7 @@ const REPOSITORY_VARIABLES: [&str; 15] = [
     "GIT_COMMON_DIR",
 ];
 
-/// A `git` command with the repository variables of a running hook removed and no user or system
+/// A `git` command with the repository variables of a running hook removed, no askpass helper and no user or system
 /// configuration, so it behaves the same on every machine.
 #[must_use]
 pub fn clean_git(home: &Path) -> std::process::Command {
@@ -200,6 +200,10 @@ pub fn clean_git(home: &Path) -> std::process::Command {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
         .env("GIT_TERMINAL_PROMPT", "0")
+        // An editor's askpass helper, inherited from the developer's shell, would answer a
+        // refused client with a dialog instead of the refusal.
+        .env_remove("GIT_ASKPASS")
+        .env_remove("SSH_ASKPASS")
         .stdin(Stdio::null());
     command
 }
@@ -343,13 +347,13 @@ impl GitHost {
     }
 }
 
-/// A root, and a server configuration for a leaf signed by it for `name`.
-pub(super) fn tls_config(
+/// A root made for the run and a leaf for `names` signed by it, valid from the start of year
+/// `valid.0` to the start of year `valid.1`: the root, the leaf and the leaf's key.
+pub(super) fn issue(
     root_name: &str,
     names: &[String],
-    versions: Versions,
     valid: (i32, i32),
-) -> (CertificateDer<'static>, Arc<rustls::ServerConfig>) {
+) -> (rcgen::Certificate, rcgen::Certificate, rcgen::KeyPair) {
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -374,6 +378,17 @@ pub(super) fn tls_config(
     leaf.not_after = rcgen::date_time_ymd(valid.1, 1, 1);
     let key = rcgen::KeyPair::generate().unwrap();
     let cert = leaf.signed_by(&key, &issuer).unwrap();
+    (ca_cert, cert, key)
+}
+
+/// A root, and a server configuration for a leaf signed by it for `name`.
+pub(super) fn tls_config(
+    root_name: &str,
+    names: &[String],
+    versions: Versions,
+    valid: (i32, i32),
+) -> (CertificateDer<'static>, Arc<rustls::ServerConfig>) {
+    let (ca_cert, cert, key) = issue(root_name, names, valid);
     let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -862,77 +877,4 @@ impl NameProxy {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn options_name_every_certificate_name_and_the_validity() {
-        let options = GitHostOptions::new("a.test", Versions::Http1)
-            .also_for("b.test")
-            .valid_between(2008, 2012);
-        assert_eq!(options.certificate_names, ["a.test", "b.test"]);
-        assert_eq!(options.valid, (2008, 2012));
-        let options = options.certificate_for("c.test");
-        assert_eq!(options.certificate_names, ["c.test"]);
-    }
-
-    #[test]
-    fn a_plain_request_is_held_by_its_authority_and_then_by_its_name() {
-        assert_eq!(plain_authority("http://a.test/x?y"), "a.test:80");
-        assert_eq!(plain_authority("http://a.test:8080?y"), "a.test:8080");
-        assert_eq!(plain_authority("a.test:443"), "a.test:443");
-        let (one, two): (SocketAddr, SocketAddr) = (
-            "127.0.0.1:1".parse().unwrap(),
-            "127.0.0.1:2".parse().unwrap(),
-        );
-        let names = vec![("a.test".to_owned(), one), ("a.test:80".to_owned(), two)];
-        assert_eq!(held(&names, "a.test:80"), Some(two));
-        assert_eq!(held(&names, "a.test:443"), Some(one));
-        assert_eq!(held(&names, "b.test:80"), None);
-    }
-
-    #[test]
-    fn a_forwarded_head_loses_the_headers_meant_for_the_proxy() {
-        let head = b"GET http://a.test/ HTTP/1.1\r\nHost: a.test\r\nProxy-Authorization: Negotiate abc\r\nproxy-connection: keep-alive\r\nAccept: */*\r\n\r\n";
-        assert_eq!(
-            String::from_utf8(without_proxy_headers(head)).unwrap(),
-            "GET http://a.test/ HTTP/1.1\r\nHost: a.test\r\nAccept: */*\r\n\r\n"
-        );
-    }
-
-    #[test]
-    fn a_path_is_read_as_owner_repository_and_the_rest() {
-        assert_eq!(
-            split_repo("/acme/web.git/info/refs"),
-            Some(("acme/web".to_owned(), "/info/refs"))
-        );
-        for no in [
-            "acme/web.git",
-            "/acme",
-            "/acme/web",
-            "/acme/.git/x",
-            "//web.git/x",
-            "/a/b/c.git/x",
-        ] {
-            assert_eq!(split_repo(no), None, "{no}");
-        }
-    }
-
-    #[test]
-    fn a_cgi_document_becomes_a_response() {
-        let ok = cgi_response(b"Status: 404 Not Found\r\nContent-Type: text/plain\r\n\r\nnope");
-        assert_eq!(ok.status().as_u16(), 404);
-        assert_eq!(ok.headers().get("content-type").unwrap(), "text/plain");
-        // A bare-newline document and a status that is no number.
-        let odd = cgi_response(b"Status: abc\nX-A: 1\n\nbody");
-        assert_eq!(odd.status().as_u16(), 200);
-        assert_eq!(odd.headers().get("x-a").unwrap(), "1");
-        assert_eq!(cgi_response(b"no separator").status().as_u16(), 500);
-    }
-
-    #[test]
-    fn an_lfs_operation_is_read_from_the_body_and_defaults_to_none() {
-        assert_eq!(lfs_operation(br#"{"operation":"upload"}"#), "upload");
-        assert_eq!(lfs_operation(b"not json"), "");
-    }
-}
+mod tests;

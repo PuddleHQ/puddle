@@ -22,6 +22,8 @@ on:
       - coverage-baseline
       - stress
       - lab-override
+      - live-contracts
+      - lab-forgejo
     types: [completed]
 
 permissions:

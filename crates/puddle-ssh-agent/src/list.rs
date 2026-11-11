@@ -53,8 +53,21 @@ pub fn list_identities(
     }
 }
 
-#[cfg(unix)]
+/// One request on the host's kind of endpoint. The two bodies have their own names so that a
+/// mutation exclusion can name the Windows one (a Linux run never compiles it).
 fn ask(endpoint: &AgentEndpoint, limit: Duration) -> Result<Vec<Identity>, AgentError> {
+    #[cfg(unix)]
+    {
+        ask_socket(endpoint, limit)
+    }
+    #[cfg(windows)]
+    {
+        ask_pipe(endpoint, limit)
+    }
+}
+
+#[cfg(unix)]
+fn ask_socket(endpoint: &AgentEndpoint, limit: Duration) -> Result<Vec<Identity>, AgentError> {
     let mut stream = std::os::unix::net::UnixStream::connect(endpoint.path())
         .map_err(AgentError::Unreachable)?;
     // The caller stops waiting at `limit`; this makes the thread stop reading then too.
@@ -65,7 +78,7 @@ fn ask(endpoint: &AgentEndpoint, limit: Duration) -> Result<Vec<Identity>, Agent
     wire::exchange(&mut stream).map_err(|error| as_timeout(error, limit))
 }
 
-/// A socket timeout set in [`ask`] surfaces as `WouldBlock` (Linux, macOS) or `TimedOut`. When the
+/// A socket timeout set in [`ask_socket`] surfaces as `WouldBlock` (Linux, macOS) or `TimedOut`. When the
 /// request thread hits it just before the caller's own wait ends, the thread's error is the one
 /// the caller reads, so it must say what the caller would have said.
 #[cfg(unix)]
@@ -84,7 +97,7 @@ fn as_timeout(error: AgentError, limit: Duration) -> AgentError {
 }
 
 #[cfg(windows)]
-fn ask(endpoint: &AgentEndpoint, _limit: Duration) -> Result<Vec<Identity>, AgentError> {
+fn ask_pipe(endpoint: &AgentEndpoint, _limit: Duration) -> Result<Vec<Identity>, AgentError> {
     // A named pipe opens like a file. A pipe whose instances are all busy fails here at once
     // (`ERROR_PIPE_BUSY`), which reads as unreachable.
     let mut pipe = std::fs::OpenOptions::new()
@@ -99,23 +112,4 @@ fn ask(endpoint: &AgentEndpoint, _limit: Duration) -> Result<Vec<Identity>, Agen
 compile_error!("puddle-ssh-agent supports unix and windows hosts");
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-    use std::os::unix::net::UnixListener;
-
-    /// The request thread's own read timeout, reached before the caller's wait ends (a loaded host
-    /// schedules the caller late), must be the same answer the caller gives.
-    #[test]
-    fn a_read_timeout_on_the_request_thread_is_a_timeout_not_an_io_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("silent.sock");
-        let listener = UnixListener::bind(&path).unwrap();
-        let limit = Duration::from_millis(50);
-        let result = ask(&AgentEndpoint::at(&path), limit);
-        assert!(
-            matches!(result, Err(AgentError::TimedOut(l)) if l == limit),
-            "{result:?}"
-        );
-        drop(listener);
-    }
-}
+mod tests;

@@ -18,7 +18,7 @@ pub enum RemoteNote {
     /// The address had a user name or password in it; they were removed before it left the
     /// parser, and `remote_url` is the address without them.
     CredentialsRemoved,
-    /// An SSH address ("SSH is not supported yet"); `remote_url` is `null`.
+    /// An SSH address (Manage this needs an `https://` one); `remote_url` is `null`.
     Ssh,
     /// Not an `https://` address (`http://`, `git://`, a path); `remote_url` is `null`.
     NotHttps,
@@ -234,21 +234,4 @@ impl AddRepositoryRequest {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_note_has_its_wire_name() {
-        for (note, wire) in [
-            (
-                domain::RemoteNote::CredentialsRemoved,
-                "credentials_removed",
-            ),
-            (domain::RemoteNote::Ssh, "ssh"),
-            (domain::RemoteNote::NotHttps, "not_https"),
-            (domain::RemoteNote::NoRemote, "no_remote"),
-        ] {
-            assert_eq!(serde_json::to_value(RemoteNote::from(note)).unwrap(), wire);
-        }
-    }
-}
+mod tests;

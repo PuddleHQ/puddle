@@ -205,3 +205,26 @@ fn the_tcp_corpus_holds_every_way_a_frame_states_its_length() {
         ]
     );
 }
+
+#[test]
+fn a_header_cut_short_and_padded_is_judged_by_the_bytes_that_remain() {
+    // The grammar wrote an authority count of 1, cut the message after the answer count and padded
+    // it with zero bytes, so the stub reads a header with no authority records: a query.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fuzz/corpus/dns_message_grammar/crash-header-cut-and-padded");
+    let message =
+        Message::arbitrary(&mut Unstructured::new(&std::fs::read(path).unwrap())).unwrap();
+    assert_eq!(message.shape(), "unchecked");
+    assert_eq!(
+        message.bytes(),
+        [
+            0x87, 0xfe, 0x03, 0xff, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]
+    );
+    let query = wire::parse_query(message.bytes()).unwrap();
+    assert_eq!(
+        (query.id, query.name),
+        (0x87fe, QueryName::Plain(String::new()))
+    );
+    dns_message_grammar::dns_message_grammar(&message);
+}

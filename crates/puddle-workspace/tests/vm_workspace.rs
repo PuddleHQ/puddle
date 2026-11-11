@@ -419,7 +419,7 @@ async fn vm_clone_through_the_route_survives_a_sandbox_rebuild() {
 }
 
 /// The VM's process id, from msb's record.
-async fn vm_pid(settings: &Settings, name: &SandboxName) -> u32 {
+async fn process_id_of(settings: &Settings, name: &SandboxName) -> u32 {
     let harness = VmEnv::new(settings.clone()).await.unwrap();
     let handle = harness
         .scope(Box::pin(SdkSandbox::get(name.as_str())))
@@ -548,7 +548,7 @@ async fn vm_vmm_kill_during_commits_leaves_git_consistent() {
         )
         .await;
         wait_for_commits(sb.ungated(), repo, round, before + 25).await;
-        let pid = vm_pid(&settings, &name).await;
+        let pid = process_id_of(&settings, &name).await;
         kill_hard(pid);
         drop(sb);
         wait_down(rt, &name).await;
@@ -873,6 +873,89 @@ async fn vm_root_disk_use_follows_what_the_guest_writes() {
     rt.remove(&name).await.unwrap();
 }
 
+/// The reset of a root disk, as the host does it for a stopped workspace (`reset_root_disk_work`):
+/// the sandbox is removed, its root disk goes with it and the volume stays; the next start makes a
+/// fresh root disk from the image and mounts the same volume with its files.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_reset_root_disk_keeps_the_volume_and_makes_a_fresh_root_disk() {
+    let (rt, settings) = runtime().await;
+    let rt = &rt;
+    let (id, name) = names(&settings, "reset");
+    let w = workspaces();
+    let mount = Layout::new(&id).unwrap().mount().to_string();
+    let upper = settings
+        .home()
+        .join("sandboxes")
+        .join(name.as_str())
+        .join("upper.ext4");
+
+    // First life: one file on the volume, one on the root disk (a package installed to `/usr`
+    // would sit there).
+    let sb = w
+        .create(rt, &id, base_spec(&name), Some(DiskSize::gib(1)))
+        .await
+        .unwrap();
+    sh_ok(
+        &sb,
+        &format!(
+            "echo kept > {mount}/volume-marker && echo lost > /root-disk-marker && \
+             dd if=/dev/urandom of=/root-disk-big bs=1M count=256 status=none && sync"
+        ),
+    )
+    .await;
+    let full = root_disk_of(rt, &name).await;
+    assert!(
+        full.used.as_mib() >= 200,
+        "root disk use before: {}",
+        full.used
+    );
+    w.stop(&sb).await.unwrap();
+    drop(sb);
+
+    // The reset: remove the sandbox and nothing else.
+    rt.remove(&name).await.unwrap();
+    w.sandbox_removed(&name);
+    assert!(!upper.exists(), "the root disk image went with the sandbox");
+    assert!(
+        rt.volume(&id.volume_name()).await.unwrap().is_some(),
+        "the volume stays after the reset"
+    );
+
+    // The next start: a new sandbox on the same volume.
+    let attachment = w.prepare_existing(rt, &id, &name).await.unwrap();
+    let sb = rt
+        .create(attachment.add_to(base_spec(&name)))
+        .await
+        .unwrap();
+    attachment.commit();
+    let seen = sh_ok(
+        &sb,
+        &format!(
+            "cat {mount}/volume-marker; test ! -e /root-disk-marker && echo root-clean; \
+             test ! -e /root-disk-big && echo big-gone"
+        ),
+    )
+    .await;
+    assert_eq!(seen, "kept\nroot-clean\nbig-gone", "after the reset");
+    let fresh = root_disk_of(rt, &name).await;
+    eprintln!(
+        "root disk use: {} before the reset, {} after",
+        full.used, fresh.used
+    );
+    assert!(
+        fresh.used.as_mib() < full.used.as_mib() / 2,
+        "a fresh root disk takes less than the used one ({} against {})",
+        fresh.used,
+        full.used
+    );
+
+    sb.stop().await.unwrap();
+    drop(sb);
+    rt.remove(&name).await.unwrap();
+    w.sandbox_removed(&name);
+    rt.remove_volume(&id.volume_name()).await.unwrap();
+}
+
 /// Kills the VM of `name` hard, waits until msb sees it down, and starts it again through the
 /// boot hook.
 async fn kill_and_restart(
@@ -882,7 +965,7 @@ async fn kill_and_restart(
     name: &SandboxName,
     sb: GatedSandbox<puddle_compute_msb::MsbSandbox>,
 ) -> GatedSandbox<puddle_compute_msb::MsbSandbox> {
-    let pid = vm_pid(settings, name).await;
+    let pid = process_id_of(settings, name).await;
     kill_hard(pid);
     drop(sb);
     wait_down(rt, name).await;

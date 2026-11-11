@@ -18,7 +18,9 @@
     directoryProblem,
     sameRepositoryKey,
   } from "#lib/workspaces/repo-rows.ts";
+  import type { HostCheck } from "#lib/workspaces/hosts.ts";
   import FormDialog from "./FormDialog.svelte";
+  import RepositoryHostsNotice from "./RepositoryHostsNotice.svelte";
   import RepoPicker from "./RepoPicker.svelte";
 
   // "Add repository": one row of the create form, for a running workspace. The checks are the
@@ -31,6 +33,8 @@
     onDisk,
     identities = identityStore,
     onSubmit,
+    workspace = undefined,
+    hostCheck = undefined,
   }: {
     open?: boolean;
     /** The list's entries: their directories and addresses are taken. */
@@ -39,7 +43,12 @@
     onDisk: readonly string[];
     identities?: Pick<IdentitiesStore, "identities" | "ensureLoaded">;
     onSubmit: (body: AddRepository) => Promise<string | null>;
+    /** The workspace the repository is for, so its own rules count for the host check. */
+    workspace?: string;
+    /** For tests: the host check. */
+    hostCheck?: HostCheck;
   } = $props();
+  let hostBlocked = $state(false);
 
   const id = $props.id();
   let url = $state("");
@@ -174,6 +183,13 @@
       onPick={(repo, by) => picked(repo, by)}
     />
 
+    <RepositoryHostsNotice
+      urls={[url]}
+      {workspace}
+      {...hostCheck ? { check: hostCheck } : {}}
+      onBlocked={(b) => (hostBlocked = b)}
+    />
+
     {#if tableCannotHold(url)}
       <p class="hint warn" data-testid="table-cannot-hold">
         {TABLE_CANNOT_HOLD}
@@ -266,7 +282,9 @@
       <button type="button" class="btn" onclick={() => (open = false)}
         >Cancel</button
       >
-      <button type="submit" class="btn primary" disabled={busy}>Clone</button>
+      <button type="submit" class="btn primary" disabled={busy || hostBlocked}
+        >Clone</button
+      >
     </div>
   </form>
 </FormDialog>

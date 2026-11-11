@@ -30,7 +30,10 @@ use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
 use puddle_netpolicy::{CompanySignals, LocalAccess, NetPolicy, NoSignals, PuddleEndpoints};
 use puddle_ports::Ports;
-use puddle_proxy::{Proxy, ProxyUrl, PullProxy, PullRoute, Resolver, Terminations, Upstream};
+use puddle_proxy::{
+    GitSsh, GitSshAccounts, GitSshHttps, Proxy, ProxyUrl, PullProxy, PullRoute, Resolver,
+    Terminations, Upstream,
+};
 use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
@@ -54,6 +57,7 @@ use crate::injection::{
 use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
 use crate::proxy_sign_ins::HostProxySignIns;
+use crate::quit_trims::QuitTrims;
 use crate::ssh_config::SshSetup;
 use crate::workspaces::{Parts, RewriteGate, known_ids};
 use crate::{HostConfig, HostError, HostWorkspaces, Platform, ProxyPasswords, VsCodeLauncher};
@@ -309,6 +313,18 @@ pub struct HostOptions {
     /// Holds an author rewrite back when it starts (tests, to make the rewrites of one workspace
     /// run out of order). Without one, no rewrite waits.
     pub rewrite_gate: Option<RewriteGate>,
+    /// Serves Git over SSH for the Git hosts: SSH host keys for each start of a workspace's
+    /// sandbox, listed in the guest's `ssh_known_hosts` under the Git hosts, and Puddle's own SSH
+    /// server, which carries each command out over the host's HTTPS with the workspace's
+    /// identities. On by default; off, SSH to a Git host is refused (`ssh_unsupported`).
+    pub git_ssh: bool,
+    /// Where new workspace ids come from. Without one, the operating system's random source
+    /// ([`puddle_api::RandomIds`]); tests give [`puddle_api::NameIds`], so a workspace called
+    /// `acme` gets the id `acme`.
+    pub workspace_ids: Option<Arc<dyn puddle_api::IdSource>>,
+    /// Where a root disk grow reads the free space of the data folder's drive. Without one, the
+    /// real drive; tests give a fixed figure so a grow never depends on the machine's disk.
+    pub free_space: Option<Arc<dyn crate::Space>>,
 }
 
 impl Default for HostOptions {
@@ -322,6 +338,9 @@ impl Default for HostOptions {
             resolver: None,
             company_signals: None,
             rewrite_gate: None,
+            git_ssh: true,
+            workspace_ids: None,
+            free_space: None,
         }
     }
 }
@@ -410,6 +429,10 @@ pub struct Host<R: Runtime + Clone> {
     url: Url,
     events: Arc<EventHub>,
     problems: Arc<Problems>,
+    quit_trims: QuitTrims,
+    /// The untrimmed disks the last quit left, with why; the ones still untrimmed at this quit
+    /// stay in the file.
+    carried: BTreeMap<WorkspaceId, String>,
     proxy_passwords: Arc<ProxyPasswords>,
     store: Arc<Store>,
     settings: Arc<dyn SettingsRepo>,
@@ -496,6 +519,7 @@ impl<R: Runtime + Clone> Host<R> {
             settings,
             book,
             stored,
+            retired,
         } = open_state(&config.paths, &events, &clock)?;
         steps.push(Step::StoreOpened);
 
@@ -508,7 +532,8 @@ impl<R: Runtime + Clone> Host<R> {
         let vault_sweep =
             crate::vault::sweep_in_background(vault.clone(), store.clone(), problems.clone());
         let marks = config.paths.login_markers();
-        let injecting = Injecting::build(&options, &vault, &store, &events, &roots, marks)?;
+        let injecting =
+            Injecting::build(&options, &vault, &store, &events, &roots, marks, &settings)?;
         let proxy_passwords = ProxyPasswords::new(vault.clone());
         load_proxy_passwords(proxy_passwords.clone(), problems.clone());
 
@@ -521,6 +546,13 @@ impl<R: Runtime + Clone> Host<R> {
             Arc::new(StorePins::new(store.clone())),
             events.clone() as Arc<dyn EventSink>,
         );
+        // Who `ssh -T` greets: read from the store, named once the repository reader exists.
+        let ssh_accounts = Arc::new(crate::ssh_accounts::SshAccounts::new(store.clone()));
+        let mut egress_parts =
+            EgressParts::new(injecting.termination(), &proxy_passwords, &reports, &ports);
+        if options.git_ssh {
+            egress_parts.git_ssh = Some(ssh_accounts.clone());
+        }
         let egress = Egress::build(
             &config,
             &options,
@@ -528,7 +560,7 @@ impl<R: Runtime + Clone> Host<R> {
             &endpoints,
             &connections,
             &events,
-            EgressParts::new(injecting.termination(), &proxy_passwords, &reports, &ports),
+            egress_parts,
         );
         let (proxy, upstream, discovery) = (egress.proxy, egress.upstream, egress.discovery);
         let sign_ins: Arc<dyn ProxySignInService> = Arc::new(HostProxySignIns::new(
@@ -583,6 +615,16 @@ impl<R: Runtime + Clone> Host<R> {
             problems.raise(problem);
         }
         steps.push(Step::Reconciled);
+        // A trim that failed when the last run quit is told now, to a user who can read it.
+        let quit_trims = QuitTrims::new(config.paths.quit_trims());
+        let carried: BTreeMap<WorkspaceId, String> = quit_trims
+            .load()
+            .into_iter()
+            .filter(|(id, _)| stored.iter().any(|s| &s.id == id))
+            .collect();
+        for (id, why) in &carried {
+            problems.raise(crate::quit_trims::problem(id, why));
+        }
         let workspaces = adopt_holders(&runtime, &config, &stored).await?;
         steps.push(Step::WorkspacesAdopted);
 
@@ -634,10 +676,22 @@ impl<R: Runtime + Clone> Host<R> {
                 front_addr,
                 front_guests,
                 front_halves,
+                ids: options
+                    .workspace_ids
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
+                login_markers: config.paths.login_markers(),
+                space: crate::space_watch::space_or_drive(
+                    options.free_space.clone(),
+                    config.paths.data(),
+                ),
             },
             stored,
+            retired,
             &status,
         )?;
+        // Downloads the image the delete check boots now, while nobody is waiting on it.
+        service.warm_maintenance_image_for_listed().await;
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
         let editor_windows = front.windows().clone();
         let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
@@ -667,7 +721,11 @@ impl<R: Runtime + Clone> Host<R> {
             HostCredentials::new(ToolPaths::resolve(), vault)
                 .with_read_log(Arc::clone(&injecting.reads)),
         ))
-        .with_repos(injecting.repos(&egress.chain, &clock, connections.clone(), &events))
+        .with_repos({
+            let repos = injecting.repos(&egress.chain, &clock, connections.clone(), &events);
+            ssh_accounts.read_with(repos.clone());
+            repos
+        })
         .with_doctor(system_doctor(
             &config.layout,
             &config.paths,
@@ -677,7 +735,10 @@ impl<R: Runtime + Clone> Host<R> {
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
         .with_terminals(Arc::new(service.clone()))
-        .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
+        .with_learned(Arc::new(HostLearned::new(
+            injecting.terminations.clone(),
+            Arc::clone(&store),
+        )))
         .with_proxy_sign_ins(sign_ins)
         .with_company_signals(signals)
         .with_endpoints(endpoints.clone());
@@ -690,6 +751,8 @@ impl<R: Runtime + Clone> Host<R> {
             url: served.url,
             events,
             problems,
+            quit_trims,
+            carried,
             proxy_passwords,
             store,
             settings,
@@ -812,6 +875,32 @@ impl<R: Runtime + Clone> Host<R> {
             .push(step);
     }
 
+    /// Writes the workspaces whose disk is still untrimmed: this quit's failed trims, and the
+    /// ones from the last quit that no later trim has fixed (their problem still stands).
+    fn save_quit_trims(&self, report: &ShutdownReport) {
+        let standing: BTreeSet<String> = self.problems.list().into_iter().map(|p| p.key).collect();
+        let mut untrimmed: BTreeMap<WorkspaceId, String> = self
+            .carried
+            .iter()
+            .filter(|(id, _)| standing.contains(&crate::quit_trims::key(id)))
+            .map(|(id, why)| (id.clone(), why.clone()))
+            .collect();
+        for (sandbox, why) in report.untrimmed() {
+            if let Ok(id) = WorkspaceId::new(sandbox.as_str()) {
+                untrimmed.insert(id, why);
+            }
+        }
+        // A workspace whose trim worked now is clean, whatever the file said.
+        for outcome in &report.sandboxes {
+            if outcome.trim == puddle_lifecycle::TrimOutcome::Trimmed
+                && let Ok(id) = WorkspaceId::new(outcome.sandbox.as_str())
+            {
+                untrimmed.remove(&id);
+            }
+        }
+        self.quit_trims.save(&untrimmed);
+    }
+
     /// Stops the host: refuse new operations, let running ones finish (up to the grace period),
     /// trim and stop every sandbox, close the routes, stop the API, stop the background tasks.
     /// Calling it again returns the first result.
@@ -824,6 +913,7 @@ impl<R: Runtime + Clone> Host<R> {
                 self.step(Step::OperationsFinished);
                 let sandboxes = self.lifecycle.shutdown().await;
                 self.step(Step::WorkspacesStopped);
+                self.save_quit_trims(&sandboxes);
                 self.workspaces.release_all().await;
                 self.step(Step::RoutesClosed);
                 if let Some(api) = self.api.lock().await.take() {
@@ -871,6 +961,7 @@ struct State {
     settings: Arc<dyn SettingsRepo>,
     book: WorkspaceBook,
     stored: Vec<crate::files::Stored>,
+    retired: BTreeSet<WorkspaceId>,
 }
 
 /// Opens the database, the settings files and the workspace list.
@@ -886,12 +977,16 @@ fn open_state(
     );
     let settings: Arc<dyn SettingsRepo> = Arc::new(FileSettings::new(paths.settings()));
     let book = WorkspaceBook::new(paths.workspace_book());
-    let stored = book.load()?;
+    let crate::files::Book {
+        workspaces: stored,
+        retired,
+    } = book.load()?;
     Ok(State {
         store,
         settings,
         book,
         stored,
+        retired,
     })
 }
 
@@ -992,6 +1087,7 @@ impl Injecting {
         events: &Arc<EventHub>,
         roots: &CorporateRoots,
         login_markers: PathBuf,
+        settings: &Arc<dyn SettingsRepo>,
     ) -> Result<Self, HostError> {
         // The secrets read from the user's own sign-ins (`gh`, Git, the operating system's store).
         let reads = credential_read_log(events.clone() as Arc<dyn EventSink>);
@@ -1016,7 +1112,9 @@ impl Injecting {
                 options.injector.clone(),
                 Arc::clone(vault),
             )
-            .with_login_markers(login_markers),
+            .with_login_markers(login_markers)
+            .with_settings(Arc::clone(settings))
+            .with_git_ssh(options.git_ssh),
         );
         // The platform's roots plus the company's, as the guest is given.
         let tls = TlsClient::new(roots.certificates().iter().map(der_of))?;
@@ -1059,6 +1157,8 @@ struct EgressParts {
     /// Where the guest agents' reports go.
     reports: Arc<ReportDesk>,
     ports: Ports,
+    /// Git over SSH, with the accounts `ssh -T` greets; `None` leaves SSH to Git hosts refused.
+    git_ssh: Option<Arc<crate::ssh_accounts::SshAccounts>>,
 }
 
 impl EgressParts {
@@ -1074,6 +1174,7 @@ impl EgressParts {
             proxy_passwords: proxy_passwords.clone(),
             reports: reports.clone(),
             ports: ports.clone(),
+            git_ssh: None,
         }
     }
 }
@@ -1110,6 +1211,7 @@ impl Egress {
             proxy_passwords,
             reports,
             ports,
+            git_ssh,
         } = parts;
         let discovery = options.discovery.clone().unwrap_or_else(|| {
             Discovery::new(
@@ -1143,6 +1245,11 @@ impl Egress {
         .with_guest_watcher(Arc::new(ports));
         if let Some(resolver) = &options.resolver {
             proxy = proxy.with_resolver(Arc::clone(resolver));
+        }
+        if let Some(accounts) = git_ssh {
+            // Each workspace serves its own start's host keys (`Injection`), so none here.
+            let https = GitSshHttps::new(accounts as Arc<dyn GitSshAccounts>);
+            proxy = proxy.with_git_ssh(GitSsh::new(Arc::new(https), Vec::new()));
         }
         let proxy = Arc::new(proxy);
         Self {
@@ -1326,127 +1433,4 @@ fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_api::MemorySettings;
-    use puddle_repos::{ApiReply, FakeApi, Freshness, Read, Secrets};
-    use puddle_secrets::{Credential, Secret, SourceError, SourceSpec};
-    use puddle_settings::WorkspaceSettings;
-    use puddle_types::LocalCategory;
-    use serde_json::json;
-
-    use super::*;
-
-    fn name() -> WorkspaceId {
-        WorkspaceId::new("acme").unwrap()
-    }
-
-    #[test]
-    fn local_access_follows_the_settings_when_they_can_be_read() {
-        let repo = MemorySettings::default();
-        let mut own = WorkspaceSettings::default();
-        own.overrides.local_toggles.private = Some(true);
-        repo.save_workspace(&name(), own.to_document()).unwrap();
-        let access = local_access(&repo, &name());
-        assert!(access.is_on(LocalCategory::Private));
-        assert!(!access.is_on(LocalCategory::Loopback));
-    }
-
-    #[test]
-    fn damaged_settings_block_every_local_destination_and_say_why() {
-        let repo = MemorySettings::default();
-        repo.save_global(json!("not an object")).unwrap();
-        assert_eq!(local_access(&repo, &name()), LocalAccess::UNREADABLE);
-        let reason = local_access_checked(&repo, &name()).unwrap_err();
-        assert!(reason.contains("global settings are not valid"), "{reason}");
-
-        let repo = MemorySettings::default();
-        repo.save_workspace(&name(), json!([1])).unwrap();
-        assert_eq!(local_access(&repo, &name()), LocalAccess::UNREADABLE);
-        let reason = local_access_checked(&repo, &name()).unwrap_err();
-        assert!(reason.contains("workspace acme"), "{reason}");
-    }
-
-    struct OneToken;
-
-    impl Secrets for OneToken {
-        fn get<'a>(
-            &'a self,
-            _spec: &'a SourceSpec,
-        ) -> futures_util::future::BoxFuture<'a, Result<Credential, SourceError>> {
-            Box::pin(async {
-                Ok(Credential {
-                    username: None,
-                    secret: Arc::new(Secret::new("CANARY-host-token".to_owned())),
-                })
-            })
-        }
-
-        fn invalidate(&self, _spec: &SourceSpec) {}
-    }
-
-    #[tokio::test]
-    async fn a_repository_list_renewed_behind_the_callers_back_is_announced_as_an_event() {
-        use std::collections::BTreeSet;
-
-        use puddle_store::{
-            Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Store,
-        };
-
-        let host = puddle_secrets::HostName::new("github.com").unwrap();
-        let source = SourceSpec::Gh {
-            host: host.clone(),
-            account: puddle_secrets::AccountName::new("octocat").unwrap(),
-        };
-        let clock = Arc::new(ManualClock::new(1_700_000_000_000));
-        let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
-        let identity = store
-            .create_identity(IdentityDraft {
-                label: "Me".to_owned(),
-                author: puddle_store::Author::new("Me", "me@example.org").unwrap(),
-                credentials: vec![
-                    CredentialBinding::new(
-                        &host,
-                        source,
-                        Coverage::new(BTreeSet::new(), true).unwrap(),
-                    )
-                    .unwrap(),
-                ],
-            })
-            .unwrap();
-        // The token source answers the same for as long as it is asked.
-        OneToken.invalidate(&SourceSpec::Gh {
-            host: host.clone(),
-            account: puddle_secrets::AccountName::new("octocat").unwrap(),
-        });
-        let api = Arc::new(FakeApi::new());
-        let path = "/user/repos?per_page=100&sort=full_name&direction=asc";
-        api.reply("api.github.com", path, ApiReply::new(200, "[]"));
-        let repos = Repos::new(api.clone(), Arc::new(OneToken), clock.clone());
-        let hub = Arc::new(EventHub::default());
-        let mut stream = hub.subscribe();
-        announce_renewals(&repos, hub.clone());
-        let read = Read {
-            only: None,
-            freshness: Freshness::Cached,
-        };
-        repos.lists(std::slice::from_ref(&identity), read).await;
-
-        // A repository appears; the next ask after the list went stale is answered with the old
-        // list and the new one is announced.
-        api.clear("api.github.com", path);
-        api.reply(
-            "api.github.com",
-            path,
-            ApiReply::new(200, r#"[{"id":1,"name":"new","full_name":"octo/new","private":false,"html_url":"https://github.com/octo/new"}]"#),
-        );
-        clock.advance(11 * 60_000);
-        let served = repos.lists(std::slice::from_ref(&identity), read).await;
-
-        assert!(served[0].repos.is_empty());
-        let event = tokio::time::timeout(std::time::Duration::from_secs(5), stream.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(event, Event::RepoListsChanged {});
-    }
-}
+mod tests;

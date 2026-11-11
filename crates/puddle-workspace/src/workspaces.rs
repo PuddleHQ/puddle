@@ -783,10 +783,14 @@ impl Workspaces {
         let owner = self.existing_owner(rt, id).await?;
         let checked_in = maintenance_name(id)?;
         self.borrow(id, &checked_in)?;
+        let loan = Loan {
+            registry: &self.registry,
+            id,
+        };
         let result = self
             .delete_borrowed(rt, id, &info, confirmed, owner, checked_in)
             .await;
-        self.registry.give_back(id);
+        drop(loan);
         if result.is_ok() {
             self.registry.forget(id);
         }
@@ -1137,9 +1141,11 @@ impl Workspaces {
     ) -> Result<JobOutput, WorkspaceError> {
         let name = maintenance_name(id)?;
         self.borrow(id, &name)?;
-        let result = self.run_maintenance(rt, id, info, job).await;
-        self.registry.give_back(id);
-        result
+        let _loan = Loan {
+            registry: &self.registry,
+            id,
+        };
+        self.run_maintenance(rt, id, info, job).await
     }
 
     /// Creates the maintenance sandbox with the workspace, runs `job`, and stops and removes the
@@ -1213,6 +1219,20 @@ pub struct ImportReport {
     pub created_volume: bool,
     /// The checkouts git refused, each with git's reason; the others are on the volume.
     pub failed: Vec<(CheckoutDir, String)>,
+}
+
+/// A maintenance loan of a workspace, given back when this is dropped: also when the future that
+/// holds it is dropped mid-way (a request that timed out), which would otherwise leave the
+/// workspace borrowed until the process restarts.
+struct Loan<'a> {
+    registry: &'a Registry,
+    id: &'a WorkspaceId,
+}
+
+impl Drop for Loan<'_> {
+    fn drop(&mut self) {
+        self.registry.give_back(self.id);
+    }
 }
 
 /// The mount of `volume` at the workspace's mount point, always with kind disk and the size
@@ -1435,28 +1455,4 @@ impl Drop for Attachment<'_> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn defaults_are_valid() {
-        let c = WorkspaceConfig::default();
-        assert_eq!(c.default_size, DiskSize::gib(32));
-        assert_eq!(
-            c.maintenance_image.as_str(),
-            WorkspaceConfig::DEFAULT_MAINTENANCE_IMAGE
-        );
-        assert_eq!(c.maintenance_memory.get(), 1024);
-    }
-
-    #[test]
-    fn maintenance_names_fit_every_workspace_id() {
-        let longest = WorkspaceId::new(&"w".repeat(WorkspaceId::MAX_LEN)).unwrap();
-        let name = maintenance_name(&longest).unwrap();
-        assert!(is_maintenance_name(name.as_str()));
-        assert!(is_maintenance_name("m--acme"));
-        assert!(!is_maintenance_name("acme"));
-        assert!(!is_maintenance_name("m--"));
-        assert!(!is_maintenance_name("m---a"));
-    }
-}
+mod tests;

@@ -1,20 +1,52 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The "decrypt every host" switch of each workspace and the names that are never decrypted.
 
-use puddle_types::{Event, WorkspaceId};
+use puddle_types::{Event, InterceptionMode, WorkspaceId};
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::{Store, lock};
 use crate::error::StoreError;
 
-/// A workspace's own settings for decrypting every host. The global never-decrypt names are
-/// separate ([`Store::global_never_decrypt`]).
+/// A workspace's own settings for decrypting port 443. The global setting
+/// ([`Store::interception_settings`]) and the global never-decrypt names
+/// ([`Store::global_never_decrypt`]) are separate.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkspaceInterception {
-    /// Decrypt every host except the never-decrypt names (off by default).
-    pub decrypt_all: bool,
+    /// This workspace's own mode; `None` follows the global setting.
+    pub mode: Option<InterceptionMode>,
     /// The names this workspace never decrypts, as written (`example.com`, `*.example.com`).
     pub never_decrypt: Vec<String>,
+}
+
+/// The global setting for every workspace that does not choose its own mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterceptionSettings {
+    /// The mode the user chose; `None` until they do (an existing install then keeps
+    /// [`InterceptionMode::EXISTING_INSTALL`]).
+    pub mode: Option<InterceptionMode>,
+    /// Whether a host that refuses Puddle's certificate is passed through for a while and put on
+    /// the learned list (on unless turned off).
+    pub learn_from_rejections: bool,
+    /// Whether the user has seen the notice that offers the choice (existing installs).
+    pub notice_seen: bool,
+}
+
+impl Default for InterceptionSettings {
+    fn default() -> Self {
+        Self {
+            mode: None,
+            learn_from_rejections: true,
+            notice_seen: false,
+        }
+    }
+}
+
+impl InterceptionSettings {
+    /// The mode in force for a workspace that follows the global setting.
+    #[must_use]
+    pub fn effective_mode(self) -> InterceptionMode {
+        self.mode.unwrap_or(InterceptionMode::EXISTING_INSTALL)
+    }
 }
 
 /// How long a host that refused Puddle's certificate stays passed through: 12 hours.
@@ -50,6 +82,21 @@ fn changed(fx: &mut Vec<Event>, workspace: &WorkspaceId) {
     });
 }
 
+/// Tells every workspace the store knows (a global change reaches the ones that inherit it).
+fn changed_everywhere(tx: &Transaction<'_>, fx: &mut Vec<Event>) -> Result<(), StoreError> {
+    let mut stmt = tx.prepare(
+        "SELECT workspace_id FROM workspace_names
+         UNION SELECT workspace_id FROM workspace_interception",
+    )?;
+    let names = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    for name in names.flatten() {
+        if let Ok(workspace) = WorkspaceId::new(&name) {
+            changed(fx, &workspace);
+        }
+    }
+    Ok(())
+}
+
 impl Store {
     /// `workspace`'s switch and its own never-decrypt names.
     ///
@@ -60,14 +107,15 @@ impl Store {
         workspace: &WorkspaceId,
     ) -> Result<WorkspaceInterception, StoreError> {
         let conn = lock(&self.conn);
-        let decrypt_all = conn
+        let mode = conn
             .query_row(
-                "SELECT decrypt_all FROM workspace_interception WHERE workspace_id = ?1",
+                "SELECT mode FROM workspace_interception WHERE workspace_id = ?1",
                 [workspace.as_str()],
-                |r| r.get::<_, bool>(0),
+                |r| r.get::<_, Option<String>>(0),
             )
             .optional()?
-            .unwrap_or(false);
+            .flatten()
+            .and_then(|name| InterceptionMode::parse(&name));
         let mut stmt = conn.prepare(
             "SELECT pattern FROM never_decrypt WHERE workspace_id = ?1 ORDER BY pattern",
         )?;
@@ -75,8 +123,62 @@ impl Store {
             .query_map([workspace.as_str()], |r| r.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(WorkspaceInterception {
-            decrypt_all,
+            mode,
             never_decrypt,
+        })
+    }
+
+    /// The global interception setting (the defaults until saved).
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn interception_settings(&self) -> Result<InterceptionSettings, StoreError> {
+        let conn = lock(&self.conn);
+        Ok(conn
+            .query_row(
+                "SELECT mode, learn, notice_seen FROM interception_settings WHERE id = 1",
+                [],
+                |r| {
+                    Ok(InterceptionSettings {
+                        mode: r
+                            .get::<_, Option<String>>(0)?
+                            .and_then(|name| InterceptionMode::parse(&name)),
+                        learn_from_rejections: r.get(1)?,
+                        notice_seen: r.get(2)?,
+                    })
+                },
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    /// Saves the global interception setting and tells every workspace when it changes what they
+    /// decrypt (the mode or the learning switch). The notice flag alone sends no event.
+    ///
+    /// # Errors
+    /// A database error; nothing changes then.
+    pub fn set_interception_settings(
+        &self,
+        settings: InterceptionSettings,
+    ) -> Result<(), StoreError> {
+        let before = self.interception_settings()?;
+        self.change(|tx, _now, fx| {
+            tx.execute(
+                "INSERT INTO interception_settings (id, mode, learn, notice_seen)
+                 VALUES (1, ?1, ?2, ?3)
+                 ON CONFLICT (id) DO UPDATE SET mode = ?1, learn = ?2, notice_seen = ?3",
+                params![
+                    settings.mode.map(InterceptionMode::as_str),
+                    settings.learn_from_rejections,
+                    settings.notice_seen
+                ],
+            )?;
+            if before.mode != settings.mode
+                || before.learn_from_rejections != settings.learn_from_rejections
+            {
+                changed_everywhere(tx, fx)?;
+            }
+            Ok(())
         })
     }
 
@@ -147,33 +249,30 @@ impl Store {
                 params![limits.ttl_secs, limits.cap],
             )?;
             if before != limits {
-                let mut stmt = tx.prepare(
-                    "SELECT workspace_id FROM workspace_interception WHERE decrypt_all = 1",
-                )?;
-                let names = stmt.query_map([], |r| r.get::<_, String>(0))?;
-                for name in names.flatten() {
-                    if let Ok(workspace) = WorkspaceId::new(&name) {
-                        changed(fx, &workspace);
-                    }
-                }
+                changed_everywhere(tx, fx)?;
             }
             Ok(())
         })
     }
 
-    /// Turns "decrypt every host" on or off for `workspace`. An unchanged value sends no event.
+    /// Sets `workspace`'s own mode (`None` follows the global setting). An unchanged value sends
+    /// no event.
     ///
     /// # Errors
     /// A database error; nothing changes then.
-    pub fn set_decrypt_all(&self, workspace: &WorkspaceId, on: bool) -> Result<(), StoreError> {
-        let before = self.workspace_interception(workspace)?.decrypt_all;
+    pub fn set_workspace_mode(
+        &self,
+        workspace: &WorkspaceId,
+        mode: Option<InterceptionMode>,
+    ) -> Result<(), StoreError> {
+        let before = self.workspace_interception(workspace)?.mode;
         self.change(|tx, _now, fx| {
             tx.execute(
-                "INSERT INTO workspace_interception (workspace_id, decrypt_all) VALUES (?1, ?2)
-                 ON CONFLICT (workspace_id) DO UPDATE SET decrypt_all = ?2",
-                params![workspace.as_str(), on],
+                "INSERT INTO workspace_interception (workspace_id, mode) VALUES (?1, ?2)
+                 ON CONFLICT (workspace_id) DO UPDATE SET mode = ?2",
+                params![workspace.as_str(), mode.map(InterceptionMode::as_str)],
             )?;
-            if before != on {
+            if before != mode {
                 changed(fx, workspace);
             }
             Ok(())
@@ -212,8 +311,7 @@ impl Store {
         })
     }
 
-    /// Replaces the names no workspace decrypts with `patterns`, and tells every workspace that
-    /// has a switch row (the others do not decrypt every host, so it changes nothing for them).
+    /// Replaces the names no workspace decrypts with `patterns`, and tells every workspace.
     ///
     /// # Errors
     /// A database error; nothing changes then.
@@ -226,14 +324,7 @@ impl Store {
                     [pattern],
                 )?;
             }
-            let mut stmt = tx
-                .prepare("SELECT workspace_id FROM workspace_interception WHERE decrypt_all = 1")?;
-            let names = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            for name in names.flatten() {
-                if let Ok(workspace) = WorkspaceId::new(&name) {
-                    changed(fx, &workspace);
-                }
-            }
+            changed_everywhere(tx, fx)?;
             Ok(())
         })
     }
@@ -256,199 +347,4 @@ pub(super) fn delete_workspace_rows(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use puddle_types::EventSink;
-
-    use super::*;
-    use crate::clock::ManualClock;
-    use crate::store::Limits;
-
-    #[derive(Default)]
-    struct Seen(Mutex<Vec<Event>>);
-
-    impl EventSink for Seen {
-        fn emit(&self, event: Event) {
-            self.0.lock().unwrap().push(event);
-        }
-    }
-
-    fn ws(text: &str) -> WorkspaceId {
-        WorkspaceId::new(text).unwrap()
-    }
-
-    fn strings(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| (*s).to_owned()).collect()
-    }
-
-    fn store() -> (Store, Arc<Seen>) {
-        let seen = Arc::new(Seen::default());
-        let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default())
-            .unwrap()
-            .with_events(Arc::clone(&seen) as Arc<dyn EventSink>);
-        (store, seen)
-    }
-
-    fn changes(seen: &Seen) -> usize {
-        seen.0
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|e| matches!(e, Event::WorkspaceGitChanged { .. }))
-            .count()
-    }
-
-    #[test]
-    fn a_workspace_decrypts_nothing_extra_until_its_switch_is_turned_on() {
-        let (store, seen) = store();
-        assert_eq!(
-            store.workspace_interception(&ws("a")).unwrap(),
-            WorkspaceInterception::default()
-        );
-        store.set_decrypt_all(&ws("a"), true).unwrap();
-        store.set_decrypt_all(&ws("a"), true).unwrap();
-        assert!(store.workspace_interception(&ws("a")).unwrap().decrypt_all);
-        assert!(!store.workspace_interception(&ws("b")).unwrap().decrypt_all);
-        assert_eq!(changes(&seen), 1, "an unchanged value is not a change");
-        store.set_decrypt_all(&ws("a"), false).unwrap();
-        assert!(!store.workspace_interception(&ws("a")).unwrap().decrypt_all);
-        assert_eq!(changes(&seen), 2);
-    }
-
-    #[test]
-    fn never_decrypt_names_are_per_workspace_sorted_and_replaced_as_a_whole() {
-        let (store, seen) = store();
-        store
-            .set_never_decrypt(
-                &ws("a"),
-                &strings(&["b.example", "*.a.example", "b.example"]),
-            )
-            .unwrap();
-        assert_eq!(
-            store
-                .workspace_interception(&ws("a"))
-                .unwrap()
-                .never_decrypt,
-            ["*.a.example", "b.example"]
-        );
-        assert_eq!(
-            store
-                .workspace_interception(&ws("b"))
-                .unwrap()
-                .never_decrypt,
-            strings(&[])
-        );
-        assert_eq!(changes(&seen), 1);
-        store
-            .set_never_decrypt(&ws("a"), &strings(&["*.a.example", "b.example"]))
-            .unwrap();
-        assert_eq!(changes(&seen), 1, "the same names are not a change");
-        store.set_never_decrypt(&ws("a"), &[]).unwrap();
-        assert_eq!(
-            store
-                .workspace_interception(&ws("a"))
-                .unwrap()
-                .never_decrypt,
-            strings(&[])
-        );
-        assert_eq!(changes(&seen), 2);
-    }
-
-    #[test]
-    fn the_global_list_tells_only_the_workspaces_that_decrypt_every_host() {
-        let (store, seen) = store();
-        store.set_decrypt_all(&ws("on"), true).unwrap();
-        store.set_decrypt_all(&ws("off"), false).unwrap();
-        let before = changes(&seen);
-        store
-            .set_global_never_decrypt(&strings(&["bank.example"]))
-            .unwrap();
-        assert_eq!(store.global_never_decrypt().unwrap(), ["bank.example"]);
-        assert_eq!(changes(&seen) - before, 1);
-        store.set_global_never_decrypt(&[]).unwrap();
-        assert_eq!(store.global_never_decrypt().unwrap(), strings(&[]));
-    }
-
-    #[test]
-    fn the_learned_limits_are_twelve_hours_and_1024_until_saved_and_tell_the_decrypting_workspaces()
-    {
-        let (store, seen) = store();
-        let built_in = LearnedLimits::default();
-        assert_eq!((built_in.ttl_secs, built_in.cap), (43_200, 1024));
-        assert_eq!(store.learned_limits().unwrap(), built_in);
-        store.set_decrypt_all(&ws("on"), true).unwrap();
-        store.set_decrypt_all(&ws("off"), false).unwrap();
-        let before = changes(&seen);
-        let mine = LearnedLimits {
-            ttl_secs: 600,
-            cap: 8,
-        };
-        store.set_learned_limits(mine).unwrap();
-        assert_eq!(store.learned_limits().unwrap(), mine);
-        assert_eq!(
-            changes(&seen) - before,
-            1,
-            "only the workspace that decrypts"
-        );
-        store.set_learned_limits(mine).unwrap();
-        assert_eq!(
-            changes(&seen) - before,
-            1,
-            "the same values are not a change"
-        );
-        store.set_learned_limits(built_in).unwrap();
-        assert_eq!(store.learned_limits().unwrap(), built_in);
-        assert!(
-            store
-                .set_learned_limits(LearnedLimits {
-                    ttl_secs: 0,
-                    cap: 1
-                })
-                .is_err(),
-            "the table refuses zero"
-        );
-    }
-
-    #[test]
-    fn deleting_a_workspace_deletes_its_settings_and_keeps_the_global_list() {
-        let (store, _) = store();
-        store.set_decrypt_all(&ws("a"), true).unwrap();
-        store
-            .set_never_decrypt(&ws("a"), &strings(&["x.example"]))
-            .unwrap();
-        store
-            .set_global_never_decrypt(&strings(&["g.example"]))
-            .unwrap();
-        store.delete_workspace(&ws("a")).unwrap();
-        assert_eq!(
-            store.workspace_interception(&ws("a")).unwrap(),
-            WorkspaceInterception::default()
-        );
-        assert_eq!(store.global_never_decrypt().unwrap(), ["g.example"]);
-    }
-
-    #[test]
-    fn every_never_decrypt_name_is_listed_with_its_workspace() {
-        let (store, _) = store();
-        store
-            .set_global_never_decrypt(&strings(&["g.example"]))
-            .unwrap();
-        store
-            .set_never_decrypt(&ws("shop"), &strings(&["*.bank.example"]))
-            .unwrap();
-        store
-            .set_never_decrypt(&ws("other"), &strings(&["o.example"]))
-            .unwrap();
-        let named: Vec<String> = store
-            .never_decrypt_names()
-            .unwrap()
-            .into_iter()
-            .map(|(w, p)| format!("{}:{p}", w.unwrap_or_default()))
-            .collect();
-        assert_eq!(
-            named,
-            [":g.example", "other:o.example", "shop:*.bank.example"]
-        );
-    }
-}
+mod tests;

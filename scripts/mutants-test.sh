@@ -5,7 +5,7 @@
 # the cache, a dirty tree never uses it, and a cache hit that now fails reports a MISMATCH. Then the
 # list's two forms: a crate with a file list is swept with one `-f` per file (and `diff` looks at those
 # files only), a crate without one whole, a file unit has its own cache entry, a malformed list is refused.
-# The job matrix is a list of {crate, file, name} objects and the workflow spreads it with `include:`.
+# The job matrix is a list of {crate, file, shard, name} objects and the workflow spreads it with `include:`.
 set -eu
 # A git hook runs this with GIT_DIR and friends set; they would point the throwaway repository's git
 # commands at the real one.
@@ -144,6 +144,58 @@ wf="$here/../.github/workflows/mutants.yml"
 grep -Eq '^ +include: \$\{\{ fromJson\(needs\.crates\.outputs\.matrix\) \}\}$' "$wf" || fail "the sweep job must use matrix include: with the crate list"
 grep -Eq '^ +crate: \$\{\{ fromJson' "$wf" && fail "the matrix must not be keyed by crate: its entries are objects"
 grep -q 'scripts/mutants.sh --matrix' "$wf" || fail "the workflow must build the matrix with scripts/mutants.sh --matrix"
+
+# `crate shards=N`: N units `crate @K/N`, one `--shard K/N` run each, with their own cache entries; the matrix
+# carries the shard and a name safe for a file or artifact; another crate's lines are untouched.
+printf 'puddle-a shards=3   # a big crate\nputdle-x\n' | sed 's/putdle/puddle/' >scripts/mutants-crates.txt
+[ "$(scripts/mutants.sh --units | tr '\n' ',')" = "puddle-a @0/3,puddle-a @1/3,puddle-a @2/3,puddle-x," ] || fail "--units must print one unit per shard"
+[ "$(scripts/mutants.sh --list | tr '\n' ' ')" = "puddle-a puddle-x " ] || fail "--list must name a sharded crate once"
+matrix=$(scripts/mutants.sh --matrix)
+[ "$(echo "$matrix" | jq -c '[.[] | [.crate, .file, .shard, .name] | map(type == "string") | all] | all')" = true ] || fail "matrix fields must be strings: $matrix"
+[ "$(echo "$matrix" | jq -r '.[1] | "\(.crate)|\(.file)|\(.shard)|\(.name)"')" = "puddle-a||1/3|shard-1of3" ] || fail "shard matrix entry wrong: $matrix"
+[ "$(echo "$matrix" | jq -r '.[3] | "\(.crate)|\(.file)|\(.shard)|\(.name)"')" = "puddle-x|||" ] || fail "unsharded matrix entry wrong: $matrix"
+[ "$(echo "$matrix" | jq 'length')" = 4 ] || fail "matrix must have one entry per unit: $matrix"
+mkdir -p crates/puddle-x && echo x >crates/puddle-x/lib.rs && git add scripts crates && git commit -qm sharded
+: >"$FAKE_RUNS"
+cache="$tmp/cache3"
+sweep --cache "$cache" >/dev/null
+[ "$(runs)" = 4 ] || fail "a sharded sweep runs each shard and the other crate once, ran $(runs)"
+for k in 0 1 2; do
+    [ "$(grep -c -e "-p puddle-a .*--shard $k/3 --output" "$FAKE_RUNS")" = 1 ] || fail "shard $k/3 must run once"
+done
+grep -e '-p puddle-x ' "$FAKE_RUNS" | grep -q -e '--shard' && fail "an unsharded crate must not get --shard"
+sweep --cache "$cache" >/dev/null
+[ "$(runs)" = 4 ] || fail "every passing shard must be skipped when unchanged"
+# One failing shard fails the sweep and is not recorded; the passing ones stay skipped.
+echo y >crates/puddle-a/lib.rs && git commit -qam change-a
+: >"$FAKE_RUNS"
+cat >fake-cargo-shard <<'F'
+#!/bin/sh
+case $1 in
+tree) echo "$3 v0.0.0" ;;
+mutants)
+    [ "$2" = --version ] && { echo "cargo-mutants 0.0.0"; exit 0; }
+    echo "$*" >>"$FAKE_RUNS"
+    case $* in *"--shard 1/3"*) exit 2 ;; esac
+    ;;
+esac
+F
+chmod +x fake-cargo-shard
+: >"$FAKE_RUNS"
+CARGO="$tmp/fake-cargo-shard" sweep --cache "$cache" >/dev/null && fail "a failing shard must fail the sweep"
+[ "$(runs)" = 3 ] || fail "all three shards of the changed crate run, ran $(runs)"
+: >"$FAKE_RUNS"
+CARGO="$tmp/fake-cargo-shard" sweep --cache "$cache" >/dev/null && fail "a failing shard must fail the sweep again"
+[ "$(runs)" = 1 ] || fail "only the failing shard runs again, ran $(runs)"
+# --shard by hand still works on a crate that is not sharded in the list.
+printf 'puddle-x\n' >scripts/mutants-crates.txt
+: >"$FAKE_RUNS"
+sweep --crate puddle-x --shard 2/5 >/dev/null
+tail -n 1 "$FAKE_RUNS" | grep -q -e '--shard 2/5 --output' || fail "--shard on the command line must pass through"
+printf 'puddle-a shards=0\n' >scripts/mutants-crates.txt
+scripts/mutants.sh --list >/dev/null 2>&1 && fail "shards=0 must be refused"
+printf 'puddle-a shards=2\npuddle-a src/x.rs\n' >scripts/mutants-crates.txt
+scripts/mutants.sh --list >/dev/null 2>&1 && fail "a crate with shards=N and a file line must be refused"
 
 # A malformed list is refused.
 printf 'puddle-a\npuddle-a src/x.rs\n' >scripts/mutants-crates.txt

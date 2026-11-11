@@ -21,7 +21,51 @@ function many(count: number) {
 
 const body = () => document.querySelectorAll("tbody tr.row");
 
+const refused = (rule: number) =>
+  connection(1, {
+    decision: "deny",
+    reason: "request_rule",
+    rule_id: null,
+    request_rule: rule,
+    method: "DELETE",
+    path: "/repos/a/b",
+  });
+
 describe("AuditTable", () => {
+  it("links a refusing rule on method and path to its row on the Rules screen", () => {
+    render(AuditTable, { entries: [refused(7)], now: NOW });
+    const link = screen.getByRole("link", { name: "method and path rule 7" });
+    expect(link).toHaveAttribute("href", "/rules?request-rule=7");
+    expect(link.closest("td")).toHaveTextContent(
+      "DELETE /repos/a/b · method and path rule 7",
+    );
+  });
+  it("follows the link without opening the row's raw record", async () => {
+    render(AuditTable, { entries: [refused(7)], now: NOW });
+    const link = screen.getByRole("link", { name: "method and path rule 7" });
+    link.addEventListener("click", (e) => e.preventDefault());
+    await fireEvent.click(link);
+    expect(document.querySelector("tr.detail")).toBeNull();
+  });
+  it("shows a deleted rule as plain text marked (deleted)", () => {
+    render(AuditTable, {
+      entries: [refused(7)],
+      now: NOW,
+      ruleGone: (id: number) => id === 7,
+    } as never);
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(document.querySelector("td.muted")).toHaveTextContent(
+      "DELETE /repos/a/b · method and path rule 7 (deleted)",
+    );
+  });
+  it("keeps a rule that still exists a link", () => {
+    render(AuditTable, {
+      entries: [refused(7)],
+      now: NOW,
+      ruleGone: () => false,
+    } as never);
+    expect(screen.getByRole("link")).toBeInTheDocument();
+  });
   it("draws a table with the columns, one row per record, newest first", () => {
     render(AuditTable, { entries: many(3), now: NOW });
     expect(

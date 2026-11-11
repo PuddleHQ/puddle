@@ -34,7 +34,6 @@ use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
 use puddle_agent_proto::ssh::{BANNER_MIN, PROTOCOL_HEADER, SSH, is_banner};
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
-    copy_bidirectional, join,
 };
 use tokio::net::TcpStream;
 use tokio::time::Instant;
@@ -245,19 +244,8 @@ where
     }
     let first = peek(&mut stdin, settings.first_bytes).await;
     match open(settings, request, &first).await {
-        Ok(Opened::Tunnel { mut conn, rest }) => {
-            let mut both = join(stdin, &mut stdout);
-            let carried = async {
-                both.write_all(&rest).await?;
-                copy_bidirectional(&mut both, &mut conn).await
-            };
-            match carried.await {
-                Ok(_) => Exit::Done,
-                Err(err) => {
-                    tracing::debug!(error = %err, "connection ended with an error");
-                    Exit::Failed
-                }
-            }
+        Ok(Opened::Tunnel { conn, rest }) => {
+            carry_until_the_server_closes(conn, &rest, stdin, stdout).await
         }
         Ok(Opened::Refused(text)) => {
             say(stderr, &text).await;
@@ -314,7 +302,7 @@ where
         // An IPv4-mapped IPv6 address (::ffff:127.0.0.1) is local by `is_local`; dial its IPv4
         // form, since Windows refuses to connect to the mapped one (os error 10049).
         match TcpStream::connect(SocketAddr::new(ip.to_canonical(), port)).await {
-            Ok(conn) => return carry_until_the_server_closes(conn, stdin, stdout).await,
+            Ok(conn) => return carry_until_the_server_closes(conn, &[], stdin, stdout).await,
             Err(err) => failure = format!("puddle-agent connect: {ip} port {port}: {err}\n"),
         }
     }
@@ -324,14 +312,25 @@ where
 
 /// Carries both directions until the server is done. The client's own end is no signal: `stdout`
 /// is a pipe that stays open until this process exits, so a client waiting for the server to
-/// close would never close its side first.
-async fn carry_until_the_server_closes<I, O>(conn: TcpStream, mut stdin: I, mut stdout: O) -> Exit
+/// close would never close its side first. `ahead` is what the server already sent: it goes to
+/// `stdout` before anything else.
+async fn carry_until_the_server_closes<I, O>(
+    conn: TcpStream,
+    ahead: &[u8],
+    mut stdin: I,
+    mut stdout: O,
+) -> Exit
 where
     I: AsyncRead + Unpin,
     O: AsyncWrite + Unpin,
 {
     let (mut from_server, mut to_server) = conn.into_split();
     let down = async {
+        // `copy` flushes only what it wrote itself, and the process's stdout is line-buffered:
+        // without this flush an SSH server's KEXINIT that came in behind its banner stays here
+        // while the client waits for it.
+        stdout.write_all(ahead).await?;
+        stdout.flush().await?;
         tokio::io::copy(&mut from_server, &mut stdout).await?;
         stdout.flush().await
     };

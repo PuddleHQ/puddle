@@ -40,6 +40,7 @@ fn a_root_disk_reset_names_itself_on_the_wire() {
         Operation::ResettingRootDisk.to_string(),
         "resetting_root_disk"
     );
+    assert_eq!(Operation::GrowingRootDisk.to_string(), "growing_root_disk");
 }
 
 #[test]
@@ -104,6 +105,8 @@ fn a_launcher_with_no_window_has_nothing_to_close_and_nothing_to_forget() {
     )
     .unwrap()
     .unwrap();
+    // A shell with no window keeps no browser data under any id.
+    assert!(!NoWindow.has_browser_data(&WorkspaceId::new("demo").unwrap()));
 }
 
 #[test]
@@ -232,9 +235,10 @@ async fn the_empty_service_says_it_is_unavailable() {
     let id = WorkspaceId::new("w").unwrap();
     let name = DisplayName::parse("w").unwrap();
     let dir = CheckoutDir::new("a").unwrap();
+    let entry = EntryId::from_random([1; 5]);
     let url = RepoUrl::parse("https://example.com/a").unwrap();
     let repos = vec![NewRepository {
-        repository: Repository::at_default_directory(url),
+        repository: Repository::at_default_directory(EntryId::from_random([1; 5]), url),
         identity: None,
         pull: true,
         push: true,
@@ -273,8 +277,8 @@ async fn the_empty_service_says_it_is_unavailable() {
         )
         .await
         .map(|_| ()),
-        svc.clone_again(&id, &dir, &NoGitSetup).await.map(|_| ()),
-        svc.remove_repository(&id, &dir).await.map(|_| ()),
+        svc.clone_again(&id, &entry, &NoGitSetup).await.map(|_| ()),
+        svc.remove_repository(&id, &entry).await.map(|_| ()),
     ];
     for result in all {
         assert!(matches!(result, Err(WorkspaceError::Unavailable(_))));
@@ -380,14 +384,20 @@ fn an_id_for_a_name_is_a_label_the_same_every_time() {
 }
 
 #[test]
-fn a_taken_id_gets_a_number_and_the_numbers_run_out() {
+fn the_name_source_numbers_its_later_draws_and_cuts_the_label_for_the_number() {
     let new = |name: &str| NewWorkspace::new(DisplayName::parse(name).unwrap(), Vec::new());
     let taken = |ids: &'static [&'static str]| move |id: &WorkspaceId| ids.contains(&id.as_str());
-    assert_eq!(new("Shop").id(taken(&[])).unwrap().as_str(), "shop");
-    assert_eq!(new("Shop").id(taken(&["shop"])).unwrap().as_str(), "shop-2");
+    assert_eq!(
+        new("Shop").id(&NameIds, taken(&[])).unwrap().as_str(),
+        "shop"
+    );
+    assert_eq!(
+        new("Shop").id(&NameIds, taken(&["shop"])).unwrap().as_str(),
+        "shop-2"
+    );
     assert_eq!(
         new("shop!")
-            .id(taken(&["shop", "shop-2"]))
+            .id(&NameIds, taken(&["shop", "shop-2"]))
             .unwrap()
             .as_str(),
         "shop-3"
@@ -395,11 +405,105 @@ fn a_taken_id_gets_a_number_and_the_numbers_run_out() {
     // The number fits under the longest id: the label is cut, never the number.
     let long = "a".repeat(DisplayName::MAX_CHARS);
     let full = WorkspaceId::new(&long).unwrap();
-    let second = new(&long).id(|id| *id == full).unwrap();
+    let second = new(&long).id(&NameIds, |id| *id == full).unwrap();
     assert_eq!(second.as_str().len(), WorkspaceId::MAX_LEN);
     assert!(second.as_str().ends_with("-2"), "{second}");
-    // At most 99 of one label.
-    assert!(new("Shop").id(|_| true).is_err());
+}
+
+/// A source that gives the same id every time, or nothing at all, and counts its draws.
+struct Stuck {
+    id: Option<WorkspaceId>,
+    draws: std::sync::atomic::AtomicU32,
+}
+
+impl IdSource for Stuck {
+    fn draw(&self, _name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String> {
+        assert_eq!(
+            attempt,
+            self.draws.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
+        self.id
+            .clone()
+            .ok_or_else(|| "the source is empty".to_owned())
+    }
+}
+
+#[test]
+fn an_entry_id_is_drawn_again_while_taken_and_given_up_on_after_sixteen_draws() {
+    let calls = std::cell::Cell::new(0_u8);
+    let counting = |bytes: &mut [u8; 5]| {
+        calls.set(calls.get() + 1);
+        *bytes = [calls.get(); 5];
+        Ok(())
+    };
+    let first = EntryId::from_random([1; 5]);
+    let id = draw_entry_id(counting, |e| *e == first).unwrap();
+    assert_eq!((calls.get(), id), (2, EntryId::from_random([2; 5])));
+
+    let draws = std::cell::Cell::new(0_u32);
+    let err = draw_entry_id(
+        |_| {
+            draws.set(draws.get() + 1);
+            Ok(())
+        },
+        |_| true,
+    )
+    .unwrap_err();
+    assert_eq!(draws.get(), MAX_ID_DRAWS);
+    assert!(err.contains("no free repository entry id"), "{err}");
+
+    let empty = draw_entry_id(|_| Err("no randomness".to_owned()), |_| false).unwrap_err();
+    assert!(empty.contains("random source may be broken"), "{empty}");
+    assert!(new_entry_id(|_| false).is_ok());
+}
+
+#[test]
+fn a_stuck_source_is_given_up_on_after_sixteen_draws() {
+    let new = NewWorkspace::new(DisplayName::parse("acme").unwrap(), Vec::new());
+    let stuck = WorkspaceId::new("a0000000").unwrap();
+    for id in [Some(stuck.clone()), None] {
+        let source = Stuck {
+            id,
+            draws: std::sync::atomic::AtomicU32::new(0),
+        };
+        let err = new.id(&source, |id| *id == stuck).unwrap_err();
+        assert_eq!(source.draws.into_inner(), MAX_ID_DRAWS);
+        assert_eq!(MAX_ID_DRAWS, 16);
+        assert_eq!(
+            err.to_string(),
+            "no free workspace id was found; the system's random source may be broken"
+        );
+    }
+    // A free id on the last draw is still taken up.
+    let source = Stuck {
+        id: Some(stuck.clone()),
+        draws: std::sync::atomic::AtomicU32::new(0),
+    };
+    let seen = std::sync::atomic::AtomicU32::new(0);
+    let last = new
+        .id(&source, |_| {
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 < MAX_ID_DRAWS
+        })
+        .unwrap();
+    assert_eq!(last, stuck);
+}
+
+#[test]
+fn the_random_source_draws_generated_ids_whatever_the_name() {
+    let new = NewWorkspace::new(DisplayName::parse("acme").unwrap(), Vec::new());
+    let first = new.id(&RandomIds, |_| false).unwrap();
+    assert_eq!(first.as_str().len(), WorkspaceId::GENERATED_LEN);
+    assert_ne!(first.as_str(), "acme");
+    // A taken id is drawn again, not numbered: the first draw is refused, the second taken up.
+    let asked = std::sync::atomic::AtomicU32::new(0);
+    let second = new
+        .id(&RandomIds, |_| {
+            asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0
+        })
+        .unwrap();
+    assert_eq!(asked.into_inner(), 2);
+    // Two random draws are not compared: `asked` shows the second came from a new draw.
+    assert_eq!(second.as_str().len(), WorkspaceId::GENERATED_LEN);
 }
 
 #[test]

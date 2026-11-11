@@ -166,6 +166,18 @@
     captureHint = ok && workspace?.status === "running";
   }
 
+  async function saveForeignWarning(select: HTMLSelectElement) {
+    await save(
+      { warn_foreign_credentials: toggleFromChoice(select.value) },
+      "Credential warning",
+      () => {
+        select.value = toggleToChoice(
+          settings.overrides?.warn_foreign_credentials ?? null,
+        );
+      },
+    );
+  }
+
   async function saveClipboard(select: HTMLSelectElement) {
     await save(
       {
@@ -331,9 +343,10 @@
             workspace, Puddle keeps the real token on this computer. The
             workspace gets a stand-in that works only through Puddle, so while
             capture works nothing running in the workspace can copy your login.
-            A change takes effect when the workspace next starts; turning it off
-            leaves the logins Puddle already kept unused, so sign in again in
-            the workspace. A token the workspace prints, such as the one of
+            When Puddle cannot keep a token it stops the sign-in. A change takes
+            effect when the workspace next starts; turning it off leaves the
+            logins Puddle already kept unused, so sign in again in the
+            workspace. A token the workspace prints, such as the one of
             <code>claude setup-token</code>, is a stand-in as well and works
             only inside this workspace; copy it elsewhere and it is refused.
             With capture off, a login keeps its real token in the workspace.
@@ -359,6 +372,42 @@
         workspaceLabel={workspace.name}
         reload={() => void kept.load(workspace.id)}
       />
+    </section>
+
+    <section class="card" aria-labelledby="foreign-h">
+      <h2 id="foreign-h">Credentials Puddle did not add</h2>
+      <div class="setting">
+        <div class="grow">
+          <label for="ws-foreign-warning"
+            >Warn when a tool sends a token of its own</label
+          >
+          <p class="desc" id="ws-foreign-warning-desc">
+            When a tool in this workspace sends a token Puddle did not add (one
+            you pasted, or a login Puddle does not keep) to a website, the
+            request goes through as it always did. With the warning on you also
+            get a notice and a flag in the Activity log that names the website
+            and what kind of token it looked like, never the token itself.
+            Puddle cannot tell your own token from one that leaked, so this
+            catches mistakes, not a workspace that hides what it sends. The same
+            switch covers a token of a known kind that a website sends this
+            workspace in an answer and Puddle does not hold. A change applies to
+            the next request.
+            <span class="chip"
+              >{sourceLabel(effective.warn_foreign_credentials.source)}</span
+            >
+          </p>
+        </div>
+        <select
+          id="ws-foreign-warning"
+          aria-describedby="ws-foreign-warning-desc"
+          value={toggleToChoice(overrides.warn_foreign_credentials)}
+          onchange={(e) => void saveForeignWarning(e.currentTarget)}
+        >
+          {#each switchOptions(global.warn_foreign_credentials.value) as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </div>
     </section>
 
     <InterceptionSetting id={workspace.id} />

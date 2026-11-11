@@ -110,6 +110,16 @@ pub struct ConnectionRecord {
     /// before it existed.
     #[serde(default)]
     pub scrubbed_stand_ins: Vec<String>,
+    /// The kinds of credential the requests carried that Puddle did not add or swap
+    /// (`github_token`, `stale_stand_in`, ...), each once; never a value. Absent in records
+    /// written before it existed.
+    #[serde(default)]
+    pub foreign_credentials: Vec<String>,
+    /// The kinds of token the answers held that Puddle does not hold (`github_token`,
+    /// `jwt_with_refresh_token`, ...), each once; never a value. Absent in records written before
+    /// it existed.
+    #[serde(default)]
+    pub answer_credentials: Vec<String>,
     /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
     pub method: Option<String>,
     /// HTTP path without query string, where `method` is set.
@@ -154,6 +164,8 @@ impl ConnectionRecord {
             injected: event.injected,
             unswapped_stand_ins: event.unswapped_stand_ins.clone(),
             scrubbed_stand_ins: event.scrubbed_stand_ins.clone(),
+            foreign_credentials: event.foreign_credentials.clone(),
+            answer_credentials: event.answer_credentials.clone(),
             method,
             path,
             path_truncated: false,
@@ -207,6 +219,8 @@ impl ConnectionRecord {
             injected: false,
             unswapped_stand_ins: Vec::new(),
             scrubbed_stand_ins: Vec::new(),
+            foreign_credentials: Vec::new(),
+            answer_credentials: Vec::new(),
             method: None,
             path: None,
             path_truncated: false,
@@ -430,6 +444,9 @@ pub enum WorkspaceOpKind {
     RepoRemoved,
     /// A zero-filled or corrupt git file (`HEAD`, the index) of a checkout rebuilt at boot.
     GitRepaired,
+    /// A workspace's root disk made bigger, or the attempt failed; `detail` says from what size
+    /// to what size and how it took effect.
+    RootDiskGrown,
 }
 
 /// How a workspace operation ended.

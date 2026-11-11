@@ -11,8 +11,8 @@
 # (ci/scope.sh, the `scope` job); the result job accepts that skip only when `scope` said so. With the
 # repository variable PUDDLE_QUEUE set to `on`, a pull request to develop skips them too (the light
 # mode) and the merge queue runs them on the commit that lands.
-# The test binaries are built once (`cargo nextest archive`) and the tests run in six partitions
-# on six runners at once; the guest agent and the runtime layout check are built in a job beside the archive build.
+# The test binaries are built once (`cargo nextest archive`) and the tests run in ten partitions
+# on ten runners at once; the guest agent and the runtime layout check are built in a job beside the archive build.
 # `vm-linux (KVM, msb microVMs)` is the one result of all of them. The partitions are balanced by measured test time
 # (ci/vm-partition.sh, ci/vm-test-timings-linux.tsv), not by nextest's name hash.
 name: vm-linux
@@ -131,7 +131,7 @@ jobs:
       # No Rust cache here: this job's nextest archive build restored an entry on 0 of the last 22 pull
       # requests, and with the ci entry restored (exact) it was no faster than a cold build, so the
       # restore only cost time and the repo's 10 GB cap more space (cache-gc.yml, budget table).
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -225,7 +225,7 @@ jobs:
         uses: ./.github/actions/cancel-group
 
   tests:
-    name: vm-linux tests (partition ${{ matrix.partition }} of 6)
+    name: vm-linux tests (partition ${{ matrix.partition }} of 10)
     needs: [build, agent]
     if: needs.build.outputs.run == 'true'
     permissions:
@@ -243,7 +243,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4, 5, 6]
+        partition: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     env:
       # The hosted runner has passwordless sudo; the doctor test that hands a folder to another uid
       # fails without it instead of skipping.
@@ -284,7 +284,7 @@ jobs:
           ls -l /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           echo "ok=true" >> "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         if: steps.kvm.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -306,7 +306,9 @@ jobs:
       # the corepack home) is kept in this folder between runs: a warm cache installs with no third-party host
       # (a 504 from services.gradle.org once failed a merge queue run). The folder is saved only by a develop run
       # (the nightly or a dispatch), because a pull request or merge queue ref cannot share its entries; they all
-      # restore it, and a miss is filled by the test itself from the real mirrors.
+      # restore it, and a miss is filled by the test itself from the real mirrors. GitHub purges the repo's caches without a
+      # log when a Rust entry is replaced (2026-11-06: gone 100 minutes after the save), so cache-gc.yml dispatches a develop
+      # run to refill it (ci/tools-cache-heal.sh).
       - name: guest tools cache (vm_guest_env)
         id: tools-cache
         if: steps.kvm.outputs.ok == 'true'
@@ -392,7 +394,7 @@ jobs:
         timeout-minutes: 2
         continue-on-error: true
         run: ci/runner-speed.sh | tee "$RUNNER_TEMP/runner-speed.txt"
-      - name: VM tests (tier K, partition ${{ matrix.partition }} of 6)
+      - name: VM tests (tier K, partition ${{ matrix.partition }} of 10)
         if: steps.kvm.outputs.ok == 'true'
         timeout-minutes: ${{ contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) && 52 || 32 }}
         env:
@@ -404,7 +406,7 @@ jobs:
           # cargo-nextest is called directly: through `cargo` it would make rustup install the
           # pinned toolchain here, which an archive run never needs.
           mkdir -p "$RUNNER_TEMP/vmx"
-          # Which tests run here is ci/vm-filter.sh (vm_machine_*, vm_radar_* and, off the nightly, vm_soak_* stay out). Each run gets its
+          # Which tests run here is ci/vm-filter.sh (vm_machine_*, vm_radar_* and, off the nightly, vm_soak_* and vm_perf_* stay out). Each run gets its
           # own prefix, so its sandbox names and private msb home never meet another run's.
           base="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           FILTER=$(ci/vm-filter.sh)

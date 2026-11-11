@@ -8,6 +8,7 @@ use crate::terminate_support;
 use std::sync::Arc;
 use std::time::Duration;
 
+use puddle_agent_proto::ssh::{PROTOCOL_HEADER, SSH};
 use puddle_proxy::{InjectDecision, PassThrough};
 use puddle_types::ConnectionDecision;
 use rustls::pki_types::ServerName;
@@ -499,9 +500,11 @@ async fn a_client_that_asks_for_another_name_is_passed_through_not_refused() {
     );
 }
 
-/// An address nothing listens on.
-fn closed_port() -> std::io::Result<std::net::SocketAddr> {
-    std::net::TcpListener::bind(("127.0.0.1", 0))?.local_addr()
+/// An address nothing listens on, and the hold that keeps another test from taking its port.
+fn closed_port() -> (puddle_test_kit::ReservedPort, std::net::SocketAddr) {
+    let held = puddle_test_kit::ReservedPort::new();
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], held.port()));
+    (held, addr)
 }
 
 #[tokio::test]
@@ -532,8 +535,9 @@ async fn a_record_that_looks_like_a_hello_but_is_not_one_is_passed_through() {
 #[tokio::test]
 async fn a_pass_through_to_a_server_that_cannot_be_reached_just_ends_the_connection() {
     let pki = Pki::new();
+    let (_held, dead) = closed_port();
     let rig = RigBuilder::new(&pki)
-        .name("dead.test", closed_port().unwrap())
+        .name("dead.test", dead)
         .allow(vec!["bound.test", "dead.test"])
         .injector(adds_nothing())
         .decrypting_all(true, &[])
@@ -556,8 +560,9 @@ async fn a_pass_through_to_a_server_that_cannot_be_reached_just_ends_the_connect
 #[tokio::test]
 async fn a_decrypted_host_that_cannot_be_reached_gets_an_error_the_tool_can_read() {
     let pki = Pki::new();
+    let (_held, dead) = closed_port();
     let rig = RigBuilder::new(&pki)
-        .name("dead.test", closed_port().unwrap())
+        .name("dead.test", dead)
         .allow(vec!["bound.test", "dead.test"])
         .injector(adds_nothing())
         .decrypting_all(true, &[])
@@ -567,4 +572,37 @@ async fn a_decrypted_host_that_cannot_be_reached_gets_an_error_the_tool_can_read
     let response = client.get("dead.test", "/").await;
     assert_eq!(response.status, 502);
     client.close().await;
+}
+
+#[tokio::test]
+async fn ssh_to_a_decrypted_name_is_spliced_at_once_and_never_waits_for_a_tls_hello() {
+    let pki = Pki::new();
+    let server = FakeServer::plain(Arc::new(|_| Reply::ok("never asked"))).await;
+    let injector = adds_nothing();
+    let rig = RigBuilder::new(&pki)
+        .name("free.test", server.addr)
+        .allow(vec!["bound.test", "free.test"])
+        .injector(injector.clone())
+        .decrypting_all(true, &[])
+        .build();
+    let guest = rig.guest();
+    let mut stream = guest.open_stream().await;
+    let head = format!(
+        "CONNECT free.test:443 HTTP/1.1\r\nHost: free.test:443\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let mut answer = [0u8; 12];
+    stream.read_exact(&mut answer).await.unwrap();
+    assert_eq!(&answer, b"HTTP/1.1 200");
+    // A terminated connection would wait for the guest's TLS hello before it connected upstream.
+    puddle_test_kit::eventually(
+        "the real server was connected to",
+        Duration::from_secs(5),
+        || match server.accepted() {
+            1 => Ok(()),
+            n => Err(format!("{n} connections")),
+        },
+    )
+    .await;
+    assert_eq!(injector.calls(), 0, "nothing was decrypted");
 }

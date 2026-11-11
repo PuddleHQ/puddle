@@ -258,6 +258,7 @@ pub struct Proxy {
     log: Arc<dyn ConnectionLog>,
     upstream: Option<Upstream>,
     terminations: Option<TerminationConfig>,
+    git_ssh: Option<crate::ssh_git::GitSsh>,
     guest: Option<Arc<dyn GuestWatcher>>,
     pub(crate) sink: Arc<dyn EventSink>,
     reports: Option<Arc<dyn AgentReports>>,
@@ -292,6 +293,7 @@ impl Proxy {
             log: Arc::new(NullConnectionLog),
             upstream: None,
             terminations: None,
+            git_ssh: None,
             guest: None,
             sink,
             reports: None,
@@ -370,6 +372,39 @@ impl Proxy {
         self
     }
 
+    /// Serves SSH to the Git hosts the workspace terminates (see [`crate::ssh_git::GitSsh`]): Puddle's own
+    /// SSH server with `git`'s host keys, each command carried out by its upstream. Without it
+    /// every SSH connection is refused (`ssh_unsupported`).
+    #[must_use]
+    pub fn with_git_ssh(mut self, git: crate::ssh_git::GitSsh) -> Self {
+        self.git_ssh = Some(git);
+        self
+    }
+
+    /// The Git SSH server and host for `request`, when SSH to its name is served by Puddle: a
+    /// built-in Git host, or a host of one of the workspace's Git credentials.
+    fn git_ssh_for(
+        &self,
+        request: &EgressRequest,
+    ) -> Option<(
+        &crate::ssh_git::GitSsh,
+        Arc<terminate::Termination>,
+        crate::ssh_git::GitHost,
+    )> {
+        let git = self.git_ssh.as_ref()?;
+        let termination = self.termination_of(request)?;
+        let host = crate::ssh_git::built_in(&request.host).or_else(|| {
+            termination
+                .git_ssh_hosts()
+                .contains(&request.host)
+                .then(|| crate::ssh_git::GitHost {
+                    https: request.host.clone(),
+                    form: crate::ssh_git::PathForm::Plain,
+                })
+        })?;
+        Some((git, termination, host))
+    }
+
     /// Passes what each workspace's agent says about the guest (the way to open a stream to it,
     /// the ports it listens on) to `watcher`. Without one the proxy ignores both.
     #[must_use]
@@ -410,7 +445,7 @@ impl Proxy {
 
     /// The termination of `request`'s workspace, if this connection is to be terminated: a
     /// `CONNECT` to a name of the workspace's termination set on port 443.
-    fn terminating(
+    pub(crate) fn terminating(
         &self,
         request: &EgressRequest,
         from_container: bool,
@@ -466,6 +501,21 @@ impl Proxy {
             .is_some_and(Upstream::resolves_unknown_names)
     }
 
+    /// Whether `request`'s name is one whose SSH Puddle serves itself or refuses, never splices:
+    /// a built-in Git host or a host of one of the workspace's Git credentials.
+    fn is_git_ssh_name(&self, request: &EgressRequest) -> bool {
+        crate::ssh_git::built_in(&request.host).is_some()
+            || self
+                .termination_of(request)
+                .is_some_and(|t| t.git_ssh_hosts().contains(&request.host))
+    }
+
+    /// Whether `request` is SSH to a Git host's name that Puddle does not serve: refused at once,
+    /// before the rules (SSH to any other name is spliced after a rules decision).
+    pub(crate) fn refuses_ssh(&self, request: &EgressRequest) -> bool {
+        request.protocol == Some(ProtocolHint::Ssh) && self.is_git_ssh_name(request)
+    }
+
     /// The rule that decides `request`, without recording anything (on a blocking thread: the
     /// policy may read SQLite).
     pub(crate) async fn look_up_rule(
@@ -488,7 +538,7 @@ impl Proxy {
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Decision, PolicyError> {
-        if request.protocol == Some(ProtocolHint::Ssh) {
+        if self.refuses_ssh(request) {
             return Ok(Decision::Blocked {
                 reason: BlockReason::SshUnsupported,
             });
@@ -533,8 +583,8 @@ impl std::fmt::Debug for TerminationConfig {
 #[derive(Debug, Clone)]
 pub struct WorkspaceHandler {
     pub(crate) proxy: Arc<Proxy>,
-    streams: Arc<Semaphore>,
-    h2_streams: Arc<Semaphore>,
+    pub(crate) streams: Arc<Semaphore>,
+    pub(crate) h2_streams: Arc<Semaphore>,
     pub(crate) lookups: Arc<Semaphore>,
     pub(crate) workspace: WorkspaceId,
 }
@@ -843,6 +893,9 @@ pub(crate) fn refuse_by_request_rule(
     Some((refusal, change))
 }
 
+/// The port SSH listens on.
+const GIT_SSH_PORT: u16 = 22;
+
 /// Decides, connects and relays one `CONNECT` whose destination is known; returns what the audit
 /// records about it (bytes are filled in by the caller once the stream is gone). Plain HTTP goes
 /// to [`plain::serve`] instead.
@@ -855,6 +908,14 @@ async fn relay(
 ) -> ConnectionEvent {
     let proxy = &handler.proxy;
     let from_container = ssh::from_container(head);
+    // A client that waits for the server's identification before it sends its own (`ssh-keyscan`)
+    // sends nothing that marks it as SSH. Port 22 of a Git host whose SSH Puddle serves is SSH, so
+    // such a client gets Puddle's server and its keys, as `ssh` does.
+    if (request.protocol == Some(ProtocolHint::Ssh) || request.port == GIT_SSH_PORT)
+        && let Some((git, termination, host)) = proxy.git_ssh_for(request)
+    {
+        return crate::ssh_git::serve(handler, reader, request, git, &termination, host).await;
+    }
     let (admitted, mut event) = admit(proxy, request).await;
     let admitted = match admitted {
         Ok(admitted) => admitted,
@@ -872,7 +933,11 @@ async fn relay(
     }
     // A bound host is terminated: the guest's TLS handshake comes first, so a client that asks
     // for the wrong name never causes a connection to the real server.
-    if let Some((termination, mode, tls)) = proxy.terminating(request, from_container) {
+    // SSH to a name that is not a Git host is spliced, even on port 443 of a terminated name.
+    let spliced_ssh = request.protocol == Some(ProtocolHint::Ssh);
+    if !spliced_ssh
+        && let Some((termination, mode, tls)) = proxy.terminating(request, from_container)
+    {
         let cx = Arc::new(terminate::Context {
             proxy: Arc::clone(proxy),
             termination,
@@ -897,6 +962,8 @@ async fn relay(
         event.binding_id = done.binding_id;
         event.unswapped_stand_ins = done.unswapped_stand_ins;
         event.scrubbed_stand_ins = done.scrubbed_stand_ins;
+        event.foreign_credentials = done.foreign_credentials;
+        event.answer_credentials = done.answer_credentials;
         return event;
     }
     let out = match connect_out(
@@ -936,7 +1003,7 @@ async fn note_tunnel(
     let end = tunnel(
         reader,
         stream,
-        Some(request),
+        Some(request).filter(|request| proxy.is_git_ssh_name(request)),
         watch,
         proxy.termination_of(request),
     )
@@ -1085,10 +1152,11 @@ async fn admit_into(
 ) -> Result<Admitted, Refusal> {
     let host = &request.host;
     let port = request.port;
-    // SSH is refused whatever the destination is: before the name stage (so the reason is the
-    // protocol, not a toggle that turning on would only lead to the same refusal) and before
-    // any rule, so it never becomes a pending row or an allow.
-    if request.protocol == Some(ProtocolHint::Ssh) {
+    // SSH to a Git host's name is refused whatever the destination is: before the name stage (so
+    // the reason is the protocol, not a toggle that turning on would only lead to the same
+    // refusal) and before any rule, so it never becomes a pending row or an allow. SSH to any
+    // other name is decided below like every connection.
+    if proxy.refuses_ssh(request) {
         note_block(event, BlockReason::SshUnsupported);
         return Err(block(request, &[BlockReason::SshUnsupported]));
     }
@@ -1481,7 +1549,7 @@ fn block_at(request: &EgressRequest, reasons: &[BlockReason], ip: Option<IpAddr>
     };
     Refusal::new("403 Forbidden", message)
         .header("x-puddle-decision", "blocked")
-        .header("x-puddle-blocked", reason.header_code())
+        .header("x-puddle-blocked", reason.code())
 }
 
 /// The reason a block names: the first toggle or unreadable-settings reason if any (turning the

@@ -36,6 +36,7 @@ use crate::ValidationError;
 
 mod json;
 mod jsonc;
+mod knownhosts;
 mod sshconfig;
 
 /// Largest file the engine reads (4 MiB). A larger one is left alone.
@@ -56,6 +57,10 @@ pub enum MergeFormat {
     /// the value is the pattern), added at the top when no `Include` before the first `Host` or
     /// `Match` reads that pattern. The rest of the file keeps its bytes.
     SshConfig,
+    /// OpenSSH's `ssh_known_hosts`: Puddle owns the lines between `# puddle: begin` and
+    /// `# puddle: end` (key path `["Puddle"]`, the value is the lines, one host-key entry each).
+    /// A file without the markers gets them at its end, and every other byte of the file stays.
+    KnownHosts,
 }
 
 /// One key Puddle owns, as a path from the top level (`["proxies", "default"]`), and its value
@@ -83,6 +88,16 @@ impl MergeEntry {
         Self {
             key: vec!["Include".to_owned()],
             value: pattern.to_owned(),
+        }
+    }
+
+    /// The block of host-key lines of an `ssh_known_hosts` ([`MergeFormat::KnownHosts`]): `lines`
+    /// are `host keytype base64` entries separated by `\n`, without a final line break.
+    #[must_use]
+    pub fn known_hosts(lines: &str) -> Self {
+        Self {
+            key: vec![knownhosts::KEY.to_owned()],
+            value: lines.to_owned(),
         }
     }
 
@@ -237,6 +252,14 @@ impl MergeSpec {
                         ));
                     }
                 }
+                MergeFormat::KnownHosts => {
+                    if e.key != [knownhosts::KEY] {
+                        return Err(ValidationError::new(WHAT, &shown, "only Puddle is owned"));
+                    }
+                    if let Some(reason) = knownhosts::invalid(&e.value) {
+                        return Err(ValidationError::new(WHAT, &shown, reason));
+                    }
+                }
             }
         }
         Ok(Self { format, entries })
@@ -284,7 +307,12 @@ impl MergeSpec {
         previous: &[Vec<String>],
     ) -> Result<Merged, MergeRefusal> {
         let Some(dialect) = dialect(self.format) else {
-            return sshconfig::apply(existing, &self.entries).map(|out| {
+            let applied = if self.format == MergeFormat::KnownHosts {
+                knownhosts::apply(existing, &self.entries)
+            } else {
+                sshconfig::apply(existing, &self.entries)
+            };
+            return applied.map(|out| {
                 if existing == Some(out.as_bytes()) {
                     Merged::Unchanged
                 } else {
@@ -317,7 +345,11 @@ pub fn unmerge(
     keys: &[Vec<String>],
 ) -> Result<Unmerged, MergeRefusal> {
     let Some(dialect) = dialect(format) else {
-        return sshconfig::unmerge(existing);
+        return if format == MergeFormat::KnownHosts {
+            knownhosts::unmerge(existing)
+        } else {
+            sshconfig::unmerge(existing)
+        };
     };
     let Some(original) = text(Some(existing))? else {
         return Ok(Unmerged {
@@ -340,7 +372,7 @@ fn dialect(format: MergeFormat) -> Option<json::Dialect> {
     match format {
         MergeFormat::Json => Some(json::Dialect::Strict),
         MergeFormat::Jsonc => Some(json::Dialect::Comments),
-        MergeFormat::SshConfig => None,
+        MergeFormat::SshConfig | MergeFormat::KnownHosts => None,
     }
 }
 
@@ -363,111 +395,25 @@ fn display_key(key: &[String]) -> String {
     key.join(".")
 }
 
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    fn spec(entries: Vec<MergeEntry>) -> MergeSpec {
-        MergeSpec::new(MergeFormat::Json, entries).unwrap()
+/// The text of a line-based file: `None` for no file; refused with a NUL byte, invalid UTF-8 or
+/// more than [`MAX_MERGE_FILE`] bytes.
+fn read_text(existing: Option<&[u8]>) -> Result<Option<&str>, MergeRefusal> {
+    let Some(bytes) = existing else {
+        return Ok(None);
+    };
+    if bytes.len() > MAX_MERGE_FILE {
+        return Err(MergeRefusal::TooLarge);
     }
-
-    #[test]
-    fn spec_refuses_empty_overlapping_and_invalid_entries() {
-        let err = |entries| {
-            MergeSpec::new(MergeFormat::Json, entries)
-                .unwrap_err()
-                .to_string()
-        };
-        assert!(err(vec![]).contains("at least one key"));
-        assert!(err(vec![MergeEntry::json(&[], &json!(1))]).contains("key path is empty"));
-        assert!(
-            err(vec![
-                MergeEntry::json(&["a", "b"], &json!(1)),
-                MergeEntry::json(&["a"], &json!(1)),
-            ])
-            .contains("\"a.b\": overlaps")
-        );
-        assert!(
-            err(vec![
-                MergeEntry::json(&["a"], &json!(1)),
-                MergeEntry::json(&["a"], &json!(2)),
-            ])
-            .contains("overlaps")
-        );
-        let bad = MergeEntry {
-            key: vec!["a".into()],
-            value: "{".into(),
-        };
-        assert!(err(vec![bad]).contains("not JSON"));
-        // Siblings and keys that only share a string prefix are fine.
-        spec(vec![
-            MergeEntry::json(&["a", "b"], &json!(1)),
-            MergeEntry::json(&["a", "c"], &json!(1)),
-            MergeEntry::json(&["ab"], &json!(1)),
-        ]);
+    if bytes.contains(&0) {
+        return Err(MergeRefusal::NulByte);
     }
-
-    #[test]
-    fn spec_round_trips_through_serde_and_validates_on_the_way_in() {
-        let s = spec(vec![MergeEntry::json(&["k"], &json!({"x": [1, 2]}))]);
-        let text = serde_json::to_string(&s).unwrap();
-        assert_eq!(
-            text,
-            r#"{"format":"json","entries":[{"key":["k"],"value":"{\"x\":[1,2]}"}]}"#
-        );
-        assert_eq!(serde_json::from_str::<MergeSpec>(&text).unwrap(), s);
-        assert!(serde_json::from_str::<MergeSpec>(r#"{"format":"json","entries":[]}"#).is_err());
-        assert_eq!(s.format(), MergeFormat::Json);
-        assert_eq!(s.entries()[0].key(), ["k"]);
-        assert_eq!(s.entries()[0].value(), r#"{"x":[1,2]}"#);
-    }
-
-    #[test]
-    fn fresh_file_is_tab_indented_like_the_docker_cli_writes_it() {
-        let s = spec(vec![MergeEntry::json(
-            &["proxies", "default"],
-            &json!({"httpProxy": "http://172.17.0.1:3128", "noProxy": "localhost"}),
-        )]);
-        assert_eq!(
-            String::from_utf8(s.fresh()).unwrap(),
-            "{\n\t\"proxies\": {\n\t\t\"default\": {\n\t\t\t\"httpProxy\": \"http://172.17.0.1:3128\",\n\t\t\t\"noProxy\": \"localhost\"\n\t\t}\n\t}\n}\n"
-        );
-        // An empty or whitespace-only file counts as no file.
-        assert_eq!(
-            s.apply(Some(b" \n"), &[]).unwrap(),
-            Merged::Write(s.fresh())
-        );
-    }
-
-    #[test]
-    fn unreadable_files_are_refused_with_a_reason_and_no_content() {
-        let s = spec(vec![MergeEntry::json(&["a"], &json!(1))]);
-        let big = vec![b' '; MAX_MERGE_FILE + 1];
-        assert_eq!(s.apply(Some(&big), &[]), Err(MergeRefusal::TooLarge));
-        let e = s.apply(Some(b"\xff{}"), &[]).unwrap_err();
-        assert_eq!(
-            e.to_string(),
-            "the file is not valid UTF-8: invalid byte sequence"
-        );
-        let e = s.apply(Some(b"{\"secret-token\": "), &[]).unwrap_err();
-        assert!(matches!(e, MergeRefusal::Syntax { format: "JSON", .. }));
-        assert!(!e.to_string().contains("secret-token"), "{e}");
-        assert_eq!(s.apply(Some(b"[1]"), &[]), Err(MergeRefusal::NotAnObject));
-        assert_eq!(
-            unmerge(MergeFormat::Json, b"nope", &[vec!["a".into()]]).unwrap_err(),
-            MergeRefusal::Syntax {
-                format: "JSON",
-                reason: "expected ident at line 1 column 2".into()
-            }
-        );
-    }
-
-    #[test]
-    fn unmerge_of_an_empty_file_is_a_no_op() {
-        let u = unmerge(MergeFormat::Json, b"", &[vec!["a".into()]]).unwrap();
-        assert_eq!(u.merged, Merged::Unchanged);
-        assert!(u.empty);
-    }
+    std::str::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| MergeRefusal::Syntax {
+            format: "UTF-8",
+            reason: "invalid byte sequence".to_owned(),
+        })
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { type ChildProcess, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,6 +56,30 @@ describe("waiting for the fixture backend", () => {
     expect(message).toContain("cannot bind 127.0.0.1:9");
     expect(message).toContain("control url: not written");
     expect(message).toContain("host load:");
+  });
+
+  it("keeps output that arrives after the process exit event", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      stderr: new PassThrough(),
+    }) as unknown as ChildProcess;
+    const output = new OutputTail();
+    (child.stderr as PassThrough).on("data", (chunk: Buffer) =>
+      output.push(chunk),
+    );
+    const waiting = waitForBackend(
+      child,
+      "/nonexistent/connection.json",
+      output,
+      {
+        pollMs: 5,
+      },
+    ).catch((error: Error) => error);
+    child.emit("exit", 2, null);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    (child.stderr as PassThrough).write("late words");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    child.emit("close", 2, null);
+    expect(((await waiting) as Error).message).toContain("late words");
   });
 
   it("names a backend that is still starting at the limit, with the URL it announced", async () => {

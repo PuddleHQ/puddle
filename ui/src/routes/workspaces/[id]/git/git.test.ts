@@ -52,6 +52,7 @@ beforeEach(() => {
     workspace("docs", {
       repositories: [
         {
+          entry: "e-Docs",
           url: "https://dev.azure.com/contoso/Platform/_git/Docs",
           directory: "Docs",
         },
@@ -227,12 +228,18 @@ describe("identities on a workspace", () => {
     workspaces.list = [
       workspace("many", {
         repositories: [
-          { url: "https://github.com/acme/api.git", directory: "api" },
           {
+            entry: "e-api",
+            url: "https://github.com/acme/api.git",
+            directory: "api",
+          },
+          {
+            entry: "e-Docs",
             url: "https://dev.azure.com/contoso/Platform/_git/Docs",
             directory: "Docs",
           },
           {
+            entry: "e-tools",
             url: "https://gitlab.example.org/team/tools.git",
             directory: "tools",
           },
@@ -256,7 +263,9 @@ describe("identities on a workspace", () => {
   it("says when a listed address could not be read, so nothing was listed or chosen", async () => {
     workspaces.list = [
       workspace("odd", {
-        repositories: [{ url: "https://github.com/a/b/c", directory: "c" }],
+        repositories: [
+          { entry: "e-c", url: "https://github.com/a/b/c", directory: "c" },
+        ],
       }),
     ];
     api.git["w-odd"] = { ids: [], repos: [], push: true, pull: false };
@@ -487,6 +496,31 @@ describe("adding a repository", () => {
     expect(table().getByText("github.com/acme/billing")).toBeInTheDocument();
   });
 
+  it("lists an SSH address as the repository it names and says the list covers SSH", async () => {
+    await mount();
+    expect(
+      screen.getByText(/The list holds for Git over HTTPS and over SSH/),
+    ).toBeInTheDocument();
+    expect(url_()).toHaveAccessibleDescription(
+      /listed as the same repository as its HTTPS address/,
+    );
+    await fireEvent.input(url_(), {
+      target: { value: "git@github.com:Acme/Billing.git" },
+    });
+    await add();
+    await waitFor(() =>
+      expect(lastToast()).toBe("Listed github.com/acme/billing."),
+    );
+    expect(api.bodies.at(-1)).toEqual({
+      host: "github.com",
+      owner: "acme",
+      repo: "billing",
+      pull: true,
+      push: true,
+    });
+    expect(table().getByText("github.com/acme/billing")).toBeInTheDocument();
+  });
+
   it("checks the address with the create form's words before it asks", async () => {
     await mount();
     await add();
@@ -495,11 +529,11 @@ describe("adding a repository", () => {
     );
     expect(url_()).toHaveFocus();
     await fireEvent.input(url_(), {
-      target: { value: "git@github.com:acme/x.git" },
+      target: { value: "git@example.com:acme/x.git" },
     });
     await add();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "SSH remotes are not supported yet",
+      "Puddle reads SSH addresses of GitHub, GitLab, Bitbucket and Azure DevOps",
     );
     await fireEvent.input(url_(), {
       target: { value: "https://github.com/acme" },

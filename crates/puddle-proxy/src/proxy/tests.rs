@@ -324,6 +324,27 @@ async fn ssh_is_blocked_before_the_policy_is_asked() {
 }
 
 #[tokio::test]
+async fn ssh_to_a_name_that_is_not_a_git_host_is_decided_by_the_rules() {
+    let policy = Arc::new(StaticPolicy::new());
+    policy.allow(&host("nas.example"));
+    policy.deny_host(&host("denied.example"));
+    let p = proxy(
+        policy.clone(),
+        StaticResolver::new()
+            .with("nas.example", &[ip("93.184.216.34")])
+            .with("denied.example", &[ip("93.184.216.35")]),
+    );
+    let ssh = |name| request(name).with_protocol(ProtocolHint::Ssh);
+    assert!(admit(&p, &ssh("nas.example")).await.is_ok());
+    let refusal = admit(&p, &ssh("denied.example")).await.unwrap_err();
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("deny"));
+    let refusal = admit(&p, &ssh("new.example")).await.unwrap_err();
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+    assert_eq!(policy.decisions(), 3);
+    assert_eq!(policy.pending().len(), 1);
+}
+
+#[tokio::test]
 async fn a_blocked_decision_from_the_policy_is_never_pending() {
     let p = proxy(
         FnPolicy::new(|_| {
@@ -458,9 +479,9 @@ async fn the_audit_event_follows_each_admit_path() {
     let resolver = || StaticResolver::new().with("nas.example", &[ip("10.0.0.5")]);
     let kind = |e: &ConnectionEvent| (e.decision, e.reason, e.rule_id, e.pending_id);
 
-    // Name stage: SSH never reaches the rules.
+    // Name stage: SSH to a Git host's name never reaches the rules.
     let p = proxy(Arc::new(StaticPolicy::new()), resolver());
-    let req = request("nas.example").with_protocol(ProtocolHint::Ssh);
+    let req = request("gitlab.com").with_protocol(ProtocolHint::Ssh);
     let (_, e) = super::admit(&p, &req).await;
     assert_eq!(
         kind(&e),
@@ -469,6 +490,20 @@ async fn the_audit_event_follows_each_admit_path() {
             ConnectionReason::Blocked(BlockReason::SshUnsupported),
             None,
             None
+        )
+    );
+    // SSH to any other name is decided like any connection: no rule, so pending.
+    let policy = Arc::new(StaticPolicy::new());
+    let p = proxy(policy.clone(), resolver());
+    let req = request("nas.example").with_protocol(ProtocolHint::Ssh);
+    let (_, e) = super::admit(&p, &req).await;
+    assert_eq!(
+        kind(&e),
+        (
+            ConnectionDecision::Pending,
+            ConnectionReason::NoRule,
+            None,
+            Some(policy.pending()[0].id)
         )
     );
     // Name stage: a literal blocked by the address check.
@@ -1627,7 +1662,7 @@ mod company_network {
         assert_eq!(header(&refusal, "x-puddle-decision"), Some("blocked"));
         assert_eq!(
             header(&refusal, "x-puddle-blocked"),
-            Some("company_network")
+            Some("toggle:company_network")
         );
         assert_eq!(header(&refusal, "x-puddle-pending"), None);
         assert_eq!(
@@ -1636,11 +1671,11 @@ mod company_network {
         );
         assert_eq!(policy.pending().len(), 0);
         assert_eq!(event.decision, ConnectionDecision::Blocked);
-        assert_eq!(event.reason.to_string(), "company_network_off");
+        assert_eq!(event.reason.to_string(), "toggle:company_network");
         assert_eq!(event.company_network, Some(CompanySignal::DnsSuffix));
         assert_eq!(
             event.refused_address.map(|(a, why)| (a, why.code())),
-            Some((ip("100.64.3.7"), "company_network_off"))
+            Some((ip("100.64.3.7"), "toggle:company_network"))
         );
     }
 
@@ -1685,10 +1720,10 @@ mod company_network {
         let refusal = admitted.unwrap_err();
         assert_eq!(
             header(&refusal, "x-puddle-blocked"),
-            Some("company_network")
+            Some("toggle:company_network")
         );
         assert_eq!(policy.pending().len(), 0);
-        assert_eq!(event.reason.to_string(), "company_network_off");
+        assert_eq!(event.reason.to_string(), "toggle:company_network");
     }
 }
 
@@ -1724,6 +1759,56 @@ mod tunnel_end {
         let line = end.http.expect("the early request line is kept");
         assert_eq!((line.method(), line.path()), ("GET", "/early"));
         assert!(!end.ssh && !end.token_endpoint);
+    }
+
+    /// A tunnel to a Git host's name whose guest starts SSH is ended: the guest reads the `200`
+    /// and then the refusal, nothing reaches the server, and the tunnel reports SSH.
+    #[tokio::test]
+    async fn ssh_in_a_tunnel_is_reported_and_the_guest_gets_the_refusal() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let server = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut accepted, _) = listener.accept().await.unwrap();
+        let (mut peer, near) = tokio::io::duplex(4096);
+        peer.write_all(b"SSH-2.0-OpenSSH_9.6\r\n").await.unwrap();
+        let reader = ClientReader::new(Counted::new(near).0);
+        let git = request("github.com");
+        let end = tunnel(reader, server, Some(&git), None, None).await;
+        assert!(end.ssh);
+        assert!(end.http.is_none() && !end.token_endpoint);
+        let mut said = String::new();
+        tokio::io::AsyncReadExt::read_to_string(&mut peer, &mut said)
+            .await
+            .unwrap();
+        let refusal = said
+            .strip_prefix("HTTP/1.1 200 Connection Established\r\n\r\npuddle: ")
+            .expect("the 200, then the refusal as pre-banner lines");
+        assert!(refusal.ends_with("\r\n"), "{said:?}");
+        let mut nothing = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut accepted, &mut nothing)
+            .await
+            .ok();
+        assert!(
+            !nothing.starts_with(b"SSH-"),
+            "the banner was not passed on"
+        );
+    }
+
+    /// `abort` makes the server socket reset its peer instead of closing cleanly.
+    #[tokio::test]
+    async fn abort_makes_a_dropped_socket_reset_its_peer() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let server = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut accepted, _) = listener.accept().await.unwrap();
+        abort(&server);
+        drop(server);
+        let err = tokio::io::AsyncReadExt::read(&mut accepted, &mut [0_u8; 1])
+            .await
+            .expect_err("a reset, not a clean end of stream");
+        assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
     }
 
     /// A hello that came with the `CONNECT` and asks for a token endpoint is refused before the

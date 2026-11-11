@@ -402,18 +402,26 @@ fn the_check_refuses_an_unknown_or_colliding_identity_and_changes_nothing() {
     };
     let _ = sink.take();
     let both = [with(a, "one"), with(b, "two")];
-    let err = store.check_repository_git(&ws("w"), &both).unwrap_err();
+    let err = store
+        .check_repository_git(Some(&ws("w")), &both)
+        .unwrap_err();
     assert!(matches!(err, StoreError::IdentityCollision(_)), "{err}");
     assert!(err.to_string().contains("A and B"), "{err}");
     let ghost = [with(IdentityId(99), "one")];
     assert!(matches!(
-        store.check_repository_git(&ws("w"), &ghost),
+        store.check_repository_git(Some(&ws("w")), &ghost),
         Err(StoreError::UnknownIdentity(IdentityId(99)))
     ));
     // One identity named twice is no collision.
     store
-        .check_repository_git(&ws("w"), &[with(a, "one"), with(a, "two")])
+        .check_repository_git(Some(&ws("w")), &[with(a, "one"), with(a, "two")])
         .unwrap();
+    // A new workspace has no list yet: the same checks hold.
+    assert!(matches!(
+        store.check_repository_git(None, &both),
+        Err(StoreError::IdentityCollision(_))
+    ));
+    store.check_repository_git(None, &[with(a, "one")]).unwrap();
     assert_eq!(sink.take(), [], "a check changes nothing");
     assert_eq!(
         store.workspace_git(&ws("w")).unwrap(),

@@ -291,52 +291,55 @@ function Invoke-InstalledMsb([string[]]$Arguments) {
     }
 }
 
-function Get-WorkspaceNow($Conn, [string]$Name) {
-    (Invoke-PuddleApi $Conn 'Get' '/api/workspaces').workspaces | Where-Object { $_.name -eq $Name }
+function Get-WorkspaceNow($Conn, [string]$Id) {
+    (Invoke-PuddleApi $Conn 'Get' '/api/workspaces').workspaces | Where-Object { $_.id -eq $Id }
 }
 
 # A workspace from the stock image, made, run in, stopped and deleted through the installed
-# program's API, the way the app's own buttons do.
+# program's API, the way the app's own buttons do. Puddle picks the id; the create's answer
+# carries it, and every later call and the runtime's sandbox go by it.
 function Test-WorkspaceLifecycle($Conn) {
     $name = 'msi-test'
-    Expect ($null -eq (Get-WorkspaceNow $Conn $name)) "a workspace called $name exists before the test"
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    Invoke-PuddleApi $Conn 'Post' '/api/workspaces' @{ name = $name } | Out-Null
+    $made = Invoke-PuddleApi $Conn 'Post' '/api/workspaces' @{ name = $name }
+    $wsId = $made.id
+    Expect ($wsId -cmatch '^[a-z][0-9a-z]{7}$') "the create answered no generated id: $($made | ConvertTo-Json -Compress)"
+    Expect ($made.name -eq $name) "the create answered the name $($made.name), not $name"
     $started = $false
-    $running = Wait-Until "workspace $name is not running" $CreateBudgetSec {
-        $w = Get-WorkspaceNow $Conn $name
-        if ($null -eq $w) { Fail "workspace $name vanished while it was being made" }
-        if ($w.status -in @('crashed', 'volume_missing')) { Fail "workspace $name is $($w.status)" }
+    $running = Wait-Until "workspace $name ($wsId) is not running" $CreateBudgetSec {
+        $w = Get-WorkspaceNow $Conn $wsId
+        if ($null -eq $w) { Fail "workspace $name ($wsId) vanished while it was being made" }
+        if ($w.status -in @('crashed', 'volume_missing')) { Fail "workspace $name ($wsId) is $($w.status)" }
         if ($w.status -eq 'running' -and -not $w.busy) { return $w }
         # A create that ends with the workspace made but down is started once, as the app does.
         if (-not $started -and -not $w.busy -and $w.status -in @('created', 'stopped')) {
             $started = $true
-            Invoke-PuddleApi $Conn 'Post' "/api/workspaces/$name/start" | Out-Null
+            Invoke-PuddleApi $Conn 'Post' "/api/workspaces/$wsId/start" | Out-Null
         }
     }
-    Write-Host "workspace $name running $([math]::Round($clock.Elapsed.TotalSeconds)) s after the create (image: $($running.image))"
+    Write-Host "workspace $name ($wsId) running $([math]::Round($clock.Elapsed.TotalSeconds)) s after the create (image: $($running.image))"
     Expect ($clock.Elapsed.TotalSeconds -le $CreateBudgetSec) "the create took over $CreateBudgetSec s"
 
     $token = [guid]::NewGuid().ToString()
-    $ran = Invoke-InstalledMsb @('exec', $name, '--', 'sh', '-c', "echo $token; . /etc/os-release; echo `$ID")
-    Expect ($ran.Code -eq 0) "msb exec in $name exited with $($ran.Code): $($ran.Output)"
-    Expect ($ran.Output -match [regex]::Escape($token)) "the command in $name did not run: $($ran.Output)"
+    $ran = Invoke-InstalledMsb @('exec', $wsId, '--', 'sh', '-c', "echo $token; . /etc/os-release; echo `$ID")
+    Expect ($ran.Code -eq 0) "msb exec in $wsId exited with $($ran.Code): $($ran.Output)"
+    Expect ($ran.Output -match [regex]::Escape($token)) "the command in $wsId did not run: $($ran.Output)"
     Expect ($ran.Output -match '(?m)^debian\s*$') "the workspace is not the stock debian image: $($ran.Output)"
-    Write-Host "ran a command inside $name"
+    Write-Host "ran a command inside $wsId"
 
-    Invoke-PuddleApi $Conn 'Post' "/api/workspaces/$name/stop" | Out-Null
-    Wait-Until "workspace $name did not stop" 120 {
-        $w = Get-WorkspaceNow $Conn $name
+    Invoke-PuddleApi $Conn 'Post' "/api/workspaces/$wsId/stop" | Out-Null
+    Wait-Until "workspace $name ($wsId) did not stop" 120 {
+        $w = Get-WorkspaceNow $Conn $wsId
         $null -ne $w -and -not $w.busy -and $w.status -eq 'stopped'
     } | Out-Null
-    Invoke-PuddleApi $Conn 'Delete' "/api/workspaces/$name" @{ confirm = $true } | Out-Null
-    Wait-Until "workspace $name is still listed after the delete" 120 { $null -eq (Get-WorkspaceNow $Conn $name) } | Out-Null
+    Invoke-PuddleApi $Conn 'Delete' "/api/workspaces/$wsId" @{ confirm = $true } | Out-Null
+    Wait-Until "workspace $name ($wsId) is still listed after the delete" 120 { $null -eq (Get-WorkspaceNow $Conn $wsId) } | Out-Null
     Wait-Until 'a runtime process is still running after the workspace was deleted' 60 {
         @(Get-RuntimeProcesses).Count -eq 0
     } | Out-Null
     $left = Invoke-InstalledMsb @('ls')
-    Expect ($left.Output -notmatch [regex]::Escape($name)) "msb still lists $name after the delete: $($left.Output)"
-    Write-Host "workspace $name stopped and deleted; no runtime process left"
+    Expect ($left.Output -notmatch [regex]::Escape($wsId)) "msb still lists $wsId after the delete: $($left.Output)"
+    Write-Host "workspace $name ($wsId) stopped and deleted; no runtime process left"
 }
 
 if ($SelfTest) {

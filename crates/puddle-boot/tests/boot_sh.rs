@@ -365,12 +365,10 @@ fn entrypoint_is_chained_once_with_puddle_env_and_workdir() {
     for sh in shells() {
         let fr = FakeRoot::new(&sh);
         let entry = fr.path("/entry.sh");
-        std::fs::write(
+        puddle_test_kit::write_executable(
             &entry,
             "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$HTTPS_PROXY\" \"$*\" \"$(pwd)\" >>\"$PUDDLE_ROOT/entry.out\"\nexec sleep 1000\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         std::fs::create_dir_all(fr.path("/srv")).unwrap();
         let mut img = image(&[entry.display().to_string()], &["--flag"]);
         img.working_dir = Some("/srv".into());
@@ -402,8 +400,7 @@ fn entrypoint_is_chained_once_with_puddle_env_and_workdir() {
 fn entrypoint_report(sh: &std::path::Path, script: &str) -> String {
     let fr = FakeRoot::new(sh);
     let entry = fr.path("/entry.sh");
-    std::fs::write(&entry, script).unwrap();
-    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&entry, script);
     let plan = BootPlan::builder(&image(&[entry.display().to_string()], &[]))
         .build()
         .unwrap();
@@ -461,8 +458,7 @@ fn a_failure_at_once_is_reported_however_slow_the_host_runs_the_wrapper() {
         let fr = FakeRoot::new(&sh);
         fr.stub(stub, &slow(stub, secs));
         let entry = fr.path("/entry.sh");
-        std::fs::write(&entry, "#!/nonexistent/interpreter\n").unwrap();
-        std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+        puddle_test_kit::write_executable(&entry, "#!/nonexistent/interpreter\n");
         let mut img = image(&[entry.display().to_string()], &[]);
         // The wrapper reads its commands from the image's PATH; the hook's own from the stubs.
         img.env = vec![(
@@ -492,8 +488,7 @@ fn an_entrypoint_that_finishes_cleanly_or_keeps_running_is_not_reported() {
 fn exit_line(sh: &std::path::Path, script: &str) -> (String, String) {
     let fr = FakeRoot::new(sh);
     let entry = fr.path("/entry.sh");
-    std::fs::write(&entry, script).unwrap();
-    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&entry, script);
     let plan = BootPlan::builder(&image(&[entry.display().to_string()], &[]))
         .build()
         .unwrap();
@@ -611,16 +606,10 @@ fn a_missing_or_silent_agent_fails_the_boot() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("/puddle/none is missing"));
 
-    std::fs::write(
-        fr.path("/puddle/mute"),
+    puddle_test_kit::write_executable(
+        &fr.path("/puddle/mute"),
         "#!/bin/sh\nif [ \"${1:-}\" = merge-file ]; then cat >/dev/null; echo unchanged; exit 0; fi\necho $$ >>\"$PUDDLE_ROOT/agent.pids\"\necho mute agent here\nexec sleep 1000\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        fr.path("/puddle/mute"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
+    );
     let mute = BootPlan::builder(&ImageConfig::default())
         .agent(puddle_boot::AgentConfig {
             binary: GuestPath::new("/puddle/mute").unwrap(),
@@ -707,8 +696,7 @@ fn a_kubernetes_tool_only_the_images_own_path_names_is_found_too() {
     let fr = FakeRoot::new(&shells()[0]);
     let bin = tempfile::tempdir().unwrap();
     let tool = bin.path().join("minikube");
-    std::fs::write(&tool, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&tool, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&tool, "#!/bin/sh\nexit 0\n");
     let config = ImageConfig {
         env: vec![("PATH".into(), bin.path().display().to_string())],
         ..ImageConfig::default()
@@ -772,7 +760,6 @@ async fn boot_hook_through_the_fake_runtime_runs_the_real_script() {
     use puddle_compute::fake::{ExecContext, FakeRuntime};
     use puddle_compute::{ExecOutput, ExecRequest, FileMount, Runtime, SandboxSpec};
     use puddle_types::{ImageRef, SandboxName};
-    use std::io::Write as _;
 
     let fr = std::sync::Arc::new(FakeRoot::new(&shells()[0]));
     let runner = fr.clone();
@@ -783,7 +770,7 @@ async fn boot_hook_through_the_fake_runtime_runs_the_real_script() {
         assert_eq!(r.user.as_deref(), Some("root"));
         assert_eq!(r.env.get("PUDDLE_ROOT"), Some(""));
         let mut child = runner.command(&r.args[1..], true).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(&r.stdin).unwrap();
+        puddle_test_kit::feed_stdin(&mut child, &r.stdin);
         let out = child.wait_with_output().unwrap();
         Some(ExecOutput::new(
             out.status.code().unwrap_or(-1),
@@ -1349,6 +1336,12 @@ fn the_hook_adds_the_session_user_at_the_first_free_uid_and_keeps_it_after() {
             "{stdout}"
         );
         assert!(stdout.contains("no sudo in this image"), "{stdout}");
+        assert!(
+            stdout
+                .lines()
+                .any(|l| l == "puddle-boot: session user cannot become root: no sudo"),
+            "{stdout}"
+        );
 
         let user_rows = fr.read("/etc/passwd");
         assert!(
@@ -1417,8 +1410,7 @@ fn the_session_user_gets_uid_1000_when_it_is_free_and_bash_and_sudo_when_the_ima
     std::fs::write(fr.path("/etc/group"), "root:x:0:\n").unwrap();
     for exe in ["/bin/bash", "/usr/bin/sudo"] {
         std::fs::create_dir_all(fr.path(exe).parent().unwrap()).unwrap();
-        std::fs::write(fr.path(exe), "").unwrap();
-        std::fs::set_permissions(fr.path(exe), std::fs::Permissions::from_mode(0o755)).unwrap();
+        puddle_test_kit::write_executable(&fr.path(exe), "");
     }
     let out = fr.run(&agent_plan("/etc/puddle-test"));
     assert!(out.status.success(), "{}", show(&out));
@@ -1427,6 +1419,7 @@ fn the_session_user_gets_uid_1000_when_it_is_free_and_bash_and_sudo_when_the_ima
         stdout.contains("session user agent (uid 1000), sudo at /usr/bin/sudo"),
         "{stdout}"
     );
+    assert!(!stdout.contains("cannot become root"), "{stdout}");
     assert!(
         fr.read("/etc/passwd")
             .ends_with("agent:x:1000:1000::/home/agent:/bin/bash\n")

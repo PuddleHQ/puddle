@@ -15,7 +15,7 @@
 
 use crate::hostile_support;
 
-use std::sync::Arc;
+use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
@@ -41,10 +41,8 @@ const STALL_POLL: Duration = Duration::from_millis(200);
 #[tokio::test]
 async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and_over_the_cap_refused()
  {
-    let refusals = Arc::new(Refusals::default());
-    let _log = tracing::subscriber::set_default(
-        tracing_subscriber::registry().with(CountRefusals(Arc::clone(&refusals))),
-    );
+    count_refusals();
+    let refusals = &REFUSALS;
     let config = ProxyConfig::default()
         .with_max_streams_per_workspace(CAP)
         .with_head_timeout(DEADLINE);
@@ -56,7 +54,7 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
     }
     // A paused clock still jumps to the next timer whenever the runtime waits on I/O, unless a
     // blocking task is running; this one runs until the test drops `thaw`.
-    let (thaw, mut frozen) = hold_thread(&refusals);
+    let (thaw, mut frozen) = hold_thread(refusals);
     tokio::time::pause();
     let started = Instant::now();
     let mut tasks = Vec::new();
@@ -138,10 +136,9 @@ async fn hostile_hg11_ten_thousand_stalled_heads_are_cut_off_at_the_deadline_and
 /// clock from jumping ahead. Its result is `true` when it was released and `false` when it gave
 /// up after [`STALL_LIMIT`] without one more refusal.
 fn hold_thread(
-    refusals: &Arc<Refusals>,
+    watched: &'static Refusals,
 ) -> (std::sync::mpsc::Sender<()>, tokio::task::JoinHandle<bool>) {
     let (thaw, thawed) = std::sync::mpsc::channel::<()>();
-    let watched = Arc::clone(refusals);
     let held = tokio::task::spawn_blocking(move || {
         let (mut seen, mut since) = (0, std::time::Instant::now());
         loop {
@@ -162,10 +159,32 @@ fn hold_thread(
 
 /// How many streams the proxy has refused at the cap, counted from the warning it logs as it
 /// refuses one.
-#[derive(Default)]
 struct Refusals {
     count: AtomicUsize,
     more: Notify,
+}
+
+static REFUSALS: Refusals = Refusals {
+    count: AtomicUsize::new(0),
+    more: Notify::const_new(),
+};
+
+/// Installs the counter as the process's tracing subscriber, once. A subscriber set for this
+/// thread only (`set_default`) is not enough: tracing caches per call site whether anyone listens,
+/// and when another test thread of this binary reaches the refusal's call site first (the
+/// `route` tests refuse at a cap of their own), that thread has no subscriber and the cache says
+/// nobody listens, so this test would see none of its 9000 refusals and give up after
+/// [`STALL_LIMIT`]. A global subscriber is found from every thread. Only refusals at this test's
+/// cap count, so the other tests' refusals do not.
+fn count_refusals() {
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| {
+        // A failure means another subscriber is installed, and the test then fails by its stall
+        // message with a count of 0.
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::registry().with(CountRefusals),
+        );
+    });
 }
 
 impl Refusals {
@@ -180,27 +199,43 @@ impl Refusals {
     }
 }
 
-struct CountRefusals(Arc<Refusals>);
+struct CountRefusals;
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CountRefusals {
     fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
-        let mut message = Message(false);
-        event.record(&mut message);
-        if message.0 {
-            self.0.count.fetch_add(1, Ordering::SeqCst);
-            self.0.more.notify_waiters();
+        let mut seen = Seen::default();
+        event.record(&mut seen);
+        if seen.is_refusal_at_cap() {
+            REFUSALS.count.fetch_add(1, Ordering::SeqCst);
+            REFUSALS.more.notify_waiters();
         }
     }
 }
 
-/// Whether an event's message is the proxy's refusal at the cap.
-struct Message(bool);
+/// The message and the `limit` field of an event.
+#[derive(Default)]
+struct Seen {
+    refusal: bool,
+    limit: Option<u64>,
+}
 
-impl Visit for Message {
+impl Seen {
+    fn is_refusal_at_cap(&self) -> bool {
+        self.refusal && self.limit == Some(CAP as u64)
+    }
+}
+
+impl Visit for Seen {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
-            self.0 =
+            self.refusal =
                 format!("{value:?}") == "connection refused: workspace over its connection limit";
+        }
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        if field.name() == "limit" {
+            self.limit = Some(value);
         }
     }
 }

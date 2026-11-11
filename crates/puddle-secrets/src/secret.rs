@@ -36,13 +36,4 @@ impl Drop for Secret {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::Secret;
-
-    #[test]
-    fn debug_never_shows_the_value() {
-        let s = Secret::new("CANARY-value".to_owned());
-        assert_eq!(format!("{s:?}"), "<redacted>");
-        assert_eq!(s.expose(), "CANARY-value");
-    }
-}
+mod tests;

@@ -59,7 +59,8 @@ pub use self::exec::{ExecContext, ExecHandler, FsError};
 use self::exec::{Files, builtin};
 use crate::{
     Capabilities, ComputeError, DiskSize, ExecOutput, ExecRequest, ImageConfig, MountKind,
-    RootDiskUse, Runtime, Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo, VolumeSpec,
+    RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo,
+    VolumeSpec,
 };
 
 /// The identification line the fake SSH server sends.
@@ -84,6 +85,8 @@ pub enum Op {
     SetMemory,
     /// [`Runtime::set_cpus`].
     SetCpus,
+    /// [`Runtime::grow_root_disk`].
+    GrowRootDisk,
     /// [`Runtime::list`].
     List,
     /// [`Runtime::remove`].
@@ -211,13 +214,26 @@ struct SandboxRecord {
     /// What the root disk "holds on the host", as a test sets it; `None` is a runtime that
     /// cannot say.
     root_disk: Option<RootDiskUse>,
+    /// A size [`Runtime::grow_root_disk`] left for the next boot (the runtime could not grow
+    /// live), applied by [`SandboxRecord::boot`].
+    pending_root: Option<DiskSize>,
 }
 
 impl SandboxRecord {
+    /// The reported root disk capacity becomes `size`; the use stays what it was.
+    fn grow_reported(&mut self, size: DiskSize) {
+        if let Some(root) = &mut self.root_disk {
+            root.size = size;
+        }
+    }
+
     /// The guest's view of its memory at boot, like the kernel's `/proc/meminfo`.
     fn boot(&mut self, boot: u64) {
         self.status = WorkspaceStatus::Running;
         self.boot = boot;
+        if let Some(size) = self.pending_root.take() {
+            self.grow_reported(size);
+        }
         let kib = u64::from(self.spec.memory.get()) * 1024;
         self.files.insert(
             MEMINFO.to_owned(),
@@ -256,6 +272,8 @@ struct State {
     force_stop: BTreeSet<String>,
     /// [`FakeRuntime::serve_terminals`]: `serve_ssh` runs the pseudo-terminal stand-in.
     terminals: bool,
+    /// [`FakeRuntime::set_live_root_grow`] turned off: a running sandbox grows at its next boot.
+    no_live_root_grow: bool,
 }
 
 impl State {
@@ -463,6 +481,16 @@ impl FakeRuntime {
             .unwrap_or_default()
     }
 
+    /// The root disk size `name` was made with: `None` when there is no such sandbox or its spec
+    /// named none (the runtime's default).
+    #[must_use]
+    pub fn root_disk_size(&self, name: &SandboxName) -> Option<DiskSize> {
+        self.lock()
+            .sandboxes
+            .get(name.as_str())
+            .and_then(|r| r.spec.root_disk)
+    }
+
     /// The named volumes `name` was made with. Empty when there is no such sandbox.
     #[must_use]
     pub fn volume_mounts(&self, name: &SandboxName) -> Vec<crate::VolumeMount> {
@@ -543,6 +571,12 @@ impl FakeRuntime {
         if let Some(record) = self.lock().sandboxes.get_mut(name.as_str()) {
             record.root_disk = Some(RootDiskUse { size, used });
         }
+    }
+
+    /// Whether a running sandbox grows its root disk live (the default). Off, it answers
+    /// [`RootDiskGrowth::NextStart`] and grows at its next boot, as msb does on Windows.
+    pub fn set_live_root_grow(&self, live: bool) {
+        self.lock().no_live_root_grow = !live;
     }
 
     fn handle(&self, name: &SandboxName, boot: u64, owned: bool) -> FakeSandbox {
@@ -655,6 +689,7 @@ impl Runtime for FakeRuntime {
                     boot: 0,
                     files: Files::new(),
                     root_disk: None,
+                    pending_root: None,
                 },
             );
             return Err(e);
@@ -678,6 +713,7 @@ impl Runtime for FakeRuntime {
             boot: 0,
             files: Files::new(),
             root_disk: None,
+            pending_root: None,
         };
         record.boot(boot);
         state.sandboxes.insert(name.to_string(), record);
@@ -764,6 +800,51 @@ impl Runtime for FakeRuntime {
                 })?;
         record.spec.cpus = Some(cpus.get());
         Ok(())
+    }
+
+    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
+    async fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: DiskSize,
+    ) -> Result<RootDiskGrowth, ComputeError> {
+        let mut state = self.lock();
+        state.enter(Op::GrowRootDisk, Some(name.as_str()), None)?;
+        let live_capable = !state.no_live_root_grow;
+        let record =
+            state
+                .sandboxes
+                .get_mut(name.as_str())
+                .ok_or_else(|| ComputeError::NotFound {
+                    sandbox: name.to_string(),
+                })?;
+        let current = record
+            .root_disk
+            .map(|r| r.size)
+            .or(record.spec.root_disk)
+            .unwrap_or(DiskSize::mib(0));
+        if size <= current {
+            return Err(ComputeError::InvalidSpec {
+                reason: format!(
+                    "a root disk only grows: {} MiB is not above {} MiB",
+                    size.as_mib(),
+                    current.as_mib()
+                ),
+            });
+        }
+        record.spec.root_disk = Some(size);
+        let running = record.status == WorkspaceStatus::Running;
+        if running && !live_capable {
+            // The guest keeps what it has until the next boot.
+            record.pending_root = Some(size);
+            return Ok(RootDiskGrowth::NextStart);
+        }
+        record.grow_reported(size);
+        Ok(if running {
+            RootDiskGrowth::Live
+        } else {
+            RootDiskGrowth::NextStart
+        })
     }
 
     #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]

@@ -6,6 +6,7 @@
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
+  import GlobalInterception from "#lib/components/GlobalInterception.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
   import ProxySignIn from "#lib/components/ProxySignIn.svelte";
@@ -571,7 +572,7 @@
           "notify_disk_full",
           "set-disk-full",
           "A workspace's disk is nearly full",
-          "Its root disk or its volume reached the percentage below.",
+          "Its root disk or its volume reached the percentage below of its own size; the figure is what the disk file takes on the drive, not the room left there.",
           true,
         )}
         <div class="setting">
@@ -743,12 +744,14 @@
               When you sign in to Claude Code, GitHub or Copilot inside a
               workspace, Puddle keeps the real token on this computer and the
               workspace gets a stand-in that works only through Puddle. On by
-              default. A workspace can set its own switch; a change takes effect
-              when a workspace next starts, and turning it off leaves the logins
-              Puddle already kept unused. A token the workspace prints, such as
-              the one of <code>claude setup-token</code>, is a stand-in as well
-              and works only inside that workspace. With capture off, a login
-              keeps its real token in the workspace.
+              default. When Puddle cannot keep a token, it stops the sign-in
+              instead of letting the real token into the workspace. A workspace
+              can set its own switch; a change takes effect when a workspace
+              next starts, and turning it off leaves the logins Puddle already
+              kept unused. A token the workspace prints, such as the one of
+              <code>claude setup-token</code>, is a stand-in as well and works
+              only inside that workspace. With capture off, a login keeps its
+              real token in the workspace.
             </p>
           </div>
           <input
@@ -764,6 +767,40 @@
               )}
           />
         </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-foreign-warning"
+              >Warn about a credential Puddle did not add</label
+            >
+            <p class="desc" id="set-foreign-warning-desc">
+              When a tool in a workspace sends a token of its own (one you
+              pasted, or a login Puddle does not keep) to a website, Puddle lets
+              the request through as it always did and tells you: a notice, and
+              a flag in the Activity log that names the website and what kind of
+              token it looked like, never the token itself. On by default.
+              Puddle cannot tell your own token from one that leaked, so this
+              catches mistakes, not a workspace that hides what it sends. A
+              workspace can set its own switch; a change applies to the next
+              request. The same switch covers a token of a known kind that a
+              website sends the workspace in an answer and Puddle does not hold.
+            </p>
+          </div>
+          <input
+            id="set-foreign-warning"
+            type="checkbox"
+            aria-describedby="set-foreign-warning-desc"
+            checked={layerValue(
+              "warn_foreign_credentials",
+              eff.warn_foreign_credentials.value,
+            )}
+            onchange={(e) =>
+              editLayer(
+                "warn_foreign_credentials",
+                e.currentTarget.checked,
+                eff.warn_foreign_credentials.value,
+              )}
+          />
+        </div>
       </section>
 
       <section class="card" id="s-disk" aria-labelledby="h-disk">
@@ -773,7 +810,10 @@
           on the drive that holds Puddle's data. When it fills up, a build or a
           tool in a workspace stops with an error that does not name the cause.
           <code>puddle doctor</code> and the app check the free space against these
-          two lines (GB of 1024 x 1024 x 1024 bytes).
+          two lines (GB of 1024 x 1024 x 1024 bytes). They measure the room left on
+          the drive, not the size of the disks: a workspace's root disk (16 GiB for
+          a new workspace) and its volume are sparse files that take space only as
+          the workspace writes, so a workspace can still grow past what is left.
         </p>
         <div class="setting">
           <div class="grow">
@@ -914,6 +954,7 @@
           />
         </div>
 
+        <GlobalInterception />
         <GlobalNeverDecrypt />
         <LearnedLimitsSetting />
       </section>

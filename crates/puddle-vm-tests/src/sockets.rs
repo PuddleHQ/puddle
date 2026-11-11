@@ -80,11 +80,13 @@ pub struct Process {
     pub pid: u32,
     /// The id of the process that started it.
     pub parent: u32,
+    /// When it was created, in OS ticks; only ever compared with another row's.
+    pub created: u64,
     /// The image name (`msb.exe`).
     pub name: String,
 }
 
-/// Rows of `<pid> <parent pid> <image name>` per line.
+/// Rows of `<pid> <parent pid> <creation time> <image name>` per line.
 ///
 /// # Errors
 ///
@@ -92,30 +94,41 @@ pub struct Process {
 pub fn parse_processes(text: &str) -> Result<Vec<Process>, String> {
     let mut rows = Vec::new();
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let mut parts = line.splitn(3, ' ');
+        let mut parts = line.splitn(4, ' ');
         let row = (|| {
             Some(Process {
                 pid: parts.next()?.parse().ok()?,
                 parent: parts.next()?.parse().ok()?,
+                created: parts.next()?.parse().ok()?,
                 name: parts.next()?.trim().to_owned(),
             })
         })();
-        rows.push(row.ok_or_else(|| format!("process row {line:?} is not `pid parent name`"))?);
+        rows.push(
+            row.ok_or_else(|| format!("process row {line:?} is not `pid parent created name`"))?,
+        );
     }
     Ok(rows)
 }
 
 /// `root` and every process that descends from it, by parent id.
 ///
-/// Windows reuses ids, so a stale parent id can add a stranger; for the sweep, too many processes
-/// only means more sockets looked at.
+/// Windows reuses ids, and a process keeps the id of a parent that has exited (the system
+/// processes name a long-gone session manager). A process created before the process now holding
+/// its parent id is not that process's child, so a reused id never pulls in strangers.
 #[must_use]
 pub fn descendants(table: &[Process], root: u32) -> BTreeSet<u32> {
     let mut family = BTreeSet::from([root]);
     loop {
         let before = family.len();
         for process in table {
-            if family.contains(&process.parent) {
+            let born_after_parent = table
+                .iter()
+                .find(|p| p.pid == process.parent)
+                .is_none_or(|parent| process.created >= parent.created);
+            if process.pid != process.parent
+                && family.contains(&process.parent)
+                && born_after_parent
+            {
                 family.insert(process.pid);
             }
         }
@@ -149,7 +162,7 @@ pub fn listening_sockets() -> Result<Vec<Listening>, String> {
 /// PowerShell could not run, or a row was unreadable.
 #[cfg(windows)]
 pub fn process_table() -> Result<Vec<Process>, String> {
-    let script = "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.Name)\" }";
+    let script = "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.ToFileTimeUtc()) $($_.Name)\" }";
     let out = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .output()
@@ -161,71 +174,4 @@ pub fn process_table() -> Result<Vec<Process>, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const NETSTAT: &str = "
-Active Connections
-
-  Proto  Local Address          Foreign Address        State           PID
-  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1032
-  TCP    127.0.0.1:49152        0.0.0.0:0              LISTENING       4100
-  TCP    127.0.0.1:49152        127.0.0.1:50000        ESTABLISHED     4100
-  TCP    [::]:445               [::]:0                 LISTENING       4
-  TCP    [::1]:8080             [::]:0                 LISTENING       4100
-  UDP    0.0.0.0:123            *:*                                    2344
-  UDP    [fe80::1%12]:1900      *:*                                    2344
-  UDP    127.0.0.1:5353         *:*                                    4100
-";
-
-    #[test]
-    fn listening_and_bound_sockets_are_read_and_established_ones_are_not() {
-        let rows = parse_netstat(NETSTAT).unwrap();
-        let shown: Vec<String> = rows.iter().map(ToString::to_string).collect();
-        assert_eq!(
-            shown,
-            [
-                "TCP 0.0.0.0:135 (pid 1032)",
-                "TCP 127.0.0.1:49152 (pid 4100)",
-                "TCP :::445 (pid 4)",
-                "TCP ::1:8080 (pid 4100)",
-                "UDP 0.0.0.0:123 (pid 2344)",
-                "UDP fe80::1:1900 (pid 2344)",
-                "UDP 127.0.0.1:5353 (pid 4100)",
-            ]
-        );
-        let open: Vec<bool> = rows.iter().map(|r| !r.is_loopback()).collect();
-        assert_eq!(open, [true, false, true, false, true, true, false]);
-    }
-
-    #[test]
-    fn a_row_that_cannot_be_read_fails_the_sweep() {
-        for bad in [
-            "  TCP    nonsense               0.0.0.0:0              LISTENING       1",
-            "  TCP    0.0.0.0:99999          0.0.0.0:0              LISTENING       1",
-            "  TCP    0.0.0.0:80             0.0.0.0:0              LISTENING       x",
-            "  UDP    0.0.0.0:80             *:*                                    -1",
-            "  UDP    host:80                *:*                                    1",
-        ] {
-            assert!(parse_netstat(bad).is_err(), "{bad}");
-        }
-    }
-
-    #[test]
-    fn processes_are_read_and_their_descendants_found() {
-        let table = parse_processes("10 1 test.exe\n11 10 msb.exe\n12 11 msb helper.exe\n\n20 1 other.exe\n13 12 deep.exe\n")
-            .unwrap();
-        assert_eq!(table.len(), 5);
-        assert_eq!(table[2].name, "msb helper.exe");
-        assert_eq!(descendants(&table, 10), BTreeSet::from([10, 11, 12, 13]));
-        assert_eq!(descendants(&table, 20), BTreeSet::from([20]));
-        assert_eq!(descendants(&table, 99), BTreeSet::from([99]));
-    }
-
-    #[test]
-    fn a_process_row_that_cannot_be_read_is_an_error() {
-        for bad in ["x 1 a.exe", "1 x a.exe", "1 2", "1"] {
-            assert!(parse_processes(bad).is_err(), "{bad}");
-        }
-    }
-}
+mod tests;

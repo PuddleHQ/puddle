@@ -76,6 +76,11 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "otherwise msb's default (1 vCPU); changes apply at the next start via modify().cpus().next_start()",
     ),
     set(
+        "SandboxBuilder::root_disk",
+        "spec root disk size (MiB), only when given (a workspace's sandbox: 16 GiB)",
+        "a managed sparse ext4 upper that takes host space only as the guest writes; otherwise msb's default of 4 096 MiB (maintenance sandboxes)",
+    ),
+    set(
         "SandboxBuilder::env",
         "spec env (proxy vars, git identity, ...)",
         "reaches exec, SSH and the boot hook",
@@ -142,9 +147,9 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "no pinning on a workstation",
     ),
     default(
-        "SandboxBuilder::root_disk / root_disk_with / oci_upper_size",
+        "SandboxBuilder::root_disk_with / oci_upper_size",
         "msb default writable upper",
-        "ADR 0006: workspace data lives on the named volume",
+        "both are other spellings of root_disk",
     ),
     default("SandboxBuilder::thp", "Madvise", "msb default"),
     default(
@@ -349,6 +354,9 @@ pub fn builder(spec: &SandboxSpec) -> SandboxBuilder {
     for route in &spec.routes {
         b = b.vsock(&route.host, route.guest_port);
     }
+    if let Some(size) = spec.root_disk {
+        b = b.root_disk(size.as_mib());
+    }
     for mount in &spec.file_mounts {
         b = b.volume(mount.guest.as_str(), |m| m.bind(&mount.host).readonly());
     }
@@ -368,126 +376,4 @@ pub fn builder(spec: &SandboxSpec) -> SandboxBuilder {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use super::*;
-
-    /// The `SandboxBuilder` methods [`builder`] calls, read from this file's source.
-    fn methods_called_by_builder() -> BTreeSet<String> {
-        let source = include_str!("spec.rs");
-        let start = source.find("pub fn builder(").unwrap();
-        let body = &source[start..];
-        let end = body.find("\n}\n").unwrap();
-        let body = &body[..end];
-        let mut called = BTreeSet::new();
-        for (i, _) in body.match_indices('.') {
-            let rest = &body[i + 1..];
-            let name: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            if !name.is_empty() && rest[name.len()..].starts_with('(') {
-                called.insert(name);
-            }
-        }
-        // Calls on Puddle's own types and on the nested mount/volume builders.
-        for ours in [
-            "get",
-            "as_str",
-            "iter",
-            "as_mib",
-            "bind",
-            "readonly",
-            "named",
-            "named_with",
-            "ensure_exists",
-            "disk",
-            "size",
-            "owned_with",
-        ] {
-            called.remove(ours);
-        }
-        called
-    }
-
-    fn listed(setting: fn(&SdkSetting) -> bool) -> BTreeSet<String> {
-        SDK_OPTIONS
-            .iter()
-            .filter(|o| setting(&o.setting))
-            .filter_map(|o| o.option.strip_prefix("SandboxBuilder::"))
-            .flat_map(|names| names.split(" / ").map(str::to_owned))
-            .collect()
-    }
-
-    #[test]
-    fn the_option_list_matches_what_the_builder_sets() {
-        let called = methods_called_by_builder();
-        let set = listed(|s| matches!(s, SdkSetting::Set(_)));
-        assert_eq!(
-            called, set,
-            "SDK_OPTIONS `Set` entries differ from builder()"
-        );
-        let defaulted = listed(|s| matches!(s, SdkSetting::Default(_)));
-        assert!(
-            set.is_disjoint(&defaulted),
-            "an option is both set and default"
-        );
-    }
-
-    #[test]
-    fn max_memory_is_only_ever_pinned_to_the_memory_size() {
-        // Creation never sets it (the SDK then makes it equal to memory); the only call is in
-        // set_memory, with the same value as memory.
-        let spec_source = include_str!("spec.rs");
-        let builder_fn = &spec_source[spec_source.find("pub fn builder(").unwrap()..];
-        assert!(!builder_fn[..builder_fn.find("\n}\n").unwrap()].contains("max_memory"));
-        let call = format!(".{}(", "max_memory");
-        for (file, source) in [
-            ("lib.rs", include_str!("lib.rs")),
-            ("config.rs", include_str!("config.rs")),
-            ("error.rs", include_str!("error.rs")),
-            ("image.rs", include_str!("image.rs")),
-            ("sandbox.rs", include_str!("sandbox.rs")),
-            ("volume.rs", include_str!("volume.rs")),
-        ] {
-            assert!(!source.contains(&call), "{file} sets max-memory");
-        }
-        let runtime = include_str!("runtime.rs");
-        assert_eq!(runtime.matches(&call).count(), 1);
-        assert!(runtime.contains(&format!(".memory(mib){call}mib)")));
-    }
-
-    #[test]
-    fn max_cpus_is_only_ever_pinned_to_the_cpu_count() {
-        let spec_source = include_str!("spec.rs");
-        let builder_fn = &spec_source[spec_source.find("pub fn builder(").unwrap()..];
-        assert!(!builder_fn[..builder_fn.find("\n}\n").unwrap()].contains("max_cpus"));
-        let call = format!(".{}(", "max_cpus");
-        for (file, source) in [
-            ("lib.rs", include_str!("lib.rs")),
-            ("config.rs", include_str!("config.rs")),
-            ("error.rs", include_str!("error.rs")),
-            ("image.rs", include_str!("image.rs")),
-            ("sandbox.rs", include_str!("sandbox.rs")),
-            ("volume.rs", include_str!("volume.rs")),
-        ] {
-            assert!(!source.contains(&call), "{file} sets max-cpus");
-        }
-        let runtime = include_str!("runtime.rs");
-        assert_eq!(runtime.matches(&call).count(), 1);
-        assert!(runtime.contains(&format!(".cpus(count){call}count)")));
-    }
-
-    #[test]
-    fn every_option_says_why() {
-        let mut seen = BTreeSet::new();
-        for o in SDK_OPTIONS {
-            assert!(!o.why.is_empty(), "{}", o.option);
-            assert!(seen.insert(o.option), "{} listed twice", o.option);
-            match o.setting {
-                SdkSetting::Set(v) | SdkSetting::Default(v) => assert_ne!(v, ""),
-            }
-        }
-    }
-}
+mod tests;

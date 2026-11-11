@@ -117,7 +117,11 @@ describe("events", () => {
         ? {
             ...w,
             repositories: [
-              { url: "https://github.com/acme/x.git", directory: "x" },
+              {
+                entry: "e-x",
+                url: "https://github.com/acme/x.git",
+                directory: "x",
+              },
             ],
           }
         : w,
@@ -346,6 +350,26 @@ describe("actions", () => {
       expect(store.progress["w-b-site"]).toBeUndefined();
     },
   );
+
+  it("growRootDisk sends the size in MiB and marks the workspace busy at once", async () => {
+    api.list = [workspace("b-site", { root_disk_size_mib: 10_240 })];
+    await store.refresh();
+    const result = await store.growRootDisk("w-b-site", 20_480);
+    expect(result.ok).toBe(true);
+    expect(api.bodies.at(-1)).toEqual({ size_mib: 20_480 });
+    expect(store.byId("w-b-site")).toMatchObject({
+      busy: "growing_root_disk",
+      root_disk_size_mib: 20_480,
+    });
+  });
+
+  it("growRootDisk hands a refusal back and leaves the workspace alone", async () => {
+    api.list = [workspace("b-site", { root_disk_size_mib: 10_240 })];
+    await store.refresh();
+    const result = await store.growRootDisk("w-b-site", 10_240);
+    expect(result).toMatchObject({ ok: false });
+    expect(store.byId("w-b-site")?.busy).toBeNull();
+  });
 
   it("takes the operation from its first step when the answer to the request is late", async () => {
     // The service finished before its answer reached the page: steps, then done.

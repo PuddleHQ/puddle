@@ -22,6 +22,9 @@ import { CredentialNotices, type IdentityLookup } from "./credentials.ts";
 import { DiskSpaceNotices } from "./disk-space.ts";
 import { LearnedNotices } from "#lib/interception/learned.ts";
 import { EnvironmentNotices } from "./environment.ts";
+import { ForeignCredentialNotices } from "./foreign-credentials.ts";
+import { UnknownTokenNotices } from "./unknown-tokens.ts";
+import { InterceptionChoiceNotice } from "./interception.ts";
 import { LoginNotices } from "./logins.ts";
 import { InAppNotifier, type Notifier } from "./notifier.ts";
 import { ProblemNotices } from "./problems.ts";
@@ -51,9 +54,12 @@ export class NoticeWatcher {
   readonly #api: Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
   readonly #credentials: CredentialNotices;
   readonly #logins: LoginNotices;
+  readonly #foreign: ForeignCredentialNotices;
+  readonly #unknownTokens: UnknownTokenNotices;
   readonly #environment: EnvironmentNotices;
   readonly #learned: LearnedNotices;
   readonly #problems: ProblemNotices;
+  readonly #interceptionChoice: InterceptionChoiceNotice;
   readonly #diskSpace: DiskSpaceNotices;
   readonly #status = new Map<string, Status>();
   readonly #expected = new Set<string>();
@@ -70,9 +76,15 @@ export class NoticeWatcher {
       api: this.#api,
     });
     this.#logins = new LoginNotices(this.#notifier, this.#api);
+    this.#foreign = new ForeignCredentialNotices(this.#notifier);
+    this.#unknownTokens = new UnknownTokenNotices(this.#notifier);
     this.#environment = new EnvironmentNotices(this.#notifier);
     this.#learned = new LearnedNotices(this.#notifier, this.#api);
     this.#problems = new ProblemNotices(this.#notifier, this.#api);
+    this.#interceptionChoice = new InterceptionChoiceNotice(
+      this.#notifier,
+      this.#api,
+    );
     this.#diskSpace = new DiskSpaceNotices(
       this.#notifier,
       deps.lowDiskSpaceNotice ??
@@ -83,6 +95,7 @@ export class NoticeWatcher {
   /** Reads the statuses the events will be compared with; never throws. */
   async seed(): Promise<void> {
     void this.#problems.refresh();
+    void this.#interceptionChoice.refresh();
     try {
       const { data } = await this.#api.GET("/api/workspaces");
       if (!data) return;
@@ -100,6 +113,8 @@ export class NoticeWatcher {
     if (
       this.#credentials.handle(raw) ||
       this.#logins.handle(raw) ||
+      this.#foreign.handle(raw) ||
+      this.#unknownTokens.handle(raw) ||
       this.#environment.handle(raw) ||
       this.#learned.handle(raw) ||
       this.#problems.handle(raw) ||

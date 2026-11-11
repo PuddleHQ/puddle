@@ -21,12 +21,15 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
+use crate::driver::Driver;
 use crate::error::HarnessError;
 
 /// Environment variable naming the `node_modules` folder that holds `playwright-core`.
@@ -55,7 +58,7 @@ pub struct NodeOutput {
 /// A node binary that VM tests run scripts with.
 #[derive(Debug, Clone)]
 pub struct Node {
-    program: OsString,
+    pub(crate) program: OsString,
 }
 
 impl Node {
@@ -74,7 +77,7 @@ impl Node {
     }
 
     /// `node <args>` with every standard stream piped, killed when dropped.
-    fn command<I, S>(&self, args: I) -> Command
+    pub(crate) fn command<I, S>(&self, args: I) -> Command
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -94,8 +97,8 @@ impl Node {
     ///
     /// # Errors
     ///
-    /// [`HarnessError::Io`] when node can't be started, [`HarnessError::Timeout`] when the budget
-    /// runs out. A non-zero exit is not an error here: it is [`NodeOutput::success`].
+    /// [`HarnessError::Io`] when node can't be started, [`HarnessError::NodeHung`] when the budget
+    /// runs out (it says what node had printed and which steps had finished). A non-zero exit is not an error here: it is [`NodeOutput::success`].
     pub async fn run<I, S>(
         &self,
         args: I,
@@ -110,31 +113,139 @@ impl Node {
         let mut command = self.command(args);
         command.envs(envs.iter().copied());
         let program = PathBuf::from(&self.program);
+        let spawn_began = Instant::now();
         let mut child = command
             .spawn()
             .map_err(|source| HarnessError::io("start node", &program, source))?;
+        let spawn_took = spawn_began.elapsed();
+        let pid = child.id();
+        let progress = Arc::new(Progress::default());
         // A script that never reads its input closes the pipe early: that is not this call's error.
         let feed = child.stdin.take().map(|mut pipe| {
             let input = stdin.to_owned();
+            let progress = Arc::clone(&progress);
             tokio::spawn(async move {
                 let _ = pipe.write_all(input.as_bytes()).await;
+                progress.stdin_done.store(true, Ordering::SeqCst);
             })
         });
-        let waited = tokio::time::timeout(budget, child.wait_with_output()).await;
+        let out = child
+            .stdout
+            .take()
+            .map(|pipe| progress.drain(pipe, Stream::Out));
+        let err = child
+            .stderr
+            .take()
+            .map(|pipe| progress.drain(pipe, Stream::Err));
+        let waited = tokio::time::timeout(budget, async {
+            let status = child.wait().await;
+            progress.exited.store(true, Ordering::SeqCst);
+            // The output ends when every holder of the pipe's write end has closed it: a process
+            // node started that outlives it keeps the pipe open past node's own exit.
+            for reader in [out, err].into_iter().flatten() {
+                let _ = reader.await;
+            }
+            status
+        })
+        .await;
         if let Some(feed) = feed {
             feed.abort();
         }
-        let output = waited
-            .map_err(|_| HarnessError::Timeout {
-                what: "node process",
+        let Ok(status) = waited else {
+            let stage = progress.stage();
+            let _ = child.start_kill();
+            return Err(HarnessError::NodeHung {
                 limit: budget,
-            })?
-            .map_err(|source| HarnessError::io("wait for node", &program, source))?;
+                pid,
+                spawn_took,
+                stage,
+                stdout: progress.text(Stream::Out),
+                stderr: progress.text(Stream::Err),
+            });
+        };
+        let status =
+            status.map_err(|source| HarnessError::io("wait for node", &program, source))?;
         Ok(NodeOutput {
-            success: output.status.success(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            success: status.success(),
+            stdout: progress.text(Stream::Out),
+            stderr: progress.text(Stream::Err),
         })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Stream {
+    Out,
+    Err,
+}
+
+/// What a running node process has done so far: the output read from each pipe and which steps
+/// finished, so a timeout can report both.
+#[derive(Default)]
+struct Progress {
+    stdin_done: AtomicBool,
+    exited: AtomicBool,
+    out_closed: AtomicBool,
+    err_closed: AtomicBool,
+    out: Mutex<Vec<u8>>,
+    err: Mutex<Vec<u8>>,
+}
+
+impl Progress {
+    /// Reads `pipe` to its end into the buffer, on its own task.
+    fn drain<R>(self: &Arc<Self>, mut pipe: R, stream: Stream) -> tokio::task::JoinHandle<()>
+    where
+        R: AsyncReadExt + Unpin + Send + 'static,
+    {
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut chunk = [0_u8; 4096];
+            while let Ok(read) = pipe.read(&mut chunk).await {
+                let Some(got) = chunk.get(..read).filter(|got| !got.is_empty()) else {
+                    break;
+                };
+                this.buffer(stream)
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .extend_from_slice(got);
+            }
+            match stream {
+                Stream::Out => this.out_closed.store(true, Ordering::SeqCst),
+                Stream::Err => this.err_closed.store(true, Ordering::SeqCst),
+            }
+        })
+    }
+
+    fn buffer(&self, stream: Stream) -> &Mutex<Vec<u8>> {
+        match stream {
+            Stream::Out => &self.out,
+            Stream::Err => &self.err,
+        }
+    }
+
+    fn text(&self, stream: Stream) -> String {
+        let bytes = self
+            .buffer(stream)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn stage(&self) -> String {
+        let flag = |done: &AtomicBool| {
+            if done.load(Ordering::SeqCst) {
+                "done"
+            } else {
+                "pending"
+            }
+        };
+        format!(
+            "stdin written: {}, process exited: {}, stdout closed: {}, stderr closed: {}",
+            flag(&self.stdin_done),
+            flag(&self.exited),
+            flag(&self.out_closed),
+            flag(&self.err_closed),
+        )
     }
 }
 
@@ -342,26 +453,16 @@ impl BrowserClient {
         &self,
         ignore_https_errors: bool,
     ) -> Result<BrowserSession, HarnessError> {
-        let mut child = self
-            .node
-            .command(["--input-type=module", "-e", DRIVER])
-            .env(BROWSER_MODULES_VAR, &self.modules)
-            .spawn()
-            .map_err(|source| {
-                HarnessError::io("start node", PathBuf::from(&self.node.program), source)
-            })?;
-        let stdin = child.stdin.take();
-        let stdout = child.stdout.take().map(|out| BufReader::new(out).lines());
-        let (Some(stdin), Some(stdout)) = (stdin, stdout) else {
-            return Err(HarnessError::Browser {
-                detail: "node gave no pipes".to_owned(),
-            });
-        };
+        let driver = Driver::spawn(
+            &self.node,
+            DRIVER,
+            &[(BROWSER_MODULES_VAR, self.modules.as_os_str())],
+            self.grace,
+            "browser client",
+            "closing the browser",
+        )?;
         let mut session = BrowserSession {
-            grace: self.grace,
-            child,
-            stdin,
-            stdout,
+            driver,
             next_page: 0,
         };
         session
@@ -385,10 +486,7 @@ pub struct PageId(u32);
 /// browser; [`BrowserSession::quit`] closes it cleanly.
 #[derive(Debug)]
 pub struct BrowserSession {
-    grace: Duration,
-    child: tokio::process::Child,
-    stdin: tokio::process::ChildStdin,
-    stdout: Lines<BufReader<tokio::process::ChildStdout>>,
+    driver: Driver,
     next_page: u32,
 }
 
@@ -467,16 +565,8 @@ impl BrowserSession {
     /// # Errors
     ///
     /// [`HarnessError::Timeout`] when it did not end in time (it is killed then).
-    pub async fn quit(mut self) -> Result<(), HarnessError> {
-        let _ = self.stdin.write_all(b"{\"op\":\"quit\"}\n").await;
-        let _ = self.stdin.flush().await;
-        match tokio::time::timeout(self.grace, self.child.wait()).await {
-            Ok(_) => Ok(()),
-            Err(_) => Err(HarnessError::Timeout {
-                what: "closing the browser",
-                limit: self.grace,
-            }),
-        }
+    pub async fn quit(self) -> Result<(), HarnessError> {
+        self.driver.quit().await
     }
 
     async fn call(
@@ -484,72 +574,8 @@ impl BrowserSession {
         command: &Value,
         budget: Duration,
     ) -> Result<PageOutcome, HarnessError> {
-        let mut line = command.to_string();
-        line.push('\n');
-        // A driver that has ended refuses the write or gives no answer; either way its stderr says why.
-        let sent = match self.stdin.write_all(line.as_bytes()).await {
-            Ok(()) => self.stdin.flush().await,
-            Err(e) => Err(e),
-        };
-        if sent.is_err() {
-            return Err(self.ended().await);
-        }
-        let limit = budget + self.grace;
-        let answer = tokio::time::timeout(limit, self.stdout.next_line())
-            .await
-            .map_err(|_| HarnessError::Timeout {
-                what: "browser client",
-                limit,
-            })?;
-        match answer {
-            Ok(Some(answer)) => parse_reply(&answer),
-            Ok(None) | Err(_) => Err(self.ended().await),
-        }
+        self.driver.call(command, budget).await
     }
-
-    /// The error for a driver that ended: what it wrote to stderr (read once).
-    async fn ended(&mut self) -> HarnessError {
-        let mut stderr = String::new();
-        if let Some(mut err) = self.child.stderr.take() {
-            let _ =
-                tokio::time::timeout(Duration::from_secs(5), err.read_to_string(&mut stderr)).await;
-        }
-        HarnessError::Browser {
-            detail: format!(
-                "the driver ended without an answer; stderr: {}",
-                stderr.trim()
-            ),
-        }
-    }
-}
-
-/// Reads one of the driver's answers.
-fn parse_reply(line: &str) -> Result<PageOutcome, HarnessError> {
-    let fail = |detail: String| HarnessError::Browser { detail };
-    let reply: Value =
-        serde_json::from_str(line).map_err(|e| fail(format!("unreadable driver answer: {e}")))?;
-    let field = |key: &str| reply.get(key).unwrap_or(&Value::Null);
-    let strings = |key: &str| -> Vec<String> {
-        field(key)
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .collect()
-    };
-    let console = strings("console");
-    let page_errors = strings("pageErrors");
-    if field("ok").as_bool() != Some(true) {
-        return Err(fail(format!(
-            "{}; console: {console:?}; page errors: {page_errors:?}",
-            field("error").as_str().unwrap_or("no reason given")
-        )));
-    }
-    Ok(PageOutcome {
-        result: field("result").clone(),
-        console,
-        page_errors,
-    })
 }
 
 /// Whether `dir` looks like a `node_modules` folder with Playwright's driver.
@@ -558,366 +584,4 @@ fn has_playwright(dir: &Path) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_ready_page_gives_its_result_and_its_console() {
-        let outcome = parse_reply(
-            "{\"ok\":true,\"result\":{\"n\":3},\"console\":[\"log: hi\"],\"pageErrors\":[]}",
-        )
-        .expect("answer");
-        assert_eq!(outcome.result, json!({"n": 3}));
-        assert_eq!(outcome.console, ["log: hi"]);
-        assert_eq!(outcome.page_errors, Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_failed_page_names_the_reason_the_console_and_the_page_errors() {
-        let err = parse_reply(
-            "{\"ok\":false,\"error\":\"waiting failed\",\"console\":[\"error: boom\"],\"pageErrors\":[\"Error: x\"]}",
-        )
-        .expect_err("not ok");
-        let text = err.to_string();
-        assert!(text.contains("waiting failed"), "{text}");
-        assert!(text.contains("error: boom"), "{text}");
-        assert!(text.contains("Error: x"), "{text}");
-    }
-
-    #[test]
-    fn an_unreadable_answer_is_an_error_not_a_pass() {
-        let err = parse_reply("{not json").expect_err("bad json");
-        assert!(err.to_string().contains("unreadable"), "{err}");
-    }
-
-    #[test]
-    fn the_request_carries_the_page_and_the_budget_in_milliseconds() {
-        let request = PageRequest::new("http://a.localhost:1/", "window.done")
-            .result("window.value")
-            .budget(Duration::from_secs(5));
-        let parsed = request.command("wait", 7);
-        assert_eq!(parsed["op"], "wait");
-        assert_eq!(parsed["page"], 7);
-        assert_eq!(parsed["timeoutMs"], 5000);
-        assert_eq!(parsed["ready"], "window.done");
-        assert_eq!(parsed["result"], "window.value");
-        assert_eq!(parsed["waitUntil"], "domcontentloaded");
-        assert_eq!(
-            request.on_commit().command("open", 0)["waitUntil"],
-            "commit"
-        );
-    }
-
-    #[test]
-    fn a_cookie_is_host_only_http_only_and_lax() {
-        let cookie = BrowserCookie::host_only("s", "v", "demo.localhost:4800").to_json();
-        assert_eq!(
-            cookie,
-            json!({"name": "s", "value": "v", "url": "http://demo.localhost:4800/", "httpOnly": true, "sameSite": "Lax"})
-        );
-        let readable = BrowserCookie::host_only("t", "v", "demo.localhost")
-            .script_reads()
-            .to_json();
-        assert_eq!(readable["httpOnly"], false);
-    }
-
-    #[test]
-    fn a_folder_without_playwright_is_refused_with_its_path() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let err = BrowserClient::new(Node::new("node"), dir.path().to_owned()).expect_err("empty");
-        assert!(err.to_string().contains(&dir.path().display().to_string()));
-        assert!(!has_playwright(dir.path()));
-        std::fs::create_dir_all(dir.path().join("playwright-core")).expect("mkdir");
-        std::fs::write(dir.path().join("playwright-core/package.json"), "{}").expect("write");
-        assert!(has_playwright(dir.path()));
-        BrowserClient::new(Node::new("node"), dir.path().to_owned()).expect("now present");
-    }
-
-    #[tokio::test]
-    async fn node_runs_a_script_with_stdin_env_and_reports_its_exit() {
-        let node = Node::from_env();
-        let got = node
-            .run(
-                [
-                    "-e",
-                    "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{console.log(s+process.env.VM_NODE_PROBE);process.exit(3)})",
-                ],
-                &[("VM_NODE_PROBE", OsStr::new("env"))],
-                "in-",
-                Duration::from_secs(30),
-            )
-            .await
-            .expect("node runs");
-        assert!(!got.success);
-        assert_eq!(got.stdout.trim(), "in-env");
-    }
-
-    #[tokio::test]
-    async fn node_that_hangs_is_stopped_at_the_budget() {
-        let err = Node::from_env()
-            .run(
-                ["-e", "setInterval(()=>{},1000)"],
-                &[],
-                "",
-                Duration::from_secs(2),
-            )
-            .await
-            .expect_err("hang");
-        assert!(matches!(err, HarnessError::Timeout { .. }), "{err}");
-    }
-
-    #[tokio::test]
-    async fn a_missing_node_binary_names_the_path() {
-        let err = Node::new("/nonexistent/node-probe")
-            .run(["-v"], &[], "", Duration::from_secs(5))
-            .await
-            .expect_err("no binary");
-        assert!(err.to_string().contains("node-probe"), "{err}");
-        let err = BrowserClient {
-            node: Node::new("/nonexistent/node-probe"),
-            // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
-            modules: PathBuf::from("/nonexistent"),
-            grace: NODE_GRACE,
-        }
-        .session()
-        .await
-        .expect_err("no binary");
-        assert!(err.to_string().contains("node-probe"), "{err}");
-    }
-
-    /// A `playwright-core` that drives no browser. Its page answers a wait with the request's
-    /// `result` expression and what it knows (the URL it went to, the cookies of its context, the
-    /// keys pressed); `ready` of `never` times out; it logs every `goto`, and a `goto` to a URL
-    /// ending in `/hang` never ends. A cookie named `exit` ends node. `launch` fails when the
-    /// variable `STUB_NO_LAUNCH` is set.
-    fn stub_modules() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let core = dir.path().join("node_modules").join("playwright-core");
-        std::fs::create_dir_all(&core).expect("mkdir");
-        std::fs::write(core.join("package.json"), "{\"main\":\"index.js\"}").expect("package");
-        std::fs::write(
-            core.join("index.js"),
-            "exports.chromium = { launch: async () => {
-               if (process.env.STUB_NO_LAUNCH) throw new Error('no browser here');
-               return {
-               newContext: async (o) => {
-                 const jar = [];
-                 return {
-                 addCookies: async (c) => { if (c.some((k) => k.name === 'exit')) process.exit(3); jar.push(...c); },
-                 newPage: async () => {
-                   const h = {}; let url = null; const keys = [];
-                   return {
-                     on: (e, f) => { h[e] = f; },
-                     goto: async (u) => { if (u.endsWith('/hang')) await new Promise(() => {}); url = u; h.console({ type: () => 'log', text: () => 'at ' + u }); },
-                     waitForFunction: async (e) => { if (e === 'never') { h.pageerror(new Error('never ready')); throw new Error('timed out'); } },
-                     evaluate: async (e) => ({ evaluated: e, url, cookies: jar.map(c => c.name), keys, strict: o.ignoreHTTPSErrors }),
-                     keyboard: { press: async (k) => { keys.push(k); } },
-                     close: async () => {},
-                   };
-                 } };
-               },
-               close: async () => {},
-             }; } };",
-        )
-        .expect("index");
-        dir
-    }
-
-    fn stub_client(modules: &tempfile::TempDir) -> BrowserClient {
-        BrowserClient::new(Node::from_env(), modules.path().join("node_modules")).expect("client")
-    }
-
-    #[tokio::test]
-    async fn the_driver_opens_the_page_waits_and_returns_the_result_with_the_console() {
-        let modules = stub_modules();
-        let request = PageRequest::new("http://x.localhost:9/", "ready")
-            .result("answer")
-            .ignore_https_errors();
-        let outcome = stub_client(&modules).open(&request).await.expect("opened");
-        assert_eq!(
-            outcome.result,
-            json!({"evaluated": "answer", "url": "http://x.localhost:9/", "cookies": [], "keys": [], "strict": true})
-        );
-        assert_eq!(outcome.console, ["log: at http://x.localhost:9/"]);
-    }
-
-    #[tokio::test]
-    async fn the_driver_reports_a_page_that_never_becomes_ready() {
-        let modules = stub_modules();
-        let err = stub_client(&modules)
-            .open(&PageRequest::new("http://x.localhost:9/", "never"))
-            .await
-            .expect_err("not ready");
-        let text = err.to_string();
-        assert!(text.contains("timed out"), "{text}");
-        assert!(text.contains("at http://x.localhost:9/"), "{text}");
-        assert!(text.contains("never ready"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn a_session_keeps_its_cookies_and_pages_takes_keys_and_closes_them() {
-        let modules = stub_modules();
-        let mut session = stub_client(&modules).session().await.expect("session");
-        session
-            .add_cookies(&[BrowserCookie::host_only("sign-in", "v", "x.localhost:9")])
-            .await
-            .expect("cookies");
-        let (first, opened) = session
-            .open(&PageRequest::new("http://x.localhost:9/a", "ready").result("r"))
-            .await
-            .expect("first page");
-        assert_eq!(opened.result["cookies"], json!(["sign-in"]));
-        assert_eq!(opened.result["strict"], false);
-        let (second, _) = session
-            .open(&PageRequest::new("http://x.localhost:9/b", "ready"))
-            .await
-            .expect("second page");
-        assert_ne!(first, second);
-        session
-            .press(first, "Control+Backquote")
-            .await
-            .expect("keys");
-        let waited = session
-            .wait(first, &PageRequest::new("", "ready").result("r"))
-            .await
-            .expect("wait");
-        // The first page still is where it went, has the key, and logged nothing new.
-        assert_eq!(waited.result["url"], "http://x.localhost:9/a");
-        assert_eq!(waited.result["keys"], json!(["Control+Backquote"]));
-        assert!(waited.console.is_empty(), "{:?}", waited.console);
-        session.close(first).await.expect("close");
-        let err = session
-            .wait(first, &PageRequest::new("", "ready"))
-            .await
-            .expect_err("closed");
-        assert!(err.to_string().contains("no open page 0"), "{err}");
-        let err = session.press(first, "a").await.expect_err("closed");
-        assert!(err.to_string().contains("no open page"), "{err}");
-        let err = session.close(first).await.expect_err("closed twice");
-        assert!(err.to_string().contains("no open page"), "{err}");
-        session.close(second).await.expect("close the second");
-        session.quit().await.expect("quit");
-    }
-
-    /// Unix only: the stand-in for node is a shell script.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_browser_that_does_not_start_says_why() {
-        let modules = stub_modules();
-        // The variable reaches only the driver's process, through a wrapper around node.
-        let node = Node::from_env().program;
-        let wrapper = modules.path().join("no-launch.sh");
-        std::fs::write(
-            &wrapper,
-            format!(
-                "#!/bin/sh\nSTUB_NO_LAUNCH=1 exec '{}' \"$@\"\n",
-                node.to_string_lossy()
-            ),
-        )
-        .expect("wrapper");
-        std::fs::set_permissions(
-            &wrapper,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .expect("chmod");
-        let err = BrowserClient::new(Node::new(&wrapper), modules.path().join("node_modules"))
-            .expect("client")
-            .session()
-            .await
-            .expect_err("no browser");
-        assert!(err.to_string().contains("no browser here"), "{err}");
-    }
-
-    /// Unix only: the stand-in for node is a shell script.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_driver_that_dies_says_so_with_its_stderr() {
-        let modules = stub_modules();
-        let wrapper = modules.path().join("dies.sh");
-        std::fs::write(
-            &wrapper,
-            "#!/bin/sh\necho 'Cannot find module' >&2\nexit 1\n",
-        )
-        .expect("wrapper");
-        std::fs::set_permissions(
-            &wrapper,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .expect("chmod");
-        let err = BrowserClient::new(Node::new(&wrapper), modules.path().join("node_modules"))
-            .expect("client")
-            .session()
-            .await
-            .expect_err("dead driver");
-        let text = err.to_string();
-        assert!(text.contains("Cannot find module"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn a_step_that_hangs_and_a_browser_that_does_not_close_are_given_up_on() {
-        let modules = stub_modules();
-        let mut client = stub_client(&modules);
-        client.grace = Duration::from_millis(500);
-        let mut session = client.session().await.expect("session");
-        let err = session
-            .open(
-                &PageRequest::new("http://x.localhost:9/hang", "ready")
-                    .budget(Duration::from_millis(1)),
-            )
-            .await
-            .expect_err("hung");
-        assert!(
-            matches!(
-                err,
-                HarnessError::Timeout {
-                    what: "browser client",
-                    ..
-                }
-            ),
-            "{err}"
-        );
-        // The driver is still in the hung step, so it never reads the quit.
-        let err = session.quit().await.expect_err("stuck");
-        assert!(
-            matches!(
-                err,
-                HarnessError::Timeout {
-                    what: "closing the browser",
-                    ..
-                }
-            ),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_driver_that_ends_mid_session_says_so_and_is_gone_for_the_next_step() {
-        let modules = stub_modules();
-        let mut session = stub_client(&modules).session().await.expect("session");
-        let err = session
-            .add_cookies(&[BrowserCookie::host_only("exit", "v", "x.localhost")])
-            .await
-            .expect_err("node ended");
-        assert!(err.to_string().contains("ended without an answer"), "{err}");
-        // Its stderr was read with the first failure; the next step fails without it.
-        let err = session.press(PageId(0), "a").await.expect_err("no driver");
-        assert!(err.to_string().contains("ended without an answer"), "{err}");
-    }
-
-    #[test]
-    fn the_client_needs_the_modules_variable_and_takes_a_node_override() {
-        let missing = BrowserClient::from_vars(None, None).expect_err("no modules");
-        assert!(
-            missing.to_string().contains(BROWSER_MODULES_VAR),
-            "{missing}"
-        );
-        let modules = stub_modules();
-        BrowserClient::from_vars(
-            Some("some-node".into()),
-            Some(modules.path().join("node_modules").into_os_string()),
-        )
-        .expect("with a node override");
-        // The process's own environment: either answer is right, the line must run.
-        let _ = BrowserClient::from_env();
-    }
-}
+mod tests;

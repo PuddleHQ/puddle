@@ -187,6 +187,27 @@ fn a_connection_line_without_the_stand_in_list_reads_as_empty_and_a_list_is_kept
         flagged.unswapped_stand_ins,
         ["stand-in:secret:A", "stand-in:secret:B"]
     );
+    assert!(matches!(
+        AuditRecord::Connection(ConnectionRecord::from_event(1, &event())),
+        AuditRecord::Connection(ConnectionRecord { foreign_credentials, .. })
+            if foreign_credentials.is_empty()
+    ));
+    let mut warned = event();
+    warned.foreign_credentials = vec!["github_token".to_owned()];
+    assert_eq!(
+        ConnectionRecord::from_event(1, &warned).foreign_credentials,
+        ["github_token"]
+    );
+    let mut told = event();
+    told.answer_credentials = vec!["jwt_with_refresh_token".to_owned()];
+    assert_eq!(
+        ConnectionRecord::from_event(1, &told).answer_credentials,
+        ["jwt_with_refresh_token"]
+    );
+    assert_eq!(
+        ConnectionRecord::from_event(1, &event()).answer_credentials,
+        Vec::<String>::new()
+    );
 }
 
 /// A line written before the field existed reads as no refused address, and an event's
@@ -342,6 +363,8 @@ fn r24_record_types_and_connection_fields() {
         "injected",
         "unswapped_stand_ins",
         "scrubbed_stand_ins",
+        "foreign_credentials",
+        "answer_credentials",
         "refused_address",
         "refused_reason",
         "category",
@@ -369,7 +392,7 @@ fn a_company_network_destination_is_recorded_with_its_category_and_signal() {
         .to_line()
         .unwrap();
     let value: Value = serde_json::from_str(&line).unwrap();
-    assert_eq!(value["reason"], "company_network_off");
+    assert_eq!(value["reason"], "toggle:company_network");
     assert_eq!(value["category"], "company_network");
     assert_eq!(value["signal"], "vpn_route");
     // Any other connection has neither field set.

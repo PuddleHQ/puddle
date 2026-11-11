@@ -1,12 +1,20 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <script lang="ts">
+  import { onLearnedChanged } from "#lib/interception/learned.ts";
   import LearnedHostsList from "#lib/components/LearnedHostsList.svelte";
   import NeverDecryptEditor from "#lib/components/NeverDecryptEditor.svelte";
-  import { WorkspaceInterception } from "#lib/stores/interception.svelte.ts";
+  import {
+    MODE_NAMES as NAMES,
+    MODE_WARNINGS as WARNINGS,
+  } from "#lib/interception/modes.ts";
+  import {
+    WorkspaceInterception,
+    type WorkspaceMode,
+  } from "#lib/stores/interception.svelte.ts";
   import "#lib/theme/controls.css";
 
-  // Whether Puddle decrypts every HTTPS host of one workspace, not only the hosts with a
-  // credential, and the names it leaves alone either way. The workspace applies a change at once.
+  // Which HTTPS hosts of one workspace Puddle decrypts beyond the ones with a credential, and the
+  // names it leaves alone. The workspace applies a change at once.
   let { id }: { id: string } = $props();
 
   const store = new WorkspaceInterception();
@@ -16,25 +24,27 @@
 
   $effect(() => {
     void store.load(id);
+    // Making a learned host permanent changes the names above the list.
+    return onLearnedChanged((workspace) => {
+      if (workspace === id) void store.load(id, true);
+    });
   });
 
-  async function toggle(box: HTMLInputElement) {
+  async function choose(select: HTMLSelectElement) {
     problem = null;
     saved = null;
-    const result = await store.setDecryptAll(box.checked);
+    const result = await store.setMode(select.value as WorkspaceMode);
     if (result.ok) {
-      saved = store.decryptAll
-        ? "Puddle now decrypts every host."
-        : "Puddle decrypts only hosts with a credential.";
+      saved = "Interception mode saved.";
     } else {
       problem = result.message;
-      box.checked = store.decryptAll;
+      select.value = store.mode;
     }
   }
 </script>
 
 <section class="card" aria-labelledby={headingId}>
-  <h2 id={headingId}>Decrypt every host</h2>
+  <h2 id={headingId}>Which hosts to decrypt</h2>
   {#if store.status === "loading"}
     <p class="muted">Loading&hellip;</p>
   {:else if store.status === "failed"}
@@ -45,26 +55,28 @@
   {:else}
     <div class="setting">
       <div class="grow">
-        <label for="ws-decrypt-all">Decrypt every host</label>
-        <p class="desc" id="ws-decrypt-all-desc">
-          By default Puddle decrypts only the hosts it has a credential, secret
-          or login capture for. With this on it decrypts every HTTPS host, so
-          rules can see methods and paths. A tool that doesn't trust Puddle's
-          certificate fails once for that host, and Puddle then leaves the host
-          alone for 12 hours (the audit log shows it as pass_through:learned).
-          Connections that aren't HTTPS, servers that ask for a client
-          certificate and servers whose certificate Puddle doesn't accept go
-          through untouched. It applies at once, no restart.
+        <label for="ws-interception-mode">Interception mode</label>
+        <p class="desc" id="ws-interception-mode-desc">
+          {WARNINGS[store.effectiveMode]}
+          Connections that aren't HTTPS, servers that ask for a client certificate
+          and servers whose certificate Puddle doesn't accept go through untouched.
+          Hosts with a credential, secret, login capture or rule on method and path
+          are always decrypted. It applies at once, no restart.
         </p>
       </div>
-      <input
-        id="ws-decrypt-all"
-        type="checkbox"
-        role="switch"
-        aria-describedby="ws-decrypt-all-desc"
-        checked={store.decryptAll}
-        onchange={(e) => void toggle(e.currentTarget)}
-      />
+      <select
+        id="ws-interception-mode"
+        aria-describedby="ws-interception-mode-desc"
+        value={store.mode}
+        onchange={(e) => void choose(e.currentTarget)}
+      >
+        <option value="inherit">
+          Use the global setting ({NAMES[store.effectiveMode]})
+        </option>
+        <option value="all">{NAMES.all}</option>
+        <option value="all_except_curated">{NAMES.all_except_curated}</option>
+        <option value="known_only">{NAMES.known_only}</option>
+      </select>
     </div>
     <div class="status" aria-live="polite">
       {#if saved}<p class="saved">{saved}</p>{/if}
@@ -72,7 +84,7 @@
     </div>
     <NeverDecryptEditor
       label="Never decrypt in this workspace"
-      hint="One host name per line, or *. and a domain such as *.example.com. These stay untouched while the switch is on. Hosts with a credential are always decrypted."
+      hint="One host name per line, or *. and a domain such as *.example.com. These stay untouched while the mode decrypts unlisted hosts. Hosts with a credential are always decrypted."
       names={store.names}
       save={(names) => store.saveNames(names)}
     />

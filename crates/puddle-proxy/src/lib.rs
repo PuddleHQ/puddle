@@ -74,6 +74,7 @@ mod records;
 mod resolve;
 mod route;
 mod ssh;
+mod ssh_git;
 mod tap;
 mod target;
 pub mod terminate;
@@ -88,12 +89,18 @@ pub use proxy::{Proxy, ProxyConfig, WorkspaceHandler};
 pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use records::{RecordError, RecordResolver, Records, SystemRecords};
 pub use route::Route;
+pub use ssh_git::{
+    GitService, GitSsh, GitSshAccount, GitSshAccounts, GitSshCommand, GitSshContext, GitSshFailure,
+    GitSshGreeting, GitSshHostKey, GitSshHostKeys, GitSshHttps, GitSshKeyError, GitSshLimits,
+    GitSshStream, GitSshUpstream, git_ssh_built_in_hosts,
+};
 pub use terminate::{
-    AnswerHead, AnswerRewriter, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange, ExchangeRewriter,
-    HeaderError, InjectContext, InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector,
-    Interception, LEARNED_CAP, LEARNED_TTL, MAX_EXCHANGE_BODY, NoInjection, PassThrough,
-    PatternError, Placement, RequestRule, RequestRules, RequestView, SecretValue, StandIn,
-    StandInError, StandInOrigin, StandIns, Termination, TerminationSet, TerminationSource,
-    Terminations, TokenBody, TokenBodyError, Unauthorized, secret_stand_in,
+    AnswerHead, AnswerRewriter, BodyField, BodyFormat, DEFAULT_TERMINATED_HOSTS, Exchange,
+    ExchangeRewriter, FieldKind, ForeignCredentialWarning, HeaderError, InjectContext,
+    InjectDecision, InjectRefusal, InjectedHeader, Injection, Injector, Interception, LEARNED_CAP,
+    LEARNED_TTL, MAX_EXCHANGE_BODY, NoInjection, PassThrough, PatternError, Placement, RequestRule,
+    RequestRules, RequestView, SecretValue, StandIn, StandInError, StandInOrigin, StandIns,
+    Termination, TerminationSet, TerminationSource, Terminations, TokenBody, TokenBodyError,
+    Unauthorized, secret_stand_in,
 };
 pub use upstream::Upstream;

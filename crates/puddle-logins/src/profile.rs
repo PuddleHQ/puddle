@@ -182,6 +182,11 @@ pub struct Field {
     /// that is a JWT, is made again at every exchange (its expiry is in what the client reads),
     /// so the slot's earlier stand-ins stay swapped for a few exchanges.
     pub stand_in: StandInKind,
+    /// Whether the field only takes a token that starts with one of `prefixes`. Two fields of one
+    /// endpoint may name the same answer field when the answers differ (a token exchange answers
+    /// with an API key where the login answered with a JWT): the first field in the list that takes
+    /// the token is the one used, so a field with no such condition goes last.
+    pub only_prefixed: bool,
     /// Where the stand-in is swapped for the real token.
     pub scope: Scope,
     /// Which answers the field applies to.
@@ -212,8 +217,10 @@ pub struct Endpoint {
     /// stands for any segment that starts with the text before it (`org.couchdb.user:*`). The
     /// segments are read as [`path_matches`] says.
     pub path: &'static str,
-    /// The request field that holds the refresh token, where the stand-in is swapped back.
-    pub refresh_field: Option<&'static str>,
+    /// The top-level request fields that hold one of the workspace's stand-ins (the refresh
+    /// token, a token handed in for another), where the stand-in is swapped for the real token.
+    /// An endpoint with some is also a token endpoint for [`Scope::TokenEndpoint`].
+    pub request_fields: &'static [&'static str],
     /// The answer's token fields.
     pub fields: &'static [Field],
 }
@@ -280,7 +287,7 @@ impl Profile {
             Scope::TokenEndpoint => (
                 self.endpoints
                     .iter()
-                    .filter(|e| e.refresh_field.is_some())
+                    .filter(|e| !e.request_fields.is_empty())
                     .collect(),
                 &[],
             ),
@@ -342,6 +349,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["sk-ant-oat01-"],
         keep_last: 0,
         stand_in: StandInKind::Shaped,
+        only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Any,
     },
@@ -352,6 +360,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["sk-ant-ort01-"],
         keep_last: 0,
         stand_in: StandInKind::Shaped,
+        only_prefixed: false,
         scope: Scope::TokenEndpoint,
         audience: Audience::Any,
     },
@@ -368,21 +377,21 @@ pub const CLAUDE: Profile = Profile {
             host: "platform.claude.com",
             method: Method::Post,
             path: "/v1/oauth/token",
-            refresh_field: Some("refresh_token"),
+            request_fields: &["refresh_token"],
             fields: CLAUDE_TOKEN_FIELDS,
         },
         Endpoint {
             host: "console.anthropic.com",
             method: Method::Post,
             path: "/v1/oauth/token",
-            refresh_field: Some("refresh_token"),
+            request_fields: &["refresh_token"],
             fields: CLAUDE_TOKEN_FIELDS,
         },
         Endpoint {
             host: "api.anthropic.com",
             method: Method::Post,
             path: "/api/oauth/claude_cli/create_api_key",
-            refresh_field: None,
+            request_fields: &[],
             fields: &[Field {
                 path: "raw_key",
                 resource: None,
@@ -391,6 +400,7 @@ pub const CLAUDE: Profile = Profile {
                 // The CLI keeps the last 20 characters of the key it was given.
                 keep_last: 20,
                 stand_in: StandInKind::Shaped,
+                only_prefixed: false,
                 scope: Scope::Api,
                 audience: Audience::Any,
             }],
@@ -417,7 +427,7 @@ pub const GITHUB: Profile = Profile {
             host: "github.com",
             method: Method::Post,
             path: "/login/oauth/access_token",
-            refresh_field: Some("refresh_token"),
+            request_fields: &["refresh_token"],
             fields: &[
                 Field {
                     path: "access_token",
@@ -426,6 +436,7 @@ pub const GITHUB: Profile = Profile {
                     prefixes: &["gho_", "ghu_"],
                     keep_last: 0,
                     stand_in: StandInKind::Shaped,
+                    only_prefixed: false,
                     scope: Scope::Api,
                     audience: Audience::Any,
                 },
@@ -436,6 +447,7 @@ pub const GITHUB: Profile = Profile {
                     prefixes: &["ghr_"],
                     keep_last: 0,
                     stand_in: StandInKind::Shaped,
+                    only_prefixed: false,
                     scope: Scope::TokenEndpoint,
                     audience: Audience::Any,
                 },
@@ -447,7 +459,7 @@ pub const GITHUB: Profile = Profile {
             host: "api.github.com",
             method: Method::Any,
             path: "/copilot_internal/v2/token",
-            refresh_field: None,
+            request_fields: &[],
             fields: &[Field {
                 path: "token",
                 resource: None,
@@ -455,6 +467,7 @@ pub const GITHUB: Profile = Profile {
                 prefixes: &[],
                 keep_last: 0,
                 stand_in: StandInKind::Fields,
+                only_prefixed: false,
                 scope: Scope::Api,
                 audience: Audience::Any,
             }],
@@ -480,6 +493,7 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["Ew"],
         keep_last: 0,
         stand_in: StandInKind::Jwt,
+        only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Named(&["management.azure.com", "management.core.windows.net"]),
     },
@@ -491,6 +505,7 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["Ew"],
         keep_last: 0,
         stand_in: StandInKind::Jwt,
+        only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Named(&[
             "graph.microsoft.com",
@@ -505,6 +520,7 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["Ew"],
         keep_last: 0,
         stand_in: StandInKind::Jwt,
+        only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Named(&[
             "499b84ac-1321-427f-aa17-267ca6975798",
@@ -520,6 +536,7 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["Ew"],
         keep_last: 0,
         stand_in: StandInKind::Jwt,
+        only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Named(&["vault.azure.net"]),
     },
@@ -533,6 +550,7 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["Ew"],
         keep_last: 0,
         stand_in: StandInKind::Jwt,
+        only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Unnamed,
     },
@@ -545,6 +563,7 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         prefixes: &["0.", "1."],
         keep_last: 0,
         stand_in: StandInKind::ShapedLong,
+        only_prefixed: false,
         scope: Scope::TokenEndpoint,
         audience: Audience::Any,
     },
@@ -556,6 +575,7 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         prefixes: &[],
         keep_last: 0,
         stand_in: StandInKind::Jwt,
+        only_prefixed: false,
         scope: Scope::TokenEndpoint,
         audience: Audience::Any,
     },
@@ -575,14 +595,14 @@ pub const ENTRA: Profile = Profile {
             host: "login.microsoftonline.com",
             method: Method::Post,
             path: "/*/oauth2/v2.0/token",
-            refresh_field: Some("refresh_token"),
+            request_fields: &["refresh_token"],
             fields: ENTRA_TOKEN_FIELDS,
         },
         Endpoint {
             host: "login.microsoftonline.com",
             method: Method::Post,
             path: "/*/oauth2/token",
-            refresh_field: Some("refresh_token"),
+            request_fields: &["refresh_token"],
             fields: ENTRA_TOKEN_FIELDS,
         },
     ],
@@ -598,95 +618,174 @@ pub const ENTRA: Profile = Profile {
     ],
 };
 
+/// `OpenAI`'s Codex (`codex login` with a `ChatGPT` account): the OAuth code exchange, the refresh and
+/// the token exchange that trades the identity token for an API key all go to
+/// `auth.openai.com/oauth/token`.
+///
+/// - The code exchange and the refresh answer with `id_token`, `access_token` and `refresh_token`.
+///   Both JWTs are read by Codex (who signed in, which plan, when the token ends), so their stand-ins
+///   keep header and payload.
+/// - The token exchange answers with an API key (`sk-...`) in the same `access_token` field, so
+///   that field is listed twice: the API key first, because it only takes a token with its prefix.
+/// - The refresh sends `refresh_token`, the token exchange sends the identity token as
+///   `subject_token`.
+/// - The tokens go to the API (`api.openai.com`) and to `ChatGPT`'s backend (`chatgpt.com`).
+///
+/// The hosts and the shape of the tokens are from the Codex source and public descriptions of the
+/// login, not from a recording.
+pub const OPENAI: Profile = Profile {
+    id: "openai",
+    name: "OpenAI Codex",
+    endpoints: &[Endpoint {
+        host: "auth.openai.com",
+        method: Method::Post,
+        path: "/oauth/token",
+        request_fields: &["refresh_token", "subject_token"],
+        fields: &[
+            Field {
+                path: "access_token",
+                resource: None,
+                role: Role::ApiKey,
+                prefixes: &["sk-"],
+                keep_last: 0,
+                stand_in: StandInKind::Shaped,
+                only_prefixed: true,
+                scope: Scope::Api,
+                audience: Audience::Any,
+            },
+            Field {
+                path: "access_token",
+                resource: None,
+                role: Role::Access,
+                prefixes: &[],
+                keep_last: 0,
+                stand_in: StandInKind::Jwt,
+                only_prefixed: false,
+                scope: Scope::Api,
+                audience: Audience::Any,
+            },
+            Field {
+                path: "id_token",
+                resource: None,
+                role: Role::IdToken,
+                prefixes: &[],
+                keep_last: 0,
+                stand_in: StandInKind::Jwt,
+                only_prefixed: false,
+                scope: Scope::TokenEndpoint,
+                audience: Audience::Any,
+            },
+            Field {
+                path: "refresh_token",
+                resource: None,
+                role: Role::Refresh,
+                prefixes: &["rt_"],
+                keep_last: 0,
+                stand_in: StandInKind::Shaped,
+                only_prefixed: false,
+                scope: Scope::TokenEndpoint,
+                audience: Audience::Any,
+            },
+        ],
+    }],
+    api_hosts: &["api.openai.com", "chatgpt.com"],
+};
+
+/// The token fields of Docker's login host (Auth0): the device flow's poll and a refresh answer with
+/// the same three. The access token is a JWT whose claims `docker` reads (`username` under
+/// `https://hub.docker.com`) and verifies against nothing.
+const DOCKER_TOKEN_FIELDS: &[Field] = &[
+    Field {
+        path: "access_token",
+        resource: None,
+        role: Role::Access,
+        prefixes: &[],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        only_prefixed: false,
+        scope: Scope::Api,
+        audience: Audience::Any,
+    },
+    Field {
+        path: "id_token",
+        resource: None,
+        role: Role::IdToken,
+        prefixes: &[],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        only_prefixed: false,
+        scope: Scope::TokenEndpoint,
+        audience: Audience::Any,
+    },
+    Field {
+        path: "refresh_token",
+        resource: None,
+        role: Role::Refresh,
+        prefixes: &[],
+        keep_last: 0,
+        stand_in: StandInKind::Shaped,
+        only_prefixed: false,
+        scope: Scope::TokenEndpoint,
+        audience: Audience::Any,
+    },
+];
+
+/// Docker Hub (`docker login` through the browser, the device flow): the login host
+/// `login.docker.com` answers the poll with an access token (a JWT), an identity token (a JWT) and a
+/// refresh token; `docker logout` sends the refresh token back to `/oauth/revoke`. The CLI then
+/// trades the access token for a personal access token at
+/// `hub.docker.com/v2/access-tokens/desktop-generate` (answer `{"data":{"token":"dckr_pat_..."}}`),
+/// stores it, and sends it as the password of a `Basic` credential to `auth.docker.io`, which
+/// answers with a registry bearer token (not captured, see the credential audit's E2). A password
+/// typed to `docker login -u` is not a login answer and is not covered here.
+///
+/// The hosts and fields are from the Docker CLI source (`internal/oauth`), not from a recording.
+pub const DOCKER: Profile = Profile {
+    id: "docker",
+    name: "Docker Hub",
+    endpoints: &[
+        Endpoint {
+            host: "login.docker.com",
+            method: Method::Post,
+            path: "/oauth/token",
+            request_fields: &["refresh_token"],
+            fields: DOCKER_TOKEN_FIELDS,
+        },
+        // The answer is empty and not read; the endpoint is listed for the request: the refresh
+        // token's stand-in is swapped in the `token` field.
+        Endpoint {
+            host: "login.docker.com",
+            method: Method::Post,
+            path: "/oauth/revoke",
+            request_fields: &["token"],
+            fields: &[],
+        },
+        Endpoint {
+            host: "hub.docker.com",
+            method: Method::Post,
+            path: "/v2/access-tokens/desktop-generate",
+            request_fields: &[],
+            fields: &[Field {
+                path: "data.token",
+                resource: None,
+                role: Role::ApiKey,
+                prefixes: &["dckr_pat_"],
+                keep_last: 0,
+                stand_in: StandInKind::Shaped,
+                only_prefixed: false,
+                scope: Scope::Api,
+                audience: Audience::Any,
+            }],
+        },
+    ],
+    api_hosts: &["auth.docker.io", "registry-1.docker.io"],
+};
+
 /// The profiles Puddle ships.
 #[must_use]
 pub fn builtin() -> &'static [Profile] {
-    &[CLAUDE, GITHUB, ENTRA]
+    &[CLAUDE, GITHUB, ENTRA, OPENAI, DOCKER]
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_types::Host;
-
-    use super::*;
-
-    fn host(name: &str) -> Host {
-        Host::parse_normalised(name).unwrap()
-    }
-
-    #[test]
-    fn every_built_in_host_is_a_name_the_proxy_accepts() {
-        for profile in builtin() {
-            for scope in [Scope::Api, Scope::TokenEndpoint] {
-                let set = profile.hosts_for(scope);
-                let wanted: Vec<&str> = profile
-                    .endpoints
-                    .iter()
-                    .filter(|e| scope == Scope::Api || e.refresh_field.is_some())
-                    .map(|e| e.host)
-                    .chain(match scope {
-                        Scope::Api => profile.api_hosts.iter().copied(),
-                        Scope::TokenEndpoint => [].iter().copied(),
-                    })
-                    .collect();
-                for name in wanted {
-                    let probe = name
-                        .strip_prefix("*.")
-                        .map_or_else(|| name.to_owned(), |base| format!("anything.{base}"));
-                    assert!(set.contains(&host(&probe)), "{}: {name}", profile.id);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn a_refresh_token_is_swapped_toward_the_token_endpoint_only() {
-        let claude = CLAUDE.hosts_for(Scope::TokenEndpoint);
-        assert!(claude.contains(&host("platform.claude.com")));
-        assert!(claude.contains(&host("console.anthropic.com")));
-        assert!(
-            !claude.contains(&host("api.anthropic.com")),
-            "the endpoint that creates a key takes no refresh token"
-        );
-        assert!(!claude.contains(&host("claude.ai")));
-        let github = GITHUB.hosts_for(Scope::TokenEndpoint);
-        assert!(github.contains(&host("github.com")));
-        assert!(!github.contains(&host("api.github.com")));
-    }
-
-    #[test]
-    fn the_github_profile_covers_copilot_hosts_and_not_the_whole_domain() {
-        let set = GITHUB.hosts();
-        assert!(set.contains(&host("api.individual.githubcopilot.com")));
-        assert!(set.contains(&host("api.github.com")));
-        assert!(!set.contains(&host("githubcopilot.com")));
-        assert!(!set.contains(&host("gist.github.com")));
-        assert!(!set.contains(&host("evilgithub.com")));
-    }
-
-    #[test]
-    fn slots_are_named_by_profile_and_role_and_each_role_is_listed_once() {
-        assert_eq!(CLAUDE.slot_name(Role::ApiKey), "claude-api-key");
-        assert_eq!(GITHUB.slot_name(Role::Access), "github-access");
-        assert_eq!(CLAUDE.roles(), [Role::Access, Role::Refresh, Role::ApiKey]);
-        assert_eq!(GITHUB.roles(), [Role::Access, Role::Refresh, Role::Copilot]);
-        assert_eq!(GITHUB.slot_name(Role::Copilot), "github-copilot");
-        // Two token hosts with two fields each, and the key.
-        assert_eq!(CLAUDE.fields().count(), 5);
-    }
-
-    #[test]
-    fn profile_ids_and_paths_are_unique_and_well_formed() {
-        let profiles = builtin();
-        for (i, a) in profiles.iter().enumerate() {
-            for b in &profiles[i + 1..] {
-                assert_ne!(a.id, b.id);
-            }
-            assert!(a.id.bytes().all(|c| c.is_ascii_lowercase()));
-            for e in a.endpoints {
-                assert!(e.path.starts_with('/'));
-                assert!(!e.fields.is_empty());
-            }
-        }
-    }
-}
+mod tests;

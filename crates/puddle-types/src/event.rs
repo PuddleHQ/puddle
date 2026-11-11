@@ -251,6 +251,10 @@ pub enum Event {
         workspace: WorkspaceId,
         /// The host, lower case.
         host: String,
+        /// How many times Puddle has stopped decrypting this host in this workspace because a
+        /// tool refused its certificate, this one included. The app raises a notice from the
+        /// third time.
+        count: u32,
     },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
     /// or the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in
@@ -300,6 +304,28 @@ pub enum Event {
         service: String,
         /// What is wrong.
         kind: LoginProblemKind,
+    },
+    /// A request of the workspace carried a credential Puddle did not add or swap, and the
+    /// warning is on. The request went out as it was. `host` is the host it went to and `kind`
+    /// says what Puddle could tell about the credential; never a part of its value.
+    ForeignCredential {
+        /// The workspace that sent it.
+        workspace: WorkspaceId,
+        /// The host the request went to.
+        host: String,
+        /// What kind of credential it looked like.
+        kind: ForeignCredentialKind,
+    },
+    /// An answer to a request of the workspace held a token of a known kind that Puddle does not
+    /// hold, and the warning is on. The answer went to the workspace as it was. `host` is the
+    /// host that sent it and `kind` says what the token looked like; never a part of its value.
+    UnknownTokenInAnswer {
+        /// The workspace that got the answer.
+        workspace: WorkspaceId,
+        /// The host that answered.
+        host: String,
+        /// What kind of token it looked like.
+        kind: UnknownTokenKind,
     },
     /// New audit records were committed. `id` is the newest record's id, so a client that holds
     /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit,
@@ -398,17 +424,21 @@ pub enum GitAccess {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[non_exhaustive]
 pub enum LoginProblemKind {
-    /// The operating system's credential store did not take the token: the workspace got the real
-    /// token, so the login works but is not protected.
+    /// The operating system's credential store did not take the token: the login failed and the
+    /// workspace got nothing. Unlock the store or start it, then sign in again.
     StoreUnavailable,
-    /// The service's answer was in a form Puddle does not read: the workspace got the real token.
+    /// The service's answer was in a form Puddle does not read: the login failed and the workspace
+    /// got nothing.
     UnexpectedAnswer,
-    /// The token has a length or a character a stand-in cannot copy: the workspace got the real
-    /// token.
+    /// The token has a length or a character a stand-in cannot copy: the login failed and the
+    /// workspace got nothing.
     UnusableToken,
     /// The service ties its tokens to a key of the tool's own, which a stand-in cannot stand in
-    /// for: the workspace got the real token.
+    /// for: the login failed and the workspace got nothing.
     BoundToken,
+    /// The answer carries a token in a field Puddle does not know, so it could not be kept: the
+    /// login failed and the workspace got nothing.
+    UnnamedToken,
     /// A login Puddle kept earlier could not be read back when the workspace started: the tool
     /// asks for a new sign-in.
     Unreadable,
@@ -417,8 +447,87 @@ pub enum LoginProblemKind {
     /// turn capture on again, or sign in again.
     CaptureOff,
     /// A problem this version of Puddle has no name for. Nothing is known about it, so the notice
-    /// says only that the login may not work or may not be protected.
+    /// says only that the login may not work.
     Unknown,
+}
+
+/// What Puddle can tell about a credential it did not add: by its bytes alone, never by whose it
+/// is (the user's own token and a leaked one look the same). See [`Event::ForeignCredential`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[non_exhaustive]
+pub enum ForeignCredentialKind {
+    /// A stand-in Puddle made once and no longer holds (a removed secret, a forgotten login, or
+    /// another workspace's): it cannot be swapped, so the server will refuse it.
+    StaleStandIn,
+    /// A GitHub token with a valid checksum.
+    GithubToken,
+    /// An npm token with a valid checksum.
+    NpmToken,
+    /// A GitLab token with a valid checksum.
+    GitlabToken,
+    /// An Azure DevOps personal access token of the newer, 84-character kind.
+    AzureDevopsToken,
+    /// An `Authorization` header the workspace set itself on a request to a Git repository.
+    GitAuthorization,
+}
+
+impl ForeignCredentialKind {
+    /// The name the record and the API use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StaleStandIn => "stale_stand_in",
+            Self::GithubToken => "github_token",
+            Self::NpmToken => "npm_token",
+            Self::GitlabToken => "gitlab_token",
+            Self::AzureDevopsToken => "azure_devops_token",
+            Self::GitAuthorization => "git_authorization",
+        }
+    }
+}
+
+/// What Puddle can tell about a token in an answer that it does not hold: by its bytes alone
+/// (see [`Event::UnknownTokenInAnswer`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[non_exhaustive]
+pub enum UnknownTokenKind {
+    /// A GitHub token with a valid checksum (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`).
+    GithubToken,
+    /// A fine-grained GitHub token (`github_pat_`).
+    GithubFineGrainedToken,
+    /// A GitLab token (`glpat-`).
+    GitlabToken,
+    /// An npm token with a valid checksum.
+    NpmToken,
+    /// An Azure DevOps personal access token of the 84-character kind.
+    AzureDevopsToken,
+    /// An Anthropic API key or sign-in token (`sk-ant-`).
+    AnthropicKey,
+    /// An `OpenAI` project key (`sk-proj-`).
+    OpenaiKey,
+    /// A JSON Web Token in an answer that also has a `refresh_token` field.
+    JwtWithRefreshToken,
+}
+
+impl UnknownTokenKind {
+    /// The name the record and the API use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GithubToken => "github_token",
+            Self::GithubFineGrainedToken => "github_fine_grained_token",
+            Self::GitlabToken => "gitlab_token",
+            Self::NpmToken => "npm_token",
+            Self::AzureDevopsToken => "azure_devops_token",
+            Self::AnthropicKey => "anthropic_key",
+            Self::OpenaiKey => "openai_key",
+            Self::JwtWithRefreshToken => "jwt_with_refresh_token",
+        }
+    }
 }
 
 /// How a pending request ended.
@@ -467,6 +576,8 @@ pub enum WorkspaceStep {
     Reclaiming,
     /// Removing the sandbox, and with it the root disk, so the next start makes a fresh one.
     ResettingRootDisk,
+    /// Making the root disk bigger.
+    GrowingRootDisk,
     /// Shutting the virtual machine down.
     Stopping,
     /// Removing the volume and the workspace.
@@ -519,6 +630,8 @@ impl Event {
             | Self::GitAccessDenied { workspace, .. }
             | Self::GitNoIdentity { workspace, .. }
             | Self::LoginProblem { workspace, .. }
+            | Self::ForeignCredential { workspace, .. }
+            | Self::UnknownTokenInAnswer { workspace, .. }
             | Self::WorkspaceGitChanged { workspace }
             | Self::WorkspaceEnvChanged { workspace }
             | Self::WorkspaceEnvFailed { workspace, .. }

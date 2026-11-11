@@ -98,6 +98,7 @@ fn workspace_progress_is_per_workspace_and_always_carries_detail() {
         (WorkspaceStep::Checking, "checking"),
         (WorkspaceStep::Reclaiming, "reclaiming"),
         (WorkspaceStep::ResettingRootDisk, "resetting_root_disk"),
+        (WorkspaceStep::GrowingRootDisk, "growing_root_disk"),
         (WorkspaceStep::Stopping, "stopping"),
         (WorkspaceStep::Removing, "removing"),
         (WorkspaceStep::Done, "done"),
@@ -153,6 +154,7 @@ fn global_events_have_no_workspace_and_round_trip_without_one() {
 #[test]
 fn login_problem_kinds_have_fixed_wire_names() {
     for (kind, wire) in [
+        (LoginProblemKind::UnnamedToken, "unnamed_token"),
         (LoginProblemKind::CaptureOff, "capture_off"),
         (LoginProblemKind::Unknown, "unknown"),
     ] {
@@ -415,6 +417,64 @@ fn credential_and_git_access_events_have_fixed_shapes() {
 }
 
 #[test]
+fn a_foreign_credential_names_the_host_and_the_kind_and_nothing_else() {
+    let event = Event::ForeignCredential {
+        workspace: name(),
+        host: "api.github.com".into(),
+        kind: ForeignCredentialKind::GithubToken,
+    };
+    let json = r#"{"type":"foreign_credential","workspace":"box","host":"api.github.com","kind":"github_token"}"#;
+    assert_eq!(serde_json::to_string(&event).unwrap(), json);
+    assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+    assert_eq!(event.workspace(), Some(&name()));
+    for kind in [
+        ForeignCredentialKind::StaleStandIn,
+        ForeignCredentialKind::GithubToken,
+        ForeignCredentialKind::NpmToken,
+        ForeignCredentialKind::GitlabToken,
+        ForeignCredentialKind::AzureDevopsToken,
+        ForeignCredentialKind::GitAuthorization,
+    ] {
+        assert_eq!(
+            serde_json::to_string(&kind).unwrap(),
+            format!("\"{}\"", kind.as_str())
+        );
+    }
+}
+
+#[test]
+fn an_unknown_token_in_an_answer_names_the_host_and_the_kind_and_nothing_else() {
+    let event = Event::UnknownTokenInAnswer {
+        workspace: name(),
+        host: "login.example.invalid".into(),
+        kind: UnknownTokenKind::JwtWithRefreshToken,
+    };
+    let json = r#"{"type":"unknown_token_in_answer","workspace":"box","host":"login.example.invalid","kind":"jwt_with_refresh_token"}"#;
+    assert_eq!(serde_json::to_string(&event).unwrap(), json);
+    assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
+    assert_eq!(event.workspace(), Some(&name()));
+    for (kind, text) in [
+        (UnknownTokenKind::GithubToken, "github_token"),
+        (
+            UnknownTokenKind::GithubFineGrainedToken,
+            "github_fine_grained_token",
+        ),
+        (UnknownTokenKind::GitlabToken, "gitlab_token"),
+        (UnknownTokenKind::NpmToken, "npm_token"),
+        (UnknownTokenKind::AzureDevopsToken, "azure_devops_token"),
+        (UnknownTokenKind::AnthropicKey, "anthropic_key"),
+        (UnknownTokenKind::OpenaiKey, "openai_key"),
+        (
+            UnknownTokenKind::JwtWithRefreshToken,
+            "jwt_with_refresh_token",
+        ),
+    ] {
+        assert_eq!(kind.as_str(), text);
+        assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{text}\""));
+    }
+}
+
+#[test]
 fn a_repository_list_change_carries_only_the_workspace() {
     let event = Event::WorkspaceRepositoriesChanged { workspace: name() };
     let json = r#"{"type":"workspace_repositories_changed","workspace":"box"}"#;
@@ -506,6 +566,8 @@ fn openapi_schema_is_the_tagged_union() {
             "git_access_denied",
             "git_no_identity",
             "login_problem",
+            "foreign_credential",
+            "unknown_token_in_answer",
             "audit_appended",
             "network_changed",
             "proxy_sign_in_failed",
@@ -568,8 +630,10 @@ fn a_learned_pass_through_host_has_a_fixed_shape() {
     let event = Event::PassThroughLearned {
         workspace: WorkspaceId::new("box").unwrap(),
         host: "pinned.example".into(),
+        count: 3,
     };
-    let json = r#"{"type":"pass_through_learned","workspace":"box","host":"pinned.example"}"#;
+    let json =
+        r#"{"type":"pass_through_learned","workspace":"box","host":"pinned.example","count":3}"#;
     assert_eq!(serde_json::to_string(&event).unwrap(), json);
     assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
     assert_eq!(event.workspace(), Some(&WorkspaceId::new("box").unwrap()));

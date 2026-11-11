@@ -43,6 +43,7 @@ mod problems;
 mod proxy_sign_in;
 mod repos;
 mod repositories;
+mod repository_hosts;
 mod request_rules;
 mod rule_sets;
 mod rules;
@@ -150,8 +151,10 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::stop_workspace))
         .routes(routes!(workspaces::reclaim_workspace))
         .routes(routes!(workspaces::reset_root_disk))
+        .routes(routes!(workspaces::grow_root_disk))
         .routes(routes!(workspaces::delete_check))
         .routes(routes!(workspaces::attach_workspace))
+        .routes(routes!(repository_hosts::repository_hosts))
         .routes(routes!(repositories::list_checkouts))
         .routes(routes!(repositories::add_repository))
         .routes(routes!(repositories::clone_again))
@@ -262,6 +265,10 @@ fn environment_router() -> OpenApiRouter<AppState> {
             interception::put_interception
         ))
         .routes(routes!(
+            interception::get_interception_settings,
+            interception::put_interception_settings
+        ))
+        .routes(routes!(
             interception::get_global_never_decrypt,
             interception::put_global_never_decrypt
         ))
@@ -270,6 +277,7 @@ fn environment_router() -> OpenApiRouter<AppState> {
             interception::clear_learned
         ))
         .routes(routes!(interception::forget_learned))
+        .routes(routes!(interception::make_permanent))
         .routes(routes!(
             interception::get_learned_limits,
             interception::put_learned_limits

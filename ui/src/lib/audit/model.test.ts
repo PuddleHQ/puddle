@@ -10,6 +10,7 @@ import {
   describe as row,
   exportName,
   fromSearch,
+  splitDetail,
   isFiltered,
   isNarrowed,
   jsonLine,
@@ -326,6 +327,32 @@ describe("a record as a row", () => {
     );
     expect(view.detail).not.toContain("went out unchanged (check");
   });
+  it("says which kinds of credential the workspace sent that Puddle did not add, never a value", () => {
+    const view = row(
+      connection(1, {
+        foreign_credentials: ["github_token", "git_authorization", "odd_kind"],
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "the workspace sent a GitHub token, a login for a Git repository, odd_kind that Puddle did not add; it went out as it was",
+    );
+    expect(row(connection(2, {}).record).detail).not.toContain("did not add");
+  });
+  it("says which kinds of token the answer held that Puddle does not hold, never a value", () => {
+    const view = row(
+      connection(1, {
+        answer_credentials: [
+          "github_token",
+          "jwt_with_refresh_token",
+          "odd_kind",
+        ],
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "the answer held a GitHub token, a sign-in token with a refresh token, odd_kind that Puddle does not hold; the workspace got it as it was",
+    );
+    expect(row(connection(2, {}).record).detail).not.toContain("does not hold");
+  });
   it("names the refused address of a mixed answer, apart from the one connected to", () => {
     const view = row(
       connection(1, {
@@ -384,6 +411,8 @@ describe("a record as a row", () => {
       "push_denied",
       "pull_denied",
       "bad_git_path",
+      "ssh_command_unsupported",
+      "ssh_channel_refused",
       "credential_rejected",
       "credential_unavailable",
       "credential_ambiguous",
@@ -400,8 +429,106 @@ describe("a record as a row", () => {
     ]) {
       expect(detail(reason), reason).not.toContain(reason);
     }
+    expect(detail("ssh_command_unsupported")).toBe(
+      "because Puddle serves only git-upload-pack and git-receive-pack over SSH, and this command was neither",
+    );
+    expect(detail("ssh_channel_refused")).toBe(
+      "because the SSH session asked for something Puddle does not allow (a terminal, a subsystem, forwarding or a second command)",
+    );
+    expect(detail("bad_git_path")).toBe(
+      "because the Git address is not one Puddle reads, or names the repository in more than one way (use owner/repository)",
+    );
     expect(detail("a_code_from_a_newer_puddle")).toBe(
       "because a_code_from_a_newer_puddle",
+    );
+  });
+  it.each([
+    ["git-receive-pack", "/acme/app", "SSH: push to github.com/acme/app"],
+    ["git-upload-pack", "/acme/app", "SSH: fetch from github.com/acme/app"],
+    [
+      "git-lfs-upload",
+      "/acme/app",
+      "SSH: Git LFS upload to github.com/acme/app",
+    ],
+    [
+      "git-lfs-download",
+      "/acme/app",
+      "SSH: Git LFS download from github.com/acme/app",
+    ],
+  ])("words a %s record as Git over SSH", (method, path, words) => {
+    const view = row(
+      connection(1, {
+        host: "github.com",
+        port: 22,
+        method,
+        path,
+        reason: "rule",
+        rule_id: null,
+        rule_set: "builtin:git",
+        injected: true,
+      }).record,
+    );
+    expect(view.destination).toBe("github.com:22");
+    expect(view.detail).toBe(
+      `${words} · rule set builtin:git · credential added`,
+    );
+  });
+  it("words a refused SSH push with the push list's reason, and leaves HTTP alone", () => {
+    const refused = row(
+      connection(1, {
+        host: "github.com",
+        port: 22,
+        method: "git-receive-pack",
+        path: "/acme/other",
+        decision: "blocked",
+        reason: "push_denied",
+        rule_id: null,
+      }).record,
+    );
+    expect(refused.outcome).toEqual({ label: "Blocked", tone: "deny" });
+    expect(refused.detail).toBe(
+      'SSH: push to github.com/acme/other · because the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+    );
+    const http = row(
+      connection(2, {
+        host: "github.com",
+        method: "POST",
+        path: "/acme/other/git-receive-pack",
+        decision: "blocked",
+        reason: "push_denied",
+        rule_id: null,
+      }).record,
+    );
+    expect(http.detail).toMatch(/^POST \/acme\/other\/git-receive-pack · /);
+  });
+  it("words a command or a channel request Puddle refused over SSH", () => {
+    const command = row(
+      connection(1, {
+        host: "github.com",
+        port: 22,
+        method: "ssh-command",
+        path: "/",
+        decision: "blocked",
+        reason: "ssh_command_unsupported",
+        rule_id: null,
+      }).record,
+    );
+    expect(command.detail).toMatch(
+      /^SSH: command Puddle does not serve · because Puddle serves only/,
+    );
+    const channel = row(
+      connection(2, {
+        host: "github.com",
+        port: 22,
+        method: "ssh-channel",
+        path: "/",
+        decision: "blocked",
+        reason: "ssh_channel_refused",
+        rule_id: null,
+      }).record,
+    );
+    expect(channel.detail).toMatch(
+      /^SSH: session request · because the SSH session asked/,
     );
   });
   it("shows a listing request of Puddle's that failed as failed, with why", () => {
@@ -496,6 +623,15 @@ describe("a record as a row", () => {
       ).toMatchObject({ detail });
     }
   });
+  it("says a rule made by a workspace create was made by the create", () => {
+    expect(
+      row({
+        ts: 1,
+        type: "rule_created",
+        rule: { ...rule, created_by: "workspace_create" },
+      } as AuditRecord),
+    ).toMatchObject({ detail: "allow for workspace shop, by the create" });
+  });
   it("shows rule changes by pattern and scope, with no outcome", () => {
     const base = { ts: 1, rule };
     expect(row({ ...base, type: "rule_created" } as AuditRecord)).toMatchObject(
@@ -549,7 +685,9 @@ describe("a record as a row", () => {
     ).toMatchObject({
       outcome: { label: "Denied", tone: "deny" },
       detail: "DELETE /repos/a/b · method and path rule 7",
+      requestRule: 7,
     });
+    expect(row(connection(6).record).requestRule).toBeUndefined();
     expect(
       row(
         connection(5, {
@@ -559,6 +697,18 @@ describe("a record as a row", () => {
         }).record,
       ).detail,
     ).toContain("because the host has rules on method and path");
+  });
+  it("cuts a detail around its rule's name, or leaves it whole when the name is missing", () => {
+    expect(splitDetail("GET /a · method and path rule 7 · x", 7)).toEqual({
+      before: "GET /a · ",
+      name: "method and path rule 7",
+      after: " · x",
+    });
+    expect(splitDetail("GET /a", 7)).toEqual({
+      before: "GET /a",
+      name: "",
+      after: "",
+    });
   });
   it("shows a workspace operation with who asked, what it touched and how it ended", () => {
     const op = (fields: Record<string, unknown>) =>
@@ -620,10 +770,43 @@ describe("a record as a row", () => {
       "repo_added",
       "repo_switched",
       "repo_removed",
+      "root_disk_grown",
       "git_repaired",
     ]) {
       expect(op({ op: kind }).detail).toMatch(/^[A-Z][a-z ]+, by api$/);
     }
+  });
+  it("words a root disk grow with both sizes, and a failed one with its reason", () => {
+    const op = (fields: Record<string, unknown>) =>
+      row({
+        type: "workspace_op",
+        ts: 5,
+        workspace_id: "shop",
+        op: "root_disk_grown",
+        outcome: "succeeded",
+        actor: "api",
+        detail: null,
+        ...fields,
+      } as AuditRecord);
+    expect(
+      op({
+        detail: "root disk grown from 10240 MiB to 20480 MiB, while it ran",
+      }),
+    ).toMatchObject({
+      outcome: { label: "Succeeded", tone: "allow" },
+      detail:
+        "Root disk made bigger: root disk grown from 10240 MiB to 20480 MiB, while it ran, by api",
+    });
+    expect(
+      op({
+        outcome: "failed",
+        detail: "root disk not grown from 10240 MiB to 20480 MiB: no room",
+      }),
+    ).toMatchObject({
+      outcome: { label: "Failed", tone: "deny" },
+      detail:
+        "Making the root disk bigger failed: root disk not grown from 10240 MiB to 20480 MiB: no room, by api",
+    });
   });
   it("filters on the workspace operation type and its two outcomes", () => {
     const filter = {

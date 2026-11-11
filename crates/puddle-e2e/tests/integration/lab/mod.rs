@@ -7,6 +7,8 @@
 )]
 #![allow(dead_code, reason = "each test binary uses some of the pieces")]
 
+pub(crate) mod registry;
+
 use std::fmt::Write as _;
 use std::io;
 use std::net::SocketAddr;

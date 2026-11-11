@@ -10,7 +10,7 @@ use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::{Host, WorkspaceId};
 use serde_json::{Value, json};
 
-use crate::profile::{CLAUDE, GITHUB, Profile, Role, builtin};
+use crate::profile::{CLAUDE, DOCKER, GITHUB, OPENAI, Profile, Role, builtin};
 use crate::vault::Vault;
 use crate::{ForgetError, LoginNotices, Logins, Marker, Problem};
 
@@ -836,7 +836,9 @@ async fn a_credential_store_that_is_not_there_at_the_start_is_reported_once_per_
         [
             ("claude".to_owned(), Problem::StoreUnavailable),
             ("github".to_owned(), Problem::StoreUnavailable),
-            ("entra".to_owned(), Problem::StoreUnavailable)
+            ("entra".to_owned(), Problem::StoreUnavailable),
+            ("openai".to_owned(), Problem::StoreUnavailable),
+            ("docker".to_owned(), Problem::StoreUnavailable)
         ]
     );
 }
@@ -887,7 +889,11 @@ async fn deleting_the_workspace_deletes_every_token_kept_for_it() {
     rig.store.break_it();
     assert_eq!(
         Logins::delete_workspace(&store, &workspace(), builtin()),
-        CLAUDE.roles().len() + GITHUB.roles().len() + crate::profile::ENTRA.slots().len()
+        CLAUDE.roles().len()
+            + GITHUB.roles().len()
+            + crate::profile::ENTRA.slots().len()
+            + OPENAI.roles().len()
+            + DOCKER.roles().len()
     );
 }
 
@@ -930,6 +936,24 @@ fn the_debug_output_names_no_token() {
     let rig = rig();
     let text = format!("{:?}", rig.logins);
     assert!(text.contains("Logins") && !text.contains("CANARY"));
+}
+
+#[test]
+fn a_request_is_matched_to_its_token_endpoint_in_any_spelling() {
+    use crate::token_endpoint_of;
+    let (profile, endpoint) =
+        token_endpoint_of("Platform.Claude.com", "POST", "//V1/oauth/./token?x=1").unwrap();
+    assert_eq!(
+        (profile.id, endpoint.host),
+        ("claude", "platform.claude.com")
+    );
+    let (profile, _) =
+        token_endpoint_of("login.microsoftonline.com", "POST", "/t1/oauth2/v2.0/token").unwrap();
+    assert_eq!(profile.id, "entra");
+    // Another method, another host on the same path, another path: none of them.
+    assert!(token_endpoint_of("platform.claude.com", "GET", "/v1/oauth/token").is_none());
+    assert!(token_endpoint_of("api.anthropic.com", "POST", "/v1/oauth/token").is_none());
+    assert!(token_endpoint_of("platform.claude.com", "POST", "/v1/oauth").is_none());
 }
 
 #[test]
@@ -1126,6 +1150,48 @@ async fn a_saved_entry_that_is_not_one_of_ours_is_reported_as_unreadable_and_the
     );
 }
 
+#[tokio::test]
+async fn a_long_text_in_a_field_named_like_an_address_or_a_kind_is_not_a_token() {
+    let rig = rig();
+    let mut answer: Value =
+        serde_json::from_slice(&claude_answer(REAL_ACCESS, REAL_REFRESH)).unwrap();
+    answer["token_endpoint"] = json!("https://example.invalid/a/long/address/for/the/token");
+    let exchange = rig
+        .logins
+        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+    let body = answered(
+        exchange,
+        200,
+        Some("application/json"),
+        answer.to_string().as_bytes(),
+    )
+    .await;
+    assert!(body.is_some());
+    assert_eq!(rig.notices.seen(), []);
+}
+
+#[tokio::test]
+async fn a_long_token_in_a_field_the_profile_does_not_name_is_refused() {
+    let rig = rig();
+    let mut answer: Value =
+        serde_json::from_slice(&claude_answer(REAL_ACCESS, REAL_REFRESH)).unwrap();
+    answer["id_token"] = json!("abcdefghijklmnopqrstuvwxyz0123456789");
+    let exchange = rig
+        .logins
+        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+    let _ = answered(
+        exchange,
+        200,
+        Some("application/json"),
+        answer.to_string().as_bytes(),
+    )
+    .await;
+    assert_eq!(
+        rig.notices.seen(),
+        [("claude".to_owned(), Problem::UnnamedToken)]
+    );
+}
+
 const SESSION_FIELDS: &str = "tid=7a1b;exp=1790000000;sku=free_limited_copilot;proxy-ep=proxy.individual.githubcopilot.com;chat=1";
 const MAC_1: &str = "0badc0ffee0badc0ffee0badc0ffee0badc0ffee0badc0ffee0badc0ffee0bad";
 
@@ -1225,6 +1291,24 @@ async fn other_requests_to_the_github_api_host_are_not_exchanges() {
         off.logins
             .begin(&host("api.github.com"), "GET", "/copilot_internal/v2/token")
             .is_none()
+    );
+}
+
+#[tokio::test]
+async fn an_answer_found_too_large_while_it_streams_is_refused_and_the_user_is_told() {
+    let rig = rig();
+    let mut exchange = rig
+        .logins
+        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token")
+        .unwrap();
+    let answer = exchange.answer_mut().unwrap();
+    answer.too_large();
+    let refusal = answer.refusal().expect("the answer is refused");
+    assert_eq!(refusal.code(), "login_not_kept");
+    assert!(answer.refusal().is_none());
+    assert_eq!(
+        rig.notices.seen(),
+        [("claude".to_owned(), Problem::UnexpectedAnswer)]
     );
 }
 

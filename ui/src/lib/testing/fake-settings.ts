@@ -3,6 +3,7 @@
 // returns them. Like the API it refuses Microsoft's server without a granted consent. Not
 // shipped (tests import it).
 import type { components } from "#lib/api/schema.d.ts";
+import { FakeInterception } from "./fake-interception.ts";
 import { needsMicrosoftConsent } from "#lib/settings/model.ts";
 
 type S = components["schemas"];
@@ -25,6 +26,7 @@ const noLayer = (): S["SettingsLayer"] => ({
   zoom_hotkeys: null,
   direct_ssh: null,
   capture_logins: null,
+  warn_foreign_credentials: null,
 });
 
 const noUi = (): S["UiPrefs"] => ({
@@ -88,7 +90,11 @@ export class FakeSettings {
   version = "0.1.0";
 
   /** Back to a fresh backend, keeping the object (a module mock holds on to it). */
+  /** The global interception setting, answered on `/api/interception`. */
+  interception = new FakeInterception();
+
   reset(): void {
+    this.interception.reset();
     const fresh = new FakeSettings();
     this.layer = fresh.layer;
     this.unknown = [];
@@ -166,6 +172,7 @@ export class FakeSettings {
         zoom_hotkeys: this.pick(l.zoom_hotkeys, true),
         direct_ssh: this.pick(l.direct_ssh),
         capture_logins: this.pick(l.capture_logins, true),
+        warn_foreign_credentials: this.pick(l.warn_foreign_credentials, true),
         clipboard_read: {
           value: l.clipboard_read ?? "ask",
           source: l.clipboard_read === null ? "default" : "global",
@@ -192,6 +199,8 @@ export class FakeSettings {
         return this.reply(200, this.view());
       case "/api/consents":
         return this.reply(200, this.consents());
+      case "/api/interception":
+        return this.interception.GET(path);
       case "/api/interception/never-decrypt":
         return this.reply(200, { never_decrypt: this.neverDecrypt });
       case "/api/interception/learned-limits":
@@ -225,6 +234,9 @@ export class FakeSettings {
     if (this.down) throw new TypeError("down");
     const refused = this.refusal(`PUT ${path}`);
     if (refused) return refused;
+    if (path === "/api/interception") {
+      return this.interception.PUT(path, init as never);
+    }
     if (path === "/api/interception/learned-limits") {
       this.learnedLimits = init.body as S["LearnedLimits"];
       return this.reply(200, this.learnedLimits);

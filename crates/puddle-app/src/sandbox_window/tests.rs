@@ -822,9 +822,8 @@ async fn a_session_is_reused_for_the_same_password_and_renewed_for_another() {
 #[tokio::test]
 async fn a_session_that_cannot_be_had_is_an_error_and_is_not_kept() {
     let Fixture { windows, .. } = fixture();
-    let free = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = free.local_addr().unwrap();
-    drop(free);
+    let free = puddle_test_kit::ReservedPort::new();
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], free.port()));
     assert!(
         windows
             .session(addr, &workspace("demo"), &fixture::password("unused"))

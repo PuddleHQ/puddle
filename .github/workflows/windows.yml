@@ -5,7 +5,7 @@
 # Clippy, tests and UI run on every trigger; the release build runs only on the nightly, on pull
 # requests to main and on manual runs from develop, so a pull request to develop skips it. The jobs
 # run side by side, so the run takes as long as the slowest one instead of the sum: the tests are built once
-# (`test-build`, a nextest archive) and run on two runners (`tests`), the doc tests and the secret scan have a
+# (`test-build`, a nextest archive) and run on four runners (`tests`), the doc tests and the secret scan have a
 # job (`docs`), and the UI is split into Edge end-to-end (`ui-e2e`) and the rest (`ui-unit`). Two cache entries
 # (debug builds, clippy's check builds); only runs on develop save them. The release build has none.
 # A pull request runs only the jobs its changed files can affect (ci/scope.sh, the `scope` job):
@@ -168,7 +168,7 @@ jobs:
           shared-key: windows
           cache-on-failure: true # a red build must not forfeit the dependencies
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -198,16 +198,16 @@ jobs:
         continue-on-error: true
         uses: ./.github/actions/cancel-group
 
-  # Two runners run the archive side by side (nextest `--partition hash:`: a test's partition follows its name, so
+  # Four runners run the archive side by side (nextest `--partition hash:`: a test's partition follows its name, so
   # a new test never moves the others). Each runner makes its own second-user account and runs its own mitmproxy.
   # The job is not skipped when the build job found nothing new (a nightly on a green commit): its steps are, so
   # the result job sees a success and not a skip it would have to explain.
   tests:
-    name: windows tests (nextest, partition ${{ matrix.partition }} of 2)
+    name: windows tests (nextest, partition ${{ matrix.partition }} of 4)
     needs: test-build
     if: ${{ !cancelled() && needs.test-build.result == 'success' }}
     runs-on: windows-2025
-    # About 4.3 min of tests across both partitions, plus the steps before them (a few minutes).
+    # About 4.3 min of tests across all four partitions, plus the steps before them (a few minutes).
     timeout-minutes: 30
     # `actions: write` for ci/cancel-group.sh (it covers the read ci/should-run.sh needs; a separate gate job would be billed a full minute).
     permissions:
@@ -216,11 +216,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2]
+        partition: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.test-build.outputs.run == 'true'
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         if: needs.test-build.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -249,13 +249,20 @@ jobs:
         if: needs.test-build.outputs.run == 'true'
         shell: pwsh
         run: Start-Process -WindowStyle Hidden pwsh -ArgumentList '-NoProfile', '-File', 'ci/start-canary.ps1', '-Out', (Join-Path $env:RUNNER_TEMP 'start-canary.txt')
+      # The first start of node.exe on a fresh runner reads it from a slow disk: 2 to 8 s idle, 10 to 19 s
+      # in the canary_github_auth tests while the other tests read their binaries, and 30 s or more once
+      # (a failed merge group, 2026-11-10). Starting it here, idle, puts it in memory (ci/warm-node.ps1).
+      - name: warm up node
+        if: needs.test-build.outputs.run == 'true'
+        shell: pwsh
+        run: ./ci/warm-node.ps1
       - name: the test archive from the build job
         if: needs.test-build.outputs.run == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-tests-build
           path: ${{ runner.temp }}/bundle
-      - name: tests (partition ${{ matrix.partition }} of 2)
+      - name: tests (partition ${{ matrix.partition }} of 4)
         if: needs.test-build.outputs.run == 'true'
         shell: bash
         env:
@@ -550,6 +557,24 @@ jobs:
         run: |
           $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
           node crates/puddle-app/e2e/sandbox-window.mjs
+      # What the real webview keeps under a workspace's origins: storage and a cookie on
+      # `<id>.localhost` and `<port>.<id>.localhost` survive a restart on the same id, a new id
+      # starts empty, and a delete removes the data (five runs of the shell over one data folder).
+      - name: workspace origins test (WebView2)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: pwsh
+        run: |
+          $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          node crates/puddle-app/e2e/origins.mjs
+      # What the terminal screen's key rules assume of WebView2, with
+      # real input (SendInput): Ctrl+Shift+V and Shift+Insert fire `paste`, Ctrl+R and F5 with the keydown
+      # cancelled do not reload, and Ctrl+Q is pinned as it behaves today (it does not quit). The WebKitGTK half runs in ci.yml.
+      - name: terminal paste, key-cancel and Ctrl+Q test (WebView2)
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        shell: pwsh
+        run: |
+          $env:PUDDLE_APP_EXE = Join-Path $PWD 'target\debug\puddle-app.exe'
+          node crates/puddle-app/e2e/terminal-keys.mjs
       # The host needs the bundled runtime beside the program (the fork's msb.exe and libkrunfw.dll,
       # checksums pinned); no machine boots, so WHP is not needed.
       - name: desktop shell smoke test (WebView2, Puddle host)

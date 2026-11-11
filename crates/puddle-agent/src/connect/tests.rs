@@ -1,10 +1,49 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::task::{Context, Poll};
+
+use puddle_test_kit::eventually;
 use tokio::net::TcpListener;
 
 use super::*;
 
+/// A writer whose shutdown only flushes, as a process's stdout pipe behaves: the descriptor
+/// stays open until the process exits.
+struct KeepOpen<W>(W);
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for KeepOpen<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.poll_flush(cx)
+    }
+}
+
 fn request(host: &str, port: u16) -> Request {
     Request::parse(&[host, &port.to_string()]).unwrap()
+}
+
+#[tokio::test]
+async fn keep_open_flushes_on_shutdown_and_leaves_the_writer_open() {
+    let (writer, mut peer) = tokio::io::duplex(64);
+    let mut keep = KeepOpen(writer);
+    keep.write_all(b"one").await.unwrap();
+    keep.shutdown().await.unwrap();
+    // A shut-down duplex refuses writes, so this succeeding shows shutdown left it open.
+    keep.write_all(b"two").await.unwrap();
+    keep.flush().await.unwrap();
+    let mut got = [0u8; 6];
+    peer.read_exact(&mut got).await.unwrap();
+    assert_eq!(&got, b"onetwo");
 }
 
 #[test]
@@ -215,6 +254,104 @@ async fn anything_else_is_carried_both_ways_with_no_announcement() {
         head,
         "CONNECT db.test:5432 HTTP/1.1\r\nHost: db.test:5432\r\n\r\nhello"
     );
+}
+
+/// What an `ssh` `ProxyCommand` does: its end of both pipes stays open until the command exits
+/// (`stdout` does not even close on shutdown), so only the server's close can end the command.
+#[tokio::test]
+async fn a_server_that_closes_ends_the_command_though_the_client_keeps_its_pipes_open() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut conn, _) = listener.accept().await.unwrap();
+        // Everything the client sent is read, so the close is a FIN and not a reset.
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 256];
+        while !seen.ends_with(b"OpenSSH_10.0p2\r\n") {
+            let n = conn.read(&mut buf).await.unwrap();
+            assert_ne!(n, 0, "the client closed before its banner");
+            seen.extend_from_slice(&buf[..n]);
+        }
+        conn.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\nSSH-2.0-fixture\r\n")
+            .await
+            .unwrap();
+        // Dropped here: the server closed after its banner.
+    });
+    let (mut ssh, stdin) = tokio::io::duplex(64);
+    ssh.write_all(b"SSH-2.0-OpenSSH_10.0p2\r\n").await.unwrap();
+    let (stdout, mut out) = tokio::io::duplex(64);
+    let task = tokio::spawn(async move {
+        let mut stderr = Vec::new();
+        run(
+            &settings(addr),
+            &request("git.example.test", 22),
+            stdin,
+            KeepOpen(stdout),
+            &mut stderr,
+        )
+        .await
+    });
+    eventually(
+        "the command ends after the server closed",
+        Duration::from_secs(10),
+        || task.is_finished(),
+    )
+    .await;
+    assert_eq!(task.await.unwrap(), Exit::Done);
+    let mut printed = [0u8; 17];
+    out.read_exact(&mut printed).await.unwrap();
+    assert_eq!(&printed, b"SSH-2.0-fixture\r\n");
+    drop(ssh);
+}
+
+/// An SSH server sends its KEXINIT right behind its banner with no round trip, so both can
+/// come in the read that holds the proxy's answer; the server then waits for the client.
+/// The process's stdout is line-buffered (a `BufWriter` here), so what came behind the answer
+/// reaches the client only if it is flushed.
+#[tokio::test]
+async fn what_the_server_sent_behind_the_answer_reaches_a_buffered_stdout_while_it_waits() {
+    const AHEAD: &[u8] = b"SSH-2.0-fixture\r\n\x00\x00\x00\x2c\x06\x14KEXINIT";
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        let (mut conn, _) = listener.accept().await.unwrap();
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 256];
+        while !seen.ends_with(b"OpenSSH_10.0p2\r\n") {
+            let n = conn.read(&mut buf).await.unwrap();
+            assert_ne!(n, 0, "the client closed before its banner");
+            seen.extend_from_slice(&buf[..n]);
+        }
+        let mut answer = b"HTTP/1.1 200 Connection Established\r\n\r\n".to_vec();
+        answer.extend_from_slice(AHEAD);
+        conn.write_all(&answer).await.unwrap();
+        // The server waits for the client's key exchange and sends nothing more.
+        let _ = done_rx.await;
+    });
+    let (mut ssh, stdin) = tokio::io::duplex(64);
+    ssh.write_all(b"SSH-2.0-OpenSSH_10.0p2\r\n").await.unwrap();
+    let (stdout, mut out) = tokio::io::duplex(256);
+    let task = tokio::spawn(async move {
+        let mut stderr = Vec::new();
+        run(
+            &settings(addr),
+            &request("git.example.test", 22),
+            stdin,
+            tokio::io::BufWriter::new(stdout),
+            &mut stderr,
+        )
+        .await
+    });
+    let mut printed = vec![0u8; AHEAD.len()];
+    tokio::time::timeout(Duration::from_secs(10), out.read_exact(&mut printed))
+        .await
+        .expect("the bytes behind the answer never reached stdout")
+        .unwrap();
+    assert_eq!(printed, AHEAD);
+    let _ = done_tx.send(());
+    drop(ssh);
+    let _ = task.await;
 }
 
 #[tokio::test]

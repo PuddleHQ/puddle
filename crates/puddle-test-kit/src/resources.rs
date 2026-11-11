@@ -135,6 +135,37 @@ pub fn accepts(addr: SocketAddr) -> bool {
     has_a_peer(&conn)
 }
 
+/// The status an HTTP/1.1 server on `addr` gives `GET path` with `Authorization: Bearer token`:
+/// `None` when nothing accepts, or what accepts does not speak HTTP (loopback only; each wait is
+/// bounded at a second).
+///
+/// For a test that a server has stopped. `TcpStream::connect(..).is_err()` is not that: a server
+/// that bound port 0 gave its number back, and another test's socket can take it before the test
+/// connects (measured on a Windows runner: about 1 in 1,000 released ports is taken again within the
+/// next connect under 8 to 16 busy threads). Connecting then succeeds with the server long gone.
+/// What a stopped server cannot do is answer its own token with `200`, which a stranger on its old
+/// port never does.
+#[must_use]
+pub fn http_status(addr: SocketAddr, path: &str, token: &str) -> Option<u16> {
+    use std::io::{BufRead, Read, Write};
+    let mut conn = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).ok()?;
+    conn.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
+    conn.set_write_timeout(Some(Duration::from_secs(1))).ok()?;
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    );
+    conn.write_all(request.as_bytes()).ok()?;
+    let mut head = Vec::new();
+    // `read_until` retries a read a signal cut short (EINTR) and keeps what it read when a read
+    // fails or times out, so a partial status line still counts.
+    let _ = std::io::BufReader::new((&conn).take(1024)).read_until(b'\n', &mut head);
+    let line = String::from_utf8_lossy(&head);
+    let line = line.lines().next()?;
+    let mut words = line.split(' ');
+    words.next().filter(|v| v.starts_with("HTTP/1."))?;
+    words.next()?.parse().ok()
+}
+
 fn has_a_peer(conn: &TcpStream) -> bool {
     matches!((conn.local_addr(), conn.peer_addr()), (Ok(local), Ok(peer)) if local != peer)
 }
@@ -194,122 +225,4 @@ impl AsRef<Path> for TestDir {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn two_bound_ports_differ_and_stay_taken() {
-        let (first, a) = bound_port();
-        let (second, b) = bound_port();
-        assert_ne!(a, b);
-        assert!(TcpListener::bind(("127.0.0.1", a)).is_err());
-        drop((first, second));
-    }
-
-    #[test]
-    fn a_reserved_port_refuses_connections_and_other_binds_but_takes_a_reusing_listener() {
-        let reserved = ReservedPort::new();
-        let addr = SocketAddr::from(([127, 0, 0, 1], reserved.port()));
-        assert!(!accepts(addr), "nothing listens on a reserved port");
-        // Another program picking the number without SO_REUSEADDR is turned away: the collision a
-        // dropped listener leaves open.
-        let squatter = tokio::net::TcpSocket::new_v4().unwrap();
-        assert!(squatter.bind(addr).is_err(), "a plain bind took the port");
-        // The test's own server binds with SO_REUSEADDR like a real one (serve.rs). std's plain
-        // bind would be refused on Windows, where only two sockets that both set it can share.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let server = rt.block_on(async {
-            let socket = tokio::net::TcpSocket::new_v4().unwrap();
-            socket.set_reuseaddr(true).unwrap();
-            socket
-                .bind(addr)
-                .expect("the test's own server can answer there");
-            socket.listen(8).unwrap()
-        });
-        assert!(accepts(addr), "the test's own server answers");
-        drop(server);
-        assert!(!accepts(addr), "and be dropped again");
-        let other = ReservedPort::default();
-        assert_ne!(other.port(), reserved.port());
-    }
-
-    #[test]
-    fn a_quiet_port_is_below_the_ephemeral_ranges_and_can_be_bound_plainly() {
-        let port = quiet_port();
-        assert!((20_000..32_000).contains(&port), "{port}");
-        let socket = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)));
-        assert!(socket.is_ok(), "a plain bind takes it");
-    }
-
-    #[test]
-    fn a_range_with_every_port_held_has_none_free() {
-        let (_held, port) = bound_port();
-        assert_eq!(free_port_in(port, 1), None);
-    }
-
-    #[test]
-    fn a_listener_is_accepted_and_a_closed_port_refused() {
-        let (listener, port) = bound_port();
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        assert!(accepts(addr));
-        drop(listener);
-        assert!(!accepts(addr));
-    }
-
-    #[test]
-    fn a_socket_connected_to_itself_is_not_accepted() {
-        // The kernel's simultaneous open: bind to a port, then connect to that same port with
-        // nothing listening. The connect succeeds, to nobody; `is_ok()` on it would read "open".
-        let (listener, port) = bound_port();
-        drop(listener);
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let joined = rt.block_on(async {
-            let socket = tokio::net::TcpSocket::new_v4().unwrap();
-            socket.set_reuseaddr(true).unwrap();
-            socket.bind(addr).unwrap();
-            socket.connect(addr).await
-        });
-        let stream = joined.expect("a socket can connect to its own address and port");
-        let stream = stream.into_std().unwrap();
-        assert_eq!(stream.local_addr().unwrap(), stream.peer_addr().unwrap());
-        assert!(
-            !has_a_peer(&stream),
-            "a socket joined to itself has no peer"
-        );
-        // While that socket holds the address, a connect from outside finds nobody either.
-        assert!(!accepts(addr));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_private_tempdir_is_owner_only_whatever_the_umask() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = private_tempdir();
-        let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode();
-        assert_eq!(mode & 0o7777, 0o700, "{}", dir.path().display());
-    }
-
-    #[test]
-    fn a_test_dir_is_unique_labelled_and_removed_on_drop() {
-        let one = TestDir::new("kit-a-");
-        let two = TestDir::new("kit-a-");
-        assert_ne!(one.as_ref() as &Path, two.as_ref() as &Path);
-        assert!(
-            one.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("kit-a-")
-        );
-        std::fs::write(one.join("f"), "x").unwrap();
-        let path = one.to_path_buf();
-        drop(one);
-        assert!(!path.exists());
-    }
-}
+mod tests;

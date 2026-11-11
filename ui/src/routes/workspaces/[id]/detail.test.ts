@@ -7,6 +7,7 @@ import {
   within,
 } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { components } from "#lib/api/schema.d.ts";
 
 const url = vi.hoisted(() => ({
   pathname: "/workspaces/w-demo",
@@ -205,6 +206,7 @@ describe("the detail layout", () => {
     expect(tabs.getAllByRole("link").map((l) => l.textContent?.trim())).toEqual(
       [
         "Overview",
+        "Terminal",
         "Network",
         "Git",
         "Environment",
@@ -321,8 +323,16 @@ describe("the detail layout", () => {
       workspace("demo", {
         status: "stopped",
         repositories: [
-          { url: "https://github.com/acme/web.git", directory: "web" },
-          { url: "https://github.com/acme/api.git", directory: "api" },
+          {
+            entry: "e-web",
+            url: "https://github.com/acme/web.git",
+            directory: "web",
+          },
+          {
+            entry: "e-api",
+            url: "https://github.com/acme/api.git",
+            directory: "api",
+          },
         ],
       }),
     ];
@@ -399,6 +409,7 @@ describe("the overview", () => {
     ];
     inbox.add(request(1, { workspace: "w-demo" as never }), "example.com");
     const entry = {
+      entry: "e-demo",
       url: "https://github.com/acme/demo.git",
       directory: "demo",
     };
@@ -537,6 +548,65 @@ describe("the overview", () => {
     );
     await vi.waitFor(() =>
       expect(api.calls).toContain("POST /api/workspaces/{id}/reset-root-disk"),
+    );
+  });
+
+  it("makes the root disk bigger from the warning of a running workspace, without a reset", async () => {
+    api.list = [
+      workspace("demo", {
+        status: "running",
+        root_disk_size_mib: 4096,
+        root_disk_used_mib: 4000,
+        disk_warnings: ["root"],
+      }),
+    ];
+    await load();
+    render(Overview);
+    const banner = await screen.findByTestId("disk-warning-root");
+    await fireEvent.click(
+      within(banner).getByRole("button", { name: "Make root disk bigger…" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Make the root disk of demo bigger");
+    const input = within(dialog).getByRole("textbox", {
+      name: /New size in GiB/,
+    });
+    expect(input).toHaveValue("14");
+    await fireEvent.input(input, { target: { value: "16" } });
+    await fireEvent.click(
+      within(dialog).getByRole("button", { name: "Make bigger" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.calls).toContain("POST /api/workspaces/{id}/grow-root-disk"),
+    );
+    expect(api.bodies.at(-1)).toEqual({ size_mib: 16_384 });
+    expect(api.calls).not.toContain(
+      "POST /api/workspaces/{id}/reset-root-disk",
+    );
+  });
+
+  it("offers the grow in the resources card, and not while the workspace is busy", async () => {
+    api.list = [
+      workspace("demo", { status: "stopped", root_disk_size_mib: 4096 }),
+    ];
+    await load();
+    render(Overview);
+    const grow = await screen.findByRole("button", {
+      name: "Make root disk bigger…",
+    });
+    expect(grow).toBeEnabled();
+    api.list = [
+      workspace("demo", {
+        status: "stopped",
+        root_disk_size_mib: 4096,
+        busy: "reclaiming",
+      }),
+    ];
+    await workspaces.refresh();
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Make root disk bigger…" }),
+      ).toBeDisabled(),
     );
   });
 
@@ -1141,7 +1211,9 @@ describe("the settings tab", () => {
     ) as HTMLSelectElement;
     expect(select.value).toBe("inherit");
     expect(
-      screen.getByRole("option", { name: "Use the global setting (on)" }),
+      within(select).getByRole("option", {
+        name: "Use the global setting (on)",
+      }),
     ).toBeInTheDocument();
     await fireEvent.change(select, { target: { value: "off" } });
     await screen.findByText("Login capture saved.");
@@ -1157,15 +1229,43 @@ describe("the settings tab", () => {
     );
   });
 
-  it("turns decrypting every host on and off at once and saves the never-decrypt names", async () => {
+  it("warns about a credential Puddle did not add by default and lets the workspace turn the warning off or follow the global setting", async () => {
     await open();
-    const box = (await screen.findByRole("switch", {
-      name: "Decrypt every host",
-    })) as HTMLInputElement;
-    expect(box.checked).toBe(false);
-    await fireEvent.click(box);
-    await screen.findByText("Puddle now decrypts every host.");
-    expect(api.interception["w-demo"]?.decrypt_all).toBe(true);
+    const select = screen.getByLabelText(
+      "Warn when a tool sends a token of its own",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("inherit");
+    expect(
+      within(select).getByRole("option", {
+        name: "Use the global setting (on)",
+      }),
+    ).toBeInTheDocument();
+    await fireEvent.change(select, { target: { value: "off" } });
+    await screen.findByText("Credential warning saved.");
+    expect(api.overrides["w-demo"]?.warn_foreign_credentials).toBe(false);
+    await fireEvent.change(select, { target: { value: "inherit" } });
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.warn_foreign_credentials).toBeNull(),
+    );
+  });
+
+  it("sets the interception mode at once and saves the never-decrypt names", async () => {
+    await open();
+    const select = (await screen.findByLabelText(
+      "Interception mode",
+    )) as HTMLSelectElement;
+    expect(select.value).toBe("inherit");
+    expect(
+      within(select).getByRole("option", {
+        name: "Use the global setting (Decrypt only hosts Puddle has a reason to read)",
+      }),
+    ).toBeInTheDocument();
+    await fireEvent.change(select, { target: { value: "all" } });
+    await screen.findByText("Interception mode saved.");
+    expect(api.interception["w-demo"]?.mode).toBe("all");
+    expect(
+      screen.getByText(/fails on first contact with a host until Puddle/),
+    ).toBeInTheDocument();
     const names = screen.getByRole("textbox", {
       name: "Never decrypt in this workspace",
     });
@@ -1178,17 +1278,18 @@ describe("the settings tab", () => {
       "*.corp.test",
       "bank.example",
     ]);
-    await fireEvent.click(box);
-    await screen.findByText("Puddle decrypts only hosts with a credential.");
-    expect(api.interception["w-demo"]?.decrypt_all).toBe(false);
+    await fireEvent.change(select, { target: { value: "inherit" } });
+    await vi.waitFor(() =>
+      expect(api.interception["w-demo"]?.mode).toBe("inherit"),
+    );
   });
 
-  it("names the global never-decrypt list read-only, and puts the switch back when the save is refused", async () => {
+  it("names the global never-decrypt list read-only, and puts the mode back when the save is refused", async () => {
     api.globalNeverDecrypt = ["bank.example"];
     await open();
-    const box = (await screen.findByRole("switch", {
-      name: "Decrypt every host",
-    })) as HTMLInputElement;
+    const select = (await screen.findByLabelText(
+      "Interception mode",
+    )) as HTMLSelectElement;
     expect(
       screen.getByText(/Never decrypted in any workspace/),
     ).toHaveTextContent("bank.example");
@@ -1196,38 +1297,113 @@ describe("the settings tab", () => {
       status: 500,
       message: "disk full",
     });
-    await fireEvent.click(box);
+    await fireEvent.change(select, { target: { value: "all" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("Disk full.");
-    expect(box.checked).toBe(false);
+    expect(select.value).toBe("inherit");
   });
 
-  it("lists the hosts a tool refused Puddle's certificate for and decrypts them again", async () => {
+  const seen = (
+    host: string,
+    expires_in_secs: number | null,
+    count = 1,
+  ): components["schemas"]["LearnedHost"] => ({
+    host,
+    passed_through: expires_in_secs !== null,
+    expires_in_secs,
+    first_rejected_at: Date.now() - 3 * 3_600_000,
+    last_rejected_at: Date.now() - 5 * 60_000,
+    count,
+  });
+
+  it("lists the hosts a tool refused Puddle's certificate for with their history and tries decrypting them again", async () => {
     api.learned["w-demo"] = [
-      { host: "pinned.example", expires_in_secs: 600 },
-      { host: "other.example", expires_in_secs: 7200 },
+      seen("pinned.example", 600, 3),
+      seen("other.example", 7200),
+      seen("old.example", null, 2),
     ];
     await open();
     const group = await screen.findByRole("group", {
-      name: "Left alone after a tool refused Puddle's certificate",
+      name: "Hosts a tool refused Puddle's certificate for",
     });
     await screen.findByText("pinned.example");
+    expect(group).toHaveTextContent("refused 3 times, first 3 hours ago");
+    expect(group).toHaveTextContent("last 5 minutes ago");
     expect(group).toHaveTextContent("decrypted again by itself in 10 minutes");
     expect(group).toHaveTextContent("2 hours");
+    expect(group).toHaveTextContent("refused once");
+    expect(
+      screen.queryByRole("button", {
+        name: "Try decrypting old.example again",
+      }),
+      "a host that is not passed through has nothing to try again",
+    ).toBeNull();
     await fireEvent.click(
-      screen.getByRole("button", { name: "Decrypt pinned.example again" }),
+      screen.getByRole("button", {
+        name: "Try decrypting pinned.example again",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("button", {
+          name: "Try decrypting pinned.example again",
+        }),
+      ).toBeNull(),
+    );
+    expect(group).toHaveTextContent("pinned.example");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Try decrypting all again" }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Try decrypting all again" }),
+      ).toBeNull(),
+    );
+    expect(group).toHaveTextContent("other.example");
+  });
+
+  it("makes a refused host permanent for the workspace or for every workspace", async () => {
+    api.learned["w-demo"] = [
+      seen("pinned.example", 600, 3),
+      seen("other.example", null, 2),
+    ];
+    await open();
+    const group = await screen.findByRole("group", {
+      name: "Hosts a tool refused Puddle's certificate for",
+    });
+    await screen.findByText("pinned.example");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Never decrypt pinned.example in this workspace",
+      }),
     );
     await vi.waitFor(() =>
       expect(group).not.toHaveTextContent("pinned.example"),
     );
-    expect(group).toHaveTextContent("other.example");
+    expect(api.interception["w-demo"]?.never_decrypt).toEqual([
+      "pinned.example",
+    ]);
+    await vi.waitFor(() =>
+      expect(
+        screen.getByLabelText("Never decrypt in this workspace"),
+        "the names above the list show the new one",
+      ).toHaveValue("pinned.example"),
+    );
     await fireEvent.click(
-      screen.getByRole("button", { name: "Decrypt all again" }),
+      screen.getByRole("button", {
+        name: "Never decrypt other.example in any workspace",
+      }),
     );
     await vi.waitFor(() => expect(group).toHaveTextContent("None."));
+    expect(api.globalNeverDecrypt).toContain("other.example");
+    await vi.waitFor(() =>
+      expect(
+        screen.getByText(/Never decrypted in any workspace/),
+      ).toHaveTextContent("other.example"),
+    );
   });
 
-  it("says why a host could not be decrypted again and keeps the list", async () => {
-    api.learned["w-demo"] = [{ host: "pinned.example", expires_in_secs: 600 }];
+  it("says why a host could not be tried again and keeps the list", async () => {
+    api.learned["w-demo"] = [seen("pinned.example", 600)];
     await open();
     await screen.findByText("pinned.example");
     api.refuse.set("DELETE /api/workspaces/{id}/interception/learned/{host}", {
@@ -1235,7 +1411,9 @@ describe("the settings tab", () => {
       message: "the list is locked",
     });
     await fireEvent.click(
-      screen.getByRole("button", { name: "Decrypt pinned.example again" }),
+      screen.getByRole("button", {
+        name: "Try decrypting pinned.example again",
+      }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "The list is locked.",
@@ -1279,6 +1457,21 @@ describe("the settings tab", () => {
     });
     await fireEvent.change(select, { target: { value: "off" } });
     await vi.waitFor(() => expect(select.value).toBe("on"));
+  });
+
+  it("puts the credential warning choice back when the save is refused", async () => {
+    await open();
+    const select = screen.getByLabelText(
+      "Warn when a tool sends a token of its own",
+    ) as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: "off" } });
+    await screen.findByText("Credential warning saved.");
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
+      status: 422,
+      message: "no",
+    });
+    await fireEvent.change(select, { target: { value: "on" } });
+    await vi.waitFor(() => expect(select.value).toBe("off"));
   });
 
   it("lists the kept logins on the settings page, forgets one after a confirmation, and ends its notice", async () => {

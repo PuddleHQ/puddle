@@ -280,7 +280,9 @@
           <button
             type="button"
             class="btn"
-            aria-label="Undo: {decidedSentence(d)}"
+            aria-label="Undo: {decidedSentence(d, undefined, (id) =>
+              workspaces.spokenLabelOf(id),
+            )}"
             onclick={() => void flow?.undo(d)}
           >
             <Undo2 aria-hidden="true" size={16} />Undo

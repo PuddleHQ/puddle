@@ -220,7 +220,14 @@ fn quitting_stops_the_host_in_order_and_frees_its_data_folder() {
     let stopped = shell::stop(app.handle()).unwrap();
     assert_eq!(stopped.steps, SHUTDOWN_STEPS);
     assert_eq!(stopped.operations_ended, 0);
-    assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
+    // Not "nothing accepts on the port": the port is the system's pick, and another test's socket
+    // can take it the moment the host lets go (seen on a Windows runner). The host no longer
+    // answers its own token.
+    let token = app.state::<Backend>().token().to_owned();
+    assert_ne!(
+        puddle_test_kit::http_status(([127, 0, 0, 1], port).into(), "/api/workspaces", &token),
+        Some(200)
+    );
     // A second exit event finds nothing left to stop.
     assert_eq!(shell::stop(app.handle()), None);
     // The host let go of the data folder: the next start gets it.

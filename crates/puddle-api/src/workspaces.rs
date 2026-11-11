@@ -17,7 +17,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use puddle_store::{IdentityId, RepoRef};
 use puddle_types::{
-    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
+    CheckoutDir, DiskKind, EntryId, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
     WorkspaceStatus,
 };
 use sha2::{Digest, Sha256};
@@ -37,6 +37,8 @@ pub enum Operation {
     Reclaiming,
     /// Removing the sandbox so the next start makes a fresh root disk.
     ResettingRootDisk,
+    /// Making the root disk bigger.
+    GrowingRootDisk,
     /// Cloning one repository into a running workspace.
     Cloning,
     /// Checking for unsaved work and removing the workspace.
@@ -51,6 +53,7 @@ impl fmt::Display for Operation {
             Self::Stopping => "stopping",
             Self::Reclaiming => "reclaiming",
             Self::ResettingRootDisk => "resetting_root_disk",
+            Self::GrowingRootDisk => "growing_root_disk",
             Self::Cloning => "cloning",
             Self::Deleting => "deleting",
         })
@@ -91,6 +94,9 @@ pub struct WorkspaceRecord {
     pub root_disk_size_mib: Option<u64>,
     /// What the root disk holds now in MiB, when known.
     pub root_disk_used_mib: Option<u64>,
+    /// The size in MiB the user grew the root disk to, kept so a reset makes the fresh root disk
+    /// this big; `None` when it was never grown.
+    pub root_disk_grown_mib: Option<u32>,
 }
 
 impl WorkspaceRecord {
@@ -112,6 +118,7 @@ impl WorkspaceRecord {
             disk_used_mib: None,
             root_disk_size_mib: None,
             root_disk_used_mib: None,
+            root_disk_grown_mib: None,
         }
     }
 }
@@ -345,11 +352,13 @@ impl fmt::Display for RepoUrl {
     }
 }
 
-/// One repository Puddle manages for a workspace: the address it is cloned from
+/// One repository Puddle manages for a workspace: its entry id, the address it is cloned from
 /// and the checkout directly under the volume root it is cloned into. Its identity and its Pull
 /// and Push toggles are not part of it: they are the workspace's Git settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repository {
+    /// What API paths and problem keys call the entry; the directory is not an id.
+    pub entry: EntryId,
     /// Where it is cloned from.
     pub url: RepoUrl,
     /// The checkout it is cloned into.
@@ -357,12 +366,51 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// The entry for `url` in the directory `git clone` would pick.
+    /// The entry `entry` for `url` in the directory `git clone` would pick.
     #[must_use]
-    pub fn at_default_directory(url: RepoUrl) -> Self {
+    pub fn at_default_directory(entry: EntryId, url: RepoUrl) -> Self {
         let directory = CheckoutDir::from_url(url.as_str());
-        Self { url, directory }
+        Self {
+            entry,
+            url,
+            directory,
+        }
     }
+}
+
+/// A fresh entry id ([`EntryId::from_random`] over the operating system's random source) that
+/// `taken` does not know, drawn up to [`MAX_ID_DRAWS`] times; `taken` says whether the entry
+/// list of the workspace already has it.
+///
+/// # Errors
+///
+/// The message for the user when every draw was taken or the random source gave nothing.
+pub fn new_entry_id(taken: impl Fn(&EntryId) -> bool) -> Result<EntryId, String> {
+    draw_entry_id(
+        |bytes| getrandom::fill(bytes).map_err(|e| e.to_string()),
+        taken,
+    )
+}
+
+/// [`new_entry_id`] over any source of five bytes.
+fn draw_entry_id(
+    mut fill: impl FnMut(&mut [u8; 5]) -> Result<(), String>,
+    taken: impl Fn(&EntryId) -> bool,
+) -> Result<EntryId, String> {
+    for attempt in 0..MAX_ID_DRAWS {
+        let mut bytes = [0_u8; 5];
+        match fill(&mut bytes) {
+            Ok(()) => {
+                let id = EntryId::from_random(bytes);
+                if !taken(&id) {
+                    return Ok(id);
+                }
+                tracing::debug!(%id, attempt, "a drawn entry id is taken");
+            }
+            Err(reason) => tracing::warn!(%reason, attempt, "no entry id was drawn"),
+        }
+    }
+    Err("no free repository entry id was found; the system's random source may be broken".into())
 }
 
 /// Most repositories one workspace holds (where the delete check stops counting checkouts).
@@ -487,8 +535,14 @@ pub fn check_repositories_with(
         {
             return Err(named(&format!("there is no identity {}", id.0)));
         }
+        let entry = new_entry_id(|id| checked.iter().any(|c| c.repository.entry == *id))
+            .map_err(|e| named(&e))?;
         checked.push(NewRepository {
-            repository: Repository { url, directory },
+            repository: Repository {
+                entry,
+                url,
+                directory,
+            },
             identity: draft.identity,
             pull: draft.pull.unwrap_or(true),
             push: draft.push.unwrap_or(true),
@@ -693,14 +747,75 @@ impl fmt::Display for StartFolder {
     }
 }
 
-/// The id a workspace of this name gets while ids are derived from names: ASCII letters and
-/// digits lower-cased, every other run of characters one hyphen, at most
-/// [`WorkspaceId::MAX_LEN`] characters. A name with nothing usable in it, or one that comes out
-/// reserved, gets `workspace-` and eight hex digits of a hash of the name, so the same name
-/// always gives the same id.
-pub(crate) fn id_for_name(
-    name: &DisplayName,
-) -> Result<WorkspaceId, puddle_types::ValidationError> {
+/// How many ids a create draws before it refuses: with about 39 random bits, only a broken
+/// random source makes 16 draws in a row hit ids that are taken.
+pub const MAX_ID_DRAWS: u32 = 16;
+
+/// Why a create got no id: every draw was taken or gave nothing.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("no free workspace id was found; the system's random source may be broken")]
+#[non_exhaustive]
+pub struct NoFreeId;
+
+/// Where new workspace ids come from.
+pub trait IdSource: Send + Sync {
+    /// Draw number `attempt` (counted from 0) for a new workspace called `name`. A create
+    /// draws again while the id is taken, at most [`MAX_ID_DRAWS`] times.
+    ///
+    /// # Errors
+    ///
+    /// When the source gave nothing, with the reason. That draw counts.
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String>;
+}
+
+/// The operating system's random source, five bytes a draw ([`WorkspaceId::from_random`]);
+/// nothing of the name goes into the id. The host uses this one.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RandomIds;
+
+impl IdSource for RandomIds {
+    fn draw(&self, _name: &DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
+        let mut bytes = [0_u8; 5];
+        getrandom::fill(&mut bytes).map_err(|e| format!("no randomness: {e}"))?;
+        Ok(WorkspaceId::from_random(bytes))
+    }
+}
+
+/// Ids made from the name, for tests and the UI fixture, which name a workspace's paths before
+/// it exists: `Shop API` gets `shop-api` (ASCII letters and digits lower-cased, every other run
+/// of characters one hyphen), and the draws after the first add `-2`, `-3` and so on. A name
+/// with nothing usable in it, or one that comes out reserved, gets `workspace-` and eight hex
+/// digits of a hash of the name.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NameIds;
+
+impl IdSource for NameIds {
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String> {
+        let base = id_for_name(name).map_err(|e| e.to_string())?;
+        if attempt == 0 {
+            return Ok(base);
+        }
+        let suffix = format!("-{}", attempt + 1);
+        let room = WorkspaceId::MAX_LEN - suffix.len();
+        let stem: String = base.as_str().chars().take(room).collect();
+        WorkspaceId::new(&format!("{}{suffix}", stem.trim_end_matches('-')))
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// An entry id made from `text` (a hash of it), for tests and the UI fixture, which need the same
+/// entry to get the same id on every run. Nothing in it spells the text.
+#[must_use]
+pub fn entry_id_from_text(text: &str) -> EntryId {
+    let mut bytes = [0_u8; 5];
+    for (slot, byte) in bytes.iter_mut().zip(Sha256::digest(text.as_bytes())) {
+        *slot = byte;
+    }
+    EntryId::from_random(bytes)
+}
+
+/// The name as an id, for [`NameIds`].
+fn id_for_name(name: &DisplayName) -> Result<WorkspaceId, puddle_types::ValidationError> {
     let mut slug = String::new();
     for c in name.as_str().chars() {
         if c.is_ascii_alphanumeric() {
@@ -726,7 +841,7 @@ pub(crate) fn id_for_name(
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NewWorkspace {
-    /// The workspace's name: display text. Its id is derived from it (until ids are generated).
+    /// The workspace's name: display text. The id is drawn apart from it (see [`NewWorkspace::id`]).
     pub name: DisplayName,
     /// What to clone, in order, with the Git settings each starts with.
     pub repositories: Vec<NewRepository>,
@@ -751,35 +866,25 @@ impl NewWorkspace {
         }
     }
 
-    /// The id the new workspace gets: the name as a DNS label (`id_for_name`), with `-2`,
-    /// `-3` and so on added while `taken` says the id is in use, so two names that make the
-    /// same label are two workspaces.
+    /// The id the new workspace gets: the first draw of `source` that `taken` does not refuse.
+    /// Nothing about the name decides it (unless `source` is made to).
     ///
     /// # Errors
     ///
-    /// When 99 ids of that label are taken.
+    /// [`NoFreeId`] after [`MAX_ID_DRAWS`] draws that were all taken or gave nothing.
     pub fn id(
         &self,
+        source: &dyn IdSource,
         taken: impl Fn(&WorkspaceId) -> bool,
-    ) -> Result<WorkspaceId, puddle_types::ValidationError> {
-        let base = id_for_name(&self.name)?;
-        if !taken(&base) {
-            return Ok(base);
-        }
-        for n in 2..=99 {
-            let suffix = format!("-{n}");
-            let room = WorkspaceId::MAX_LEN - suffix.len();
-            let stem: String = base.as_str().chars().take(room).collect();
-            let candidate = WorkspaceId::new(&format!("{}{suffix}", stem.trim_end_matches('-')))?;
-            if !taken(&candidate) {
-                return Ok(candidate);
+    ) -> Result<WorkspaceId, NoFreeId> {
+        for attempt in 0..MAX_ID_DRAWS {
+            match source.draw(&self.name, attempt) {
+                Ok(id) if !taken(&id) => return Ok(id),
+                Ok(id) => tracing::debug!(%id, attempt, "a drawn workspace id is taken"),
+                Err(reason) => tracing::warn!(%reason, attempt, "no workspace id was drawn"),
             }
         }
-        Err(puddle_types::ValidationError::new(
-            "workspace id",
-            base.as_str(),
-            "has too many workspaces with the same name",
-        ))
+        Err(NoFreeId)
     }
 
     /// The entries the new workspace's list holds.
@@ -1076,6 +1181,17 @@ pub trait WorkspaceService: Send + Sync {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
+    /// Makes the workspace's root disk `size_mib` big. A root disk only grows, so the size must
+    /// be above the current one. A running workspace has the room at once when the runtime can
+    /// grow a disk under a running guest, and is otherwise restarted (nothing is lost); a
+    /// stopped one has it at its next start. The size is kept: a reset of the root disk makes
+    /// the fresh one this big. Refused when the added room is more than the computer has free.
+    fn grow_root_disk<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        size_mib: u32,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
+
     /// Looks for what deleting the workspace would lose. Works on a running or a stopped
     /// workspace.
     fn delete_check<'a>(
@@ -1244,12 +1360,12 @@ pub trait WorkspaceService: Send + Sync {
         unavailable()
     }
 
-    /// Clones a list entry whose directory is not on the volume again. Accepted
+    /// Clones the list entry `_entry`, whose directory is not on the volume, again. Accepted
     /// like [`WorkspaceService::add_repository`] with a clone.
     fn clone_again<'a>(
         &'a self,
         _id: &'a WorkspaceId,
-        _directory: &'a CheckoutDir,
+        _entry: &'a EntryId,
         _git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
@@ -1261,7 +1377,7 @@ pub trait WorkspaceService: Send + Sync {
     fn remove_repository<'a>(
         &'a self,
         _id: &'a WorkspaceId,
-        _directory: &'a CheckoutDir,
+        _entry: &'a EntryId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
@@ -1334,6 +1450,12 @@ pub trait Launcher: Send + Sync {
         _workspace: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async { Ok(()) })
+    }
+
+    /// Whether the shell keeps browser data under `workspace`'s id (a window's data folder). A
+    /// new workspace never gets an id that has some. The default keeps none.
+    fn has_browser_data(&self, _workspace: &WorkspaceId) -> bool {
+        false
     }
 }
 
@@ -1490,6 +1612,13 @@ impl WorkspaceService for NoWorkspaces {
     fn reset_root_disk<'a>(
         &'a self,
         _: &'a WorkspaceId,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        unavailable()
+    }
+    fn grow_root_disk<'a>(
+        &'a self,
+        _: &'a WorkspaceId,
+        _: u32,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }

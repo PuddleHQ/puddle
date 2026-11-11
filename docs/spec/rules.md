@@ -109,10 +109,12 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   goes pending for the exact name, unless the "wildcards reach local addresses"
   setting is on (global default off, per-workspace override *(default)*). The IP check only looks
   up rules (`Policy::lookup`); it never writes a pending row for the address. Puddle's own
-  endpoints are blocked whatever rules or toggles say, and never become pending. So is SSH from a
-  workspace, which is not supported yet (reason `ssh_unsupported`, R-24): the proxy recognises it by
-  the client's identification line on any port and refuses it before any rule is asked, so no rule
-  allows it and it never goes pending. UDP other than DNS is refused the same way, inside the
+  endpoints are blocked whatever rules or toggles say, and never become pending. So is SSH to a
+  Git host's name that Puddle does not serve (reason `ssh_unsupported`, R-24): the proxy recognises
+  SSH by the client's identification line on any port and refuses it before any rule is asked, so no
+  rule allows it and it never goes pending. SSH to any other name is an ordinary connection: the
+  rules decide it as for any `CONNECT` (R-2, so a rule for the name covers every port), a request
+  with no rule goes pending as that host and port, and an allowed one is spliced end to end. UDP other than DNS is refused the same way, inside the
   workspace, before it leaves; the workspace's agent reports where each refused datagram was going
   and the proxy records it as `blocked` with reason `udp_unsupported` (never pending, never
   approvable; one record per destination at most every ten seconds).
@@ -198,14 +200,21 @@ readable as JSONL (one record per line).
   workspace still reads as the user knew it. The line itself is unchanged.
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `category` (`company_network` for a destination in that category, `null` otherwise and in older records), `signal` (`pac_direct`, `dns_suffix`, `private_access_cgnat` or `vpn_route`: the signal that put it there, `null` when none is known), `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
-  `toggle:<category>`, `company_network_off`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
-  `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
+  `toggle:<category>` (`toggle:company_network` for the company network), `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
+  `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `bad_git_path` (a Git path Puddle does not read, over HTTPS or SSH), `ssh_command_unsupported` (an SSH command that is not `git-upload-pack` or `git-receive-pack`), `ssh_channel_refused` (an SSH channel request Puddle does not allow), `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
   went out unchanged: to a host outside their hosts, or in the path or query; also `stale-stand-in:secret:<name>` and
   `stale-stand-in:github` for a value shaped like a stand-in that the workspace does not hold),
   `scrubbed_stand_ins` (the ids of the stand-ins whose real values an answer from one of their
   hosts held and that went to the workspace as the stand-in instead; empty in older records; an
   answer in a content encoding Puddle cannot read is refused with reason `answer_encoding`, one cut
   off because it held a real value in a form that cannot be replaced has reason `answer_withheld`),
+  `foreign_credentials` (the kinds of credential a request carried that Puddle did not add or swap:
+  `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`, `azure_devops_token`,
+  `git_authorization`; each once, never a value; empty in older records and when the warning is off),
+  `answer_credentials` (the kinds of token an answer held that Puddle does not hold, read as the
+  workspace gets it: `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
+  `azure_devops_token`, `anthropic_key`, `openai_key`, `jwt_with_refresh_token`; each once, never a
+  value; the same setting turns it off; empty in older records),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
   `rule_created`, `rule_updated`, `rule_deleted`,
@@ -268,7 +277,7 @@ readable as JSONL (one record per line).
   identity, which belongs to none), how it ended (`outcome`: `succeeded` or `failed`) and a short
   plain sentence (`detail`, `null` when there is nothing to add). The `op` values are `create`,
   `delete`, `rename`, `start`, `stop`, `identity_created`, `identity_updated`, `identity_deleted`,
-  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed` and
+  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed`, `root_disk_grown` (a workspace's root disk made bigger, or the try failed; `detail` gives both sizes and how it took effect) and
   `git_repaired` (one record, actor `system`, for each zero-filled or corrupt git file Puddle rebuilt
   at boot; `detail` names the file and what was done).
   A create or a delete is written whether it worked or not; a start or a stop only when it failed

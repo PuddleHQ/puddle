@@ -364,6 +364,24 @@ export class WorkspaceStore {
   reclaim = (id: string) => this.#operate(id, "reclaim");
   resetRootDisk = (id: string) => this.#operate(id, "reset-root-disk");
 
+  /** Makes the root disk `sizeMib` big; it only grows, and the workspace is busy until it is done. */
+  async growRootDisk(
+    id: string,
+    sizeMib: number,
+  ): Promise<ActionResult<Workspace>> {
+    const before = this.#endedCount(id);
+    const result = await this.#post(() =>
+      this.#api.POST("/api/workspaces/{id}/grow-root-disk", {
+        params: { path: { id } },
+        body: { size_mib: sizeMib },
+      }),
+    );
+    if (result.ok) {
+      this.#accept(result.value.id, before, result.value, true);
+    }
+    return result;
+  }
+
   /** What deleting would lose. */
   checkDelete(id: string): Promise<ActionResult<DeleteCheck>> {
     return this.#post(() =>

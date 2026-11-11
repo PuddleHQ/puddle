@@ -494,6 +494,7 @@ async fn the_connect_command_carries_what_is_not_ssh() {
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
+    // flake-ok: the command echoes until its stdin ends, so it is still reading when this write lands
     stdin.write_all(b"hello, not ssh\n").await.unwrap();
     stdin.shutdown().await.unwrap();
     drop(stdin);

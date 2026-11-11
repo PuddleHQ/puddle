@@ -638,12 +638,7 @@ mod tests {
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .unwrap();
-            child
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(script.as_bytes())
-                .unwrap();
+            puddle_test_kit::feed_stdin(&mut child, script.as_bytes());
             let out = child.wait_with_output().unwrap();
             ExecOutput::new(out.status.code().unwrap(), out.stdout, out.stderr)
         };

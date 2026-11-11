@@ -9,7 +9,6 @@
     reason = "test harness outside #[test] fns: a failed setup fails the test"
 )]
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -213,7 +212,7 @@ impl FakeRoot {
     /// Runs the hook with `stdin` as the plan.
     pub(crate) fn run_raw(&self, stdin: &[u8], args: &[String], path_with_stubs: bool) -> Output {
         let mut child = self.command(args, path_with_stubs).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(stdin).unwrap();
+        puddle_test_kit::feed_stdin(&mut child, stdin);
         child.wait_with_output().unwrap()
     }
 

@@ -1,0 +1,26 @@
+// Original shape of a flake: a hook or script fed its input through a pipe, with the write unwrapped. A child that
+// exited before reading (a missing folder made `sh` fail its redirect) closed the pipe, the write returned
+// BrokenPipe, and the test panicked on that instead of the child's failure.
+fn run_hook(plan: &[u8]) -> Output {
+    let mut child = Command::new("sh").stdin(Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(plan).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn run_hook_split(plan: &[u8]) -> Output {
+    let mut child = Command::new("sh").stdin(Stdio::piped()).spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .expect("piped stdin")
+        .write_all(plan)
+        .expect("send the plan");
+    child.wait_with_output().unwrap()
+}
+
+async fn run_client(bytes: &[u8]) {
+    let mut child = tokio::process::Command::new("ssh").stdin(Stdio::piped()).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(bytes).await.unwrap();
+    stdin.shutdown().await.unwrap();
+}

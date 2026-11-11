@@ -3,7 +3,7 @@
 
 use std::io::Write as _;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 
 /// Writes `contents` to `path` and makes it executable (mode 0755), so the caller can execute it
 /// at once without `ETXTBSY` ("Text file busy").
@@ -47,18 +47,32 @@ pub fn write_executable_bytes(path: &Path, contents: &[u8]) {
         .stdin(Stdio::piped())
         .spawn()
         .expect("run sh to write a test program");
-    child
-        .stdin
-        .take()
-        .expect("piped stdin")
-        .write_all(contents)
-        .expect("send the program to sh");
+    feed_stdin(&mut child, contents);
     let status = child.wait().expect("wait for sh");
     assert!(
         status.success(),
         "sh failed to write the program {}: {status}",
         path.display()
     );
+}
+
+/// Sends `bytes` to the child's stdin and closes it.
+///
+/// A child can exit before it reads (a script that fails on its arguments first), which closes the
+/// pipe and fails the write with `BrokenPipe`. That is the child's outcome, which the caller reads
+/// from its exit status and output, so it is not an error here; any other write error panics.
+///
+/// # Panics
+/// When the child has no piped stdin, or the write fails for a reason other than a closed pipe.
+pub fn feed_stdin(child: &mut Child, bytes: &[u8]) {
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    if let Err(e) = stdin.write_all(bytes) {
+        assert_eq!(
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "send the input to the child: {e}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -109,6 +123,31 @@ mod tests {
     fn a_folder_that_does_not_exist_fails_loudly() {
         let dir = tempfile::tempdir().unwrap();
         write_executable(&dir.path().join("missing").join("tool"), "#!/bin/sh\n");
+    }
+
+    #[test]
+    fn a_child_that_exits_without_reading_is_not_a_write_error() {
+        let mut child = Command::new("true").stdin(Stdio::piped()).spawn().unwrap();
+        let mut held = child.stdin.take().unwrap();
+        child.wait().unwrap();
+        // The pipe's read end is gone, so this write is the `BrokenPipe` case itself.
+        assert_eq!(
+            held.write_all(b"never read").unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        child.stdin = Some(held);
+        feed_stdin(&mut child, b"never read");
+    }
+
+    #[test]
+    fn input_the_child_reads_arrives_whole() {
+        let mut child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        feed_stdin(&mut child, b"all of it");
+        assert_eq!(child.wait_with_output().unwrap().stdout, b"all of it");
     }
 
     #[test]

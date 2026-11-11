@@ -6,6 +6,7 @@
     type Choice,
     type Target,
   } from "#lib/decision/model.ts";
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
 
   // Ctrl+click (Cmd+click on a Mac) decides for every workspace and skips the chevron.
@@ -36,6 +37,9 @@
     /** The chevron was used; the element is where the options hang from. */
     onMore: (anchor: HTMLElement) => void;
   } = $props();
+
+  // `workspace` is the id; a person hears the name.
+  const spoken = $derived(workspaces.spokenLabelOf(workspace));
 </script>
 
 <div class="control">
@@ -44,8 +48,8 @@
       <button
         type="button"
         class="btn allow main"
-        aria-label="Allow {target.host} for {workspace}"
-        title="Allow for {workspace}, this host only, permanently (A). Ctrl+click: every workspace"
+        aria-label="Allow {target.host} for {spoken}"
+        title="Allow for {spoken}, this host only, permanently (A). Ctrl+click: every workspace"
         onclick={(event) => choose("allow", event)}
       >
         Allow
@@ -65,8 +69,8 @@
   <button
     type="button"
     class="btn deny"
-    aria-label="Deny {target.host} for {workspace}"
-    title="Deny for {workspace}, this host only, permanently (D). Ctrl+click: every workspace"
+    aria-label="Deny {target.host} for {spoken}"
+    title="Deny for {spoken}, this host only, permanently (D). Ctrl+click: every workspace"
     onclick={(event) => choose("deny", event)}
   >
     Deny

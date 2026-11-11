@@ -7,6 +7,11 @@ import type { Checkout, CheckoutListing } from "#lib/workspaces/checkouts.ts";
 
 type Layer = components["schemas"]["SettingsLayer"];
 
+/** The entry id the fake gives the list entry in `directory`: never the directory itself. */
+export function entryOf(directory: string): string {
+  return `e-${directory}`;
+}
+
 export function workspace(
   name: string,
   over: Partial<Workspace> = {},
@@ -15,7 +20,11 @@ export function workspace(
     id: "w-" + name,
     name,
     repositories: [
-      { url: `https://github.com/acme/${name}.git`, directory: name },
+      {
+        entry: entryOf(name),
+        url: `https://github.com/acme/${name}.git`,
+        directory: name,
+      },
     ],
     start_folder: null,
     session_user: "agent",
@@ -349,6 +358,13 @@ export class FakeWorkspaces {
       const asked = (body["repositories"] ?? []) as { url: string }[];
       const created = workspace(name, {
         repositories: asked.map((r) => ({
+          entry: entryOf(
+            r.url
+              .replace(/\/+$/, "")
+              .split("/")
+              .pop()!
+              .replace(/\.git$/, ""),
+          ),
           url: r.url,
           directory: r.url
             .replace(/\/+$/, "")
@@ -380,13 +396,16 @@ export class FakeWorkspaces {
       const cloning = body["kind"] === "clone";
       const next: Workspace = {
         ...found,
-        repositories: [...found.repositories, { url, directory }],
+        repositories: [
+          ...found.repositories,
+          { entry: entryOf(directory), url, directory },
+        ],
         ...(cloning ? { busy: "cloning" as const } : {}),
       };
       this.list = this.list.map((w) => (w.id === found.id ? next : w));
       return this.reply(cloning ? 202 : 200, next);
     }
-    if (path === "/api/workspaces/{id}/repositories/{directory}/clone") {
+    if (path === "/api/workspaces/{id}/repositories/{entry}/clone") {
       const next: Workspace = { ...found, busy: "cloning" };
       this.list = this.list.map((w) => (w.id === found.id ? next : w));
       return this.reply(202, next);
@@ -469,11 +488,11 @@ export class FakeWorkspaces {
       }
       return { data: undefined, response: { status: 204, ok: true } };
     }
-    if (path === "/api/workspaces/{id}/repositories/{directory}") {
-      const gone = (init.params.path as { directory?: string }).directory;
+    if (path === "/api/workspaces/{id}/repositories/{entry}") {
+      const gone = (init.params.path as { entry?: string }).entry;
       const next: Workspace = {
         ...found,
-        repositories: found.repositories.filter((r) => r.directory !== gone),
+        repositories: found.repositories.filter((r) => r.entry !== gone),
       };
       this.list = this.list.map((w) => (w.id === found.id ? next : w));
       return this.reply(200, next);

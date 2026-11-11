@@ -52,6 +52,7 @@ beforeEach(() => {
     workspace("docs", {
       repositories: [
         {
+          entry: "e-Docs",
           url: "https://dev.azure.com/contoso/Platform/_git/Docs",
           directory: "Docs",
         },
@@ -227,12 +228,18 @@ describe("identities on a workspace", () => {
     workspaces.list = [
       workspace("many", {
         repositories: [
-          { url: "https://github.com/acme/api.git", directory: "api" },
           {
+            entry: "e-api",
+            url: "https://github.com/acme/api.git",
+            directory: "api",
+          },
+          {
+            entry: "e-Docs",
             url: "https://dev.azure.com/contoso/Platform/_git/Docs",
             directory: "Docs",
           },
           {
+            entry: "e-tools",
             url: "https://gitlab.example.org/team/tools.git",
             directory: "tools",
           },
@@ -256,7 +263,9 @@ describe("identities on a workspace", () => {
   it("says when a listed address could not be read, so nothing was listed or chosen", async () => {
     workspaces.list = [
       workspace("odd", {
-        repositories: [{ url: "https://github.com/a/b/c", directory: "c" }],
+        repositories: [
+          { entry: "e-c", url: "https://github.com/a/b/c", directory: "c" },
+        ],
       }),
     ];
     api.git["w-odd"] = { ids: [], repos: [], push: true, pull: false };

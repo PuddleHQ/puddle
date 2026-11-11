@@ -7,7 +7,6 @@
     reason = "helpers outside #[test] fns run only in tests"
 )]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -42,8 +41,7 @@ impl Server {
         std::fs::create_dir_all(dir.path().join("out")).unwrap();
         for (name, script) in [("host", HOST), ("pty", PTY), ("forks", FORKS)] {
             let path = dir.path().join("out").join(name);
-            std::fs::write(&path, script).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            puddle_test_kit::write_executable(&path, script);
         }
         Self { dir }
     }

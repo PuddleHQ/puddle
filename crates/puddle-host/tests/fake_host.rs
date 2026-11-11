@@ -1375,13 +1375,39 @@ async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
     host.shutdown().await;
 }
 
+/// The id of the list entry in `dir` on `workspace`'s list. Entry ids are generated, so a test
+/// reads them from the workspace.
+async fn entry_of(api: &Api, workspace: &str, dir: &str) -> String {
+    let ws = api
+        .get(&format!("/api/workspaces/{workspace}"))
+        .await
+        .json();
+    let found = ws["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["directory"] == dir)
+        .unwrap();
+    found["entry"].as_str().unwrap().to_owned()
+}
+
+/// A list of repositories without its generated entry ids.
+fn without_entries(list: &serde_json::Value) -> serde_json::Value {
+    let mut list = list.clone();
+    for r in list.as_array_mut().unwrap() {
+        r.as_object_mut().unwrap().remove("entry");
+    }
+    list
+}
+
 /// The only problem standing is the failed clone of `url` into `workspace`'s `dir`, with git's
 /// error first and the way out last.
 async fn the_one_problem_names_the_clone(api: &Api, workspace: &str, dir: &str, url: &str) {
+    let entry = entry_of(api, workspace, dir).await;
     let problems = problems_of(api).await;
     assert_eq!(problems.len(), 1, "{problems:?}");
     let (key, about, title, detail) = &problems[0];
-    assert_eq!(key, &format!("clone:{workspace}:{dir}"));
+    assert_eq!(key, &format!("clone:{workspace}:{entry}"));
     assert_eq!(about.as_deref(), Some(workspace));
     assert_eq!(
         title,
@@ -1504,7 +1530,7 @@ async fn a_clone_that_fails_fails_only_its_repository_and_every_clone_carries_it
     let ws = api.get("/api/workspaces/trio").await.json();
     assert_eq!(ws["status"], "running");
     assert_eq!(
-        ws["repositories"],
+        without_entries(&ws["repositories"]),
         json!([
             {"url": REPO, "directory": "api"},
             {"url": DOWN, "directory": "docs"},
@@ -1677,8 +1703,17 @@ async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_
 
     // Cloning again while the directory is empty works and the problem goes.
     *rig.guest.fail_clone_of.lock().unwrap() = None;
+    let docs = entry_of(&api, "adds", "docs").await;
+    // A directory is no entry id, so the way a client used to name the entry is a 404 now.
     let reply = api
         .post("/api/workspaces/adds/repositories/docs/clone", "")
+        .await;
+    assert_eq!(reply.status, 404, "{}", reply.body);
+    let reply = api
+        .post(
+            &format!("/api/workspaces/adds/repositories/{docs}/clone"),
+            "",
+        )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     events.until(ended("adds"), Duration::from_secs(20)).await;
@@ -1686,17 +1721,21 @@ async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_
     assert_eq!(checkouts_of(&api, "adds").await["missing"], json!([]));
     // An entry that is on the disk is not cloned over.
     let reply = api
-        .post("/api/workspaces/adds/repositories/docs/clone", "")
+        .post(
+            &format!("/api/workspaces/adds/repositories/{docs}/clone"),
+            "",
+        )
         .await;
     assert_eq!(reply.status, 409, "{}", reply.body);
     let reply = api
-        .post("/api/workspaces/adds/repositories/nope/clone", "")
+        .post("/api/workspaces/adds/repositories/a0000000/clone", "")
         .await;
     assert_eq!(reply.status, 404, "{}", reply.body);
     host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(clippy::too_many_lines, reason = "one scenario, one rig")]
 async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() {
     const MOVED: &str = "https://example.org/acme/moved.git";
     let rig = Rig::new();
@@ -1770,7 +1809,10 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
     );
     assert_eq!(rig.guest.listings.lock().unwrap().len(), listings + 1);
     let entries = reply.json()["repositories"].clone();
-    assert_eq!(entries[1], json!({"url": MOVED, "directory": "legacy"}));
+    assert_eq!(
+        without_entries(&json!([entries[1]])),
+        json!([{"url": MOVED, "directory": "legacy"}])
+    );
     assert_eq!(
         rig.guest.clone_commands().len(),
         clones,
@@ -1818,8 +1860,16 @@ async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
     create(&api, &mut events, "adds").await;
     let rows_before = api.get("/api/workspaces/adds/git").await.json();
 
-    let reply = api
+    let api_entry = entry_of(&api, "adds", "api").await;
+    let by_directory = api
         .delete("/api/workspaces/adds/repositories/api", None)
+        .await;
+    assert_eq!(by_directory.status, 404, "{}", by_directory.body);
+    let reply = api
+        .delete(
+            &format!("/api/workspaces/adds/repositories/{api_entry}"),
+            None,
+        )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(reply.json()["repositories"], json!([]));
@@ -1836,7 +1886,10 @@ async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
         rows_before
     );
     let gone = api
-        .delete("/api/workspaces/adds/repositories/api", None)
+        .delete(
+            &format!("/api/workspaces/adds/repositories/{api_entry}"),
+            None,
+        )
         .await;
     assert_eq!(gone.status, 404, "{}", gone.body);
 
@@ -1958,8 +2011,12 @@ async fn a_stopped_workspace_lists_the_checkouts_it_had_and_refuses_an_add() {
     .await;
     assert_eq!(add.status, 409, "{}", add.body);
     // Taking an entry off the list works while stopped.
+    let api_entry = entry_of(&api, "adds", "api").await;
     let removed = api
-        .delete("/api/workspaces/adds/repositories/api", None)
+        .delete(
+            &format!("/api/workspaces/adds/repositories/{api_entry}"),
+            None,
+        )
         .await;
     assert_eq!(removed.status, 200, "{}", removed.body);
     host.shutdown().await;
@@ -2122,10 +2179,14 @@ async fn a_list_that_cannot_be_saved_changes_nothing_and_says_so() {
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "adds").await;
+    let api_entry = entry_of(&api, "adds", "api").await;
     make_unwritable(&list_path(&rig));
 
     let reply = api
-        .delete("/api/workspaces/adds/repositories/api", None)
+        .delete(
+            &format!("/api/workspaces/adds/repositories/{api_entry}"),
+            None,
+        )
         .await;
     assert_eq!(reply.status, 503, "{}", reply.body);
     assert!(reply.body.contains("nothing changed"), "{}", reply.body);
@@ -2188,8 +2249,12 @@ async fn an_entry_cannot_be_removed_while_its_workspace_is_being_created() {
     }));
     let reply = api.post("/api/workspaces", &new_workspace("late")).await;
     assert_eq!(reply.status, 202, "{}", reply.body);
+    let late_entry = entry_of(&api, "late", "api").await;
     let refused = api
-        .delete("/api/workspaces/late/repositories/api", None)
+        .delete(
+            &format!("/api/workspaces/late/repositories/{late_entry}"),
+            None,
+        )
         .await;
     assert_eq!(refused.status, 409, "{}", refused.body);
     assert!(refused.body.contains("creating"), "{}", refused.body);
@@ -2338,7 +2403,7 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
     let api = api(&host);
     let ws = api.get("/api/workspaces/acme").await.json();
     assert_eq!(
-        ws["repositories"],
+        without_entries(&ws["repositories"]),
         json!([{"url": "https://example.org/acme/shop.git", "directory": "shop"}])
     );
     assert_eq!(ws["start_folder"], "shop");
@@ -2354,8 +2419,12 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(saved["version"], 3);
     assert_eq!(
-        saved["workspaces"][0]["repositories"],
+        without_entries(&saved["workspaces"][0]["repositories"]),
         json!([{"url": "https://example.org/acme/shop.git", "directory": "shop"}])
+    );
+    assert_eq!(
+        saved["workspaces"][0]["repositories"][0]["entry"], ws["repositories"][0]["entry"],
+        "the id given on read is the one saved"
     );
     assert_eq!(saved["workspaces"][0]["start_folder"], "shop");
     assert_eq!(saved["workspaces"][0]["name"], "Shop");
@@ -11821,11 +11890,12 @@ async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_imp
         .await;
     assert_eq!(end["step"], "done", "{end}");
     let problems = api.get("/api/problems").await.json();
+    let shop = entry_of(&api, "refused", "shop").await;
     let problem = problems["problems"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|p| p["key"] == "clone:refused:shop")
+        .find(|p| p["key"] == format!("clone:refused:{shop}"))
         .unwrap_or_else(|| panic!("{problems}"))
         .clone();
     assert!(

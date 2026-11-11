@@ -17,7 +17,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use puddle_store::{IdentityId, RepoRef};
 use puddle_types::{
-    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
+    CheckoutDir, DiskKind, EntryId, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
     WorkspaceStatus,
 };
 use sha2::{Digest, Sha256};
@@ -352,11 +352,13 @@ impl fmt::Display for RepoUrl {
     }
 }
 
-/// One repository Puddle manages for a workspace: the address it is cloned from
+/// One repository Puddle manages for a workspace: its entry id, the address it is cloned from
 /// and the checkout directly under the volume root it is cloned into. Its identity and its Pull
 /// and Push toggles are not part of it: they are the workspace's Git settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repository {
+    /// What API paths and problem keys call the entry; the directory is not an id.
+    pub entry: EntryId,
     /// Where it is cloned from.
     pub url: RepoUrl,
     /// The checkout it is cloned into.
@@ -364,12 +366,51 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// The entry for `url` in the directory `git clone` would pick.
+    /// The entry `entry` for `url` in the directory `git clone` would pick.
     #[must_use]
-    pub fn at_default_directory(url: RepoUrl) -> Self {
+    pub fn at_default_directory(entry: EntryId, url: RepoUrl) -> Self {
         let directory = CheckoutDir::from_url(url.as_str());
-        Self { url, directory }
+        Self {
+            entry,
+            url,
+            directory,
+        }
     }
+}
+
+/// A fresh entry id ([`EntryId::from_random`] over the operating system's random source) that
+/// `taken` does not know, drawn up to [`MAX_ID_DRAWS`] times; `taken` says whether the entry
+/// list of the workspace already has it.
+///
+/// # Errors
+///
+/// The message for the user when every draw was taken or the random source gave nothing.
+pub fn new_entry_id(taken: impl Fn(&EntryId) -> bool) -> Result<EntryId, String> {
+    draw_entry_id(
+        |bytes| getrandom::fill(bytes).map_err(|e| e.to_string()),
+        taken,
+    )
+}
+
+/// [`new_entry_id`] over any source of five bytes.
+fn draw_entry_id(
+    mut fill: impl FnMut(&mut [u8; 5]) -> Result<(), String>,
+    taken: impl Fn(&EntryId) -> bool,
+) -> Result<EntryId, String> {
+    for attempt in 0..MAX_ID_DRAWS {
+        let mut bytes = [0_u8; 5];
+        match fill(&mut bytes) {
+            Ok(()) => {
+                let id = EntryId::from_random(bytes);
+                if !taken(&id) {
+                    return Ok(id);
+                }
+                tracing::debug!(%id, attempt, "a drawn entry id is taken");
+            }
+            Err(reason) => tracing::warn!(%reason, attempt, "no entry id was drawn"),
+        }
+    }
+    Err("no free repository entry id was found; the system's random source may be broken".into())
 }
 
 /// Most repositories one workspace holds (where the delete check stops counting checkouts).
@@ -494,8 +535,14 @@ pub fn check_repositories_with(
         {
             return Err(named(&format!("there is no identity {}", id.0)));
         }
+        let entry = new_entry_id(|id| checked.iter().any(|c| c.repository.entry == *id))
+            .map_err(|e| named(&e))?;
         checked.push(NewRepository {
-            repository: Repository { url, directory },
+            repository: Repository {
+                entry,
+                url,
+                directory,
+            },
             identity: draft.identity,
             pull: draft.pull.unwrap_or(true),
             push: draft.push.unwrap_or(true),
@@ -754,6 +801,17 @@ impl IdSource for NameIds {
         WorkspaceId::new(&format!("{}{suffix}", stem.trim_end_matches('-')))
             .map_err(|e| e.to_string())
     }
+}
+
+/// An entry id made from `text` (a hash of it), for tests and the UI fixture, which need the same
+/// entry to get the same id on every run. Nothing in it spells the text.
+#[must_use]
+pub fn entry_id_from_text(text: &str) -> EntryId {
+    let mut bytes = [0_u8; 5];
+    for (slot, byte) in bytes.iter_mut().zip(Sha256::digest(text.as_bytes())) {
+        *slot = byte;
+    }
+    EntryId::from_random(bytes)
 }
 
 /// The name as an id, for [`NameIds`].
@@ -1302,12 +1360,12 @@ pub trait WorkspaceService: Send + Sync {
         unavailable()
     }
 
-    /// Clones a list entry whose directory is not on the volume again. Accepted
+    /// Clones the list entry `_entry`, whose directory is not on the volume, again. Accepted
     /// like [`WorkspaceService::add_repository`] with a clone.
     fn clone_again<'a>(
         &'a self,
         _id: &'a WorkspaceId,
-        _directory: &'a CheckoutDir,
+        _entry: &'a EntryId,
         _git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
@@ -1319,7 +1377,7 @@ pub trait WorkspaceService: Send + Sync {
     fn remove_repository<'a>(
         &'a self,
         _id: &'a WorkspaceId,
-        _directory: &'a CheckoutDir,
+        _entry: &'a EntryId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
@@ -1882,9 +1940,10 @@ mod tests {
         let id = WorkspaceId::new("w").unwrap();
         let name = DisplayName::parse("w").unwrap();
         let dir = CheckoutDir::new("a").unwrap();
+        let entry = EntryId::from_random([1; 5]);
         let url = RepoUrl::parse("https://example.com/a").unwrap();
         let repos = vec![NewRepository {
-            repository: Repository::at_default_directory(url),
+            repository: Repository::at_default_directory(EntryId::from_random([1; 5]), url),
             identity: None,
             pull: true,
             push: true,
@@ -1923,8 +1982,8 @@ mod tests {
             )
             .await
             .map(|_| ()),
-            svc.clone_again(&id, &dir, &NoGitSetup).await.map(|_| ()),
-            svc.remove_repository(&id, &dir).await.map(|_| ()),
+            svc.clone_again(&id, &entry, &NoGitSetup).await.map(|_| ()),
+            svc.remove_repository(&id, &entry).await.map(|_| ()),
         ];
         for result in all {
             assert!(matches!(result, Err(WorkspaceError::Unavailable(_))));
@@ -2073,6 +2132,35 @@ mod tests {
                 .clone()
                 .ok_or_else(|| "the source is empty".to_owned())
         }
+    }
+
+    #[test]
+    fn an_entry_id_is_drawn_again_while_taken_and_given_up_on_after_sixteen_draws() {
+        let calls = std::cell::Cell::new(0_u8);
+        let counting = |bytes: &mut [u8; 5]| {
+            calls.set(calls.get() + 1);
+            *bytes = [calls.get(); 5];
+            Ok(())
+        };
+        let first = EntryId::from_random([1; 5]);
+        let id = draw_entry_id(counting, |e| *e == first).unwrap();
+        assert_eq!((calls.get(), id), (2, EntryId::from_random([2; 5])));
+
+        let draws = std::cell::Cell::new(0_u32);
+        let err = draw_entry_id(
+            |_| {
+                draws.set(draws.get() + 1);
+                Ok(())
+            },
+            |_| true,
+        )
+        .unwrap_err();
+        assert_eq!(draws.get(), MAX_ID_DRAWS);
+        assert!(err.contains("no free repository entry id"), "{err}");
+
+        let empty = draw_entry_id(|_| Err("no randomness".to_owned()), |_| false).unwrap_err();
+        assert!(empty.contains("random source may be broken"), "{empty}");
+        assert!(new_entry_id(|_| false).is_ok());
     }
 
     #[test]

@@ -37,12 +37,10 @@ fn fixture() -> Fixture {
     std::os::unix::fs::symlink(tmp.path(), vol.join("outside")).unwrap();
     let log = tmp.path().join("chown.log");
     let chown = tmp.path().join("chown");
-    std::fs::write(
+    puddle_test_kit::write_executable(
         &chown,
-        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >>'{}'\n", log.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&chown, std::fs::Permissions::from_mode(0o755)).unwrap();
+        &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >>'{}'\n", log.display()),
+    );
     Fixture {
         _tmp: tmp,
         vol,

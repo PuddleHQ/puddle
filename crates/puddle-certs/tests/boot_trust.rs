@@ -67,8 +67,7 @@ fn shells() -> Vec<PathBuf> {
 
 fn write_exec(path: &Path, text: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, text).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(path, text);
 }
 
 impl Guest {

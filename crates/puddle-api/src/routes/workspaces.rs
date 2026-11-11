@@ -665,7 +665,10 @@ mod tests {
 
     fn at(url: &str, identity: Option<i64>) -> NewRepository {
         NewRepository {
-            repository: Repository::at_default_directory(RepoUrl::parse(url).unwrap()),
+            repository: Repository::at_default_directory(
+                crate::new_entry_id(|_| false).unwrap(),
+                RepoUrl::parse(url).unwrap(),
+            ),
             identity: identity.map(IdentityId),
             pull: true,
             push: true,

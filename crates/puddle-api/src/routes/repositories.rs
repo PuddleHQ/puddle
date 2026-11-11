@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_store::{IdentityId, WorkspaceOpKind};
-use puddle_types::CheckoutDir;
+use puddle_types::EntryId;
 
 use crate::ApiErrorBody;
 use crate::checkouts::AddRepository;
@@ -18,10 +18,9 @@ use crate::routes::workspaces::{StoreGitSetup, git_request, view, workspace_id};
 use crate::routes::{AppState, record_op};
 use crate::wire::{AddRepositoryRequest, Checkouts, Workspace};
 
-/// The directory in a path. A string that can't be a checkout directory names no entry.
-fn entry_directory(raw: &str) -> Result<CheckoutDir, ApiError> {
-    CheckoutDir::new(raw)
-        .map_err(|_| ApiError::not_found(format!("no repository {raw:?} on the list")))
+/// The entry id in a path. A string that is not an entry id (a directory, say) names no entry.
+fn entry_id(raw: &str) -> Result<EntryId, ApiError> {
+    EntryId::new(raw).map_err(|_| ApiError::not_found(format!("no repository {raw:?} on the list")))
 }
 
 /// The checkouts directly under the workspace's volume root, each with the list entry that has
@@ -116,11 +115,11 @@ pub(crate) async fn add_repository(
 /// with the workspace busy `cloning`.
 #[utoipa::path(
     post,
-    path = "/api/workspaces/{id}/repositories/{directory}/clone",
+    path = "/api/workspaces/{id}/repositories/{entry}/clone",
     tag = "workspaces",
     params(
         ("id" = String, Path, description = "workspace id"),
-        ("directory" = String, Path, description = "the entry's directory")
+        ("entry" = String, Path, description = "the entry's id (not its directory)")
     ),
     responses(
         (status = ACCEPTED, description = "the clone started", body = Workspace),
@@ -130,11 +129,11 @@ pub(crate) async fn add_repository(
 )]
 pub(crate) async fn clone_again(
     State(state): State<AppState>,
-    Path((id, directory)): Path<(String, String)>,
+    Path((id, entry)): Path<(String, String)>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
-    let (id, directory) = (workspace_id(&id)?, entry_directory(&directory)?);
+    let (id, entry) = (workspace_id(&id)?, entry_id(&entry)?);
     let git = StoreGitSetup::new(state.store.clone());
-    let record = state.workspaces.clone_again(&id, &directory, &git).await?;
+    let record = state.workspaces.clone_again(&id, &entry, &git).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(view(&state, record).await.with_identities(git.take())),
@@ -146,11 +145,11 @@ pub(crate) async fn clone_again(
 /// every state but creating and deleting. No call deletes a checkout.
 #[utoipa::path(
     delete,
-    path = "/api/workspaces/{id}/repositories/{directory}",
+    path = "/api/workspaces/{id}/repositories/{entry}",
     tag = "workspaces",
     params(
         ("id" = String, Path, description = "workspace id"),
-        ("directory" = String, Path, description = "the entry's directory")
+        ("entry" = String, Path, description = "the entry's id (not its directory)")
     ),
     responses(
         (status = OK, description = "the workspace without the entry", body = Workspace),
@@ -161,10 +160,18 @@ pub(crate) async fn clone_again(
 )]
 pub(crate) async fn remove_repository(
     State(state): State<AppState>,
-    Path((id, directory)): Path<(String, String)>,
+    Path((id, entry)): Path<(String, String)>,
 ) -> Result<Json<Workspace>, ApiError> {
-    let (id, directory) = (workspace_id(&id)?, entry_directory(&directory)?);
-    let record = state.workspaces.remove_repository(&id, &directory).await?;
+    let (id, entry) = (workspace_id(&id)?, entry_id(&entry)?);
+    let directory = state
+        .workspaces
+        .get(&id)
+        .await?
+        .repositories
+        .iter()
+        .find(|r| r.entry == entry)
+        .map_or_else(|| entry.to_string(), |r| r.directory.to_string());
+    let record = state.workspaces.remove_repository(&id, &entry).await?;
     let (store, name) = (state.store.clone(), record.id.clone());
     blocking(move || {
         record_op(

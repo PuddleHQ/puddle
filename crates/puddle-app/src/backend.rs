@@ -415,7 +415,16 @@ pub(crate) mod tests {
             })
         );
         assert!(backend.shutdown().await.is_none());
-        assert!(TcpStream::connect(("127.0.0.1", port)).await.is_err());
+        // The port was the system's pick and another test can take it at once: the API must no
+        // longer answer its token, which is not the same as nothing accepting.
+        assert_ne!(
+            puddle_test_kit::http_status(
+                ([127, 0, 0, 1], port).into(),
+                "/api/pending",
+                backend.token()
+            ),
+            Some(200)
+        );
     }
 
     #[tokio::test]

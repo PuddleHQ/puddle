@@ -117,7 +117,11 @@ describe("events", () => {
         ? {
             ...w,
             repositories: [
-              { url: "https://github.com/acme/x.git", directory: "x" },
+              {
+                entry: "e-x",
+                url: "https://github.com/acme/x.git",
+                directory: "x",
+              },
             ],
           }
         : w,

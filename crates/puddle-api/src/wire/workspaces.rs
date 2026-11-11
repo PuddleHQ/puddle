@@ -2,7 +2,7 @@
 //! Wire types of the workspaces resource.
 
 use puddle_types::{
-    CheckoutDir, DiskKind, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceStatus,
+    CheckoutDir, DiskKind, EntryId, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceStatus,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -54,6 +54,10 @@ impl From<domain::Operation> for WorkspaceOperation {
 /// table's spelling.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct WorkspaceRepository {
+    /// The entry's id, unique within the workspace: what `/api/workspaces/{id}/repositories/{entry}`
+    /// and the `clone:<id>:<entry>` problem key use. It never changes while the entry is on the
+    /// list.
+    pub entry: EntryId,
     /// The HTTPS address it is cloned from, without credentials.
     pub url: String,
     /// The checkout it is cloned into, directly under the volume root.
@@ -63,6 +67,7 @@ pub struct WorkspaceRepository {
 impl From<domain::Repository> for WorkspaceRepository {
     fn from(r: domain::Repository) -> Self {
         Self {
+            entry: r.entry,
             url: r.url.as_str().to_owned(),
             directory: r.directory,
         }

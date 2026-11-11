@@ -820,6 +820,10 @@ mod tests {
     use super::*;
     use crate::MsbConfig;
 
+    async fn yes() -> bool {
+        true
+    }
+
     fn probe_timeout() -> MicrosandboxError {
         MicrosandboxError::Runtime("runtime version probe timed out".into())
     }
@@ -836,7 +840,7 @@ mod tests {
                 let n = calls.get();
                 async move { if n < 3 { Err(probe_timeout()) } else { Ok(n) } }
             },
-            || async { true },
+            yes,
         )
         .await;
         assert_eq!(result.unwrap(), 3);
@@ -852,7 +856,7 @@ mod tests {
                 calls.set(calls.get() + 1);
                 async { Err(probe_timeout()) }
             },
-            || async { true },
+            yes,
         )
         .await;
         assert!(is_probe_timeout(&result.unwrap_err()));
@@ -872,7 +876,7 @@ mod tests {
                     ))
                 }
             },
-            || async { true },
+            yes,
         )
         .await;
         assert!(!is_probe_timeout(&other.unwrap_err()));

@@ -185,12 +185,7 @@ impl Guest {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&plan.render())
-            .unwrap();
+        puddle_test_kit::feed_stdin(&mut child, &plan.render());
         child.wait_with_output().unwrap()
     }
 
@@ -829,6 +824,7 @@ fn jks_entries(file: &Path) -> Vec<(String, Vec<u8>)> {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
+    // flake-ok: sha1sum reads all of its input before it answers, so the pipe never closes early
     child.stdin.take().unwrap().write_all(&check).unwrap();
     let sum = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
     let hex = digest.iter().fold(String::new(), |mut hex, b| {

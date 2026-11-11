@@ -136,6 +136,7 @@ mod tests {
         let kind = (0..2000)
             .find_map(|_| {
                 thread::sleep(std::time::Duration::from_millis(5));
+                // flake-ok: this test is the BrokenPipe case itself; the result is read as data and retried until the pipe closes, never unwrapped.
                 held.write_all(b"x").err().map(|e| e.kind())
             })
             .expect("the pipe never closed");

@@ -760,7 +760,6 @@ async fn boot_hook_through_the_fake_runtime_runs_the_real_script() {
     use puddle_compute::fake::{ExecContext, FakeRuntime};
     use puddle_compute::{ExecOutput, ExecRequest, FileMount, Runtime, SandboxSpec};
     use puddle_types::{ImageRef, SandboxName};
-    use std::io::Write as _;
 
     let fr = std::sync::Arc::new(FakeRoot::new(&shells()[0]));
     let runner = fr.clone();
@@ -771,7 +770,7 @@ async fn boot_hook_through_the_fake_runtime_runs_the_real_script() {
         assert_eq!(r.user.as_deref(), Some("root"));
         assert_eq!(r.env.get("PUDDLE_ROOT"), Some(""));
         let mut child = runner.command(&r.args[1..], true).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(&r.stdin).unwrap();
+        puddle_test_kit::feed_stdin(&mut child, &r.stdin);
         let out = child.wait_with_output().unwrap();
         Some(ExecOutput::new(
             out.status.code().unwrap_or(-1),

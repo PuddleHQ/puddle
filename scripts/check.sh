@@ -201,10 +201,10 @@ run_gate() {
         GIT_ENV_CARGO="$cargo" GIT_ENV_EXCLUDE="$skip_app" scripts/git-env-test.sh
         ;;
     platform-literals)
-        # The per-OS runtime file names live in puddle-runtime's table (platform.rs) and nowhere
-        # else in the Rust code: a string literal naming msb or its firmware is a hard-coded OS.
+        # The per-OS runtime file names live in puddle-runtime's table (platform.rs, whose unit tests are
+        # platform/tests.rs and assert the table) and nowhere else in the Rust code: a string literal naming msb or its firmware is a hard-coded OS.
         # Versioned names (libkrunfw.so.5.6.1) are msb-release facts, not table entries.
-        hits=$(git grep -nE '"(msb\.exe|libkrunfw\.(dll|so(\.5)?|dylib|5\.dylib))"' -- 'crates/*.rs' ':!crates/puddle-runtime/src/platform.rs' || true)
+        hits=$(git grep -nE '"(msb\.exe|libkrunfw\.(dll|so(\.5)?|dylib|5\.dylib))"' -- 'crates/*.rs' ':!crates/puddle-runtime/src/platform.rs' ':!crates/puddle-runtime/src/platform/tests.rs' || true)
         if [ -n "$hits" ]; then
             echo "$hits" >&2
             echo "platform-literals: use puddle_runtime::HostOs::runtime_files() instead of these literals" >&2

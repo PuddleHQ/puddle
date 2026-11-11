@@ -100,12 +100,13 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
+      # Same keys as ci.yml: `ui` saves Chromium under playwright-*, `ui-webkit` saves WebKit under playwright-webkit-*.
+      # `playwright install` does nothing for a browser the restored entry already holds, so a wrong hit cannot go red.
       - name: Playwright browsers cache
-        id: browsers
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+          key: ${{ matrix.project == 'webkit' && 'playwright-webkit' || 'playwright' }}-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
       - name: Playwright browser and its system libraries
         timeout-minutes: 10
         run: |
@@ -113,9 +114,7 @@ jobs:
           cd ui
           npm ci --ignore-scripts --no-audit --no-fund
           ../ci/apt-retry.sh npx playwright install-deps "$STRESS_PROJECTS"
-          if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
-            npx playwright install "$STRESS_PROJECTS"
-          fi
+          npx playwright install "$STRESS_PROJECTS"
       # The fixture server embeds the built UI, and the starved run must not spend its time compiling.
       - name: build the UI and the fixture server before the starved run
         run: |

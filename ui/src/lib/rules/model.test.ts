@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { rule } from "#lib/testing/fake-rules.ts";
 import {
+  actorLabel,
   DEFAULT_SORT,
   EXPIRY_OPTIONS,
   NO_FILTER,
@@ -148,5 +149,12 @@ describe("helpers", () => {
     expect(sentence("invalid pattern")).toBe("Invalid pattern.");
     expect(sentence("Already.")).toBe("Already.");
     expect(sentence("  ")).toBe("");
+  });
+});
+
+describe("actorLabel", () => {
+  it("names the create of a workspace in words and leaves the rest as they are", () => {
+    expect(actorLabel("workspace_create")).toBe("the create");
+    expect(actorLabel("ui")).toBe("ui");
   });
 });

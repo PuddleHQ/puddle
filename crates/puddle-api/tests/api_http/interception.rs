@@ -27,19 +27,20 @@ async fn a_workspace_decrypts_only_its_credential_hosts_until_the_switch_is_turn
     assert_eq!(off.status, 200, "{}", off.body);
     assert_eq!(
         off.json(),
-        json!({"workspace": "shop", "decrypt_all": false, "never_decrypt": [], "global_never_decrypt": []})
+        json!({"workspace": "shop", "mode": "inherit", "effective_mode": "known_only", "never_decrypt": [], "global_never_decrypt": []})
     );
 
     let on = api
         .send(
             "PUT",
             "/api/workspaces/shop/interception",
-            Some(&json!({"decrypt_all": true, "never_decrypt": ["Bank.Example.", "*.health.example", "bank.example"]})),
+            Some(&json!({"mode": "all", "never_decrypt": ["Bank.Example.", "*.health.example", "bank.example"]})),
         )
         .await;
     assert_eq!(on.status, 200, "{}", on.body);
     let body: Value = on.json();
-    assert_eq!(body["decrypt_all"], true);
+    assert_eq!(body["mode"], "all");
+    assert_eq!(body["effective_mode"], "all");
     assert_eq!(
         body["never_decrypt"],
         json!(["*.health.example", "bank.example"]),
@@ -54,23 +55,121 @@ async fn a_workspace_decrypts_only_its_credential_hosts_until_the_switch_is_turn
         )
         .await;
     let body: Value = only_names.json();
-    assert_eq!(body["decrypt_all"], true, "an absent field stays as it is");
+    assert_eq!(body["mode"], "all", "an absent field stays as it is");
     assert_eq!(body["never_decrypt"], json!([]));
 
     let only_switch = api
         .send(
             "PUT",
             "/api/workspaces/shop/interception",
-            Some(&json!({"decrypt_all": false})),
+            Some(&json!({"mode": "inherit"})),
         )
         .await;
     let body: Value = only_switch.json();
-    assert_eq!(body["decrypt_all"], false);
+    assert_eq!(body["mode"], "inherit");
+    assert_eq!(body["effective_mode"], "known_only");
     assert_eq!(
         body["never_decrypt"],
         json!([]),
         "the names stay as they are"
     );
+}
+
+#[tokio::test]
+async fn the_global_mode_is_unchosen_known_only_until_set_and_a_workspace_follows_or_overrides_it()
+{
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let fresh = api.send("GET", "/api/interception", None).await;
+    assert_eq!(fresh.status, 200, "{}", fresh.body);
+    let body: Value = fresh.json();
+    assert_eq!(body["mode"], "known_only");
+    assert_eq!(body["chosen"], false);
+    assert_eq!(body["learn_from_rejections"], true);
+    assert_eq!(body["notice_seen"], false);
+
+    let put = api
+        .send(
+            "PUT",
+            "/api/interception",
+            Some(&json!({"mode": "all_except_curated"})),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    let body: Value = put.json();
+    assert_eq!(body["mode"], "all_except_curated");
+    assert_eq!(body["chosen"], true);
+    assert_eq!(body["notice_seen"], true, "choosing answers the notice");
+
+    let follows = api
+        .send("GET", "/api/workspaces/shop/interception", None)
+        .await
+        .json();
+    assert_eq!(follows["mode"], "inherit");
+    assert_eq!(follows["effective_mode"], "all_except_curated");
+
+    let own = api
+        .send(
+            "PUT",
+            "/api/workspaces/shop/interception",
+            Some(&json!({"mode": "known_only"})),
+        )
+        .await
+        .json();
+    assert_eq!(own["mode"], "known_only");
+    assert_eq!(own["effective_mode"], "known_only", "its own mode wins");
+
+    let curated = api
+        .send(
+            "PUT",
+            "/api/workspaces/shop/interception",
+            Some(&json!({"mode": "all_except_curated"})),
+        )
+        .await
+        .json();
+    assert_eq!(curated["mode"], "all_except_curated");
+    assert_eq!(curated["effective_mode"], "all_except_curated");
+    let back = api
+        .send("GET", "/api/workspaces/shop/interception", None)
+        .await
+        .json();
+    assert_eq!(
+        back["mode"], "all_except_curated",
+        "the choice is read back"
+    );
+
+    let seen = api
+        .send(
+            "PUT",
+            "/api/interception",
+            Some(&json!({"notice_seen": false})),
+        )
+        .await
+        .json();
+    assert_eq!(
+        seen["notice_seen"], false,
+        "the notice flag is its own field"
+    );
+    assert_eq!(
+        seen["mode"], "all_except_curated",
+        "and leaves the mode alone"
+    );
+
+    let off = api
+        .send(
+            "PUT",
+            "/api/interception",
+            Some(&json!({"learn_from_rejections": false})),
+        )
+        .await
+        .json();
+    assert_eq!(off["learn_from_rejections"], false);
+    assert_eq!(off["mode"], "all_except_curated", "an absent field stays");
+
+    let bad = api
+        .send("PUT", "/api/interception", Some(&json!({"mode": "most"})))
+        .await;
+    assert_eq!(bad.status, 422, "{}", bad.body);
 }
 
 #[tokio::test]
@@ -82,7 +181,7 @@ async fn a_name_that_cannot_be_decrypted_anyway_is_refused_and_nothing_changes()
             .send(
                 "PUT",
                 "/api/workspaces/shop/interception",
-                Some(&json!({"decrypt_all": true, "never_decrypt": ["ok.example", bad]})),
+                Some(&json!({"mode": "all", "never_decrypt": ["ok.example", bad]})),
             )
             .await;
         assert_eq!(reply.status, 422, "{bad:?}: {}", reply.body);
@@ -92,7 +191,7 @@ async fn a_name_that_cannot_be_decrypted_anyway_is_refused_and_nothing_changes()
         .await;
     assert_eq!(
         after.json(),
-        json!({"workspace": "shop", "decrypt_all": false, "never_decrypt": [], "global_never_decrypt": []})
+        json!({"workspace": "shop", "mode": "inherit", "effective_mode": "known_only", "never_decrypt": [], "global_never_decrypt": []})
     );
     let missing = api
         .send("GET", "/api/workspaces/nope/interception", None)

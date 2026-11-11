@@ -106,11 +106,8 @@ async fn start_agent(dir: &tempfile::TempDir, mut server: EditorServer) -> (Host
             });
         }
     });
-    server.port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    // A quiet port: the editor stand-in binds it after this pick, so a port 0 port given up would be open to a parallel test.
+    server.port = puddle_test_kit::quiet_port();
     std::fs::write(dir.path().join("boot_id"), "this-boot\n").unwrap();
     let config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),

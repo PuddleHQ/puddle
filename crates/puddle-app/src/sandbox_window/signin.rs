@@ -270,9 +270,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_front_that_is_not_there_is_an_error() {
-        let free = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = free.local_addr().unwrap();
-        drop(free);
+        let free = puddle_test_kit::ReservedPort::new();
+        let addr = SocketAddr::from(([127, 0, 0, 1], free.port()));
         let err = sign_in(addr, &workspace(), &fixture::password("unused"))
             .await
             .unwrap_err();

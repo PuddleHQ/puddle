@@ -15,7 +15,11 @@ export interface KeyLike {
 export type KeyAction =
   /** Copy the selection: Ctrl+Shift+C. */
   | "copy"
-  /** Paste: Ctrl+Shift+V and Shift+Insert. The webview's paste event does the work. */
+  /**
+   * Paste: Ctrl+Shift+V everywhere, and Shift+Insert only where the webview raises a paste event
+   * (Windows). WebKitGTK on Linux raises none for Shift+Insert and shows its own paste prompt.
+   * The webview's paste event does the work.
+   */
   | "paste"
   /** F6: focus leaves the terminal for the sub-tab row. */
   | "leave"

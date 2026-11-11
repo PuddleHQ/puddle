@@ -109,8 +109,8 @@ async fn a_token_split_across_chunks_reaches_the_guest_and_the_record_and_one_no
     }
     let events = rig.events(2).await;
     for event in &events {
-        assert_eq!(event.unknown_tokens_in_answer, ["github_token"]);
-        assert!(event.foreign_credentials.is_empty());
+        assert_eq!(event.answer_credentials, ["github_token"]);
+        assert_eq!(event.foreign_credentials, Vec::<String>::new());
     }
     assert_eq!(
         notices(&sink),
@@ -144,7 +144,7 @@ async fn a_token_in_a_header_and_one_in_a_gzip_body_are_found() {
     assert_eq!(response.status, 200);
     assert_eq!(response.header("content-encoding"), Some("gzip"));
     let events = rig.events(1).await;
-    let mut kinds = events[0].unknown_tokens_in_answer.clone();
+    let mut kinds = events[0].answer_credentials.clone();
     kinds.sort();
     assert_eq!(kinds, ["anthropic_key", "npm_token"]);
     assert_no_value(&in_header, &events, &sink);
@@ -177,11 +177,8 @@ async fn a_jwt_next_to_a_refresh_token_field_is_found_and_a_jwt_alone_is_not() {
     assert_eq!(get(&rig).await.status, 200);
     assert_eq!(get(&rig).await.status, 200);
     let events = rig.events(2).await;
-    assert_eq!(
-        events[0].unknown_tokens_in_answer,
-        ["jwt_with_refresh_token"]
-    );
-    assert!(events[1].unknown_tokens_in_answer.is_empty());
+    assert_eq!(events[0].answer_credentials, ["jwt_with_refresh_token"]);
+    assert_eq!(events[1].answer_credentials, Vec::<String>::new());
     assert_no_value(&signed, &events, &sink);
     assert_no_value("opaque-refresh-value", &events, &sink);
 }
@@ -210,8 +207,8 @@ async fn with_the_warning_off_the_answer_still_arrives_and_nothing_is_flagged() 
     on.store(true, Ordering::Relaxed);
     assert_eq!(get(&rig).await.text(), made);
     let events = rig.events(2).await;
-    assert!(events[0].unknown_tokens_in_answer.is_empty());
-    assert_eq!(events[1].unknown_tokens_in_answer, ["gitlab_token"]);
+    assert_eq!(events[0].answer_credentials, Vec::<String>::new());
+    assert_eq!(events[1].answer_credentials, ["gitlab_token"]);
     assert_eq!(notices(&sink).len(), 1);
 }
 
@@ -266,11 +263,8 @@ async fn a_token_puddle_holds_is_never_found_even_where_the_answer_echoes_its_re
     let response = get(&rig).await;
     assert_eq!(response.text(), format!("echo {stand_in} {stranger}"));
     let events = rig.events(2).await;
-    assert!(events[0].unknown_tokens_in_answer.is_empty(), "{events:?}");
-    assert_eq!(
-        events[1].unknown_tokens_in_answer,
-        ["github_fine_grained_token"]
-    );
+    assert_eq!(events[0].answer_credentials, Vec::<String>::new());
+    assert_eq!(events[1].answer_credentials, ["github_fine_grained_token"]);
     assert_no_value(&stranger, &events, &sink);
 }
 
@@ -319,7 +313,7 @@ async fn an_http2_answer_split_across_data_frames_is_read_and_the_record_names_t
     drop(sender);
     client.close().await;
     let events = rig.events(1).await;
-    assert_eq!(events[0].unknown_tokens_in_answer, ["azure_devops_token"]);
+    assert_eq!(events[0].answer_credentials, ["azure_devops_token"]);
     assert_eq!(
         notices(&sink),
         [("bound.test".to_owned(), UnknownTokenKind::AzureDevopsToken)]
@@ -350,6 +344,6 @@ async fn an_answer_that_is_not_text_is_not_read() {
         .build();
     assert_eq!(get(&rig).await.text(), made);
     let events = rig.events(1).await;
-    assert!(events[0].unknown_tokens_in_answer.is_empty());
+    assert_eq!(events[0].answer_credentials, Vec::<String>::new());
     assert_eq!(notices(&sink), []);
 }

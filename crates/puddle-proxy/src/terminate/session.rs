@@ -98,7 +98,7 @@ pub(crate) struct Outcome {
     pub(crate) foreign_credentials: Vec<String>,
     /// The kinds of token the answers held that Puddle does not hold, each once
     /// (`github_token`, ...); empty when the workspace turned the warning off.
-    pub(crate) unknown_tokens_in_answer: Vec<String>,
+    pub(crate) answer_credentials: Vec<String>,
     /// The address first connected to.
     pub(crate) resolved_ip: Option<std::net::IpAddr>,
     /// The company-proxy hop that carried the first connection.
@@ -160,8 +160,8 @@ impl Outcome {
     /// [`scan_answer`]).
     pub(crate) fn record_unknown_tokens(&mut self, report: &AnswerReport) {
         for kind in report.kinds() {
-            if !self.unknown_tokens_in_answer.contains(&kind) {
-                self.unknown_tokens_in_answer.push(kind);
+            if !self.answer_credentials.contains(&kind) {
+                self.answer_credentials.push(kind);
             }
         }
     }
@@ -338,6 +338,7 @@ where
                 upstream,
                 deferred,
                 outcome,
+                unknown_tokens: Arc::new(AnswerReport::of(&cx)),
                 first: true,
             };
             conn.serve().await;
@@ -539,6 +540,8 @@ struct Conn<'a, R, W> {
     /// Why the real server could not be used at the handshake; answered by the first request.
     deferred: Option<Refusal>,
     outcome: Outcome,
+    /// The tokens the answers held that Puddle does not hold; they join the outcome too.
+    unknown_tokens: Arc<AnswerReport>,
     first: bool,
 }
 
@@ -1120,19 +1123,13 @@ where
             config.body_idle_timeout,
         )
         .await;
-        let report = Arc::new(AnswerReport::new(
-            Arc::clone(self.cx.termination.foreign_warning()),
-            Arc::clone(&self.cx.proxy.sink),
-            self.cx.workspace.clone(),
-            self.cx.target.host.clone(),
-        ));
         let written = match scrubbed {
             Ok(response) => {
                 let response = scan_answer(
                     self.cx.termination.stand_ins(),
                     response,
                     parsed.method.eq_ignore_ascii_case("HEAD"),
-                    &report,
+                    &self.unknown_tokens,
                 );
                 self.write_response(response, parsed, &config).await
             }
@@ -1146,7 +1143,7 @@ where
             }
         };
         self.outcome.record_scrubbed(&notes);
-        self.outcome.record_unknown_tokens(&report);
+        self.outcome.record_unknown_tokens(&self.unknown_tokens);
         match written {
             Ok(response::Written::KeepOpen) if body_complete || !has_body => Flow::Continue,
             Ok(_) => {

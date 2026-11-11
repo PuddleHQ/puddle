@@ -10,7 +10,7 @@
 //!
 //! - **Kinds**: a GitHub token with a valid checksum, a fine-grained GitHub token, a GitLab
 //!   token, an npm token with a valid checksum, an 84-character Azure DevOps token (`AZDO` at 76),
-//!   an Anthropic key (`sk-ant-`), an OpenAI project key (`sk-proj-`), and a JSON Web Token in an
+//!   an Anthropic key (`sk-ant-`), an `OpenAI` project key (`sk-proj-`), and a JSON Web Token in an
 //!   answer that also has a `refresh_token` field (a sign-in's answer; a JWT alone is too common
 //!   to say anything).
 //! - **What counts as held**: a run that is the text of a stand-in, or the real value of an
@@ -26,7 +26,7 @@
 
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::task::{Context, Poll};
+use std::task::{Context as TaskContext, Poll};
 
 use ::http::header::{self, HeaderValue};
 use ::http::{Response, StatusCode};
@@ -42,7 +42,7 @@ use super::super::foreign;
 use super::super::leg::BoxError;
 use super::StandIns;
 use super::answer::Decoder;
-use crate::terminate::ForeignCredentialWarning;
+use crate::terminate::{Context, ForeignCredentialWarning};
 
 /// The longest run read as a token: a JSON Web Token is the longest kind, and a longer run is
 /// not one.
@@ -298,7 +298,18 @@ pub(crate) struct AnswerReport {
 }
 
 impl AnswerReport {
-    pub(crate) fn new(
+    /// The report of a connection: its workspace and host, the proxy's sink and the workspace's
+    /// warning.
+    pub(crate) fn of(cx: &Context) -> Self {
+        Self::new(
+            Arc::clone(cx.termination.foreign_warning()),
+            Arc::clone(&cx.proxy.sink),
+            cx.workspace.clone(),
+            cx.target.host.clone(),
+        )
+    }
+
+    fn new(
         warning: Arc<ForeignCredentialWarning>,
         sink: Arc<dyn EventSink>,
         workspace: WorkspaceId,
@@ -365,7 +376,7 @@ impl ScanBody {
             None => Zeroizing::new(data.unwrap_or_default().to_vec()),
             Some(decoder) => {
                 let mut plain = Zeroizing::new(Vec::new());
-                let decoded = decoder
+                let result = decoder
                     .push(data.unwrap_or_default(), &mut plain)
                     .and_then(|()| {
                         if end {
@@ -374,7 +385,7 @@ impl ScanBody {
                             Ok(())
                         }
                     });
-                if decoded.is_err() {
+                if result.is_err() {
                     // Whatever decoded before the fault was read; the rest cannot be.
                     self.done = true;
                 }
@@ -394,7 +405,7 @@ impl Body for ScanBody {
 
     fn poll_frame(
         mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        cx: &mut TaskContext<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = &mut *self;
         let polled = Pin::new(&mut this.inner).poll_frame(cx);
@@ -433,7 +444,7 @@ pub(crate) fn check(bytes: &[u8]) {
     };
     let size = usize::from(first) % 97 + 1;
     // A deterministic stand-in for "Puddle holds this run".
-    let holds = |run: &[u8]| run.len() % 2 == 0;
+    let holds = |run: &[u8]| run.len().is_multiple_of(2);
     let names = |kinds: &[UnknownTokenKind]| {
         let mut names: Vec<&str> = kinds.iter().map(|kind| kind.as_str()).collect();
         names.sort_unstable();

@@ -10523,7 +10523,7 @@
               "unswapped_stand_ins",
               "scrubbed_stand_ins",
               "foreign_credentials",
-              "unknown_tokens_in_answer",
+              "answer_credentials",
               "method",
               "path",
               "path_truncated",
@@ -10533,6 +10533,13 @@
               "type"
             ],
             "properties": {
+              "answer_credentials": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The kinds of token the answers held that Puddle does not hold, each once:\n`github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,\n`azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never\na value. Records written before it existed, and connections of a workspace that turned\nthe warning off, read as empty."
+              },
               "binding_id": {
                 "type": [
                   "string",
@@ -10720,13 +10727,6 @@
                 "enum": [
                   "connection"
                 ]
-              },
-              "unknown_tokens_in_answer": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "The kinds of token the answers held that Puddle does not hold, each once:\n`github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,\n`azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never\na value. Records written before it existed, and connections of a workspace that turned\nthe warning off, read as empty."
               },
               "unswapped_stand_ins": {
                 "type": "array",

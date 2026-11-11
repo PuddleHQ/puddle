@@ -119,7 +119,7 @@ pub struct ConnectionRecord {
     /// `jwt_with_refresh_token`, ...), each once; never a value. Absent in records written before
     /// it existed.
     #[serde(default)]
-    pub unknown_tokens_in_answer: Vec<String>,
+    pub answer_credentials: Vec<String>,
     /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
     pub method: Option<String>,
     /// HTTP path without query string, where `method` is set.
@@ -165,7 +165,7 @@ impl ConnectionRecord {
             unswapped_stand_ins: event.unswapped_stand_ins.clone(),
             scrubbed_stand_ins: event.scrubbed_stand_ins.clone(),
             foreign_credentials: event.foreign_credentials.clone(),
-            unknown_tokens_in_answer: event.unknown_tokens_in_answer.clone(),
+            answer_credentials: event.answer_credentials.clone(),
             method,
             path,
             path_truncated: false,
@@ -220,7 +220,7 @@ impl ConnectionRecord {
             unswapped_stand_ins: Vec::new(),
             scrubbed_stand_ins: Vec::new(),
             foreign_credentials: Vec::new(),
-            unknown_tokens_in_answer: Vec::new(),
+            answer_credentials: Vec::new(),
             method: None,
             path: None,
             path_truncated: false,
@@ -1300,15 +1300,14 @@ mod tests {
             ["github_token"]
         );
         let mut told = event();
-        told.unknown_tokens_in_answer = vec!["jwt_with_refresh_token".to_owned()];
+        told.answer_credentials = vec!["jwt_with_refresh_token".to_owned()];
         assert_eq!(
-            ConnectionRecord::from_event(1, &told).unknown_tokens_in_answer,
+            ConnectionRecord::from_event(1, &told).answer_credentials,
             ["jwt_with_refresh_token"]
         );
-        assert!(
-            ConnectionRecord::from_event(1, &event())
-                .unknown_tokens_in_answer
-                .is_empty()
+        assert_eq!(
+            ConnectionRecord::from_event(1, &event()).answer_credentials,
+            Vec::<String>::new()
         );
     }
 
@@ -1467,7 +1466,7 @@ mod tests {
             "unswapped_stand_ins",
             "scrubbed_stand_ins",
             "foreign_credentials",
-            "unknown_tokens_in_answer",
+            "answer_credentials",
             "refused_address",
             "refused_reason",
             "category",

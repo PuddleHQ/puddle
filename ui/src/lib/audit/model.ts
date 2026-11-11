@@ -517,8 +517,8 @@ function connectionDetail(
   if (record.foreign_credentials.length > 0) {
     parts.push(foreignNote(record.foreign_credentials));
   }
-  if (record.unknown_tokens_in_answer.length > 0) {
-    parts.push(unknownTokenNote(record.unknown_tokens_in_answer));
+  if (record.answer_credentials.length > 0) {
+    parts.push(unknownTokenNote(record.answer_credentials));
   }
   if (record.scrubbed_stand_ins.length > 0) {
     const names = record.scrubbed_stand_ins.map(standInLabel).join(", ");

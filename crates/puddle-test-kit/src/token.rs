@@ -41,7 +41,7 @@ pub enum TokenKind {
     Gitlab,
     /// `sk-ant-api03-`: Anthropic API key, by prefix and length.
     Anthropic,
-    /// `sk-proj-`: OpenAI project key, by prefix and length.
+    /// `sk-proj-`: `OpenAI` project key, by prefix and length.
     OpenaiProject,
     /// The newer Azure DevOps personal access token: 84 base62 characters with `AZDO` at 76.
     /// It has no prefix.

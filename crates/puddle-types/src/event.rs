@@ -503,7 +503,7 @@ pub enum UnknownTokenKind {
     AzureDevopsToken,
     /// An Anthropic API key or sign-in token (`sk-ant-`).
     AnthropicKey,
-    /// An OpenAI project key (`sk-proj-`).
+    /// An `OpenAI` project key (`sk-proj-`).
     OpenaiKey,
     /// A JSON Web Token in an answer that also has a `refresh_token` field.
     JwtWithRefreshToken,

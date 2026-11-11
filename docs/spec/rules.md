@@ -211,7 +211,7 @@ readable as JSONL (one record per line).
   `foreign_credentials` (the kinds of credential a request carried that Puddle did not add or swap:
   `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`, `azure_devops_token`,
   `git_authorization`; each once, never a value; empty in older records and when the warning is off),
-  `unknown_tokens_in_answer` (the kinds of token an answer held that Puddle does not hold, read as the
+  `answer_credentials` (the kinds of token an answer held that Puddle does not hold, read as the
   workspace gets it: `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
   `azure_devops_token`, `anthropic_key`, `openai_key`, `jwt_with_refresh_token`; each once, never a
   value; the same setting turns it off; empty in older records),

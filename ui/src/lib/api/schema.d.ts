@@ -1969,6 +1969,14 @@ export interface components {
          *     fields added since, which read as `null`.
          */
         AuditRecord: {
+            /**
+             * @description The kinds of token the answers held that Puddle does not hold, each once:
+             *     `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
+             *     `azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never
+             *     a value. Records written before it existed, and connections of a workspace that turned
+             *     the warning off, read as empty.
+             */
+            answer_credentials: string[];
             /** @description The credential binding, by id. */
             binding_id: string | null;
             /**
@@ -2068,14 +2076,6 @@ export interface components {
             ts: number;
             /** @enum {string} */
             type: "connection";
-            /**
-             * @description The kinds of token the answers held that Puddle does not hold, each once:
-             *     `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
-             *     `azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never
-             *     a value. Records written before it existed, and connections of a workspace that turned
-             *     the warning off, read as empty.
-             */
-            unknown_tokens_in_answer: string[];
             /**
              * @description The ids (`stand-in:<secret|login>:<name>`) of the secret stand-ins that went out
              *     unchanged, to a host outside their hosts or in the path or query. Records written

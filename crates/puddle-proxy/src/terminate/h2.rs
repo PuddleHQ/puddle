@@ -258,12 +258,7 @@ where
         None => LegState::None,
     };
     let limit_hit: Arc<OnceLock<&'static str>> = Arc::default();
-    let unknown_tokens = Arc::new(AnswerReport::new(
-        Arc::clone(cx.termination.foreign_warning()),
-        Arc::clone(&cx.proxy.sink),
-        cx.workspace.clone(),
-        cx.target.host.clone(),
-    ));
+    let unknown_tokens = Arc::new(AnswerReport::of(&cx));
     let shared = Arc::new(Shared {
         cx,
         leg: Mutex::new(leg),

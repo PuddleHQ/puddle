@@ -510,8 +510,8 @@ async fn a_warning_that_is_off_finds_nothing_to_tell() {
     let made = token(TokenKind::Gitlab, "off");
     let response = answer(None, None, &[], made.into_bytes());
     let _ = passed(scan_answer(&rig.stand_ins, response, false, &rig.report)).await;
-    assert!(rig.report.kinds().is_empty());
-    assert!(rig.sink.events().is_empty());
+    assert_eq!(rig.report.kinds(), Vec::<String>::new());
+    assert_eq!(rig.sink.events(), []);
 }
 
 #[tokio::test]
@@ -533,7 +533,7 @@ async fn a_body_that_cannot_be_decoded_is_passed_and_what_decoded_is_still_read(
     let response = answer(None, Some("gzip"), &[], b"not gzip at all".to_vec());
     let (_, got) = passed(scan_answer(&rig.stand_ins, response, false, &rig.report)).await;
     assert_eq!(got, b"not gzip at all");
-    assert!(rig.report.kinds().is_empty());
+    assert_eq!(rig.report.kinds(), Vec::<String>::new());
     // An encoding Puddle does not read: passed, not read, its headers still are.
     let made = token(TokenKind::OpenaiProject, "enc");
     let response = answer(
@@ -557,7 +557,7 @@ async fn a_body_that_is_not_text_is_not_read_but_its_headers_are() {
         made.clone().into_bytes(),
     );
     let _ = passed(scan_answer(&rig.stand_ins, response, false, &rig.report)).await;
-    assert!(rig.report.kinds().is_empty());
+    assert_eq!(rig.report.kinds(), Vec::<String>::new());
     let response = answer(
         Some("application/octet-stream"),
         None,
@@ -581,7 +581,7 @@ async fn a_head_answer_and_the_statuses_without_a_body_are_not_read() {
             .unwrap();
         let _ = passed(scan_answer(&rig.stand_ins, response, false, &rig.report)).await;
     }
-    assert!(rig.report.kinds().is_empty());
+    assert_eq!(rig.report.kinds(), Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -604,7 +604,7 @@ async fn a_token_the_registry_holds_is_its_own_whether_stand_in_or_real_value() 
     let body = format!("{stand_in} {real}");
     let response = answer(None, None, &[], body.into_bytes());
     let _ = passed(scan_answer(&rig.stand_ins, response, false, &rig.report)).await;
-    assert!(rig.report.kinds().is_empty());
+    assert_eq!(rig.report.kinds(), Vec::<String>::new());
     // A token it does not hold, in the same answer, is found.
     let other = token(TokenKind::GithubPersonal, "other");
     let response = answer(None, None, &[], format!("{stand_in} {other}").into_bytes());

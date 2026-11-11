@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { connect } from "./cdp.mjs";
+import { onChildEnd } from "./child-end.mjs";
 
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
@@ -162,7 +163,7 @@ async function session(n, id, forget, body) {
     process.stderr.write(chunk);
   });
   let exited = false;
-  app.on("exit", () => {
+  onChildEnd(app, () => {
     exited = true;
   });
   const opened = [];

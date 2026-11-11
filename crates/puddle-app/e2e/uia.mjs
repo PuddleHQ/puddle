@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
+import { onChildEnd } from "./child-end.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -28,7 +29,7 @@ export class Uia {
     uia.#lines.on("line", (line) => uia.#pending.shift()?.(line));
     const ready = await new Promise((resolve) => {
       uia.#pending.push(resolve);
-      uia.#child.on("exit", () => resolve(undefined));
+      onChildEnd(uia.#child, () => resolve(undefined));
     });
     if (!ready || !JSON.parse(ready).ready) throw new Error("the UI Automation helper did not start");
     return uia;

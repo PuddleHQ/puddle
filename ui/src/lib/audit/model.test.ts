@@ -341,7 +341,11 @@ describe("a record as a row", () => {
   it("says which kinds of token the answer held that Puddle does not hold, never a value", () => {
     const view = row(
       connection(1, {
-        answer_credentials: ["github_token", "jwt_with_refresh_token", "odd_kind"],
+        answer_credentials: [
+          "github_token",
+          "jwt_with_refresh_token",
+          "odd_kind",
+        ],
       }).record,
     );
     expect(view.detail).toContain(

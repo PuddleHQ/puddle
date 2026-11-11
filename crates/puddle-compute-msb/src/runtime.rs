@@ -331,6 +331,56 @@ pub(crate) fn is_boot_race(error: &MicrosandboxError) -> bool {
         if err.message.contains("before agent relay became available"))
 }
 
+/// The SDK's message when the runtime binary does not answer its own version or capability
+/// query within the SDK's fixed 2 s limit (`runtime/launch_contract.rs`, `bounded_probe`).
+const PROBE_TIMEOUT_MESSAGE: &str = "runtime version probe timed out";
+
+/// Waits between attempts after a probe timeout: four attempts, 35 s of waiting at most.
+const PROBE_RETRY_PAUSES: [Duration; 3] = [
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(20),
+];
+
+/// The SDK starts the runtime binary for a short query before every create and start and gives
+/// it 2 s. A host at load average 20 to 40 can take longer to schedule and page in that
+/// process, and the SDK reports the miss as a failed start. Nothing is wrong with the
+/// sandbox, so the call is repeated.
+pub(crate) fn is_probe_timeout(error: &MicrosandboxError) -> bool {
+    matches!(error, MicrosandboxError::Runtime(message) if message.contains(PROBE_TIMEOUT_MESSAGE))
+}
+
+/// Runs `attempt`, repeating it after each of `pauses` while it fails with a probe timeout and
+/// `untouched` says the failed attempt left nothing behind. Any other result, and the last
+/// timeout, is returned as it is.
+pub(crate) async fn retry_probe_timeouts<T, A, AF, U, UF>(
+    pauses: &[Duration],
+    mut attempt: A,
+    mut untouched: U,
+) -> Result<T, MicrosandboxError>
+where
+    A: FnMut() -> AF,
+    AF: Future<Output = Result<T, MicrosandboxError>>,
+    U: FnMut() -> UF,
+    UF: Future<Output = bool>,
+{
+    let mut result = attempt().await;
+    for pause in pauses {
+        match &result {
+            Err(e) if is_probe_timeout(e) && untouched().await => {
+                tracing::warn!(
+                    ?pause,
+                    "msb's runtime probe timed out (host busy), trying again"
+                );
+                tokio::time::sleep(*pause).await;
+                result = attempt().await;
+            }
+            _ => break,
+        }
+    }
+    result
+}
+
 /// The last `max` bytes of every file in `dir`, each under its name; empty if there are none.
 pub(crate) fn log_tail(dir: &Path, max: usize) -> String {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -438,7 +488,18 @@ impl Runtime for MsbRuntime {
             // Checked again right before msb opens them: a pull can take minutes, and a checkout
             // is a folder the user's own programs may change meanwhile.
             self.check_mounts(&spec)?;
-            match self.sdk(spec::builder(&spec).create()).await {
+            let created = retry_probe_timeouts(
+                &PROBE_RETRY_PAUSES,
+                || self.sdk(spec::builder(&spec).create()),
+                || async {
+                    // A timeout after msb began making the sandbox would make a repeat fail
+                    // with "already exists"; only repeat while nothing of it is there.
+                    matches!(self.record(name.as_str()).await, Ok(None))
+                        && !self.sandbox_dir(name.as_str()).exists()
+                },
+            )
+            .await;
+            match created {
                 Ok(sdk) => self.handle_for(&name, sdk).await,
                 Err(e) => {
                     if is_boot_race(&e) {
@@ -477,7 +538,16 @@ impl Runtime for MsbRuntime {
                     .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
             self.prune_grow_orphans(name.as_str());
-            match self.sdk(Sandbox::start(name.as_str())).await {
+            let started = retry_probe_timeouts(
+                &PROBE_RETRY_PAUSES,
+                || self.sdk(Sandbox::start(name.as_str())),
+                || async {
+                    matches!(self.record(name.as_str()).await, Ok(Some(r))
+                        if status(r.status_snapshot()).is_down())
+                },
+            )
+            .await;
+            match started {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {
                     if is_boot_race(&e) {
@@ -749,6 +819,86 @@ fn dir_names(
 mod tests {
     use super::*;
     use crate::MsbConfig;
+
+    fn probe_timeout() -> MicrosandboxError {
+        MicrosandboxError::Runtime("runtime version probe timed out".into())
+    }
+
+    const NO_WAIT: [Duration; 3] = [Duration::from_millis(1); 3];
+
+    #[tokio::test]
+    async fn a_probe_timeout_is_repeated_until_the_host_answers() {
+        let calls = std::cell::Cell::new(0_u32);
+        let result = retry_probe_timeouts(
+            &NO_WAIT,
+            || {
+                calls.set(calls.get() + 1);
+                let n = calls.get();
+                async move { if n < 3 { Err(probe_timeout()) } else { Ok(n) } }
+            },
+            || async { true },
+        )
+        .await;
+        assert_eq!(result.unwrap(), 3);
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_probe_that_never_answers_stops_after_the_last_pause() {
+        let calls = std::cell::Cell::new(0_u32);
+        let result: Result<(), _> = retry_probe_timeouts(
+            &NO_WAIT,
+            || {
+                calls.set(calls.get() + 1);
+                async { Err(probe_timeout()) }
+            },
+            || async { true },
+        )
+        .await;
+        assert!(is_probe_timeout(&result.unwrap_err()));
+        assert_eq!(calls.get(), 4);
+    }
+
+    #[tokio::test]
+    async fn other_errors_and_touched_state_are_not_repeated() {
+        let calls = std::cell::Cell::new(0_u32);
+        let other: Result<(), _> = retry_probe_timeouts(
+            &NO_WAIT,
+            || {
+                calls.set(calls.get() + 1);
+                async {
+                    Err(MicrosandboxError::Runtime(
+                        "upgrade required: old msb".into(),
+                    ))
+                }
+            },
+            || async { true },
+        )
+        .await;
+        assert!(!is_probe_timeout(&other.unwrap_err()));
+        assert_eq!(calls.get(), 1);
+        let touched: Result<(), _> = retry_probe_timeouts(
+            &NO_WAIT,
+            || {
+                calls.set(calls.get() + 1);
+                async { Err(probe_timeout()) }
+            },
+            || async { false },
+        )
+        .await;
+        assert!(touched.is_err());
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn the_sdks_probe_timeout_wording_is_recognised_inside_its_upgrade_message() {
+        // Wording at v0.7.12 (`launch_contract.rs`, `require_protected_guest_state`).
+        assert!(is_probe_timeout(&MicrosandboxError::Runtime(
+            "upgrade required: selected runtime /x/msb does not advertise protected sandbox \
+             state. Probe failed: runtime error: runtime version probe timed out."
+                .into()
+        )));
+    }
 
     #[test]
     fn only_the_relay_race_counts_as_a_boot_race() {

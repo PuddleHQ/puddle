@@ -103,3 +103,30 @@ fn extra_blocks_in_the_stored_file_do_not_stop_it_being_reused() {
     let again = ensure(dir.path(), &[ip("10.0.0.5")], &[], now).unwrap();
     assert_eq!(first.cert_der(), again.cert_der());
 }
+
+/// Reuse the stored leaf after `tag` has a second, junk block appended to the file.
+fn reuse_after_duplicate(tag: &str) -> (ListenerCert, ListenerCert) {
+    let dir = tempfile::tempdir().unwrap();
+    let now = SystemTime::now();
+    let first = ensure(dir.path(), &[ip("10.0.0.5")], &[], now).unwrap();
+    let file = dir.path().join(FOLDER).join(FILE);
+    let mut body = fs::read_to_string(&file).unwrap();
+    body.push_str(&pem::encode(&pem::Pem::new(tag, vec![1, 2, 3])));
+    puddle_fs::private::write_atomic(&file, body.as_bytes()).unwrap();
+    let again = ensure(dir.path(), &[ip("10.0.0.5")], &[], now).unwrap();
+    (first, again)
+}
+
+#[test]
+fn a_second_certificate_block_does_not_replace_the_first() {
+    let (first, again) = reuse_after_duplicate("CERTIFICATE");
+    assert_eq!(first.cert_der(), again.cert_der());
+    assert_eq!(first.key().pkcs8_der(), again.key().pkcs8_der());
+}
+
+#[test]
+fn a_second_private_key_block_does_not_replace_the_first() {
+    let (first, again) = reuse_after_duplicate("PRIVATE KEY");
+    assert_eq!(first.cert_der(), again.cert_der());
+    assert_eq!(first.key().pkcs8_der(), again.key().pkcs8_der());
+}

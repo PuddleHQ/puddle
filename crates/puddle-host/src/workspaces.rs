@@ -313,7 +313,10 @@ struct Inner<R: Runtime + Clone> {
     space: Arc<dyn crate::Space>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceId, Live<R>>>,
-    tasks: tokio::sync::Mutex<JoinSet<()>>,
+    /// The tasks the service owns: operations, maintenance checks and downloads. A plain mutex,
+    /// so a request never awaits between marking a workspace busy and spawning the task that
+    /// clears the mark.
+    tasks: Mutex<JoinSet<()>>,
     running: watch::Sender<usize>,
     /// Whether the image the delete check boots is in the cache; see [`HostWorkspaces::maintenance_ready`].
     maintenance_image: watch::Sender<Warmth>,
@@ -491,22 +494,33 @@ async fn wait_until_downloaded(
     }
 }
 
-/// Clears the busy mark a delete put on a workspace unless it is disarmed, so a request that is
-/// dropped before its work starts (the API's request limit, a closed connection) does not leave
-/// the workspace "deleting" for good.
-struct DeleteMark<'a, R: Runtime + Clone> {
-    service: &'a HostWorkspaces<R>,
-    id: &'a WorkspaceId,
+/// The busy mark an accepted operation put on its workspace. [`HostWorkspaces::run`] takes it
+/// and hands the mark to the task that does the work. Dropped before that (the API dropped the
+/// request at its time limit or for a closed connection, or the request gave up with an error),
+/// it takes the mark off and puts the workspace back as it was, so no workspace stays busy for
+/// an operation that never ran.
+#[must_use = "dropping the ticket takes the busy mark off again"]
+struct Ticket<R: Runtime + Clone> {
+    service: HostWorkspaces<R>,
+    record: WorkspaceRecord,
+    op: Operation,
+    /// The workspace's status before the operation changed it.
+    before: WorkspaceStatus,
+    /// Cleared once `run` has spawned the work.
     armed: bool,
 }
 
-impl<R: Runtime + Clone> Drop for DeleteMark<'_, R> {
+impl<R: Runtime + Clone> Ticket<R> {
+    /// The workspace as the operation found it, with the busy mark on.
+    fn record(&self) -> &WorkspaceRecord {
+        &self.record
+    }
+}
+
+impl<R: Runtime + Clone> Drop for Ticket<R> {
     fn drop(&mut self) {
-        if self.armed
-            && let Some(slot) = self.service.state().slots.get_mut(self.id)
-        {
-            slot.record.busy = None;
-            slot.deleting = false;
+        if self.armed {
+            self.service.withdraw(&self.record.id, self.op, self.before);
         }
     }
 }
@@ -687,7 +701,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     closed: false,
                 }),
                 live: tokio::sync::Mutex::new(BTreeMap::new()),
-                tasks: tokio::sync::Mutex::new(JoinSet::new()),
+                tasks: Mutex::new(JoinSet::new()),
                 running: watch::channel(0).0,
                 maintenance_image: watch::channel(Warmth::Cold).0,
                 shell_init_changed_inside: Mutex::new(BTreeSet::new()),
@@ -820,7 +834,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         let ended = *self.inner.running.borrow();
         tracing::warn!(ended, "shutdown: ending workspace operations still running");
-        let mut tasks = self.inner.tasks.lock().await;
+        let mut tasks = std::mem::take(&mut *self.tasks());
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         ended
@@ -923,7 +937,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         op: Operation,
         check: impl FnOnce(&WorkspaceRecord) -> Result<(), WorkspaceError>,
         enter: impl FnOnce(&mut WorkspaceRecord),
-    ) -> Result<WorkspaceRecord, WorkspaceError> {
+    ) -> Result<Ticket<R>, WorkspaceError> {
         let mut state = self.state();
         if state.closed {
             return Err(WorkspaceError::Unavailable(
@@ -938,27 +952,102 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             )));
         }
         check(&slot.record)?;
+        let before = slot.record.status;
         slot.record.busy = Some(op);
         enter(&mut slot.record);
-        Ok(slot.record.clone())
+        Ok(self.ticket(slot.record.clone(), op, before))
     }
 
-    /// Runs `work` on a task the service owns and settles the workspace when it ends.
-    async fn run<F>(&self, record: &WorkspaceRecord, op: Operation, work: F)
+    /// The ticket of an operation that has just marked `record` busy; `before` is its status
+    /// from before the operation.
+    fn ticket(&self, record: WorkspaceRecord, op: Operation, before: WorkspaceStatus) -> Ticket<R> {
+        Ticket {
+            service: self.clone(),
+            record,
+            op,
+            before,
+            armed: true,
+        }
+    }
+
+    /// Takes off the busy mark of an operation that never started its work, and puts the
+    /// workspace back as it was. A create that never started leaves nothing to keep: its entry
+    /// goes and its id is retired, like a failed create's.
+    fn withdraw(&self, id: &WorkspaceId, op: Operation, before: WorkspaceStatus) {
+        let mut state = self.state();
+        let Some(slot) = state.slots.get_mut(id) else {
+            return;
+        };
+        if op == Operation::Creating {
+            state.slots.remove(id);
+            state.retired.insert(id.clone());
+            if let Err(e) = self.persist(&state) {
+                // Harmless: the saved entry says "being created", so the next start drops it.
+                tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after a create was dropped");
+            }
+            return;
+        }
+        slot.record.busy = None;
+        slot.deleting = false;
+        slot.delete_note = None;
+        slot.record.status = before;
+        let record = slot.record.clone();
+        drop(state);
+        tracing::info!(workspace = %id, %op, "a request was dropped before its work began");
+        // The mark is off: say so, as the end of an operation does.
+        self.status_event(&record);
+    }
+
+    fn tasks(&self) -> MutexGuard<'_, JoinSet<()>> {
+        self.inner
+            .tasks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Spawns `work` on a task the service owns: it runs to its end whatever becomes of the
+    /// request that started it, unless shutdown ends it.
+    fn spawn(&self, work: impl Future<Output = ()> + Send + 'static) {
+        let mut tasks = self.tasks();
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn(work);
+    }
+
+    /// Runs `job` on a task the service owns and returns what it returns. A caller dropped while
+    /// it waits leaves the job to finish: a maintenance sandbox the job booted is stopped and
+    /// removed, and its hold on the volume given back, only once the job has done so. Shutdown
+    /// waits for the job like for an operation.
+    async fn on_own_task<T: Send + 'static>(
+        &self,
+        job: impl Future<Output = T> + Send + 'static,
+    ) -> Result<T, WorkspaceError> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let running = Running::new(&self.inner.running);
+        self.spawn(async move {
+            let _running = running;
+            // Nobody waits any more when the request was dropped: the outcome goes with it.
+            let _ = tx.send(job.await);
+        });
+        rx.await
+            .map_err(|_| WorkspaceError::Unavailable("Puddle is shutting down".to_owned()))
+    }
+
+    /// Runs `work` on a task the service owns and settles the workspace when it ends. The task
+    /// takes over the busy mark of `ticket`; nothing awaits between the two.
+    fn run<F>(&self, mut ticket: Ticket<R>, work: F)
     where
         F: Future<Output = Result<(), String>> + Send + 'static,
     {
         let this = self.clone();
-        let id = record.id.clone();
+        let (id, op) = (ticket.record.id.clone(), ticket.op);
         let running = Running::new(&self.inner.running);
-        let mut tasks = self.inner.tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
-        tasks.spawn(async move {
+        self.spawn(async move {
             let _running = running;
             let result = work.await;
             this.refresh_disk_use().await;
             this.conclude(&id, op, result);
         });
+        ticket.armed = false;
     }
 
     /// Reads what every workspace's volume and root disk take on the host into the records, so
@@ -1216,7 +1305,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Starts pulling the image the delete check boots on a task the service owns, unless it is
     /// cached or a pull runs. The check can't go ahead without it, and the first pull of an image
     /// that isn't the workspace's own takes minutes, longer than a request may.
-    pub(crate) async fn warm_maintenance_image(&self) {
+    pub(crate) fn warm_maintenance_image(&self) {
         let start = self.inner.maintenance_image.send_if_modified(|w| {
             let idle = matches!(w, Warmth::Cold | Warmth::Failed);
             if idle {
@@ -1228,9 +1317,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             return;
         }
         let this = self.clone();
-        let mut tasks = self.inner.tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
-        tasks.spawn(async move {
+        self.spawn(async move {
             let image = this.inner.workspaces.config().maintenance_image.clone();
             let next = match this.inner.runtime.pull_image(&image).await {
                 Ok(_) => Warmth::Ready,
@@ -1245,10 +1332,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// [`HostWorkspaces::warm_maintenance_image`] when the service starts with workspaces
     /// listed: one of them may be deleted at once.
-    pub(crate) async fn warm_maintenance_image_for_listed(&self) {
+    pub(crate) fn warm_maintenance_image_for_listed(&self) {
         let listed = !self.state().slots.is_empty();
         if listed {
-            self.warm_maintenance_image().await;
+            self.warm_maintenance_image();
         }
     }
 
@@ -1256,7 +1343,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// cache, starting the download when nothing has. A request that cannot wait that long gets
     /// an answer that says what is going on; the download goes on without it.
     async fn maintenance_ready(&self) -> Result<(), WorkspaceError> {
-        self.warm_maintenance_image().await;
+        self.warm_maintenance_image();
         wait_until_downloaded(
             &mut self.inner.maintenance_image.subscribe(),
             MAINTENANCE_WAIT,
@@ -2778,7 +2865,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let reason = format!("{e}; the new workspace was removed again; {SAVE_HINT}");
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
-        self.refresh_checkouts_later(&record.id).await;
+        self.refresh_checkouts_later(&record.id);
         Ok(())
     }
 
@@ -3175,7 +3262,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, false, false, reason).await);
         }
-        self.refresh_checkouts_later(&record.id).await;
+        self.refresh_checkouts_later(&record.id);
         Ok(())
     }
 
@@ -3599,7 +3686,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     ))
                 })?,
             };
-            let record = {
+            let ticket = {
                 let mut state = self.state();
                 if state.closed {
                     return Err(WorkspaceError::Unavailable(
@@ -3641,8 +3728,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 state
                     .slots
                     .insert(id.clone(), Slot::new(record.clone(), true));
-                record
+                self.ticket(record, Operation::Creating, WorkspaceStatus::Stopped)
             };
+            let record = ticket.record().clone();
             let id = record.id.clone();
             // A second guard: a drawn id is never one with browser data left (`id_taken`), so
             // this finds nothing unless a window wrote some since. Reserved first, so no other
@@ -3674,10 +3762,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 .collect();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::Creating, async move {
-                this.create_work(work, imports).await
-            })
-            .await;
+            self.run(ticket, async move { this.create_work(work, imports).await });
             Ok(record)
         })
     }
@@ -3687,7 +3772,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::Starting,
                 |r| {
@@ -3702,13 +3787,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |r| r.status = WorkspaceStatus::Starting,
             )?;
+            let record = ticket.record().clone();
             self.status_event(&record);
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::Starting, async move {
-                this.start_work(work).await
-            })
-            .await;
+            self.run(ticket, async move { this.start_work(work).await });
             Ok(record)
         })
     }
@@ -3718,7 +3801,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::Stopping,
                 |r| {
@@ -3733,17 +3816,17 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |r| r.status = WorkspaceStatus::Draining,
             )?;
-            self.inner.reports.pause(&record.id);
+            let record = ticket.record().clone();
             self.status_event(&record);
             // A stopped workspace is the one a user deletes next: have the delete check's image
             // ready by then.
-            self.warm_maintenance_image().await;
+            self.warm_maintenance_image();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::Stopping, async move {
+            self.run(ticket, async move {
+                this.inner.reports.pause(&work.id);
                 this.stop_work(work).await
-            })
-            .await;
+            });
             Ok(record)
         })
     }
@@ -3753,7 +3836,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::Reclaiming,
                 |r| {
@@ -3771,9 +3854,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
+            let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::Reclaiming, async move {
+            self.run(ticket, async move {
                 this.progress(&work.id, WorkspaceStep::Reclaiming, None);
                 this.inner
                     .workspaces
@@ -3781,8 +3865,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     .await
                     .map(|_| ())
                     .map_err(|e| e.to_string())
-            })
-            .await;
+            });
             Ok(record)
         })
     }
@@ -3792,7 +3875,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::ResettingRootDisk,
                 |r| {
@@ -3807,13 +3890,13 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
+            let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::ResettingRootDisk, async move {
+            self.run(ticket, async move {
                 this.progress(&work.id, WorkspaceStep::ResettingRootDisk, None);
                 this.reset_root_disk_work(&work.id).await
-            })
-            .await;
+            });
             Ok(record)
         })
     }
@@ -3855,7 +3938,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     added / (1024 * 1024 * 1024)
                 )));
             }
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::GrowingRootDisk,
                 |r| {
@@ -3873,12 +3956,12 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
+            let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::GrowingRootDisk, async move {
+            self.run(ticket, async move {
                 this.grow_root_disk_work(work, current, size, room).await
-            })
-            .await;
+            });
             Ok(record)
         })
     }
@@ -3892,11 +3975,15 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 return Err(not_found(id));
             }
             self.maintenance_ready().await?;
+            let (this, target) = (self.clone(), id.clone());
             let report = self
-                .inner
-                .workspaces
-                .check_delete(&self.inner.runtime, id)
-                .await
+                .on_own_task(async move {
+                    this.inner
+                        .workspaces
+                        .check_delete(&this.inner.runtime, &target)
+                        .await
+                })
+                .await?
                 .map_err(|e| workspace_error(&e))?;
             Ok(delete_check(&report))
         })
@@ -3908,7 +3995,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         fingerprint: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::Deleting,
                 |r| {
@@ -3923,18 +4010,22 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
-            let mut mark = DeleteMark {
-                service: self,
-                id,
-                armed: true,
-            };
+            let record = ticket.record().clone();
             // The check runs before the call returns, so a refusal reaches the caller.
             self.maintenance_ready().await?;
-            let checked = self
-                .inner
-                .workspaces
-                .check_delete(&self.inner.runtime, id)
-                .await;
+            // The ticket goes with the check: a request dropped while it runs leaves the
+            // workspace busy until the check's sandbox is gone.
+            let (this, target) = (self.clone(), id.clone());
+            let (ticket, checked) = self
+                .on_own_task(async move {
+                    let checked = this
+                        .inner
+                        .workspaces
+                        .check_delete(&this.inner.runtime, &target)
+                        .await;
+                    (ticket, checked)
+                })
+                .await?;
             let verdict = match checked {
                 Err(e) => Err(workspace_error(&e)),
                 Ok(report) => {
@@ -3979,11 +4070,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             };
             let this = self.clone();
             let work = record.clone();
-            mark.armed = false;
-            self.run(&record, Operation::Deleting, async move {
-                this.delete_work(work, report).await
-            })
-            .await;
+            self.run(ticket, async move { this.delete_work(work, report).await });
             Ok(record)
         })
     }

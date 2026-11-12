@@ -108,18 +108,17 @@ async fn ready_for(
         Some(id) => service.get(id).await.ok(),
         None => None,
     };
-    let record = match kept {
-        Some(record) => record,
-        None => {
-            *made += 1;
-            let name = DisplayName::parse(&format!("dropped-{made}")).unwrap();
-            let record = service
-                .create(NewWorkspace::new(name, Vec::new()), &GitThatWaits)
-                .await
-                .unwrap();
-            settled(host, rig, "the create ends").await;
-            service.get(&record.id).await.unwrap()
-        }
+    let record = if let Some(record) = kept {
+        record
+    } else {
+        *made += 1;
+        let name = DisplayName::parse(&format!("dropped-{made}")).unwrap();
+        let record = service
+            .create(NewWorkspace::new(name, Vec::new()), &GitThatWaits)
+            .await
+            .unwrap();
+        settled(host, rig, "the create ends").await;
+        service.get(&record.id).await.unwrap()
     };
     let id = record.id.clone();
     *current = Some(id.clone());

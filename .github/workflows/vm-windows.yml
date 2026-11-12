@@ -485,7 +485,6 @@ jobs:
   trace:
     name: msb trace (research)
     needs: [build, agent]
-    if: ${{ needs.build.outputs.run == 'true' }}
     if: false
     runs-on: windows-2025
     timeout-minutes: 60

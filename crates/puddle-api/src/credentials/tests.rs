@@ -6,7 +6,11 @@ use crate::error::ApiError;
 
 #[test]
 fn a_sign_in_that_could_not_start_says_what_happened_and_what_to_try() {
-    let said = |err| sign_in_error(err).to_string();
+    let gh = SourceSpec::Gh {
+        host: puddle_secrets::HostName::new("github.com").unwrap(),
+        account: puddle_secrets::AccountName::new("octo").unwrap(),
+    };
+    let said = |err| sign_in_error(&gh, err).to_string();
     assert_eq!(
         said(SignInError::NoPrompt(
             Tool::Gh,
@@ -23,6 +27,31 @@ fn a_sign_in_that_could_not_start_says_what_happened_and_what_to_try() {
         "gh is not installed or not on PATH"
     );
     assert!(said(SignInError::NothingToSignIn).starts_with("a pasted token has nothing"));
+}
+
+#[test]
+fn no_sign_in_starts_for_the_azure_cli_and_the_answer_names_the_terminal_step() {
+    let az = SourceSpec::AzCli {
+        tenant: puddle_secrets::TenantId::new("contoso.onmicrosoft.com").unwrap(),
+        org: None,
+    };
+    assert_eq!(
+        sign_in_error(&az, SignInError::NothingToSignIn).to_string(),
+        "Puddle does not sign in to the Azure CLI; run `az login --tenant contoso.onmicrosoft.com` in a terminal"
+    );
+}
+
+#[tokio::test]
+async fn the_fake_starts_no_sign_in_for_the_azure_cli() {
+    let fake = FakeCredentials::new();
+    let az = SourceSpec::AzCli {
+        tenant: puddle_secrets::TenantId::new("contoso.onmicrosoft.com").unwrap(),
+        org: None,
+    };
+    assert!(matches!(
+        fake.sign_in(az).await,
+        Err(CredentialsError::Invalid(_))
+    ));
 }
 
 #[tokio::test]

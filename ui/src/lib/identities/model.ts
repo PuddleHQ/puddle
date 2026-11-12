@@ -33,6 +33,10 @@ export function describeSource(source: Source): string {
         : `Git credential for https://${source.host}/${source.path} (account ${source.username})`;
     case "stored":
       return `stored token ${source.id} for ${source.host}`;
+    case "az_cli":
+      return source.org === null
+        ? `Azure CLI account in tenant ${source.tenant}`
+        : `Azure CLI account in tenant ${source.tenant} for ${source.org}`;
   }
 }
 
@@ -47,6 +51,8 @@ export function sourceLabel(source: Source): string {
       return source.org === null
         ? "Pasted token"
         : `Pasted token · ${source.org}`;
+    case "az_cli":
+      return `Azure CLI · ${source.tenant}`;
   }
 }
 
@@ -74,9 +80,76 @@ export type Check =
   | { state: "untested" }
   | { state: "checking" }
   | { state: "ok"; seen?: Seen }
-  | { state: "problem"; message: string; needsSignIn: boolean; seen?: Seen };
+  | {
+      state: "problem";
+      message: string;
+      needsSignIn: boolean;
+      /** The exact step the user takes, when the host names one (the Azure CLI has no sign-in button). */
+      fixStep?: string;
+      seen?: Seen;
+    };
 
 export const UNTESTED: Check = { state: "untested" };
+
+/** The host Azure CLI tokens are for; the credential is added for it and nothing else. */
+export const AZURE_HOST = "dev.azure.com";
+
+/** What a user types in a terminal to sign in to the Azure CLI for a tenant. */
+export function azLoginCommand(tenant: string): string {
+  return `az login --tenant ${tenant}`;
+}
+
+/**
+ * What a workspace's failed read of a credential means for the user: a source Puddle can start a
+ * sign-in for shows the button; the Azure CLI shows the step to take in a terminal instead.
+ */
+export function signedOutCheck(source: Source): Check {
+  if (source.kind === "az_cli") {
+    return {
+      state: "problem",
+      message: "A workspace asked for it and Puddle couldn't read it.",
+      needsSignIn: false,
+      fixStep: `Run \`${azLoginCommand(source.tenant)}\` in a terminal and finish the sign-in.`,
+    };
+  }
+  return {
+    state: "problem",
+    message: "A workspace asked for it and Puddle couldn't read it.",
+    needsSignIn: true,
+  };
+}
+
+/** Whether Puddle can start a sign-in for a source: not for a pasted token, not for the Azure CLI. */
+export function canSignIn(source: Source): boolean {
+  return source.kind !== "stored" && source.kind !== "az_cli";
+}
+
+/** The Azure CLI note every `az_cli` credential carries: what Puddle does and what the user does. */
+export function azNote(source: Extract<Source, { kind: "az_cli" }>): string {
+  return `Puddle reads the token from the Azure CLI and does not sign in for you. Install \`az\`, then run \`${azLoginCommand(source.tenant)}\` in a terminal.`;
+}
+
+const TENANT = /^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)*$/;
+
+/** The reason a tenant can't be used (a directory id or a domain), or `null`. */
+export function tenantProblem(tenant: string): string | null {
+  const text = tenant.trim();
+  if (text === "")
+    return "Enter the Microsoft Entra tenant: its id or a domain such as contoso.onmicrosoft.com.";
+  if (text.length > 256 || !TENANT.test(text))
+    return "A tenant is letters, digits, dots and hyphens, for example contoso.onmicrosoft.com.";
+  return null;
+}
+
+/** The source that reads the Azure CLI's token for a tenant and, optionally, an organisation. */
+export function azSource(tenant: string, org: string): Source {
+  const named = org.trim();
+  return {
+    kind: "az_cli",
+    tenant: tenant.trim(),
+    org: named === "" ? null : named,
+  };
+}
 
 /** The key a credential's check is kept under. */
 export function credentialKey(credential: CredentialDraft): string {
@@ -90,6 +163,7 @@ export function checkOf(result: CheckResult): Check {
         state: "problem",
         message: result.problem ?? "Puddle can't read it",
         needsSignIn: result.needs_sign_in,
+        ...(result.fix_step === null ? {} : { fixStep: result.fix_step }),
       };
 }
 
@@ -103,6 +177,7 @@ export function checkFromLast(last: LastCheck | null): Check {
         state: "problem",
         message: last.problem ?? "Puddle can't read it",
         needsSignIn: last.needs_sign_in,
+        ...(last.fix_step === null ? {} : { fixStep: last.fix_step }),
         seen,
       };
 }

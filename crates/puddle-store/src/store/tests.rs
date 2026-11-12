@@ -395,3 +395,33 @@ fn timestamp_helpers_saturate() {
     assert_eq!(plus(u64::MAX - 1, Duration::from_secs(1)), u64::MAX);
     assert!(stored_ts("rules", 1, -1).is_err());
 }
+
+#[test]
+fn peeking_as_a_user_answers_from_that_users_rules_only() {
+    let (_, store) = store();
+    let ana = store
+        .add_user(&crate::UserName::new("ana").unwrap())
+        .unwrap();
+    let host = Host::parse_normalised("api.example.com").unwrap();
+    let elsewhere = Host::parse_normalised("other.example.com").unwrap();
+    let workspace = WorkspaceId::new("not-made-yet").unwrap();
+    let rule = store
+        .add_rule_as(
+            ana.id,
+            &NewRule {
+                scope: Scope::Global,
+                pattern: Pattern::Exact(host.clone()),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Ui,
+            },
+        )
+        .unwrap();
+
+    match store.peek_as(ana.id, &workspace, &host) {
+        Some(Decision::Allow { rule_id, .. }) => assert_eq!(rule_id, rule.id),
+        other => panic!("expected the user's allow rule, got {other:?}"),
+    }
+    assert_eq!(store.peek_as(ana.id, &workspace, &elsewhere), None);
+    assert_eq!(store.peek_as(UserId::OWNER, &workspace, &host), None);
+}

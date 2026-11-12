@@ -30,7 +30,7 @@ use puddle_host::Host;
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope, StartValue};
 use puddle_types::WorkspaceId;
 use serde_json::json;
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, guest_within, start_vm_host_platform, web_internet};
 
 const NPM: &str = "npm.feeds.invalid";
@@ -240,7 +240,7 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
             responder: Some(private_feeds(NPM, NUGET, PIP, MAVEN, REAL)),
             ..WebOptions::default()
         },
-        hermetic_options(),
+        named_id_options(),
     )
     .await;
     let vm = start_vm_host_platform("feed", net.options, &net.platform, |_| {}).await;

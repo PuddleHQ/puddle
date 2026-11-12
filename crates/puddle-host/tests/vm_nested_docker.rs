@@ -22,7 +22,7 @@ use puddle_e2e::lab::WebOptions;
 use puddle_test_kit::eventually_async;
 use puddle_types::WorkspaceId;
 use serde_json::json;
-use support::{Api, hermetic_options};
+use support::{Api, named_id_options};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use vm_support::{
     PROBE_IMAGE, VmHost, allowed_connections, as_agent, container_fetch, create_workspace_from,
@@ -103,7 +103,7 @@ async fn get_through_forward(port: u16) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_nested_docker_build_publish_bridge_and_compose_work_through_the_proxy() {
     let sites = [BUILD_SITE, COMPOSE_SITE];
-    let net = web_internet(&sites, WebOptions::default(), hermetic_options()).await;
+    let net = web_internet(&sites, WebOptions::default(), named_id_options()).await;
     let vm = start_vm_host_platform("nested", net.options.clone(), &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let workspace = create_workspace_from(

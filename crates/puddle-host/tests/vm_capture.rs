@@ -40,7 +40,7 @@ use puddle_store::{Actor, Resolution};
 use puddle_test_kit::{eventually, eventually_async};
 use puddle_types::WorkspaceId;
 use serde_json::json;
-use support::{Api, hermetic_options};
+use support::{Api, named_id_options};
 use vm_support::{
     PROBE_IMAGE, VmHost, WebInternet, allowed_connections, as_agent, container_fetch,
     create_workspace_from, field, guest, guest_as, guest_live, reached_by_host, start_vm_host,
@@ -107,7 +107,7 @@ async fn wait_for_row(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses_the_rest_at_once()
 {
-    let net = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let net = web_internet(&[SITE], WebOptions::default(), named_id_options()).await;
     // The address nothing allows at first is answered by the same site once a rule lets it through.
     net.proxy.route("1.1.1.1:443", net.web.tls_addr());
     let vm = start_vm_host_platform("capt", net.options, &net.platform, |_| {}).await;
@@ -273,7 +273,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
 /// through (the VM has no route of its own), and the agent puts the rules back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_survives_a_root_that_deletes_the_rules() {
-    let net = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let net = web_internet(&[SITE], WebOptions::default(), named_id_options()).await;
     let vm = start_vm_host_platform("flush", net.options, &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let workspace = create_workspace(
@@ -412,7 +412,7 @@ async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
             responder: Some(pip_index(INDEX, PROJECT)),
             ..WebOptions::default()
         },
-        hermetic_options(),
+        named_id_options(),
     )
     .await;
     let vm = start_vm_host_platform("pyth", net.options, &net.platform, |_| {}).await;
@@ -699,7 +699,7 @@ async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceId, p
 /// bridge get to a site only through a rule, and the session user works through `sudo`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_coexists_with_a_real_dockerd_in_both_start_orders() {
-    let net = web_internet(&DOCKER_SITES, WebOptions::default(), hermetic_options()).await;
+    let net = web_internet(&DOCKER_SITES, WebOptions::default(), named_id_options()).await;
     let vm = start_vm_host_platform("dock", net.options.clone(), &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let workspace = create_workspace_from(

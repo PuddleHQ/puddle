@@ -230,9 +230,20 @@ fn rule_sets_and_switches_are_one_users() {
     assert!(!allows(&store, "mine", "set.example"));
     // The owner switching a built-in set on for every workspace changes only the owner's.
     let github = RuleSetId::BuiltIn("github");
-    store
+    let waiting = |workspace: &str| match decide(&store, workspace, "github.com") {
+        Decision::Pending(PendingOutcome::New(id)) => id,
+        other => unreachable!("{other:?}"),
+    };
+    let (owners_request, anns_request) = (waiting("mine"), waiting("anns"));
+    let closed = store
         .switch_rule_set(UserId::OWNER, github, None, Some(true), Actor::Api)
         .unwrap();
+    // Only the owner's request is closed, and only it is reported.
+    assert_eq!(closed, vec![owners_request]);
+    assert_eq!(
+        store.pending(anns_request).unwrap().state,
+        puddle_store::PendingState::Requested
+    );
     assert!(allows(&store, "mine", "github.com"));
     assert!(!allows(&store, "anns", "github.com"));
     let github_for = |user| store.rule_set(user, github).unwrap().global;

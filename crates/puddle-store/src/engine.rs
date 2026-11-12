@@ -355,10 +355,8 @@ impl RuleIndex {
                             Hit::Rule(rule)
                         }
                         scope => {
-                            let applies = match scope.workspace() {
-                                Some(s) => s == workspace,
-                                None => rule.user == user,
-                            };
+                            let applies = rule.user == user
+                                && scope.workspace().is_none_or(|s| s == workspace);
                             let dropped = ignore
                                 && rule.effect == Effect::Allow
                                 && matches!(rule.pattern, Pattern::Suffix(_));

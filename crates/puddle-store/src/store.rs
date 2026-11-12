@@ -1411,9 +1411,9 @@ fn append_by(
 
 /// For each user with records appended after `head`, their newest record's id.
 fn appended_since(conn: &Connection, head: i64) -> Result<Vec<(UserId, i64)>, StoreError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT user_id, max(id) FROM audit WHERE id > ?1 GROUP BY user_id ORDER BY max(id)",
-    )?;
+    const NEWEST_PER_USER: &str =
+        "SELECT user_id, max(id) FROM audit WHERE id > ?1 GROUP BY user_id ORDER BY max(id)";
+    let mut stmt = conn.prepare_cached(NEWEST_PER_USER)?;
     let rows = stmt.query_map([head], |row| {
         Ok((UserId::from_stored(row.get(0)?), row.get(1)?))
     })?;

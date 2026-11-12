@@ -395,11 +395,13 @@ fn checked_names(
     Ok((name.to_owned(), description.to_owned()))
 }
 
-/// Closes the open rows (in `workspace`, or in any workspace) that `index` now decides, the way it
-/// decides them (R-37: like a new rule, R-16). Returns the rows it closed.
+/// Closes the open rows (in `workspace`, or in any workspace of `user`, or of anyone when `None`)
+/// that `index` now decides, the way it decides them (R-37: like a new rule, R-16). Returns the
+/// rows it closed.
 fn close_rows_now_decided(
     tx: &Transaction<'_>,
     index: &RuleIndex,
+    user: Option<UserId>,
     workspace: Option<&WorkspaceId>,
     actor: Actor,
     now: u64,
@@ -416,6 +418,9 @@ fn close_rows_now_decided(
     drop(stmt);
     let mut closed = Vec::new();
     for row in &open {
+        if user.is_some_and(|user| index.owner_of(&row.workspace) != user) {
+            continue;
+        }
         let Some(hit) = index.decide(&row.workspace, &row.host, now, SuffixAllows::Count) else {
             continue;
         };
@@ -691,7 +696,7 @@ impl Store {
             };
             append_for(tx, &record, user)?;
             let index = load_index(tx)?;
-            let closed = close_rows_now_decided(tx, &index, workspace, actor, now, fx)?;
+            let closed = close_rows_now_decided(tx, &index, Some(user), workspace, actor, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(closed)
         })?;
@@ -779,7 +784,7 @@ impl Store {
                 append(tx, &record)?;
             }
             let index = load_index(tx)?;
-            let closed = close_rows_now_decided(tx, &index, None, Actor::System, now, fx)?;
+            let closed = close_rows_now_decided(tx, &index, None, None, Actor::System, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(closed)
         })?;

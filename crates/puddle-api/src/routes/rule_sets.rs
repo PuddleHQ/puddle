@@ -72,7 +72,8 @@ pub(crate) async fn list_rule_sets(
     let owners = authz::owners(&state).await?;
     let list = blocking(move || {
         let sets = state.store.rule_sets(principal.user)?;
-        // The hosts allowed for every workspace, and for the principal's own.
+        // The hosts allowed for every workspace (the install's own choices, which decide the
+        // principal's requests too, so they may see them), and for the principal's own.
         let system = state
             .store
             .system_managed()?

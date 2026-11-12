@@ -90,12 +90,8 @@ fn list(conn: &Connection, user: UserId, scope: &EnvScope) -> Result<Vec<EnvEntr
         "SELECT {COLUMNS} FROM env_vars WHERE {IN_SCOPE} ORDER BY name"
     ))?;
     // `?2` (the name in `find`) is not used here, but `?3` makes it a parameter.
-    let rows = stmt
-        .query_map(
-            params![scope.column().unwrap_or(""), None::<String>, user.get()],
-            raw,
-        )?
-        .collect::<Result<Vec<_>, _>>()?;
+    let args = params![scope.column().unwrap_or(""), None::<String>, user.get()];
+    let rows = stmt.query_map(args, raw)?.collect::<Result<Vec<_>, _>>()?;
     rows.into_iter().map(entry_of).collect()
 }
 
@@ -396,11 +392,8 @@ pub(super) fn delete_workspace_rows(
     tx: &Transaction<'_>,
     workspace: &WorkspaceId,
 ) -> Result<(Vec<(EnvName, StoredId)>, bool), StoreError> {
-    let own = list(
-        tx,
-        users::owner_in(tx, workspace)?,
-        &EnvScope::Workspace(workspace.clone()),
-    )?;
+    let user = users::owner_in(tx, workspace)?;
+    let own = list(tx, user, &EnvScope::Workspace(workspace.clone()))?;
     let held = tx.execute(
         "DELETE FROM env_stand_ins WHERE workspace_id = ?1",
         [workspace.as_str()],

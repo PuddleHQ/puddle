@@ -23,6 +23,9 @@ use crate::workspace_git::{
 const COLUMNS: &str = "id, label, author_name, author_email, credentials, signing, is_default, \
                        created_at, changed_at";
 
+/// Whether a user has no identity yet.
+const NONE_YET: &str = "SELECT count(*) = 0 FROM identities WHERE user_id = ?1";
+
 struct Raw {
     id: i64,
     label: String,
@@ -371,11 +374,7 @@ impl Store {
         let draft = draft.checked()?;
         let id = self.change(|tx, now, fx| {
             label_free(tx, user, &draft.label, None)?;
-            let first: bool = tx.query_row(
-                "SELECT count(*) = 0 FROM identities WHERE user_id = ?1",
-                [user.get()],
-                |r| r.get(0),
-            )?;
+            let first: bool = tx.query_row(NONE_YET, [user.get()], |r| r.get(0))?;
             tx.execute(
                 "INSERT INTO identities (user_id, label, author_name, author_email, credentials,
                                          position, is_default, created_at, changed_at)

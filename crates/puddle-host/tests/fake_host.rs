@@ -4114,6 +4114,33 @@ async fn a_vm_that_dies_while_puddle_runs_shows_crashed_and_start_recovers_it() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_end_of_an_agent_session_finds_a_dead_vm_without_a_list() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let id = WorkspaceId::new("acme").unwrap();
+
+    // The agent restarting ends a session too: the VM is up, so nothing changes.
+    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+
+    // The VM dies and its session ends: the host reads the sandboxes by itself, no list asked.
+    assert!(rig.runtime.crash(&SandboxName::new("acme").unwrap()));
+    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    events
+        .until(
+            |e| e["type"] == "status_changed" && e["status"] == "crashed",
+            Duration::from_secs(15),
+        )
+        .await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "crashed");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
     let rig = Rig::new();
     let host = rig.start().await;

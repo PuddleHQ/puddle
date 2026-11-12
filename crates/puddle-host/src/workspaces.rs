@@ -966,8 +966,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Says which workspace's agent session ended, each time one does.
-    pub(crate) fn agent_sessions_ended(&self) -> tokio::sync::broadcast::Receiver<WorkspaceId> {
+    pub(crate) fn agent_sessions_ended(&self) -> puddle_ports::EndedSessions {
         self.inner.ports.agent_sessions_ended()
+    }
+
+    /// The ports the sandboxes' agents report to (tests drive an agent session's end through it).
+    #[must_use]
+    pub fn ports(&self) -> &Ports {
+        &self.inner.ports
     }
 
     /// Reads what every workspace's volume and root disk take on the host into the records, so

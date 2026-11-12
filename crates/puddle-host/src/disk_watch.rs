@@ -29,12 +29,7 @@ pub(crate) fn spawn<R: Runtime + Clone>(
         loop {
             tokio::select! {
                 _ = tick.tick() => workspaces.refresh_disk_use().await,
-                gone = ended.recv() => match gone {
-                    Ok(workspace) => workspaces.check_after_session_end(&workspace).await,
-                    // Behind: the next tick reads every sandbox anyway.
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-                },
+                workspace = ended.next() => workspaces.check_after_session_end(&workspace).await,
             }
         }
     })

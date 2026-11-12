@@ -224,6 +224,23 @@ pub trait GuestWatcher: Send + Sync + 'static {
     fn session_ended(&self, _workspace: &WorkspaceId) {}
 }
 
+#[cfg(test)]
+mod watcher_tests {
+    use super::*;
+
+    struct Nothing;
+
+    impl GuestWatcher for Nothing {
+        fn link(&self, _: &WorkspaceId, _: GuestLink) {}
+        fn ports(&self, _: &WorkspaceId, _: Vec<u16>) {}
+    }
+
+    #[test]
+    fn a_watcher_may_ignore_the_end_of_a_session() {
+        Nothing.session_ended(&WorkspaceId::new("acme").unwrap());
+    }
+}
+
 /// A report from the guest that UDP was refused: the guest's own claim, cleaned by the host
 /// before it is used.
 #[derive(Debug, Clone, PartialEq, Eq)]

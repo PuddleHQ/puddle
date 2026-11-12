@@ -128,6 +128,26 @@ struct Entry {
     failed: BTreeMap<u16, Failed>,
 }
 
+/// Which workspaces' agent sessions ended, from [`Ports::agent_sessions_ended`].
+#[derive(Debug)]
+pub struct EndedSessions(tokio::sync::broadcast::Receiver<WorkspaceId>);
+
+impl EndedSessions {
+    /// The workspace of the next agent session that ended. A receiver that fell behind skips
+    /// to the oldest name still held; when the ports are gone it never returns.
+    pub async fn next(&mut self) -> WorkspaceId {
+        loop {
+            match self.0.recv().await {
+                Ok(workspace) => return workspace,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+    }
+}
+
 struct Active {
     host_port: u16,
     forward: Forward,
@@ -211,8 +231,8 @@ impl Ports {
     /// Says which workspace's agent session ended, each time one does. A receiver that falls
     /// behind loses the oldest names; it is a hint to look, never the only way to find out.
     #[must_use]
-    pub fn agent_sessions_ended(&self) -> tokio::sync::broadcast::Receiver<WorkspaceId> {
-        self.inner.ended.subscribe()
+    pub fn agent_sessions_ended(&self) -> EndedSessions {
+        EndedSessions(self.inner.ended.subscribe())
     }
 
     fn entries(&self) -> MutexGuard<'_, HashMap<WorkspaceId, Entry>> {
@@ -579,5 +599,19 @@ impl GuestWatcher for Ports {
         if changed {
             self.changed(workspace);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn ended_sessions_wait_for_ever_once_the_ports_are_gone() {
+        let (tx, rx) = tokio::sync::broadcast::channel(4);
+        let mut ended = EndedSessions(rx);
+        drop(tx);
+        let waited = tokio::time::timeout(Duration::from_millis(50), ended.next()).await;
+        assert!(waited.is_err());
     }
 }

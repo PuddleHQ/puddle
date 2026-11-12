@@ -20,7 +20,7 @@ pub mod config_file;
 pub mod options;
 
 use config_file::ConfigError;
-use options::{Effective, Flags, resolve, spec_for_flag};
+use options::{Effective, Flags, Value, resolve, spec_for_flag, spec_for_negated_flag};
 
 /// The environment variable that overrides the guest agent's location (development builds).
 pub const AGENT_VAR: &str = "PUDDLE_AGENT_BIN";
@@ -55,9 +55,23 @@ where
             parsed.print_config = true;
             continue;
         }
+        let unknown = || UsageError::UnknownArgument(arg.to_owned());
+        if let Some(spec) = spec_for_flag(arg).filter(|spec| spec.kind.is_switch()) {
+            // `--name`: a switch takes no value.
+            if parsed.flags.insert(spec.key, Value::Bool(true)).is_some() {
+                return Err(unknown());
+            }
+            continue;
+        }
+        if let Some(spec) = spec_for_negated_flag(arg) {
+            if parsed.flags.insert(spec.key, Value::Bool(false)).is_some() {
+                return Err(unknown());
+            }
+            continue;
+        }
         let spec = spec_for_flag(arg)
             .filter(|spec| !parsed.flags.contains_key(spec.key))
-            .ok_or_else(|| UsageError::UnknownArgument(arg.to_owned()))?;
+            .ok_or_else(unknown)?;
         let text = args.next().ok_or(UsageError::MissingArgument(spec.usage))?;
         let value =
             spec.kind
@@ -83,7 +97,10 @@ pub const PRINT_CONFIG_FLAG: &str = "--print-config";
 /// usable.
 pub fn effective(args: &ServeArgs) -> Result<Effective, ConfigError> {
     let cwd = std::env::current_dir().map_err(|e| ConfigError::WorkingDirectory(e.to_string()))?;
-    resolve(&args.flags, &|name| std::env::var_os(name), &cwd)
+    let options = resolve(&args.flags, &|name| std::env::var_os(name), &cwd)?;
+    // Options that do not fit together refuse here, before the host prepares anything.
+    options.remote()?;
+    Ok(options)
 }
 
 /// The host configuration for this machine and these options.
@@ -110,6 +127,16 @@ pub fn config(
     }
     if let Some(file) = options.path("connection_file") {
         config.api.connection_file = Some(file.to_path_buf());
+    }
+    let remote = options
+        .remote()
+        .map_err(|e| puddle_host::HostError::State {
+            what: "remote serving",
+            reason: e.to_string(),
+        })?;
+    if let Some(options::RemoteSettings { serving, listener }) = remote {
+        config.api.remote = Some(serving);
+        config.api.network_listener = listener;
     }
     Ok(config)
 }
@@ -180,6 +207,14 @@ pub fn run(args: &ServeArgs) -> ExitCode {
             }
         };
         println!("Puddle is up at {}", host.url());
+        if let Some(listener) = host.remote_listener() {
+            println!("Network listener (TLS) on {}", listener.addr);
+            println!("  certificate SHA-256: {}", listener.fingerprint);
+            println!(
+                "  certificate file: {}",
+                listener.certificate_file.display()
+            );
+        }
         match wait_for_shutdown().await {
             Ok(cause) => tracing::info!(cause = cause.as_str(), "shutting down"),
             Err(e) => tracing::error!(error = %e, "cannot wait for a shutdown request; stopping"),

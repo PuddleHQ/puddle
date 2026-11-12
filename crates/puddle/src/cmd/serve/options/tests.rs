@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::collections::BTreeMap;
 
+use puddle_api::PublicHost;
+
 use super::*;
 
 /// What a test sets an option to from each place, so a winner is told by its value.
@@ -27,6 +29,32 @@ fn samples(kind: Kind) -> Samples {
             env: "warn",
             file: "error",
         },
+        // Two values only: the source tells the winner where the value cannot.
+        Kind::Bool => Samples {
+            flag: "true",
+            env: "false",
+            file: "true",
+        },
+        Kind::Ip => Samples {
+            flag: "10.0.0.1",
+            env: "10.0.0.2",
+            file: "10.0.0.3",
+        },
+        Kind::IpList => Samples {
+            flag: "10.0.1.1,10.0.1.2",
+            env: "10.0.2.1",
+            file: "10.0.3.1",
+        },
+        Kind::HostList => Samples {
+            flag: "a.example.org,b.example.org:8443",
+            env: "c.example.org",
+            file: "d.example.org",
+        },
+        Kind::Domain => Samples {
+            flag: "flag.example.net",
+            env: "env.example.net",
+            file: "file.example.net",
+        },
     }
 }
 
@@ -34,10 +62,24 @@ fn samples(kind: Kind) -> Samples {
 fn file_line(spec: &Spec) -> String {
     let file = samples(spec.kind).file;
     match spec.kind {
-        Kind::Port => format!("{} = {file}\n", spec.key),
-        Kind::Path | Kind::Log => format!("{} = \"{file}\"\n", spec.key),
+        Kind::Port | Kind::Bool => format!("{} = {file}\n", spec.key),
+        Kind::Path | Kind::Log | Kind::Ip | Kind::Domain => {
+            format!("{} = \"{file}\"\n", spec.key)
+        }
+        Kind::IpList | Kind::HostList => {
+            let items: Vec<String> = file.split(',').map(|item| format!("\"{item}\"")).collect();
+            format!("{} = [{}]\n", spec.key, items.join(", "))
+        }
     }
 }
+
+/// What `--print-config` shows for the remote serving options when nothing sets them.
+const REMOTE_DEFAULTS: &str = "remote = off (default)\n\
+     public_hosts = none (default)\n\
+     workspace_base_domain = subdomains of the first public host (default)\n\
+     listen_interface = no network listener (default)\n\
+     listen_port = 8443 (default)\n\
+     allowed_proxies = none (default)\n";
 
 struct Rig {
     dir: tempfile::TempDir,
@@ -222,9 +264,11 @@ fn print_config_lists_every_option_with_its_value_and_where_it_came_from() {
          port = 4000 (flag --port)\n\
          connection_file = {api} (config file {file})\n\
          data_dir = the per-user data folder (default)\n\
-         log = debug (environment PUDDLE_LOG)\n",
+         log = debug (environment PUDDLE_LOG)\n\
+         {remote_defaults}",
         file = file.display(),
         api = rig.dir.path().join("api.json").display(),
+        remote_defaults = REMOTE_DEFAULTS,
     );
     assert_eq!(out, expected);
 }
@@ -242,11 +286,13 @@ fn print_config_without_anything_set_shows_the_defaults() {
         .render();
     assert_eq!(
         out,
-        "config = no config file (default)\n\
-         port = a free port (default)\n\
-         connection_file = api.json in the data folder (default)\n\
-         data_dir = the per-user data folder (default)\n\
-         log = info (default)\n"
+        format!(
+            "config = no config file (default)\n\
+             port = a free port (default)\n\
+             connection_file = api.json in the data folder (default)\n\
+             data_dir = the per-user data folder (default)\n\
+             log = info (default)\n{REMOTE_DEFAULTS}"
+        )
     );
 }
 
@@ -369,4 +415,268 @@ fn the_flags_and_the_file_keys_mirror_each_other() {
             .collect::<Vec<_>>(),
         [CONFIG_KEY]
     );
+}
+
+#[test]
+fn a_switch_is_flag_and_negated_flag_in_the_table_the_usage_and_the_docs() {
+    let docs = include_str!("../../../../../../docs/serve.md");
+    let switches: Vec<_> = OPTIONS.iter().filter(|s| s.kind.is_switch()).collect();
+    assert_eq!(switches.len(), 1);
+    for spec in switches {
+        let negated = spec.negated_flag().unwrap();
+        assert_eq!(negated, format!("--no-{}", spec.key.replace('_', "-")));
+        assert_eq!(
+            spec_for_negated_flag(&negated).map(|s| s.key),
+            Some(spec.key)
+        );
+        assert!(
+            crate::cli::USAGE.contains(&negated),
+            "usage lacks {negated}"
+        );
+        assert!(docs.contains(&negated), "docs lack {negated}");
+        assert!(!spec.usage.contains(' '), "a switch takes no value");
+    }
+    assert!(spec_for_negated_flag("--no-port").is_none());
+    assert!(spec_for_negated_flag("--remote").is_none());
+    assert_eq!(spec_for_key("port").unwrap().negated_flag(), None);
+}
+
+#[test]
+fn each_kind_names_what_it_expects_and_refuses_the_rest() {
+    let bad = [
+        (Kind::Bool, "yes"),
+        (Kind::Bool, ""),
+        (Kind::Ip, "example.org"),
+        (Kind::Ip, "10.0.0"),
+        (Kind::IpList, "10.0.0.1,"),
+        (Kind::IpList, "10.0.0.1,nope"),
+        (Kind::HostList, ""),
+        (Kind::HostList, "https://a.example.org"),
+        (Kind::HostList, "a.example.org/path"),
+        (Kind::HostList, "a.example.org:0"),
+        (Kind::HostList, "a.example.org:99999"),
+        (Kind::HostList, "a_b.example.org"),
+        (Kind::HostList, "a.example.org,,b.example.org"),
+        (Kind::Domain, "not a domain"),
+        (Kind::Domain, ""),
+        (Kind::Domain, "a..example.org"),
+    ];
+    for (kind, text) in bad {
+        assert_eq!(
+            kind.parse_text(text),
+            Err(kind.expects()),
+            "{kind:?} {text:?}"
+        );
+    }
+    assert_eq!(Kind::Bool.parse_text("true"), Ok(Value::Bool(true)));
+    assert_eq!(Kind::Bool.parse_text("false"), Ok(Value::Bool(false)));
+    assert_eq!(
+        Kind::Ip.parse_text("2001:db8::1"),
+        Ok(Value::Ip("2001:db8::1".parse().unwrap()))
+    );
+    assert_eq!(
+        Kind::IpList.parse_text(" 10.0.0.1 , ::1 "),
+        Ok(Value::IpList(vec![
+            "10.0.0.1".parse().unwrap(),
+            "::1".parse().unwrap()
+        ]))
+    );
+    // Case is folded, `:443` is the same as none, and a bracketed IPv6 address is a host.
+    assert_eq!(
+        Kind::HostList.parse_text("Puddle.Example.ORG:443,a.example.org.,[::1]:8443"),
+        Ok(Value::Hosts(vec![
+            "puddle.example.org".into(),
+            "a.example.org".into(),
+            "[::1]:8443".into()
+        ]))
+    );
+    assert_eq!(
+        Kind::Domain.parse_text("WS.Example.Net."),
+        Ok(Value::Domain("ws.example.net".into()))
+    );
+    assert!(Kind::HostList.is_list() && Kind::IpList.is_list());
+    assert!(!Kind::Bool.is_list() && !Kind::Domain.is_list());
+}
+
+#[test]
+fn a_switch_in_the_environment_is_true_or_false_and_nothing_else() {
+    let set = |value: &'static str| {
+        let env = move |n: &str| (n == "PUDDLE_REMOTE").then(|| OsString::from(value));
+        resolve(&Flags::new(), &env, Path::new("/"))
+    };
+    assert_eq!(set("true").unwrap().switch("remote"), Some(true));
+    assert_eq!(set("false").unwrap().switch("remote"), Some(false));
+    let err = set("1").unwrap_err().to_string();
+    assert!(
+        err.starts_with("PUDDLE_REMOTE has the invalid value \"1\""),
+        "{err}"
+    );
+    assert!(err.contains("true or false"), "{err}");
+    assert_eq!(
+        resolve(&Flags::new(), &|_| None, Path::new("/"))
+            .unwrap()
+            .switch("remote"),
+        None
+    );
+}
+
+/// The options for these environment values.
+fn with_env(vars: &[(&'static str, &'static str)]) -> Effective {
+    let vars: BTreeMap<&str, &str> = vars.iter().copied().collect();
+    resolve(
+        &Flags::new(),
+        &|name| vars.get(name).map(OsString::from),
+        Path::new("/"),
+    )
+    .unwrap()
+}
+
+#[test]
+fn remote_serving_off_looks_at_no_other_remote_option() {
+    assert_eq!(with_env(&[]).remote(), Ok(None));
+    assert_eq!(with_env(&[("PUDDLE_REMOTE", "false")]).remote(), Ok(None));
+    // `--no-remote` over a file that sets everything switches it all off.
+    assert_eq!(
+        with_env(&[
+            ("PUDDLE_REMOTE", "false"),
+            ("PUDDLE_LISTEN_PORT", "9000"),
+            ("PUDDLE_ALLOWED_PROXIES", "10.0.0.1"),
+        ])
+        .remote(),
+        Ok(None)
+    );
+    assert_eq!(
+        with_env(&[("PUDDLE_PUBLIC_HOSTS", "puddle.example.org")]).remote(),
+        Ok(None)
+    );
+}
+
+#[test]
+fn remote_serving_on_needs_a_public_host() {
+    let err = with_env(&[("PUDDLE_REMOTE", "true")]).remote().unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "remote serving: remote serving needs at least one public host (`public_hosts`)"
+    );
+}
+
+#[test]
+fn remote_serving_on_takes_the_public_hosts_and_defaults_the_workspace_names_to_subdomains() {
+    let remote = with_env(&[
+        ("PUDDLE_REMOTE", "true"),
+        (
+            "PUDDLE_PUBLIC_HOSTS",
+            "puddle.example.org,alt.example.org:8443",
+        ),
+    ])
+    .remote()
+    .unwrap()
+    .unwrap();
+    let hosts: Vec<String> = remote
+        .serving
+        .public_hosts()
+        .iter()
+        .map(PublicHost::authority)
+        .collect();
+    assert_eq!(hosts, ["puddle.example.org", "alt.example.org:8443"]);
+    assert_eq!(
+        remote.serving.workspace_names().base_domain(),
+        "puddle.example.org"
+    );
+    assert_eq!(remote.listener, None);
+    let own = with_env(&[
+        ("PUDDLE_REMOTE", "true"),
+        ("PUDDLE_PUBLIC_HOSTS", "puddle.example.org"),
+        ("PUDDLE_WORKSPACE_BASE_DOMAIN", "ws.example.net"),
+    ])
+    .remote()
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        own.serving.workspace_names().base_domain(),
+        "ws.example.net"
+    );
+}
+
+#[test]
+fn the_network_listener_needs_an_interface_and_a_proxy_and_defaults_its_port() {
+    let base = [
+        ("PUDDLE_REMOTE", "true"),
+        ("PUDDLE_PUBLIC_HOSTS", "puddle.example.org"),
+    ];
+    let with = |extra: &[(&'static str, &'static str)]| {
+        let mut vars = base.to_vec();
+        vars.extend_from_slice(extra);
+        with_env(&vars).remote()
+    };
+    let listener = with(&[
+        ("PUDDLE_LISTEN_INTERFACE", "192.168.1.10"),
+        ("PUDDLE_ALLOWED_PROXIES", "192.168.1.20,192.168.1.21"),
+    ])
+    .unwrap()
+    .unwrap()
+    .listener
+    .unwrap();
+    assert_eq!(
+        listener.interface,
+        "192.168.1.10".parse::<IpAddr>().unwrap()
+    );
+    assert_eq!(listener.port, DEFAULT_LISTEN_PORT);
+    assert_eq!(listener.allowed_proxies.len(), 2);
+    let set_port = with(&[
+        ("PUDDLE_LISTEN_INTERFACE", "192.168.1.10"),
+        ("PUDDLE_LISTEN_PORT", "9443"),
+        ("PUDDLE_ALLOWED_PROXIES", "192.168.1.20"),
+    ])
+    .unwrap()
+    .unwrap();
+    assert_eq!(set_port.listener.unwrap().port, 9443);
+    let none_allowed = with(&[("PUDDLE_LISTEN_INTERFACE", "192.168.1.10")]).unwrap_err();
+    assert!(
+        none_allowed.to_string().contains("`allowed_proxies`"),
+        "{none_allowed}"
+    );
+    for orphan in [
+        ("PUDDLE_LISTEN_PORT", "9443"),
+        ("PUDDLE_ALLOWED_PROXIES", "10.0.0.1"),
+    ] {
+        let err = with(&[orphan]).unwrap_err().to_string();
+        assert!(err.contains("set `listen_interface` too"), "{err}");
+    }
+}
+
+#[test]
+fn remote_serving_refuses_a_base_domain_that_cannot_tell_workspaces_from_the_ui() {
+    let err =
+        |vars: &[(&'static str, &'static str)]| with_env(vars).remote().unwrap_err().to_string();
+    assert!(
+        err(&[
+            ("PUDDLE_REMOTE", "true"),
+            ("PUDDLE_PUBLIC_HOSTS", "puddle.example.org"),
+            ("PUDDLE_WORKSPACE_BASE_DOMAIN", "puddle.example.org"),
+        ])
+        .contains("is also a public host")
+    );
+    assert!(
+        err(&[
+            ("PUDDLE_REMOTE", "true"),
+            ("PUDDLE_PUBLIC_HOSTS", "203.0.113.7")
+        ])
+        .contains("set `workspace_base_domain`")
+    );
+}
+
+#[test]
+fn a_negated_switch_is_reported_as_the_flag_that_was_typed() {
+    let mut flags = Flags::new();
+    flags.insert("remote", Value::Bool(false));
+    let off = resolve(&flags, &|_| None, Path::new("/")).unwrap();
+    assert_eq!(
+        off.get("remote"),
+        Some(&(Value::Bool(false), Source::NegatedFlag("--remote")))
+    );
+    assert!(off.render().contains("remote = false (flag --no-remote)\n"));
+    flags.insert("remote", Value::Bool(true));
+    let on = resolve(&flags, &|_| None, Path::new("/")).unwrap();
+    assert!(on.render().contains("remote = true (flag --remote)\n"));
 }

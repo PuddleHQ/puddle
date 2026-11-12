@@ -10,7 +10,12 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+
+use puddle_api::{PublicHost, RemoteServing};
+use puddle_host::NetworkListenerSettings;
+use puddle_types::DomainName;
 
 use puddle_log::ScopedFilter;
 
@@ -26,6 +31,18 @@ pub enum Kind {
     Path,
     /// A log filter, `PUDDLE_LOG` syntax.
     Log,
+    /// `true` or `false`. On the command line the option is a flag without a value:
+    /// `--name` for true and `--no-name` for false.
+    Bool,
+    /// One IP address.
+    Ip,
+    /// A comma-separated list of IP addresses (an array of strings in the file).
+    IpList,
+    /// A comma-separated list of public hosts, each a host name with an optional port (an array
+    /// of strings in the file).
+    HostList,
+    /// A domain name.
+    Domain,
 }
 
 impl Kind {
@@ -38,6 +55,54 @@ impl Kind {
             Self::Log => {
                 "error, warn, info, debug or trace, optionally followed by crate=level entries"
             }
+            Self::Bool => "true or false",
+            Self::Ip => "an IP address",
+            Self::IpList => "a comma-separated list of IP addresses",
+            Self::HostList => {
+                "a comma-separated list of host names, each with an optional port, such as puddle.example.org or puddle.example.org:8443"
+            }
+            Self::Domain => "a domain name such as ws.example.org",
+        }
+    }
+
+    /// Whether the value is a list, written as an array in the file.
+    #[must_use]
+    pub const fn is_list(self) -> bool {
+        matches!(self, Self::IpList | Self::HostList)
+    }
+
+    /// Whether the option is a flag without a value (`--name`, `--no-name`).
+    #[must_use]
+    pub const fn is_switch(self) -> bool {
+        matches!(self, Self::Bool)
+    }
+
+    /// The value made of separate items (the entries of a file's array).
+    ///
+    /// # Errors
+    ///
+    /// What was expected, when an item is not valid or the list is empty.
+    pub fn parse_items(self, items: &[&str]) -> Result<Value, &'static str> {
+        let bad = self.expects();
+        if items.is_empty() {
+            return Err(bad);
+        }
+        match self {
+            Self::IpList => items
+                .iter()
+                .map(|item| item.trim().parse::<IpAddr>().map_err(|_| bad))
+                .collect::<Result<_, _>>()
+                .map(Value::IpList),
+            Self::HostList => items
+                .iter()
+                .map(|item| {
+                    PublicHost::parse(item.trim())
+                        .map(|host| host.authority())
+                        .map_err(|_| bad)
+                })
+                .collect::<Result<_, _>>()
+                .map(Value::Hosts),
+            _ => Err(bad),
         }
     }
 
@@ -54,6 +119,23 @@ impl Kind {
             Self::Log => ScopedFilter::parse(text)
                 .map(|_| Value::Log(text.to_owned()))
                 .map_err(|_| self.expects()),
+            Self::Bool => match text {
+                "true" => Ok(Value::Bool(true)),
+                "false" => Ok(Value::Bool(false)),
+                _ => Err(self.expects()),
+            },
+            Self::Ip => text.parse().map(Value::Ip).map_err(|_| self.expects()),
+            Self::IpList | Self::HostList => {
+                let items: Vec<&str> = text.split(',').collect();
+                self.parse_items(&items)
+            }
+            Self::Domain => {
+                let name = text.to_ascii_lowercase();
+                let name = name.strip_suffix('.').unwrap_or(&name);
+                DomainName::parse_normalised(name)
+                    .map(|name| Value::Domain(name.as_str().to_owned()))
+                    .map_err(|_| self.expects())
+            }
         }
     }
 }
@@ -83,10 +165,18 @@ impl Spec {
     pub fn flag(&self) -> &'static str {
         self.usage.split(' ').next().unwrap_or(self.usage)
     }
+
+    /// The flag that sets a boolean option to false: `--no-remote`.
+    #[must_use]
+    pub fn negated_flag(&self) -> Option<String> {
+        self.kind
+            .is_switch()
+            .then(|| format!("--no-{}", &self.flag()[2..]))
+    }
 }
 
 /// Every option of `puddle serve`, in the order `--print-config` lists them.
-pub const OPTIONS: [Spec; 5] = [
+pub const OPTIONS: [Spec; 11] = [
     Spec {
         key: "config",
         usage: "--config <path>",
@@ -132,6 +222,60 @@ pub const OPTIONS: [Spec; 5] = [
         example: "\"info,hyper=debug\"",
         default: "info",
     },
+    Spec {
+        key: "remote",
+        usage: "--remote",
+        env: "PUDDLE_REMOTE",
+        kind: Kind::Bool,
+        in_file: true,
+        example: "true",
+        default: "off",
+    },
+    Spec {
+        key: "public_hosts",
+        usage: "--public-hosts <host,...>",
+        env: "PUDDLE_PUBLIC_HOSTS",
+        kind: Kind::HostList,
+        in_file: true,
+        example: "[\"puddle.example.org\"]",
+        default: "none",
+    },
+    Spec {
+        key: "workspace_base_domain",
+        usage: "--workspace-base-domain <domain>",
+        env: "PUDDLE_WORKSPACE_BASE_DOMAIN",
+        kind: Kind::Domain,
+        in_file: true,
+        example: "\"ws.example.net\"",
+        default: "subdomains of the first public host",
+    },
+    Spec {
+        key: "listen_interface",
+        usage: "--listen-interface <ip>",
+        env: "PUDDLE_LISTEN_INTERFACE",
+        kind: Kind::Ip,
+        in_file: true,
+        example: "\"192.168.1.10\"",
+        default: "no network listener",
+    },
+    Spec {
+        key: "listen_port",
+        usage: "--listen-port <n>",
+        env: "PUDDLE_LISTEN_PORT",
+        kind: Kind::Port,
+        in_file: true,
+        example: "8443",
+        default: "8443",
+    },
+    Spec {
+        key: "allowed_proxies",
+        usage: "--allowed-proxies <ip,...>",
+        env: "PUDDLE_ALLOWED_PROXIES",
+        kind: Kind::IpList,
+        in_file: true,
+        example: "[\"192.168.1.20\"]",
+        default: "none",
+    },
 ];
 
 /// The row of the table with this key.
@@ -146,6 +290,14 @@ pub fn spec_for_flag(flag: &str) -> Option<&'static Spec> {
     OPTIONS.iter().find(|spec| spec.flag() == flag)
 }
 
+/// The boolean row whose `--no-name` flag this is.
+#[must_use]
+pub fn spec_for_negated_flag(flag: &str) -> Option<&'static Spec> {
+    OPTIONS
+        .iter()
+        .find(|spec| spec.negated_flag().as_deref() == Some(flag))
+}
+
 /// A value an option was given.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
@@ -155,6 +307,16 @@ pub enum Value {
     Path(PathBuf),
     /// A log filter, as written.
     Log(String),
+    /// A switch.
+    Bool(bool),
+    /// An IP address.
+    Ip(IpAddr),
+    /// IP addresses.
+    IpList(Vec<IpAddr>),
+    /// Public hosts, each as its authority (lower case, `:443` dropped).
+    Hosts(Vec<String>),
+    /// A domain name, lower case.
+    Domain(String),
 }
 
 impl std::fmt::Display for Value {
@@ -162,7 +324,14 @@ impl std::fmt::Display for Value {
         match self {
             Self::Port(port) => write!(f, "{port}"),
             Self::Path(path) => write!(f, "{}", path.display()),
-            Self::Log(text) => f.write_str(text),
+            Self::Log(text) | Self::Domain(text) => f.write_str(text),
+            Self::Bool(on) => write!(f, "{on}"),
+            Self::Ip(ip) => write!(f, "{ip}"),
+            Self::IpList(ips) => {
+                let ips: Vec<String> = ips.iter().map(ToString::to_string).collect();
+                f.write_str(&ips.join(","))
+            }
+            Self::Hosts(hosts) => f.write_str(&hosts.join(",")),
         }
     }
 }
@@ -172,6 +341,8 @@ impl std::fmt::Display for Value {
 pub enum Source {
     /// A command-line flag.
     Flag(&'static str),
+    /// The `--no-name` flag of a switch; holds the switch's own flag, `--name`.
+    NegatedFlag(&'static str),
     /// An environment variable.
     Environment(&'static str),
     /// The config file.
@@ -184,6 +355,7 @@ impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Flag(flag) => write!(f, "flag {flag}"),
+            Self::NegatedFlag(flag) => write!(f, "flag --no-{}", flag.trim_start_matches("--")),
             Self::Environment(name) => write!(f, "environment {name}"),
             Self::File(path) => write!(f, "config file {}", path.display()),
             Self::Default => f.write_str("default"),
@@ -223,6 +395,76 @@ impl Effective {
         }
     }
 
+    /// The value of a switch, when one was set.
+    #[must_use]
+    pub fn switch(&self, key: &str) -> Option<bool> {
+        match self.values.get(key) {
+            Some((Value::Bool(on), _)) => Some(*on),
+            _ => None,
+        }
+    }
+
+    /// Remote serving, from the options that set it: `None` while the switch is off or unset
+    /// (the other remote options are then not looked at), the settings otherwise.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::Remote`] when the options do not fit together: no public host, a network
+    /// listener without a proxy that may connect, or an option that needs another one.
+    pub fn remote(&self) -> Result<Option<RemoteSettings>, ConfigError> {
+        if self.switch("remote") != Some(true) {
+            return Ok(None);
+        }
+        let fail = |message: String| ConfigError::Remote(message);
+        let hosts = match self.values.get("public_hosts") {
+            Some((Value::Hosts(hosts), _)) => hosts.as_slice(),
+            _ => &[],
+        };
+        let hosts = hosts
+            .iter()
+            .map(|text| PublicHost::parse(text).map_err(|e| fail(e.to_string())))
+            .collect::<Result<Vec<_>, _>>()?;
+        let base = match self.values.get("workspace_base_domain") {
+            Some((Value::Domain(domain), _)) => Some(domain.as_str()),
+            _ => None,
+        };
+        let serving = RemoteServing::new(hosts, base).map_err(|e| fail(e.to_string()))?;
+        let interface = match self.values.get("listen_interface") {
+            Some((Value::Ip(ip), _)) => Some(*ip),
+            _ => None,
+        };
+        let proxies = match self.values.get("allowed_proxies") {
+            Some((Value::IpList(ips), _)) => ips.clone(),
+            _ => Vec::new(),
+        };
+        let port = match self.values.get("listen_port") {
+            Some((Value::Port(port), _)) => Some(*port),
+            _ => None,
+        };
+        let listener = match interface {
+            Some(interface) if proxies.is_empty() => {
+                return Err(fail(format!(
+                    "the network listener on {interface} needs at least one proxy address that may connect (`allowed_proxies`)"
+                )));
+            }
+            Some(interface) => Some(NetworkListenerSettings {
+                interface,
+                port: port.unwrap_or(DEFAULT_LISTEN_PORT),
+                allowed_proxies: proxies,
+            }),
+            None => {
+                if port.is_some() || !proxies.is_empty() {
+                    return Err(fail(
+                        "`listen_port` and `allowed_proxies` belong to the network listener; set `listen_interface` too or remove them"
+                            .to_owned(),
+                    ));
+                }
+                None
+            }
+        };
+        Ok(Some(RemoteSettings { serving, listener }))
+    }
+
     /// The log filter, `info` when none was set.
     #[must_use]
     pub fn log_filter(&self) -> ScopedFilter {
@@ -246,6 +488,18 @@ impl Effective {
         }
         out
     }
+}
+
+/// The port of the network listener when `listen_port` is not set.
+pub const DEFAULT_LISTEN_PORT: u16 = 8443;
+
+/// Remote serving as the options set it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteSettings {
+    /// The public names, and the base domain of workspace web apps.
+    pub serving: RemoteServing,
+    /// The listener for a reverse proxy on another machine, when `listen_interface` is set.
+    pub listener: Option<NetworkListenerSettings>,
 }
 
 /// The options given as flags, by option key.
@@ -297,10 +551,11 @@ fn flag_or_env(
     cwd: &Path,
 ) -> Result<Option<(Value, Source)>, ConfigError> {
     if let Some(value) = flags.get(spec.key) {
-        return Ok(Some((
-            absolute(value.clone(), cwd),
-            Source::Flag(spec.flag()),
-        )));
+        let source = match value {
+            Value::Bool(false) => Source::NegatedFlag(spec.flag()),
+            _ => Source::Flag(spec.flag()),
+        };
+        return Ok(Some((absolute(value.clone(), cwd), source)));
     }
     let Some(raw) = env(spec.env) else {
         return Ok(None);

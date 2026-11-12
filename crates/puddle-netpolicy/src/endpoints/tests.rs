@@ -122,3 +122,48 @@ fn only_address_not_available_means_not_own() {
         io::ErrorKind::AddrNotAvailable
     ))));
 }
+
+#[test]
+fn a_blocked_name_matches_exactly_or_with_its_subdomains_until_dropped() {
+    let endpoints = PuddleEndpoints::new();
+    let one = endpoints.block_name("Front.Example.org.", false, EndpointKind::ExternalFront);
+    let tree = endpoints.block_name("apps.example.net", true, EndpointKind::Other);
+    assert_eq!(
+        endpoints.find_name("front.example.org"),
+        Some(EndpointKind::ExternalFront)
+    );
+    assert_eq!(
+        endpoints.find_name("FRONT.example.org."),
+        Some(EndpointKind::ExternalFront)
+    );
+    assert_eq!(endpoints.find_name("a.front.example.org"), None);
+    assert_eq!(
+        endpoints.find_name("apps.example.net"),
+        Some(EndpointKind::Other)
+    );
+    assert_eq!(
+        endpoints.find_name("x.y.apps.example.net"),
+        Some(EndpointKind::Other)
+    );
+    assert_eq!(endpoints.find_name("myapps.example.net"), None);
+    assert_eq!(endpoints.find_name("example.net"), None);
+    // A name block is not a listener: the address list stays empty.
+    assert_eq!(endpoints.list(), []);
+    drop(one);
+    assert_eq!(endpoints.find_name("front.example.org"), None);
+    assert_eq!(
+        endpoints.find_name("apps.example.net"),
+        Some(EndpointKind::Other)
+    );
+    drop(tree);
+    assert_eq!(endpoints.find_name("apps.example.net"), None);
+}
+
+#[test]
+fn the_new_kinds_describe_themselves() {
+    assert_eq!(EndpointKind::RemoteApi.to_string(), "remote API listener");
+    assert_eq!(
+        EndpointKind::ExternalFront.to_string(),
+        "reverse proxy in front of Puddle"
+    );
+}

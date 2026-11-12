@@ -556,3 +556,53 @@ async fn dropping_the_route_stops_the_proxy_and_closes_its_connections() {
         .expect("a dropped route closes its connections");
     assert!(matches!(read, Ok(0) | Err(_)));
 }
+
+#[tokio::test]
+async fn a_pull_to_a_name_puddle_serves_under_is_refused_before_any_lookup() {
+    let endpoints = PuddleEndpoints::new();
+    let _name = endpoints.block_name("front.puddle.example", true, EndpointKind::Api);
+    // The resolver would answer with a public address: only the name stage can refuse it.
+    let (route, good) = pull_proxy(&endpoints, Some(std::net::Ipv4Addr::new(8, 8, 8, 8).into()));
+    let auth = format!("Basic {good}");
+    for target in ["front.puddle.example:443", "ws.front.puddle.example:443"] {
+        let (head, _) = send(route.local_addr(), &connect(target, Some(&auth))).await;
+        assert!(head.starts_with("HTTP/1.1 403 "), "{target}: {head}");
+        assert!(
+            head.contains("x-puddle-blocked: puddle_endpoint"),
+            "{target}: {head}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_name_under_a_company_dns_suffix_answers_to_the_company_toggle_even_on_a_private_address()
+{
+    let signals = Arc::new(puddle_netpolicy::StaticSignals::new().with_dns_suffix("corp.example"));
+    let resolver = || {
+        Arc::new(
+            StaticResolver::new().with("registry.corp.example", &["10.1.2.3".parse().unwrap()]),
+        )
+    };
+    // Private networks on, company network off: the name makes the address the company's.
+    let off = LocalAccess::NONE.with_toggle(LocalCategory::Private, true);
+    let proxy = PullProxy::bind(&PuddleEndpoints::new())
+        .unwrap()
+        .with_resolver(resolver())
+        .with_company_signals(signals)
+        .with_local_access(off);
+    let auth = format!(
+        "Basic {}",
+        BASE64.encode(format!("puddle:{}", proxy.token().expose()))
+    );
+    let route = proxy.serve().unwrap();
+    let (head, _) = send(
+        route.local_addr(),
+        &connect("registry.corp.example:443", Some(&auth)),
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 403 "), "{head}");
+    assert!(
+        head.contains("x-puddle-blocked: toggle:company_network"),
+        "{head}"
+    );
+}

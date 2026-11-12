@@ -35,8 +35,8 @@ fn routes_and_subnets_match_their_family_and_prefix_only() {
     assert!(!s.vpn_routed(ip("10.9.0.0")));
     assert!(s.vpn_routed(ip("fd12::1")));
     assert!(!s.vpn_routed(ip("fe80::1")));
-    assert!(s.on_physical_lan(ip("192.168.1.77")));
-    assert!(!s.on_physical_lan(ip("192.168.2.1")));
+    assert_eq!(s.physical_lan(ip("192.168.1.77")), LanReading::OnLan);
+    assert_eq!(s.physical_lan(ip("192.168.2.1")), LanReading::OffLan);
     // A /0 route covers its whole family and nothing of the other.
     let all = StaticSignals::new().with_vpn_route(ip("0.0.0.0"), 0);
     assert!(all.vpn_routed(ip("10.1.1.1")));
@@ -153,13 +153,52 @@ fn a_prefix_longer_than_the_address_matches_nothing() {
     assert!(!s.vpn_routed(ip("fd00::1")));
 }
 
-/// A host that can read only the proxy script: the signals it cannot read answer "no".
+/// A host that can read only the proxy script and its LAN interfaces (none has a private
+/// subnet): the signals it cannot read answer "no".
 struct PacOnly;
 
 impl CompanySignals for PacOnly {
     fn pac_direct(&self, name: &str) -> bool {
         name == "nexus.corp.example"
     }
+
+    fn physical_lan(&self, _ip: IpAddr) -> LanReading {
+        LanReading::OffLan
+    }
+}
+
+/// A host whose proxy script says everything is direct but that could not read its interfaces.
+struct PacButNoLan;
+
+impl CompanySignals for PacButNoLan {
+    fn pac_direct(&self, _name: &str) -> bool {
+        true
+    }
+}
+
+#[test]
+fn an_unread_lan_keeps_every_private_address_out_of_the_company_network() {
+    // A trait default that says "not on the LAN" would put a home address in the category.
+    for addr in ["192.168.1.5", "10.1.2.3", "100.64.3.7"] {
+        assert_eq!(
+            company_signal(true, ip(addr), Some("nas.home.test"), &PacButNoLan),
+            None,
+            "{addr}"
+        );
+    }
+    assert_eq!(
+        PacButNoLan.physical_lan(ip("192.168.1.5")),
+        LanReading::Unread
+    );
+    let unread = StaticSignals::new()
+        .with_pac_direct("nas.home.test")
+        .with_lan_subnet(ip("10.0.0.0"), 8)
+        .with_lan_unread();
+    assert_eq!(unread.physical_lan(ip("172.16.0.1")), LanReading::Unread);
+    assert_eq!(
+        company_signal(true, ip("172.16.0.1"), Some("nas.home.test"), &unread),
+        None
+    );
 }
 
 #[test]

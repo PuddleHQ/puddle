@@ -138,10 +138,19 @@ impl NetPolicy {
         name: Option<&Host>,
         addr: SocketAddr,
     ) -> AddressVerdict {
-        verdict(
-            self.classify_named(name, addr),
-            self.access.local_access(workspace),
-        )
+        self.check_address_with(self.access.local_access(workspace), name, addr)
+    }
+
+    /// The verdict on one address reached by `name` under `access`, for a caller with no
+    /// workspace (Puddle's own requests) that brings its settings itself.
+    #[must_use]
+    pub fn check_address_with(
+        &self,
+        access: LocalAccess,
+        name: Option<&Host>,
+        addr: SocketAddr,
+    ) -> AddressVerdict {
+        verdict(self.classify_named(name, addr), access)
     }
 
     /// The company-network signal that puts `addr` (reached by `name`) in that category, for the
@@ -164,7 +173,17 @@ impl NetPolicy {
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
-        let access = self.access.local_access(workspace);
+        self.check_target_with(self.access.local_access(workspace), target, port)
+    }
+
+    /// [`Self::check_target`] under `access`, for a caller with no workspace.
+    #[must_use]
+    pub fn check_target_with(
+        &self,
+        access: LocalAccess,
+        target: &Target,
+        port: u16,
+    ) -> Option<BlockReason> {
         if let Host::Ip(ip) = target.host() {
             return match verdict(self.classify(SocketAddr::new(*ip, port)), access) {
                 AddressVerdict::Block(reason) => Some(reason),

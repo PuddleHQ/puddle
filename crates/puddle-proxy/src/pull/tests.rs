@@ -143,7 +143,7 @@ fn pulls_reach_public_private_and_loopback_but_not_metadata_link_local_or_puddle
     let _api = endpoints.register("127.0.0.1:7070".parse().unwrap(), EndpointKind::Api);
     let access = default_pull_access();
     let guard = NetPolicy::new(Arc::new(access)).with_endpoints(endpoints);
-    let v = |a: &str| verdict(&guard, access, a.parse().unwrap());
+    let v = |a: &str| verdict(&guard, access, None, a.parse().unwrap());
     assert_eq!(v("140.82.121.4:443"), Ok(()));
     assert_eq!(v("10.1.2.3:443"), Ok(()));
     assert_eq!(v("[fd00::1]:443"), Ok(()));
@@ -168,7 +168,7 @@ fn pulls_reach_public_private_and_loopback_but_not_metadata_link_local_or_puddle
     let none = LocalAccess::NONE;
     let strict = NetPolicy::new(Arc::new(none));
     assert_eq!(
-        verdict(&strict, none, "10.1.2.3:443".parse().unwrap()),
+        verdict(&strict, none, None, "10.1.2.3:443".parse().unwrap()),
         Err(BlockReason::LocalToggle(LocalCategory::Private))
     );
 }
@@ -180,13 +180,13 @@ fn a_company_registry_is_reachable_by_default_and_refused_when_its_toggle_is_off
     let access = default_pull_access();
     let guard = guard_for(access);
     assert_eq!(
-        verdict(&guard, access, "100.64.3.7:443".parse().unwrap()),
+        verdict(&guard, access, None, "100.64.3.7:443".parse().unwrap()),
         Ok(())
     );
     // Switched off, the pull is refused with the company reason and the header names it.
     let off = access.with_toggle(LocalCategory::CompanyNetwork, false);
     let guard = guard_for(off);
-    let reason = verdict(&guard, off, "100.64.3.7:443".parse().unwrap()).unwrap_err();
+    let reason = verdict(&guard, off, None, "100.64.3.7:443".parse().unwrap()).unwrap_err();
     assert!(matches!(reason, BlockReason::CompanyNetwork(_)));
     let host = Host::parse_normalised("registry.corp.example").unwrap();
     let mut event = ConnectionEvent::puddle(

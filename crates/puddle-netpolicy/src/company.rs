@@ -5,15 +5,34 @@
 //! The host reads the signals (the proxy script, DNS suffixes, installed private-access clients,
 //! routes); this module only decides. A signal the host cannot read answers "no", so an unknown
 //! address stays in its local/private category and the company toggle never opens what the
-//! private toggle guards.
+//! private toggle guards. The LAN reading is the one signal whose "no" would widen access (it is
+//! the guard that keeps a home-LAN address out of the category), so it has a third answer,
+//! [`LanReading::Unread`], and that answer also keeps the address out.
+//!
+//! The shipped host gives no [`CompanySignals`] yet (`HostOptions::company_signals` is `None`),
+//! so in the app today the category is empty and its toggle changes nothing.
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr};
 
 use puddle_types::CompanySignal;
 
-/// What the host can tell about its company network. Every method answers "no" when the host
-/// cannot read the signal (the defaults), so an unreadable signal never widens access.
+/// Whether an address is on the subnet of a physical LAN interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LanReading {
+    /// On a physical LAN's own subnet: local/private, whatever else it matches.
+    OnLan,
+    /// The host read its interfaces and the address is on none of the physical ones.
+    OffLan,
+    /// The host could not read its interfaces, so it cannot rule out that the address is on the
+    /// LAN. Treated like [`LanReading::OnLan`]: the address stays local/private.
+    Unread,
+}
+
+/// What the host can tell about its company network. Every method but
+/// [`CompanySignals::physical_lan`] answers "no" when the host cannot read the signal (the
+/// defaults), so an unreadable signal never widens access. `physical_lan` answers
+/// [`LanReading::Unread`] by default, because there a plain "no" would widen access.
 pub trait CompanySignals: Send + Sync {
     /// Whether the proxy script answers `DIRECT` for `name` while it names proxies for other
     /// URLs.
@@ -39,9 +58,10 @@ pub trait CompanySignals: Send + Sync {
     }
 
     /// Whether `ip` is on the subnet of a physical LAN interface. Such an address is a
-    /// local/private network address, whatever else it matches.
-    fn on_physical_lan(&self, _ip: IpAddr) -> bool {
-        false
+    /// local/private network address, whatever else it matches; so is one the host could not
+    /// tell about ([`LanReading::Unread`]).
+    fn physical_lan(&self, _ip: IpAddr) -> LanReading {
+        LanReading::Unread
     }
 
     /// What the host found, for a screen that lists it. The default knows the client flag and no
@@ -77,6 +97,7 @@ pub struct StaticSignals {
     private_access_client: bool,
     vpn_routes: Vec<(IpAddr, u8)>,
     lan_subnets: Vec<(IpAddr, u8)>,
+    lan_unread: bool,
 }
 
 fn clean(name: &str) -> String {
@@ -129,6 +150,14 @@ impl StaticSignals {
         self.lan_subnets.push((net, bits));
         self
     }
+
+    /// The host could not read its LAN interfaces: every address answers
+    /// [`LanReading::Unread`], whatever subnets were given.
+    #[must_use]
+    pub fn with_lan_unread(mut self) -> Self {
+        self.lan_unread = true;
+        self
+    }
 }
 
 impl CompanySignals for StaticSignals {
@@ -166,10 +195,18 @@ impl CompanySignals for StaticSignals {
             .any(|&(net, bits)| in_net(ip, net, bits))
     }
 
-    fn on_physical_lan(&self, ip: IpAddr) -> bool {
-        self.lan_subnets
+    fn physical_lan(&self, ip: IpAddr) -> LanReading {
+        if self.lan_unread {
+            LanReading::Unread
+        } else if self
+            .lan_subnets
             .iter()
             .any(|&(net, bits)| in_net(ip, net, bits))
+        {
+            LanReading::OnLan
+        } else {
+            LanReading::OffLan
+        }
     }
 }
 
@@ -192,7 +229,8 @@ fn in_net(ip: IpAddr, net: IpAddr, bits: u8) -> bool {
 /// or `None`. Only an address that is already in the local/private category qualifies
 /// (`private` is that classification): a public address stays public whatever its name says, and
 /// loopback, link-local, metadata and special-use addresses never qualify. An address on a
-/// physical LAN's own subnet stays local/private.
+/// physical LAN's own subnet stays local/private, and so does any address while the host cannot
+/// read its LAN interfaces.
 #[must_use]
 pub(crate) fn company_signal(
     private: bool,
@@ -208,7 +246,7 @@ pub(crate) fn company_signal(
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
         v4 @ IpAddr::V4(_) => v4,
     };
-    if signals.on_physical_lan(ip) {
+    if signals.physical_lan(ip) != LanReading::OffLan {
         return None;
     }
     let named =

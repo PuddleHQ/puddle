@@ -140,10 +140,11 @@ impl Store {
              WHERE id = ?1 AND user_id = ?2 AND revoked_at IS NULL",
             params![device.get(), user.get(), sql_ts(self.clock.now_ms())],
         )?;
-        if changed > 0 {
-            self.forget_session(device)?;
+        if changed == 0 {
+            return Ok(false);
         }
-        Ok(changed > 0)
+        self.forget_session(device)?;
+        Ok(true)
     }
 
     /// Revokes every device of `user` except `keep` (a password change keeps the browser that
@@ -163,16 +164,18 @@ impl Store {
                  WHERE user_id = ?1 AND revoked_at IS NULL AND id IS NOT ?3
                  RETURNING id",
             )?;
-            let mut rows = stmt.query(params![
-                user.get(),
-                sql_ts(self.clock.now_ms()),
-                keep.map(DeviceId::get)
-            ])?;
-            let mut ids = Vec::new();
-            while let Some(row) = rows.next()? {
-                ids.push(DeviceId::from_stored(row.get(0)?));
-            }
-            ids
+            stmt.query_map(
+                params![
+                    user.get(),
+                    sql_ts(self.clock.now_ms()),
+                    keep.map(DeviceId::get)
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .and_then(Iterator::collect::<Result<Vec<i64>, _>>)?
+            .into_iter()
+            .map(DeviceId::from_stored)
+            .collect()
         };
         for id in &revoked {
             self.forget_session(*id)?;
@@ -233,10 +236,11 @@ impl Store {
     ) -> Result<(), StoreError> {
         let mut conn = lock(&self.conn);
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let exists: bool = tx.query_row(
-            "SELECT count(*) > 0 FROM sign_in_methods WHERE method = ?1",
+        let (exists, others): (bool, i64) = tx.query_row(
+            "SELECT coalesce(max(method = ?1), 0), coalesce(sum(enabled = 1 AND method <> ?1), 0)
+             FROM sign_in_methods",
             [method.as_str()],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         if !exists {
             return Err(StoreError::SignInMethod(format!(
@@ -244,17 +248,10 @@ impl Store {
                 method.as_str()
             )));
         }
-        if !enabled {
-            let others: i64 = tx.query_row(
-                "SELECT count(*) FROM sign_in_methods WHERE enabled = 1 AND method <> ?1",
-                [method.as_str()],
-                |r| r.get(0),
-            )?;
-            if others == 0 {
-                return Err(StoreError::SignInMethod(
-                    "at least one way of signing in must stay on".to_owned(),
-                ));
-            }
+        if !enabled && others == 0 {
+            return Err(StoreError::SignInMethod(
+                "at least one way of signing in must stay on".to_owned(),
+            ));
         }
         tx.execute(
             "UPDATE sign_in_methods SET enabled = ?2 WHERE method = ?1",

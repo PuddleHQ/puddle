@@ -73,6 +73,9 @@ fn a_device_name_and_user_are_checked() {
         store.add_device(UserId::OWNER, "  ", 5_000),
         Err(StoreError::DeviceName(_))
     ));
+    store
+        .add_device(UserId::OWNER, &"x".repeat(64), 5_000)
+        .unwrap();
     assert!(matches!(
         store.add_device(UserId::OWNER, &"x".repeat(65), 5_000),
         Err(StoreError::DeviceName(_))

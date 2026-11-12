@@ -61,6 +61,7 @@ describe("filters and the API query", () => {
       workspace: "shop",
       type: "connection",
       outcome: "deny",
+      category: "company_network",
       q: "  github  ",
       range: "1h",
     };
@@ -68,6 +69,7 @@ describe("filters and the API query", () => {
       workspace: "shop",
       type: "connection",
       outcome: "deny",
+      category: "company_network",
       q: "github",
       from: 10_000_000 - 3_600_000,
     });
@@ -79,6 +81,7 @@ describe("filters and the API query", () => {
       { workspace: "a" },
       { type: "connection" },
       { outcome: "allow" },
+      { category: "company_network" },
       { q: "x" },
       { range: "7d" },
     ] as Partial<Filter>[]) {
@@ -96,6 +99,7 @@ describe("isNarrowed", () => {
       { workspace: "a" },
       { type: "connection" },
       { outcome: "allow" },
+      { category: "company_network" },
       { q: "x" },
     ] as Partial<Filter>[]) {
       expect(isNarrowed({ ...NO_FILTER, range: "all", ...change })).toBe(true);
@@ -121,6 +125,7 @@ describe("the page address", () => {
       workspace: "shop",
       type: "rule_created",
       outcome: "blocked",
+      category: "company_network",
       q: "a&b=c d",
       range: "all",
     };
@@ -171,6 +176,25 @@ describe("a record as a row", () => {
       outcome: { label: "Allowed", tone: "allow" },
     });
     expect(view.detail).toBe("rule 1 · 2.0 KB up, 3.0 MB down");
+  });
+  it("marks a company-network connection with a chip that says why, and names the toggle that refused it", () => {
+    const view = row(
+      connection(1, {
+        decision: "blocked",
+        reason: "toggle:company_network",
+        rule_id: null,
+        category: "company_network",
+        signal: "dns_suffix",
+      }).record,
+    );
+    expect(view.company).toEqual({
+      label: "Company network",
+      title: "Its name ends in one of the company's DNS suffixes.",
+    });
+    expect(view.detail).toBe(
+      "because company network destinations are switched off",
+    );
+    expect(row(connection(2, {}).record).company).toBeUndefined();
   });
   it("explains a block, a waiting request and a request line", () => {
     const blocked = row(
@@ -367,10 +391,19 @@ describe("a record as a row", () => {
     const raw = row(
       connection(2, {
         refused_address: "127.0.0.1",
+        refused_reason: "a_later_reason",
+      }).record,
+    );
+    expect(raw.detail).toContain("127.0.0.1 (a_later_reason)");
+    const toggled = row(
+      connection(4, {
+        refused_address: "127.0.0.1",
         refused_reason: "toggle:loopback",
       }).record,
     );
-    expect(raw.detail).toContain("127.0.0.1 (toggle:loopback)");
+    expect(toggled.detail).toContain(
+      "127.0.0.1 (this computer's own addresses are switched off)",
+    );
     expect(row(connection(3, {}).record).detail).not.toContain("answer");
   });
   it("names an address that a rule on the address denied", () => {

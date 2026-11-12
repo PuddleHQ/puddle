@@ -60,3 +60,17 @@ export function localCategory(rawHost: string): LocalCategory | null {
   if (mapped?.[1]) return localCategory(mapped[1]);
   return null;
 }
+
+/** What put an address on the company network, in words (the wire carries the code). */
+export const COMPANY_SIGNAL_TEXT: Record<string, string> = {
+  pac_direct: "your company's proxy script sends it straight out",
+  dns_suffix: "its name ends in one of your company's DNS suffixes",
+  private_access_cgnat:
+    "a company private-access client (such as Zscaler, Netskope, WARP or Tailscale) is active and this address is in its range",
+  vpn_route: "this computer reaches it through a VPN connection",
+};
+
+/** The reason, or `null` for a signal this version doesn't know (shown as no reason at all). */
+export function companySignalText(signal: string | null): string | null {
+  return signal === null ? null : (COMPANY_SIGNAL_TEXT[signal] ?? null);
+}

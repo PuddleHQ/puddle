@@ -115,6 +115,40 @@ describe("RequestRow", () => {
     ).toHaveAttribute("href", "/settings#local-destinations");
   });
 
+  it("says a company-network destination is on the company network, why, and opens that workspace's switch", () => {
+    mount(
+      { blockedBy: "company_network" },
+      request(3, {
+        host: "100.64.3.7",
+        workspace: "demo",
+        blocked_by: "company_network",
+        company_signal: "dns_suffix",
+      }),
+    );
+    const note = screen
+      .getByText("on your company network")
+      .closest("p") as HTMLElement;
+    expect(note).toHaveTextContent(
+      "its name ends in one of your company's DNS suffixes",
+    );
+    expect(note).toHaveTextContent("can't be approved yet");
+    expect(screen.queryByRole("button", { name: /^Allow/ })).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Open the company network switch" }),
+    ).toHaveAttribute("href", "/workspaces/demo/settings#local-destinations");
+  });
+
+  it("still says it is on the company network when the signal is one this version doesn't know", () => {
+    mount(
+      { blockedBy: "company_network" },
+      request(3, { host: "100.64.3.7", company_signal: "later" }),
+    );
+    const note = screen
+      .getByText("on your company network")
+      .closest("p") as HTMLElement;
+    expect(note).toHaveTextContent(/on your company network\. Company network/);
+  });
+
   it("offers Allow for a local destination whose toggle is on, with no subdomain choice", () => {
     mount({ blockedBy: null }, request(2, { host: "192.168.1.10" }));
     expect(screen.getByRole("button", { name: /^Allow/ })).toBeInTheDocument();

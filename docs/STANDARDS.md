@@ -733,7 +733,7 @@ and in `ci.yml` (Linux); every one but `ui-e2e` is also in the `pre-push` set; `
 
 - **The fixture backend** (`puddle-ui-fixture`, `crates/puddle-e2e/src/ui_fixture/`) is the real
   `puddle-api` router on an in-memory store, a manual clock and in-memory settings, seeded from a JSON
-  scenario (`ui/e2e/fixtures/*.json`: built-ins `default`, `empty`, `lived-in`, `corporate-network`, `network-trouble`, or any file) and driven by
+  scenario (`ui/e2e/fixtures/*.json`: built-ins `default`, `empty`, `lived-in`, `corporate-network`, `company-network`, `network-trouble`, or any file) and driven by
   scripts and a loopback control server (emit an event, advance the clock, restart, reset). Screens are
   developed with `cd ui && npm run dev:fixture`; e2e tests that only read use the shared server of
   `playwright.config.ts`, tests that change state use `e2e/fixture.ts` (a backend per worker, reset per

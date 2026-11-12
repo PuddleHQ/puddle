@@ -46,10 +46,10 @@ index 04a864fc..35b7cbc4 100644
  // Re-Exports
 diff --git a/sdk/rust/lib/runtime/sandbox_trial.rs b/sdk/rust/lib/runtime/sandbox_trial.rs
 new file mode 100644
-index 00000000..e2a57333
+index 00000000..fe4031ff
 --- /dev/null
 +++ b/sdk/rust/lib/runtime/sandbox_trial.rs
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,283 @@
 +//! RESEARCH ONLY (never shipped): start the sandbox runtime under a candidate sandbox control,
 +//! chosen by the environment variable PUDDLE_SANDBOX_TRIAL:
 +//!   restricted | rsids | low | lowbox:<appcontainer name>:<capability>[,<capability>...]
@@ -256,6 +256,31 @@ index 00000000..e2a57333
 +    Ok(out)
 +}
 +
++/// Research shortcut: open the msb home to the sandboxed runtime before it starts
++/// (Low: a low label; AppContainer: ALL APPLICATION PACKAGES), recursively, every spawn.
++pub(crate) fn open_home(home: &std::path::Path, mode: &str) {
++    let arg = if mode == "low" {
++        vec!["/setintegritylevel".to_owned(), "(OI)(CI)low".to_owned()]
++    } else if mode.starts_with("lowbox:") {
++        vec!["/grant".to_owned(), "*S-1-15-2-1:(OI)(CI)F".to_owned()]
++    } else {
++        return;
++    };
++    let t = std::time::Instant::now();
++    let out = std::process::Command::new("icacls")
++        .arg(home)
++        .args(&arg)
++        .args(["/T", "/C", "/Q"])
++        .output();
++    eprintln!(
++        "sandbox trial: icacls {} {:?} took {} ms: {:?}",
++        home.display(),
++        arg,
++        t.elapsed().as_millis(),
++        out.map(|o| o.status)
++    );
++}
++
 +/// Swap the suspended child's primary token, then resume its threads.
 +pub(crate) fn apply(process: HANDLE, pid: u32, mode: &str) -> std::io::Result<()> {
 +    unsafe {
@@ -309,10 +334,10 @@ index 00000000..e2a57333
 +    }
 +}
 diff --git a/sdk/rust/lib/runtime/spawn.rs b/sdk/rust/lib/runtime/spawn.rs
-index 4ccec1c3..89c72d7d 100644
+index 4ccec1c3..017d4ca7 100644
 --- a/sdk/rust/lib/runtime/spawn.rs
 +++ b/sdk/rust/lib/runtime/spawn.rs
-@@ -1065,6 +1065,23 @@ fn spawn_runtime_command(
+@@ -1065,6 +1065,34 @@ fn spawn_runtime_command(
      } else {
          None
      };
@@ -323,7 +348,18 @@ index 4ccec1c3..89c72d7d 100644
 +            super::launcher_isolation::creation_flags(_mode)
 +                | windows_sys::Win32::System::Threading::CREATE_SUSPENDED,
 +        );
++        if let Ok(t) = std::env::var("PUDDLE_SANDBOX_TRIAL_TEMP") {
++            cmd.env("TEMP", &t).env("TMP", &t);
++        }
++        let home = cmd
++            .as_std()
++            .get_envs()
++            .find(|(k, _)| k.eq_ignore_ascii_case("MSB_HOME"))
++            .and_then(|(_, v)| v.map(std::path::PathBuf::from));
 +        let child = cmd.spawn()?;
++        if let Some(home) = home {
++            super::sandbox_trial::open_home(&home, &mode);
++        }
 +        let pid = child.id().unwrap_or(0);
 +        let handle = child.raw_handle().unwrap_or(std::ptr::null_mut());
 +        if let Err(e) = super::sandbox_trial::apply(handle as _, pid, &mode) {

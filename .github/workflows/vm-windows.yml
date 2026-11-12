@@ -221,7 +221,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [base, strong, restricted, rsids, low, lowbox]
+        trial: [low, lowbox]
         partition: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -360,10 +360,10 @@ jobs:
   vscode:
     name: vm-windows desktop VS Code (${{ matrix.trial }})
     needs: [build, agent]
-    if: ${{ needs.build.outputs.run == 'true' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) }}
     permissions:
       contents: read
       actions: write
+    if: false
     runs-on: windows-2025
     timeout-minutes: 45
     strategy:
@@ -461,6 +461,7 @@ jobs:
   # Research only: the sandbox controls one by one on this runner (WHP probe, msb CLI boots, IFEO mitigations).
   probe:
     name: sandbox probe (research)
+    if: false
     runs-on: windows-2025
     timeout-minutes: 60
     steps:
@@ -485,6 +486,7 @@ jobs:
     name: msb trace (research)
     needs: [build, agent]
     if: ${{ needs.build.outputs.run == 'true' }}
+    if: false
     runs-on: windows-2025
     timeout-minutes: 60
     steps:

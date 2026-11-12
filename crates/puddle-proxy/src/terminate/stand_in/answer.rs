@@ -562,11 +562,15 @@ pub(super) enum Pushed {
 
 /// A content decoder fed pieces of an encoded body.
 pub(super) enum Decoder {
+    /// A `deflate` body: waits for the first two bytes to tell zlib (what the standard says
+    /// `deflate` is) from a raw deflate stream (what some servers send).
+    DeflateStart(Vec<u8>),
+    Ready(Box<Format>),
+}
+
+/// A decoder that writes into a [`Sink`], by coding.
+pub(super) enum Format {
     Gzip(flate2::write::MultiGzDecoder<Sink>),
-    /// Waits for the first two bytes to tell zlib (what the standard says `deflate` is) from a
-    /// raw deflate stream (what some servers send).
-    /// With the bytes held so far, and a buffer that stays empty.
-    DeflateStart(Vec<u8>, Sink),
     Zlib(flate2::write::ZlibDecoder<Sink>),
     Deflate(flate2::write::DeflateDecoder<Sink>),
     Brotli(Box<brotli_decompressor::DecompressorWriter<Sink>>),
@@ -584,22 +588,23 @@ impl Decoder {
             .map(str::trim)
             .filter(|coding| !coding.is_empty() && *coding != "identity")
             .collect();
+        let ready = |format| Ok(Some(Self::Ready(Box::new(format))));
         match codings.as_slice() {
             [] => Ok(None),
-            ["gzip" | "x-gzip"] => Ok(Some(Self::Gzip(flate2::write::MultiGzDecoder::new(
+            ["gzip" | "x-gzip"] => ready(Format::Gzip(flate2::write::MultiGzDecoder::new(
                 Sink::default(),
-            )))),
-            ["deflate"] => Ok(Some(Self::DeflateStart(Vec::new(), Sink::default()))),
-            ["br"] => Ok(Some(Self::Brotli(Box::new(
+            ))),
+            ["deflate"] => Ok(Some(Self::DeflateStart(Vec::new()))),
+            ["br"] => ready(Format::Brotli(Box::new(
                 brotli_decompressor::DecompressorWriter::new(Sink::default(), DECODE_STEP),
-            )))),
+            ))),
             ["zstd"] => zstd::stream::write::Decoder::new(Sink::default())
                 .and_then(|mut decoder| {
                     decoder.window_log_max(ZSTD_WINDOW_LOG_MAX)?;
                     Ok(decoder)
                 })
-                .map(|decoder| Some(Self::Zstd(decoder)))
-                .map_err(|_| ()),
+                .map_err(|_| ())
+                .and_then(|decoder| ready(Format::Zstd(decoder))),
             _ => Err(()),
         }
     }
@@ -613,28 +618,47 @@ impl Decoder {
         out: &mut Vec<u8>,
         limit: usize,
     ) -> io::Result<Pushed> {
-        if let Self::DeflateStart(held, _) = self {
-            held.extend_from_slice(input);
-            let [cmf, flg, ..] = held[..] else {
-                return Ok(Pushed::All);
-            };
-            let zlib = cmf & 0x0f == 8 && (u16::from(cmf) * 256 + u16::from(flg)) % 31 == 0;
-            let held = std::mem::take(held);
-            *self = if zlib {
-                Self::Zlib(flate2::write::ZlibDecoder::new(Sink::default()))
-            } else {
-                Self::Deflate(flate2::write::DeflateDecoder::new(Sink::default()))
-            };
-            return self.push(&held, out, limit);
+        match self {
+            Self::DeflateStart(held) => {
+                held.extend_from_slice(input);
+                let [cmf, flg, ..] = held[..] else {
+                    return Ok(Pushed::All);
+                };
+                let zlib = cmf & 0x0f == 8 && (u16::from(cmf) * 256 + u16::from(flg)) % 31 == 0;
+                let held = std::mem::take(held);
+                let mut format = if zlib {
+                    Format::Zlib(flate2::write::ZlibDecoder::new(Sink::default()))
+                } else {
+                    Format::Deflate(flate2::write::DeflateDecoder::new(Sink::default()))
+                };
+                let pushed = format.push(&held, out, limit);
+                *self = Self::Ready(Box::new(format));
+                pushed
+            }
+            Self::Ready(format) => format.push(input, out, limit),
         }
+    }
+
+    /// Ends the body: what the decoder still holds (a write's worth at most), or an error when
+    /// the body stopped short. Not called after `push` said `Full`.
+    pub(super) fn finish(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
+        match self {
+            Self::DeflateStart(held) if held.is_empty() => Ok(()),
+            Self::DeflateStart(_) => Err(io::Error::other("a deflate body ended at once")),
+            Self::Ready(format) => format.finish(out),
+        }
+    }
+}
+
+impl Format {
+    fn push(&mut self, input: &[u8], out: &mut Vec<u8>, limit: usize) -> io::Result<Pushed> {
         let start = out.len();
         for piece in input.chunks(DECODE_STEP) {
-            let sink = self.sink();
             let room = limit.saturating_sub(out.len() - start);
-            if sink.full || room == 0 {
+            if self.sink().full || room == 0 {
                 return Ok(Pushed::Full);
             }
-            sink.limit = room;
+            self.sink().limit = room;
             let written = self
                 .writer()
                 .write_all(piece)
@@ -649,13 +673,9 @@ impl Decoder {
         Ok(Pushed::All)
     }
 
-    /// Ends the body: what the decoder still holds (a write's worth at most), or an error when
-    /// the body stopped short. Not called after `push` said `Full`.
-    pub(super) fn finish(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
+    fn finish(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
         self.sink().limit = usize::MAX;
         let ended = match self {
-            Self::DeflateStart(held, _) if held.is_empty() => return Ok(()),
-            Self::DeflateStart(..) => Err(io::Error::other("a deflate body ended at once")),
             Self::Gzip(decoder) => decoder.try_finish(),
             Self::Zlib(decoder) => decoder.try_finish(),
             Self::Deflate(decoder) => decoder.try_finish(),
@@ -673,7 +693,6 @@ impl Decoder {
             Self::Deflate(decoder) => decoder,
             Self::Brotli(decoder) => &mut **decoder,
             Self::Zstd(decoder) => decoder,
-            Self::DeflateStart(held, _) => held,
         }
     }
 
@@ -685,7 +704,6 @@ impl Decoder {
             Self::Deflate(decoder) => decoder.get_mut(),
             Self::Brotli(decoder) => decoder.get_mut(),
             Self::Zstd(decoder) => decoder.get_mut(),
-            Self::DeflateStart(_, sink) => sink,
         }
     }
 }

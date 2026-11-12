@@ -45,26 +45,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Opened<S> {
 
     /// Reads on until the first upload bytes tell whether they are an SSH identification line
     /// ([`ssh::undecided`]), for at most `limit`. When what came with the head does not tell, the
-    /// guest is answered first: a client may wait for the `200` before it sends anything.
-    pub(crate) async fn read_first(&mut self, limit: Duration) -> io::Result<()> {
-        if !ssh::undecided(&self.early) {
-            return Ok(());
+    /// guest is answered first: a client may wait for the `200` before it sends anything. A stream
+    /// that fails ends the read; whatever handles the connection next meets the same failure.
+    pub(crate) async fn read_first(&mut self, limit: Duration) {
+        if !ssh::undecided(&self.early) || self.answer().await.is_err() {
+            return;
         }
-        self.answer().await?;
         let read = async {
             let mut chunk = [0u8; 256];
             while ssh::undecided(&self.early) {
-                let n = self.stream.read(&mut chunk).await?;
-                if n == 0 {
-                    break;
+                match self.stream.read(&mut chunk).await {
+                    Ok(n) if n > 0 => self
+                        .early
+                        .extend_from_slice(chunk.get(..n).unwrap_or_default()),
+                    _ => break,
                 }
-                self.early
-                    .extend_from_slice(chunk.get(..n).unwrap_or_default());
             }
-            Ok(())
         };
         // On timeout, decide from what arrived: too little for a banner is decrypted.
-        tokio::time::timeout(limit, read).await.unwrap_or(Ok(()))
+        let _ = tokio::time::timeout(limit, read).await;
     }
 }
 

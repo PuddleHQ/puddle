@@ -937,12 +937,8 @@ async fn relay(
     // SSH to a name that is not a Git host is spliced, even on port 443 of a decrypted name. The
     // header that says SSH is the guest's word, so there the first bytes decide: an identification
     // line is spliced, anything else is decrypted like every connection to the name.
-    if terminating.is_some()
-        && request.protocol == Some(ProtocolHint::Ssh)
-        && let Err(err) = guest.read_first(proxy.config.head_timeout).await
-    {
-        tracing::debug!(error = %err, "guest stream failed before its first bytes");
-        return event;
+    if terminating.is_some() && request.protocol == Some(ProtocolHint::Ssh) {
+        guest.read_first(proxy.config.head_timeout).await;
     }
     // A bound host is terminated: the guest's TLS handshake comes first, so a client that asks
     // for the wrong name never causes a connection to the real server.

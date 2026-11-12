@@ -644,6 +644,40 @@ async fn an_ssh_header_with_no_bytes_behind_it_is_answered_and_the_banner_that_f
 }
 
 #[tokio::test]
+async fn an_answered_ssh_tunnel_whose_server_cannot_be_reached_just_ends_with_no_second_answer() {
+    let pki = Pki::new();
+    let (_held, dead) = closed_port();
+    let rig = RigBuilder::new(&pki)
+        .name("dead.test", dead)
+        .allow(vec!["bound.test", "dead.test"])
+        .injector(adds_nothing())
+        .decrypting_all(true, &[])
+        .build();
+    let mut guest = rig.guest();
+    let (code, mut stream) = guest
+        .connect_with("dead.test:443", &[&format!("{PROTOCOL_HEADER}: {SSH}")])
+        .await;
+    assert_eq!(code, 200);
+    stream.write_all(BANNER).await.unwrap();
+    stream.flush().await.unwrap();
+    let mut rest = Vec::new();
+    // The tunnel is closed or reset, depending on the platform: both end it.
+    let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut rest))
+        .await
+        .expect("the proxy ends the connection");
+    assert!(
+        rest.is_empty(),
+        "no second answer: {:?}",
+        String::from_utf8_lossy(&rest)
+    );
+    let events = rig.events(1).await;
+    assert_ne!(
+        events[0].outcome,
+        Some(puddle_types::ConnectionOutcome::Connected)
+    );
+}
+
+#[tokio::test]
 async fn hostile_hg58_the_ssh_header_alone_does_not_keep_a_decrypted_name_from_being_decrypted() {
     // The header is the guest's word. A guest that sets it and then speaks TLS must be decrypted
     // like any other connection to the name, or it would reach the server past the rules on method

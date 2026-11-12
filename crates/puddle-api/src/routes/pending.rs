@@ -223,8 +223,9 @@ async fn decide(
     effect: Effect,
 ) -> Result<Json<DecisionOutcome>, ApiError> {
     let resolution = body.into_resolution(effect)?;
-    // The request is the principal's (checked on the route); a rule beyond its workspace is not
-    // split per user yet.
+    // The request is the principal's (checked on the route). A rule beyond its workspace is a
+    // global rule or a set entry of the workspace's user, which the store makes it; changing those
+    // is an action of its own.
     if resolution.scope != ScopeChoice::Workspace {
         authz::check(
             &state,

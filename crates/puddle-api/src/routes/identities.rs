@@ -12,6 +12,7 @@ use puddle_store::{CredentialBinding, IdentityId, WorkspaceOpKind};
 use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
+use crate::authz::Principal;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::{AppState, record_op};
@@ -56,6 +57,18 @@ fn git_view(
 }
 
 /// The workspace a path names, as the id the store keys it by; 404 for none.
+/// Refuses a credential `principal` may not read: another user's pasted token, or, for anyone
+/// but the owner, an account signed in on this computer.
+fn usable_sources(
+    principal: Principal,
+    draft: &puddle_store::IdentityDraft,
+) -> Result<(), ApiError> {
+    draft
+        .credentials
+        .iter()
+        .try_for_each(|binding| crate::stored_ids::check_source(principal.user, &binding.source))
+}
+
 pub(super) async fn workspace(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
     let id =
         WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))?;
@@ -112,11 +125,12 @@ async fn forget_unclaimed_tokens(state: &AppState, before: &[CredentialBinding])
 )]
 pub(crate) async fn list_identities(
     State(state): State<AppState>,
+    principal: Principal,
 ) -> Result<Json<IdentityList>, ApiError> {
     let list = blocking(move || {
         let identities = state
             .store
-            .identities()?
+            .identities(principal.user)?
             .into_iter()
             .map(|identity| view(&state, identity))
             .collect::<Result<_, _>>()?;
@@ -140,13 +154,16 @@ pub(crate) async fn list_identities(
 )]
 pub(crate) async fn create_identity(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<IdentityRequest>,
 ) -> Result<(StatusCode, Json<IdentityView>), ApiError> {
     let draft = body.into_draft()?;
+    usable_sources(principal, &draft)?;
     let made = blocking(move || {
-        let identity = state.store.create_identity(draft)?;
+        let identity = state.store.create_identity(principal.user, draft)?;
         record_op(
             &state.store,
+            principal.user,
             WorkspaceOpKind::IdentityCreated,
             None,
             Some(identity.label.clone()),
@@ -170,10 +187,11 @@ pub(crate) async fn create_identity(
 )]
 pub(crate) async fn get_identity(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<i64>,
 ) -> Result<Json<IdentityView>, ApiError> {
     let found = blocking(move || {
-        let identity = state.store.identity(IdentityId(id))?;
+        let identity = state.store.identity(principal.user, IdentityId(id))?;
         view(&state, identity)
     })
     .await?;
@@ -199,16 +217,24 @@ pub(crate) async fn get_identity(
 )]
 pub(crate) async fn update_identity(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<i64>,
     crate::extract::Json(body): crate::extract::Json<IdentityRequest>,
 ) -> Result<Json<IdentityView>, ApiError> {
     let draft = body.into_draft()?;
+    usable_sources(principal, &draft)?;
     let held = state.clone();
     let (updated, before) = blocking(move || {
-        let before = held.store.identity(IdentityId(id))?.credentials;
-        let identity = held.store.update_identity(IdentityId(id), draft)?;
+        let before = held
+            .store
+            .identity(principal.user, IdentityId(id))?
+            .credentials;
+        let identity = held
+            .store
+            .update_identity(principal.user, IdentityId(id), draft)?;
         record_op(
             &held.store,
+            principal.user,
             WorkspaceOpKind::IdentityUpdated,
             None,
             Some(identity.label.clone()),
@@ -239,14 +265,16 @@ pub(crate) async fn update_identity(
 )]
 pub(crate) async fn delete_identity(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<i64>,
 ) -> Result<Json<IdentityDeleted>, ApiError> {
     let store = Arc::clone(&state.store);
     let (detached_from, before) = blocking(move || {
-        let gone = store.identity(IdentityId(id))?;
-        let left = store.delete_identity(IdentityId(id))?;
+        let gone = store.identity(principal.user, IdentityId(id))?;
+        let left = store.delete_identity(principal.user, IdentityId(id))?;
         record_op(
             &store,
+            principal.user,
             WorkspaceOpKind::IdentityDeleted,
             None,
             Some(gone.label.clone()),
@@ -274,12 +302,16 @@ pub(crate) async fn delete_identity(
 )]
 pub(crate) async fn set_default_identity(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<i64>,
 ) -> Result<Json<IdentityView>, ApiError> {
     let found = blocking(move || {
-        let identity = state.store.set_default_identity(IdentityId(id))?;
+        let identity = state
+            .store
+            .set_default_identity(principal.user, IdentityId(id))?;
         record_op(
             &state.store,
+            principal.user,
             WorkspaceOpKind::IdentityDefaultSet,
             None,
             Some(identity.label.clone()),
@@ -303,11 +335,12 @@ pub(crate) async fn set_default_identity(
 )]
 pub(crate) async fn reorder_identities(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<IdentityOrderRequest>,
 ) -> Result<Json<IdentityList>, ApiError> {
     let ids: Vec<_> = body.ids.into_iter().map(IdentityId).collect();
     let list = blocking(move || {
-        let ordered = state.store.reorder_identities(&ids)?;
+        let ordered = state.store.reorder_identities(principal.user, &ids)?;
         let order = ordered
             .iter()
             .map(|identity| identity.label.as_str())
@@ -315,6 +348,7 @@ pub(crate) async fn reorder_identities(
             .join(", ");
         record_op(
             &state.store,
+            principal.user,
             WorkspaceOpKind::IdentitiesReordered,
             None,
             Some(order),
@@ -338,8 +372,9 @@ pub(crate) async fn reorder_identities(
 )]
 pub(crate) async fn get_git_defaults(
     State(state): State<AppState>,
+    principal: Principal,
 ) -> Result<Json<GitDefaultsView>, ApiError> {
-    let defaults = blocking(move || Ok(state.store.git_defaults()?)).await?;
+    let defaults = blocking(move || Ok(state.store.git_defaults(principal.user)?)).await?;
     Ok(Json(defaults.into()))
 }
 
@@ -354,12 +389,15 @@ pub(crate) async fn get_git_defaults(
 )]
 pub(crate) async fn set_git_defaults(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<GitSwitchesRequest>,
 ) -> Result<Json<GitDefaultsView>, ApiError> {
     let defaults = blocking(move || {
-        Ok(state
-            .store
-            .set_git_defaults(body.only_push_listed, body.only_pull_listed)?)
+        Ok(state.store.set_git_defaults(
+            principal.user,
+            body.only_push_listed,
+            body.only_pull_listed,
+        )?)
     })
     .await?;
     Ok(Json(defaults.into()))
@@ -406,6 +444,7 @@ pub(crate) async fn get_workspace_git(
 )]
 pub(crate) async fn set_workspace_identities(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<WorkspaceIdentitiesRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
@@ -415,6 +454,7 @@ pub(crate) async fn set_workspace_identities(
         let git = state.store.set_workspace_identities(&name, &ids)?;
         record_op(
             &state.store,
+            principal.user,
             WorkspaceOpKind::IdentitiesChanged,
             Some(&name),
             Some(format!("the list now has {} identities", ids.len())),
@@ -441,6 +481,7 @@ pub(crate) async fn set_workspace_identities(
 )]
 pub(crate) async fn attach_identity(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<AttachIdentityRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
@@ -454,6 +495,7 @@ pub(crate) async fn attach_identity(
             .attach_identity(&name, IdentityId(body.identity), position)?;
         record_op(
             &state.store,
+            principal.user,
             WorkspaceOpKind::IdentitiesChanged,
             Some(&name),
             Some(format!("attached identity {}", body.identity)),
@@ -480,6 +522,7 @@ pub(crate) async fn attach_identity(
 )]
 pub(crate) async fn detach_identity(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, identity)): Path<(String, i64)>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
     let name = workspace(&state, &id).await?;
@@ -487,6 +530,7 @@ pub(crate) async fn detach_identity(
         let git = state.store.detach_identity(&name, IdentityId(identity))?;
         record_op(
             &state.store,
+            principal.user,
             WorkspaceOpKind::IdentitiesChanged,
             Some(&name),
             Some(format!("took identity {identity} off")),
@@ -542,6 +586,7 @@ pub(crate) async fn set_git_switches(
 )]
 pub(crate) async fn add_git_repo(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<GitRepoRequest>,
 ) -> Result<(StatusCode, Json<GitRepoView>), ApiError> {
@@ -551,6 +596,7 @@ pub(crate) async fn add_git_repo(
         let entry = state.store.add_repo(&name, &repo, body.pull, body.push)?;
         record_op(
             &state.store,
+            principal.user,
             WorkspaceOpKind::RepoAdded,
             Some(&name),
             Some(format!("{repo} in the Git settings")),
@@ -578,6 +624,7 @@ pub(crate) async fn add_git_repo(
 )]
 pub(crate) async fn set_git_repo(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, repo)): Path<(String, i64)>,
     crate::extract::Json(body): crate::extract::Json<GitRepoToggles>,
 ) -> Result<Json<GitRepoView>, ApiError> {
@@ -588,6 +635,7 @@ pub(crate) async fn set_git_repo(
             .set_repo_toggles(&name, repo, body.pull, body.push)?;
         record_op(
             &state.store,
+            principal.user,
             WorkspaceOpKind::RepoSwitched,
             Some(&name),
             Some(format!(
@@ -618,6 +666,7 @@ pub(crate) async fn set_git_repo(
 )]
 pub(crate) async fn remove_git_repo(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, repo)): Path<(String, i64)>,
 ) -> Result<StatusCode, ApiError> {
     let name = workspace(&state, &id).await?;
@@ -625,6 +674,7 @@ pub(crate) async fn remove_git_repo(
         state.store.remove_repo(&name, repo)?;
         record_op(
             &state.store,
+            principal.user,
             WorkspaceOpKind::RepoRemoved,
             Some(&name),
             Some(format!("row {repo} of the Git settings")),

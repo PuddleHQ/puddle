@@ -206,9 +206,10 @@ async fn a_secret_is_kept_in_the_credential_store_and_its_value_never_comes_back
     // The stored row has the reference and the hosts, not the value.
     let entries = api
         .store
-        .env_entries(&puddle_store::EnvScope::Workspace(
-            puddle_types::WorkspaceId::new("shop").unwrap(),
-        ))
+        .env_entries(
+            puddle_store::UserId::OWNER,
+            &puddle_store::EnvScope::Workspace(puddle_types::WorkspaceId::new("shop").unwrap()),
+        )
         .unwrap();
     assert!(!format!("{entries:?}").contains(canary()));
 }

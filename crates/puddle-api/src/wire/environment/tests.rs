@@ -58,6 +58,7 @@ fn a_secret_is_listed_by_name_and_hosts_and_never_by_value() {
     .unwrap();
     let secret = db
         .set_env(
+            puddle_store::UserId::OWNER,
             &store::EnvScope::Global,
             &store::EnvName::new("T").unwrap(),
             draft,

@@ -11,6 +11,7 @@ use puddle_store::IdentityId;
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
+use crate::authz::Principal;
 use crate::error::{ApiError, blocking};
 use crate::extract::Query;
 use crate::routes::AppState;
@@ -60,6 +61,7 @@ pub(crate) struct ReposQuery {
 )]
 pub(crate) async fn list_repos(
     State(state): State<AppState>,
+    principal: Principal,
     Query(query): Query<ReposQuery>,
 ) -> Result<Json<RepoListing>, ApiError> {
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT);
@@ -76,7 +78,7 @@ pub(crate) async fn list_repos(
     }
     let offset = query.offset.unwrap_or(0);
     let only = query.identity.map(IdentityId);
-    let identities = identities(&state, only).await?;
+    let identities = identities(&state, principal, only).await?;
     let lists = state
         .repos
         .lists(
@@ -108,14 +110,15 @@ pub(crate) async fn list_repos(
 /// Every identity, and a 404 when `only` names one that does not exist.
 async fn identities(
     state: &AppState,
+    principal: Principal,
     only: Option<IdentityId>,
 ) -> Result<Vec<puddle_store::Identity>, ApiError> {
     let store = state.store.clone();
     blocking(move || {
         if let Some(id) = only {
-            store.identity(id)?;
+            store.identity(principal.user, id)?;
         }
-        Ok(store.identities()?)
+        Ok(store.identities(principal.user)?)
     })
     .await
 }
@@ -136,10 +139,11 @@ async fn identities(
 )]
 pub(crate) async fn refresh_repos(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<RepoRefreshRequest>,
 ) -> Result<Json<RepoSources>, ApiError> {
     let only = body.identity_id.map(IdentityId);
-    let identities = identities(&state, only).await?;
+    let identities = identities(&state, principal, only).await?;
     let lists = state
         .repos
         .lists(
@@ -172,8 +176,10 @@ pub(crate) async fn refresh_repos(
 )]
 pub(crate) async fn credential_profile(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<AccountProfileRequest>,
 ) -> Result<Json<AccountProfile>, ApiError> {
     let source = body.source.into_store()?;
+    crate::stored_ids::check_source(principal.user, &source)?;
     Ok(Json(state.repos.profile(source).await?.into()))
 }

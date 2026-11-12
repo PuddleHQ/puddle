@@ -14,10 +14,11 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_secrets::{SecretStore, StoredId};
 use puddle_store::{
-    EnvDraft, EnvEntry, EnvName, EnvScope, EnvValue, SecretHost, Store, check_secret_value,
+    EnvDraft, EnvEntry, EnvName, EnvScope, EnvValue, SecretHost, Store, UserId, check_secret_value,
 };
 
 use crate::ApiErrorBody;
+use crate::authz::Principal;
 use crate::error::{ApiError, ErrorCode, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
@@ -32,14 +33,9 @@ fn unavailable() -> ApiError {
     )
 }
 
-/// A fresh id for a secret's value: `env-` and 128 random bits.
-fn new_stored_id() -> Result<StoredId, ApiError> {
-    let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes).map_err(|err| ApiError::internal(&err))?;
-    let id = bytes
-        .iter()
-        .fold(String::from("env-"), |id, byte| format!("{id}{byte:02x}"));
-    StoredId::new(id).map_err(|err| ApiError::internal(&err))
+/// A fresh id for a secret's value of `user`: `env-` and 128 random bits, with the user's mark.
+fn new_stored_id(user: UserId) -> Result<StoredId, ApiError> {
+    crate::stored_ids::fresh(user, "env").map_err(|err| ApiError::internal(&err))
 }
 
 /// Removes a secret's value that nothing refers to any more. The variable is already changed, so a
@@ -69,6 +65,7 @@ fn drop_replaced(
 /// Sets `name` in `scope`.
 async fn set(
     state: &AppState,
+    user: UserId,
     scope: EnvScope,
     name: &str,
     request: EnvSetRequest,
@@ -82,11 +79,11 @@ async fn set(
             // A secret that becomes a plain variable has no value to keep: it goes first, so a
             // credential store that is not there refuses the change instead of leaving the value
             // behind with nothing naming it.
-            let kept = store.env_entry(&scope, &name)?;
+            let kept = store.env_entry(user, &scope, &name)?;
             if let Some(secret) = kept.as_ref().and_then(|e| e.value.as_secret()) {
                 vault.delete(&secret.id).map_err(|_| unavailable())?;
             }
-            let change = store.set_env(&scope, &name, draft)?;
+            let change = store.set_env(user, &scope, &name, draft)?;
             drop_replaced(&vault, change.replaced.as_ref(), None);
             Ok(EnvVariable::from_store(change.entry, false))
         }
@@ -96,14 +93,14 @@ async fn set(
             place,
         } => {
             let hosts = SecretHost::list(&hosts)?;
-            let (kept, stored) = match store.env_entry(&scope, &name)?.map(|e| e.value) {
+            let (kept, stored) = match store.env_entry(user, &scope, &name)?.map(|e| e.value) {
                 Some(EnvValue::Secret(secret)) => (Some(secret.id), Some(secret.place)),
                 _ => (None, None),
             };
             let place = SecretPlace::into_store(place, stored)?;
             let (id, fresh) = match &kept {
                 Some(id) => (id.clone(), false),
-                None => (new_stored_id()?, true),
+                None => (new_stored_id(user)?, true),
             };
             match value {
                 Some(value) => {
@@ -119,7 +116,7 @@ async fn set(
                 None => {}
             }
             let draft = EnvDraft::secret_in(id.clone(), hosts, place)?;
-            let change = match store.set_env(&scope, &name, draft) {
+            let change = match store.set_env(user, &scope, &name, draft) {
                 Ok(change) => change,
                 Err(err) => {
                     if fresh {
@@ -136,7 +133,12 @@ async fn set(
 }
 
 /// Removes `name` from `scope`, and a secret's value from the credential store.
-async fn remove(state: &AppState, scope: EnvScope, name: &str) -> Result<(), ApiError> {
+async fn remove(
+    state: &AppState,
+    user: UserId,
+    scope: EnvScope,
+    name: &str,
+) -> Result<(), ApiError> {
     // Shape only: a name that is stored must stay removable.
     let name = EnvName::existing(name)?;
     let (store, vault): (Arc<Store>, Arc<dyn SecretStore>) =
@@ -144,12 +146,12 @@ async fn remove(state: &AppState, scope: EnvScope, name: &str) -> Result<(), Api
     blocking(move || {
         // The value first: when the credential store is not there, the variable stays and the
         // user can try again, instead of a value left behind with nothing naming it.
-        let entry = store.env_entry(&scope, &name)?;
+        let entry = store.env_entry(user, &scope, &name)?;
         if let Some(secret) = entry.as_ref().and_then(|e| e.value.as_secret()) {
             vault.delete(&secret.id).map_err(|_| unavailable())?;
         }
         // A name that is not set says so here, in the store's words: no such variable in this scope.
-        store.delete_env(&scope, &name)?;
+        store.delete_env(user, &scope, &name)?;
         Ok(())
     })
     .await
@@ -164,11 +166,12 @@ async fn remove(state: &AppState, scope: EnvScope, name: &str) -> Result<(), Api
 )]
 pub(crate) async fn list_global_env(
     State(state): State<AppState>,
+    principal: Principal,
 ) -> Result<Json<EnvList>, ApiError> {
     let list = blocking(move || {
         let variables = state
             .store
-            .env_entries(&EnvScope::Global)?
+            .env_entries(principal.user, &EnvScope::Global)?
             .into_iter()
             .map(|entry| EnvVariable::from_store(entry, false))
             .collect();
@@ -194,10 +197,13 @@ pub(crate) async fn list_global_env(
 )]
 pub(crate) async fn put_global_env(
     State(state): State<AppState>,
+    principal: Principal,
     Path(name): Path<String>,
     crate::extract::SecretJson(body): crate::extract::SecretJson<EnvSetRequest>,
 ) -> Result<Json<EnvVariable>, ApiError> {
-    Ok(Json(set(&state, EnvScope::Global, &name, body).await?))
+    Ok(Json(
+        set(&state, principal.user, EnvScope::Global, &name, body).await?,
+    ))
 }
 
 /// Removes a global variable or secret, and a secret's value from the credential store.
@@ -214,9 +220,10 @@ pub(crate) async fn put_global_env(
 )]
 pub(crate) async fn delete_global_env(
     State(state): State<AppState>,
+    principal: Principal,
     Path(name): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    remove(&state, EnvScope::Global, &name).await?;
+    remove(&state, principal.user, EnvScope::Global, &name).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -274,12 +281,20 @@ pub(crate) async fn list_workspace_env(
 )]
 pub(crate) async fn put_workspace_env(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, name)): Path<(String, String)>,
     crate::extract::SecretJson(body): crate::extract::SecretJson<EnvSetRequest>,
 ) -> Result<Json<EnvVariable>, ApiError> {
     let workspace = workspace(&state, &id).await?;
     Ok(Json(
-        set(&state, EnvScope::Workspace(workspace), &name, body).await?,
+        set(
+            &state,
+            principal.user,
+            EnvScope::Workspace(workspace),
+            &name,
+            body,
+        )
+        .await?,
     ))
 }
 
@@ -301,10 +316,17 @@ pub(crate) async fn put_workspace_env(
 )]
 pub(crate) async fn delete_workspace_env(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, name)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
     let workspace = workspace(&state, &id).await?;
-    remove(&state, EnvScope::Workspace(workspace), &name).await?;
+    remove(
+        &state,
+        principal.user,
+        EnvScope::Workspace(workspace),
+        &name,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

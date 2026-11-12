@@ -7,10 +7,11 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_store::{RepoRef, Store};
+use puddle_store::{RepoRef, Store, UserId};
 use puddle_types::{Decision, Host, WorkspaceId};
 
 use crate::ApiErrorBody;
+use crate::authz::{self, Action, Principal, ResourceRef};
 use crate::error::{ApiError, ErrorCode, blocking};
 use crate::routes::AppState;
 use crate::routes::workspaces::workspace_id;
@@ -39,13 +40,13 @@ pub(crate) fn hosts_of<'a>(urls: impl IntoIterator<Item = &'a str>) -> Vec<Host>
     hosts
 }
 
-/// Which rule or rule set blocks a host, in words, for a decision that is a deny.
-fn blocked_by(store: &Store, host: &Host, decision: Decision) -> Option<String> {
+/// Which rule or rule set of `user` blocks a host, in words, for a decision that is a deny.
+fn blocked_by(store: &Store, user: UserId, host: &Host, decision: Decision) -> Option<String> {
     match decision {
         Decision::Deny { rule_id, .. } => Some(format!("your rule {rule_id} blocks {host}")),
         Decision::SetDeny { set, .. } => {
             let name = store
-                .rule_set(set)
+                .rule_set(user, set)
                 .map_or_else(|_| set.to_string(), |info| info.name);
             Some(format!("the rule set {name} blocks {host}"))
         }
@@ -53,21 +54,25 @@ fn blocked_by(store: &Store, host: &Host, decision: Decision) -> Option<String> 
     }
 }
 
-/// Where each host stands for `workspace` (a workspace that does not exist yet when `None`).
+/// Where each host stands for `workspace` of `user` (a workspace of theirs that does not exist
+/// yet when `None`).
 pub(crate) fn stand(
     store: &Store,
+    user: UserId,
     workspace: Option<&WorkspaceId>,
     hosts: &[Host],
 ) -> Vec<RepositoryHost> {
     let placeholder = new_workspace();
-    let workspace = workspace.unwrap_or(&placeholder);
     hosts
         .iter()
         .map(|host| {
-            let decision = store.peek(workspace, host);
+            let decision = match workspace {
+                Some(workspace) => store.peek(workspace, host),
+                None => store.peek_as(user, &placeholder, host),
+            };
             let (state, blocked_by) = match decision {
                 None => (RepositoryHostState::New, None),
-                Some(d) => match blocked_by(store, host, d) {
+                Some(d) => match blocked_by(store, user, host, d) {
                     Some(text) => (RepositoryHostState::Blocked, Some(text)),
                     None => (RepositoryHostState::Allowed, None),
                 },
@@ -85,11 +90,12 @@ pub(crate) fn stand(
 /// overrides a block, so the list or the rule has to change first.
 pub(crate) async fn refuse_blocked(
     store: &Arc<Store>,
+    user: UserId,
     workspace: Option<WorkspaceId>,
     hosts: Vec<Host>,
 ) -> Result<(), ApiError> {
     let store = store.clone();
-    let stands = blocking(move || Ok(stand(&store, workspace.as_ref(), &hosts))).await?;
+    let stands = blocking(move || Ok(stand(&store, user, workspace.as_ref(), &hosts))).await?;
     let blocked: Vec<String> = stands.into_iter().filter_map(|h| h.blocked_by).collect();
     if blocked.is_empty() {
         return Ok(());
@@ -119,6 +125,7 @@ pub(crate) async fn refuse_blocked(
 )]
 pub(crate) async fn repository_hosts(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<RepositoryHostsRequest>,
 ) -> Result<Json<RepositoryHosts>, ApiError> {
     if body.urls.len() > crate::workspaces::MAX_REPOSITORIES {
@@ -126,10 +133,19 @@ pub(crate) async fn repository_hosts(
     }
     let workspace = body.workspace.as_deref().map(workspace_id).transpose()?;
     if let Some(id) = &workspace {
+        // The body names the workspace, so the route's own check could not see it.
+        authz::check(
+            &state,
+            principal,
+            Action::ChangeWorkspace,
+            ResourceRef::Workspace(id.clone()),
+        )
+        .await?;
         state.workspaces.get(id).await?;
     }
     let hosts = hosts_of(body.urls.iter().map(String::as_str));
     let store = state.store.clone();
-    let hosts = blocking(move || Ok(stand(&store, workspace.as_ref(), &hosts))).await?;
+    let user = principal.user;
+    let hosts = blocking(move || Ok(stand(&store, user, workspace.as_ref(), &hosts))).await?;
     Ok(Json(RepositoryHosts { hosts }))
 }

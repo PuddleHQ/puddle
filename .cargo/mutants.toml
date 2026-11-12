@@ -30,6 +30,9 @@ exclude_globs = [
 
 # Equivalent mutants, each with its reason:
 exclude_re = [
+    # The filtered SSH agent's `log` only writes log lines (one per answered request); the answer the
+    # guest gets is written by `serve` whatever `log` does.
+    'ssh_agent\.rs:\d+:\d+: replace log with \(\)',
     # `KeyringStore::keep_local` is `Ok(())` outside Windows: its rewrite is `#[cfg(windows)]`, so a
     # Linux mutation run never compiles the match guard (`is_kept_local`, which holds the testable
     # part, is tested) and replacing the body or the guard changes nothing it can run. The trait's

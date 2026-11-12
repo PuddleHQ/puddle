@@ -620,6 +620,13 @@ async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off
         async move { api.get(&path).await.json()["blocked_by"].clone() }
     };
     assert_eq!(one(company).await, "company_network");
+    let signal = |id: i64| {
+        let path = format!("/api/pending/{id}");
+        let api = &api;
+        async move { api.get(&path).await.json()["company_signal"].clone() }
+    };
+    assert_eq!(signal(company).await, "private_access_cgnat");
+    assert_eq!(signal(private).await, json!(null));
     // The category comes from the host's signals alone: other private addresses stay private.
     assert_eq!(one(private).await, "private");
     // The private toggle does not free it.
@@ -643,6 +650,8 @@ async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off
         .await;
     assert_eq!(put.status, 200, "{}", put.body);
     assert_eq!(one(company).await, json!(null));
+    // The signal stays, so a client that reads address ranges still knows it is the company's.
+    assert_eq!(signal(company).await, "private_access_cgnat");
     api.running.shutdown().await;
 }
 

@@ -32,6 +32,7 @@ use puddle_api::{
     RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved,
     WorkspaceRecord, check_repositories, entry_id_from_text,
 };
+use puddle_netpolicy::StaticSignals;
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
     SignInStart, SourceError, Tool,
@@ -42,9 +43,9 @@ use puddle_store::{
     Scope, Store,
 };
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, EgressRequest, Event,
-    EventSink, Host, HttpRequestLine, ImageRef, MemoryMib, Methods, PathPattern, Problem, Problems,
-    RuleId, SuffixAllows, WorkspaceId, WorkspaceStatus,
+    BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionReason,
+    EgressRequest, Event, EventSink, Host, HttpRequestLine, ImageRef, LocalCategory, MemoryMib,
+    Methods, PathPattern, Problem, Problems, RuleId, SuffixAllows, WorkspaceId, WorkspaceStatus,
 };
 use tokio::sync::Mutex;
 
@@ -63,7 +64,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 14] = [
+const BUILT_IN: [(&str, &str); 15] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -79,6 +80,10 @@ const BUILT_IN: [(&str, &str); 14] = [
     (
         "corporate-network",
         include_str!("../../../../ui/e2e/fixtures/corporate-network.json"),
+    ),
+    (
+        "company-network",
+        include_str!("../../../../ui/e2e/fixtures/company-network.json"),
     ),
     (
         "network-trouble",
@@ -288,6 +293,8 @@ impl Fixture {
             )
             .with_workspaces(Arc::new(state.workspaces.clone()))
             .with_network_health(state.network.clone() as Arc<dyn NetworkHealthService>)
+            // A private-access client is active, so an address in 100.64.0.0/10 is the company's.
+            .with_company_signals(Arc::new(StaticSignals::new().with_private_access_client()))
             .with_credentials(state.credentials.clone() as Arc<dyn CredentialService>)
             .with_secret_store(state.secrets.clone())
             .with_repos(state.repos.clone() as Arc<dyn RepoService>)
@@ -649,6 +656,7 @@ impl State {
                             decision,
                             reason: None,
                             request_line: None,
+                            company_signal: None,
                             bytes_up: i % 5000,
                             bytes_down: (i % 700) * 1024,
                             ago_ms: (count - 1 - i) * WEEK_MS / count,
@@ -1119,11 +1127,24 @@ impl State {
             "ssh_unsupported" => ConnectionReason::Blocked(BlockReason::SshUnsupported),
             "udp_unsupported" => ConnectionReason::Blocked(BlockReason::UdpUnsupported),
             "local_address" => ConnectionReason::Blocked(BlockReason::LocalAddress),
+            "toggle:company_network" => {
+                ConnectionReason::Blocked(BlockReason::LocalToggle(LocalCategory::CompanyNetwork))
+            }
             other => return Err(format!("unknown connection reason {other:?}")),
         };
         let mut event = ConnectionEvent::new(&request, decision, reason);
         event.bytes_up = seed.bytes_up;
         event.bytes_down = seed.bytes_down;
+        event.company_network = seed
+            .company_signal
+            .as_deref()
+            .map(|code| {
+                CompanySignal::ALL
+                    .into_iter()
+                    .find(|signal| signal.code() == code)
+                    .ok_or_else(|| format!("unknown company signal {code:?}"))
+            })
+            .transpose()?;
         if let Some(line) = &seed.request_line {
             event.http = Some(HttpRequestLine::new(line.method.as_str(), &line.path));
             event.request_rule = line.rule.map(RuleId);

@@ -43,6 +43,20 @@ pub trait CompanySignals: Send + Sync {
     fn on_physical_lan(&self, _ip: IpAddr) -> bool {
         false
     }
+
+    /// What the host found, for a screen that lists it. Empty when the host reads nothing.
+    fn found(&self) -> CompanyFound {
+        CompanyFound::default()
+    }
+}
+
+/// What a host found that drives the company-network category, in words a screen can show.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompanyFound {
+    /// DNS suffixes and name-resolution namespaces of the machine, lower case, each once.
+    pub dns_suffixes: Vec<String>,
+    /// A private-access client (Zscaler, Netskope, WARP, Tailscale) is installed and active.
+    pub private_access_client: bool,
 }
 
 /// The signals of a host that can read none: the category is empty.
@@ -130,6 +144,16 @@ impl CompanySignals for StaticSignals {
 
     fn private_access_client(&self) -> bool {
         self.private_access_client
+    }
+
+    fn found(&self) -> CompanyFound {
+        let mut dns_suffixes = self.dns_suffixes.clone();
+        dns_suffixes.sort();
+        dns_suffixes.dedup();
+        CompanyFound {
+            dns_suffixes,
+            private_access_client: self.private_access_client,
+        }
     }
 
     fn vpn_routed(&self, ip: IpAddr) -> bool {

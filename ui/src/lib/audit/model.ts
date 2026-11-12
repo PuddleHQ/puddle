@@ -26,11 +26,27 @@ export const RANGES: readonly { key: RangeKey; label: string; ms: number }[] = [
 
 export const DEFAULT_RANGE: RangeKey = "24h";
 
+export type AuditCategory = "company_network";
+
+export const CATEGORIES: readonly { value: AuditCategory; label: string }[] = [
+  { value: "company_network", label: "Company network" },
+];
+
+/** What put a destination on the company network, as a record's `signal` code reads in words. */
+const COMPANY_SIGNAL_WORDS: Record<string, string> = {
+  pac_direct: "The company's proxy script sends it straight out.",
+  dns_suffix: "Its name ends in one of the company's DNS suffixes.",
+  private_access_cgnat: "A company private-access client's range.",
+  vpn_route: "Reached through a VPN connection.",
+};
+
 export interface Filter {
   /** A workspace's id; empty for all. */
   workspace: string;
   type: AuditType | "";
   outcome: AuditOutcome | "";
+  /** A destination category; empty for all. Only the company network exists. */
+  category: AuditCategory | "";
   /** Text a record's host (or a rule's pattern), method, path or reason contains; empty for all. */
   q: string;
   range: RangeKey;
@@ -40,6 +56,7 @@ export const NO_FILTER: Filter = {
   workspace: "",
   type: "",
   outcome: "",
+  category: "",
   q: "",
   range: DEFAULT_RANGE,
 };
@@ -93,6 +110,7 @@ export function isFiltered(filter: Filter): boolean {
     filter.workspace !== "" ||
     filter.type !== "" ||
     filter.outcome !== "" ||
+    filter.category !== "" ||
     filter.q.trim() !== "" ||
     filter.range !== DEFAULT_RANGE
   );
@@ -104,6 +122,7 @@ export function isNarrowed(filter: Filter): boolean {
     filter.workspace !== "" ||
     filter.type !== "" ||
     filter.outcome !== "" ||
+    filter.category !== "" ||
     filter.q.trim() !== "" ||
     filter.range !== "all"
   );
@@ -114,6 +133,7 @@ export interface AuditQuery {
   workspace?: string;
   type?: AuditType;
   outcome?: AuditOutcome;
+  category?: AuditCategory;
   q?: string;
   from?: number;
 }
@@ -123,6 +143,7 @@ export function toQuery(filter: Filter, now: number): AuditQuery {
   if (filter.workspace !== "") query.workspace = filter.workspace;
   if (filter.type !== "") query.type = filter.type;
   if (filter.outcome !== "") query.outcome = filter.outcome;
+  if (filter.category !== "") query.category = filter.category;
   const q = filter.q.trim();
   if (q !== "") query.q = q;
   const range = RANGES.find((r) => r.key === filter.range);
@@ -136,6 +157,7 @@ export function toSearch(filter: Filter): string {
   if (filter.workspace !== "") params.set("workspace", filter.workspace);
   if (filter.type !== "") params.set("type", filter.type);
   if (filter.outcome !== "") params.set("outcome", filter.outcome);
+  if (filter.category !== "") params.set("category", filter.category);
   if (filter.q.trim() !== "") params.set("q", filter.q.trim());
   if (filter.range !== DEFAULT_RANGE) params.set("range", filter.range);
   const text = params.toString();
@@ -148,11 +170,15 @@ export function fromSearch(search: string): Filter {
   const type = params.get("type");
   const outcome = params.get("outcome");
   const range = params.get("range");
+  const category = params.get("category");
   return {
     workspace: params.get("workspace") ?? "",
     type: TYPES.some((t) => t.value === type) ? (type as AuditType) : "",
     outcome: OUTCOMES.some((o) => o.value === outcome)
       ? (outcome as AuditOutcome)
+      : "",
+    category: CATEGORIES.some((c) => c.value === category)
+      ? (category as AuditCategory)
       : "",
     q: params.get("q") ?? params.get("host") ?? "",
     range: RANGES.some((r) => r.key === range)
@@ -177,6 +203,8 @@ export interface RowView {
   detail: string;
   /** The rule on method and path that refused a connection; its name is part of `detail`. */
   requestRule?: number;
+  /** Set on a connection to a company-network destination: the chip's text and what it means. */
+  company?: { label: string; title: string };
 }
 
 /** How a rule on method and path reads inside a connection's detail. */
@@ -212,6 +240,12 @@ const REASONS: Record<string, string> = {
   ssh_unsupported: "SSH is not supported",
   udp_unsupported: "UDP is not supported",
   local_address: "a local address",
+  "toggle:loopback": "this computer's own addresses are switched off",
+  "toggle:private": "private networks are switched off",
+  "toggle:link_local": "link-local addresses are switched off",
+  "toggle:metadata": "cloud metadata addresses are switched off",
+  "toggle:special": "other special ranges are switched off",
+  "toggle:company_network": "company network destinations are switched off",
   settings_unreadable: "unreadable settings",
   puddle_request: "Puddle's own request",
   push_denied:
@@ -628,6 +662,16 @@ export function describe(record: AuditRecord): RowView {
         destination: endpoint(record.host, record.port),
         outcome: connectionOutcome(record),
         detail: connectionDetail(record),
+        ...(record.category === "company_network"
+          ? {
+              company: {
+                label: "Company network",
+                title:
+                  (record.signal && COMPANY_SIGNAL_WORDS[record.signal]) ||
+                  "On the company network.",
+              },
+            }
+          : {}),
         ...(record.request_rule === null
           ? {}
           : { requestRule: record.request_rule }),

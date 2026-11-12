@@ -95,6 +95,7 @@
   const CATEGORIES: LocalCategory[] = [
     "loopback",
     "private",
+    "company_network",
     "link_local",
     "metadata",
     "special",
@@ -901,7 +902,7 @@
             >Run the system check again</a
           >
         </div>
-        <h3>Local destinations</h3>
+        <h3 id="local-destinations">Local destinations</h3>
         <p class="desc">
           Off by default. Turning one on makes those destinations
           <b>approvable</b>: each one still needs a rule or your approval.

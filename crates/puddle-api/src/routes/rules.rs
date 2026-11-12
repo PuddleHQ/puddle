@@ -4,10 +4,11 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_store::Actor;
+use puddle_store::{Actor, UserId};
 use puddle_types::RuleId;
 
 use crate::ApiErrorBody;
+use crate::authz::{self, Principal};
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
@@ -20,12 +21,23 @@ use crate::wire::{NewRuleRequest, Rule, RuleExpiryRequest, RuleList};
     tag = "rules",
     responses((status = OK, description = "the rules", body = RuleList))
 )]
-pub(crate) async fn list_rules(State(state): State<AppState>) -> Result<Json<RuleList>, ApiError> {
+pub(crate) async fn list_rules(
+    State(state): State<AppState>,
+    principal: Principal,
+) -> Result<Json<RuleList>, ApiError> {
+    let owners = authz::owners(&state).await?;
     Ok(Json(RuleList {
         rules: state
             .store
             .rules()
             .into_iter()
+            .filter(|rule| {
+                let user = rule
+                    .scope
+                    .workspace()
+                    .map_or(UserId::OWNER, |w| owners.of(w));
+                user == principal.user
+            })
             .map(Rule::from_store)
             .collect::<Result<_, _>>()?,
     }))
@@ -44,9 +56,12 @@ pub(crate) async fn list_rules(State(state): State<AppState>) -> Result<Json<Rul
 )]
 pub(crate) async fn create_rule(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<NewRuleRequest>,
 ) -> Result<(StatusCode, Json<Rule>), ApiError> {
     let new = body.into_new_rule()?;
+    let (action, resource) = authz::rule_scope(new.scope.workspace());
+    authz::check(&state, principal, action, resource).await?;
     let rule = blocking(move || Ok(state.store.add_rule(&new)?)).await?;
     Ok((StatusCode::CREATED, Json(Rule::from_store(rule)?)))
 }

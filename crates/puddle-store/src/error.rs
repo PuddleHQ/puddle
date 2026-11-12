@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The store's error type.
 
-use puddle_types::{PendingId, RuleId};
+use puddle_types::{PendingId, RuleId, WorkspaceId};
 
 use crate::identity::{Collision, IdentityId};
 
 use crate::audit::AuditError;
 use crate::pattern::PatternError;
 use crate::pending::PendingState;
+use crate::users::UserId;
 
 /// What went wrong in the store. Messages name ids and states, never secret values.
 #[derive(Debug, thiserror::Error)]
@@ -122,4 +123,16 @@ pub enum StoreError {
     /// An audit record couldn't be written.
     #[error(transparent)]
     Audit(#[from] AuditError),
+    /// No user has this id.
+    #[error("no user {0}")]
+    UnknownUser(UserId),
+    /// A user name was refused; the text says why.
+    #[error("{0}")]
+    UserName(String),
+    /// The workspace already belongs to another user; a workspace's user never changes.
+    #[error("workspace {0} already belongs to another user")]
+    WorkspaceOwned(WorkspaceId),
+    /// An invite's digest was refused (too short to be a hash).
+    #[error("an invite digest must be at least 16 bytes")]
+    InviteInvalid,
 }

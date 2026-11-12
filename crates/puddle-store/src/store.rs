@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
@@ -41,6 +42,7 @@ mod ports;
 mod request_rules;
 mod sets;
 mod shell_init;
+mod users;
 
 pub use interception::{
     DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings, LearnedLimits,
@@ -50,6 +52,7 @@ pub use learned::LearnedRow;
 pub use ports::PinnedPort;
 pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
+pub use users::WorkspaceOwners;
 
 /// Tunable limits. The defaults are the spec's *(default)* values.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +103,8 @@ pub struct NewWorkspaceOp {
 /// ones all have to match.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AuditFilter {
+    /// Records of this user's workspaces and changes; every user's when `None`.
+    pub user: Option<crate::users::UserId>,
     /// Records about this workspace.
     pub workspace: Option<WorkspaceId>,
     /// Records of this `type` (one of [`AuditRecord::KINDS`]).
@@ -205,7 +210,9 @@ struct Flushed(Option<WorkspaceId>, u64, u64);
 
 /// Puddle's rules, pending requests and audit log, in one SQLite database.
 pub struct Store {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
+    /// Whether [`Store::take_account_secrets`] has handed the sign-in secrets out.
+    secrets_taken: AtomicBool,
     rules: RwLock<Arc<RuleIndex>>,
     workspaces: Mutex<HashMap<WorkspaceId, WorkspaceState>>,
     /// The connection limit of Puddle's own connections, which have no workspace.
@@ -223,7 +230,7 @@ impl std::fmt::Debug for Store {
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // A panic while holding the lock can't leave SQLite half-written (the transaction rolls
     // back on drop), and the other guarded state is counters, so carry on.
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -238,7 +245,7 @@ pub(crate) fn write_tx(conn: &mut Connection) -> Result<Transaction<'_>, rusqlit
 }
 
 /// Epoch ms as SQLite stores it. Times past year 292 million saturate.
-fn sql_ts(ms: u64) -> i64 {
+pub(crate) fn sql_ts(ms: u64) -> i64 {
     i64::try_from(ms).unwrap_or(i64::MAX)
 }
 
@@ -277,7 +284,8 @@ impl Store {
         sets::note_built_in_changes(&mut conn, clock.now_ms())?;
         let rules = sets::load_index(&conn)?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
+            secrets_taken: AtomicBool::new(false),
             rules: RwLock::new(Arc::new(rules)),
             workspaces: Mutex::new(HashMap::new()),
             puddle_connections: Mutex::new(ConnectionWindow::default()),
@@ -1219,6 +1227,11 @@ fn audit_query_sql(
         AuditCursor::Before(Some(id)) => clause("id < ?", Some(Value::Integer(id))),
         AuditCursor::Before(None) => {}
     }
+    if let Some(user) = filter.user {
+        // `+` keeps the planner on the indexes the other filters pick: users are few, so this
+        // narrows little, and the owner's rows are nearly all of them.
+        clause("+user_id = ?", Some(Value::Integer(user.get())));
+    }
     if let Some(workspace) = &filter.workspace {
         clause("workspace_id = ?", Some(Value::Text(workspace.to_string())));
     }
@@ -1307,9 +1320,11 @@ fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
 fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
-        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, workspace_name)
+        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, workspace_name,
+                            user_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-                 (SELECT name FROM workspace_names WHERE workspace_id = ?3))",
+                 (SELECT name FROM workspace_names WHERE workspace_id = ?3),
+                 coalesce((SELECT user_id FROM workspace_owners WHERE workspace_id = ?3), 1))",
         params![
             sql_ts(record.ts()),
             record.kind(),

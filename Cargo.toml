@@ -135,7 +135,7 @@ pem = { version = "4", default-features = false, features = ["std"] }
 # OpenAPI schemas for the API's wire types (ADR 0004).
 utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
 # Local HTTP API: axum on loopback; utoipa-axum registers routes and spec together.
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "query", "tokio", "tracing", "ws"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "matched-path", "query", "tokio", "tracing", "ws"] }
 # Served through hyper directly (not `axum::serve`) for a header-read timeout and owned connection tasks.
 hyper = { version = "1.11", default-features = false, features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.21", default-features = false, features = ["http1", "server", "server-graceful", "service", "tokio"] }

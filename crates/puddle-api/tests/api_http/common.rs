@@ -242,6 +242,7 @@ async fn start_inner_with(
     let services = services.with_terminals(terminals.clone());
     let proxy_sign_ins = Arc::new(FakeProxySignIns::new());
     let services = services.with_proxy_sign_ins(proxy_sign_ins.clone());
+    let services = services.with_account_secrets(store.take_account_secrets().unwrap());
     let services = match company_signals {
         Some(signals) => services.with_company_signals(signals),
         None => services,

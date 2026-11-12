@@ -39,6 +39,7 @@ import { ssr, prerender } from "../../routes/+layout.ts";
 import Sidebar from "./Sidebar.svelte";
 import { theme } from "../theme/theme.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
+import { session } from "#lib/session/session.svelte.ts";
 
 beforeEach(() => {
   url.pathname = "/inbox";
@@ -51,6 +52,9 @@ beforeEach(() => {
   live.start.mockClear();
   live.subscribe.mockClear();
   health.start.mockClear();
+  // The desktop window: the shell hands the page its token, so there is nothing to sign in to.
+  (globalThis as { __PUDDLE__?: unknown }).__PUDDLE__ = { token: "shell" };
+  session.mode = "local";
   localStorage.clear();
   delete document.documentElement.dataset["theme"];
   // The theme is one object for the whole file: read the (now empty) storage so every test starts on "system".
@@ -59,6 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
+  delete (globalThis as { __PUDDLE__?: unknown }).__PUDDLE__;
 });
 
 describe("Sidebar", () => {
@@ -209,6 +214,81 @@ describe("root layout", () => {
     live.pending = 2;
     render(Layout, { children: (() => {}) as never });
     expect(document.title).toBe("Inbox (2) - Puddle");
+  });
+});
+
+describe("root layout and signing in", () => {
+  it("shows a sign-in page and starts nothing until the browser is signed in", async () => {
+    delete (globalThis as { __PUDDLE__?: unknown }).__PUDDLE__;
+    const start = vi.spyOn(session, "start").mockResolvedValue();
+    session.mode = "signed-out";
+    render(Layout, { children: (() => {}) as never });
+    expect(start).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("heading", { name: "Sign in to Puddle" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("navigation", { name: "Main" })).toBeNull();
+    expect(live.start).not.toHaveBeenCalled();
+    expect(health.start).not.toHaveBeenCalled();
+    // Signed in: the app loads and its reads start.
+    session.mode = "signed-in";
+    await vi.waitFor(() => expect(live.start).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("navigation", { name: "Main" })).toBeVisible();
+    expect(health.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("says it is loading while it asks the service, and stops its reads when signed out", async () => {
+    const stop = vi.fn();
+    live.start.mockReturnValueOnce(stop);
+    vi.spyOn(session, "start").mockResolvedValue();
+    session.mode = "checking";
+    render(Layout, { children: (() => {}) as never });
+    expect(screen.getByRole("status")).toHaveTextContent("Loading.");
+    session.mode = "signed-in";
+    await vi.waitFor(() => expect(live.start).toHaveBeenCalledTimes(1));
+    session.mode = "signed-out";
+    await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+    expect(
+      screen.getByRole("heading", { name: "Sign in to Puddle" }),
+    ).toBeVisible();
+  });
+
+  it("asks for a new token when a signed-in browser's request or stream is refused", async () => {
+    const recover = vi.spyOn(session, "recover").mockResolvedValue(true);
+    vi.spyOn(session, "start").mockResolvedValue();
+    session.mode = "signed-in";
+    live.problem = "unauthorized";
+    render(Layout, { children: (() => {}) as never });
+    await vi.waitFor(() => expect(recover).toHaveBeenCalled());
+    live.problem = null;
+    live.stream = "refused";
+    recover.mockClear();
+    cleanup();
+    render(Layout, { children: (() => {}) as never });
+    await vi.waitFor(() => expect(recover).toHaveBeenCalled());
+  });
+
+  it("leaves a desktop window that is refused to say so, with nothing to recover", () => {
+    const recover = vi.spyOn(session, "recover");
+    live.problem = "unauthorized";
+    render(Layout, { children: (() => {}) as never });
+    expect(recover).not.toHaveBeenCalled();
+  });
+
+  it("shows who is signed in and signs out from the sidebar", async () => {
+    session.mode = "signed-in";
+    session.user = { id: 1, name: "Tijs", role: "owner" };
+    const signOut = vi.spyOn(session, "signOut").mockResolvedValue();
+    render(Sidebar);
+    expect(screen.getByText("Tijs")).toBeVisible();
+    await fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(signOut).toHaveBeenCalledOnce();
+    session.user = null;
+  });
+
+  it("shows nobody in the desktop window", () => {
+    render(Sidebar);
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
   });
 });
 

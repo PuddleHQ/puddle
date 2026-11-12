@@ -149,7 +149,6 @@ struct Bound {
     host: String,
     host_key: KeyData,
     session_id: Vec<u8>,
-    keys: AllowedKeys,
 }
 
 /// One client connection's filter.
@@ -202,9 +201,9 @@ impl Filter {
         let Some(host) = cx.seen(&bind.host_key, &bind.signature) else {
             return Outcome::Refused(Refusal::UnseenSession);
         };
-        let Some(keys) = cx.allowed(&host) else {
+        if cx.allowed(&host).is_none() {
             return Outcome::Refused(Refusal::AgentOff(host));
-        };
+        }
         if !bind.is_signed() {
             return Outcome::Refused(Refusal::BadBindSignature);
         }
@@ -212,7 +211,6 @@ impl Filter {
             host: host.clone(),
             host_key: bind.host_key,
             session_id: bind.session_id,
-            keys,
         });
         Outcome::Bound(host)
     }
@@ -226,11 +224,18 @@ impl Filter {
                 Outcome::Refused(Refusal::NotBound),
             );
         };
+        // Asked again on every request: a switch turned off acts on bound connections at once.
+        let Some(allowed_keys) = cx.allowed(&bound.host) else {
+            return (
+                request::identities(&[]),
+                Outcome::Refused(Refusal::AgentOff(bound.host.clone())),
+            );
+        };
         match cx.list() {
             Ok(keys) => {
                 let allowed: Vec<&Identity> = keys
                     .iter()
-                    .filter(|k| bound.keys.allows(k.blob()))
+                    .filter(|k| allowed_keys.allows(k.blob()))
                     .collect();
                 (
                     request::identities(&allowed),
@@ -261,7 +266,10 @@ impl Filter {
         if session_id != bound.session_id || other_server {
             return refused(Refusal::OtherSession);
         }
-        if login_key != key || !bound.keys.allows(key) {
+        let Some(allowed_keys) = cx.allowed(&bound.host) else {
+            return refused(Refusal::AgentOff(bound.host.clone()));
+        };
+        if login_key != key || !allowed_keys.allows(key) {
             return refused(Refusal::KeyNotAllowed);
         }
         match cx.sign(key, data, flags) {

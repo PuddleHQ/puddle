@@ -214,6 +214,27 @@ fn a_bind_to_a_host_the_agent_is_off_for_is_refused() {
 }
 
 #[test]
+fn turning_the_agent_off_acts_on_a_connection_already_bound() {
+    let mut w = world();
+    let mut filter = bound(&w);
+    w.fake.allowed.clear();
+    let off = Outcome::Refused(Refusal::AgentOff("build.example".into()));
+    assert_eq!(
+        filter.answer(&[11], &w.fake),
+        (list_answer(&[]), off.clone())
+    );
+    let data = login(&SESSION, &w.user.blob(), None);
+    assert_eq!(
+        filter.answer(&sign_request(&w.user.blob(), &data, 0), &w.fake),
+        (request::failure(), off)
+    );
+    assert!(
+        w.fake.signed.borrow().is_empty(),
+        "the host's agent was not asked"
+    );
+}
+
+#[test]
 fn a_bind_with_a_git_hosts_key_is_refused_even_when_seen_and_on() {
     use ssh_key::PublicKey;
     let mut w = world();

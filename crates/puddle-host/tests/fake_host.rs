@@ -4148,6 +4148,8 @@ async fn the_end_of_an_agent_session_finds_a_dead_vm_without_a_list() {
         )
         .await;
     assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "crashed");
+    // The re-reads stop at the next gap, now that the workspace no longer shows Running.
+    tokio::time::sleep(Duration::from_secs(3)).await;
     host.shutdown().await;
 }
 

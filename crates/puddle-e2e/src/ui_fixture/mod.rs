@@ -472,7 +472,7 @@ impl Fixture {
 }
 
 /// Reads control files dropped into `dir` (one JSON object or an array per file; each is taken
-/// once and deleted). An object without `do` is read as a `request` (it has `host`) or a `bulk`
+/// once and deleted after its steps are applied). An object without `do` is read as a `request` (it has `host`) or a `bulk`
 /// (it has `count`): the format the earlier `serve_ui` example took.
 pub fn watch_drop_dir(fixture: Arc<Fixture>, dir: PathBuf) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -506,7 +506,6 @@ async fn drain_drop_dir(fixture: &Fixture, dir: &Path) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
             continue;
         };
-        let _ = tokio::fs::remove_file(&path).await;
         let items = match value {
             serde_json::Value::Array(items) => items,
             item => vec![item],
@@ -521,6 +520,8 @@ async fn drain_drop_dir(fixture: &Fixture, dir: &Path) {
                 Err(err) => eprintln!("fixture: control file {}: {err}", path.display()),
             }
         }
+        // Deleted last: a writer that sees its file gone can rely on every step being applied.
+        let _ = tokio::fs::remove_file(&path).await;
     }
 }
 

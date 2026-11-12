@@ -20,7 +20,7 @@ pub const SESSION_BIND: &[u8] = b"session-bind@openssh.com";
 
 /// The sign-request flags a client may set: `SSH_AGENT_RSA_SHA2_256` (2) and
 /// `SSH_AGENT_RSA_SHA2_512` (4). Any other bit is refused.
-pub const KNOWN_SIGN_FLAGS: u32 = 2 | 4;
+pub const KNOWN_SIGN_FLAGS: u32 = 0b110;
 
 /// One request from a client, read from one message (the type byte and its body).
 #[derive(Debug, PartialEq, Eq)]

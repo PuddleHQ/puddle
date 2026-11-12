@@ -836,6 +836,24 @@ mod filtered_agent {
         );
     }
 
+    #[tokio::test]
+    async fn only_an_announced_tunnel_to_a_host_the_agent_is_on_for_is_watched() {
+        let server = TestKey::ed25519(1);
+        let kex = server_kex(&server, &server.sign(&SESSION));
+        let addr = kex_server(kex.clone()).await;
+        let mut rig = agent_rig().await;
+        // Not announced: the same server, the same host, no session kept.
+        let mut tunnel = rig.guest.tunnel(&format!("nas.test:{}", addr.port())).await;
+        tunnel.write_all(BANNER).await.unwrap();
+        let mut seen = vec![0u8; kex.len()];
+        tokio::time::timeout(Duration::from_secs(5), tunnel.read_exact(&mut seen))
+            .await
+            .expect("the server's bytes reach the guest")
+            .unwrap();
+        assert_eq!(seen, kex);
+        assert_eq!(rig.agents.seen_sessions(), 0);
+    }
+
     /// [`server_kex`] with a host key given as a blob, for a key this test has no private half of.
     fn server_kex_with_blob(host_key: &[u8], signature: &[u8]) -> Vec<u8> {
         let mut out = b"SSH-2.0-TestServer\r\n".to_vec();

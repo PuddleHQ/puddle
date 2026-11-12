@@ -244,6 +244,62 @@ async fn turning_the_switch_off_refuses_the_next_request_of_a_bound_stream() {
 }
 
 #[tokio::test]
+async fn a_message_of_the_largest_length_is_answered() {
+    let w = world();
+    let (mut guest, _served) = w.stream("box", IDLE_LIMIT);
+    let mut message = vec![99_u8];
+    message.resize(MAX_MESSAGE, 0);
+    assert_eq!(ask(&mut guest, &framed(&message)).await, request::failure());
+}
+
+#[test]
+fn the_registry_and_a_watch_name_themselves_in_debug_output() {
+    let w = world();
+    assert!(format!("{:?}", w.agents).starts_with("SshAgents"));
+    let watch = w.spliced("box", "build.example");
+    assert!(format!("{watch:?}").contains("build.example"));
+}
+
+/// A user's agent on a real socket (named pipe on Windows) that holds one key and signs anything.
+fn agent_on_an_endpoint(key: Vec<u8>) -> (AgentAt, puddle_ipc::IpcRoot) {
+    let root = puddle_ipc::IpcRoot::new().unwrap();
+    let mut listener = root.listen().unwrap();
+    let endpoint = puddle_ssh_agent::AgentEndpoint::at(listener.endpoint().path());
+    tokio::spawn(async move {
+        // flake-ok: the accept loop of a fake server, not a wait for a condition.
+        while let Ok(mut conn) = listener.accept().await {
+            let key = key.clone();
+            tokio::spawn(async move {
+                let mut len = [0_u8; 4];
+                conn.read_exact(&mut len).await.unwrap();
+                let mut asked = vec![0_u8; u32::from_be_bytes(len) as usize];
+                conn.read_exact(&mut asked).await.unwrap();
+                let answer = match asked.first() {
+                    Some(11) => request::identities(&[&Identity::new(key, "c".into())]),
+                    _ => request::signature(b"SIGNED BY THE AGENT"),
+                };
+                conn.write_all(&answer).await.unwrap();
+            });
+        }
+    });
+    (AgentAt::new(endpoint), root)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_agent_at_an_endpoint_lists_and_signs_through_it() {
+    let user = TestKey::ed25519(2);
+    let (agent, _root) = agent_on_an_endpoint(user.blob());
+    let (keys, signature) = tokio::task::spawn_blocking(move || {
+        (agent.list().unwrap(), agent.sign(&[1], b"data", 0).unwrap())
+    })
+    .await
+    .unwrap();
+    // The fake answers with `request::identities`, which blanks comments.
+    assert_eq!(keys, vec![Identity::new(user.blob(), String::new())]);
+    assert_eq!(signature, b"SIGNED BY THE AGENT");
+}
+
+#[tokio::test]
 async fn a_bad_length_closes_the_stream() {
     let w = world();
     for length in [0_u32, u32::try_from(MAX_MESSAGE).unwrap() + 1] {

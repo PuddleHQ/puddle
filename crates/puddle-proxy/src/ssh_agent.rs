@@ -292,15 +292,14 @@ fn log(workspace: &WorkspaceId, host: Option<&str>, outcome: &Outcome) {
     }
 }
 
-/// Reads one framed message. `Ok(None)`: the guest closed between messages.
+/// Reads one framed message. `Ok(None)`: the stream ended between messages.
 async fn read_message<S: AsyncRead + Unpin>(
     stream: &mut S,
 ) -> Result<Option<Vec<u8>>, &'static str> {
     let mut len = [0_u8; 4];
-    match stream.read_exact(&mut len).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(_) => return Err("the stream broke"),
+    if stream.read_exact(&mut len).await.is_err() {
+        // The guest closed (or the stream broke) between two messages: nothing was cut short.
+        return Ok(None);
     }
     let len = u32::from_be_bytes(len) as usize;
     if len == 0 || len > MAX_MESSAGE {

@@ -217,3 +217,20 @@ fn other_packets_before_the_reply_are_passed_over() {
         Some(seen(&host, &signature))
     );
 }
+
+#[test]
+fn a_large_key_exchange_in_one_read_is_seen() {
+    // A post-quantum hybrid exchange sends kilobytes before the reply; it all fits the limit.
+    let host = TestKey::ed25519(5);
+    let signature = host.sign(b"h");
+    let kex = server_kex(&host, &signature);
+    let split = kex.iter().position(|&b| b == b'\n').unwrap() + 1;
+    let mut bytes = kex[..split].to_vec();
+    bytes.extend(packet(&[20; 8 * 1024]));
+    bytes.extend_from_slice(&kex[split..]);
+    assert!(bytes.len() < MAX_OBSERVED);
+    assert_eq!(
+        KexObserver::new().feed(&bytes),
+        Some(seen(&host, &signature))
+    );
+}

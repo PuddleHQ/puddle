@@ -415,6 +415,11 @@ fn room(added: u64, free: u64) -> Room {
     }
 }
 
+/// `name` as the user reads it, or `id` for a workspace the list no longer holds.
+fn name_or_id(name: Option<&DisplayName>, id: &WorkspaceId) -> String {
+    name.map_or_else(|| id.to_string(), |name| name.as_str().to_owned())
+}
+
 /// The title of the problem about the editor's file in `record`'s workspace.
 fn editor_file_title(record: &WorkspaceRecord) -> String {
     format!(
@@ -716,10 +721,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// What the user calls workspace `id`, for text they read. Never the id: a real host draws
     /// random ones. A workspace the list no longer holds reads as its id, the one thing left.
     fn label(&self, id: &WorkspaceId) -> String {
-        self.state().slots.get(id).map_or_else(
-            || id.to_string(),
-            |slot| slot.record.name.as_str().to_owned(),
-        )
+        let name = self
+            .state()
+            .slots
+            .get(id)
+            .map(|slot| slot.record.name.clone());
+        name_or_id(name.as_ref(), id)
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -4364,3 +4371,6 @@ mod no_link_words;
 
 #[cfg(test)]
 mod download_wait_tests;
+
+#[cfg(test)]
+mod name_or_id_tests;

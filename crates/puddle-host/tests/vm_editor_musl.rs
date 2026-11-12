@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use puddle_types::WorkspaceId;
 use serde_json::json;
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, guest, start_vm_host_config};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -24,7 +24,7 @@ async fn vm_editor_on_an_alpine_image_says_why_it_is_unavailable_and_the_workspa
         runtime,
         settings,
         ..
-    } = start_vm_host_config("musl", hermetic_options(), |config| {
+    } = start_vm_host_config("musl", named_id_options(), |config| {
         config.guest.code_server = Some(release);
     })
     .await;

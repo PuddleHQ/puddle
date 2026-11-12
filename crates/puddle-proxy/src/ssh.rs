@@ -64,6 +64,7 @@ pub(crate) struct Gate<S> {
     inner: S,
     watching: bool,
     ssh: bool,
+    kex: Option<crate::ssh_agent::KexWatch>,
 }
 
 impl<S> Gate<S> {
@@ -74,7 +75,15 @@ impl<S> Gate<S> {
             inner,
             watching,
             ssh: false,
+            kex: None,
         }
+    }
+
+    /// Also shows the bytes written toward the guest (the server's side of the tunnel) to `kex`,
+    /// which keeps the session's key exchange for the filtered SSH agent while the gate lives.
+    pub(crate) fn with_kex(mut self, kex: Option<crate::ssh_agent::KexWatch>) -> Self {
+        self.kex = kex;
+        self
     }
 
     /// Whether the first upload bytes were an SSH identification line (they were dropped).
@@ -120,7 +129,11 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Gate<S> {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.inner).poll_write(cx, buf)
+        let polled = Pin::new(&mut self.inner).poll_write(cx, buf);
+        if let (Poll::Ready(Ok(written)), Some(kex)) = (&polled, self.kex.as_mut()) {
+            kex.feed(buf.get(..*written).unwrap_or_default());
+        }
+        polled
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {

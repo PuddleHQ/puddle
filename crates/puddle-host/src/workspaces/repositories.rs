@@ -114,9 +114,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Lists the checkouts of the running workspace `id` in the background, so a stopped
     /// workspace has a listing to show. Errors are logged by [`Self::checkouts_of`].
-    pub(super) async fn refresh_checkouts_later(&self, id: &WorkspaceId) {
+    pub(super) fn refresh_checkouts_later(&self, id: &WorkspaceId) {
         let (this, id) = (self.clone(), id.clone());
-        self.inner.tasks.lock().await.spawn(async move {
+        self.spawn(async move {
             let _ = this.checkouts_of(&id).await;
         });
     }
@@ -252,7 +252,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 repository.directory
             )));
         }
-        let record = {
+        let ticket = {
             let mut state = self.state();
             if state.closed {
                 return Err(WorkspaceError::Unavailable(
@@ -269,18 +269,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
             slot.record.busy = Some(Operation::Cloning);
-            slot.record.clone()
+            self.ticket(slot.record.clone(), Operation::Cloning)
         };
+        let record = ticket.record().clone();
         git.set_up(&record.id, std::slice::from_ref(&new)).await;
         if add {
             self.repositories_changed(&record.id);
         }
         let this = self.clone();
         let work = record.clone();
-        self.run(&record, Operation::Cloning, async move {
-            this.clone_work(&work, &repository).await
-        })
-        .await;
+        self.run(
+            ticket,
+            async move { this.clone_work(&work, &repository).await },
+        );
         Ok(record)
     }
 
@@ -328,7 +329,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             Err(other) => return Err(other.to_string()),
         }
-        self.refresh_checkouts_later(&record.id).await;
+        self.refresh_checkouts_later(&record.id);
         Ok(())
     }
 

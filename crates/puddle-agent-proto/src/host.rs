@@ -148,6 +148,15 @@ pub trait StreamHandler: Send + Sync + 'static {
         async {}
     }
 
+    /// Serves one client of the guest's SSH agent socket: agent-protocol messages in, answers out
+    /// (the preamble already read). The default closes it with a logged reason: a handler without
+    /// a filtered agent has nothing to answer with.
+    fn ssh_agent(&self, stream: AgentStream) -> impl Future<Output = ()> + Send {
+        tracing::warn!("ssh-agent stream not served by this host, closed");
+        drop(stream);
+        async {}
+    }
+
     /// Takes a report about the workspace (an entrypoint exit, stub DNS trouble, capture rules the
     /// guest tore down or that cannot be installed), already cleaned
     /// and logged by the session. The default does nothing more. The report is the guest's claim:
@@ -247,6 +256,37 @@ impl AsyncRead for GuestStream {
 }
 
 impl AsyncWrite for GuestStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+/// One `ssh-agent` stream after its preamble, handed to [`StreamHandler::ssh_agent`]. Its bytes
+/// come from the guest: the handler trusts none of them.
+#[derive(Debug)]
+pub struct AgentStream(BufReader<Prefixed<StreamHandle>>);
+
+impl AsyncRead for AgentStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for AgentStream {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -434,6 +474,7 @@ async fn serve_stream<H: StreamHandler>(mut stream: StreamHandle, shared: Arc<Sh
             shared.control_open.store(false, Ordering::Release);
         }
         Ok((StreamKind::Resolve, 1)) => serve_resolve(reader, &shared).await,
+        Ok((StreamKind::SshAgent, 1)) => shared.handler.ssh_agent(AgentStream(reader)).await,
         Ok((kind, version)) => {
             tracing::warn!(workspace = %shared.workspace, kind = kind.name(), version, "stream kind not served by this host, closed");
         }

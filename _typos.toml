@@ -4,7 +4,8 @@ extend-exclude = ["vendor", "LICENSE", "CLA.md", "*.lock", "ui/package-lock.json
 
 [default]
 # Hex code points in a CSS unicode-range (U+02BA) read as words.
-extend-ignore-re = ["[uU]\\+[0-9a-fA-F]{4}(-[0-9a-fA-F]{4})?"]
+# An SSH key fingerprint (SHA256: and 43 base64 characters) is not words.
+extend-ignore-re = ["[uU]\\+[0-9a-fA-F]{4}(-[0-9a-fA-F]{4})?", "SHA256:[A-Za-z0-9+/]{43}"]
 
 [default.extend-words]
 # Real words in this project that typos flags. Add with a comment.

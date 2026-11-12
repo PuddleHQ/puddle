@@ -33,7 +33,7 @@ use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_test_kit::eventually;
 use puddle_types::{Host as HostName, WorkspaceId};
 use serde_json::{Value, json};
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, guest_within, start_vm_host_platform, web_internet};
 
 /// The versions CI runs the other login tests against; Dependabot bumps them.
@@ -248,7 +248,7 @@ fn outside_profile(profile: &str, seen: &BTreeSet<(String, String)>) -> Vec<Stri
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
     // No fake names: every name goes to the real internet through the company proxy.
-    let net = web_internet(&[], WebOptions::default(), hermetic_options()).await;
+    let net = web_internet(&[], WebOptions::default(), named_id_options()).await;
     let vm = start_vm_host_platform("logintools", net.options, &net.platform, |_| {}).await;
     let name = format!("{}-tools", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();

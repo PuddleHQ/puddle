@@ -35,7 +35,7 @@ use puddle_host::Host;
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope, StartValue};
 use puddle_types::WorkspaceId;
 use serde_json::json;
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, WebInternet, guest_within, start_vm_host_platform, web_internet};
 
 const NPM: &str = "npm.feeds.invalid";
@@ -299,7 +299,7 @@ async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost,
             responder: Some(private_feeds(NPM, NUGET, PIP, MAVEN, REAL)),
             ..WebOptions::default()
         },
-        hermetic_options(),
+        named_id_options(),
     )
     .await;
     let vm = start_vm_host_platform("feed", net.options.clone(), &net.platform, |_| {}).await;

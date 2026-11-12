@@ -31,9 +31,11 @@ puddle-ca = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-types = { workspace = true }
+puddle-ssh-agent = { workspace = true }
 puddle-upstream = { workspace = true }
 ring = { workspace = true }
 russh = { workspace = true }
+ssh-key = { workspace = true }
 rustls = { workspace = true }
 serde_json = { workspace = true }
 subtle = { workspace = true }
@@ -70,6 +72,7 @@ puddle-proxy = { path = ".", features = ["testing", "fuzzing"] }
 puddle-secrets = { workspace = true }
 puddle-store = { workspace = true }
 puddle-upstream = { workspace = true, features = ["testing"] }
+puddle-ssh-agent = { workspace = true, features = ["testing"] }
 rcgen = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "rt-multi-thread", "sync", "test-util", "time"] }

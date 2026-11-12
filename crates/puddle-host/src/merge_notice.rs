@@ -36,13 +36,17 @@ fn consequence(path: &str) -> &'static str {
 
 /// The notices for the files the boot hook left as they were (`left`: each path with the reason
 /// the hook gave), one per file. The file editor's multi-root file is not one of them.
-pub(crate) fn merge_notices(workspace: &WorkspaceId, left: &[(&str, &str)]) -> Vec<Problem> {
+pub(crate) fn merge_notices(
+    workspace: &WorkspaceId,
+    name: &str,
+    left: &[(&str, &str)],
+) -> Vec<Problem> {
     left.iter()
         .filter(|(path, _)| !path.ends_with(EDITOR_FILE_SUFFIX))
         .map(|(path, why)| {
             Problem::new(
                 format!("{}{path}", merge_notice_prefix(workspace)),
-                format!("Puddle could not update {path} in {workspace}"),
+                format!("Puddle could not update {path} in {name}"),
                 format!(
                     "{path} was left as it is: {why}. Until it is fixed, {}. Puddle checks it \
                      again at the next start.",
@@ -60,9 +64,10 @@ pub(crate) fn merge_notices(workspace: &WorkspaceId, left: &[(&str, &str)]) -> V
 pub(crate) fn settle_merge_notices(
     problems: &Problems,
     workspace: &WorkspaceId,
+    name: &str,
     left: &[(&str, &str)],
 ) {
-    let notices = merge_notices(workspace, left);
+    let notices = merge_notices(workspace, name, left);
     let prefix = merge_notice_prefix(workspace);
     for stale in problems.list() {
         if stale.key.starts_with(&prefix) && !notices.iter().any(|n| n.key == stale.key) {

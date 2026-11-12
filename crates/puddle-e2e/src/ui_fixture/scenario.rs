@@ -618,13 +618,17 @@ pub struct ConnectionSeed {
     pub decision: DecisionSeed,
     /// Why, as the audit log's `reason` code: `rule` (default for allow and deny), `no_rule`
     /// (default for pending), `request_rule`, `puddle_endpoint`, `ssh_unsupported` or
-    /// `local_address` (default for blocked).
+    /// `local_address` (default for blocked) or `toggle:company_network`.
     #[serde(default)]
     pub reason: Option<String>,
     /// The request the proxy read, and the rule on method and path that refused it (reason
     /// `request_rule`).
     #[serde(default)]
     pub request_line: Option<RequestLineSeed>,
+    /// Puts the destination in the company network: the signal's code (`pac_direct`,
+    /// `dns_suffix`, `private_access_cgnat` or `vpn_route`).
+    #[serde(default)]
+    pub company_signal: Option<String>,
     /// Bytes from the workspace.
     #[serde(default)]
     pub bytes_up: u64,

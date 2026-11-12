@@ -62,6 +62,7 @@ url = { workspace = true }
 # Already in the tree through wry: the editor window turns the webview's browser shortcuts off.
 webview2-com = "0.39"
 windows = "0.62"
+windows-sys = { workspace = true, features = ["Win32_UI_Input_KeyboardAndMouse"] }
 # Already in the tree through embed-resource's build script: the start-at-sign-in entry in the
 # current user's Run key.
 winreg = "0.56"

@@ -327,6 +327,23 @@ pub enum DataPathFacts {
     NoFolder,
 }
 
+/// What the Azure CLI (`az`) on the search path answered for its version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AzCliFacts {
+    /// No `az` (`az.cmd` on Windows) is on the search path.
+    NotFound,
+    /// `az --version` ran and named its version.
+    Found {
+        /// The version, as `az` prints it (`2.64.0`).
+        version: String,
+    },
+    /// `az` is there but its answer is not one: it failed, hung or printed no version.
+    Unknown {
+        /// What happened.
+        detail: String,
+    },
+}
+
 /// How the SSH agent Puddle would ask answered a request for its key list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SshAgentFacts {

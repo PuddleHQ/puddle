@@ -2548,6 +2548,16 @@ export interface components {
          */
         CloseBehaviour: "tray" | "quit";
         /**
+         * @description What Puddle found on this computer that puts a destination on the company network. Both are
+         *     empty when this computer can't be read for them, which leaves the category empty.
+         */
+        CompanyNetworkReport: {
+            /** @description The DNS suffixes and namespaces of this computer, lower case, each once. */
+            dns_suffixes: string[];
+            /** @description A private-access client (Zscaler, Netskope, WARP, Tailscale) is installed and active. */
+            private_access_client: boolean;
+        };
+        /**
          * @description How the proxy handled a connection.
          * @enum {string}
          */
@@ -3742,6 +3752,8 @@ export interface components {
         };
         /** @description `GET /api/network-health`: everything Puddle knows about how it reaches the internet. */
         NetworkHealth: {
+            /** @description What drives the company-network destination category. */
+            company_network: components["schemas"]["CompanyNetworkReport"];
             /**
              * Format: int64
              * @description Epoch ms the report was made.
@@ -3937,6 +3949,13 @@ export interface components {
              */
             attempts: number;
             blocked_by: components["schemas"]["LocalCategory"] | null;
+            /**
+             * @description For an open request to an IP literal on the company network, whether or not its toggle is
+             *     on: what put the address there (`pac_direct`, `dns_suffix`, `private_access_cgnat` or
+             *     `vpn_route`). `null` otherwise. A client that reads the address ranges itself needs it to
+             *     tell a company address from the plain range it also falls in.
+             */
+            company_signal: string | null;
             /**
              * Format: int64
              * @description Epoch ms it was decided or expired.
@@ -5589,6 +5608,8 @@ export interface operations {
                 host_contains?: string;
                 /** @description records whose host (a rule's pattern), method, path or reason contains this text, case-insensitive; combines with the other filters */
                 q?: string;
+                /** @description `connection` records in this destination category; only `company_network` */
+                category?: string;
                 /** @description records at or after this epoch ms */
                 from?: number;
                 /** @description records before this epoch ms */

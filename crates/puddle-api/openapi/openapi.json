@@ -339,6 +339,15 @@
             }
           },
           {
+            "name": "category",
+            "in": "query",
+            "description": "`connection` records in this destination category; only `company_network`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "description": "records at or after this epoch ms",
@@ -11957,6 +11966,28 @@
           "quit"
         ]
       },
+      "CompanyNetworkReport": {
+        "type": "object",
+        "description": "What Puddle found on this computer that puts a destination on the company network. Both are\nempty when this computer can't be read for them, which leaves the category empty.",
+        "required": [
+          "private_access_client",
+          "dns_suffixes"
+        ],
+        "properties": {
+          "dns_suffixes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The DNS suffixes and namespaces of this computer, lower case, each once."
+          },
+          "private_access_client": {
+            "type": "boolean",
+            "description": "A private-access client (Zscaler, Netskope, WARP, Tailscale) is installed and active."
+          }
+        },
+        "additionalProperties": false
+      },
       "ConnectionDecision": {
         "type": "string",
         "description": "How the proxy handled a connection.",
@@ -14954,9 +14985,14 @@
           "sign_in",
           "roots",
           "pull_proxy",
-          "routes"
+          "routes",
+          "company_network"
         ],
         "properties": {
+          "company_network": {
+            "$ref": "#/components/schemas/CompanyNetworkReport",
+            "description": "What drives the company-network destination category."
+          },
           "generated_at": {
             "type": "integer",
             "format": "int64",
@@ -15337,7 +15373,8 @@
           "decided_by",
           "rule_id",
           "rule_set",
-          "blocked_by"
+          "blocked_by",
+          "company_signal"
         ],
         "properties": {
           "attempts": {
@@ -15356,6 +15393,13 @@
                 "type": "null"
               }
             ]
+          },
+          "company_signal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For an open request to an IP literal on the company network, whether or not its toggle is\non: what put the address there (`pac_direct`, `dns_suffix`, `private_access_cgnat` or\n`vpn_route`). `null` otherwise. A client that reads the address ranges itself needs it to\ntell a company address from the plain range it also falls in."
           },
           "decided_at": {
             "type": [

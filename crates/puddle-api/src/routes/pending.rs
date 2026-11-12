@@ -39,6 +39,17 @@ fn local_category(host: &Host, signals: &dyn CompanySignals) -> Option<LocalCate
     }
 }
 
+/// The signal that put an IP literal on the company network, as its audit code.
+fn company_signal(host: &Host, signals: &dyn CompanySignals) -> Option<&'static str> {
+    match host {
+        Host::Ip(ip) => match classify_with_signals(*ip, None, signals) {
+            puddle_netpolicy::AddressClass::Company(signal) => Some(signal.code()),
+            _ => None,
+        },
+        Host::Name(_) => None,
+    }
+}
+
 /// Maps rows to wire requests, naming for each open one the local-destination toggle that blocks
 /// its approval. Settings are read only if some open row is to a local destination; a workspace
 /// whose settings can't be read counts as unblocked (the decision itself never depends on this).
@@ -82,8 +93,12 @@ async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingR
     rows.into_iter()
         .map(|row| {
             let id = row.id;
+            let host = row.host.clone();
             let mut request = PendingRequest::from_store(row)?;
             request.blocked_by = blocked.get(&id).copied();
+            if request.state == crate::wire::PendingState::Requested {
+                request.company_signal = company_signal(&host, signals).map(str::to_owned);
+            }
             Ok(request)
         })
         .collect()

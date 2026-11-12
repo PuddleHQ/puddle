@@ -18,6 +18,7 @@ info  SSH agent             no agent answers on \\.\pipe\openssh-ssh-agent: SSH 
             Automatic in Services (services.msc), then start it. Git hosts need no agent: Puddle
             ends their SSH sessions itself, so Git over SSH is not affected.
       from: The system cannot find the file specified. (os error 2)
+ok    Azure CLI (az)        version 2.64.0
 ok    Global Secure Access  client not installed
 
 No problems found. (1.2 s)
@@ -84,6 +85,11 @@ No problems found. (1.2 s)
       "finding": "ssh_agent_missing",
       "fix": "SSH to servers other than Git hosts gets no key from Puddle. The OpenSSH Authentication Agent service is disabled: set its startup type to Manual or Automatic in Services (services.msc), then start it. Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is not affected.",
       "detail": "The system cannot find the file specified. (os error 2)"
+    },
+    {
+      "id": "az_cli",
+      "status": "ok",
+      "summary": "version 2.64.0"
     },
     {
       "id": "global_secure_access",

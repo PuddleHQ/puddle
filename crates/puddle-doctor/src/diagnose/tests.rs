@@ -55,3 +55,30 @@ fn load_failures_by_status() {
     assert_eq!(f(0xC000_0139), Some(Finding::DllMissing));
     assert_eq!(f(0xC000_0005), None);
 }
+
+#[test]
+fn a_missing_azure_cli_only_warns() {
+    let check = az_cli(&AzCliFacts::NotFound);
+    assert_eq!(check.id, CheckId::AzCli);
+    assert_eq!(check.status, Status::Warn);
+    assert_eq!(check.finding, Some(Finding::AzCliMissing));
+    assert!(check.summary.contains("needed only for Azure DevOps"));
+    assert_eq!(
+        az_cli(&AzCliFacts::Found {
+            version: "2.64.0".into()
+        })
+        .status,
+        Status::Ok
+    );
+}
+
+#[test]
+fn an_azure_cli_whose_version_cannot_be_read_only_warns() {
+    let check = az_cli(&AzCliFacts::Unknown {
+        detail: "exited with Some(1)".into(),
+    });
+    assert_eq!(check.status, Status::Warn);
+    assert_eq!(check.finding, None);
+    assert!(check.summary.contains("exited with Some(1)"));
+    assert!(check.fix.is_some());
+}

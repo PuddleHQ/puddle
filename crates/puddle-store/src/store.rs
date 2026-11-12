@@ -122,6 +122,9 @@ pub struct AuditFilter {
     /// Records whose search text (host or a rule's pattern, method, path, reason; see
     /// [`AuditRecord::search_text`]) contains this text, compared case-folded (ASCII).
     pub q: Option<String>,
+    /// `connection` records in this destination category (`company_network`, see
+    /// `ConnectionRecord::category`); other records have none and never match.
+    pub category: Option<&'static str>,
     /// Records at or after this epoch ms.
     pub from: Option<u64>,
     /// Records before this epoch ms.
@@ -1323,6 +1326,13 @@ fn audit_query_sql(
         clause(
             "instr(search, ?) > 0",
             Some(Value::Text(needle.to_ascii_lowercase())),
+        );
+    }
+    if let Some(category) = filter.category {
+        // The category is one whole line of the search text, never a part of another.
+        clause(
+            "instr(char(10) || search || char(10), char(10) || ? || char(10)) > 0",
+            Some(Value::Text(category.to_owned())),
         );
     }
     sql.push_str(match cursor {

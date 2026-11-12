@@ -12431,12 +12431,19 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
         .unwrap();
     let reached = terminal_output_until(&mut link, &format!("{user}\r\n")).await;
     assert_eq!(reached.reason, puddle_api::EndReason::Exited, "{reached:?}");
+    assert_eq!(service.open_terminals(), 1, "the shell counts as open");
 
     let stop = api.post("/api/workspaces/acme/stop", "").await;
     assert_eq!(stop.status, 202, "{}", stop.body);
     let end = terminal_output_until(&mut link, "never printed").await;
     assert_eq!(end.reason, puddle_api::EndReason::Stopped, "{end:?}");
     events.until(ended("acme"), Duration::from_secs(20)).await;
+    eventually(
+        "a stop leaves no terminal open",
+        Duration::from_secs(10),
+        || service.open_terminals() == 0,
+    )
+    .await;
 
     // A stopped workspace has no terminal to open.
     let refused = puddle_api::TerminalService::open(service, &id, size)

@@ -63,7 +63,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Opened<S> {
             }
             Ok(())
         };
-        // Out of time, the bytes so far are all there is to go by.
+        // On timeout, decide from what arrived: too little for a banner is decrypted.
         tokio::time::timeout(limit, read).await.unwrap_or(Ok(()))
     }
 }

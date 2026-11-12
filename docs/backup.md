@@ -37,8 +37,8 @@ and not yet reflected in `puddle.db`, or the other way round.
 
 - **Sign-in secrets.** Each user's password hash and open invite are emptied in the copy
   (`account_passwords` and `account_invites`), and the file is rebuilt so the removed rows are
-  not left in it. After a restore the users are back and nobody has a password: invite each
-  one again.
+  not left in it. After a restore the users are back and nobody has a password: run
+  `puddle user reset <name>` for each one and send them the invite link it prints.
 - **Credentials.** The database holds references to the operating system's credential store
   and the stand-ins that workspaces see, never the real values. The credential store is not
   read, so the backup holds no token, password or password hash, and the destination can be a shared disk or a
@@ -61,7 +61,7 @@ and not yet reflected in `puddle.db`, or the other way round.
    the one installed is refused, so restore with the same or a newer version.
 
 After a restore on another machine, the credential store there is empty: sign in again
-for each captured login and re-enter each secret, and every user needs a new invite to set a
+for each captured login and re-enter each secret, and every user needs `puddle user reset <name>` to get an invite that sets a
 password. Rules, settings and the audit log are back.
 A workspace in the list whose volume is not on this machine has to be recreated.
 

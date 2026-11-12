@@ -191,6 +191,11 @@ impl Guard {
             // send it on a WebSocket); the route checks it, after these two.
             let class = self.check_host(uri, headers)?;
             self.check_origin(headers, class)?;
+            // A ticket is minted behind the install token and is not bound to a listener, so it
+            // must not open a shell through a public name; sign-in for those comes later.
+            if class == HostClass::Public {
+                return Err(Refusal::CredentialHost);
+            }
             Ok(None)
         } else if self.inner.serves_ui && is_read && !is_api_path(uri.path()) {
             let class = self.check_host(uri, headers)?;

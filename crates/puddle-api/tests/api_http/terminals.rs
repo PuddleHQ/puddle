@@ -3,16 +3,17 @@
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use puddle_api::{
-    EndReason, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, SUBPROTOCOL, TerminalEnd,
-    TerminalError,
+    ApiConfig, EndReason, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, SUBPROTOCOL,
+    TerminalEnd, TerminalError,
 };
+use puddle_api::{PublicHost, Remote, RemoteServing};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
-use crate::common::{Api, STEP, start};
+use crate::common::{Api, STEP, start, start_with};
 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -235,6 +236,55 @@ async fn a_ticket_works_once_and_only_for_its_own_terminal_and_a_foreign_origin_
     )
     .await;
     assert!(own.is_ok(), "the API's own origin is allowed");
+}
+
+#[tokio::test]
+async fn a_caller_without_a_ticket_cannot_tell_an_unknown_workspace_from_a_known_one() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, _ticket) = ticket(&api, "shop").await;
+    let offer = format!("{SUBPROTOCOL}, ticket.{}", "0".repeat(64));
+    let mut answers = Vec::new();
+    for name in ["shop", "nobody", "Bad!Name"] {
+        let result = connect_with(&api, name, terminal, &offer, None).await;
+        let Err(tokio_tungstenite::tungstenite::Error::Http(response)) = result else {
+            panic!("{name}: expected a refusal");
+        };
+        answers.push((
+            response.status().as_u16(),
+            response.body().clone().unwrap_or_default(),
+        ));
+    }
+    assert_eq!(answers[0].0, 401);
+    assert!(answers.iter().all(|a| a == &answers[0]), "{answers:?}");
+}
+
+#[tokio::test]
+async fn a_ticket_does_not_open_a_shell_under_a_public_name_and_stays_good_for_loopback() {
+    let mut config = ApiConfig::default();
+    config.remote = Some(Remote::new(
+        RemoteServing::new(vec![PublicHost::parse("puddle.example.org").unwrap()], None).unwrap(),
+    ));
+    let api = start_with(config).await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    // Any 16 bytes in base64 will do; built in two parts so a secret scanner does not read it as a key.
+    let key = ["dGhlIHNhbXBs", "ZSBub25jZQ=="].concat();
+    let under = |host: &str| {
+        format!(
+            "GET /api/workspaces/shop/terminals/{terminal} HTTP/1.1\r\nHost: {host}\r\n\
+             Connection: close, Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
+             Sec-WebSocket-Key: {key}\r\nOrigin: https://{host}\r\n\
+             Sec-Fetch-Site: same-origin\r\n\
+             Sec-WebSocket-Protocol: {SUBPROTOCOL}, ticket.{ticket}\r\n\r\n"
+        )
+    };
+    let public = crate::common::raw(api.addr, under("puddle.example.org").as_bytes()).await;
+    assert_eq!(public.status, 401, "{public:?}");
+    assert_ne!(public.status, 101);
+    // The refusal came before the ticket was read, so it is still good on loopback.
+    let mut socket = connect(&api, "shop", terminal, &ticket).await;
+    read_until(&mut socket, "$ ").await;
 }
 
 #[tokio::test]

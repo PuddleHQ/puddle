@@ -904,6 +904,51 @@ async fn a_missing_agent_stops_the_start_before_anything_is_reconciled() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn remote_serving_gives_the_host_a_network_listener_with_its_own_certificate_only_when_asked()
+{
+    use std::net::{IpAddr, Ipv4Addr};
+    let serving = || {
+        puddle_api::RemoteServing::new(
+            vec![puddle_api::PublicHost::parse("puddle.example.org").unwrap()],
+            None,
+        )
+        .unwrap()
+    };
+    let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+    let rig = Rig::new();
+    let mut config = rig.config();
+    config.api.remote = Some(puddle_host::RemoteSettings {
+        serving: serving(),
+        network: None,
+    });
+    let host = rig.start_with(config).await;
+    assert_eq!(
+        host.remote_listener(),
+        None,
+        "a front on this machine needs none"
+    );
+    host.shutdown().await;
+
+    let rig = Rig::new();
+    let mut config = rig.config();
+    config.api.remote = Some(puddle_host::RemoteSettings {
+        serving: serving(),
+        network: Some(puddle_api::NetworkEndpoint::new(loopback, 0, vec![loopback]).unwrap()),
+    });
+    let host = rig.start_with(config).await;
+    let listener = host.remote_listener().expect("a network listener").clone();
+    assert_eq!(listener.addr.ip(), loopback);
+    assert_eq!(listener.fingerprint.len(), 64);
+    assert!(
+        listener.certificate_file.is_file(),
+        "{:?}",
+        listener.certificate_file
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_taken_api_port_is_reported_and_nothing_was_stopped_or_removed() {
     let rig = Rig::new();
     let first = rig.start().await;

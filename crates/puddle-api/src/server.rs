@@ -37,7 +37,7 @@ use crate::learned::{LearnedService, NoLearned};
 use crate::network_health::{NetworkHealthService, NoNetworkHealth};
 use crate::ports::{NoPorts, PortsService};
 use crate::proxy_sign_in::{NoProxySignIns, ProxySignInService};
-use crate::remote::{NetworkListener, PublicHost, RemoteError, RemoteServing};
+use crate::remote::{NetworkListener, PublicHost, Remote, RemoteError, RemoteServing};
 use crate::repos::{NoRepos, RepoService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
@@ -83,9 +83,10 @@ pub struct ApiConfig {
     pub ui: Option<Arc<dyn UiAssets>>,
     /// Remote serving: the public names a reverse proxy may use. `None` (the default) keeps
     /// exactly the loopback behaviour.
-    pub remote: Option<RemoteServing>,
-    /// A second listener for a reverse proxy on another machine. Needs [`Self::remote`].
-    pub network_listener: Option<NetworkListener>,
+    ///
+    /// Its optional [`NetworkListener`] is the second listener, for a reverse proxy on another
+    /// machine.
+    pub remote: Option<Remote>,
 }
 
 impl Default for ApiConfig {
@@ -101,7 +102,6 @@ impl Default for ApiConfig {
             max_connections: 256,
             ui,
             remote: None,
-            network_listener: None,
         }
     }
 }
@@ -429,8 +429,9 @@ async fn bind_network(
     network: &NetworkListener,
     endpoints: &PuddleEndpoints,
 ) -> Result<BoundNetwork, ServeError> {
-    let requested = SocketAddr::new(network.interface, network.port);
-    let tls = tls_acceptor(&network.tls)?;
+    let endpoint = network.endpoint();
+    let requested = SocketAddr::new(endpoint.interface(), endpoint.port());
+    let tls = tls_acceptor(network.tls())?;
     let bound = async {
         let listener = TcpListener::bind(requested).await?;
         let addr = listener.local_addr()?;
@@ -446,7 +447,7 @@ async fn bind_network(
         listener,
         addr,
         admission: Admission::Proxies {
-            allowed: network.allowed_proxies.clone(),
+            allowed: endpoint.allowed_proxies().to_vec(),
             tls,
         },
         registration,
@@ -512,22 +513,18 @@ impl ApiServer {
         let addr = listener.local_addr().map_err(bind_err)?;
         // Registered before anything can serve, so there is no moment a guest could reach it.
         let registration = services.endpoints.register(addr, EndpointKind::Api);
-        let network = match (&config.remote, &config.network_listener) {
-            (None, Some(_)) => return Err(RemoteError::ListenerWithoutRemote.into()),
-            (_, Some(network)) => {
-                network.check()?;
-                Some(bind_network(network, &services.endpoints).await?)
-            }
-            (_, None) => None,
+        let network = match config.remote.as_ref().and_then(Remote::network_listener) {
+            Some(network) => Some(bind_network(network, &services.endpoints).await?),
+            None => None,
         };
         let fronts = config
             .remote
             .as_ref()
-            .map(|remote| front_registrations(remote, &services.endpoints));
+            .map(|remote| front_registrations(remote.serving(), &services.endpoints));
         let names = config
             .remote
             .as_ref()
-            .map(|remote| name_blocks(remote, &services.endpoints));
+            .map(|remote| name_blocks(remote.serving(), &services.endpoints));
         let (stop, shutdown) = watch::channel(false);
         let settings_lock = services
             .workspaces
@@ -567,7 +564,7 @@ impl ApiServer {
                 .serving_ui(ui.is_some())
                 .acting_as(principal);
             match &config.remote {
-                Some(remote) => guard.remote(remote, listener),
+                Some(remote) => guard.remote(remote.serving(), listener),
                 None => guard,
             }
         };

@@ -1747,7 +1747,8 @@ export interface paths {
         /**
          * Opens the terminal's socket. A browser cannot send `Authorization` on a WebSocket, so on this
          *     one path the single-use ticket stands in for the token; the `Host` and `Origin` checks run
-         *     before it is read.
+         *     before it is read, and the ticket is checked before the workspace is looked up, so a caller
+         *     without one learns nothing about which workspaces exist.
          */
         get: operations["terminal_socket"];
         put?: never;
@@ -13702,7 +13703,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description a wrong, used or late ticket */
+            /** @description a wrong, used or late ticket, or a request under a public name */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -13713,15 +13714,6 @@ export interface operations {
             };
             /** @description forbidden origin */
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiErrorBody"];
-                };
-            };
-            /** @description no such workspace */
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };

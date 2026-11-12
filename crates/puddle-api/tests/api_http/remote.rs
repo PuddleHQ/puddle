@@ -10,8 +10,9 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NetworkListener, PublicHost,
-    RemoteServing, RunningApi, Services, SettingsRepo, TlsIdentity, UiAssets, UiFile,
+    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NetworkEndpoint, NetworkListener,
+    PublicHost, Remote, RemoteServing, RunningApi, Services, SettingsRepo, TlsIdentity, UiAssets,
+    UiFile,
 };
 use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};
 use puddle_store::{Limits, ManualClock, Store};
@@ -40,7 +41,7 @@ fn config(remote: Option<RemoteServing>) -> ApiConfig {
         ("<html><body>app shell</body></html>", "text/html"),
     )]))));
     config.extra_origins = vec!["tauri://localhost".to_owned()];
-    config.remote = remote;
+    config.remote = remote.map(Remote::new);
     config
 }
 
@@ -355,11 +356,11 @@ async fn proxied(allowed: &[IpAddr]) -> Proxy {
     )
     .unwrap();
     let mut config = config(Some(serving(&["puddle.example.org"], None)));
-    config.network_listener = Some(NetworkListener {
-        interface: IpAddr::V4(Ipv4Addr::LOCALHOST),
-        port: 0,
-        allowed_proxies: allowed.to_vec(),
-        tls: TlsIdentity::new(cert.cert_der().to_vec(), cert.key().pkcs8_der().to_vec()),
+    config.remote = config.remote.map(|remote| {
+        remote.with_network_listener(NetworkListener::new(
+            NetworkEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, allowed.to_vec()).unwrap(),
+            TlsIdentity::new(cert.cert_der().to_vec(), cert.key().pkcs8_der().to_vec()),
+        ))
     });
     let api = bind(config).await;
     let addr = api.running.network_addr().expect("a network listener");
@@ -530,49 +531,27 @@ async fn the_network_listener_speaks_tls_only_and_trusts_only_its_own_certificat
 }
 
 #[tokio::test]
-async fn a_network_listener_without_remote_serving_or_without_a_proxy_does_not_bind() {
+async fn a_network_listener_with_an_unusable_certificate_does_not_bind() {
     let clock = Arc::new(ManualClock::new(START_MS));
-    let services = || {
-        Services::new(
-            Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap()),
-            Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
-            Arc::new(EventHub::default()),
-            clock.clone(),
-        )
-    };
-    let dir = tempfile::tempdir().unwrap();
-    let cert = puddle_certs::devcert::listener::ensure(
-        dir.path(),
-        &[IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        &[],
-        SystemTime::now(),
-    )
-    .unwrap();
-    let listener = |allowed: Vec<IpAddr>| NetworkListener {
-        interface: IpAddr::V4(Ipv4Addr::LOCALHOST),
-        port: 0,
-        allowed_proxies: allowed,
-        tls: TlsIdentity::new(cert.cert_der().to_vec(), cert.key().pkcs8_der().to_vec()),
-    };
-    let mut without = ApiConfig::default();
-    without.network_listener = Some(listener(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]));
-    let err = ApiServer::bind(without, ApiToken::generate().unwrap(), services())
-        .await
-        .err()
-        .unwrap();
-    assert!(err.to_string().contains("needs remote serving"), "{err}");
-    let mut nobody = config(Some(serving(&["puddle.example.org"], None)));
-    nobody.network_listener = Some(listener(Vec::new()));
-    let err = ApiServer::bind(nobody, ApiToken::generate().unwrap(), services())
-        .await
-        .err()
-        .unwrap();
-    assert!(err.to_string().contains("allowed proxy address"), "{err}");
+    let services = Services::new(
+        Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap()),
+        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(EventHub::default()),
+        clock,
+    );
     let mut broken = config(Some(serving(&["puddle.example.org"], None)));
-    let mut bad = listener(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]);
-    bad.tls = TlsIdentity::new(vec![1, 2, 3], vec![4, 5, 6]);
-    broken.network_listener = Some(bad);
-    let err = ApiServer::bind(broken, ApiToken::generate().unwrap(), services())
+    broken.remote = broken.remote.map(|remote| {
+        remote.with_network_listener(NetworkListener::new(
+            NetworkEndpoint::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                0,
+                vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+            )
+            .unwrap(),
+            TlsIdentity::new(vec![1, 2, 3], vec![4, 5, 6]),
+        ))
+    });
+    let err = ApiServer::bind(broken, ApiToken::generate().unwrap(), services)
         .await
         .err()
         .unwrap();
@@ -592,11 +571,16 @@ async fn a_network_listener_on_a_taken_port_says_so() {
     )
     .unwrap();
     let mut config = config(Some(serving(&["puddle.example.org"], None)));
-    config.network_listener = Some(NetworkListener {
-        interface: IpAddr::V4(Ipv4Addr::LOCALHOST),
-        port,
-        allowed_proxies: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        tls: TlsIdentity::new(cert.cert_der().to_vec(), cert.key().pkcs8_der().to_vec()),
+    config.remote = config.remote.map(|remote| {
+        remote.with_network_listener(NetworkListener::new(
+            NetworkEndpoint::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port,
+                vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+            )
+            .unwrap(),
+            TlsIdentity::new(cert.cert_der().to_vec(), cert.key().pkcs8_der().to_vec()),
+        ))
     });
     let clock = Arc::new(ManualClock::new(START_MS));
     let services = Services::new(

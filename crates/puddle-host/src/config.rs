@@ -28,23 +28,20 @@ pub struct ApiSettings {
     pub ui: Option<Arc<dyn UiAssets>>,
     /// Where to write the connection file (URL and token), if anywhere.
     pub connection_file: Option<PathBuf>,
-    /// Remote serving: the public names a reverse proxy may use. `None`: loopback only, exactly
-    /// as before.
-    pub remote: Option<puddle_api::RemoteServing>,
-    /// The listener for a reverse proxy on another machine. Needs [`Self::remote`].
-    pub network_listener: Option<NetworkListenerSettings>,
+    /// Remote serving: the public names a reverse proxy may use, and the listener for one on
+    /// another machine. `None`: loopback only, exactly as before.
+    pub remote: Option<RemoteSettings>,
 }
 
-/// Where the API listens for a reverse proxy on another machine (opt-in). The host makes the
-/// listener's TLS certificate under the data folder.
+/// Remote serving as the host is asked for it. The network listener is part of it, so a
+/// listener without remote serving cannot be written down. The host makes the listener's TLS
+/// certificate under the data folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NetworkListenerSettings {
-    /// The one interface address to bind.
-    pub interface: std::net::IpAddr,
-    /// The port.
-    pub port: u16,
-    /// The proxy addresses that may connect.
-    pub allowed_proxies: Vec<std::net::IpAddr>,
+pub struct RemoteSettings {
+    /// The public names, and the base domain of workspace web apps.
+    pub serving: puddle_api::RemoteServing,
+    /// The listener for a reverse proxy on another machine, when there is one.
+    pub network: Option<puddle_api::NetworkEndpoint>,
 }
 
 impl std::fmt::Debug for ApiSettings {
@@ -55,7 +52,6 @@ impl std::fmt::Debug for ApiSettings {
             .field("ui", &self.ui.as_ref().map(|_| "custom"))
             .field("connection_file", &self.connection_file)
             .field("remote", &self.remote)
-            .field("network_listener", &self.network_listener)
             .finish()
     }
 }
@@ -165,7 +161,6 @@ impl HostConfig {
                 ui: None,
                 connection_file,
                 remote: None,
-                network_listener: None,
             },
             upstream: UpstreamSettings::default(),
             workspaces: WorkspaceConfig::default(),

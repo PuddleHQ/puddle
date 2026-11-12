@@ -228,29 +228,38 @@ impl Probe for SystemProbe {
         let Some(program) = find_on_path(if cfg!(windows) { "az.cmd" } else { "az" }) else {
             return AzCliFacts::NotFound;
         };
-        match launch::run(Command::new(program).arg("--version"), limit) {
-            ProcessOutcome::Exited {
-                code: Some(0),
-                stdout_first_line,
-                ..
-            } => match azure_cli_version(&stdout_first_line) {
-                Some(version) => AzCliFacts::Found { version },
-                None => AzCliFacts::Unknown {
-                    detail: "no version in its first line".into(),
-                },
-            },
-            ProcessOutcome::Exited { code, .. } => AzCliFacts::Unknown {
-                detail: format!("`az --version` exited with {code:?}"),
-            },
-            ProcessOutcome::TimedOut { after } => AzCliFacts::Unknown {
-                detail: format!("`az --version` took more than {} s", after.as_secs()),
-            },
-            ProcessOutcome::SpawnFailed { detail, .. } => AzCliFacts::Unknown { detail },
-        }
+        az_cli_facts_at(&program, limit)
     }
 
     fn data_path(&self) -> Option<DataPathFacts> {
         cfg!(target_os = "linux").then(|| sys::data_path(self.data_dir.as_deref()))
+    }
+}
+
+/// What running `program --version` says about the Azure CLI.
+fn az_cli_facts_at(program: &Path, limit: Duration) -> AzCliFacts {
+    az_cli_facts(launch::run(Command::new(program).arg("--version"), limit))
+}
+
+fn az_cli_facts(outcome: ProcessOutcome) -> AzCliFacts {
+    match outcome {
+        ProcessOutcome::Exited {
+            code: Some(0),
+            stdout_first_line,
+            ..
+        } => match azure_cli_version(&stdout_first_line) {
+            Some(version) => AzCliFacts::Found { version },
+            None => AzCliFacts::Unknown {
+                detail: "no version in its first line".into(),
+            },
+        },
+        ProcessOutcome::Exited { code, .. } => AzCliFacts::Unknown {
+            detail: format!("`az --version` exited with {code:?}"),
+        },
+        ProcessOutcome::TimedOut { after } => AzCliFacts::Unknown {
+            detail: format!("`az --version` took more than {} s", after.as_secs()),
+        },
+        ProcessOutcome::SpawnFailed { detail, .. } => AzCliFacts::Unknown { detail },
     }
 }
 

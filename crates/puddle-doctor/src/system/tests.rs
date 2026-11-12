@@ -118,3 +118,100 @@ fn the_version_is_the_first_line_of_az_version() {
     assert_eq!(azure_cli_version("core 2.64.0 *\n"), None);
     assert_eq!(azure_cli_version(""), None);
 }
+
+fn exited(code: Option<i32>, first_line: &str) -> ProcessOutcome {
+    ProcessOutcome::Exited {
+        code,
+        stdout_first_line: first_line.into(),
+        stderr_tail: String::new(),
+        elapsed: Duration::from_millis(5),
+    }
+}
+
+#[test]
+fn a_clean_az_version_run_reports_the_version() {
+    assert_eq!(
+        az_cli_facts(exited(Some(0), "azure-cli  2.64.0 *")),
+        AzCliFacts::Found {
+            version: "2.64.0".into()
+        }
+    );
+}
+
+#[test]
+fn an_az_that_prints_no_version_is_unknown() {
+    assert_eq!(
+        az_cli_facts(exited(Some(0), "something else")),
+        AzCliFacts::Unknown {
+            detail: "no version in its first line".into()
+        }
+    );
+}
+
+#[test]
+fn an_az_that_fails_is_unknown_with_its_exit_code() {
+    assert_eq!(
+        az_cli_facts(exited(Some(3), "")),
+        AzCliFacts::Unknown {
+            detail: "`az --version` exited with Some(3)".into()
+        }
+    );
+    assert_eq!(
+        az_cli_facts(exited(None, "")),
+        AzCliFacts::Unknown {
+            detail: "`az --version` exited with None".into()
+        }
+    );
+}
+
+#[test]
+fn an_az_that_hangs_is_unknown_with_the_limit() {
+    assert_eq!(
+        az_cli_facts(ProcessOutcome::TimedOut {
+            after: Duration::from_secs(7)
+        }),
+        AzCliFacts::Unknown {
+            detail: "`az --version` took more than 7 s".into()
+        }
+    );
+}
+
+#[test]
+fn an_az_that_cannot_start_is_unknown_with_the_os_text() {
+    assert_eq!(
+        az_cli_facts(ProcessOutcome::SpawnFailed {
+            os_error: Some(2),
+            detail: "no such file".into()
+        }),
+        AzCliFacts::Unknown {
+            detail: "no such file".into()
+        }
+    );
+}
+
+#[test]
+fn running_a_program_that_is_not_there_is_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    let got = az_cli_facts_at(&dir.path().join("no-az"), Duration::from_secs(2));
+    assert!(matches!(got, AzCliFacts::Unknown { .. }), "{got:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn running_a_script_that_prints_the_az_banner_finds_the_version() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let az = dir.path().join("az");
+    std::fs::write(
+        &az,
+        "#!/bin/sh\necho 'azure-cli                         2.64.0 *'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&az, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        az_cli_facts_at(&az, Duration::from_secs(5)),
+        AzCliFacts::Found {
+            version: "2.64.0".into()
+        }
+    );
+}

@@ -4096,7 +4096,7 @@ async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_vm_that_dies_while_puddle_runs_shows_crashed_and_start_recovers_it() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4126,7 +4126,7 @@ async fn a_vm_that_dies_while_puddle_runs_shows_crashed_and_start_recovers_it() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_end_of_an_agent_session_finds_a_dead_vm_without_a_list() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;

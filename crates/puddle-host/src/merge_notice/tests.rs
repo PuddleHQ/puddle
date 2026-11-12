@@ -7,7 +7,10 @@ fn workspace() -> WorkspaceId {
 
 #[test]
 fn no_left_file_is_no_notice() {
-    assert_eq!(merge_notices(&workspace(), &[]), Vec::<Problem>::new());
+    assert_eq!(
+        merge_notices(&workspace(), "Acme shop", &[]),
+        Vec::<Problem>::new()
+    );
 }
 
 #[test]
@@ -16,12 +19,14 @@ fn docker_config_says_pulls_fail() {
         "/root/.docker/config.json",
         "the file is not valid JSON: EOF",
     )];
-    let [problem] = merge_notices(&workspace(), &left).try_into().unwrap();
+    let [problem] = merge_notices(&workspace(), "Acme shop", &left)
+        .try_into()
+        .unwrap();
     assert_eq!(problem.key, "merge-left:acme:/root/.docker/config.json");
     assert_eq!(problem.workspace, Some(workspace()));
     assert_eq!(
         problem.title,
-        "Puddle could not update /root/.docker/config.json in acme"
+        "Puddle could not update /root/.docker/config.json in Acme shop"
     );
     assert!(
         problem.detail.contains("not valid JSON: EOF")
@@ -35,7 +40,9 @@ fn docker_config_says_pulls_fail() {
 #[test]
 fn machine_settings_say_what_the_editor_loses() {
     let left = [(MACHINE_SETTINGS_GUEST, "the file is not valid JSON")];
-    let [problem] = merge_notices(&workspace(), &left).try_into().unwrap();
+    let [problem] = merge_notices(&workspace(), "Acme shop", &left)
+        .try_into()
+        .unwrap();
     assert!(
         problem.detail.contains("port forwarding"),
         "{}",
@@ -46,7 +53,7 @@ fn machine_settings_say_what_the_editor_loses() {
 #[test]
 fn ssh_config_and_unknown_files_have_their_own_words() {
     let left = [(SSH_CONFIG_SYSTEM, "x"), ("/root/other", "y")];
-    let notices = merge_notices(&workspace(), &left);
+    let notices = merge_notices(&workspace(), "Acme shop", &left);
     assert!(notices[0].detail.contains("ssh in this workspace"));
     assert!(
         notices[1]
@@ -62,7 +69,7 @@ fn each_file_has_its_own_consequence() {
         (MACHINE_SETTINGS_GUEST, "x"),
         (SSH_CONFIG_SYSTEM, "x"),
     ];
-    let details: Vec<String> = merge_notices(&workspace(), &left)
+    let details: Vec<String> = merge_notices(&workspace(), "Acme shop", &left)
         .into_iter()
         .map(|p| p.detail)
         .collect();
@@ -75,12 +82,14 @@ fn each_file_has_its_own_consequence() {
 #[test]
 fn a_docker_config_in_another_folder_still_says_pulls_fail() {
     let left = [("/work/docker/config.json", "x")];
-    let [problem] = merge_notices(&workspace(), &left).try_into().unwrap();
+    let [problem] = merge_notices(&workspace(), "Acme shop", &left)
+        .try_into()
+        .unwrap();
     assert!(problem.detail.contains("bypasses the proxy"));
 }
 
 fn settled(left: &[(&str, &str)], problems: &Problems) {
-    settle_merge_notices(problems, &workspace(), left);
+    settle_merge_notices(problems, &workspace(), "Acme shop", left);
 }
 
 fn keys(problems: &Problems) -> Vec<String> {
@@ -117,5 +126,8 @@ fn settling_leaves_other_problems_and_other_workspaces_alone() {
 #[test]
 fn the_editors_own_file_has_its_own_notice() {
     let left = [("/work/.puddle/w.code-workspace", "bad")];
-    assert_eq!(merge_notices(&workspace(), &left), Vec::<Problem>::new());
+    assert_eq!(
+        merge_notices(&workspace(), "Acme shop", &left),
+        Vec::<Problem>::new()
+    );
 }

@@ -146,3 +146,17 @@ async fn a_stream_that_fails_ends_the_read_with_nothing_more_taken() {
     guest.read_first(LIMIT).await;
     assert_eq!(guest.early, b"SS");
 }
+
+#[tokio::test]
+async fn a_guest_that_ends_without_bytes_ends_the_read_at_once() {
+    let (far, mut guest) = opened(b"S");
+    drop(far);
+    // An end must not be read again until the limit runs out: the outer bound is far under it.
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        guest.read_first(Duration::from_secs(600)),
+    )
+    .await
+    .expect("read_first returns at the end of the stream");
+    assert_eq!(guest.early, b"S");
+}

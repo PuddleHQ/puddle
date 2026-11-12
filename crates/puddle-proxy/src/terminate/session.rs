@@ -516,7 +516,7 @@ async fn pass_through<S>(
         early: replay,
         answered: true,
     };
-    let end = crate::proxy::tunnel(guest, out.stream, ssh_for, out.watch, None).await;
+    let end = crate::proxy::tunnel(guest, out.stream, ssh_for, out.watch, None, None).await;
     outcome.ssh = end.ssh;
 }
 

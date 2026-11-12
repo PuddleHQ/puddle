@@ -267,7 +267,7 @@ pub(crate) async fn github_internet(options: HostOptions) -> GithubInternet {
 /// [`start_vm_host_config`] on a fake `github.com`: the host clones from it, never from the real
 /// one. Keep the returned internet alive while the host runs.
 pub(crate) async fn start_vm_host_github(tag: &str) -> (VmHost, GithubInternet) {
-    let net = github_internet(crate::support::hermetic_options()).await;
+    let net = github_internet(crate::support::named_id_options()).await;
     let vm = start_vm_host_platform(tag, net.options.clone(), &net.platform, |_| {}).await;
     (vm, net)
 }
@@ -304,7 +304,7 @@ pub(crate) fn harness_config(
 /// one binary share the run's prefix, and a host over a shared folder reads the identities an
 /// earlier test left.
 pub(crate) async fn start_vm_host(tag: &str) -> VmHost {
-    start_vm_host_with(tag, crate::support::hermetic_options()).await
+    start_vm_host_with(tag, crate::support::named_id_options()).await
 }
 
 pub(crate) async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {

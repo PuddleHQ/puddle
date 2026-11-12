@@ -74,9 +74,27 @@ pub fn parse_identities(mut body: &[u8]) -> Result<Vec<Identity>, AgentError> {
 ///
 /// [`AgentError::Io`] when the stream breaks (an agent that closes without answering included),
 /// [`AgentError::Refused`] for a failure answer, [`AgentError::Protocol`] for anything else.
-pub fn exchange<S: Read + Write>(stream: &mut S) -> Result<Vec<Identity>, AgentError> {
+pub fn exchange<S: Read + Write + ?Sized>(stream: &mut S) -> Result<Vec<Identity>, AgentError> {
+    let message = ask(stream, &request_identities())?;
+    match message.split_first() {
+        Some((&MSG_IDENTITIES_ANSWER, body)) => parse_identities(body),
+        Some((&MSG_FAILURE, _)) => Err(AgentError::Refused),
+        _ => Err(AgentError::Protocol("not an identities answer")),
+    }
+}
+
+/// Writes `request` (framed) on `stream` and reads one framed answer, returned without its length.
+///
+/// # Errors
+///
+/// [`AgentError::Io`] when the stream breaks, [`AgentError::Protocol`] for an empty answer or one
+/// over [`MAX_MESSAGE`].
+pub fn ask<S: Read + Write + ?Sized>(
+    stream: &mut S,
+    request: &[u8],
+) -> Result<Vec<u8>, AgentError> {
     stream
-        .write_all(&request_identities())
+        .write_all(request)
         .and_then(|()| stream.flush())
         .map_err(AgentError::Io)?;
     let mut len = [0_u8; 4];
@@ -90,11 +108,7 @@ pub fn exchange<S: Read + Write>(stream: &mut S) -> Result<Vec<Identity>, AgentE
     }
     let mut message = vec![0_u8; len];
     stream.read_exact(&mut message).map_err(AgentError::Io)?;
-    match message.split_first() {
-        Some((&MSG_IDENTITIES_ANSWER, body)) => parse_identities(body),
-        Some((&MSG_FAILURE, _)) => Err(AgentError::Refused),
-        _ => Err(AgentError::Protocol("not an identities answer")),
-    }
+    Ok(message)
 }
 
 #[cfg(test)]

@@ -75,6 +75,7 @@ mod records;
 mod resolve;
 mod route;
 mod ssh;
+pub mod ssh_agent;
 mod ssh_git;
 mod tap;
 mod target;

@@ -210,6 +210,7 @@ async fn a_banner_split_over_several_reads_is_still_refused() {
         let err = gate.read(&mut buf).await.unwrap_err();
         (err.kind(), gate.ssh_seen())
     });
+    // flake-ok: a send loop, not a wait for a condition: it writes each chunk of a split banner.
     for chunk in [&b"S"[..], b"SH", b"-", b"2.0-x\r\n"] {
         far.write_all(chunk).await.unwrap();
         tokio::task::yield_now().await;
@@ -267,4 +268,22 @@ async fn a_gate_that_is_not_watching_hands_on_what_came_with_the_request_first()
     let mut got = Vec::new();
     gate.read_to_end(&mut got).await.unwrap();
     assert_eq!(got, b"SSH-2.0-early\r\nthen");
+}
+
+#[tokio::test]
+async fn the_bytes_sent_with_the_head_come_out_whole_through_small_reads() {
+    let (near, mut far) = tokio::io::duplex(256);
+    let mut gate = Gate::new(near, b"GET /early".to_vec(), true);
+    far.write_all(b" and later").await.unwrap();
+    drop(far);
+    let mut out = Vec::new();
+    let mut buf = [0u8; 3];
+    loop {
+        let n = gate.read(&mut buf).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+    assert_eq!(out, b"GET /early and later");
 }

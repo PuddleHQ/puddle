@@ -29,7 +29,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
-use puddle_agent_proto::ssh::{BANNER_MIN, PROTOCOL_HEADER, SSH, is_banner};
+use puddle_agent_proto::ssh::{PROTOCOL_HEADER, SSH, is_banner};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::http::{Head, header_name, header_value};
@@ -53,10 +53,10 @@ pub(crate) fn started(early: &[u8]) -> bool {
     is_banner(early)
 }
 
-/// Whether the first bytes of an upload do not tell yet if it is SSH: fewer than [`BANNER_MIN`]
-/// of them, and all of them the start of `SSH-`. Nothing at all is undecided too.
+/// Whether the first bytes of an upload do not tell yet if it is SSH: all of them are the start
+/// of `SSH-` (so fewer than `BANNER_MIN`). Nothing at all is undecided too.
 pub(crate) fn undecided(first: &[u8]) -> bool {
-    first.len() < BANNER_MIN && b"SSH-".starts_with(first)
+    b"SSH-".starts_with(first)
 }
 
 /// What the guest is told when an established tunnel turns out to carry SSH: the refusal as
@@ -80,6 +80,7 @@ pub(crate) struct Gate<S> {
     handed: usize,
     watching: bool,
     ssh: bool,
+    kex: Option<crate::ssh_agent::KexWatch>,
 }
 
 impl<S> Gate<S> {
@@ -92,7 +93,15 @@ impl<S> Gate<S> {
             handed: 0,
             watching,
             ssh: false,
+            kex: None,
         }
+    }
+
+    /// Also shows the bytes written toward the guest (the server's side of the tunnel) to `kex`,
+    /// which keeps the session's key exchange for the filtered SSH agent while the gate lives.
+    pub(crate) fn with_kex(mut self, kex: Option<crate::ssh_agent::KexWatch>) -> Self {
+        self.kex = kex;
+        self
     }
 
     /// Whether the upload started with an SSH identification line (it was dropped).
@@ -166,7 +175,11 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Gate<S> {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.inner).poll_write(cx, buf)
+        let polled = Pin::new(&mut self.inner).poll_write(cx, buf);
+        if let (Poll::Ready(Ok(written)), Some(kex)) = (&polled, self.kex.as_mut()) {
+            kex.feed(buf.get(..*written).unwrap_or_default());
+        }
+        polled
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {

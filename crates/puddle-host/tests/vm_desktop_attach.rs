@@ -73,7 +73,7 @@ mod attach {
     use puddle_types::WorkspaceId;
     use serde_json::json;
 
-    use crate::support::{Api, ended, hermetic_options};
+    use crate::support::{Api, ended, named_id_options};
     use crate::vm_support::{VmHost, guest, start_vm_host_config};
 
     const WAIT: Duration = Duration::from_secs(120);
@@ -195,7 +195,7 @@ mod attach {
         // ssh records the host key of `StrictHostKeyChecking=no` in its known-hosts file, so that
         // file must not also be the config file read again by the next call.
         let known_hosts = option_path(&scratch.path().join("bare_known_hosts"));
-        let mut options: HostOptions = hermetic_options();
+        let mut options: HostOptions = named_id_options();
         options.launcher = Arc::new(VsCodeLauncher::with_program(&bin));
         let user_config = scratch.path().join("home/.ssh/config");
         let uc = user_config.clone();

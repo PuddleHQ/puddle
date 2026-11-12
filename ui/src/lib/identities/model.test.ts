@@ -5,6 +5,10 @@ import {
   authorDiffers,
   authorFill,
   authorProblem,
+  azLoginCommand,
+  azNote,
+  azSource,
+  canSignIn,
   checkFromLast,
   checkOf,
   coverageOf,
@@ -23,6 +27,8 @@ import {
   labelProblem,
   moved,
   needsOrg,
+  signedOutCheck,
+  tenantProblem,
   orgProblem,
   parseOwners,
   requestOf,
@@ -198,19 +204,34 @@ describe("what a found account becomes", () => {
 describe("checks", () => {
   it("reads a check result and words each state", () => {
     expect(
-      checkOf({ readable: true, problem: null, needs_sign_in: false }),
+      checkOf({
+        readable: true,
+        problem: null,
+        needs_sign_in: false,
+        fix_step: null,
+      }),
     ).toEqual({
       state: "ok",
     });
     expect(
-      checkOf({ readable: false, problem: "gone", needs_sign_in: true }),
+      checkOf({
+        readable: false,
+        problem: "gone",
+        needs_sign_in: true,
+        fix_step: null,
+      }),
     ).toEqual({
       state: "problem",
       message: "gone",
       needsSignIn: true,
     });
     expect(
-      checkOf({ readable: false, problem: null, needs_sign_in: false }),
+      checkOf({
+        readable: false,
+        problem: null,
+        needs_sign_in: false,
+        fix_step: null,
+      }),
     ).toMatchObject({ message: "Puddle can't read it" });
     const words = (c: Check) => statusWord(c);
     expect(words(UNTESTED)).toBe("Not tested");
@@ -324,6 +345,7 @@ describe("the host's record of a read", () => {
     readable: true,
     problem: null,
     needs_sign_in: false,
+    fix_step: null,
     checked_at: 1_000_000,
     by: "injection" as const,
   };
@@ -339,6 +361,7 @@ describe("the host's record of a read", () => {
         ...last,
         readable: false,
         needs_sign_in: true,
+        fix_step: null,
         problem: "gone",
         by: "test",
       }),
@@ -429,5 +452,75 @@ describe("what an account offers an identity", () => {
     expect(toggleOwner("acme", "labs")).toBe("acme, labs");
     expect(toggleOwner("acme, Labs", "labs")).toBe("acme");
     expect(toggleOwner("acme", "ACME")).toBe("");
+  });
+});
+
+describe("the Azure CLI source", () => {
+  const az: Source = {
+    kind: "az_cli",
+    tenant: "contoso.onmicrosoft.com",
+    org: "contoso",
+  };
+  const azAny: Source = { ...az, org: null };
+
+  it("is worded as the host words it and labelled for a chip", () => {
+    expect(describeSource(az)).toBe(
+      "Azure CLI account in tenant contoso.onmicrosoft.com for contoso",
+    );
+    expect(describeSource(azAny)).toBe(
+      "Azure CLI account in tenant contoso.onmicrosoft.com",
+    );
+    expect(sourceLabel(az)).toBe("Azure CLI · contoso.onmicrosoft.com");
+  });
+
+  it("builds the source from the form, an empty organisation being none", () => {
+    expect(azSource(" contoso.onmicrosoft.com ", " contoso ")).toEqual(az);
+    expect(azSource("contoso.onmicrosoft.com", "  ")).toEqual(azAny);
+  });
+
+  it("checks a tenant the way the host does", () => {
+    expect(tenantProblem("contoso.onmicrosoft.com")).toBeNull();
+    expect(tenantProblem("72f988bf-86f1-41af-91ab-2d7cd011db47")).toBeNull();
+    for (const bad of ["", "  ", "--help", ".hidden", "a b", "a&b", "x/y"]) {
+      expect(tenantProblem(bad), bad).not.toBeNull();
+    }
+    expect(tenantProblem("a".repeat(257))).not.toBeNull();
+  });
+
+  it("tells the user the terminal step and never offers a sign-in", () => {
+    expect(azLoginCommand("contoso.onmicrosoft.com")).toBe(
+      "az login --tenant contoso.onmicrosoft.com",
+    );
+    expect(azNote(az)).toContain("`az login --tenant contoso.onmicrosoft.com`");
+    expect(azNote(az)).toContain("does not sign in for you");
+    expect(canSignIn(az)).toBe(false);
+    expect(canSignIn(gh)).toBe(true);
+    expect(canSignIn(stored)).toBe(false);
+  });
+
+  it("carries the host's step in a check and from a recorded read", () => {
+    const result = {
+      readable: false,
+      problem: "not signed in, or the sign-in has expired",
+      needs_sign_in: false,
+      fix_step: "Run `az login --tenant t` in a terminal.",
+    };
+    expect(checkOf(result)).toMatchObject({
+      state: "problem",
+      needsSignIn: false,
+      fixStep: "Run `az login --tenant t` in a terminal.",
+    });
+    expect(
+      checkFromLast({ ...result, checked_at: 1, by: "injection" }),
+    ).toMatchObject({ fixStep: "Run `az login --tenant t` in a terminal." });
+  });
+
+  it("words a workspace's failed read with the step for the Azure CLI only", () => {
+    expect(signedOutCheck(gh)).toMatchObject({ needsSignIn: true });
+    const check = signedOutCheck(az);
+    expect(check).toMatchObject({ state: "problem", needsSignIn: false });
+    expect(check.state === "problem" && check.fixStep).toContain(
+      "`az login --tenant contoso.onmicrosoft.com`",
+    );
   });
 });

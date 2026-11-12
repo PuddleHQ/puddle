@@ -3,10 +3,11 @@
 //! gets, and a credential that names no organisation.
 
 use puddle_repos::{ApiReply, Freshness, ListState, ProblemKind, Role, Visibility};
+use puddle_secrets::SourceError;
 use puddle_secrets::{TokenScheme, azure_devops_scheme};
 use puddle_store::RepoRef;
 
-use crate::common::{Rig, binding, data, gcm, identities, ok_json, stored};
+use crate::common::{Rig, az_cli, binding, data, gcm, identities, ok_json, stored};
 
 const LIST: &str = "/acme/_apis/git/repositories?api-version=7.1";
 const PAT: &str = "CANARY-ado-pat-0f3a";
@@ -397,4 +398,49 @@ async fn a_very_large_organisation_is_cut_at_five_thousand_and_says_so() {
     let lists = rig.lists(&ids, Freshness::Cached).await;
     assert_eq!(lists[0].repos.len(), 5000);
     assert_eq!(lists[0].notes[0].kind, puddle_repos::NoteKind::Truncated);
+}
+
+#[tokio::test]
+async fn an_azure_cli_credential_lists_the_organisation_it_names_with_its_token_as_bearer() {
+    let rig = Rig::new();
+    rig.api
+        .reply("dev.azure.com", LIST, json("azure_repositories.json"));
+    let source = az_cli("contoso.onmicrosoft.com", Some("acme"));
+    rig.tokens
+        .set(&source, "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl");
+    let ids = identities(vec![(
+        "Work",
+        vec![binding("dev.azure.com", source, &["acme"], false)],
+    )]);
+
+    let lists = rig.lists(&ids, Freshness::Cached).await;
+
+    assert_eq!(lists.len(), 1);
+    assert_eq!(lists[0].state, ListState::Ok);
+    assert_eq!(lists[0].organisation.as_deref(), Some("acme"));
+    assert!(rig.api.seen()[0].bearer);
+}
+
+#[tokio::test]
+async fn an_azure_cli_that_is_not_signed_in_says_the_exact_step_and_offers_no_sign_in() {
+    let rig = Rig::new();
+    let source = az_cli("contoso.onmicrosoft.com", Some("acme"));
+    rig.tokens.fail(&source, SourceError::NotSignedIn);
+    let ids = identities(vec![(
+        "Work",
+        vec![binding("dev.azure.com", source, &["acme"], false)],
+    )]);
+
+    let lists = rig.lists(&ids, Freshness::Cached).await;
+
+    let problem = lists[0].problem.as_ref().unwrap();
+    assert_eq!(problem.kind, ProblemKind::NotSignedIn);
+    assert!(!problem.needs_sign_in);
+    assert!(
+        problem
+            .message
+            .contains("`az login --tenant contoso.onmicrosoft.com`"),
+        "{}",
+        problem.message
+    );
 }

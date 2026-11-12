@@ -34,7 +34,11 @@ fn what_cannot_be_used_is_refused_in_words() {
 
 #[test]
 fn problems_are_worded_for_the_user() {
-    let text = |e: SourceError| CheckResult::from_error(&e);
+    let gh = SourceSpec::Gh {
+        host: HostName::new("github.com").unwrap(),
+        account: puddle_secrets::AccountName::new("octo").unwrap(),
+    };
+    let text = |e: SourceError| CheckResult::from_error(&gh, &e);
     let not_signed_in = text(SourceError::NotSignedIn);
     assert!(not_signed_in.needs_sign_in);
     assert_eq!(
@@ -51,4 +55,30 @@ fn problems_are_worded_for_the_user() {
         Some("gh is not installed or not on PATH")
     );
     assert!(CheckResult::readable().readable);
+}
+
+#[test]
+fn an_azure_cli_problem_carries_the_step_and_never_asks_for_a_sign_in_button() {
+    let az = SourceSpec::AzCli {
+        tenant: puddle_secrets::TenantId::new("contoso.onmicrosoft.com").unwrap(),
+        org: None,
+    };
+    let signed_out = CheckResult::from_error(&az, &SourceError::NotSignedIn);
+    assert!(!signed_out.needs_sign_in);
+    assert!(
+        signed_out
+            .fix_step
+            .unwrap()
+            .contains("az login --tenant contoso.onmicrosoft.com")
+    );
+    let slow = CheckResult::from_error(&az, &SourceError::Timeout(Tool::Az));
+    assert!(!slow.needs_sign_in);
+    let missing = CheckResult::from_error(&az, &SourceError::ToolMissing(Tool::Az));
+    assert!(
+        missing
+            .fix_step
+            .unwrap()
+            .starts_with("Install the Azure CLI")
+    );
+    assert_eq!(CheckResult::readable().fix_step, None);
 }

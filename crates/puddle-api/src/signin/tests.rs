@@ -777,3 +777,46 @@ async fn with_password_sign_in_off_nothing_signs_in_but_signed_in_browsers_carry
         .unwrap_err();
     assert_eq!(code(&last), ErrorCode::Invalid);
 }
+
+#[tokio::test]
+async fn what_a_sign_in_hands_back_never_shows_its_secrets_in_a_debug_print() {
+    let f = fixture();
+    let granted = owner_signed_up(&f).await;
+    for text in [
+        format!("{granted:?}"),
+        format!("{:?}", granted.grant),
+        format!("{:?}", f.sign_in),
+    ] {
+        assert!(!text.contains(granted.refresh.as_str()), "{text}");
+        assert!(!text.contains(&granted.grant.access_token), "{text}");
+    }
+}
+
+#[test]
+fn a_hash_that_cannot_be_made_is_an_internal_error_and_a_weak_password_is_invalid() {
+    assert_eq!(
+        code(&weak(PasswordError::Failed("no randomness".to_owned()))),
+        ErrorCode::Internal
+    );
+    assert_eq!(
+        code(&weak(PasswordError::Weak("too short"))),
+        ErrorCode::Invalid
+    );
+}
+
+#[tokio::test]
+async fn another_devices_revoke_does_not_end_a_stream() {
+    let f = fixture();
+    let this = owner_signed_up(&f).await;
+    let other = f.sign_in.sign_in("Tijs", password(), None).await.unwrap();
+    let device = DeviceId::from_stored(this.grant.device.id);
+    let waiting = tokio::spawn(f.sign_in.clone().ended(device));
+    tokio::task::yield_now().await;
+    f.sign_in
+        .revoke_device(UserId::OWNER, DeviceId::from_stored(other.grant.device.id))
+        .await
+        .unwrap();
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished(), "only its own device ends it");
+    waiting.abort();
+}

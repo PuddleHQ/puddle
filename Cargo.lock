@@ -6613,6 +6613,7 @@ dependencies = [
  "puddle-netpolicy",
  "puddle-proxy",
  "puddle-secrets",
+ "puddle-ssh-agent",
  "puddle-store",
  "puddle-test-kit",
  "puddle-types",
@@ -6622,6 +6623,7 @@ dependencies = [
  "russh",
  "rustls",
  "serde_json",
+ "ssh-key",
  "subtle",
  "tempfile",
  "thiserror 2.0.21",
@@ -6725,6 +6727,9 @@ name = "puddle-ssh-agent"
 version = "0.0.0"
 dependencies = [
  "puddle-ipc",
+ "puddle-ssh-agent",
+ "signature",
+ "ssh-key",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

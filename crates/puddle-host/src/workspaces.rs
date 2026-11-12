@@ -313,7 +313,10 @@ struct Inner<R: Runtime + Clone> {
     space: Arc<dyn crate::Space>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceId, Live<R>>>,
-    tasks: tokio::sync::Mutex<JoinSet<()>>,
+    /// The tasks the service owns: operations, maintenance checks and downloads. A plain mutex,
+    /// so a request never awaits between marking a workspace busy and spawning the task that
+    /// clears the mark.
+    tasks: Mutex<JoinSet<()>>,
     running: watch::Sender<usize>,
     /// Whether the image the delete check boots is in the cache; see [`HostWorkspaces::maintenance_ready`].
     maintenance_image: watch::Sender<Warmth>,
@@ -415,6 +418,19 @@ fn room(added: u64, free: u64) -> Room {
     }
 }
 
+/// `name` as the user reads it, or `id` for a workspace the list no longer holds.
+fn name_or_id(name: Option<&DisplayName>, id: &WorkspaceId) -> String {
+    name.map_or_else(|| id.to_string(), |name| name.as_str().to_owned())
+}
+
+/// The title of the problem about the editor's file in `record`'s workspace.
+fn editor_file_title(record: &WorkspaceRecord) -> String {
+    format!(
+        "Puddle could not update the editor's file in {}",
+        record.label()
+    )
+}
+
 fn problem_key(kind: &str, name: &WorkspaceId) -> String {
     format!("{kind}:{name}")
 }
@@ -491,22 +507,32 @@ async fn wait_until_downloaded(
     }
 }
 
-/// Clears the busy mark a delete put on a workspace unless it is disarmed, so a request that is
-/// dropped before its work starts (the API's request limit, a closed connection) does not leave
-/// the workspace "deleting" for good.
-struct DeleteMark<'a, R: Runtime + Clone> {
-    service: &'a HostWorkspaces<R>,
-    id: &'a WorkspaceId,
+/// The busy mark an accepted operation put on its workspace. [`HostWorkspaces::run`] takes it
+/// and hands the mark to the task that does the work. Dropped before that (the API dropped the
+/// request at its time limit or for a closed connection, or the request gave up with an error),
+/// it takes the mark off, so no workspace stays busy for an operation that never ran. It leaves
+/// the status as it is: an operation whose `enter` changes the status (start, stop) must reach
+/// `run` with no await after `accept`.
+#[must_use = "dropping the ticket takes the busy mark off again"]
+struct Ticket<R: Runtime + Clone> {
+    service: HostWorkspaces<R>,
+    record: WorkspaceRecord,
+    op: Operation,
+    /// Cleared once `run` has spawned the work.
     armed: bool,
 }
 
-impl<R: Runtime + Clone> Drop for DeleteMark<'_, R> {
+impl<R: Runtime + Clone> Ticket<R> {
+    /// The workspace as the operation found it, with the busy mark on.
+    fn record(&self) -> &WorkspaceRecord {
+        &self.record
+    }
+}
+
+impl<R: Runtime + Clone> Drop for Ticket<R> {
     fn drop(&mut self) {
-        if self.armed
-            && let Some(slot) = self.service.state().slots.get_mut(self.id)
-        {
-            slot.record.busy = None;
-            slot.deleting = false;
+        if self.armed {
+            self.service.withdraw(&self.record.id, self.op);
         }
     }
 }
@@ -687,7 +713,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     closed: false,
                 }),
                 live: tokio::sync::Mutex::new(BTreeMap::new()),
-                tasks: tokio::sync::Mutex::new(JoinSet::new()),
+                tasks: Mutex::new(JoinSet::new()),
                 running: watch::channel(0).0,
                 maintenance_image: watch::channel(Warmth::Cold).0,
                 shell_init_changed_inside: Mutex::new(BTreeSet::new()),
@@ -703,6 +729,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             tracing::warn!(error = %e, "the workspace list was not saved after dropping unfinished creates");
         }
         Ok(service)
+    }
+
+    /// What the user calls workspace `id`, for text they read. Never the id: a real host draws
+    /// random ones. A workspace the list no longer holds reads as its id, the one thing left.
+    fn label(&self, id: &WorkspaceId) -> String {
+        let name = self
+            .state()
+            .slots
+            .get(id)
+            .map(|slot| slot.record.name.clone());
+        name_or_id(name.as_ref(), id)
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -820,7 +857,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         let ended = *self.inner.running.borrow();
         tracing::warn!(ended, "shutdown: ending workspace operations still running");
-        let mut tasks = self.inner.tasks.lock().await;
+        let mut tasks = std::mem::take(&mut *self.tasks());
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         ended
@@ -929,7 +966,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         op: Operation,
         check: impl FnOnce(&WorkspaceRecord) -> Result<(), WorkspaceError>,
         enter: impl FnOnce(&mut WorkspaceRecord),
-    ) -> Result<WorkspaceRecord, WorkspaceError> {
+    ) -> Result<Ticket<R>, WorkspaceError> {
         let mut state = self.state();
         if state.closed {
             return Err(WorkspaceError::Unavailable(
@@ -946,25 +983,96 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         check(&slot.record)?;
         slot.record.busy = Some(op);
         enter(&mut slot.record);
-        Ok(slot.record.clone())
+        Ok(self.ticket(slot.record.clone(), op))
     }
 
-    /// Runs `work` on a task the service owns and settles the workspace when it ends.
-    async fn run<F>(&self, record: &WorkspaceRecord, op: Operation, work: F)
+    /// The ticket of an operation that has just marked `record` busy.
+    fn ticket(&self, record: WorkspaceRecord, op: Operation) -> Ticket<R> {
+        Ticket {
+            service: self.clone(),
+            record,
+            op,
+            armed: true,
+        }
+    }
+
+    /// Takes off the busy mark of an operation that never started its work. A create that never
+    /// started leaves nothing to keep: its entry goes and its id is retired, like a failed
+    /// create's. The status stays: whatever set it since (a crash the monitor saw) still holds.
+    fn withdraw(&self, id: &WorkspaceId, op: Operation) {
+        let mut state = self.state();
+        let Some(slot) = state.slots.get_mut(id) else {
+            return;
+        };
+        if op == Operation::Creating {
+            state.slots.remove(id);
+            state.retired.insert(id.clone());
+            if let Err(e) = self.persist(&state) {
+                // Harmless: the saved entry says "being created", so the next start drops it.
+                tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after a create was dropped");
+            }
+            return;
+        }
+        slot.record.busy = None;
+        slot.deleting = false;
+        slot.delete_note = None;
+        let record = slot.record.clone();
+        drop(state);
+        tracing::info!(workspace = %id, %op, "a request was dropped before its work began");
+        // The mark is off: say so, as the end of an operation does.
+        self.status_event(&record);
+    }
+
+    fn tasks(&self) -> MutexGuard<'_, JoinSet<()>> {
+        self.inner
+            .tasks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Spawns `work` on a task the service owns: it runs to its end whatever becomes of the
+    /// request that started it, unless shutdown ends it.
+    fn spawn(&self, work: impl Future<Output = ()> + Send + 'static) {
+        let mut tasks = self.tasks();
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn(work);
+    }
+
+    /// Runs `job` on a task the service owns and returns what it returns. A caller dropped while
+    /// it waits leaves the job to finish: a maintenance sandbox the job booted is stopped and
+    /// removed, and its hold on the volume given back, only once the job has done so. Shutdown
+    /// waits for the job like for an operation.
+    async fn on_own_task<T: Send + 'static>(
+        &self,
+        job: impl Future<Output = T> + Send + 'static,
+    ) -> Result<T, WorkspaceError> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let running = Running::new(&self.inner.running);
+        self.spawn(async move {
+            let _running = running;
+            // Nobody waits any more when the request was dropped: the outcome goes with it.
+            let _ = tx.send(job.await);
+        });
+        rx.await
+            .map_err(|_| WorkspaceError::Unavailable("Puddle is shutting down".to_owned()))
+    }
+
+    /// Runs `work` on a task the service owns and settles the workspace when it ends. The task
+    /// takes over the busy mark of `ticket`; nothing awaits between the two.
+    fn run<F>(&self, mut ticket: Ticket<R>, work: F)
     where
         F: Future<Output = Result<(), String>> + Send + 'static,
     {
         let this = self.clone();
-        let id = record.id.clone();
+        let (id, op) = (ticket.record.id.clone(), ticket.op);
         let running = Running::new(&self.inner.running);
-        let mut tasks = self.inner.tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
-        tasks.spawn(async move {
+        self.spawn(async move {
             let _running = running;
             let result = work.await;
             this.refresh_disk_use().await;
             this.conclude(&id, op, result);
         });
+        ticket.armed = false;
     }
 
     /// Reads what every workspace's volume and root disk take on the host into the records, so
@@ -1222,7 +1330,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Starts pulling the image the delete check boots on a task the service owns, unless it is
     /// cached or a pull runs. The check can't go ahead without it, and the first pull of an image
     /// that isn't the workspace's own takes minutes, longer than a request may.
-    pub(crate) async fn warm_maintenance_image(&self) {
+    pub(crate) fn warm_maintenance_image(&self) {
         let start = self.inner.maintenance_image.send_if_modified(|w| {
             let idle = matches!(w, Warmth::Cold | Warmth::Failed);
             if idle {
@@ -1234,9 +1342,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             return;
         }
         let this = self.clone();
-        let mut tasks = self.inner.tasks.lock().await;
-        while tasks.try_join_next().is_some() {}
-        tasks.spawn(async move {
+        self.spawn(async move {
             let image = this.inner.workspaces.config().maintenance_image.clone();
             let next = match this.inner.runtime.pull_image(&image).await {
                 Ok(_) => Warmth::Ready,
@@ -1251,10 +1357,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// [`HostWorkspaces::warm_maintenance_image`] when the service starts with workspaces
     /// listed: one of them may be deleted at once.
-    pub(crate) async fn warm_maintenance_image_for_listed(&self) {
+    pub(crate) fn warm_maintenance_image_for_listed(&self) {
         let listed = !self.state().slots.is_empty();
         if listed {
-            self.warm_maintenance_image().await;
+            self.warm_maintenance_image();
         }
     }
 
@@ -1262,7 +1368,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// cache, starting the download when nothing has. A request that cannot wait that long gets
     /// an answer that says what is going on; the download goes on without it.
     async fn maintenance_ready(&self) -> Result<(), WorkspaceError> {
-        self.warm_maintenance_image().await;
+        self.warm_maintenance_image();
         wait_until_downloaded(
             &mut self.inner.maintenance_image.subscribe(),
             MAINTENANCE_WAIT,
@@ -1329,7 +1435,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let image = image.map_err(|e| e.clone())?;
         self.progress(name, WorkspaceStep::Starting, None);
-        if let Err(reason) = self.publish_shell_init(id, name) {
+        if let Err(reason) = self.publish_shell_init(id) {
             return Err(self.abort_attachment(attachment, reason).await);
         }
         let route = match inner.kit.route(name) {
@@ -1495,10 +1601,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     problems,
                     name,
                     Some((
-                        format!("Puddle could not update what {name} decrypts"),
+                        format!(
+                            "Puddle could not update what {name} decrypts",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{reason}. {name} keeps the credentials it had; the next change to its \
-                             identities tries again."
+                             identities tries again.",
+                            name = self.label(name)
                         ),
                     )),
                 );
@@ -1513,7 +1623,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         GitProblem::Credentials.settle(
             &self.inner.problems,
             name,
-            credentials_problem(name, &hosts),
+            credentials_problem(&self.label(name), &hosts),
         );
     }
 
@@ -1525,13 +1635,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         wanted: &Authors,
     ) {
         self.report_credentials(name, git);
-        GitProblem::LeftOut.settle(&self.inner.problems, name, left_out_problem(name, wanted));
+        GitProblem::LeftOut.settle(
+            &self.inner.problems,
+            name,
+            left_out_problem(&self.label(name), wanted),
+        );
     }
 
     /// After a boot: Kubernetes tools in the guest are a problem on the workspace, since its
     /// kernel cannot route their Services. A stop ends it, so a start that finds none has none.
     fn settle_kubernetes(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
-        if let Some(problem) = kubernetes_problem(name, &report.kubernetes_tools()) {
+        if let Some(problem) =
+            kubernetes_problem(name, &self.label(name), &report.kubernetes_tools())
+        {
             self.inner.problems.raise(problem);
         }
     }
@@ -1541,7 +1657,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The file is left as it is, and the run goes on. A file the hook no longer leaves ends its
     /// notice, so a repair is noticed at the next run and a stop ends them all.
     fn settle_merge_notices(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
-        settle_merge_notices(&self.inner.problems, name, &report.left_files());
+        settle_merge_notices(
+            &self.inner.problems,
+            name,
+            &self.label(name),
+            &report.left_files(),
+        );
     }
 
     /// After the hook ran with `wanted` authors: a guest whose git is too old for the author rules
@@ -1555,7 +1676,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         GitProblem::OldGit.settle(
             &self.inner.problems,
             name,
-            old_git_problem(name, report.git_version(), wanted),
+            old_git_problem(&self.label(name), report.git_version(), wanted),
         );
     }
 
@@ -1595,7 +1716,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let git = match inner.injection.git(name) {
             Ok(git) => git,
             Err(reason) => {
-                Self::raise_author_sync(&inner.problems, name, &reason);
+                self.raise_author_sync(name, &reason);
                 return;
             }
         };
@@ -1627,17 +1748,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     state.ssh = listing;
                 }
             }
-            Err(reason) => Self::raise_author_sync(&inner.problems, name, &reason),
+            Err(reason) => self.raise_author_sync(name, &reason),
         }
     }
 
     /// Tells the user the commit authors in `name` could not be updated and why.
-    fn raise_author_sync(problems: &Problems, name: &WorkspaceId, reason: &str) {
+    fn raise_author_sync(&self, name: &WorkspaceId, reason: &str) {
         GitProblem::AuthorSync.settle(
-            problems,
+            &self.inner.problems,
             name,
             Some((
-                format!("Puddle could not update the commit authors in {name}"),
+                format!(
+                    "Puddle could not update the commit authors in {name}",
+                    name = self.label(name)
+                ),
                 format!(
                     "{reason}. The workspace keeps the authors it had; the next change to its \
                      identities tries again."
@@ -1676,7 +1800,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle could not look for {name}'s start folder {folder}"),
+                        format!(
+                            "Puddle could not look for {name}'s start folder {folder}",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{e}. New terminals and the editor may not open it; Puddle looks \
                              again at every start and attach."
@@ -1693,7 +1820,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.problems.raise(
                 Problem::new(
                     key,
-                    format!("{name}'s start folder {folder} does not exist"),
+                    format!(
+                        "{name}'s start folder {folder} does not exist",
+                        name = self.label(name)
+                    ),
                     format!(
                         "New terminals and the editor open the volume root instead. Create the \
                          folder {folder} in the workspace, or change the start folder in the \
@@ -1754,7 +1884,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle could not move {name}'s terminals to the new start folder"),
+                        format!(
+                            "Puddle could not move {name}'s terminals to the new start folder",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{reason}. The setting is saved; new terminals start where they did \
                              until the workspace starts again."
@@ -1800,7 +1933,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             inner.problems.raise(
                 Problem::new(
                     key.clone(),
-                    format!("Puddle could not update the editor's file in {name}"),
+                    editor_file_title(record),
                     format!(
                         "{reason}. The editor opens what it opened before until the next attach \
                          works."
@@ -1860,7 +1993,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Some((path, why)) => inner.problems.raise(
                 Problem::new(
                     key,
-                    format!("Puddle could not update the editor's file in {name}"),
+                    editor_file_title(record),
                     format!(
                         "{path} was left as it is: {why}. The editor opens it as it is, or \
                          the volume root when it lists no folder, until the file is fixed or \
@@ -2001,23 +2134,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     workspace: name.clone(),
                     reason: format!(
                         "the change is saved, but new terminals in {name} keep the old variables \
-                         until it restarts: {reason}"
+                         until it restarts: {reason}",
+                        name = self.label(name)
                     ),
                 });
             }
         }
     }
 
-    /// Writes `name`'s saved shell init to the folder its guest sees, for a start. A folder that
+    /// Writes the saved shell init of `id` to the folder its guest sees, for a start. A folder that
     /// held something else is put right and remembered, so `settle` tells the user.
-    fn publish_shell_init(&self, id: &WorkspaceId, name: &WorkspaceId) -> Result<(), String> {
-        let published = self.inner.kit.shell_init().publish(id, name)?;
+    fn publish_shell_init(&self, id: &WorkspaceId) -> Result<(), String> {
+        let published = self.inner.kit.shell_init().publish(id)?;
         if published == crate::shell_init::Published::Restored {
             self.inner
                 .shell_init_changed_inside
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .insert(name.clone());
+                .insert(id.clone());
         }
         Ok(())
     }
@@ -2033,14 +2167,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map(|(id, _)| id.clone());
         let Some(id) = id else { return };
         let key = problem_key("shell-init-copy", name);
-        match self.inner.kit.shell_init().refresh(&id, name) {
+        match self.inner.kit.shell_init().refresh(&id) {
             Ok(_) => self.inner.problems.clear(&key),
             Err(reason) => {
                 tracing::warn!(workspace = %name, %reason, "the workspace's shell init is not updated");
                 self.inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle could not update {name}'s shell init"),
+                        format!(
+                            "Puddle could not update {name}'s shell init",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{reason}. The workspace keeps the shell init it had; saving it again, \
                              or restarting the workspace, tries again."
@@ -2059,7 +2196,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     fn settle_entrypoint(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
         if let Some(failure) = report.entrypoint_failure() {
             tracing::warn!(workspace = %name, %failure, "the image's entrypoint exited at once");
-            self.inner.problems.raise(entrypoint_problem(name, failure));
+            self.inner
+                .problems
+                .raise(entrypoint_problem(name, &self.label(name), failure));
         }
     }
 
@@ -2069,7 +2208,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     fn settle_no_sudo(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
         if report.session_user_has_no_sudo() {
             tracing::warn!(workspace = %name, "the image has no sudo for the session user");
-            self.inner.problems.raise(no_sudo_problem(name));
+            self.inner
+                .problems
+                .raise(no_sudo_problem(name, &self.label(name)));
         } else {
             clear_no_sudo(&self.inner.problems, name);
         }
@@ -2113,7 +2254,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Ok(Some(why)) => inner.problems.raise(
                 Problem::new(
                     key,
-                    format!("{name}'s shell init needs fixing"),
+                    format!("{name}'s shell init needs fixing", name = self.label(name)),
                     format!(
                         "{why}. The workspace started, but tools that read a shell's output may \
                          fail until you change it on the workspace's Shell init tab."
@@ -2126,7 +2267,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle could not check {name}'s shell init"),
+                        format!(
+                            "Puddle could not check {name}'s shell init",
+                            name = self.label(name)
+                        ),
                         format!("{reason}. It will be checked again at the next start."),
                     )
                     .about(name.clone()),
@@ -2199,7 +2343,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.raise(
             Problem::new(
                 key,
-                format!("Puddle could not clear the stale git lock files in {name}"),
+                format!(
+                    "Puddle could not clear the stale git lock files in {name}",
+                    name = self.label(name)
+                ),
                 format!(
                     "{why}. The workspace started, but git may say \"Another git process seems to \
                      be running\" until the .lock files in the repository's .git folder are \
@@ -2246,9 +2393,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         let detail = parts.join(" ");
         let title = if report.damaged.is_empty() {
-            format!("Puddle repaired git files in {name} after the last shutdown")
+            format!(
+                "Puddle repaired git files in {name} after the last shutdown",
+                name = self.label(name)
+            )
         } else {
-            format!("Puddle found damaged git files in {name} that it could not repair")
+            format!(
+                "Puddle found damaged git files in {name} that it could not repair",
+                name = self.label(name)
+            )
         };
         self.inner
             .problems
@@ -2587,7 +2740,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.raise(
             Problem::new(
                 problem_key("ssh", name),
-                format!("Direct SSH does not work in {name}"),
+                format!(
+                    "Direct SSH does not work in {name}",
+                    name = self.label(name)
+                ),
                 format!(
                     "{reason}. The workspace runs, but ssh and VS Code cannot connect to it; \
                      restarting the workspace tries again."
@@ -2609,7 +2765,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle's ssh config still names {name}"),
+                        format!(
+                            "Puddle's ssh config still names {name}",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{reason}. The entry points at an endpoint that is now closed, so \
                              `ssh {}` finds nothing; the file is written again, without the \
@@ -2757,7 +2916,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         record: WorkspaceRecord,
         imports: Vec<Import>,
     ) -> Result<(), String> {
-        self.inner.reports.begin(&record.id);
+        self.inner.reports.begin(&record.id, &record.name);
         let (imported, mut created_volume) = self.import_all(&record, &imports).await?;
         let mut created_by_boot = false;
         if let Err(reason) = self
@@ -2784,7 +2943,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             let reason = format!("{e}; the new workspace was removed again; {SAVE_HINT}");
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
-        self.refresh_checkouts_later(&record.id).await;
+        self.refresh_checkouts_later(&record.id);
         Ok(())
     }
 
@@ -3140,7 +3299,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.progress(name, WorkspaceStep::Starting, None);
         inner.problems.clear(&problem_key("forced-stop", name));
         inner.problems.clear(&problem_key("start-refused", name));
-        inner.reports.begin(name);
+        inner.reports.begin(name, &record.name);
         let exists = inner
             .runtime
             .list()
@@ -3181,7 +3340,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, false, false, reason).await);
         }
-        self.refresh_checkouts_later(&record.id).await;
+        self.refresh_checkouts_later(&record.id);
         Ok(())
     }
 
@@ -3193,7 +3352,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let name = &record.id;
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
-        self.publish_shell_init(&record.id, name)?;
+        self.publish_shell_init(&record.id)?;
         let (plan, _, guest) = self.plan_guest_for(record, config).await?;
         let made_with = inner
             .live
@@ -3267,7 +3426,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.raise(
             Problem::new(
                 problem_key("start-refused", name),
-                format!("{name} was not started"),
+                format!("{name} was not started", name = self.label(name)),
                 format!(
                     "The runtime refused to start it, and nothing was attached: {cause}. {}",
                     cause.way_out()
@@ -3300,7 +3459,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.inner.problems.raise(
                     Problem::new(
                         trim_key,
-                        format!("{name}'s disk was not trimmed when it stopped"),
+                        format!(
+                            "{name}'s disk was not trimmed when it stopped",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{e}. The workspace stopped normally. Its disk file stays larger \
                              than the data in it until a later stop, or Reclaim space, trims it."
@@ -3316,7 +3478,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.problems.raise(
                 Problem::new(
                     problem_key("forced-stop", name),
-                    format!("{name} did not shut down in time and was ended by force"),
+                    format!(
+                        "{name} did not shut down in time and was ended by force",
+                        name = self.label(name)
+                    ),
                     "Files it had not written to its disk yet may be missing. Start it again \
                      and check the repositories with git status.",
                 )
@@ -3332,17 +3497,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// workspace has a new id, so it never inherits a stuck file.
     /// Under the settings routes' lock, so a settings change that read the file before this
     /// removal cannot write it back after.
-    async fn forget_settings_file(&self, name: &WorkspaceId) {
+    async fn forget_settings_file(&self, id: &WorkspaceId, name: &DisplayName) {
         let inner = &self.inner;
-        let key = problem_key("settings", name);
+        let key = problem_key("settings", id);
         let _lock = inner.settings_lock.lock().await;
-        match inner.settings.delete_workspace(name) {
+        match inner.settings.delete_workspace(id) {
             Ok(()) => inner.problems.clear(&key),
             Err(e) => inner.problems.raise(Problem::new(
                 key,
                 format!("{name}'s settings were not deleted"),
                 format!(
-                    "{e}. No later workspace gets the id {name}, so none inherits them; delete \
+                    "{e}. No later workspace gets the id {id}, so none inherits them; delete \
                      the file by hand to tidy up."
                 ),
             )),
@@ -3436,10 +3601,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Deletes what the browser editor kept for a deleted workspace. A failure is a notice: the
     /// data stays under an id no later workspace gets.
-    async fn forget_browser_state(&self, name: &WorkspaceId) {
+    async fn forget_browser_state(&self, id: &WorkspaceId, name: &DisplayName) {
         let inner = &self.inner;
-        let key = problem_key("browser-data", name);
-        let failed = self.clear_browser_state(name).await;
+        let key = problem_key("browser-data", id);
+        let failed = self.clear_browser_state(id).await;
         if failed.is_empty() {
             inner.problems.clear(&key);
         } else {
@@ -3447,7 +3612,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 key,
                 format!("{name}'s browser editor data was not deleted"),
                 format!(
-                    "{}. No later workspace gets the id {name}, so none reaches it; to tidy up, \
+                    "{}. No later workspace gets the id {id}, so none reaches it; to tidy up, \
                      close the editor windows and delete its folders under webview and front in \
                      Puddle's data folder.",
                     failed.join("; ")
@@ -3479,8 +3644,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
-        self.forget_settings_file(&record.id).await;
-        self.forget_browser_state(&record.id).await;
+        self.forget_settings_file(&record.id, &record.name).await;
+        self.forget_browser_state(&record.id, &record.name).await;
         Ok(())
     }
 }
@@ -3605,7 +3770,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     ))
                 })?,
             };
-            let record = {
+            let ticket = {
                 let mut state = self.state();
                 if state.closed {
                     return Err(WorkspaceError::Unavailable(
@@ -3647,8 +3812,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 state
                     .slots
                     .insert(id.clone(), Slot::new(record.clone(), true));
-                record
+                self.ticket(record, Operation::Creating)
             };
+            let record = ticket.record().clone();
             let id = record.id.clone();
             // A second guard: a drawn id is never one with browser data left (`id_taken`), so
             // this finds nothing unless a window wrote some since. Reserved first, so no other
@@ -3680,10 +3846,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 .collect();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::Creating, async move {
-                this.create_work(work, imports).await
-            })
-            .await;
+            self.run(ticket, async move { this.create_work(work, imports).await });
             Ok(record)
         })
     }
@@ -3693,7 +3856,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::Starting,
                 |r| {
@@ -3708,13 +3871,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |r| r.status = WorkspaceStatus::Starting,
             )?;
+            let record = ticket.record().clone();
             self.status_event(&record);
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::Starting, async move {
-                this.start_work(work).await
-            })
-            .await;
+            self.run(ticket, async move { this.start_work(work).await });
             Ok(record)
         })
     }
@@ -3724,7 +3885,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::Stopping,
                 |r| {
@@ -3739,17 +3900,17 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |r| r.status = WorkspaceStatus::Draining,
             )?;
-            self.inner.reports.pause(&record.id);
+            let record = ticket.record().clone();
             self.status_event(&record);
             // A stopped workspace is the one a user deletes next: have the delete check's image
             // ready by then.
-            self.warm_maintenance_image().await;
+            self.warm_maintenance_image();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::Stopping, async move {
+            self.run(ticket, async move {
+                this.inner.reports.pause(&work.id);
                 this.stop_work(work).await
-            })
-            .await;
+            });
             Ok(record)
         })
     }
@@ -3759,7 +3920,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::Reclaiming,
                 |r| {
@@ -3777,9 +3938,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
+            let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::Reclaiming, async move {
+            self.run(ticket, async move {
                 this.progress(&work.id, WorkspaceStep::Reclaiming, None);
                 this.inner
                     .workspaces
@@ -3787,8 +3949,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     .await
                     .map(|_| ())
                     .map_err(|e| e.to_string())
-            })
-            .await;
+            });
             Ok(record)
         })
     }
@@ -3798,7 +3959,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::ResettingRootDisk,
                 |r| {
@@ -3813,13 +3974,13 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
+            let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::ResettingRootDisk, async move {
+            self.run(ticket, async move {
                 this.progress(&work.id, WorkspaceStep::ResettingRootDisk, None);
                 this.reset_root_disk_work(&work.id).await
-            })
-            .await;
+            });
             Ok(record)
         })
     }
@@ -3861,7 +4022,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     added / (1024 * 1024 * 1024)
                 )));
             }
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::GrowingRootDisk,
                 |r| {
@@ -3879,12 +4040,12 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
+            let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
-            self.run(&record, Operation::GrowingRootDisk, async move {
+            self.run(ticket, async move {
                 this.grow_root_disk_work(work, current, size, room).await
-            })
-            .await;
+            });
             Ok(record)
         })
     }
@@ -3898,11 +4059,15 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 return Err(not_found(id));
             }
             self.maintenance_ready().await?;
+            let (this, target) = (self.clone(), id.clone());
             let report = self
-                .inner
-                .workspaces
-                .check_delete(&self.inner.runtime, id)
-                .await
+                .on_own_task(async move {
+                    this.inner
+                        .workspaces
+                        .check_delete(&this.inner.runtime, &target)
+                        .await
+                })
+                .await?
                 .map_err(|e| workspace_error(&e))?;
             Ok(delete_check(&report))
         })
@@ -3914,7 +4079,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         fingerprint: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
+            let ticket = self.accept(
                 id,
                 Operation::Deleting,
                 |r| {
@@ -3929,18 +4094,22 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
-            let mut mark = DeleteMark {
-                service: self,
-                id,
-                armed: true,
-            };
+            let record = ticket.record().clone();
             // The check runs before the call returns, so a refusal reaches the caller.
             self.maintenance_ready().await?;
-            let checked = self
-                .inner
-                .workspaces
-                .check_delete(&self.inner.runtime, id)
-                .await;
+            // The ticket goes with the check: a request dropped while it runs leaves the
+            // workspace busy until the check's sandbox is gone.
+            let (this, target) = (self.clone(), id.clone());
+            let (ticket, checked) = self
+                .on_own_task(async move {
+                    let checked = this
+                        .inner
+                        .workspaces
+                        .check_delete(&this.inner.runtime, &target)
+                        .await;
+                    (ticket, checked)
+                })
+                .await?;
             let verdict = match checked {
                 Err(e) => Err(workspace_error(&e)),
                 Ok(report) => {
@@ -3985,11 +4154,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             };
             let this = self.clone();
             let work = record.clone();
-            mark.armed = false;
-            self.run(&record, Operation::Deleting, async move {
-                this.delete_work(work, report).await
-            })
-            .await;
+            self.run(ticket, async move { this.delete_work(work, report).await });
             Ok(record)
         })
     }
@@ -4294,3 +4459,6 @@ mod no_link_words;
 
 #[cfg(test)]
 mod download_wait_tests;
+
+#[cfg(test)]
+mod name_or_id_tests;

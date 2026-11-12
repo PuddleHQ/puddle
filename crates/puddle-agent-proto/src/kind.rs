@@ -12,7 +12,7 @@
 //! | `resolve` v1 | agent | served: one name lookup per stream ([`crate::resolve`]), for the guest's stub DNS |
 //! | `forward` v1 | host | served by the agent: the host reaches a guest port ([`crate::forward`]) |
 //! | `connect` | agent | reserved: a raw connection to a named destination (`puddle-agent connect`, the `ssh` `ProxyCommand`, goes through the agent's listener as a `CONNECT` for now: [`crate::ssh`]) |
-//! | `ssh-agent` | agent | reserved: filtered SSH agent / signing |
+//! | `ssh-agent` v1 | agent | served: one client of the guest's SSH agent socket, the agent protocol both ways ([`crate::host::AgentStream`]) |
 //! | `host-control` v1 | host | served by the agent: one [`crate::host_control::HostMessage`] line, one reply line ([`crate::host_control`]) |
 //! | `editor` v1 | host | served by the agent: a connection to the editor server, or its password ([`crate::editor_stream`]) |
 //!
@@ -40,7 +40,7 @@ pub enum StreamKind {
     Forward,
     /// Reserved: a raw connection to a named destination.
     Connect,
-    /// Reserved: the guest side of a filtered SSH agent.
+    /// One client of the guest's SSH agent socket; the host's filter answers it.
     SshAgent,
     /// Reserved: host → guest messages on a host-opened stream.
     HostControl,

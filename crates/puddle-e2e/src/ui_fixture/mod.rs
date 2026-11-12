@@ -63,7 +63,7 @@ pub use scenario::{
 };
 
 /// The built-in scenarios (`ui/e2e/fixtures/*.json`), by name.
-const BUILT_IN: [(&str, &str); 14] = [
+const BUILT_IN: [(&str, &str); 15] = [
     (
         "default",
         include_str!("../../../../ui/e2e/fixtures/default.json"),
@@ -95,6 +95,10 @@ const BUILT_IN: [(&str, &str); 14] = [
     (
         "git-identities",
         include_str!("../../../../ui/e2e/fixtures/git-identities.json"),
+    ),
+    (
+        "azure-cli",
+        include_str!("../../../../ui/e2e/fixtures/azure-cli.json"),
     ),
     (
         "repo-lists",

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
+use options::{OPTIONS, Value};
 
 #[test]
 fn the_exit_names_each_sandbox_that_did_not_stop_or_trim_cleanly_and_why() {
@@ -47,61 +48,75 @@ fn serve(args: &[&str]) -> Result<ServeArgs, UsageError> {
 }
 
 #[test]
-fn the_log_filter_is_info_unless_puddle_log_says_otherwise() {
-    let level = |value: Option<&str>, target: &str, level: tracing::Level| {
-        log_filter(value.map(OsStr::new))
-            .unwrap()
-            .would_enable(target, &level)
-    };
-    assert!(level(None, "puddle_host", tracing::Level::INFO));
-    assert!(!level(None, "puddle_host", tracing::Level::DEBUG));
-    assert!(level(Some("trace"), "puddle_host", tracing::Level::TRACE));
-    assert!(!level(Some("trace"), "hyper", tracing::Level::DEBUG));
-    assert!(level(
-        Some("trace,hyper=debug"),
-        "hyper",
-        tracing::Level::DEBUG
-    ));
-    let err = log_filter(Some(OsStr::new("loud"))).unwrap_err();
-    assert!(err.starts_with("PUDDLE_LOG"), "{err}");
-    assert!(err.contains("\"loud\""), "{err}");
-}
-
-#[test]
 fn no_options_is_the_default() {
     assert_eq!(serve(&[]), Ok(ServeArgs::default()));
 }
 
 #[test]
-fn port_and_connection_file() {
-    let a = serve(&["--port", "4000", "--connection-file", "/tmp/c.json"]).unwrap();
-    assert_eq!(a.port, Some(4000));
-    // flake-ok: a value that is parsed or compared and never opened, so the missing drive letter does not matter
-    assert_eq!(a.connection_file, Some(PathBuf::from("/tmp/c.json")));
+fn every_option_has_a_flag() {
+    let a = serve(&[
+        "--port",
+        "4000",
+        "--connection-file",
+        "c.json",
+        "--data-dir",
+        "d",
+        "--log",
+        "debug",
+        "--config",
+        "s.toml",
+        "--print-config",
+    ])
+    .unwrap();
+    assert!(a.print_config);
+    assert_eq!(a.flags.get("port"), Some(&Value::Port(4000)));
+    assert_eq!(
+        a.flags.get("connection_file"),
+        Some(&Value::Path("c.json".into()))
+    );
+    assert_eq!(a.flags.get("data_dir"), Some(&Value::Path("d".into())));
+    assert_eq!(a.flags.get("log"), Some(&Value::Log("debug".into())));
+    assert_eq!(a.flags.get("config"), Some(&Value::Path("s.toml".into())));
+    assert_eq!(a.flags.len(), OPTIONS.len());
 }
 
 #[test]
 fn bad_input_is_a_usage_error() {
-    assert!(serve(&["--port"]).is_err());
-    assert!(serve(&["--port", "x"]).is_err());
+    assert_eq!(
+        serve(&["--port"]),
+        Err(UsageError::MissingArgument("--port <n>"))
+    );
+    assert_eq!(
+        serve(&["--config"]),
+        Err(UsageError::MissingArgument("--config <path>"))
+    );
+    assert_eq!(
+        serve(&["--port", "x"]).unwrap_err().to_string(),
+        "--port must be a port number from 0 to 65535, found \"x\""
+    );
     assert!(serve(&["--port", "70000"]).is_err());
     assert!(serve(&["--port", "1", "--port", "2"]).is_err());
+    assert!(serve(&["--print-config", "--print-config"]).is_err());
+    assert!(serve(&["--log", "loud"]).is_err());
+    assert!(serve(&["--data-dir", ""]).is_err());
     assert!(serve(&["--connection-file"]).is_err());
     assert!(serve(&["--wat"]).is_err());
 }
 
 #[test]
-fn the_arguments_reach_the_configuration() {
-    let args = ServeArgs {
-        port: Some(4123),
-        connection_file: Some(PathBuf::from("/x/api.json")),
-    };
+fn the_options_reach_the_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut flags = Flags::new();
+    flags.insert("port", Value::Port(4123));
+    flags.insert("data_dir", Value::Path(dir.path().join("data")));
+    flags.insert("connection_file", Value::Path(dir.path().join("api.json")));
+    let options = resolve(&flags, &|_| None, dir.path()).unwrap();
     let exe = std::env::current_exe().unwrap();
-    if let Ok(config) = config(&args, &exe) {
-        assert_eq!(config.api.port, 4123);
-        assert_eq!(
-            config.api.connection_file,
-            Some(PathBuf::from("/x/api.json"))
-        );
-    }
+    let config = config(&options, &exe).unwrap();
+    assert_eq!(config.api.port, 4123);
+    assert_eq!(
+        config.api.connection_file,
+        Some(dir.path().join("api.json"))
+    );
+    assert_eq!(config.paths.data(), dir.path().join("data"));
 }

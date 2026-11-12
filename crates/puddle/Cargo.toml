@@ -26,6 +26,7 @@ puddle-ssh = { workspace = true }
 puddle-types = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-std", "net", "rt", "rt-multi-thread", "time"] }
+toml = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
@@ -33,7 +34,10 @@ puddle-test-kit = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 puddle-boot = { workspace = true }
-puddle-compute = { workspace = true }
+puddle-compute = { workspace = true, features = ["fake"] }
+puddle-certs = { workspace = true }
+puddle-runtime = { workspace = true }
+puddle-secrets = { workspace = true }
 puddle-compute-msb = { workspace = true }
 puddle-vm-tests = { workspace = true }
 puddle-ipc = { workspace = true }

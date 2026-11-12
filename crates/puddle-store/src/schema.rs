@@ -760,9 +760,11 @@ fn backup_path(db: &Path, version: u32) -> PathBuf {
 
 /// Deletes all but the newest [`BACKUPS_KEPT`] copies next to `db`.
 fn prune_backups(db: &Path) -> std::io::Result<()> {
-    let (Some(dir), Some(file)) = (db.parent(), db.file_name()) else {
-        return Ok(());
-    };
+    let dir = db
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let file = db.file_name().unwrap_or_default();
     let prefix = format!("{}.pre-v", file.to_string_lossy());
     let mut copies: Vec<(u32, PathBuf)> = std::fs::read_dir(dir)?
         .filter_map(|entry| {

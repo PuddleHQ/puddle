@@ -451,3 +451,26 @@ async fn a_shell_killed_by_a_signal_ends_with_status_255_and_a_page_that_left_en
     drop(output);
     tokio::time::timeout(STEP, input.closed()).await.unwrap();
 }
+
+#[tokio::test]
+async fn the_hub_counts_the_sessions_open_and_a_finished_one_leaves_the_count() {
+    let hub = Hub::default();
+    assert_eq!(hub.count(), 0);
+    let mut first = session(&hub, "agent").await;
+    let mut second = session(&hub, "agent").await;
+    bytes_until(&mut first, pty::PROMPT).await;
+    bytes_until(&mut second, pty::PROMPT).await;
+    assert_eq!(hub.count(), 2);
+    type_line(&first, "exit 0").await;
+    the_end(&mut first).await;
+    eventually_count(&hub, 1).await;
+    hub.end(&workspace(), EndReason::Stopped);
+    the_end(&mut second).await;
+    eventually_count(&hub, 0).await;
+}
+
+/// The count drops when the session task has dropped its end of the hub's channel, a moment after
+/// the end reaches the page.
+async fn eventually_count(hub: &Hub, wanted: usize) {
+    puddle_test_kit::eventually("the hub's open count", STEP, || hub.count() == wanted).await;
+}

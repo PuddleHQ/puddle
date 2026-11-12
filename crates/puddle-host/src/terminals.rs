@@ -55,6 +55,14 @@ impl Hub {
         rx
     }
 
+    /// How many sessions are open now, in every workspace.
+    pub(crate) fn count(&self) -> usize {
+        let open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
+        open.iter()
+            .filter(|(_, sender)| !sender.is_closed())
+            .count()
+    }
+
     /// Ends every session of `workspace` with `reason`.
     pub(crate) fn end(&self, workspace: &WorkspaceId, reason: EndReason) {
         let open = self.open.lock().unwrap_or_else(PoisonError::into_inner);

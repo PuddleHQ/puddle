@@ -850,6 +850,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.injection.termination(workspace)
     }
 
+    /// How many terminals are open now, in every workspace: the quit asks before it ends them.
+    #[must_use]
+    pub fn open_terminals(&self) -> usize {
+        self.inner.terminals.count()
+    }
+
     /// Ends the editor's extension hosts in `workspace`'s sandbox, and what they started
     /// (language servers, debuggees), because the sandbox's editor window closed. Terminals and the
     /// editor server stay. Returns once the guest agent says it is done.

@@ -2,6 +2,8 @@
 use puddle_api::MemorySettings;
 use serde_json::json;
 
+use std::sync::atomic::AtomicUsize;
+
 use super::*;
 
 #[test]
@@ -60,4 +62,80 @@ fn the_tray_notice_is_once_per_data_folder_and_once_per_run_without_one() {
     let fallback = AtomicBool::new(false);
     assert!(first_time(Some(&missing), &fallback));
     assert!(!first_time(Some(&missing), &fallback));
+}
+
+#[test]
+fn the_quit_question_names_the_open_terminals_and_is_none_without_any() {
+    assert_eq!(quit_question(0), None);
+    assert_eq!(
+        quit_question(1).as_deref(),
+        Some("Quit Puddle? This stops every workspace and ends 1 open terminal.")
+    );
+    assert_eq!(
+        quit_question(3).as_deref(),
+        Some("Quit Puddle? This stops every workspace and ends 3 open terminals.")
+    );
+}
+
+/// Presses Ctrl+Q with `open` terminals; returns what was asked and how often it quit.
+fn press(
+    open: usize,
+    asking: &Arc<AtomicBool>,
+    quits: &Arc<AtomicUsize>,
+) -> (Option<String>, Option<QuitAnswer>) {
+    let asked = std::cell::RefCell::new(None);
+    let counter = Arc::clone(quits);
+    on_quit_pressed(
+        open,
+        asking,
+        |question, answer| *asked.borrow_mut() = Some((question, answer)),
+        move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        },
+    );
+    match asked.into_inner() {
+        Some((question, answer)) => (Some(question), Some(answer)),
+        None => (None, None),
+    }
+}
+
+#[test]
+fn ctrl_q_quits_at_once_when_no_terminal_is_open() {
+    let (asking, quits) = (Arc::default(), Arc::default());
+    let (question, _) = press(0, &asking, &quits);
+    assert_eq!(question, None);
+    assert_eq!(quits.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn ctrl_q_asks_while_a_terminal_is_open_and_quits_only_on_yes() {
+    let (asking, quits) = (Arc::default(), Arc::default());
+    let (question, answer) = press(2, &asking, &quits);
+    assert_eq!(
+        question.as_deref(),
+        Some("Quit Puddle? This stops every workspace and ends 2 open terminals.")
+    );
+    assert_eq!(
+        quits.load(Ordering::SeqCst),
+        0,
+        "nothing quits before the answer"
+    );
+
+    // Cancel: no quit, and the next press asks again.
+    answer.unwrap()(false);
+    assert_eq!(quits.load(Ordering::SeqCst), 0);
+    let (_, answer) = press(2, &asking, &quits);
+    assert!(answer.is_some(), "the shortcut asks again after a cancel");
+    answer.unwrap()(true);
+    assert_eq!(quits.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn ctrl_q_pressed_again_while_the_question_is_up_asks_nothing_more() {
+    let (asking, quits) = (Arc::default(), Arc::default());
+    let (_, answer) = press(1, &asking, &quits);
+    let (second, second_answer) = press(1, &asking, &quits);
+    assert_eq!((second, second_answer.is_none()), (None, true));
+    assert_eq!(quits.load(Ordering::SeqCst), 0);
+    answer.unwrap()(false);
 }

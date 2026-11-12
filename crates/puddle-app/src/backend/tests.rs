@@ -78,6 +78,13 @@ async fn the_fixture_runs_no_workspaces_so_it_has_no_extension_hosts_to_end() {
 }
 
 #[tokio::test]
+async fn the_fixture_runs_no_workspaces_so_it_has_no_terminals_open() {
+    let backend = start_fixture(0).await;
+    assert_eq!(backend.open_terminals(), 0);
+    backend.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_fixture_stops_only_its_api_and_a_second_shutdown_does_nothing() {
     let backend = start_fixture(0).await;
     let port = backend.url().port().unwrap();

@@ -264,7 +264,7 @@ fn the_registry_and_a_watch_name_themselves_in_debug_output() {
 fn agent_on_an_endpoint(key: Vec<u8>) -> (AgentAt, puddle_ipc::IpcRoot) {
     let root = puddle_ipc::IpcRoot::new().unwrap();
     let mut listener = root.listen().unwrap();
-    let endpoint = puddle_ssh_agent::AgentEndpoint::at(listener.endpoint().path());
+    let endpoint = AgentEndpoint::at(listener.endpoint().path());
     tokio::spawn(async move {
         // flake-ok: the accept loop of a fake server, not a wait for a condition.
         while let Ok(mut conn) = listener.accept().await {

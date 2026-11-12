@@ -581,3 +581,58 @@ fn hostile_hg37_a_flood_of_capture_unavailable_reports_changes_the_problem_a_bou
     assert!(changes(&sink) <= 2 * usize::from(MAX_REASON_CHANGES));
     assert!(problems.list().len() <= 1);
 }
+
+fn mismatch(version: &str) -> AgentReport {
+    AgentReport::ProtocolMismatch {
+        agent_version: version.to_owned(),
+        protocol: PROTOCOL_VERSION + 1,
+    }
+}
+
+#[test]
+fn an_agent_on_another_protocol_is_one_problem_per_run_that_says_to_restart_and_ends_with_the_run()
+{
+    let (sink, problems, desk) = desk();
+    let box_ = name("box");
+    desk.begin(&box_, &shown());
+    let _ = sink.take();
+    desk.report(&box_, mismatch("0.9.0"));
+    desk.report(&box_, mismatch("0.9.1"));
+    let raised = problems.list();
+    assert_eq!(raised.len(), 1);
+    assert_eq!(raised[0].key, "agent-protocol:box");
+    assert_eq!(raised[0].workspace, Some(box_.clone()));
+    assert_eq!(
+        raised[0].title,
+        "The box runs a guest agent this Puddle cannot talk to"
+    );
+    assert!(
+        raised[0].detail.contains(&format!(
+            "(version 0.9.0) speaks control protocol {}, and this Puddle speaks {PROTOCOL_VERSION}",
+            PROTOCOL_VERSION + 1
+        )),
+        "{}",
+        raised[0].detail
+    );
+    assert!(raised[0].detail.contains("Stop and start the workspace"));
+    assert_eq!(changes(&sink), 1, "a repeat in one run changes nothing");
+
+    let ends: [fn(&ReportDesk, &WorkspaceId); 3] = [
+        ReportDesk::end,
+        |desk, id| desk.begin(id, &shown()),
+        ReportDesk::forget,
+    ];
+    for end in ends {
+        desk.begin(&box_, &shown());
+        desk.report(&box_, mismatch(""));
+        assert!(
+            problems.list()[0].detail.contains("(an unnamed version)"),
+            "{:?}",
+            problems.list()
+        );
+        end(&desk, &box_);
+        assert_eq!(problems.list(), Vec::<Problem>::new());
+    }
+    desk.report(&box_, mismatch("late"));
+    assert_eq!(problems.list(), Vec::<Problem>::new(), "no run, no problem");
+}

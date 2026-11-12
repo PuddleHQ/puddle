@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The guest agents' reports about their own workspaces (an entrypoint that exited, stub DNS
 //! trouble, an editor server that could not be installed or updated, capture rules the guest tore
-//! down or that cannot be installed), made background problems.
+//! down or that cannot be installed, an agent that speaks another control protocol), made
+//! background problems.
 //!
 //! A report is the guest's claim and the guest is untrusted, so a report can only raise one of
 //! four problems of the workspace whose route carried it, with text written here. Reports count
@@ -12,6 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use puddle_agent_proto::control::PROTOCOL_VERSION;
 use puddle_agent_proto::editor::NEEDS_GLIBC;
 use puddle_agent_proto::host::{AgentReport, AgentReports};
 use puddle_agent_proto::{EditorProblemKind, StubDnsTrouble};
@@ -52,6 +54,11 @@ fn capture_tamper_key(id: &WorkspaceId) -> String {
 /// The key of the problem about capture rules that cannot be installed in `name`.
 fn capture_unavailable_key(id: &WorkspaceId) -> String {
     format!("capture-unavailable:{id}")
+}
+
+/// The key of the problem about an agent in `name` that speaks another control protocol.
+fn agent_protocol_key(id: &WorkspaceId) -> String {
+    format!("agent-protocol:{id}")
 }
 
 /// The key of the problem about the stub DNS of `name`.
@@ -198,6 +205,34 @@ fn capture_unavailable_problem(id: &WorkspaceId, name: &str, reason: &str) -> Pr
     .about(id.clone())
 }
 
+/// The problem for a guest agent whose hello named another control protocol: the session ignores
+/// it from then on. `agent_version` is the agent's cleaned text.
+fn agent_protocol_problem(
+    id: &WorkspaceId,
+    name: &str,
+    agent_version: &str,
+    protocol: u32,
+) -> Problem {
+    let version = if agent_version.is_empty() {
+        "an unnamed version".to_owned()
+    } else {
+        format!("version {agent_version}")
+    };
+    Problem::new(
+        agent_protocol_key(id),
+        format!("{name} runs a guest agent this Puddle cannot talk to"),
+        format!(
+            "The agent in the workspace ({version}) speaks control protocol {protocol}, and this \
+             Puddle speaks {PROTOCOL_VERSION}. Puddle ignores what that agent reports and sends it \
+             nothing, so open ports, out-of-memory kills and editor and capture problems in this \
+             workspace go unreported. Network traffic still goes through Puddle and its rules. Stop \
+             and start the workspace: a start gives it the agent that came with this Puddle. This \
+             goes away when the workspace stops."
+        ),
+    )
+    .about(id.clone())
+}
+
 /// What a kind of stub DNS trouble means for the tools in the workspace, or `None` when the client
 /// asks again and usually gets its answer (only the host log hears of it).
 fn stub_dns_effect(kind: StubDnsTrouble) -> Option<&'static str> {
@@ -254,6 +289,8 @@ struct Run {
     tampered: bool,
     /// The capture-unavailable problem.
     unavailable: ReasonSlot,
+    /// The agent-protocol problem was raised in this run.
+    mismatch: bool,
 }
 
 /// What one run has reported of one problem that names a reason.
@@ -305,6 +342,7 @@ impl Run {
             session_user: ReasonSlot::default(),
             tampered: false,
             unavailable: ReasonSlot::default(),
+            mismatch: false,
         }
     }
 }
@@ -339,6 +377,7 @@ impl ReportDesk {
         self.problems.clear(&editor_session_user_key(id));
         self.problems.clear(&capture_tamper_key(id));
         self.problems.clear(&capture_unavailable_key(id));
+        self.problems.clear(&agent_protocol_key(id));
     }
 
     /// A stop of `id` was accepted: what its guest reports from now (its entrypoint ended by the
@@ -356,7 +395,7 @@ impl ReportDesk {
         }
     }
 
-    /// `id` no longer runs: the DNS, editor and capture problems are about a machine that is gone (the
+    /// `id` no longer runs: the DNS, editor, capture and agent-protocol problems are about a machine that is gone (the
     /// agent of the next start tells again). The entrypoint problem stays until the next start,
     /// because the image still has the fault.
     pub(crate) fn end(&self, id: &WorkspaceId) {
@@ -367,6 +406,7 @@ impl ReportDesk {
         self.problems.clear(&editor_session_user_key(id));
         self.problems.clear(&capture_tamper_key(id));
         self.problems.clear(&capture_unavailable_key(id));
+        self.problems.clear(&agent_protocol_key(id));
     }
 
     /// `id` was deleted: both problems end.
@@ -458,6 +498,11 @@ impl AgentReports for ReportDesk {
                         }
                     }
                 }
+                AgentReport::ProtocolMismatch {
+                    agent_version,
+                    protocol,
+                } => (!std::mem::replace(&mut run.mismatch, true))
+                    .then(|| agent_protocol_problem(workspace, &shown, &agent_version, protocol)),
                 _ => None,
             }
         };

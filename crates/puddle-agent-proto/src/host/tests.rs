@@ -489,27 +489,92 @@ async fn a_handler_that_does_not_care_about_capture_reports_loses_nothing_else()
 async fn unknown_and_invalid_messages_are_skipped_and_later_ones_still_count() {
     let mut h = start();
     let mut c = h.control_stream().await;
-    c.write_all(b"{\"type\":\"future_thing\"}\nnot json\n{\"type\":\"hello\",\"agent_version\":\"\\u0007x\",\"protocol\":9}\n")
-        .await
-        .unwrap();
+    let lines = format!(
+        "{{\"type\":\"future_thing\"}}\nnot json\n{{\"type\":\"hello\",\"agent_version\":\"\\u0007x\",\"protocol\":{PROTOCOL_VERSION}}}\n"
+    );
+    c.write_all(lines.as_bytes()).await.unwrap();
     send(&mut c, &AgentMessage::oom_kill(Some(1), Some("a".into()))).await;
     assert_eq!(h.next_event().await, Event::oom_kill(name(), 1, "a"));
     h.close().await.unwrap();
 }
 
+/// A handler that records the link, the ports and the reports.
+#[derive(Default)]
+struct Heard {
+    reach: Reach,
+    told: Told,
+}
+
+struct Hearing(Arc<Heard>);
+
+impl StreamHandler for Hearing {
+    async fn handle(&self, _stream: GuestStream) {}
+
+    async fn guest_link(&self, link: GuestLink) {
+        *self.0.reach.link.lock().unwrap() = Some(link);
+    }
+
+    async fn guest_ports(&self, ports: Vec<u16>) {
+        self.0.reach.ports.lock().unwrap().push(ports);
+    }
+
+    async fn agent_report(&self, report: AgentReport) {
+        self.0.told.reports.lock().unwrap().push(report);
+    }
+}
+
 #[tokio::test]
-async fn a_guest_agent_on_another_protocol_is_logged_and_kept() {
+async fn a_guest_agent_on_another_protocol_is_reported_once_and_nothing_else_it_sends_counts() {
     Logs::capture();
-    let mut h = start();
+    let heard = Arc::new(Heard::default());
+    let mut h = start_handler(Arc::new(Hearing(Arc::clone(&heard))), HostConfig::default());
     let mut c = h.control_stream().await;
     let other = AgentMessage::Hello {
-        agent_version: "0.0.0".to_owned(),
+        agent_version: "0.9.0\u{7}".to_owned(),
         protocol: PROTOCOL_VERSION + 1,
     };
     send(&mut c, &other).await;
     send(&mut c, &AgentMessage::oom_kill(Some(1), Some("a".into()))).await;
-    assert_eq!(h.next_event().await, Event::oom_kill(name(), 1, "a"));
+    c.write_all(b"{\"type\":\"ports\",\"listening\":[8080]}\n")
+        .await
+        .unwrap();
+    send(&mut c, &AgentMessage::capture_tampered(true)).await;
+    // A later hello on this protocol does not take the refusal back: the stream's first word stands.
+    send(&mut c, &AgentMessage::hello()).await;
+    let reports = eventually("the mismatch is reported", WAIT, || {
+        let reports = heard.told.reports.lock().unwrap();
+        (!reports.is_empty()).then(|| reports.clone())
+    })
+    .await;
+    assert_eq!(
+        reports,
+        [AgentReport::ProtocolMismatch {
+            agent_version: "0.9.0?".to_owned(),
+            protocol: PROTOCOL_VERSION + 1,
+        }]
+    );
+
+    // The refused stream stays open (an agent whose stream closed would reopen it in a loop), so a
+    // second control stream is still turned away.
+    let mut second = h.control_stream().await;
+    send(&mut second, &AgentMessage::hello()).await;
+    let mut buf = [0u8; 1];
+    assert!(second.read(&mut buf).await.is_err());
+
+    let mut events = std::mem::replace(&mut h.events, mpsc::unbounded_channel().1);
     h.close().await.unwrap();
+    no_event_for(
+        "an event from an agent on another protocol",
+        Duration::from_millis(200),
+        &mut events,
+    )
+    .await;
+    assert!(
+        heard.reach.link.lock().unwrap().is_none(),
+        "the host got a link to an agent it does not speak with"
+    );
+    assert!(heard.reach.ports.lock().unwrap().is_empty());
+    assert_eq!(heard.told.reports.lock().unwrap().len(), 1);
     let text = Logs::text();
     assert!(
         text.contains("WARN") && text.contains("another control protocol"),

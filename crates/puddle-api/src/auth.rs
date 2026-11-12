@@ -19,6 +19,7 @@ pub(crate) struct Guard {
     inner: Arc<Inner>,
 }
 
+#[derive(Clone)]
 struct Inner {
     token: ApiToken,
     /// `127.0.0.1:<port>` and `localhost:<port>`, lower case.
@@ -99,9 +100,7 @@ impl Guard {
     /// Makes the token's holder `principal` instead of the owner (tests call the routes as
     /// another user this way).
     pub(crate) fn acting_as(mut self, principal: Principal) -> Self {
-        if let Some(inner) = Arc::get_mut(&mut self.inner) {
-            inner.principal = principal;
-        }
+        Arc::make_mut(&mut self.inner).principal = principal;
         self
     }
 

@@ -80,10 +80,11 @@ impl<S: Send + Sync> FromRequestParts<S> for Principal {
 /// What a route does. Grouped so a later permission system can grant them one by one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Action {
-    /// Who is answering, the contract, the event stream (filtered per principal).
+    /// Who is answering, the contract, the event stream and the problems (both kept to the
+    /// principal).
     ReadService,
     /// The install's own settings and state: global settings, consents, the first-run flow, the
-    /// system check, the network, app icons, decrypting settings, orphan volumes, problems.
+    /// system check, the network, app icons, decrypting settings, orphan volumes.
     ReadInstall,
     ChangeInstall,
     ListWorkspaces,
@@ -186,8 +187,10 @@ pub(crate) enum ResourceRef {
 pub(crate) enum Denial {
     /// Not the principal's: answered as the same resource not existing would be.
     NotFound(ApiError),
-    /// The principal's role or way in does not allow the action.
-    Forbidden,
+    /// Only the owner may do this.
+    OwnerOnly,
+    /// This needs the install token: the desktop window or the CLI on the server itself.
+    InstallTokenOnly,
     /// The owner could not be looked up.
     Failed(StoreError),
 }
@@ -196,10 +199,15 @@ impl From<Denial> for ApiError {
     fn from(denial: Denial) -> Self {
         match denial {
             Denial::NotFound(err) => err,
-            Denial::Forbidden => Self::new(
+            Denial::OwnerOnly => Self::new(
                 StatusCode::FORBIDDEN,
                 ErrorCode::Forbidden,
-                "this account may not do that",
+                "only the owner of this Puddle can do this; ask them",
+            ),
+            Denial::InstallTokenOnly => Self::new(
+                StatusCode::FORBIDDEN,
+                ErrorCode::Forbidden,
+                "this can only be done from the desktop window or the command line on the server",
             ),
             Denial::Failed(err) => Self::internal(&err),
         }
@@ -279,11 +287,11 @@ impl Authorizer for Isolation {
         resource: &ResourceRef,
     ) -> Result<(), Denial> {
         if action.needs_install_token() && principal.via != Via::Install {
-            return Err(Denial::Forbidden);
+            return Err(Denial::InstallTokenOnly);
         }
         let owner_only = action.owner_only() || *resource == ResourceRef::Install;
         if owner_only && principal.role != Role::Owner {
-            return Err(Denial::Forbidden);
+            return Err(Denial::OwnerOnly);
         }
         match self.owner(resource).map_err(Denial::Failed)? {
             Some((user, _)) if user == principal.user => Ok(()),
@@ -361,13 +369,11 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
     use Target as T;
     const WS: Target = T::Workspace("id");
     let (action, target) = match (method.as_str(), path) {
-        ("GET", "/api/health" | "/api/openapi.json" | "/api/events") => {
-            (A::ReadService, T::Service)
-        }
+        ("GET", "/api/health" | "/api/openapi.json") => (A::ReadService, T::Service),
+        ("GET", "/api/events" | "/api/problems") => (A::ReadService, T::Own),
         (
             "GET",
-            "/api/problems"
-            | "/api/network-health"
+            "/api/network-health"
             | "/api/doctor"
             | "/api/app-icons"
             | "/api/settings"
@@ -506,7 +512,7 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
 }
 
 /// The resource a declared route names, from its path parameters. `None` when the parameter does
-/// not parse: the handler then refuses the request itself, and there is nothing to protect.
+/// not parse.
 fn resource(target: Target, params: &RawPathParams) -> Option<ResourceRef> {
     let param = |name: &str| params.iter().find(|(k, _)| *k == name).map(|(_, v)| v);
     let id = || param("id")?.parse::<i64>().ok();
@@ -538,7 +544,13 @@ pub(crate) async fn authorize(
     next: Next,
 ) -> Response {
     let path = matched.as_ref().map_or("", MatchedPath::as_str);
-    let Some(declared) = declaration(request.method(), path) else {
+    // axum answers `HEAD` from the `GET` route; it is the same read.
+    let method = if request.method() == Method::HEAD {
+        &Method::GET
+    } else {
+        request.method()
+    };
+    let Some(declared) = declaration(method, path) else {
         tracing::error!(method = %request.method(), path, "route has no permission declaration");
         return ApiError::internal(&"route has no permission declaration").into_response();
     };
@@ -548,9 +560,9 @@ pub(crate) async fn authorize(
     let Some(principal) = request.extensions().get::<Principal>().copied() else {
         return unauthorized().into_response();
     };
-    let Some(resource) = resource(declared.target, &params) else {
-        return next.run(request).await;
-    };
+    // An id that does not parse names nothing, and the handler refuses it; the role and the way
+    // in are still checked.
+    let resource = resource(declared.target, &params).unwrap_or(ResourceRef::Own);
     match check(&state, principal, declared.action, resource).await {
         Ok(()) => next.run(request).await,
         Err(err) => err.into_response(),

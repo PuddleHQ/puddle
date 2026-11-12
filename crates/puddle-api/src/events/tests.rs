@@ -102,7 +102,7 @@ async fn each_stream_carries_only_its_principals_events() {
     );
     let mut anns = Box::pin(stream(hub.subscribe(), as_ann, None, shutdown.clone()));
     let mut owners = Box::pin(stream(hub.subscribe(), owner(&store), None, shutdown));
-    hub.emit(Event::RulesChanged {});
+    hub.emit(Event::AuditAppended { id: 7 });
     hub.emit(oom("owners"));
     hub.emit(oom("anns"));
     // Twice, so the second comes from the cache of who owns what.
@@ -111,15 +111,17 @@ async fn each_stream_carries_only_its_principals_events() {
     for _ in 0..2 {
         assert!(text(anns.next().await).contains("anns"));
     }
-    assert!(text(owners.next().await).contains("rules_changed"));
+    assert!(text(owners.next().await).contains("audit_appended"));
     assert!(text(owners.next().await).contains("owners"));
     hub.emit(oom("owners"));
+    hub.emit(Event::AuditAppended { id: 8 });
     hub.emit(Event::RulesChanged {});
-    hub.emit(oom("anns"));
+    // A signal that carries nothing reaches everyone.
     assert!(
-        text(anns.next().await).contains("anns"),
-        "skipped the owner's two"
+        text(anns.next().await).contains("rules_changed"),
+        "skipped the owner's workspace event and the audit"
     );
     assert!(text(owners.next().await).contains("owners"));
+    assert!(text(owners.next().await).contains("audit_appended"));
     assert!(text(owners.next().await).contains("rules_changed"));
 }

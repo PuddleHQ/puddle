@@ -545,7 +545,9 @@ CREATE TABLE learned_hosts (
 /// - `user_id` on the rows that are not tied to one workspace (global and set rules, rule sets,
 ///   their switches, rules on method and path, identities, environment variables, the Git
 ///   defaults, audit records), every existing row the owner's; names and the one default identity
-///   become unique per user. `identities` is rebuilt for that (its label was `UNIQUE` inline); the
+///   become unique per user. Only `audit.user_id` is written from the workspace's user so far;
+///   the others stay the owner's until writes become per user (reads take the user from the
+///   workspace meanwhile). `identities` is rebuilt for that (its label was `UNIQUE` inline); the
 ///   workspaces' identity lists are kept aside meanwhile, because dropping the table would cascade
 ///   into them. `git_defaults` is rebuilt keyed by user.
 const V20: &str = r"

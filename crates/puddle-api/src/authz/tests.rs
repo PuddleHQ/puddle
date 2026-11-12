@@ -114,10 +114,13 @@ fn the_owner_alone_does_install_things_and_only_with_the_token_widens_reach() {
     let ok = |p: &Principal, a: Action, r: ResourceRef| isolation.check(p, a, &r).is_ok();
     assert!(ok(&owner, Action::ChangeInstall, ResourceRef::Install));
     assert!(ok(&owner, Action::SetRemoteServing, ResourceRef::Install));
-    assert!(!ok(
-        &owner_in_a_browser,
-        Action::SetRemoteServing,
-        ResourceRef::Install
+    assert!(matches!(
+        isolation.check(
+            &owner_in_a_browser,
+            Action::SetRemoteServing,
+            &ResourceRef::Install
+        ),
+        Err(Denial::InstallTokenOnly)
     ));
     assert!(ok(
         &owner_in_a_browser,
@@ -133,7 +136,7 @@ fn the_owner_alone_does_install_things_and_only_with_the_token_widens_reach() {
         assert!(
             matches!(
                 isolation.check(&ann, action, &resource),
-                Err(Denial::Forbidden)
+                Err(Denial::OwnerOnly)
             ),
             "{action:?} {resource:?}"
         );
@@ -208,8 +211,12 @@ fn a_users_resources_are_theirs_alone_and_the_owner_has_no_way_in() {
 
 #[test]
 fn a_denial_becomes_its_status() {
-    let forbidden = ApiError::from(Denial::Forbidden).into_response();
-    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    for denial in [Denial::OwnerOnly, Denial::InstallTokenOnly] {
+        assert_eq!(
+            ApiError::from(denial).into_response().status(),
+            StatusCode::FORBIDDEN
+        );
+    }
     let failed = ApiError::from(Denial::Failed(StoreError::InviteInvalid)).into_response();
     assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
@@ -220,6 +227,7 @@ struct Pair {
     ann: (SocketAddr, RunningApi),
     token: String,
     store: Arc<Store>,
+    problems: Arc<puddle_types::Problems>,
     ann_id: UserId,
 }
 
@@ -239,6 +247,7 @@ async fn pair() -> Pair {
         clock.clone(),
     )
     .with_workspaces(Arc::new(FakeWorkspaces::new(events, clock)));
+    let problems = services.problems.clone();
     let token = ApiToken::generate().unwrap();
     let start = |principal| {
         let services = services.clone();
@@ -255,6 +264,7 @@ async fn pair() -> Pair {
         ann: start(ann_principal(ann_id)).await,
         token: token.expose().to_owned(),
         store,
+        problems,
         ann_id,
     }
 }
@@ -410,6 +420,10 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
     }
     assert_eq!(checked, 50, "routes that name a resource");
 
+    pair.problems
+        .raise(puddle_types::Problem::new("ws", "t", "d").about(ws(&box_id)));
+    pair.problems
+        .raise(puddle_types::Problem::new("puddle", "own", "d"));
     // Ann's lists hold nothing of the owner's.
     let get = |path: &'static str| async move { send(ann, token, "GET", path, None).await };
     for path in [
@@ -419,6 +433,7 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         "/api/rules",
         "/api/request-rules",
         "/api/audit",
+        "/api/problems",
     ] {
         let (status, body) = get(path).await;
         assert_eq!(status, 200, "{path}: {body}");
@@ -433,6 +448,7 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         "/api/rules",
         "/api/request-rules",
         "/api/audit",
+        "/api/problems",
     ] {
         let (_, body) = send(owner, token, "GET", path, None).await;
         assert!(body.contains(&box_id), "{path}: {body}");
@@ -552,6 +568,28 @@ async fn hostile_the_owner_has_no_way_into_a_users_workspace() {
         .await;
         assert_eq!(status, 404, "{method} {path}: {answer}");
     }
+    pair.owner.1.shutdown().await;
+    pair.ann.1.shutdown().await;
+}
+
+/// Puddle's own problems are the owner's, an id that does not parse still meets the role check,
+/// and a `HEAD` is checked as its `GET`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn odd_requests_meet_the_same_checks() {
+    let pair = pair().await;
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    pair.problems
+        .raise(puddle_types::Problem::new("puddle", "own", "d"));
+    let (_, problems) = send(ann, token, "GET", "/api/problems", None).await;
+    assert_eq!(problems, r#"{"problems":[]}"#);
+    let (_, problems) = send(owner, token, "GET", "/api/problems", None).await;
+    assert!(problems.contains("puddle"), "{problems}");
+    let (status, _) = send(ann, token, "GET", "/api/workspaces/NOT%20AN%20ID/git", None).await;
+    assert_eq!(status, 403);
+    assert_eq!(
+        send(owner, token, "HEAD", "/api/workspaces", None).await.0,
+        200
+    );
     pair.owner.1.shutdown().await;
     pair.ann.1.shutdown().await;
 }

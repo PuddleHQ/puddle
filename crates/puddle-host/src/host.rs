@@ -693,7 +693,7 @@ impl<R: Runtime + Clone> Host<R> {
             &status,
         )?;
         // Downloads the image the delete check boots now, while nobody is waiting on it.
-        service.warm_maintenance_image_for_listed().await;
+        service.warm_maintenance_image_for_listed();
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
         let editor_windows = front.windows().clone();
         let editor_updates = AbortOnDrop(crate::editor_updates::spawn(

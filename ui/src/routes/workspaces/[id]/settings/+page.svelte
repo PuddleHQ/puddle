@@ -74,6 +74,7 @@
   const CATEGORIES: LocalCategory[] = [
     "loopback",
     "private",
+    "company_network",
     "link_local",
     "metadata",
     "special",

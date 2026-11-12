@@ -158,6 +158,11 @@ fn the_window_opens_on_the_hosts_api_with_its_token_and_the_system_check_answers
     shell::open(app.handle(), &options, backend).unwrap();
 
     let backend = app.state::<Backend>();
+    assert_eq!(
+        backend.open_terminals(),
+        0,
+        "no terminal is open in a fresh host"
+    );
     let window = app.get_webview_window(MAIN_LABEL).unwrap();
     assert_eq!(&window.url().unwrap(), backend.url());
     assert_eq!(backend.url().host_str(), Some("127.0.0.1"));

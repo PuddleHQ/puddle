@@ -2,10 +2,15 @@
 <script lang="ts">
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import DecisionControl from "./DecisionControl.svelte";
-  import { LOCAL_LABELS, type LocalCategory } from "#lib/decision/local.ts";
+  import {
+    LOCAL_LABELS,
+    companySignalText,
+    type LocalCategory,
+  } from "#lib/decision/local.ts";
   import type { Choice } from "#lib/decision/model.ts";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
   import type { Row } from "#lib/stores/pending.svelte.ts";
+  import "#lib/theme/controls.css";
 
   let {
     row,
@@ -31,6 +36,7 @@
   } = $props();
 
   const request = $derived(row.request);
+  const why = $derived(companySignalText(request.company_signal));
 </script>
 
 <li
@@ -71,7 +77,20 @@
     onDecide={(choice) => onDecide(row, choice)}
     onMore={(anchor) => onMore(row, anchor)}
   />
-  {#if blockedBy}
+  {#if blockedBy === "company_network"}
+    <p class="blocked">
+      This is <b>on your company network</b>{#if why}: {why}{/if}. Company
+      network destinations are switched off for this workspace, so this can't be
+      approved yet.
+      <a
+        class="btn"
+        href="/workspaces/{request.workspace}/settings#local-destinations"
+        >Open the company network switch</a
+      >
+      Turning it on only makes it approvable; it will still need your approval after
+      that.
+    </p>
+  {:else if blockedBy}
     <p class="blocked">
       <b>{LOCAL_LABELS[blockedBy]}</b> destinations are switched off, so this
       can't be approved yet. Turn on

@@ -11,6 +11,7 @@ info  SSH agent           what answers on /run/user/1000/agent.sock does not spe
       note: SSH to servers other than Git hosts gets no key from Puddle. Check that the setting
             `ui.ssh_agent_pipe` (or SSH_AUTH_SOCK) names an SSH agent. Git hosts need no agent.
       from: the agent's answer is not valid: not an identities answer
+ok    Azure CLI (az)      version 2.64.0
 
 No problems found. (1.2 s)
 
@@ -64,6 +65,11 @@ No problems found. (1.2 s)
       "finding": "ssh_agent_unusable",
       "fix": "SSH to servers other than Git hosts gets no key from Puddle. Check that the setting `ui.ssh_agent_pipe` (or SSH_AUTH_SOCK) names an SSH agent. Git hosts need no agent.",
       "detail": "the agent's answer is not valid: not an identities answer"
+    },
+    {
+      "id": "az_cli",
+      "status": "ok",
+      "summary": "version 2.64.0"
     }
   ],
   "elapsed_ms": 1234

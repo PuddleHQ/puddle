@@ -58,6 +58,29 @@ describe("network health page", () => {
     );
   });
 
+  it("lists the private-access client and DNS suffixes behind the company network", () => {
+    const r = report();
+    r.company_network = {
+      private_access_client: true,
+      dns_suffixes: ["corp.example", "ad.example"],
+    };
+    store.report = r;
+    render(Page);
+    const card = section("Company network");
+    expect(card).toHaveTextContent("One is installed and active");
+    expect(card).toHaveTextContent("corp.example, ad.example");
+    expect(
+      within(card).getByRole("link", { name: /Local destinations/ }),
+    ).toHaveAttribute("href", "/settings#local-destinations");
+  });
+
+  it("says nothing was found when this computer can't be read for the company network", () => {
+    render(Page);
+    const card = section("Company network");
+    expect(card).toHaveTextContent("None found");
+    expect(card).not.toHaveTextContent("One is installed");
+  });
+
   it("shows a healthy setup: found setup, sign-in method, roots, routes", () => {
     const r = report();
     r.proxy.last_change_at = Date.now() - 3 * 60_000;

@@ -18,6 +18,7 @@ warn  Disk encryption     data drive NOT encrypted; swap /dev/dm-1 encrypted (LU
             swap,cipher=aes-xts-plain64,size=512`, and use /dev/mapper/swap in /etc/fstab; or
             turn swap off with `sudo swapoff -a` if the machine has the memory.
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
+ok    Azure CLI (az)      version 2.64.0
 
 No problems found; 1 warning to know about. (1.2 s)
 
@@ -70,6 +71,11 @@ No problems found; 1 warning to know about. (1.2 s)
       "id": "ssh_agent",
       "status": "ok",
       "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
+    },
+    {
+      "id": "az_cli",
+      "status": "ok",
+      "summary": "version 2.64.0"
     }
   ],
   "elapsed_ms": 1234

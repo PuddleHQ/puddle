@@ -77,10 +77,10 @@ fn an_entry_that_is_no_workspace_id_is_dropped_and_the_rest_kept() {
 
 #[test]
 fn the_problem_has_the_key_of_a_failed_stop_trim_and_names_the_quit() {
-    let p = problem(&id("acme"), "fstrim exited 1: no");
+    let p = problem(&id("acme"), "Acme shop", "fstrim exited 1: no");
     assert_eq!(p.key, "trim:acme");
     assert_eq!(p.workspace, Some(id("acme")));
-    assert!(p.title.contains("when Puddle quit"), "{}", p.title);
+    assert_eq!(p.title, "Acme shop's disk was not trimmed when Puddle quit");
     assert!(p.detail.contains("fstrim exited 1"), "{}", p.detail);
     assert!(p.detail.contains("Reclaim space"), "{}", p.detail);
 }

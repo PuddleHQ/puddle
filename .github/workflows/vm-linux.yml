@@ -321,14 +321,37 @@ jobs:
         run: |
           mkdir -p "$HOME/vm-tools-cache"
           echo "PUDDLE_VM_TOOLS_CACHE=$HOME/vm-tools-cache" >> "$GITHUB_ENV"
+      # A download that hangs would hold the job until its 40 minute limit (partition 9 of merge-group run 43245154124 sat in this
+      # step for 39 minutes while the other nine finished it in 1 to 3 minutes). Each download gets 8 minutes (the 2.5 GB archive
+      # takes up to 3), then one more try that fails the job when it also fails.
       - name: the test archive from the build job
+        id: archive
         if: steps.kvm.outputs.ok == 'true'
+        timeout-minutes: 8
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-linux-build
+          path: ${{ runner.temp }}/bundle
+      - name: the test archive from the build job (second try)
+        if: steps.kvm.outputs.ok == 'true' && steps.archive.outcome != 'success'
+        timeout-minutes: 8
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-linux-build
           path: ${{ runner.temp }}/bundle
       - name: the guest agent from the agent job
+        id: agent
         if: steps.kvm.outputs.ok == 'true'
+        timeout-minutes: 3
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-linux-agent
+          path: ${{ runner.temp }}/bundle
+      - name: the guest agent from the agent job (second try)
+        if: steps.kvm.outputs.ok == 'true' && steps.agent.outcome != 'success'
+        timeout-minutes: 3
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-linux-agent

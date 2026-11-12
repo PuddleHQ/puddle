@@ -143,6 +143,11 @@ hyper-util = { version = "0.1.21", default-features = false, features = ["http1"
 utoipa-axum = "0.3.0"
 # The host's own SSH client for the terminal (the runtime's SSH server stack, already in the tree through msb) and the fake runtime's PTY stand-in.
 russh = "0.65.0"
+# Parsing SSH public keys and checking signatures in the filtered SSH agent (a session bind's host
+# signature, the Git hosts' key list); already in the tree through russh, which pins this release.
+ssh-key = { version = "=0.7.0-rc.11", default-features = false, features = ["std", "crypto"] }
+# The `Verifier` trait `ssh-key` implements; already in the tree through it.
+signature = { version = "3.0.0", default-features = false }
 # WebSocket client of the terminal route's tests (the same crate axum's `ws` feature serves with).
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
 tower-http = { version = "0.7.1", default-features = false, features = ["timeout"] }

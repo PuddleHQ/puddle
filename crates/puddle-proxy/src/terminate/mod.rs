@@ -89,7 +89,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use puddle_ca::WorkspaceCa;
-use puddle_types::WorkspaceId;
+use puddle_ssh_agent::filter::AllowedKeys;
+use puddle_types::{Host, WorkspaceId};
 
 pub use exchange::{AnswerHead, AnswerRewriter, Exchange, ExchangeRewriter, MAX_EXCHANGE_BODY};
 pub use foreign::ForeignCredentialWarning;
@@ -138,6 +139,7 @@ pub struct Termination {
     request_rules: RequestRules,
     git_ssh_hosts: TerminationSet,
     git_ssh_keys: Option<Arc<crate::ssh_git::GitSshHostKeys>>,
+    ssh_agent_hosts: HashMap<Host, AllowedKeys>,
     foreign_warning: Arc<ForeignCredentialWarning>,
 }
 
@@ -171,6 +173,7 @@ impl Termination {
             request_rules: RequestRules::default(),
             git_ssh_hosts: TerminationSet::new(),
             git_ssh_keys: None,
+            ssh_agent_hosts: HashMap::new(),
             foreign_warning: Arc::new(ForeignCredentialWarning::default()),
         }
     }
@@ -232,6 +235,20 @@ impl Termination {
         self.git_ssh_keys.as_deref()
     }
 
+    /// Lets the workspace use keys from the host's SSH agent on `hosts`, each with the keys it may
+    /// use (see [`crate::ssh_agent`]). Empty by default: only the user turns the agent on.
+    #[must_use]
+    pub fn with_ssh_agent_hosts(mut self, hosts: HashMap<Host, AllowedKeys>) -> Self {
+        self.ssh_agent_hosts = hosts;
+        self
+    }
+
+    /// The hosts the filtered SSH agent is on for, with the keys each may use.
+    #[must_use]
+    pub fn ssh_agent_hosts(&self) -> &HashMap<Host, AllowedKeys> {
+        &self.ssh_agent_hosts
+    }
+
     /// The hosts whose SSH is ended for Git, beyond the built-in ones.
     #[must_use]
     pub fn git_ssh_hosts(&self) -> &TerminationSet {
@@ -253,11 +270,11 @@ impl Termination {
     /// How a connection to `host` is decrypted, or `None` when it is passed through.
     /// `from_container`: the agent says the client is in a container (see
     /// [`puddle_agent_proto::origin`]).
-    pub(crate) fn mode_for(&self, host: &puddle_types::Host, from_container: bool) -> Option<Mode> {
+    pub(crate) fn mode_for(&self, host: &Host, from_container: bool) -> Option<Mode> {
         if self.set.contains(host) {
             Some(Mode::Bound)
         } else if self.interception.decrypt_all
-            && matches!(host, puddle_types::Host::Name(_))
+            && matches!(host, Host::Name(_))
             && self.skipped(host, from_container).is_none()
         {
             Some(Mode::Everything)
@@ -271,18 +288,11 @@ impl Termination {
     /// workspace's trust settings), the never-decrypt list, or a host its tools did not accept the
     /// certificate for. `None` for a host with a credential, which is always decrypted so the
     /// credential can be added, and for a host that is decrypted.
-    pub(crate) fn skipped(
-        &self,
-        host: &puddle_types::Host,
-        from_container: bool,
-    ) -> Option<&'static str> {
+    pub(crate) fn skipped(&self, host: &Host, from_container: bool) -> Option<&'static str> {
         if self.set.contains(host) {
             return None;
         }
-        if from_container
-            && self.interception.decrypt_all
-            && matches!(host, puddle_types::Host::Name(_))
-        {
+        if from_container && self.interception.decrypt_all && matches!(host, Host::Name(_)) {
             return Some("container");
         }
         self.interception.skipped(host)
@@ -308,7 +318,7 @@ impl Termination {
 
     /// Whether `host` is a token endpoint of the workspace's logins (see
     /// [`ExchangeRewriter::is_token_endpoint`]); `false` without a rewriter.
-    pub(crate) fn is_token_endpoint(&self, host: &puddle_types::Host) -> bool {
+    pub(crate) fn is_token_endpoint(&self, host: &Host) -> bool {
         self.exchanges
             .as_deref()
             .is_some_and(|exchanges| exchanges.is_token_endpoint(host))

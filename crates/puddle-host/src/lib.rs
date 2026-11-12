@@ -69,15 +69,15 @@ pub use backup::{
 };
 pub use config::{
     AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, FreeSpaceTiming, GuestSettings, HostConfig,
-    UpstreamSettings,
+    NetworkListenerSettings, UpstreamSettings,
 };
 pub use dev_cert::{DevCertSource, GuestCertSource};
 pub use doctor::{disk_limits, ssh_agent_pipe};
 pub use error::HostError;
 pub use files::FileSettings;
 pub use host::{
-    Host, HostOptions, HostShutdown, MsbFactory, PREPARE_STEPS, Prepared, RuntimeFactory,
-    RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
+    Host, HostOptions, HostShutdown, MsbFactory, PREPARE_STEPS, Prepared, RemoteListener,
+    RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
 };
 pub use injection::{InjectorFactory, InjectorInputs};
 pub use paths::HostPaths;

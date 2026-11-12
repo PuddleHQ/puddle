@@ -26,6 +26,9 @@ pub enum ConfigError {
         /// What was expected.
         why: String,
     },
+    /// The options set remote serving in a way that does not fit together.
+    #[error("remote serving: {0}")]
+    Remote(String),
     /// The working directory is unknown, so a relative path cannot be made absolute.
     #[error("cannot find the working directory: {0}")]
     WorkingDirectory(String),
@@ -187,19 +190,35 @@ fn value_of(value: &DeValue<'_>, kind: Kind, folder: &Path) -> Result<Value, Str
                 other => other,
             })
             .map_err(|_| "an empty string".to_owned()),
-        (Kind::Log, DeValue::String(text)) => kind
+        (Kind::Log | Kind::Ip | Kind::Domain, DeValue::String(text)) => kind
             .parse_text(text)
             .map_err(|_| format!("the string {:?}", text.as_ref())),
-        (_, other) => {
-            let name = other.type_str();
-            let article = if name.starts_with(['a', 'e', 'i', 'o', 'u']) {
-                "an"
-            } else {
-                "a"
-            };
-            Err(format!("{article} {name}"))
+        (Kind::Bool, DeValue::Boolean(on)) => Ok(Value::Bool(*on)),
+        (kind, DeValue::Array(items)) if kind.is_list() => {
+            let mut texts = Vec::new();
+            for item in items {
+                match item.get_ref() {
+                    DeValue::String(text) if !text.contains(',') => texts.push(text.as_ref()),
+                    DeValue::String(text) => return Err(format!("the item {:?}", text.as_ref())),
+                    other => return Err(format!("an array with {}", describe(other))),
+                }
+            }
+            kind.parse_items(&texts)
+                .map_err(|_| format!("the array {texts:?}"))
         }
+        (_, other) => Err(describe(other)),
     }
+}
+
+/// A value's type with its article: "an integer", "a string".
+fn describe(value: &DeValue<'_>) -> String {
+    let name = value.type_str();
+    let article = if name.starts_with(['a', 'e', 'i', 'o', 'u']) {
+        "an"
+    } else {
+        "a"
+    };
+    format!("{article} {name}")
 }
 
 /// The keys a file may hold, for the unknown-key message.

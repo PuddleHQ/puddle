@@ -127,7 +127,13 @@ fn print_config_prints_the_effective_options_and_starts_nothing() {
              port = 4000 (flag --port)\n\
              connection_file = {api} (config file {file})\n\
              data_dir = the per-user data folder (default)\n\
-             log = debug (environment PUDDLE_LOG)\n",
+             log = debug (environment PUDDLE_LOG)\n\
+             remote = off (default)\n\
+             public_hosts = none (default)\n\
+             workspace_base_domain = subdomains of the first public host (default)\n\
+             listen_interface = no network listener (default)\n\
+             listen_port = 8443 (default)\n\
+             allowed_proxies = none (default)\n",
             api = dir.path().join("api.json").display(),
         )
     );
@@ -248,4 +254,242 @@ async fn a_host_started_from_a_config_file_listens_on_the_files_port_and_writes_
     stream.read_to_end(&mut reply).await.unwrap();
     assert!(text(&reply).starts_with("HTTP/1.1 "), "{}", text(&reply));
     host.shutdown().await;
+}
+
+#[test]
+fn print_config_shows_the_remote_options_and_where_each_came_from() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("serve.toml");
+    std::fs::write(
+        &file,
+        "remote = true\npublic_hosts = [\"puddle.example.org\"]\nlisten_interface = \"192.168.1.10\"\nallowed_proxies = [\"192.168.1.20\"]\n",
+    )
+    .unwrap();
+    let out = puddle(
+        &[
+            "serve",
+            "--print-config",
+            "--config",
+            file.to_str().unwrap(),
+            "--no-remote",
+            "--workspace-base-domain",
+            "Ws.Example.Net",
+        ],
+        &[("PUDDLE_LISTEN_PORT", "9443")],
+        dir.path(),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    let file = file.display();
+    for line in [
+        "remote = false (flag --no-remote)".to_owned(),
+        format!("public_hosts = puddle.example.org (config file {file})"),
+        "workspace_base_domain = ws.example.net (flag --workspace-base-domain)".to_owned(),
+        format!("listen_interface = 192.168.1.10 (config file {file})"),
+        "listen_port = 9443 (environment PUDDLE_LISTEN_PORT)".to_owned(),
+        format!("allowed_proxies = 192.168.1.20 (config file {file})"),
+    ] {
+        assert!(shown.lines().any(|l| l == line), "{line}\n{shown}");
+    }
+}
+
+#[test]
+fn remote_options_that_do_not_fit_together_refuse_to_start_and_say_why() {
+    let dir = tempfile::tempdir().unwrap();
+    for (args, why) in [
+        (vec!["serve", "--remote"], "at least one public host"),
+        (
+            vec!["serve", "--remote", "--public-hosts", "203.0.113.7"],
+            "set `workspace_base_domain`",
+        ),
+        (
+            vec![
+                "serve",
+                "--remote",
+                "--public-hosts",
+                "puddle.example.org",
+                "--listen-interface",
+                "192.168.1.10",
+            ],
+            "`allowed_proxies`",
+        ),
+        (
+            vec![
+                "serve",
+                "--remote",
+                "--public-hosts",
+                "puddle.example.org",
+                "--listen-port",
+                "9443",
+            ],
+            "set `listen_interface` too",
+        ),
+    ] {
+        let out = puddle(&args, &[], dir.path());
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert_eq!(text(&out.stdout), "");
+        let stderr = text(&out.stderr);
+        assert!(stderr.starts_with("puddle: remote serving: "), "{stderr}");
+        assert!(stderr.contains(why), "{args:?}: {stderr}");
+    }
+    // The switch off with the same options is accepted (and prints nothing to refuse).
+    let out = puddle(
+        &[
+            "serve",
+            "--print-config",
+            "--no-remote",
+            "--listen-port",
+            "9443",
+        ],
+        &[],
+        dir.path(),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+}
+
+/// What a request to the host's API at `addr` over `stream` answers with, status line only.
+async fn status_of<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    mut stream: S,
+    host: &str,
+) -> String {
+    stream
+        .write_all(
+            format!("GET /api/health HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut reply = Vec::new();
+    let _ = stream.read_to_end(&mut reply).await;
+    text(&reply).lines().next().unwrap_or_default().to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_started_with_remote_serving_answers_a_proxy_over_tls_and_a_loopback_client_as_before()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let port = puddle_test_kit::quiet_port();
+    let listen = puddle_test_kit::quiet_port();
+    std::fs::write(
+        dir.path().join("serve.toml"),
+        format!(
+            "port = {port}\ndata_dir = \"data\"\nremote = true\npublic_hosts = [\"puddle.example.org\", \"203.0.113.7\"]\n\
+             listen_interface = \"127.0.0.1\"\nlisten_port = {listen}\nallowed_proxies = [\"127.0.0.1\"]\n"
+        ),
+    )
+    .unwrap();
+    let flags = [("config", Value::Path(dir.path().join("serve.toml")))]
+        .into_iter()
+        .collect();
+    let options = serve::options::resolve(&flags, &|_| None, dir.path()).unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let mut config = serve::config(&options, &exe).unwrap();
+    let agent = dir.path().join("puddle-agent");
+    std::fs::write(&agent, b"#!agent\n").unwrap();
+    config.guest.agent_binary = agent;
+    let prepared = prepare(config, &QuietPlatform).unwrap();
+    let mut host_options = HostOptions::default();
+    host_options.secret_store = Some(Arc::new(MemoryStore::new()));
+    let host = Host::start(prepared, &FakeFactory, host_options)
+        .await
+        .unwrap();
+
+    // The loopback listener: the install token's address works, a public name is not the token's.
+    let tcp = || tokio::net::TcpStream::connect(("127.0.0.1", port));
+    assert_eq!(
+        status_of(tcp().await.unwrap(), &format!("127.0.0.1:{port}")).await,
+        "HTTP/1.1 401 Unauthorized"
+    );
+    assert_eq!(
+        status_of(tcp().await.unwrap(), "puddle.example.org").await,
+        "HTTP/1.1 401 Unauthorized"
+    );
+    assert_eq!(
+        status_of(tcp().await.unwrap(), "other.example.org").await,
+        "HTTP/1.1 421 Misdirected Request"
+    );
+
+    // The network listener: TLS with the certificate the host printed, the public name only.
+    let info = host.remote_listener().expect("a network listener").clone();
+    assert_eq!(info.addr.port(), listen);
+    assert_eq!(info.fingerprint.len(), 64);
+    let pem = std::fs::read(&info.certificate_file).unwrap();
+    assert!(!text(&pem).contains("PRIVATE KEY"));
+    let der = rustls_pemfile_free(&pem);
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(der))
+        .unwrap();
+    let client = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(client));
+    let over_tls = |host_header: &'static str| {
+        let connector = connector.clone();
+        async move {
+            let tcp = tokio::net::TcpStream::connect(info.addr).await.unwrap();
+            let name = rustls::pki_types::ServerName::try_from("puddle.example.org").unwrap();
+            status_of(connector.connect(name, tcp).await.unwrap(), host_header).await
+        }
+    };
+    assert_eq!(
+        over_tls("puddle.example.org").await,
+        "HTTP/1.1 401 Unauthorized"
+    );
+    assert_eq!(
+        over_tls("127.0.0.1").await,
+        "HTTP/1.1 421 Misdirected Request"
+    );
+    host.shutdown().await;
+}
+
+/// The certificate of a one-block PEM file, as DER.
+fn rustls_pemfile_free(pem: &[u8]) -> Vec<u8> {
+    pem::parse(pem).unwrap().into_contents()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_listener_certificate_that_cannot_be_kept_stops_the_start_and_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    // A file where the certificate's folder belongs.
+    std::fs::write(data.join("remote-cert"), b"in the way").unwrap();
+    let flags = [
+        ("data_dir", Value::Path(data)),
+        ("remote", Value::Bool(true)),
+        (
+            "public_hosts",
+            Value::Hosts(vec!["puddle.example.org".to_owned()]),
+        ),
+        ("listen_interface", Value::Ip("127.0.0.1".parse().unwrap())),
+        ("listen_port", Value::Port(0)),
+        (
+            "allowed_proxies",
+            Value::IpList(vec!["127.0.0.1".parse().unwrap()]),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let options = serve::options::resolve(&flags, &|_| None, dir.path()).unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let mut config = serve::config(&options, &exe).unwrap();
+    let agent = dir.path().join("puddle-agent");
+    std::fs::write(&agent, b"#!agent\n").unwrap();
+    config.guest.agent_binary = agent;
+    let prepared = prepare(config, &QuietPlatform).unwrap();
+    let mut host_options = HostOptions::default();
+    host_options.secret_store = Some(Arc::new(MemoryStore::new()));
+    let Err(err) = Host::start(prepared, &FakeFactory, host_options).await else {
+        panic!("the start should fail");
+    };
+    assert!(
+        err.to_string()
+            .contains("the network listener's certificate"),
+        "{err}"
+    );
 }

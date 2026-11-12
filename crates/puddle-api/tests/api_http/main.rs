@@ -27,6 +27,7 @@ mod orphan_volumes;
 mod ports;
 mod problems;
 mod proxy_sign_in;
+mod remote;
 mod repos;
 mod repositories;
 mod repository_hosts;

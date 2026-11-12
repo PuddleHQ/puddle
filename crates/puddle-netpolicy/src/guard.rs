@@ -171,6 +171,11 @@ impl NetPolicy {
                 _ => None,
             };
         }
+        if let Host::Name(name) = target.host()
+            && self.endpoints.find_name(name.as_str()).is_some()
+        {
+            return Some(BlockReason::PuddleEndpoint);
+        }
         let category = target.named_category()?;
         // `localhost:<puddle port>`: refuse now rather than after a useless approval.
         let loopback = SocketAddr::from(([127, 0, 0, 1], port));

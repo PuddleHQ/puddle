@@ -166,3 +166,16 @@ fn a_failing_database_is_an_error() {
             .is_err()
     );
 }
+
+#[test]
+fn a_stored_role_that_is_unknown_is_corruption() {
+    assert_eq!(role_of(3, "user").unwrap(), Role::User);
+    assert!(matches!(
+        role_of(3, "admin"),
+        Err(StoreError::Corrupt {
+            table: "users",
+            id: 3,
+            ..
+        })
+    ));
+}

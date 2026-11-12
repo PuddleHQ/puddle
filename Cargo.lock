@@ -6020,6 +6020,7 @@ dependencies = [
  "puddle-vm-tests",
  "rustls",
  "serde_json",
+ "sha2 0.11.1",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -6085,6 +6086,7 @@ dependencies = [
 name = "puddle-api"
 version = "0.0.0"
 dependencies = [
+ "argon2",
  "axum",
  "base64 0.23.1",
  "futures-util",

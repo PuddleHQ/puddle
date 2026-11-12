@@ -132,6 +132,7 @@ describe("the screen", () => {
       "Browser VS Code",
       "Git and credentials",
       "Environment",
+      "Devices and sign-in",
       "Privacy",
       "About",
     ]);

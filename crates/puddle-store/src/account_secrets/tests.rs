@@ -2,7 +2,7 @@
 use super::*;
 use crate::clock::ManualClock;
 use crate::store::{Limits, Store};
-use crate::users::UserName;
+use crate::users::{Role, UserName};
 
 fn setup() -> (Store, AccountSecrets, Arc<ManualClock>) {
     let clock = Arc::new(ManualClock::new(1_000));
@@ -95,4 +95,69 @@ fn an_invite_digest_of_exactly_the_minimum_length_is_accepted() {
     ));
     secrets.put_invite(ann, &exact, 5_000).unwrap();
     assert_eq!(secrets.redeem_invite(&exact).unwrap(), Some(ann));
+}
+
+#[test]
+fn the_first_visitor_makes_the_owner_once_and_a_reset_never_reopens_it() {
+    let (store, secrets, _) = setup();
+    assert!(!secrets.setup_done().unwrap());
+    assert!(!secrets.has_password(UserId::OWNER).unwrap());
+    let name = UserName::new("Tijs").unwrap();
+    secrets.create_owner(&name, "$argon2id$first").unwrap();
+    assert!(secrets.setup_done().unwrap());
+    assert_eq!(store.user(UserId::OWNER).unwrap().name, "Tijs");
+    assert!(
+        secrets
+            .check_password(UserId::OWNER, |h| h == "$argon2id$first")
+            .unwrap()
+    );
+    // A second visitor is turned away and changes nothing.
+    assert!(matches!(
+        secrets.create_owner(&UserName::new("mallory").unwrap(), "$argon2id$evil"),
+        Err(StoreError::SetupDone)
+    ));
+    assert_eq!(store.user(UserId::OWNER).unwrap().name, "Tijs");
+    // Neither does a reset of the owner's password reopen it.
+    secrets.clear_password(UserId::OWNER).unwrap();
+    assert!(matches!(
+        secrets.create_owner(&name, "$argon2id$again"),
+        Err(StoreError::SetupDone)
+    ));
+    assert!(!secrets.has_password(UserId::OWNER).unwrap());
+}
+
+#[test]
+fn the_owner_cannot_take_another_users_name() {
+    let (store, secrets, _) = setup();
+    store.add_user(&UserName::new("ann").unwrap()).unwrap();
+    assert!(matches!(
+        secrets.create_owner(&UserName::new("ANN").unwrap(), "$argon2id$x"),
+        Err(StoreError::UserName(_))
+    ));
+    assert!(!secrets.setup_done().unwrap(), "nothing was written");
+}
+
+#[test]
+fn a_refresh_digest_finds_its_device_until_that_is_revoked_or_expires() {
+    let (store, secrets, clock) = setup();
+    let device = store.add_device(UserId::OWNER, "desktop", 5_000).unwrap();
+    assert!(matches!(
+        secrets.put_session(device.id, &[1; 4]),
+        Err(StoreError::InviteInvalid)
+    ));
+    secrets.put_session(device.id, &[1; 32]).unwrap();
+    let found = secrets.session_for(&[1; 32]).unwrap().unwrap();
+    assert_eq!(found.device, device.id);
+    assert_eq!(found.user, UserId::OWNER);
+    assert_eq!(found.role, Role::Owner);
+    assert_eq!(secrets.session_for(&[2; 32]).unwrap(), None);
+    // A new token replaces the old one.
+    secrets.put_session(device.id, &[3; 32]).unwrap();
+    assert_eq!(secrets.session_for(&[1; 32]).unwrap(), None);
+    assert!(secrets.session_for(&[3; 32]).unwrap().is_some());
+    clock.set(5_000);
+    assert_eq!(secrets.session_for(&[3; 32]).unwrap(), None, "expired");
+    clock.set(1_000);
+    store.revoke_device(UserId::OWNER, device.id).unwrap();
+    assert_eq!(secrets.session_for(&[3; 32]).unwrap(), None, "revoked");
 }

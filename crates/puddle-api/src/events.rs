@@ -150,12 +150,14 @@ fn lagged(missed: u64) -> sse::Event {
         .unwrap_or_else(|_| sse::Event::default().event("lagged").data("{}"))
 }
 
-/// The SSE stream for one subscriber. It ends when the hub is dropped or the server shuts down.
+/// The SSE stream for one subscriber. It ends when the hub is dropped, the server shuts down or
+/// `ended` completes (the subscriber's device was revoked).
 pub(crate) fn stream(
     rx: broadcast::Receiver<Event>,
     audience: Audience,
     filter: Option<WorkspaceId>,
     mut shutdown: watch::Receiver<bool>,
+    ended: impl Future<Output = ()> + Send + 'static,
 ) -> impl Stream<Item = Result<sse::Event, Infallible>> {
     let events = futures_util::stream::unfold((rx, audience), move |(mut rx, mut audience)| {
         let filter = filter.clone();
@@ -175,8 +177,12 @@ pub(crate) fn stream(
         }
     });
     events.take_until(async move {
-        // A dropped sender also means "shut down".
-        let _ = shutdown.wait_for(|stop| *stop).await;
+        tokio::select! {
+            // A dropped sender also means "shut down".
+            _ = shutdown.wait_for(|stop| *stop) => {}
+            // Or the browser the stream is for was signed out.
+            () = ended => {}
+        }
     })
 }
 

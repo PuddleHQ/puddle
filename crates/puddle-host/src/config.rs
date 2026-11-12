@@ -33,6 +33,8 @@ pub struct ApiSettings {
     pub remote: Option<puddle_api::RemoteServing>,
     /// The listener for a reverse proxy on another machine. Needs [`Self::remote`].
     pub network_listener: Option<NetworkListenerSettings>,
+    /// Whether users other than the owner may sign in (off: everything belongs to the owner).
+    pub multi_user: bool,
 }
 
 /// Where the API listens for a reverse proxy on another machine (opt-in). The host makes the
@@ -56,6 +58,7 @@ impl std::fmt::Debug for ApiSettings {
             .field("connection_file", &self.connection_file)
             .field("remote", &self.remote)
             .field("network_listener", &self.network_listener)
+            .field("multi_user", &self.multi_user)
             .finish()
     }
 }
@@ -166,6 +169,7 @@ impl HostConfig {
                 connection_file,
                 remote: None,
                 network_listener: None,
+                multi_user: false,
             },
             upstream: UpstreamSettings::default(),
             workspaces: WorkspaceConfig::default(),

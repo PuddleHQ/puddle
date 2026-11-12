@@ -22,11 +22,13 @@ use crate::ports::PortsService;
 use crate::proxy_sign_in::ProxySignInService;
 use crate::repos::RepoService;
 use crate::settings::SettingsRepo;
+use crate::signin::SignIn;
 use crate::terminals::{Registry, TerminalService};
 use crate::workspaces::WorkspaceService;
 
 mod app_icon;
 mod audit;
+pub(crate) mod auth;
 mod credentials;
 mod doctor;
 mod environment;
@@ -102,6 +104,8 @@ pub(crate) struct AppState {
     pub(crate) proxy_sign_ins: Arc<dyn ProxySignInService>,
     /// What the host reads of the company network, for the `blocked_by` of a pending request.
     pub(crate) company_signals: Arc<dyn CompanySignals>,
+    /// Browser sign-in; `None` when the host gave the API no accounts to sign in to.
+    pub(crate) sign_in: Option<Arc<SignIn>>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }
@@ -124,6 +128,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(pending::approve))
         .routes(routes!(pending::deny))
         .merge(rules_router())
+        .merge(auth_router())
         .routes(routes!(audit::audit))
         .routes(routes!(settings::get_global, settings::put_global))
         .routes(routes!(
@@ -201,6 +206,22 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             identities::set_git_repo,
             identities::remove_git_repo
         ))
+}
+
+/// Browser sign-in, devices and the sign-in methods, in a router of their own like the rules.
+#[inline(never)]
+fn auth_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(auth::status))
+        .routes(routes!(auth::setup))
+        .routes(routes!(auth::password_sign_in))
+        .routes(routes!(auth::invite))
+        .routes(routes!(auth::refresh))
+        .routes(routes!(auth::sign_out))
+        .routes(routes!(auth::change_password))
+        .routes(routes!(auth::list_devices))
+        .routes(routes!(auth::revoke_device))
+        .routes(routes!(auth::get_methods, auth::put_methods))
 }
 
 /// The terminals, in a router of their own like the rules.

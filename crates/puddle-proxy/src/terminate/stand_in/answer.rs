@@ -565,7 +565,8 @@ pub(super) enum Decoder {
     Gzip(flate2::write::MultiGzDecoder<Sink>),
     /// Waits for the first two bytes to tell zlib (what the standard says `deflate` is) from a
     /// raw deflate stream (what some servers send).
-    DeflateStart(Vec<u8>),
+    /// With the bytes held so far, and a buffer that stays empty.
+    DeflateStart(Vec<u8>, Sink),
     Zlib(flate2::write::ZlibDecoder<Sink>),
     Deflate(flate2::write::DeflateDecoder<Sink>),
     Brotli(Box<brotli_decompressor::DecompressorWriter<Sink>>),
@@ -588,7 +589,7 @@ impl Decoder {
             ["gzip" | "x-gzip"] => Ok(Some(Self::Gzip(flate2::write::MultiGzDecoder::new(
                 Sink::default(),
             )))),
-            ["deflate"] => Ok(Some(Self::DeflateStart(Vec::new()))),
+            ["deflate"] => Ok(Some(Self::DeflateStart(Vec::new(), Sink::default()))),
             ["br"] => Ok(Some(Self::Brotli(Box::new(
                 brotli_decompressor::DecompressorWriter::new(Sink::default(), DECODE_STEP),
             )))),
@@ -612,7 +613,7 @@ impl Decoder {
         out: &mut Vec<u8>,
         limit: usize,
     ) -> io::Result<Pushed> {
-        if let Self::DeflateStart(held) = self {
+        if let Self::DeflateStart(held, _) = self {
             held.extend_from_slice(input);
             let [cmf, flg, ..] = held[..] else {
                 return Ok(Pushed::All);
@@ -628,9 +629,7 @@ impl Decoder {
         }
         let start = out.len();
         for piece in input.chunks(DECODE_STEP) {
-            let Some(sink) = self.sink() else {
-                return Ok(Pushed::All);
-            };
+            let sink = self.sink();
             let room = limit.saturating_sub(out.len() - start);
             if sink.full || room == 0 {
                 return Ok(Pushed::Full);
@@ -640,42 +639,31 @@ impl Decoder {
                 .writer()
                 .write_all(piece)
                 .and_then(|()| self.writer().flush());
-            if let Some(sink) = self.sink() {
-                out.append(&mut sink.buf);
-                if sink.full {
-                    return Ok(Pushed::Full);
-                }
+            let sink = self.sink();
+            out.append(&mut sink.buf);
+            if sink.full {
+                return Ok(Pushed::Full);
             }
             written?;
         }
         Ok(Pushed::All)
     }
 
-    /// Ends the body: what the decoder still holds (about `limit` bytes at most), or an error
-    /// when the body stopped short.
-    pub(super) fn finish(&mut self, out: &mut Vec<u8>, limit: usize) -> io::Result<Pushed> {
-        if let Some(sink) = self.sink() {
-            if sink.full {
-                return Ok(Pushed::Full);
-            }
-            sink.limit = limit;
-        }
+    /// Ends the body: what the decoder still holds (a write's worth at most), or an error when
+    /// the body stopped short. Not called after `push` said `Full`.
+    pub(super) fn finish(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
+        self.sink().limit = usize::MAX;
         let ended = match self {
-            Self::DeflateStart(held) if held.is_empty() => return Ok(Pushed::All),
-            Self::DeflateStart(_) => Err(io::Error::other("a deflate body ended at once")),
+            Self::DeflateStart(held, _) if held.is_empty() => return Ok(()),
+            Self::DeflateStart(..) => Err(io::Error::other("a deflate body ended at once")),
             Self::Gzip(decoder) => decoder.try_finish(),
             Self::Zlib(decoder) => decoder.try_finish(),
             Self::Deflate(decoder) => decoder.try_finish(),
             Self::Brotli(decoder) => decoder.close(),
             Self::Zstd(decoder) => decoder.flush(),
         };
-        if let Some(sink) = self.sink() {
-            out.append(&mut sink.buf);
-            if sink.full {
-                return Ok(Pushed::Full);
-            }
-        }
-        ended.map(|()| Pushed::All)
+        out.append(&mut self.sink().buf);
+        ended
     }
 
     fn writer(&mut self) -> &mut dyn io::Write {
@@ -685,19 +673,19 @@ impl Decoder {
             Self::Deflate(decoder) => decoder,
             Self::Brotli(decoder) => &mut **decoder,
             Self::Zstd(decoder) => decoder,
-            Self::DeflateStart(held) => held,
+            Self::DeflateStart(held, _) => held,
         }
     }
 
-    /// The buffer the decoder writes to (`None` before the deflate kind is known).
-    fn sink(&mut self) -> Option<&mut Sink> {
+    /// The buffer the decoder writes to.
+    fn sink(&mut self) -> &mut Sink {
         match self {
-            Self::Gzip(decoder) => Some(decoder.get_mut()),
-            Self::Zlib(decoder) => Some(decoder.get_mut()),
-            Self::Deflate(decoder) => Some(decoder.get_mut()),
-            Self::Brotli(decoder) => Some(decoder.get_mut()),
-            Self::Zstd(decoder) => Some(decoder.get_mut()),
-            Self::DeflateStart(_) => None,
+            Self::Gzip(decoder) => decoder.get_mut(),
+            Self::Zlib(decoder) => decoder.get_mut(),
+            Self::Deflate(decoder) => decoder.get_mut(),
+            Self::Brotli(decoder) => decoder.get_mut(),
+            Self::Zstd(decoder) => decoder.get_mut(),
+            Self::DeflateStart(_, sink) => sink,
         }
     }
 }
@@ -734,12 +722,12 @@ impl ScrubBody {
             return Ok(Zeroizing::new(data.to_vec()));
         };
         let mut plain = Zeroizing::new(Vec::new());
-        let mut pushed = decoder
+        let pushed = decoder
             .push(data, &mut plain, MAX_DECODED_STEP)
             .map_err(|err| undecodable(&err))?;
         if end && pushed == Pushed::All {
-            pushed = decoder
-                .finish(&mut plain, MAX_DECODED_STEP)
+            decoder
+                .finish(&mut plain)
                 .map_err(|err| undecodable(&err))?;
         }
         if pushed == Pushed::Full {

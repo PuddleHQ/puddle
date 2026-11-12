@@ -390,10 +390,9 @@ impl ScanBody {
                 let mut plain = Zeroizing::new(Vec::new());
                 let result = decoder.push(data, &mut plain, room).and_then(|pushed| {
                     if end && pushed == Pushed::All {
-                        decoder.finish(&mut plain, room)
-                    } else {
-                        Ok(pushed)
+                        decoder.finish(&mut plain)?;
                     }
+                    Ok(pushed)
                 });
                 // The cap, or a fault: whatever decoded before it was read; the rest cannot be
                 // (or need not be).

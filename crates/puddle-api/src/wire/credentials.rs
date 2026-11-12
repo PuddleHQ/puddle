@@ -5,7 +5,8 @@
 //! that carries one never echoes it.
 
 use puddle_secrets::{
-    DiscoveredAccount, HostName, Listing, OrgName, Secret, SignInStart, SourceError, TokenScope,
+    DiscoveredAccount, HostName, Listing, OrgName, Secret, SignInStart, SourceError, SourceSpec,
+    TokenScope,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -99,8 +100,13 @@ pub struct CheckResult {
     /// Why not, in words; `null` when it is readable.
     #[schema(required = true)]
     pub problem: Option<String>,
-    /// True when the way out is for the user to sign in.
+    /// True when the way out is for Puddle to start a sign-in. The Azure CLI never is: the user
+    /// signs in to it in a terminal (see `fix_step`).
     pub needs_sign_in: bool,
+    /// The exact step the user takes to fix it, when there is one (install `az`, run
+    /// `az login --tenant <tenant>`); `null` otherwise.
+    #[schema(required = true)]
+    pub fix_step: Option<String>,
 }
 
 impl CheckResult {
@@ -109,14 +115,16 @@ impl CheckResult {
             readable: true,
             problem: None,
             needs_sign_in: false,
+            fix_step: None,
         }
     }
 
-    pub(crate) fn from_error(err: &SourceError) -> Self {
+    pub(crate) fn from_error(source: &SourceSpec, err: &SourceError) -> Self {
         Self {
             readable: false,
             problem: Some(source_problem(err)),
-            needs_sign_in: err.needs_sign_in(),
+            needs_sign_in: err.needs_sign_in() && !matches!(source, SourceSpec::AzCli { .. }),
+            fix_step: source.fix_step(err),
         }
     }
 }

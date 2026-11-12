@@ -12,6 +12,8 @@
   import SignInDialog from "#lib/components/SignInDialog.svelte";
   import Toast from "#lib/components/Toast.svelte";
   import {
+    azNote,
+    canSignIn,
     coverageText,
     describeSource,
     seenText,
@@ -160,8 +162,19 @@
               <p class="muted">
                 Covers {coverageText(credential.covers, credential.host)}
               </p>
+              {#if credential.source.kind === "az_cli"}
+                <p class="muted" data-testid="az-note">
+                  {azNote(credential.source)}
+                </p>
+              {/if}
               {#if check.state === "problem"}
                 <p class="problem" role="status">{check.message}</p>
+                {#if check.fixStep}
+                  <p class="fix" data-testid="fix-step">
+                    <b>What to do:</b>
+                    {check.fixStep}
+                  </p>
+                {/if}
               {:else if check.state === "ok"}
                 <p class="muted" role="status">
                   Puddle can read it. (It checks that a token comes back, and
@@ -182,7 +195,7 @@
                 )} on {credential.host}"
                 onclick={() => test(credential)}>Test</button
               >
-              {#if credential.source.kind !== "stored" && check.state === "problem" && check.needsSignIn}
+              {#if canSignIn(credential.source) && check.state === "problem" && check.needsSignIn}
                 <button
                   type="button"
                   class="btn primary"
@@ -350,5 +363,12 @@
   }
   .problem {
     color: var(--color-danger);
+  }
+  .fix {
+    margin: 0;
+    padding: var(--space-2);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-raised);
   }
 </style>

@@ -13,7 +13,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::clock::Clock;
 use crate::error::StoreError;
 use crate::store::{lock, sql_ts};
-use crate::users::UserId;
+use crate::users::{DeviceId, DeviceSession, UserId};
 
 /// The shortest invite digest accepted, in bytes.
 pub const MIN_INVITE_DIGEST_BYTES: usize = 16;
@@ -72,6 +72,110 @@ impl AccountSecrets {
             )
             .optional()?;
         Ok(hash.is_some_and(|hash| verify(&hash)))
+    }
+
+    /// Whether `user` has a password.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn has_password(&self, user: UserId) -> Result<bool, StoreError> {
+        Ok(lock(&self.conn).query_row(
+            "SELECT count(*) > 0 FROM account_passwords WHERE user_id = ?1",
+            [user.get()],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Whether the owner account has been made (by the first visitor).
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn setup_done(&self) -> Result<bool, StoreError> {
+        Ok(lock(&self.conn)
+            .query_row("SELECT count(*) > 0 FROM account_setup", [], |r| r.get(0))?)
+    }
+
+    /// The first visitor's step: names the owner and gives it `hash` as its password, once.
+    /// Whoever calls it first wins; every later call fails, however many ran at once.
+    ///
+    /// # Errors
+    /// [`StoreError::SetupDone`] when the owner account is already made,
+    /// [`StoreError::UserName`] when another user has the name, or a database error.
+    pub fn create_owner(&self, name: &crate::UserName, hash: &str) -> Result<(), StoreError> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = sql_ts(self.clock.now_ms());
+        let inserted = tx.execute(
+            "INSERT INTO account_setup (id, completed_at) VALUES (1, ?1) ON CONFLICT DO NOTHING",
+            [now],
+        )?;
+        if inserted == 0 {
+            return Err(StoreError::SetupDone);
+        }
+        let taken: bool = tx.query_row(
+            "SELECT count(*) > 0 FROM users WHERE name = ?1 AND id <> ?2",
+            params![name.as_str(), UserId::OWNER.get()],
+            |r| r.get(0),
+        )?;
+        if taken {
+            return Err(StoreError::UserName("that user name is taken".to_owned()));
+        }
+        tx.execute(
+            "UPDATE users SET name = ?1 WHERE id = ?2",
+            params![name.as_str(), UserId::OWNER.get()],
+        )?;
+        tx.execute(
+            "INSERT INTO account_passwords (user_id, hash, changed_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT (user_id) DO UPDATE SET hash = excluded.hash, changed_at = excluded.changed_at",
+            params![UserId::OWNER.get(), hash, now],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Gives `device` the refresh token with this `digest` (a hash of the token, never the
+    /// token), replacing the one before.
+    ///
+    /// # Errors
+    /// [`StoreError::InviteInvalid`] for a digest shorter than [`MIN_INVITE_DIGEST_BYTES`], or a
+    /// database error.
+    pub fn put_session(&self, device: DeviceId, digest: &[u8]) -> Result<(), StoreError> {
+        if digest.len() < MIN_INVITE_DIGEST_BYTES {
+            return Err(StoreError::InviteInvalid);
+        }
+        lock(&self.conn).execute(
+            "INSERT INTO account_sessions (device_id, refresh_digest) VALUES (?1, ?2)
+             ON CONFLICT (device_id) DO UPDATE SET refresh_digest = excluded.refresh_digest",
+            params![device.get(), digest],
+        )?;
+        Ok(())
+    }
+
+    /// The device a refresh token's `digest` belongs to, while that device is neither revoked
+    /// nor expired.
+    ///
+    /// # Errors
+    /// A database error, or a stored row that does not parse.
+    pub fn session_for(&self, digest: &[u8]) -> Result<Option<DeviceSession>, StoreError> {
+        let now = sql_ts(self.clock.now_ms());
+        let found: Option<(i64, i64, String)> = lock(&self.conn)
+            .query_row(
+                "SELECT d.id, d.user_id, u.role FROM account_sessions s
+                   JOIN devices d ON d.id = s.device_id JOIN users u ON u.id = d.user_id
+                 WHERE s.refresh_digest = ?1 AND d.revoked_at IS NULL AND d.expires_at > ?2",
+                params![digest, now],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        found
+            .map(|(device, user, role)| {
+                Ok(DeviceSession {
+                    device: DeviceId::from_stored(device),
+                    user: UserId::from_stored(user),
+                    role: crate::store::users::role_of(user, &role)?,
+                })
+            })
+            .transpose()
     }
 
     /// Removes `user`'s password (a reset from the server), so they can't sign in until they set

@@ -24,6 +24,7 @@ use utoipa::ToSchema;
 use crate::error::ApiError;
 
 mod app_icon;
+mod auth;
 mod credentials;
 mod doctor;
 mod environment;
@@ -45,6 +46,11 @@ mod start_folder;
 mod workspaces;
 
 pub use app_icon::{AppIconChoice, AppIcons, BuiltInIcon, CustomIcon};
+pub use auth::{
+    AuthStatus, ChangePasswordRequest, DeviceList, DeviceView, InviteRequest,
+    PasswordSignInRequest, SessionGrant, SetupRequest, SignInMethodKind, SignInMethodRequest,
+    SignInMethodView, SignInMethods, UserView,
+};
 pub(crate) use credentials::source_problem;
 pub use credentials::{
     CheckRequest, CheckResult, FoundAccount, FoundAccounts, FoundProblem, FoundVia, SignInRequest,

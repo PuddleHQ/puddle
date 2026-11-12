@@ -27,7 +27,7 @@ Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) 
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
 whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
 and dropped, a literal port bound or connected in a test (a name's authority and a URL are fakes and stay out), a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
-asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`, BrokenPipe: use `puddle_test_kit::feed_stdin`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Three bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
+asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`, BrokenPipe: use `puddle_test_kit::feed_stdin`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Four bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages), and `ban-html-sink` (an HTML injection sink in `ui/src`: `{@html`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`; no reason comment excuses one). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
 `status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
@@ -415,6 +415,7 @@ def scan(root):
                 add("marker-" + m.group(1).lower(), "any", f, i, line)
                 if not re.search(r"\b(?:TODO|HACK|FIXME|XXX)\(\s*[\w@./-]+\s*\)|#\d+|https?://", line):
                     add("noreason", "any", f, i, m.group(1) + ": names no owner (`" + m.group(1) + "(who)`, `#123` or a URL) | " + line)
+        ban_html_sink_rows(f, lines, lambda kind, c, i, detail, f=f: add(kind, c, f, i, detail))
         if f.startswith("ui/e2e/") and f.endswith(".ts"):
             flake_e2e(lines, lambda kind, i, detail, f=f: add(kind, "test", f, i, detail))
         if f.startswith("ui/") and os.path.splitext(f)[1] in (".ts", ".js", ".svelte"):
@@ -560,6 +561,23 @@ def ban_rows(raw, code, ctx, add):
             if m and m.group(1).endswith("."):
                 add("ban-error-period", ctx(i), i, raw[i])
                 add("noreason", ctx(i), i, "error message ends with a period: drop it (STANDARDS section 5) | " + raw[i])
+
+
+# The UI keeps zero HTML injection sinks: the style policy lets the terminal emulator inject `<style>` elements, which
+# markup injected through a sink could reach. Tests, generated declarations and node_modules are out of scope.
+BAN_HTML_SINK = re.compile(r"\{@html\b|\b(?:innerHTML|outerHTML|insertAdjacentHTML)\b|\bdocument\s*\.\s*write(?:ln)?\s*\(")
+BAN_HTML_SINK_FIX = "render text with interpolation (`{value}`) or a component, never as markup"
+
+
+def ban_html_sink_rows(f, lines, add):
+    """Rows `ban-html-sink` for one UI source file; `add(kind, ctx, i, detail)`."""
+    ext = os.path.splitext(f)[1]
+    if not f.startswith("ui/src/") or ext not in (".ts", ".js", ".svelte") or f.endswith(".d.ts") or ".test." in f or ".spec." in f:
+        return
+    for i, line in enumerate(lines):
+        if BAN_HTML_SINK.search(line) and not line.lstrip().startswith(("//", "*", "/*", "<!--")):
+            add("ban-html-sink", "prod", i, line)
+            add("noreason", "prod", i, f"HTML injection sink: {BAN_HTML_SINK_FIX} | " + line)
 
 
 def kit_dependency_rows(texts, add):
@@ -1258,6 +1276,25 @@ def flake_self_test():
         failures.append("ban-error: lower-case messages, `{0}` and a mid-text period are not sites")
     if not any(r[0] == "noreason" for r in run({"crates/x/src/lib.rs": "#![forbid(unsafe_code)]\n#[serde(untagged)]\nenum E { A }\n"})):
         failures.append("ban-untagged: a site must add a noreason row so --missing fails")
+    def sinks(files):
+        return sorted(r[2] for r in run(files) if r[0] == "ban-html-sink")
+    sink_svelte, sink_ts = read("ban-html-sink.bad.svelte.txt"), read("ban-html-sink.bad.ts.txt")
+    if len(sinks({"ui/src/lib/A.svelte": sink_svelte})) != 1:
+        failures.append("ban-html-sink: `{@html` in a .svelte file must be flagged")
+    for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+        hits = [ln for ln in sink_ts.split("\n") if sink in ln]
+        if len(hits) != 1 or len(sinks({"ui/src/lib/a.ts": sink_ts})) != 4:
+            failures.append(f"ban-html-sink: the fixture must trip {sink} once and all four sinks in all: {hits}")
+        only = "\n".join(ln for ln in sink_ts.split("\n") if sink not in ln or ln.lstrip().startswith("//"))
+        if len(sinks({"ui/src/lib/a.ts": only})) != 3:
+            failures.append(f"ban-html-sink: {sink} was not flagged on its own")
+    if sinks({"ui/src/lib/A.svelte": read("ban-html-sink.good.svelte.txt")}):
+        failures.append("ban-html-sink: text interpolation, a component and a comment are not sinks")
+    for rel in ("ui/src/lib/a.test.ts", "ui/src/lib/a.spec.ts", "ui/src/lib/api/schema.d.ts", "ui/e2e/a.spec.ts", "crates/x/src/lib.rs"):
+        if sinks({rel: sink_ts}):
+            failures.append(f"ban-html-sink: {rel} is out of scope")
+    if not any(r[0] == "noreason" and "HTML injection sink" in r[3] for r in run({"ui/src/lib/A.svelte": sink_svelte})):
+        failures.append("ban-html-sink: a site must add a noreason row that names the fix so --missing fails")
     p2_bad, p2_good = read("p2-fixed-port.bad.rs.txt"), read("p2-fixed-port.good.rs.txt")
     case("p2 original", "p2", {"crates/x/tests/p.rs": p2_bad}, 3, 3)
     case("p2 fix: port 0, a fake authority and URL, a log line stay out; a reasoned literal counts once", "p2", {"crates/x/tests/p.rs": p2_good}, 1, 0)

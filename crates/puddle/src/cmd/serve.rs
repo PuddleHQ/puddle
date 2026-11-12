@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `puddle serve [--port <n>] [--connection-file <path>]`: runs the host process (store,
-//! proxies, sandbox runtime, workspaces, API) until Ctrl-C, a termination signal or the end of
-//! the console session, then stops every workspace cleanly.
+//! `puddle serve`: runs the host process (store, proxies, sandbox runtime, workspaces, API)
+//! until Ctrl-C, a termination signal or the end of the console session, then stops every
+//! workspace cleanly.
 //!
-//! The work is in [`puddle_host`]; this file is the process around it: the Windows
-//! front/worker split, logging, the order "prepare before the first thread", and the exit code.
+//! The options come from [`options`] (flags, environment, a `--config` file, defaults; see
+//! `docs/serve.md`). The work is in [`puddle_host`]; this file is the process around it: the
+//! Windows front/worker split, logging, the order "prepare before the first thread", and the exit
+//! code.
 
-use std::ffi::OsStr;
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use puddle_host::{Host, HostConfig, HostOptions, MsbFactory, SystemPlatform, prepare};
 use puddle_lifecycle::{Role, supervise, wait_for_shutdown};
-use puddle_log::{ScopedFilter, init_stderr};
+use puddle_log::init_stderr;
 
 use crate::cli::{Command, UsageError};
+
+pub mod config_file;
+pub mod options;
+
+use config_file::ConfigError;
+use options::{Effective, Flags, resolve, spec_for_flag};
 
 /// The environment variable that overrides the guest agent's location (development builds).
 pub const AGENT_VAR: &str = "PUDDLE_AGENT_BIN";
@@ -22,17 +28,13 @@ pub const AGENT_VAR: &str = "PUDDLE_AGENT_BIN";
 /// The environment variable that overrides the bundled code-server folder (development builds).
 pub const CODE_SERVER_VAR: &str = "PUDDLE_CODE_SERVER_DIR";
 
-/// The environment variable that sets the log level (`error`..`trace`, default `info`) for
-/// Puddle's crates, with `crate=level` entries to turn a dependency up (`trace,hyper=debug`).
-pub const LOG_VAR: &str = "PUDDLE_LOG";
-
-/// How `puddle serve` should run.
+/// How `puddle serve` should run: the flags that were given and whether to only print the options.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ServeArgs {
-    /// The API's port on 127.0.0.1 (a free one when absent).
-    pub port: Option<u16>,
-    /// Where to write the connection file instead of the data folder's `api.json`.
-    pub connection_file: Option<PathBuf>,
+    /// The options given as flags, by option key (see [`options::OPTIONS`]).
+    pub flags: Flags,
+    /// `--print-config`: print the effective options and their sources, then exit.
+    pub print_config: bool,
 }
 
 /// Parses the arguments after `serve`.
@@ -48,70 +50,68 @@ where
     let mut parsed = ServeArgs::default();
     let mut args = args;
     while let Some(arg) = args.next() {
-        match arg.as_ref() {
-            "--port" if parsed.port.is_none() => {
-                let value = args
-                    .next()
-                    .ok_or(UsageError::MissingArgument("--port <n>"))?;
-                parsed.port = Some(
-                    value
-                        .as_ref()
-                        .parse()
-                        .map_err(|_| UsageError::UnknownArgument(value.as_ref().to_owned()))?,
-                );
-            }
-            "--connection-file" if parsed.connection_file.is_none() => {
-                let value = args
-                    .next()
-                    .ok_or(UsageError::MissingArgument("--connection-file <path>"))?;
-                parsed.connection_file = Some(PathBuf::from(value.as_ref()));
-            }
-            other => return Err(UsageError::UnknownArgument(other.to_owned())),
+        let arg = arg.as_ref();
+        if arg == PRINT_CONFIG_FLAG && !parsed.print_config {
+            parsed.print_config = true;
+            continue;
         }
+        let spec = spec_for_flag(arg)
+            .filter(|spec| !parsed.flags.contains_key(spec.key))
+            .ok_or_else(|| UsageError::UnknownArgument(arg.to_owned()))?;
+        let text = args.next().ok_or(UsageError::MissingArgument(spec.usage))?;
+        let value =
+            spec.kind
+                .parse_text(text.as_ref())
+                .map_err(|expected| UsageError::InvalidValue {
+                    option: spec.flag(),
+                    expected,
+                    value: text.as_ref().to_owned(),
+                })?;
+        parsed.flags.insert(spec.key, value);
     }
     Ok(Command::Serve(parsed))
 }
 
-/// The host configuration for this machine and these arguments.
+/// The flag that prints the effective options and exits.
+pub const PRINT_CONFIG_FLAG: &str = "--print-config";
+
+/// The options for this process: its flags, its environment, the config file they name.
+///
+/// # Errors
+///
+/// [`ConfigError`] with the whole message when an environment variable or the config file is not
+/// usable.
+pub fn effective(args: &ServeArgs) -> Result<Effective, ConfigError> {
+    let cwd = std::env::current_dir().map_err(|e| ConfigError::WorkingDirectory(e.to_string()))?;
+    resolve(&args.flags, &|name| std::env::var_os(name), &cwd)
+}
+
+/// The host configuration for this machine and these options.
 ///
 /// # Errors
 ///
 /// [`puddle_host::HostError`] when the data folder or runtime folder cannot be found.
 pub fn config(
-    args: &ServeArgs,
+    options: &Effective,
     exe: &std::path::Path,
 ) -> Result<HostConfig, puddle_host::HostError> {
-    let mut config = HostConfig::installed_for_user(exe)?;
+    let mut config = match options.path("data_dir") {
+        Some(data) => HostConfig::installed(exe, data)?,
+        None => HostConfig::installed_for_user(exe)?,
+    };
     if let Some(agent) = std::env::var_os(AGENT_VAR) {
         config.guest.agent_binary = agent.into();
     }
     if let Some(dir) = std::env::var_os(CODE_SERVER_VAR) {
         config.guest.code_server = Some(dir.into());
     }
-    if let Some(port) = args.port {
+    if let Some(port) = options.port() {
         config.api.port = port;
     }
-    if let Some(file) = &args.connection_file {
-        config.api.connection_file = Some(file.clone());
+    if let Some(file) = options.path("connection_file") {
+        config.api.connection_file = Some(file.to_path_buf());
     }
     Ok(config)
-}
-
-/// The filter `PUDDLE_LOG` asks for, `info` when unset. Any other value is an error: a typo must
-/// not quietly give the default level.
-fn log_filter(value: Option<&OsStr>) -> Result<ScopedFilter, String> {
-    let Some(value) = value else {
-        return Ok(ScopedFilter::default());
-    };
-    value
-        .to_str()
-        .and_then(|text| ScopedFilter::parse(text).ok())
-        .ok_or_else(|| {
-            format!(
-                "{LOG_VAR} has the invalid value {:?}: expected error, warn, info, debug or trace, optionally followed by crate=level entries",
-                value.to_string_lossy()
-            )
-        })
 }
 
 /// Runs the host. Exit code 0 after a clean stop, 1 when it could not start or a workspace did
@@ -123,6 +123,18 @@ fn log_filter(value: Option<&OsStr>) -> Result<ScopedFilter, String> {
     reason = "a daemon's start-up line and fatal errors go to the console"
 )]
 pub fn run(args: &ServeArgs) -> ExitCode {
+    // Before anything starts, so a bad file or `--print-config` never reaches the host.
+    let options = match effective(args) {
+        Ok(options) => options,
+        Err(e) => {
+            eprintln!("puddle: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if args.print_config {
+        print!("{}", options.render());
+        return ExitCode::SUCCESS;
+    }
     // On Windows this is the front process, which only relays; the worker runs the host.
     match supervise() {
         Ok(Role::Front { exit_code }) => {
@@ -134,20 +146,13 @@ pub fn run(args: &ServeArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let filter = match log_filter(std::env::var_os(LOG_VAR).as_deref()) {
-        Ok(filter) => filter,
-        Err(e) => {
-            eprintln!("puddle: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    init_stderr(filter, false);
+    init_stderr(options.log_filter(), false);
     // Before the first credential is read; `PUDDLE_ALLOW_DUMPS=1` keeps native dumps for diagnosis.
     puddle_no_dump::harden_from_env().log();
     // Everything up to the async runtime happens while this is the only thread.
     let prepared = match std::env::current_exe()
         .map_err(|e| puddle_host::HostError::DataDir(e.to_string()))
-        .and_then(|exe| config(args, &exe))
+        .and_then(|exe| config(&options, &exe))
         .and_then(|config| prepare(config, &SystemPlatform::new().with_dev_override_from_env()))
     {
         Ok(prepared) => prepared,

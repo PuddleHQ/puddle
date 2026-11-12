@@ -405,7 +405,7 @@ describe("a record as a row", () => {
     const detail = (reason: string) =>
       row(connection(1, { reason, rule_id: null }).record).detail;
     expect(detail("push_denied")).toBe(
-      'because the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+      'because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
     );
     for (const reason of [
       "push_denied",
@@ -487,7 +487,7 @@ describe("a record as a row", () => {
     );
     expect(refused.outcome).toEqual({ label: "Blocked", tone: "deny" });
     expect(refused.detail).toBe(
-      'SSH: push to github.com/acme/other · because the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+      'SSH: push to github.com/acme/other · because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
     );
     const http = row(
       connection(2, {

@@ -245,7 +245,7 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
                 return;
             }
             Err(_) => {
-                tracing::debug!(workspace = %workspace, "ssh agent stream idle, closed");
+                tracing::info!(workspace = %workspace, idle_secs = idle.as_secs(), "ssh agent stream idle, closed");
                 return;
             }
         };

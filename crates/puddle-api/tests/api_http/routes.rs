@@ -656,6 +656,52 @@ async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off
 }
 
 #[tokio::test]
+async fn the_audit_log_filters_on_the_company_network_category() {
+    use puddle_types::{
+        CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason,
+    };
+    let api = start().await;
+    let ask = |host: &str| {
+        EgressRequest::new(
+            WorkspaceId::new("box").unwrap(),
+            Host::parse_normalised(host).unwrap(),
+            443,
+        )
+    };
+    let mut company = ConnectionEvent::new(
+        &ask("100.64.3.7"),
+        ConnectionDecision::Allow,
+        ConnectionReason::Rule,
+    );
+    company.company_network = Some(CompanySignal::VpnRoute);
+    api.store.record(&company);
+    api.store.record(&ConnectionEvent::new(
+        &ask("example.com"),
+        ConnectionDecision::Allow,
+        ConnectionReason::Rule,
+    ));
+    let hosts = |reply: crate::common::Reply| -> Vec<String> {
+        reply.json()["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["record"]["host"].as_str().map(str::to_owned))
+            .collect()
+    };
+    assert_eq!(
+        hosts(api.get("/api/audit?category=company_network").await),
+        ["100.64.3.7"]
+    );
+    // An empty category is no filter; an unknown one is refused.
+    assert_eq!(
+        hosts(api.get("/api/audit?category=").await),
+        ["example.com", "100.64.3.7"]
+    );
+    assert_eq!(api.get("/api/audit?category=other").await.status, 422);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn without_host_signals_a_cgnat_address_is_plain_private() {
     let api = start().await;
     let id = api.request("box", "100.64.3.7");

@@ -70,10 +70,12 @@ pub(crate) async fn check_credential(
 ) -> Result<Json<CheckResult>, ApiError> {
     let source = body.source.into_store()?;
     crate::stored_ids::check_source(principal.user, &source)?;
-    Ok(Json(match state.credentials.check(source).await? {
-        Check::Readable => CheckResult::readable(),
-        Check::Problem(err) => CheckResult::from_error(&err),
-    }))
+    Ok(Json(
+        match state.credentials.check(source.clone()).await? {
+            Check::Readable => CheckResult::readable(),
+            Check::Problem(err) => CheckResult::from_error(&source, &err),
+        },
+    ))
 }
 
 /// Keeps a pasted token in the operating system's credential store and answers with the source

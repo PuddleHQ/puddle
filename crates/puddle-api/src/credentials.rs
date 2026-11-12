@@ -125,12 +125,15 @@ impl SecretStore for NoSecretStore {
     }
 }
 
-fn sign_in_error(err: SignInError) -> CredentialsError {
+fn sign_in_error(source: &SourceSpec, err: SignInError) -> CredentialsError {
     let said = err.to_string();
     match err {
-        SignInError::NothingToSignIn => CredentialsError::Invalid(
-            "a pasted token has nothing to sign in to; paste a new one".into(),
-        ),
+        SignInError::NothingToSignIn => CredentialsError::Invalid(match source {
+            SourceSpec::AzCli { tenant, .. } => format!(
+                "Puddle does not sign in to the Azure CLI; run `az login --tenant {tenant}` in a terminal"
+            ),
+            _ => "a pasted token has nothing to sign in to; paste a new one".into(),
+        }),
         SignInError::NoPrompt(..) => {
             CredentialsError::Unavailable(format!("{said}; try again, or sign in from a terminal"))
         }
@@ -254,7 +257,12 @@ impl CredentialService for HostCredentials {
     }
 
     fn sign_in(&self, source: SourceSpec) -> BoxFuture<'_, Result<SignInStart, CredentialsError>> {
-        Box::pin(async move { self.sign_ins.begin(&source).await.map_err(sign_in_error) })
+        Box::pin(async move {
+            self.sign_ins
+                .begin(&source)
+                .await
+                .map_err(|err| sign_in_error(&source, err))
+        })
     }
 
     fn last_read(&self, source: &SourceSpec) -> Option<LastRead> {
@@ -401,8 +409,8 @@ impl CredentialService for FakeCredentials {
 
     fn sign_in(&self, source: SourceSpec) -> BoxFuture<'_, Result<SignInStart, CredentialsError>> {
         Box::pin(async move {
-            if matches!(source, SourceSpec::Stored { .. }) {
-                return Err(sign_in_error(SignInError::NothingToSignIn));
+            if matches!(source, SourceSpec::Stored { .. } | SourceSpec::AzCli { .. }) {
+                return Err(sign_in_error(&source, SignInError::NothingToSignIn));
             }
             let mut state = self.state();
             state.unreadable.remove(&source);

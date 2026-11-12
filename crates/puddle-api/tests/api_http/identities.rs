@@ -162,6 +162,100 @@ async fn a_git_credential_source_comes_back_as_sent() {
 }
 
 #[tokio::test]
+async fn az_cli_source_is_accepted_and_a_command_field_is_refused() {
+    let api = start().await;
+    let mut request = body("Contoso", &["contoso"], false);
+    request["credentials"][0]["host"] = json!("dev.azure.com");
+    request["credentials"][0]["source"] =
+        json!({"kind": "az_cli", "tenant": "contoso.onmicrosoft.com", "org": "contoso"});
+    let made = api.send("POST", "/api/identities", Some(&request)).await;
+    assert_eq!(made.status, 201, "{}", made.body);
+    let source = &made.json()["credentials"][0]["source"];
+    assert_eq!(
+        (
+            source["kind"].clone(),
+            source["tenant"].clone(),
+            source["org"].clone()
+        ),
+        (
+            json!("az_cli"),
+            json!("contoso.onmicrosoft.com"),
+            json!("contoso")
+        )
+    );
+
+    // `org` is `null`, never left out, when it was not sent.
+    request["label"] = json!("Fabrikam");
+    request["credentials"][0]["source"] = json!({"kind": "az_cli", "tenant": "fabrikam.com"});
+    request["credentials"][0]["covers"] = json!({"owners": ["fabrikam"], "rest_of_host": false});
+    let again = api.send("POST", "/api/identities", Some(&request)).await;
+    assert_eq!(again.status, 201, "{}", again.body);
+    assert_eq!(again.json()["credentials"][0]["source"]["org"], Value::Null);
+
+    // No command, resource or scope field is carried; an option-like tenant and another host are refused.
+    let mut refused = Vec::new();
+    for extra in ["command", "resource", "scope"] {
+        let mut case = request.clone();
+        case["label"] = json!(extra);
+        case["credentials"][0]["source"][extra] = json!("curl evil");
+        refused.push(case);
+    }
+    let mut option = request.clone();
+    option["credentials"][0]["source"]["tenant"] = json!("--help");
+    refused.push(option);
+    let mut elsewhere = request.clone();
+    elsewhere["credentials"][0]["host"] = json!("github.com");
+    refused.push(elsewhere);
+    for case in refused {
+        let reply = api.send("POST", "/api/identities", Some(&case)).await;
+        assert_eq!(reply.status, 422, "{case} -> {}", reply.body);
+    }
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_az_cli_check_names_the_exact_step_and_offers_no_sign_in() {
+    use puddle_secrets::{OrgName, SourceError, SourceSpec, TenantId};
+    let api = start().await;
+    let az = SourceSpec::AzCli {
+        tenant: TenantId::new("contoso.onmicrosoft.com").unwrap(),
+        org: Some(OrgName::new("contoso").unwrap()),
+    };
+    let source = json!({"kind": "az_cli", "tenant": "contoso.onmicrosoft.com", "org": "contoso"});
+    api.credentials
+        .set_unreadable(az, Some(SourceError::NotSignedIn));
+    let checked = api
+        .send(
+            "POST",
+            "/api/credentials/check",
+            Some(&json!({"source": source})),
+        )
+        .await;
+    assert_eq!(checked.status, 200, "{}", checked.body);
+    let result = checked.json();
+    assert_eq!(result["readable"], false);
+    assert_eq!(result["needs_sign_in"], false);
+    assert!(
+        result["fix_step"]
+            .as_str()
+            .unwrap()
+            .contains("az login --tenant contoso.onmicrosoft.com"),
+        "{result}"
+    );
+    // Puddle starts no sign-in for it.
+    let signed = api
+        .send(
+            "POST",
+            "/api/credentials/sign-in",
+            Some(&json!({"source": source})),
+        )
+        .await;
+    assert_eq!(signed.status, 422, "{}", signed.body);
+    assert!(signed.body.contains("az login --tenant"), "{}", signed.body);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_credentials_last_read_is_null_before_any_and_follows_every_use_never_a_value() {
     use puddle_secrets::{AccountName, HostName, ReadUse, SourceError, SourceSpec};
     let api = start().await;

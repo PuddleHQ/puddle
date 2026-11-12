@@ -2,6 +2,9 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import {
+    AZURE_HOST,
+    azLoginCommand,
+    azSource,
     coverageOf,
     coverageProblem,
     describeSource,
@@ -13,9 +16,11 @@
     orgProblem,
     parseOwners,
     sourceOf,
+    tenantProblem,
     toggleOwner,
     tokenProblem,
     type AccountProfile,
+    type Check,
     type CredentialDraft,
     type FoundAccount,
     type Source,
@@ -23,9 +28,10 @@
   import type { IdentitiesStore } from "#lib/stores/identities.svelte.ts";
   import "#lib/theme/controls.css";
 
-  // Adds one credential to an identity: an account already signed in on this computer, or a token
-  // the user pastes (kept in the operating system's credential store and never shown again), plus
-  // what the credential covers on its host. Nothing is saved until the identity is.
+  // Adds one credential to an identity: an account already signed in on this computer, a token
+  // the user pastes (kept in the operating system's credential store and never shown again), or
+  // the Azure CLI's token for a tenant (the user signs in to `az` in a terminal; there is no sign-in
+  // here), plus what the credential covers on its host. Nothing is saved until the identity is.
   let {
     store,
     existing,
@@ -43,7 +49,10 @@
   } = $props();
 
   const id = $props.id();
-  let mode = $state<"found" | "paste">("found");
+  let mode = $state<"found" | "paste" | "az">("found");
+  let tenant = $state("");
+  let azOrg = $state("");
+  let azCheck = $state<Check | null>(null);
   let pick = $state<number | null>(null);
   let host = $state("github.com");
   let org = $state("");
@@ -73,7 +82,9 @@
   const coverHost = $derived(
     mode === "found"
       ? (chosen?.host ?? "this host")
-      : host.trim() || "this host",
+      : mode === "az"
+        ? AZURE_HOST
+        : host.trim() || "this host",
   );
 
   onDestroy(() => {
@@ -144,11 +155,40 @@
     if (source) void look(source);
   }
 
-  function switchMode(next: "found" | "paste") {
+  /** Names the organisation; an Azure CLI credential for one covers only that organisation. */
+  function azOrgChanged() {
+    azCheck = null;
+    const named = azOrg.trim();
+    ownersText = named;
+    rest = named === "";
+  }
+
+  function azFieldsProblem(): { field: string; message: string } | null {
+    const tenantError = tenantProblem(tenant);
+    if (tenantError) return { field: "tenant", message: tenantError };
+    if (azOrg.trim() !== "") {
+      const orgError = orgProblem(azOrg);
+      if (orgError) return { field: "az-org", message: orgError };
+    }
+    return null;
+  }
+
+  /** Reads a token from `az` once, to say what is missing before the credential is added. */
+  async function checkAz() {
+    problem = null;
+    const wrong = azFieldsProblem();
+    if (wrong) return fail(wrong.field, wrong.message);
+    azCheck = { state: "checking" };
+    azCheck = await store.checkSource(azSource(tenant, azOrg));
+  }
+
+  function switchMode(next: "found" | "paste" | "az") {
     mode = next;
     problem = null;
     forget();
-    if (next === "paste") {
+    if (next === "az") {
+      azOrgChanged();
+    } else if (next === "paste") {
       ownersText = "";
       rest = true;
     } else if (chosen) {
@@ -167,7 +207,12 @@
     problem = null;
     let source: Source | null = null;
     let credentialHost: string;
-    if (mode === "found") {
+    if (mode === "az") {
+      const wrong = azFieldsProblem();
+      if (wrong) return fail(wrong.field, wrong.message);
+      source = azSource(tenant, azOrg);
+      credentialHost = AZURE_HOST;
+    } else if (mode === "found") {
       source = chosen ? sourceOf(chosen) : null;
       if (!chosen || !source) {
         return fail("found", "Pick an account, or paste a token instead.");
@@ -284,7 +329,82 @@
       />
       Paste a token
     </label>
+    <label class="choice">
+      <input
+        type="radio"
+        name="{id}-mode"
+        checked={mode === "az"}
+        onchange={() => switchMode("az")}
+      />
+      Use the Azure CLI (Azure DevOps)
+    </label>
   </fieldset>
+
+  {#if mode === "az"}
+    <div class="field">
+      <label for="{id}-tenant">Microsoft Entra tenant</label>
+      <input
+        id="{id}-tenant"
+        type="text"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        placeholder="contoso.onmicrosoft.com"
+        bind:value={tenant}
+        oninput={() => (azCheck = null)}
+        aria-invalid={problem?.field === "tenant" ? "true" : undefined}
+        aria-describedby={problem?.field === "tenant"
+          ? `${id}-error`
+          : `${id}-az-hint`}
+      />
+    </div>
+    <div class="field">
+      <label for="{id}-az-org">Azure DevOps organisation (optional)</label>
+      <input
+        id="{id}-az-org"
+        type="text"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        bind:value={azOrg}
+        oninput={azOrgChanged}
+        aria-invalid={problem?.field === "az-org" ? "true" : undefined}
+        aria-describedby={problem?.field === "az-org"
+          ? `${id}-error`
+          : undefined}
+      />
+    </div>
+    <p class="hint" id="{id}-az-hint">
+      Puddle reads the token from the Azure CLI and does not sign in for you.
+      Install <code>az</code>, then run
+      <code>{azLoginCommand(tenant.trim() || "<tenant>")}</code> in a terminal.
+    </p>
+    <div>
+      <button
+        type="button"
+        class="btn"
+        disabled={azCheck?.state === "checking"}
+        onclick={checkAz}>Check the Azure CLI</button
+      >
+    </div>
+    {#if azCheck && azCheck.state !== "untested"}
+      <div class="profile" aria-live="polite" data-testid="az-check">
+        {#if azCheck.state === "checking"}
+          <p class="hint">Asking the Azure CLI&hellip;</p>
+        {:else if azCheck.state === "ok"}
+          <p class="hint">Puddle can read a token from the Azure CLI.</p>
+        {:else if azCheck.state === "problem"}
+          <p class="error">{azCheck.message}</p>
+          {#if azCheck.fixStep}
+            <p class="hint" data-testid="fix-step">
+              <b>What to do:</b>
+              {azCheck.fixStep}
+            </p>
+          {/if}
+        {/if}
+      </div>
+    {/if}
+  {/if}
 
   {#if mode === "paste"}
     <div class="field">

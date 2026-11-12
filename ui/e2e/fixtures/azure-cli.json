@@ -1,0 +1,31 @@
+{
+  "name": "azure-cli",
+  "identities": [
+    {
+      "label": "Contoso",
+      "author": { "name": "Tijs Contoso", "email": "tijs@contoso.example" },
+      "credentials": [
+        {
+          "host": "dev.azure.com",
+          "source": {
+            "kind": "az_cli",
+            "tenant": "contoso.onmicrosoft.com",
+            "org": "contoso"
+          },
+          "covers": { "owners": ["contoso"], "rest_of_host": false }
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "found": [],
+    "missing": [],
+    "signed_out": [
+      {
+        "kind": "az_cli",
+        "tenant": "contoso.onmicrosoft.com",
+        "org": "contoso"
+      }
+    ]
+  }
+}

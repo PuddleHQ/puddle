@@ -82,3 +82,17 @@ fn the_repository_never_shows_a_secret_in_its_debug_text() {
         .unwrap();
     assert_eq!(format!("{secrets:?}"), "AccountSecrets { .. }");
 }
+
+#[test]
+fn an_invite_digest_of_exactly_the_minimum_length_is_accepted() {
+    let (store, secrets, _) = setup();
+    let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    let short = vec![4; MIN_INVITE_DIGEST_BYTES - 1];
+    let exact = vec![5; MIN_INVITE_DIGEST_BYTES];
+    assert!(matches!(
+        secrets.put_invite(ann, &short, 5_000),
+        Err(StoreError::InviteInvalid)
+    ));
+    secrets.put_invite(ann, &exact, 5_000).unwrap();
+    assert_eq!(secrets.redeem_invite(&exact).unwrap(), Some(ann));
+}

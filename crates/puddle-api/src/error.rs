@@ -52,6 +52,8 @@ pub enum ErrorCode {
     /// A stored settings document is damaged or cannot be read, so the settings cannot be shown
     /// or changed until it is fixed or removed (409); the message says what is wrong.
     SettingsUnreadable,
+    /// Too many sign-in attempts: wait for the time in `Retry-After` (429).
+    RateLimited,
     /// The feature isn't available in this build or state (503).
     Unavailable,
     /// Puddle failed; the details are in its log (500).
@@ -75,6 +77,8 @@ pub(crate) struct ApiError {
     /// What went wrong, for the host's own use; never serialized (the client of an internal
     /// error learns only that it failed).
     detail: Option<String>,
+    /// Seconds for `Retry-After`, on a refusal that says to wait.
+    retry_after: Option<u64>,
 }
 
 impl ApiError {
@@ -86,7 +90,19 @@ impl ApiError {
                 message: message.into(),
             },
             detail: None,
+            retry_after: None,
         }
+    }
+
+    /// Too many attempts: try again in `seconds`.
+    pub(crate) fn rate_limited(seconds: u64) -> Self {
+        let mut err = Self::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            ErrorCode::RateLimited,
+            format!("too many sign-in attempts; try again in {seconds} seconds"),
+        );
+        err.retry_after = Some(seconds);
+        err
     }
 
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
@@ -157,6 +173,11 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut response = (self.status, Json(self.body)).into_response();
+        if let Some(seconds) = self.retry_after {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(seconds));
+        }
         if self.status == StatusCode::UNAUTHORIZED {
             response.headers_mut().insert(
                 header::WWW_AUTHENTICATE,
@@ -189,10 +210,14 @@ impl From<StoreError> for ApiError {
             | StoreError::RuleSetOff { .. }
             | StoreError::IdentityLabelTaken(_)
             | StoreError::IdentityAttached { .. }
-            | StoreError::RepoListed(_) => {
+            | StoreError::RepoListed(_)
+            | StoreError::SetupDone => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, err.to_string())
             }
-            StoreError::Pattern(_)
+            StoreError::UserName(_)
+            | StoreError::DeviceName(_)
+            | StoreError::SignInMethod(_)
+            | StoreError::Pattern(_)
             | StoreError::ExpiryNotInFuture
             | StoreError::NotSwitchable
             | StoreError::RuleSetName(_)

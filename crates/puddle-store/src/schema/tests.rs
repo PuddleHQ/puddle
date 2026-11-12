@@ -813,6 +813,8 @@ fn the_database_is_copied_before_the_first_step_and_only_two_copies_stay() {
         "the copy is the database as it was before"
     );
     assert_eq!(count(&copy, "child"), 2);
+    // Windows refuses to delete a file that is still open, and step 4 prunes this copy.
+    drop(copy);
 
     migrate_to(&mut conn, 3).unwrap();
     migrate_to(&mut conn, 4).unwrap();
@@ -874,6 +876,20 @@ fn an_in_memory_database_is_never_copied_to_disk() {
     assert!(
         !Path::new(".pre-v2").exists() && !Path::new(":memory:.pre-v2").exists(),
         "a copy of a memory database landed in the working directory"
+    );
+}
+
+#[test]
+fn a_copy_that_cannot_be_pruned_is_named_in_the_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut conn = Connection::open(dir.path().join("puddle.db")).unwrap();
+    migrate_to(&mut conn, 1).unwrap();
+    std::fs::create_dir(dir.path().join("puddle.db.pre-v1")).unwrap();
+    migrate_to(&mut conn, 2).unwrap();
+    let err = migrate_to(&mut conn, 3).unwrap_err().to_string();
+    assert!(
+        err.contains("pre-v1"),
+        "the error blames the wrong file: {err}"
     );
 }
 

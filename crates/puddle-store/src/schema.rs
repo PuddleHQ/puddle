@@ -749,7 +749,7 @@ fn back_up_before(conn: &Connection, target: u32) -> Result<(), StoreError> {
         Err(err) => return Err(io(err)),
     }
     conn.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
-    prune_backups(path).map_err(io)
+    prune_backups(path).map_err(|err| StoreError::Backup(err.to_string()))
 }
 
 fn backup_path(db: &Path, version: u32) -> PathBuf {
@@ -776,7 +776,10 @@ fn prune_backups(db: &Path) -> std::io::Result<()> {
         .collect();
     copies.sort_unstable_by_key(|copy| std::cmp::Reverse(copy.0));
     for (_, stale) in copies.into_iter().skip(BACKUPS_KEPT) {
-        std::fs::remove_file(stale)?;
+        // Name the file that failed, not the copy just made.
+        std::fs::remove_file(&stale).map_err(|err| {
+            std::io::Error::new(err.kind(), format!("{}: {err}", stale.display()))
+        })?;
     }
     Ok(())
 }

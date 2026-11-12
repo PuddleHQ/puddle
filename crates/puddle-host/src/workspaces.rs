@@ -1239,9 +1239,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 // what is left of the volume: nothing the user worked on.
                 tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after a failed create");
             } else if let Err(reason) = &mut result {
-                // The saved entry still says "being deleted": the next start finds the volume
-                // there and lists the workspace again. (A finished delete whose save fails ends
-                // quietly: the volume is gone, so the next start finishes it.)
+                // The workspace is now missing from the saved list: the next start keeps its
+                // volume and reports it, but doesn't list the workspace.
                 *reason = format!("{reason}; {e}; {SAVE_HINT}");
             }
         }

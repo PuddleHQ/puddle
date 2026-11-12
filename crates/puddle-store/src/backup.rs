@@ -57,17 +57,16 @@ pub fn backup_database(source: &Path, dest: &Path) -> Result<BackupInfo, StoreEr
 /// their rows.
 const SECRET_TABLES: [&str; 2] = ["account_passwords", "account_invites"];
 
+const TABLE_EXISTS: &str =
+    "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)";
+
 /// Empties the secret tables of the copy at `dest` and rebuilds the file, so the removed rows do
 /// not survive in its free pages. A database from before those tables existed has none to empty.
 fn drop_sign_in_secrets(dest: &Path) -> Result<(), StoreError> {
     let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     copy.pragma_update(None, "secure_delete", true)?;
     for table in SECRET_TABLES {
-        let exists: bool = copy.query_row(
-            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-            [table],
-            |row| row.get(0),
-        )?;
+        let exists: bool = copy.query_row(TABLE_EXISTS, [table], |row| row.get(0))?;
         if exists {
             copy.execute(&format!("DELETE FROM {table}"), [])?;
         }

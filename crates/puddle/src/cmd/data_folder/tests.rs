@@ -53,3 +53,12 @@ fn a_bad_variable_is_an_error_naming_it() {
     .unwrap_err();
     assert!(err.to_string().contains("PUDDLE_DATA_DIR"), "{err}");
 }
+
+#[test]
+fn an_empty_path_is_a_usage_error_naming_the_option() {
+    let err = take(&["--data-dir", ""]).unwrap_err();
+    assert!(
+        matches!(&err, UsageError::InvalidValue { option, .. } if *option == "--data-dir"),
+        "{err:?}"
+    );
+}

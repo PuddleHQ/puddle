@@ -108,3 +108,20 @@ fn the_copy_keeps_the_users_and_none_of_their_sign_in_secrets() {
         "the live database keeps its own"
     );
 }
+
+#[test]
+fn a_database_from_before_the_secret_tables_copies_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("old.db");
+    let conn = Connection::open(&src).unwrap();
+    conn.execute_batch("CREATE TABLE kept (x TEXT); INSERT INTO kept VALUES ('row');")
+        .unwrap();
+    drop(conn);
+    let dest = dir.path().join("copy.db");
+    backup_database(&src, &dest).unwrap();
+    let copy = Connection::open(&dest).unwrap();
+    let kept: String = copy
+        .query_row("SELECT x FROM kept", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(kept, "row");
+}

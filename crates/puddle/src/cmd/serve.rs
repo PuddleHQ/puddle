@@ -134,6 +134,7 @@ pub fn config(
             what: "remote serving",
             reason: e.to_string(),
         })?;
+    config.api.multi_user = options.switch("multi_user") == Some(true);
     config.api.remote = remote;
     Ok(config)
 }

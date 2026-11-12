@@ -24,6 +24,7 @@
 //! [`SHUTDOWN_STEPS`].
 #![forbid(unsafe_code)]
 
+mod accounts;
 mod agent_reports;
 mod backup;
 mod boot;
@@ -64,6 +65,7 @@ mod vault;
 mod vscode;
 mod workspaces;
 
+pub use accounts::{AccountError, reset_user};
 pub use backup::{
     BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupError, BackupReport, backup,
 };

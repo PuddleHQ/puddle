@@ -16,6 +16,8 @@ use tokio::sync::watch;
 use utoipa::ToSchema;
 
 use crate::ApiErrorBody;
+use crate::auth::ReachedPublicly;
+use crate::authz::{Principal, Via};
 use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
@@ -98,6 +100,7 @@ impl From<TerminalError> for ApiError {
 )]
 pub(crate) async fn create_terminal(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     BodyJson(body): BodyJson<TerminalRequest>,
 ) -> Result<(StatusCode, Json<TerminalTicket>), ApiError> {
@@ -112,6 +115,9 @@ pub(crate) async fn create_terminal(
         .map_err(|limit| {
             ApiError::new(StatusCode::CONFLICT, ErrorCode::Conflict, limit.to_string())
         })?;
+    if let Via::Device(device) = principal.via {
+        state.terminals.bind(terminal, device);
+    }
     Ok((
         StatusCode::CREATED,
         Json(TerminalTicket { terminal, ticket }),
@@ -156,13 +162,14 @@ fn ticket_of(headers: &HeaderMap) -> Option<&str> {
     ),
     responses(
         (status = SWITCHING_PROTOCOLS, description = "the socket: binary messages carry the terminal's bytes (at most 64 KiB), text messages are JSON (`resize`, `ack` from the page; `ended` from the host)"),
-        (status = UNAUTHORIZED, description = "a wrong, used or late ticket, or a request under a public name", body = ApiErrorBody)
+        (status = UNAUTHORIZED, description = "a wrong, used or late ticket, or a loopback ticket used under a public name", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn terminal_socket(
     State(state): State<AppState>,
     Path((id, terminal)): Path<(String, u64)>,
     headers: HeaderMap,
+    public: Option<axum::Extension<ReachedPublicly>>,
     upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
     let upgrade = match upgrade {
@@ -171,14 +178,20 @@ pub(crate) async fn terminal_socket(
     };
     // The registry holds the workspace a ticket was issued for, so a claim also proves it exists;
     // a malformed id and an unknown one both fail the claim, with the same answer.
-    let claimed = WorkspaceId::new(&id).ok().and_then(|workspace| {
-        let size = ticket_of(&headers).and_then(|ticket| {
-            state
-                .terminals
-                .claim(&workspace, terminal, ticket.as_bytes())
-        })?;
-        Some((workspace, size))
-    });
+    // Under a public name only a ticket a signed-in browser asked for counts: one made with the
+    // install token on loopback is not bound to a device and never opens a shell there.
+    let admitted = public.is_none() || state.terminals.device_of(terminal).is_some();
+    let claimed = WorkspaceId::new(&id)
+        .ok()
+        .filter(|_| admitted)
+        .and_then(|workspace| {
+            let size = ticket_of(&headers).and_then(|ticket| {
+                state
+                    .terminals
+                    .claim(&workspace, terminal, ticket.as_bytes())
+            })?;
+            Some((workspace, size))
+        });
     let (workspace, size) = claimed.ok_or_else(|| {
         ApiError::new(
             StatusCode::UNAUTHORIZED,
@@ -187,11 +200,17 @@ pub(crate) async fn terminal_socket(
         )
     })?;
     let shutdown = state.shutdown.clone();
+    // A terminal made for a signed-in browser ends when that browser is signed out.
+    let ended: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> =
+        match (state.terminals.device_of(terminal), &state.sign_in) {
+            (Some(device), Some(sign_in)) => Box::pin(sign_in.clone().ended(device)),
+            _ => Box::pin(std::future::pending()),
+        };
     Ok(upgrade
         .protocols([SUBPROTOCOL])
         .max_message_size(MAX_MESSAGE_BYTES + 1024)
         .on_upgrade(move |socket| async move {
-            run(socket, &state, &workspace, size, shutdown).await;
+            run(socket, &state, &workspace, size, shutdown, ended).await;
             state.terminals.release(terminal);
         }))
 }
@@ -202,6 +221,7 @@ async fn run(
     workspace: &WorkspaceId,
     size: TerminalSize,
     shutdown: watch::Receiver<bool>,
+    ended: impl Future<Output = ()> + Unpin,
 ) {
     let link = match state.terminal_service.open(workspace, size).await {
         Ok(link) => link,
@@ -218,7 +238,7 @@ async fn run(
             return;
         }
     };
-    pump(&mut socket, link, shutdown).await;
+    pump(&mut socket, link, shutdown, ended).await;
 }
 
 async fn finish(socket: &mut WebSocket, end: &TerminalEnd) {
@@ -279,10 +299,25 @@ fn from_page(message: Message) -> FromPage {
     FromPage::Input(input)
 }
 
-async fn pump(socket: &mut WebSocket, link: TerminalLink, mut shutdown: watch::Receiver<bool>) {
+async fn pump(
+    socket: &mut WebSocket,
+    link: TerminalLink,
+    mut shutdown: watch::Receiver<bool>,
+    mut ended: impl Future<Output = ()> + Unpin,
+) {
     let TerminalLink { input, mut output } = link;
     loop {
         tokio::select! {
+            () = &mut ended => {
+                // The browser was signed out: close at once, with no word of what the shell said.
+                let _ = socket
+                    .send(Message::Close(Some(CloseFrame {
+                        code: close_code::POLICY,
+                        reason: "signed out".into(),
+                    })))
+                    .await;
+                return;
+            }
             () = async { let _ = shutdown.wait_for(|stop| *stop).await; } => {
                 finish(socket, &TerminalEnd::of(EndReason::Quitting)).await;
                 return;

@@ -33,6 +33,7 @@ use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
 use crate::schema;
 use crate::users::UserId;
 
+mod devices;
 mod environment;
 #[cfg(test)]
 mod failures;
@@ -43,7 +44,7 @@ mod ports;
 mod request_rules;
 mod sets;
 mod shell_init;
-mod users;
+pub(crate) mod users;
 
 pub use interception::{
     DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings, LearnedLimits,

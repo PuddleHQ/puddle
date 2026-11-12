@@ -76,6 +76,7 @@ fn every_option_has_a_flag() {
         "9443",
         "--allowed-proxies",
         "192.168.1.20, 10.0.0.1",
+        "--multi-user",
         "--print-config",
     ])
     .unwrap();
@@ -112,6 +113,7 @@ fn every_option_has_a_flag() {
             "10.0.0.1".parse().unwrap()
         ]))
     );
+    assert_eq!(a.flags.get("multi_user"), Some(&Value::Bool(true)));
     assert_eq!(a.flags.len(), OPTIONS.len());
 }
 
@@ -235,6 +237,23 @@ fn the_remote_options_reach_the_host_configuration() {
     let listener = remote.network.unwrap();
     assert_eq!(listener.port(), options::DEFAULT_LISTEN_PORT);
     assert_eq!(listener.interface().to_string(), "192.168.1.10");
+}
+
+#[test]
+fn several_users_are_off_unless_an_option_turns_them_on() {
+    assert!(!config_for(&[]).unwrap().api.multi_user);
+    assert!(
+        config_for(&[("PUDDLE_MULTI_USER", "true")])
+            .unwrap()
+            .api
+            .multi_user
+    );
+    assert!(
+        !config_for(&[("PUDDLE_MULTI_USER", "false")])
+            .unwrap()
+            .api
+            .multi_user
+    );
 }
 
 #[test]

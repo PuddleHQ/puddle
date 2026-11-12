@@ -31,6 +31,8 @@ pub struct ApiSettings {
     /// Remote serving: the public names a reverse proxy may use, and the listener for one on
     /// another machine. `None`: loopback only, exactly as before.
     pub remote: Option<RemoteSettings>,
+    /// Whether users other than the owner may sign in (off: everything belongs to the owner).
+    pub multi_user: bool,
 }
 
 /// Remote serving as the host is asked for it. The network listener is part of it, so a
@@ -52,6 +54,7 @@ impl std::fmt::Debug for ApiSettings {
             .field("ui", &self.ui.as_ref().map(|_| "custom"))
             .field("connection_file", &self.connection_file)
             .field("remote", &self.remote)
+            .field("multi_user", &self.multi_user)
             .finish()
     }
 }
@@ -161,6 +164,7 @@ impl HostConfig {
                 ui: None,
                 connection_file,
                 remote: None,
+                multi_user: false,
             },
             upstream: UpstreamSettings::default(),
             workspaces: WorkspaceConfig::default(),

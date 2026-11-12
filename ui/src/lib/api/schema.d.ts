@@ -2452,7 +2452,15 @@ export interface components {
         };
         /** @description Whether Puddle can read a credential's value now. Never the value. */
         CheckResult: {
-            /** @description True when the way out is for the user to sign in. */
+            /**
+             * @description The exact step the user takes to fix it, when there is one (install `az`, run
+             *     `az login --tenant <tenant>`); `null` otherwise.
+             */
+            fix_step: string | null;
+            /**
+             * @description True when the way out is for Puddle to start a sign-in. The Azure CLI never is: the user
+             *     signs in to it in a terminal (see `fix_step`).
+             */
             needs_sign_in: boolean;
             /** @description Why not, in words; `null` when it is readable. */
             problem: string | null;
@@ -2624,7 +2632,10 @@ export interface components {
             /** @description Every other owner on the host. At least one of the two must be set. */
             rest_of_host: boolean;
         };
-        /** @description Where the host reads a credential's value. A closed list; there is no command-line source. */
+        /**
+         * @description Where the host reads a credential's value. A closed list; there is no command-line source, and
+         *     a field the list does not know (a `command`, say) is refused.
+         */
         CredentialSource: {
             /** @description The account. */
             account: string;
@@ -2650,6 +2661,13 @@ export interface components {
             kind: "stored";
             /** @description The organisation, for tokens that belong to one (Azure DevOps). */
             org: string | null;
+        } | {
+            /** @enum {string} */
+            kind: "az_cli";
+            /** @description The Azure DevOps organisation the token is meant for. */
+            org: string | null;
+            /** @description The tenant to ask `az` for: a directory id or a domain such as `contoso.onmicrosoft.com`. */
+            tenant: string;
         };
         /** @description The user's own image after it was checked and resized. */
         CustomIcon: {
@@ -3630,6 +3648,8 @@ export interface components {
              * @description Epoch ms the read finished.
              */
             checked_at: number;
+            /** @description The exact step the user takes to fix it, when there is one; `null` otherwise. */
+            fix_step: string | null;
             /** @description True when the way out is for the user to sign in. */
             needs_sign_in: boolean;
             /** @description Why not, in words; `null` when it is readable. */

@@ -102,6 +102,10 @@ const BUILT_IN: [(&str, &str); 15] = [
         include_str!("../../../../ui/e2e/fixtures/git-identities.json"),
     ),
     (
+        "azure-cli",
+        include_str!("../../../../ui/e2e/fixtures/azure-cli.json"),
+    ),
+    (
         "repo-lists",
         include_str!("../../../../ui/e2e/fixtures/repo-lists.json"),
     ),

@@ -162,6 +162,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("volume-missing", 0, 0),
         ("disks-full", 0, 0),
         ("git-identities", 0, 0),
+        ("azure-cli", 0, 0),
         ("repo-lists", 0, 0),
         ("first-run", 0, 0),
         ("unmanaged-checkouts", 0, 0),
@@ -195,6 +196,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "volume-missing",
             "disks-full",
             "git-identities",
+            "azure-cli",
             "repo-lists",
             "first-run",
             "unmanaged-checkouts",
@@ -1063,6 +1065,32 @@ async fn the_git_identities_scenario_seeds_identities_tables_and_what_the_creden
         seen.contains(r#""access":"push""#) && seen.contains(r#""access":"pull""#),
         "{seen}"
     );
+}
+
+#[tokio::test]
+async fn the_azure_cli_scenario_answers_a_check_with_the_step_and_starts_no_sign_in() {
+    let run = start("azure-cli").await;
+    let source = json!({"kind": "az_cli", "tenant": "contoso.onmicrosoft.com", "org": "contoso"});
+    let listed = run.get("/api/identities").await.json();
+    assert_eq!(listed["identities"][0]["credentials"][0]["source"], source);
+    let checked = run
+        .api(
+            "POST",
+            "/api/credentials/check",
+            Some(&json!({"source": source})),
+        )
+        .await;
+    assert_eq!(checked.status, 200, "{}", checked.body);
+    let result = checked.json();
+    assert_eq!(result["readable"], false);
+    assert_eq!(result["needs_sign_in"], false);
+    assert!(
+        result["fix_step"]
+            .as_str()
+            .unwrap()
+            .contains("az login --tenant contoso.onmicrosoft.com")
+    );
+    run.fixture.shutdown().await;
 }
 
 #[tokio::test]

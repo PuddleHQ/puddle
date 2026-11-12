@@ -11760,12 +11760,20 @@
         "required": [
           "readable",
           "problem",
-          "needs_sign_in"
+          "needs_sign_in",
+          "fix_step"
         ],
         "properties": {
+          "fix_step": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The exact step the user takes to fix it, when there is one (install `az`, run\n`az login --tenant <tenant>`); `null` otherwise."
+          },
           "needs_sign_in": {
             "type": "boolean",
-            "description": "True when the way out is for the user to sign in."
+            "description": "True when the way out is for Puddle to start a sign-in. The Azure CLI never is: the user\nsigns in to it in a terminal (see `fix_step`)."
           },
           "problem": {
             "type": [
@@ -12266,9 +12274,37 @@
                 "description": "The organisation, for tokens that belong to one (Azure DevOps)."
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The Microsoft Entra token of the account signed in to the Azure CLI (`az`), for Azure\nDevOps. The user signs in to `az` in a terminal; Puddle only reads a token.",
+            "required": [
+              "tenant",
+              "org",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "az_cli"
+                ]
+              },
+              "org": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The Azure DevOps organisation the token is meant for."
+              },
+              "tenant": {
+                "type": "string",
+                "description": "The tenant to ask `az` for: a directory id or a domain such as `contoso.onmicrosoft.com`."
+              }
+            }
           }
         ],
-        "description": "Where the host reads a credential's value. A closed list; there is no command-line source."
+        "description": "Where the host reads a credential's value. A closed list; there is no command-line source, and\na field the list does not know (a `command`, say) is refused."
       },
       "CustomIcon": {
         "type": "object",
@@ -14728,6 +14764,7 @@
           "readable",
           "problem",
           "needs_sign_in",
+          "fix_step",
           "checked_at",
           "by"
         ],
@@ -14741,6 +14778,13 @@
             "format": "int64",
             "description": "Epoch ms the read finished.",
             "minimum": 0
+          },
+          "fix_step": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The exact step the user takes to fix it, when there is one; `null` otherwise."
           },
           "needs_sign_in": {
             "type": "boolean",

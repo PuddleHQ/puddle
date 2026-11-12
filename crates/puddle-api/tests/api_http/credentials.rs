@@ -79,7 +79,7 @@ async fn checking_a_credential_says_whether_it_reads_and_never_shows_a_value() {
     assert_eq!(ok.status, 200, "{}", ok.body);
     assert_eq!(
         ok.json(),
-        json!({"readable": true, "problem": null, "needs_sign_in": false})
+        json!({"readable": true, "problem": null, "needs_sign_in": false, "fix_step": null})
     );
 
     api.credentials

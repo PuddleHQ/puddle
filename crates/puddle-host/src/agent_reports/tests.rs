@@ -7,6 +7,13 @@ fn name(s: &str) -> WorkspaceId {
     WorkspaceId::new(s).unwrap()
 }
 
+/// What the user calls every workspace of these tests: never the id.
+const SHOWN: &str = "The box";
+
+fn shown() -> DisplayName {
+    DisplayName::parse(SHOWN).unwrap()
+}
+
 fn desk() -> (Arc<CollectingSink>, Arc<Problems>, ReportDesk) {
     let sink = Arc::new(CollectingSink::default());
     let problems = Arc::new(Problems::new(sink.clone()));
@@ -35,13 +42,13 @@ fn changes(sink: &CollectingSink) -> usize {
 fn a_failed_entrypoint_is_a_problem_on_its_workspace_in_the_boot_hooks_words() {
     let (_, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.report(&box_, exited(0, "done"));
     assert_eq!(problems.list(), Vec::<Problem>::new(), "exit 0 did its job");
     desk.report(&box_, exited(137, "Killed"));
     let raised = problems.list();
     assert_eq!(raised.len(), 1);
-    assert_eq!(raised[0], entrypoint_problem(&box_, "137: Killed"));
+    assert_eq!(raised[0], entrypoint_problem(&box_, SHOWN, "137: Killed"));
     assert_eq!(raised[0].key, "entrypoint:box");
     assert_eq!(raised[0].workspace, Some(box_.clone()));
     assert!(
@@ -56,14 +63,21 @@ fn a_failed_entrypoint_is_a_problem_on_its_workspace_in_the_boot_hooks_words() {
 fn an_entrypoint_with_no_output_says_so_like_the_boot_hook() {
     let (_, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.report(&box_, exited(1, ""));
-    assert_eq!(problems.list(), [entrypoint_problem(&box_, "1: no output")]);
+    assert_eq!(
+        problems.list(),
+        [entrypoint_problem(&box_, SHOWN, "1: no output")]
+    );
 }
 
 #[test]
 fn guest_text_in_the_problem_is_cut_and_has_no_control_characters() {
-    let problem = entrypoint_problem(&name("box"), &format!("1: {}", "\u{1b}[2J".repeat(500)));
+    let problem = entrypoint_problem(
+        &name("box"),
+        SHOWN,
+        &format!("1: {}", "\u{1b}[2J".repeat(500)),
+    );
     assert!(!problem.detail.chars().any(char::is_control));
     assert!(problem.detail.chars().count() < MAX_FAILURE_CHARS + 300);
 }
@@ -72,7 +86,7 @@ fn guest_text_in_the_problem_is_cut_and_has_no_control_characters() {
 fn stub_dns_trouble_that_fails_a_tool_is_a_problem_naming_each_kind_once() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     desk.report(&box_, dns(StubDnsTrouble::UdpDropped));
     desk.report(&box_, dns(StubDnsTrouble::NoLookupSlot));
@@ -88,7 +102,7 @@ fn stub_dns_trouble_that_fails_a_tool_is_a_problem_naming_each_kind_once() {
     let raised = problems.list();
     assert_eq!(raised.len(), 1);
     assert_eq!(raised[0].key, "stub-dns:box");
-    assert_eq!(raised[0].title, "Name lookups in box are failing");
+    assert_eq!(raised[0].title, "Name lookups in The box are failing");
     assert!(raised[0].detail.contains("did not answer them in time"));
     assert!(raised[0].detail.contains("ran out of addresses"));
     assert!(!raised[0].detail.contains("left out"));
@@ -105,7 +119,7 @@ fn reports_count_only_between_a_start_and_a_stop() {
     let box_ = name("box");
     desk.report(&box_, exited(1, "before any start"));
     assert_eq!(problems.list(), Vec::<Problem>::new());
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.pause(&box_);
     desk.report(&box_, exited(143, "Terminated"));
     desk.report(&box_, dns(StubDnsTrouble::LookupFailed));
@@ -131,14 +145,14 @@ fn reports_count_only_between_a_start_and_a_stop() {
 fn the_entrypoint_problem_outlives_a_stop_and_ends_at_the_next_start_or_a_delete() {
     let (_, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.report(&box_, exited(2, "bad"));
     desk.report(&box_, dns(StubDnsTrouble::RecordsLeftOut));
     desk.pause(&box_);
     desk.end(&box_);
     let keys: Vec<_> = problems.list().into_iter().map(|p| p.key).collect();
     assert_eq!(keys, ["entrypoint:box"]);
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     assert_eq!(problems.list(), Vec::<Problem>::new());
     desk.report(&box_, exited(2, "bad"));
     desk.forget(&box_);
@@ -149,13 +163,16 @@ fn the_entrypoint_problem_outlives_a_stop_and_ends_at_the_next_start_or_a_delete
 fn reports_from_one_workspace_never_touch_the_problems_of_another() {
     let (_, problems, desk) = desk();
     let (a, b) = (name("a"), name("b"));
-    desk.begin(&a);
-    desk.begin(&b);
-    problems.raise(entrypoint_problem(&b, "1: b's own"));
+    desk.begin(&a, &shown());
+    desk.begin(&b, &shown());
+    problems.raise(entrypoint_problem(&b, SHOWN, "1: b's own"));
     desk.report(&a, exited(9, "b"));
     desk.end(&a);
     desk.forget(&a);
-    assert_eq!(problems.list(), [entrypoint_problem(&b, "1: b's own")]);
+    assert_eq!(
+        problems.list(),
+        [entrypoint_problem(&b, SHOWN, "1: b's own")]
+    );
 }
 
 /// At the host's end: whatever a hostile guest sends during one run, each problem changes
@@ -166,8 +183,8 @@ fn reports_from_one_workspace_never_touch_the_problems_of_another() {
 fn hostile_hg37_a_flood_of_reports_changes_each_problem_a_bounded_number_of_times() {
     let (sink, problems, desk) = desk();
     let (box_, other) = (name("box"), name("other"));
-    desk.begin(&box_);
-    desk.begin(&other);
+    desk.begin(&box_, &shown());
+    desk.begin(&other, &shown());
     let _ = sink.take();
     for i in 0..100_000_u32 {
         let status = u8::try_from(i % 255).unwrap() + 1;
@@ -180,7 +197,7 @@ fn hostile_hg37_a_flood_of_reports_changes_each_problem_a_bounded_number_of_time
     assert_eq!(changes(&sink), 5);
     let raised = problems.list();
     assert_eq!(raised.len(), 2);
-    assert_eq!(raised[0], entrypoint_problem(&box_, "1: cause 0"));
+    assert_eq!(raised[0], entrypoint_problem(&box_, SHOWN, "1: cause 0"));
     assert!(raised.iter().all(|p| p.workspace == Some(box_.clone())));
     assert_eq!(desk.runs().get(&box_).unwrap().dns.len(), 4);
     assert!(desk.runs().get(&other).unwrap().dns.is_empty());
@@ -201,7 +218,7 @@ fn editor_of(kind: EditorProblemKind, problem: Option<&str>) -> AgentReport {
 fn an_editor_update_problem_is_its_own_problem_beside_the_install_one() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     desk.report(&box_, editor_of(EditorProblemKind::Update, None));
     assert_eq!(changes(&sink), 0, "nothing was wrong");
@@ -221,7 +238,7 @@ fn an_editor_update_problem_is_its_own_problem_beside_the_install_one() {
         .unwrap();
     assert_eq!(
         update.title,
-        "The browser editor in box could not update: the newer build exited before it started, so the previous one runs again"
+        "The browser editor in The box could not update: the newer build exited before it started, so the previous one runs again"
     );
     assert!(
         update.detail.contains("keeps working on the build it has"),
@@ -247,7 +264,7 @@ fn an_editor_update_problem_is_its_own_problem_beside_the_install_one() {
 fn an_editor_run_as_root_is_its_own_problem_that_ends_with_the_report_and_with_the_run() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     desk.report(&box_, editor_of(EditorProblemKind::SessionUser, None));
     assert_eq!(changes(&sink), 0, "nothing was wrong");
@@ -267,7 +284,7 @@ fn an_editor_run_as_root_is_its_own_problem_that_ends_with_the_report_and_with_t
         .unwrap();
     assert_eq!(
         root.title,
-        "The browser editor in box runs as root: the user agent is missing in the guest"
+        "The browser editor in The box runs as root: the user agent is missing in the guest"
     );
     assert!(root.detail.contains("belong to root"), "{}", root.detail);
     assert!(
@@ -305,7 +322,7 @@ fn an_editor_run_as_root_is_its_own_problem_that_ends_with_the_report_and_with_t
 fn an_editor_report_of_a_kind_this_host_does_not_know_raises_nothing() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     desk.report(&box_, editor_of(EditorProblemKind::Unknown, Some("x")));
     assert_eq!(changes(&sink), 0);
@@ -316,14 +333,14 @@ fn an_editor_report_of_a_kind_this_host_does_not_know_raises_nothing() {
 fn an_image_without_glibc_is_a_plain_editor_problem_that_points_at_desktop_vs_code() {
     let (_sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.report(&box_, editor(Some(NEEDS_GLIBC)));
     let raised = problems.list();
     assert_eq!(raised.len(), 1);
     assert_eq!(raised[0].key, "editor-install:box");
     assert_eq!(
         raised[0].title,
-        "The browser editor is not available in box: its image uses musl"
+        "The browser editor is not available in The box: its image uses musl"
     );
     assert!(raised[0].detail.contains("glibc"), "{}", raised[0].detail);
     assert!(raised[0].detail.contains("desktop VS Code over direct SSH"));
@@ -335,7 +352,7 @@ fn an_image_without_glibc_is_a_plain_editor_problem_that_points_at_desktop_vs_co
 fn a_refused_editor_install_is_a_problem_that_names_the_reason_and_ends_when_it_works() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     desk.report(&box_, editor(None));
     assert_eq!(changes(&sink), 0, "nothing was wrong");
@@ -345,7 +362,7 @@ fn a_refused_editor_install_is_a_problem_that_names_the_reason_and_ends_when_it_
     assert_eq!(raised[0].key, "editor-install:box");
     assert_eq!(
         raised[0].title,
-        "The browser editor could not be installed in box: the download does not match"
+        "The browser editor could not be installed in The box: the download does not match"
     );
     assert!(
         raised[0]
@@ -365,7 +382,7 @@ fn a_refused_editor_install_is_a_problem_that_names_the_reason_and_ends_when_it_
 fn the_editor_problem_ends_with_the_run_and_at_the_next_start() {
     let (_, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.report(&box_, editor(Some("no")));
     desk.end(&box_);
     assert_eq!(
@@ -379,9 +396,9 @@ fn the_editor_problem_ends_with_the_run_and_at_the_next_start() {
         Vec::<Problem>::new(),
         "a report from a workspace that does not run is ignored"
     );
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.report(&box_, editor(Some("no")));
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     assert_eq!(
         problems.list(),
         Vec::<Problem>::new(),
@@ -393,7 +410,7 @@ fn the_editor_problem_ends_with_the_run_and_at_the_next_start() {
 fn hostile_hg37_a_flood_of_editor_reports_changes_the_problem_a_bounded_number_of_times() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     for i in 0..100_000_u32 {
         desk.report(&box_, editor(Some(&format!("cause {i}"))));
@@ -409,7 +426,7 @@ fn hostile_hg37_a_flood_of_editor_reports_changes_the_problem_a_bounded_number_o
 fn hostile_hg37_a_flood_of_editor_update_reports_is_bounded_apart_from_the_install_ones() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     for i in 0..100_000_u32 {
         desk.report(
@@ -447,16 +464,16 @@ fn unavailable(reason: Option<&str>) -> AgentReport {
 fn a_guest_that_deletes_the_capture_rules_is_one_problem_per_run_with_no_count_in_it() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     desk.report(&box_, tampered());
-    assert_eq!(problems.list(), [capture_tamper_problem(&box_)]);
+    assert_eq!(problems.list(), [capture_tamper_problem(&box_, SHOWN)]);
     let raised = &problems.list()[0];
     assert_eq!(raised.key, "capture-tamper:box");
     assert_eq!(raised.workspace, Some(box_.clone()));
     assert_eq!(
         raised.title,
-        "Something in box deleted Puddle's capture rules; Puddle put them back"
+        "Something in The box deleted Puddle's capture rules; Puddle put them back"
     );
     assert!(raised.detail.contains("nft flush ruleset"));
     assert_eq!(changes(&sink), 1);
@@ -466,9 +483,9 @@ fn a_guest_that_deletes_the_capture_rules_is_one_problem_per_run_with_no_count_i
     assert_eq!(changes(&sink), 0, "a notice the user dismissed stays gone");
     desk.end(&box_);
     assert_eq!(problems.list(), Vec::<Problem>::new());
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.report(&box_, tampered());
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     assert_eq!(
         problems.list(),
         Vec::<Problem>::new(),
@@ -482,7 +499,7 @@ fn a_guest_that_deletes_the_capture_rules_is_one_problem_per_run_with_no_count_i
 fn hostile_hg37_a_flood_of_capture_tamper_reports_changes_the_problem_once() {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     for _ in 0..100_000_u32 {
         desk.report(&box_, tampered());
@@ -495,22 +512,22 @@ fn hostile_hg37_a_flood_of_capture_tamper_reports_changes_the_problem_once() {
 fn capture_rules_that_cannot_be_installed_are_a_problem_naming_the_reason_until_they_are() {
     let (_, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.report(&box_, unavailable(Some("no nf_tables")));
     assert_eq!(
         problems.list(),
-        [capture_unavailable_problem(&box_, "no nf_tables")]
+        [capture_unavailable_problem(&box_, SHOWN, "no nf_tables")]
     );
     let raised = &problems.list()[0];
     assert_eq!(raised.key, "capture-unavailable:box");
     assert_eq!(
         raised.title,
-        "Tools in box that ignore proxy settings are offline: no nf_tables"
+        "Tools in The box that ignore proxy settings are offline: no nf_tables"
     );
     desk.report(&box_, tampered());
     assert_eq!(problems.list().len(), 2, "the two are separate problems");
     desk.report(&box_, unavailable(None));
-    assert_eq!(problems.list(), [capture_tamper_problem(&box_)]);
+    assert_eq!(problems.list(), [capture_tamper_problem(&box_, SHOWN)]);
     desk.report(&box_, unavailable(None));
     assert_eq!(
         problems.list().len(),
@@ -525,12 +542,13 @@ fn capture_rules_that_cannot_be_installed_are_a_problem_naming_the_reason_until_
 fn the_capture_problems_end_with_a_stop_a_start_and_a_delete_and_late_reports_are_ignored() {
     let (_, problems, desk) = desk();
     let box_ = name("box");
-    for end in [
-        ReportDesk::end as fn(&ReportDesk, &WorkspaceId),
-        ReportDesk::begin,
+    let ends: [fn(&ReportDesk, &WorkspaceId); 3] = [
+        ReportDesk::end,
+        |desk, id| desk.begin(id, &shown()),
         ReportDesk::forget,
-    ] {
-        desk.begin(&box_);
+    ];
+    for end in ends {
+        desk.begin(&box_, &shown());
         desk.report(&box_, tampered());
         desk.report(&box_, unavailable(Some("no")));
         assert_eq!(problems.list().len(), 2);
@@ -541,7 +559,7 @@ fn the_capture_problems_end_with_a_stop_a_start_and_a_delete_and_late_reports_ar
     desk.report(&box_, tampered());
     desk.report(&box_, unavailable(Some("late")));
     assert_eq!(problems.list(), Vec::<Problem>::new());
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     desk.pause(&box_);
     desk.report(&box_, tampered());
     assert_eq!(problems.list(), Vec::<Problem>::new(), "a stop is coming");
@@ -552,7 +570,7 @@ fn hostile_hg37_a_flood_of_capture_unavailable_reports_changes_the_problem_a_bou
  {
     let (sink, problems, desk) = desk();
     let box_ = name("box");
-    desk.begin(&box_);
+    desk.begin(&box_, &shown());
     let _ = sink.take();
     for i in 0..100_000_u32 {
         desk.report(&box_, unavailable(Some(&format!("cause {i}"))));

@@ -320,8 +320,8 @@ pub struct HostOptions {
     /// identities. On by default; off, SSH to a Git host is refused (`ssh_unsupported`).
     pub git_ssh: bool,
     /// Where new workspace ids come from. Without one, the operating system's random source
-    /// ([`puddle_api::RandomIds`]); tests give [`puddle_api::NameIds`], so a workspace called
-    /// `acme` gets the id `acme`.
+    /// ([`puddle_api::RandomIds`]); a test that writes ids into paths itself gives
+    /// [`puddle_api::NameIds`], so a workspace called `acme` gets the id `acme`.
     pub workspace_ids: Option<Arc<dyn puddle_api::IdSource>>,
     /// Where a root disk grow reads the free space of the data folder's drive. Without one, the
     /// real drive; tests give a fixed figure so a grow never depends on the machine's disk.
@@ -631,7 +631,9 @@ impl<R: Runtime + Clone> Host<R> {
             .filter(|(id, _)| stored.iter().any(|s| &s.id == id))
             .collect();
         for (id, why) in &carried {
-            problems.raise(crate::quit_trims::problem(id, why));
+            if let Some(stored) = stored.iter().find(|s| &s.id == id) {
+                problems.raise(crate::quit_trims::problem(id, stored.name.as_str(), why));
+            }
         }
         let workspaces = adopt_holders(&runtime, &config, &stored).await?;
         steps.push(Step::WorkspacesAdopted);
@@ -699,7 +701,7 @@ impl<R: Runtime + Clone> Host<R> {
             &status,
         )?;
         // Downloads the image the delete check boots now, while nobody is waiting on it.
-        service.warm_maintenance_image_for_listed().await;
+        service.warm_maintenance_image_for_listed();
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
         let editor_windows = front.windows().clone();
         let editor_updates = AbortOnDrop(crate::editor_updates::spawn(

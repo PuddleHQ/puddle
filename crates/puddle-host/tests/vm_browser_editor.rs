@@ -39,7 +39,7 @@ use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceId;
 use puddle_vm_tests::{BrowserClient, BrowserCookie, BrowserSession, PageId, PageRequest};
 use serde_json::{Value, json};
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use vm_support::{VmHost, guest, guest_within, start_vm_host_config};
 
@@ -460,7 +460,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
     ));
     let shell = ShellStandIn::new().await;
-    let mut options = hermetic_options();
+    let mut options = named_id_options();
     options.launcher = shell.clone();
     let VmHost {
         host,
@@ -815,7 +815,7 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
         "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh), whose node runs the stand-in",
     ));
     let shell = ShellStandIn::new().await;
-    let mut options = hermetic_options();
+    let mut options = named_id_options();
     options.launcher = shell.clone();
     let VmHost {
         host,

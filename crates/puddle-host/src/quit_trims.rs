@@ -98,10 +98,10 @@ pub(crate) fn key(workspace: &WorkspaceId) -> String {
 }
 
 /// The problem a trim that failed when Puddle quit raises at the next start.
-pub(crate) fn problem(workspace: &WorkspaceId, why: &str) -> Problem {
+pub(crate) fn problem(workspace: &WorkspaceId, name: &str, why: &str) -> Problem {
     Problem::new(
         key(workspace),
-        format!("{workspace}'s disk was not trimmed when Puddle quit"),
+        format!("{name}'s disk was not trimmed when Puddle quit"),
         format!(
             "{why}. The workspace stopped with Puddle. Its disk file stays larger than the data \
              in it until a later stop, or Reclaim space, trims it."

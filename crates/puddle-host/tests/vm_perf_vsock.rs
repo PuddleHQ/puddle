@@ -31,7 +31,7 @@ use puddle_types::WorkspaceId;
 use puddle_vm_tests::BulkHost;
 use puddle_vm_tests::load::{Report, Route, parse_transfers, script};
 use serde_json::json;
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, guest_within, start_vm_host_platform, web_internet};
 
 /// The fake site's name: no real name, so nothing leaves the machine.
@@ -62,7 +62,7 @@ struct Rig {
 /// `/gate/` bodies wait for `gate` askers.
 async fn rig(tag: &str, gate: usize) -> Rig {
     let bulk = BulkHost::start(gate).await.expect("the bulk server");
-    let internet = web_internet(&[FILLER], WebOptions::default(), hermetic_options()).await;
+    let internet = web_internet(&[FILLER], WebOptions::default(), named_id_options()).await;
     internet
         .proxy
         .route(&format!("{BULK_HOST}:80"), bulk.addr());

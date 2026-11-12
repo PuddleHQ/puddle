@@ -9,12 +9,14 @@
 //   - Set-Clipboard, then Ctrl+Shift+V and then Shift+Insert each fire `paste` with that text;
 //   - Ctrl+R and F5, with the keydown cancelled, do not reload the document, and the page saw both
 //     keys, so a missing reload is not a missing key.
-// Session 2, the main window alone: Ctrl+Q. Today it reaches the page and does not quit (the main
-// window's menu is hidden and its accelerator never fires); the test pins that, and expects exit 0 once fixed.
+// Session 2, the main window alone: Ctrl+Q with no terminal open quits at once (exit 0). The main window's
+// menu is hidden, so the host takes the key from the webview itself and keeps it from the page.
+// Session 3, the main window with the fixture saying two terminals are open (PUDDLE_APP_FIXTURE_TERMINALS):
+// Ctrl+Q opens the shell's "Quit Puddle" question and does not quit; Escape cancels it and the app runs on.
 // The page gets the OS focus the way a user gives it: a real mouse click in the page.
 //
 // Environment: PUDDLE_APP_EXE (a debug build with all features: the in-memory fixture backend),
-// CDP_PORT (default 9340; session 2 uses the next one). Plain Node 24, no packages.
+// CDP_PORT (default 9340; sessions 2 and 3 use the next two). Plain Node 24, no packages.
 import { spawn, spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -104,6 +106,7 @@ const workspaceId = `k${randomBytes(5).toString("hex").slice(0, 7)}`;
 
 let first;
 let second;
+let third;
 let page;
 try {
   // Session 1: the keys.
@@ -164,20 +167,40 @@ try {
   await page.evaluate(`window.seenKeys = []; addEventListener("keydown", (e) => window.seenKeys.push(e.key + (e.ctrlKey ? "+ctrl" : "")), true); true`);
   input("keys", "ctrl+q");
   await Promise.race([second.done, sleep(15_000)]);
+  check("Ctrl+Q with no terminal open quits the program with exit 0", second.exited && second.code === 0, `exited: ${second.exited}, code: ${second.code}`);
+  page.close();
+  page = undefined;
+  stop(second);
+  await second.done;
+
+  // Session 3: Ctrl+Q with terminals open asks first.
+  const askPort = basePort + 2;
+  third = start({ PUDDLE_APP_DEBUG_PORT: String(askPort), PUDDLE_APP_FIXTURE_TERMINALS: "2" });
+  const askTarget = await until("the main window", async () => {
+    if (third.exited) throw new Error("puddle-app exited early");
+    return (await listPages(askPort)).find((t) => /^http:\/\/127\.0\.0\.1:\d+\//.test(t.url));
+  });
+  page = await connect(askTarget.webSocketDebuggerUrl);
+  await until("the main page to load", () => page.evaluate("document.readyState === 'complete' && !!document.body"));
+  check("a click in the main window gives it the focus", await clickIn(page, third, "body"));
+  await page.evaluate(`window.seenKeys = []; addEventListener("keydown", (e) => window.seenKeys.push(e.key + (e.ctrlKey ? "+ctrl" : "")), true); true`);
+  input("keys", "ctrl+q");
+  const questionUp = () => input("windows", String(third.app.pid)).includes('"Quit Puddle"');
+  const asked = await until("the quit question", async () => questionUp(), 15_000).catch(() => false);
+  check("Ctrl+Q with terminals open shows the quit question", asked, input("windows", String(third.app.pid)));
+  check("the program is still running while the question is up", !third.exited);
   const seen = await page.evaluate("window.seenKeys").catch((err) => err.message);
-  // Known gap, measured: the keys reach the page and the program does not quit, because the main
-  // window's menu is hidden and WebView2 hands Ctrl+Q to no accelerator. Pinned here so that the fix
-  // shows up as this check failing: then expect an exit with code 0 instead.
-  check(
-    "Ctrl+Q reaches the main page and does not quit yet (known gap: the hidden menu's accelerator does not fire)",
-    !second.exited && JSON.stringify(seen) === JSON.stringify(["Control+ctrl", "q+ctrl"]),
-    `exited: ${second.exited}, code: ${second.code}, the page saw: ${JSON.stringify(seen)}`,
-  );
+  check("the page did not get the q of Ctrl+Q", !JSON.stringify(seen).includes("q+ctrl"), JSON.stringify(seen));
+  input("keys", "esc");
+  const gone = await until("the question to close", async () => !questionUp(), 15_000).catch(() => false);
+  check("Escape cancels the question", gone, input("windows", String(third.app.pid)));
+  await sleep(1500);
+  check("cancelling leaves the program running", !third.exited, `exited: ${third.exited}, code: ${third.code}`);
 } catch (err) {
   check("the test ran to the end", false, String(err?.stack ?? err));
 } finally {
   page?.close();
-  for (const state of [first, second]) if (state) stop(state);
+  for (const state of [first, second, third]) if (state) stop(state);
   server.close();
 }
 

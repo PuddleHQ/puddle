@@ -569,8 +569,14 @@ impl<R: Runtime + Clone> Host<R> {
             proxy_passwords.clone(),
             egress.chain.clone(),
         ));
-        let network_health =
-            network_health_of(&egress.chain, &discovery, &clock, &roots, sign_ins.clone());
+        let network_health = network_health_of(
+            &egress.chain,
+            &discovery,
+            &clock,
+            &roots,
+            sign_ins.clone(),
+            company_signals(&options),
+        );
         network_health.set_tls_left_out(injecting.tls.rejected_roots(), &roots);
         let pull_url = pull.proxy_url();
         // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
@@ -1023,11 +1029,13 @@ fn network_health_of(
     clock: &Arc<SystemClock>,
     roots: &CorporateRoots,
     sign_ins: Arc<dyn ProxySignInService>,
+    signals: Arc<dyn CompanySignals>,
 ) -> Arc<HostNetworkHealth> {
     let health = Arc::new(
         HostNetworkHealth::new(discovery.clone(), clock.clone())
             .with_chain(chain.clone())
-            .with_sign_ins(sign_ins),
+            .with_sign_ins(sign_ins)
+            .with_company_signals(signals),
     );
     health.set_roots(Arc::new(roots.clone()));
     health

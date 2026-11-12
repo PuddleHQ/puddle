@@ -4753,6 +4753,146 @@ async fn vm_host_a_login_shell_lands_in_the_start_folder_and_a_missing_one_opens
         .await;
 }
 
+/// The next thing the terminal says, within `within`.
+async fn terminal_next(
+    link: &mut puddle_api::TerminalLink,
+    within: Duration,
+) -> Option<puddle_api::TerminalOutput> {
+    tokio::time::timeout(within, link.output.recv())
+        .await
+        .expect("the terminal said nothing in time")
+}
+
+/// Reads the terminal's output until it holds `text`, or until something other than output comes
+/// (the caller's assertion on the text then fails and shows what was seen).
+async fn terminal_text_until(link: &mut puddle_api::TerminalLink, text: &str) -> String {
+    let mut seen = String::new();
+    while !seen.contains(text) {
+        let item = terminal_next(link, Duration::from_secs(60)).await;
+        let Some(puddle_api::TerminalOutput::Bytes(bytes)) = item else {
+            return format!("{seen}[the terminal gave {item:?}]");
+        };
+        seen.push_str(&String::from_utf8_lossy(&bytes));
+    }
+    seen
+}
+
+/// Reads the terminal's output until it ends, and says how.
+async fn terminal_end(
+    link: &mut puddle_api::TerminalLink,
+    within: Duration,
+) -> puddle_api::TerminalEnd {
+    loop {
+        match terminal_next(link, within).await {
+            Some(puddle_api::TerminalOutput::Ended(end)) => return end,
+            Some(puddle_api::TerminalOutput::Bytes(_)) => {}
+            None => return puddle_api::TerminalEnd::of(puddle_api::EndReason::Quitting),
+        }
+    }
+}
+
+/// K and W tiers. A terminal on a real guest: the host's own SSH connection to the runtime's server
+/// grants a pty and a login shell as the session user, in the start folder; the shell's exit
+/// status reaches the host, and a stop ends a terminal that is still open with `stopped`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("term").await;
+    let name = format!("{}-term", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repositories": [], "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let user = api.get(&format!("/api/workspaces/{name}")).await.json()["session_user"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(user, "root", "the session user is not root");
+
+    let root = format!("/workspaces/{name}");
+    guest(&runtime, &sandbox, &format!("mkdir -p {root}/play/src")).await;
+    let reply = api
+        .put(
+            &format!("/api/workspaces/{name}/start-folder"),
+            &json!({ "path": "play/src" }).to_string(),
+        )
+        .await;
+    assert_eq!(reply.json()["exists"], true, "{}", reply.body);
+
+    let size = puddle_api::TerminalSize::new(100, 30).unwrap();
+    let service = host.workspaces();
+    puddle_api::TerminalService::check(service, &sandbox)
+        .await
+        .unwrap();
+    let mut link = puddle_api::TerminalService::open(service, &sandbox, size)
+        .await
+        .unwrap();
+    assert_eq!(service.open_terminals(), 1);
+    // The typed line carries `$(...)` and the answer does not, so the echo cannot satisfy the wait.
+    let typed =
+        "echo \"who=$(id -un) where=$(pwd) tty=$(test -t 0 && echo yes) size=$(stty size)\"\r";
+    link.input
+        .send(puddle_api::TerminalInput::Bytes(typed.as_bytes().to_vec()))
+        .await
+        .unwrap();
+    let seen = terminal_text_until(&mut link, "size=30 100").await;
+    assert!(
+        seen.contains(&format!(
+            "who={user} where={root}/play/src tty=yes size=30 100"
+        )),
+        "{seen:?}"
+    );
+
+    // The shell's own exit ends the session with its status.
+    link.input
+        .send(puddle_api::TerminalInput::Bytes(b"exit 7\r".to_vec()))
+        .await
+        .unwrap();
+    let ended_with = terminal_end(&mut link, Duration::from_secs(60)).await;
+    assert_eq!(
+        ended_with.reason,
+        puddle_api::EndReason::Exited,
+        "{ended_with:?}"
+    );
+    assert_eq!(ended_with.status, Some(7), "{ended_with:?}");
+
+    // A terminal still open when the workspace stops ends with `stopped`.
+    let mut open = puddle_api::TerminalService::open(service, &sandbox, size)
+        .await
+        .unwrap();
+    let prompt = terminal_text_until(&mut open, "$").await;
+    assert!(prompt.contains('$'), "{prompt:?}");
+    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let stopped = terminal_end(&mut open, Duration::from_secs(120)).await;
+    assert_eq!(
+        stopped.reason,
+        puddle_api::EndReason::Stopped,
+        "{stopped:?}"
+    );
+    events
+        .until(ended(name_static), Duration::from_secs(300))
+        .await;
+    assert_eq!(service.open_terminals(), 0);
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
 /// Starts a server in the guest that greets each connection on `addr:port` (perl is part of the
 /// base image), in the background, and waits until it listens.
 async fn greeter(runtime: &MsbRuntime, sandbox: &WorkspaceId, addr: &str, port: u16, who: &str) {

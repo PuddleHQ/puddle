@@ -3,6 +3,7 @@
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 use puddle_runtime::{
@@ -16,9 +17,9 @@ use puddle_ssh_agent::{
 
 use crate::diagnose::Probe;
 use crate::facts::{
-    AccessDenied, AgentService, BootFacts, CodeIntegrityFacts, DataPathFacts, DiskEncryptionFacts,
-    DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
-    SshAgentFacts,
+    AccessDenied, AgentService, AzCliFacts, BootFacts, CodeIntegrityFacts, DataPathFacts,
+    DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os, ProcessOutcome,
+    RuntimeFacts, RuntimeState, SshAgentFacts,
 };
 use crate::{boot, launch, sys};
 
@@ -223,9 +224,62 @@ impl Probe for SystemProbe {
         )
     }
 
+    fn az_cli(&self, limit: Duration) -> AzCliFacts {
+        az_cli_in(std::env::var_os("PATH"), limit)
+    }
+
     fn data_path(&self) -> Option<DataPathFacts> {
         cfg!(target_os = "linux").then(|| sys::data_path(self.data_dir.as_deref()))
     }
+}
+
+/// The Azure CLI facts for a given `PATH` value.
+fn az_cli_in(path: Option<std::ffi::OsString>, limit: Duration) -> AzCliFacts {
+    let Some(program) = find_on_path(if cfg!(windows) { "az.cmd" } else { "az" }, path) else {
+        return AzCliFacts::NotFound;
+    };
+    az_cli_facts_at(&program, limit)
+}
+
+/// What running `program --version` says about the Azure CLI.
+fn az_cli_facts_at(program: &Path, limit: Duration) -> AzCliFacts {
+    az_cli_facts(launch::run(Command::new(program).arg("--version"), limit))
+}
+
+fn az_cli_facts(outcome: ProcessOutcome) -> AzCliFacts {
+    match outcome {
+        ProcessOutcome::Exited {
+            code: Some(0),
+            stdout_first_line,
+            ..
+        } => match azure_cli_version(&stdout_first_line) {
+            Some(version) => AzCliFacts::Found { version },
+            None => AzCliFacts::Unknown {
+                detail: "no version in its first line".into(),
+            },
+        },
+        ProcessOutcome::Exited { code, .. } => AzCliFacts::Unknown {
+            detail: format!("`az --version` exited with {code:?}"),
+        },
+        ProcessOutcome::TimedOut { after } => AzCliFacts::Unknown {
+            detail: format!("`az --version` took more than {} s", after.as_secs()),
+        },
+        ProcessOutcome::SpawnFailed { detail, .. } => AzCliFacts::Unknown { detail },
+    }
+}
+
+/// The version in the first line of `az --version`: `azure-cli   2.64.0 *`.
+fn azure_cli_version(first_line: &str) -> Option<String> {
+    let mut words = first_line.split_whitespace();
+    (words.next()? == "azure-cli").then_some(())?;
+    words.next().map(str::to_owned)
+}
+
+/// The first file called `name` in the folders of `PATH`.
+fn find_on_path(name: &str, path: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    std::env::split_paths(&path?)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 /// What asking the agent gave. `service` reads the OpenSSH Authentication Agent service's state,

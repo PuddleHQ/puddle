@@ -743,15 +743,15 @@ impl ScrubBody {
         let pushed = decoder
             .push(data, &mut plain, MAX_DECODED_STEP)
             .map_err(|err| undecodable(&err))?;
-        if end && pushed == Pushed::All {
-            decoder
-                .finish(&mut plain)
-                .map_err(|err| undecodable(&err))?;
-        }
         if pushed == Pushed::Full {
             return Err(Box::new(io::Error::other(
                 "the answer inflates too far at once for Puddle to check it",
             )));
+        }
+        if end {
+            decoder
+                .finish(&mut plain)
+                .map_err(|err| undecodable(&err))?;
         }
         Ok(plain)
     }

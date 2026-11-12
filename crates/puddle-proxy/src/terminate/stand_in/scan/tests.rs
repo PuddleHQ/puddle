@@ -771,3 +771,25 @@ fn a_plain_body_past_the_cap_is_neither_copied_nor_read() {
     scan.read(Some(late.as_bytes()));
     assert_eq!(rig.report.kinds(), Vec::<String>::new());
 }
+
+#[test]
+fn a_gzip_body_read_in_pieces_is_read_to_its_end() {
+    let made = token(TokenKind::GithubPersonal, "pieces");
+    let plain = format!("{} {made} ", "filler ".repeat(2000));
+    let packed = gzip(plain.as_bytes());
+    let rig = rig(true);
+    let response = answer(None, Some("gzip"), &[], Vec::new());
+    let AnswerBody::Scanned(mut scan) =
+        scan_answer(&rig.stand_ins, response, false, &rig.report).into_body()
+    else {
+        panic!("a text body is scanned");
+    };
+    let (first, rest) = packed.split_at(packed.len() / 2);
+    scan.read(Some(first));
+    assert!(!scan.done && scan.decoder.is_some(), "the body goes on");
+    scan.read(Some(rest));
+    assert!(!scan.done, "no end yet");
+    scan.read(None);
+    assert!(scan.done && scan.decoder.is_none());
+    assert_eq!(rig.report.kinds(), ["github_token"]);
+}

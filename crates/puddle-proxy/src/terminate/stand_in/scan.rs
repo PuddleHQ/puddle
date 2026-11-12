@@ -389,7 +389,7 @@ impl ScanBody {
             Some(decoder) => {
                 let mut plain = Zeroizing::new(Vec::new());
                 let result = decoder.push(data, &mut plain, room).and_then(|pushed| {
-                    if end && pushed == Pushed::All {
+                    if end {
                         decoder.finish(&mut plain)?;
                     }
                     Ok(pushed)

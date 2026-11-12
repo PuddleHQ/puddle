@@ -1034,3 +1034,72 @@ async fn a_step_that_inflates_past_the_step_limit_ends_the_answer_with_an_error(
     let err = scrubbed_frames("zstd", zstd).await.unwrap_err();
     assert!(err.contains("inflates too far"), "{err}");
 }
+
+#[test]
+fn the_limit_counts_what_this_call_adds_not_what_the_caller_already_holds() {
+    const LIMIT: usize = 1024 * 1024;
+    for (encoding, packed) in bombs(8 * LIMIT) {
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = vec![1_u8; 4 * LIMIT];
+        assert_eq!(
+            decoder.push(&packed, &mut out, LIMIT).unwrap(),
+            Pushed::Full,
+            "{encoding}"
+        );
+        let added = out.len() - 4 * LIMIT;
+        assert!(
+            (LIMIT..=LIMIT + 256 * 1024).contains(&added),
+            "{encoding}: {added}"
+        );
+    }
+}
+
+#[test]
+fn a_body_that_stops_short_fails_at_its_end_in_the_codings_that_can_tell() {
+    let plain = vec![b'x'; 50_000];
+    for (encoding, whole) in [
+        ("gzip", gzip(&plain)),
+        ("deflate", zlib(&plain)),
+        ("deflate", raw_deflate(&plain)),
+    ] {
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = Vec::new();
+        let cut = whole.len() - 4;
+        decoder.push(&whole[..cut], &mut out, 1 << 20).unwrap();
+        assert!(decoder.finish(&mut out).is_err(), "{encoding} cut short");
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = Vec::new();
+        decoder.push(&whole, &mut out, 1 << 20).unwrap();
+        decoder.finish(&mut out).unwrap();
+        assert_eq!(out, plain, "{encoding}");
+    }
+}
+
+#[tokio::test]
+async fn a_plain_body_is_passed_on_in_the_frames_it_came_in() {
+    let body = ScrubBody {
+        inner: AnswerBody::Buffered(Some(Bytes::from(vec![b'a'; 100_000]))),
+        scrubber: scrubber(),
+        queued: Bytes::new(),
+        decoder: None,
+        held: Zeroizing::new(Vec::new()),
+        notes: Arc::new(ScrubNotes::default()),
+        trailers: None,
+        ended: false,
+    };
+    let mut body = body;
+    let mut sizes = Vec::new();
+    while let Some(frame) = body.frame().await {
+        if let Ok(data) = frame.unwrap().into_data() {
+            sizes.push(data.len());
+        }
+    }
+    // The scrubber keeps the last byte back until the end; nothing else splits the body.
+    assert_eq!(sizes, [99_999, 1]);
+}

@@ -30,13 +30,23 @@ pub enum UsageError {
     /// No command given.
     #[error("no command given")]
     Missing,
+    /// An option's value is not one the option takes.
+    #[error("{option} must be {expected}, found {value:?}")]
+    InvalidValue {
+        /// The flag.
+        option: &'static str,
+        /// What it takes.
+        expected: &'static str,
+        /// What was given.
+        value: String,
+    },
     /// A command lacks its argument; holds the usage of that command.
     #[error("missing argument: {0}")]
     MissingArgument(&'static str),
 }
 
 /// Usage text for `--help` and for usage errors.
-pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] | serve [--port <n>] [--connection-file <path>] | backup [--data-dir <path>] <dest> | ssh-bridge <endpoint>]";
+pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] | serve [--config <path>] [--print-config] [--port <n>] [--connection-file <path>] [--data-dir <path>] [--log <filter>] | backup [--data-dir <path>] <dest> | ssh-bridge <endpoint>]\nserve options and the config file: https://github.com/PuddleHQ/puddle/blob/main/docs/serve.md";
 
 /// Parse the arguments after the program name.
 ///

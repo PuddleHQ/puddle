@@ -79,7 +79,8 @@ const REMOTE_DEFAULTS: &str = "remote = off (default)\n\
      workspace_base_domain = subdomains of the first public host (default)\n\
      listen_interface = no network listener (default)\n\
      listen_port = 8443 (default)\n\
-     allowed_proxies = none (default)\n";
+     allowed_proxies = none (default)\n\
+     multi_user = off (default)\n";
 
 struct Rig {
     dir: tempfile::TempDir,
@@ -421,7 +422,7 @@ fn the_flags_and_the_file_keys_mirror_each_other() {
 fn a_switch_is_flag_and_negated_flag_in_the_table_the_usage_and_the_docs() {
     let docs = include_str!("../../../../../../docs/serve.md");
     let switches: Vec<_> = OPTIONS.iter().filter(|s| s.kind.is_switch()).collect();
-    assert_eq!(switches.len(), 1);
+    assert_eq!(switches.len(), 2);
     for spec in switches {
         let negated = spec.negated_flag().unwrap();
         assert_eq!(negated, format!("--no-{}", spec.key.replace('_', "-")));

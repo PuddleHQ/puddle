@@ -38,7 +38,7 @@ fn every_operation_documents_the_guard_refusals() {
             assert!(op["tags"].as_array().is_some_and(|t| !t.is_empty()));
         }
     }
-    assert_eq!(count, 113, "operations in the spec");
+    assert_eq!(count, 124, "operations in the spec");
 }
 
 /// ADR 0002: responses always carry every field (`null`, never absent), so the generated
@@ -162,8 +162,22 @@ fn committed_spec_is_current() {
     );
 }
 
+/// The only operations whose answer may carry a credential: the access token a sign-in hands the
+/// browser that just proved who it is. Their refresh token is in a cookie, not a body.
+const GRANTING: &[&str] = &[
+    "/api/auth/setup",
+    "/api/auth/sign-in",
+    "/api/auth/invite",
+    "/api/auth/refresh",
+];
+
 /// Every schema a response can carry, following references.
 fn response_schemas(s: &Value) -> BTreeSet<String> {
+    response_schemas_of(s, |path| !GRANTING.contains(&path))
+}
+
+/// Every schema the responses of the operations on the paths `keep` accepts can carry.
+fn response_schemas_of(s: &Value, keep: impl Fn(&str) -> bool) -> BTreeSet<String> {
     fn refs(value: &Value, out: &mut Vec<String>) {
         match value {
             Value::Object(map) => {
@@ -177,7 +191,10 @@ fn response_schemas(s: &Value) -> BTreeSet<String> {
         }
     }
     let mut todo = Vec::new();
-    for item in s["paths"].as_object().unwrap().values() {
+    for (path, item) in s["paths"].as_object().unwrap() {
+        if !keep(path) {
+            continue;
+        }
         for op in item.as_object().unwrap().values() {
             refs(&op["responses"], &mut todo);
         }
@@ -237,5 +254,29 @@ fn no_response_can_carry_a_credential() {
                 "response schema {name} has a field {prop}"
             );
         }
+    }
+}
+
+/// The access token is a field of `SessionGrant` and of nothing else, and `SessionGrant` is the
+/// answer of the four sign-in operations alone.
+#[test]
+fn only_the_sign_in_answers_carry_an_access_token() {
+    let s = spec();
+    let everywhere = response_schemas_of(&s, |_| true);
+    assert!(everywhere.contains("SessionGrant"));
+    let elsewhere = response_schemas(&s);
+    assert!(
+        !elsewhere.contains("SessionGrant"),
+        "an answer other than a sign-in carries a session grant"
+    );
+    for path in GRANTING {
+        let only_here = response_schemas_of(&s, |p| p == *path);
+        assert!(only_here.contains("SessionGrant"), "{path}");
+    }
+    for (name, schema) in s["components"]["schemas"].as_object().unwrap() {
+        let has = schema["properties"]
+            .as_object()
+            .is_some_and(|p| p.contains_key("access_token"));
+        assert_eq!(has, name == "SessionGrant", "{name}");
     }
 }

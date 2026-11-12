@@ -12,7 +12,7 @@ use crate::routes::{AppState, api_router, slow_router};
 
 /// The contract's version. Bump the minor version for additive changes and the major version
 /// for anything a generated client would break on.
-pub const API_VERSION: &str = "0.29.0";
+pub const API_VERSION: &str = "0.30.0";
 
 /// The security scheme's name in the spec.
 const BEARER: &str = "bearer";
@@ -41,6 +41,7 @@ const BEARER: &str = "bearer";
     tags(
         (name = "service", description = "Who is answering"),
         (name = "events", description = "The server-sent event stream"),
+        (name = "auth", description = "Browser sign-in on a public address: the first visitor's owner account, passwords, devices and the sign-in methods"),
         (name = "pending", description = "Connections waiting for a decision"),
         (name = "rules", description = "Allow and deny rules"),
         (name = "audit", description = "The audit log"),

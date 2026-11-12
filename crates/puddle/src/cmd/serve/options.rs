@@ -176,7 +176,7 @@ impl Spec {
 }
 
 /// Every option of `puddle serve`, in the order `--print-config` lists them.
-pub const OPTIONS: [Spec; 11] = [
+pub const OPTIONS: [Spec; 12] = [
     Spec {
         key: "config",
         usage: "--config <path>",
@@ -275,6 +275,15 @@ pub const OPTIONS: [Spec; 11] = [
         in_file: true,
         example: "[\"192.168.1.20\"]",
         default: "none",
+    },
+    Spec {
+        key: "multi_user",
+        usage: "--multi-user",
+        env: "PUDDLE_MULTI_USER",
+        kind: Kind::Bool,
+        in_file: true,
+        example: "true",
+        default: "off",
     },
 ];
 

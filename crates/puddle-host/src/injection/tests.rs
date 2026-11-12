@@ -78,6 +78,7 @@ fn add_secret(store: &Store, vault: &MemoryStore, ws: &WorkspaceId, var: &str, h
     let hosts = hosts.iter().map(|h| SecretHost::new(h).unwrap()).collect();
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Workspace(ws.clone()),
             &EnvName::new(var).unwrap(),
             EnvDraft::secret(id, hosts).unwrap(),
@@ -101,11 +102,14 @@ fn attach(store: &Store, ws: &WorkspaceId, label: &str, host: &str) {
     )
     .unwrap();
     let identity = store
-        .create_identity(IdentityDraft {
-            label: label.to_owned(),
-            author: Author::new(label, &format!("{label}@example.org")).unwrap(),
-            credentials: vec![credential],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            IdentityDraft {
+                label: label.to_owned(),
+                author: Author::new(label, &format!("{label}@example.org")).unwrap(),
+                credentials: vec![credential],
+            },
+        )
         .unwrap();
     store.attach_identity(ws, identity.id, None).unwrap();
 }
@@ -739,6 +743,7 @@ async fn a_start_registers_the_stand_ins_of_its_secrets_and_decrypts_their_hosts
     );
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Workspace(ws.clone()),
             &EnvName::new("EDITOR").unwrap(),
             EnvDraft::plain("vim").unwrap(),
@@ -788,6 +793,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     assert!(!decrypts(&terminations, &ws, "api.example.org"));
     store
         .delete_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Workspace(ws.clone()),
             &EnvName::new("API_KEY").unwrap(),
         )
@@ -808,6 +814,7 @@ async fn a_global_secret_changes_what_every_running_workspace_decrypts_and_a_git
     vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Global,
             &EnvName::new("G").unwrap(),
             EnvDraft::secret(id, vec![SecretHost::new("g.example.org").unwrap()]).unwrap(),
@@ -901,6 +908,7 @@ async fn a_deleted_workspace_loses_its_variables_and_the_values_of_its_own_secre
     vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Global,
             &EnvName::new("GLOBAL").unwrap(),
             EnvDraft::secret(id, vec![SecretHost::new("g.example.org").unwrap()]).unwrap(),
@@ -909,15 +917,26 @@ async fn a_deleted_workspace_loses_its_variables_and_the_values_of_its_own_secre
 
     injection.forget(&gone).await;
     assert_eq!(vault.ids(), ["env-GLOBAL", "env-THEIRS"]);
-    assert_eq!(store.env_entries(&EnvScope::Workspace(gone)).unwrap(), []);
     assert_eq!(
         store
-            .env_entries(&EnvScope::Workspace(other))
+            .env_entries(puddle_store::UserId::OWNER, &EnvScope::Workspace(gone))
+            .unwrap(),
+        []
+    );
+    assert_eq!(
+        store
+            .env_entries(puddle_store::UserId::OWNER, &EnvScope::Workspace(other))
             .unwrap()
             .len(),
         1
     );
-    assert_eq!(store.env_entries(&EnvScope::Global).unwrap().len(), 1);
+    assert_eq!(
+        store
+            .env_entries(puddle_store::UserId::OWNER, &EnvScope::Global)
+            .unwrap()
+            .len(),
+        1
+    );
 
     // A credential store that fails leaves the value but never stops the deletion, and the
     // user is told which secret's value stayed behind.
@@ -935,7 +954,10 @@ async fn a_deleted_workspace_loses_its_variables_and_the_values_of_its_own_secre
     );
     assert_eq!(
         store
-            .env_entries(&EnvScope::Workspace(workspace("other")))
+            .env_entries(
+                puddle_store::UserId::OWNER,
+                &EnvScope::Workspace(workspace("other"))
+            )
             .unwrap(),
         []
     );

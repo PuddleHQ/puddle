@@ -127,11 +127,14 @@ async fn vm_radar_forgejo_clones_pushes_and_deletes_a_branch_and_the_guest_never
     .unwrap();
     vm.host
         .store()
-        .create_identity(IdentityDraft {
-            label: "Work".to_owned(),
-            author: Author::new("Work", "work@example.org").unwrap(),
-            credentials: vec![binding],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            IdentityDraft {
+                label: "Work".to_owned(),
+                author: Author::new("Work", "work@example.org").unwrap(),
+                credentials: vec![binding],
+            },
+        )
         .unwrap();
 
     // The workspace is created by cloning the private repository: its first request carries the

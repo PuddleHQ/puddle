@@ -912,7 +912,7 @@ impl State {
     fn identity_ids(&self) -> Result<Vec<(String, IdentityId)>, String> {
         Ok(self
             .store
-            .identities()
+            .identities(puddle_store::UserId::OWNER)
             .map_err(|err| err.to_string())?
             .into_iter()
             .map(|identity| (identity.label.clone(), identity.id))
@@ -929,7 +929,7 @@ impl State {
                 let draft = request.clone().into_store_draft()?;
                 let made = self
                     .store
-                    .create_identity(draft)
+                    .create_identity(puddle_store::UserId::OWNER, draft)
                     .map_err(|err| format!("identity {label:?}: {err}"))?;
                 Ok((label, made.id))
             })
@@ -961,7 +961,7 @@ impl State {
             }
         };
         self.store
-            .set_env(scope, &name, draft)
+            .set_env(puddle_store::UserId::OWNER, scope, &name, draft)
             .map(|_| ())
             .map_err(|err| at(&err))
     }

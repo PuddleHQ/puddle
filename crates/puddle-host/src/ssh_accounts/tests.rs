@@ -49,18 +49,21 @@ fn store_with(identities: &[(&str, &str, bool)]) -> (Arc<Store>, Vec<SourceSpec>
             BTreeSet::from([Owner::new(label).unwrap()])
         };
         let identity = store
-            .create_identity(IdentityDraft {
-                label: (*label).to_owned(),
-                author: Author::new(label, "a@example.org").unwrap(),
-                credentials: vec![
-                    CredentialBinding::new(
-                        &HostName::new(*host).unwrap(),
-                        spec.clone(),
-                        Coverage::new(owners, *rest).unwrap(),
-                    )
-                    .unwrap(),
-                ],
-            })
+            .create_identity(
+                puddle_store::UserId::OWNER,
+                IdentityDraft {
+                    label: (*label).to_owned(),
+                    author: Author::new(label, "a@example.org").unwrap(),
+                    credentials: vec![
+                        CredentialBinding::new(
+                            &HostName::new(*host).unwrap(),
+                            spec.clone(),
+                            Coverage::new(owners, *rest).unwrap(),
+                        )
+                        .unwrap(),
+                    ],
+                },
+            )
             .unwrap();
         store.attach_identity(&ws, identity.id, None).unwrap();
         sources.push(spec);

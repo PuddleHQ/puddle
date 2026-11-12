@@ -199,17 +199,45 @@ fn running_a_program_that_is_not_there_is_unknown() {
 #[cfg(unix)]
 #[test]
 fn running_a_script_that_prints_the_az_banner_finds_the_version() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let az = dir.path().join("az");
-    std::fs::write(
+    puddle_test_kit::write_executable(
         &az,
         "#!/bin/sh\necho 'azure-cli                         2.64.0 *'\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&az, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     assert_eq!(
         az_cli_facts_at(&az, Duration::from_secs(5)),
+        AzCliFacts::Found {
+            version: "2.64.0".into()
+        }
+    );
+}
+
+#[test]
+fn no_az_in_any_path_folder_is_not_found() {
+    let empty = tempfile::tempdir().unwrap();
+    let path = std::env::join_paths([empty.path()]).unwrap();
+    assert_eq!(
+        az_cli_in(Some(path), Duration::from_secs(2)),
+        AzCliFacts::NotFound
+    );
+    assert_eq!(
+        az_cli_in(None, Duration::from_secs(2)),
+        AzCliFacts::NotFound
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_az_in_a_path_folder_is_found_and_asked_for_its_version() {
+    let dir = tempfile::tempdir().unwrap();
+    puddle_test_kit::write_executable(
+        &dir.path().join("az"),
+        "#!/bin/sh\necho 'azure-cli                         2.64.0 *'\n",
+    );
+    let path = std::env::join_paths([dir.path()]).unwrap();
+    assert_eq!(
+        az_cli_in(Some(path), Duration::from_secs(5)),
         AzCliFacts::Found {
             version: "2.64.0".into()
         }

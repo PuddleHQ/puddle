@@ -225,15 +225,20 @@ impl Probe for SystemProbe {
     }
 
     fn az_cli(&self, limit: Duration) -> AzCliFacts {
-        let Some(program) = find_on_path(if cfg!(windows) { "az.cmd" } else { "az" }) else {
-            return AzCliFacts::NotFound;
-        };
-        az_cli_facts_at(&program, limit)
+        az_cli_in(std::env::var_os("PATH"), limit)
     }
 
     fn data_path(&self) -> Option<DataPathFacts> {
         cfg!(target_os = "linux").then(|| sys::data_path(self.data_dir.as_deref()))
     }
+}
+
+/// The Azure CLI facts for a given `PATH` value.
+fn az_cli_in(path: Option<std::ffi::OsString>, limit: Duration) -> AzCliFacts {
+    let Some(program) = find_on_path(if cfg!(windows) { "az.cmd" } else { "az" }, path) else {
+        return AzCliFacts::NotFound;
+    };
+    az_cli_facts_at(&program, limit)
 }
 
 /// What running `program --version` says about the Azure CLI.
@@ -271,8 +276,8 @@ fn azure_cli_version(first_line: &str) -> Option<String> {
 }
 
 /// The first file called `name` in the folders of `PATH`.
-fn find_on_path(name: &str) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?)
+fn find_on_path(name: &str, path: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    std::env::split_paths(&path?)
         .map(|dir| dir.join(name))
         .find(|candidate| candidate.is_file())
 }

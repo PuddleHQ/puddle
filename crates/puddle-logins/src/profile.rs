@@ -525,32 +525,68 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
     // One access token field per resource: a tool holds tokens for several at once (`az` has one for
     // Azure Resource Manager and one for Graph), and a refresh of one must not replace the other.
     // Each is swapped only toward its own resource's hosts.
-    entra_access(
-        "arm",
-        &["management.azure.com", "management.core.windows.net"],
-        &["management.azure.com", "management.core.windows.net"],
-    ),
+    Field {
+        path: "access_token",
+        resource: Some("arm"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        only_prefixed: false,
+        scope: Scope::Hosts(&["management.azure.com", "management.core.windows.net"]),
+        audience: Audience::Named(&["management.azure.com", "management.core.windows.net"]),
+        keep: Keep::Stored,
+    },
     // Microsoft Graph, and the older Azure AD Graph that some tools still ask for.
-    entra_access(
-        "graph",
-        &[
+    Field {
+        path: "access_token",
+        resource: Some("graph"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        only_prefixed: false,
+        scope: Scope::Hosts(&["graph.microsoft.com", "graph.windows.net"]),
+        audience: Audience::Named(&[
             "graph.microsoft.com",
             "00000003-0000-0000-c000-000000000000",
             "graph.windows.net",
             "00000002-0000-0000-c000-000000000000",
-        ],
-        &["graph.microsoft.com", "graph.windows.net"],
-    ),
-    entra_access(
-        "devops",
-        &[
+        ]),
+        keep: Keep::Stored,
+    },
+    Field {
+        path: "access_token",
+        resource: Some("devops"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        only_prefixed: false,
+        scope: Scope::Hosts(&["dev.azure.com", "*.dev.azure.com", "*.visualstudio.com"]),
+        audience: Audience::Named(&[
             "499b84ac-1321-427f-aa17-267ca6975798",
             "dev.azure.com",
             "visualstudio.com",
-        ],
-        &["dev.azure.com", "*.dev.azure.com", "*.visualstudio.com"],
-    ),
-    entra_access("vault", &["vault.azure.net"], &["*.vault.azure.net"]),
+        ]),
+        keep: Keep::Stored,
+    },
+    Field {
+        path: "access_token",
+        resource: Some("vault"),
+        role: Role::Access,
+        // A token that is not a JWT (a personal account's) starts with `Ew`.
+        prefixes: &["Ew"],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        only_prefixed: false,
+        scope: Scope::Hosts(&["*.vault.azure.net"]),
+        audience: Audience::Named(&["vault.azure.net"]),
+        keep: Keep::Stored,
+    },
     // A resource none of the above names (Storage, Azure SQL, Azure Data Explorer, an app's own
     // API): they share one slot, which keeps the last few stand-ins. Their hosts are not known in
     // advance (Storage's are under a public suffix, which no pattern may cover), so the stand-in is
@@ -598,58 +634,67 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
     },
 ];
 
-/// The access token field of an Entra answer for the resource `resource`: taken when the answer or
-/// the token names one of `names`, swapped toward `hosts` only.
-const fn entra_access(
-    resource: &'static str,
-    names: &'static [&'static str],
-    hosts: &'static [&'static str],
-) -> Field {
-    Field {
-        path: "access_token",
-        resource: Some(resource),
-        role: Role::Access,
-        // A token that is not a JWT (a personal account's) starts with `Ew`.
-        prefixes: &["Ew"],
-        keep_last: 0,
-        stand_in: StandInKind::Jwt,
-        only_prefixed: false,
-        scope: Scope::Hosts(hosts),
-        audience: Audience::Named(names),
-        keep: Keep::Stored,
-    }
-}
-
-/// The token endpoints of Entra's public cloud on one login host: `/{tenant}/oauth2/v2.0/token` and
-/// the older `/{tenant}/oauth2/token`.
-const fn entra_endpoints(host: &'static str) -> [Endpoint; 2] {
-    [
-        Endpoint {
-            host,
-            method: Method::Post,
-            path: "/*/oauth2/v2.0/token",
-            request_fields: &["refresh_token"],
-            fields: ENTRA_TOKEN_FIELDS,
-        },
-        Endpoint {
-            host,
-            method: Method::Post,
-            path: "/*/oauth2/token",
-            request_fields: &["refresh_token"],
-            fields: ENTRA_TOKEN_FIELDS,
-        },
-    ]
-}
-
-/// The login hosts of Entra's public cloud: `login.microsoftonline.com` and its aliases, which
-/// answer the same token requests (a tool or a library may be set to any of them).
-const ENTRA_ENDPOINTS: [Endpoint; 8] = {
-    let [a, b] = entra_endpoints("login.microsoftonline.com");
-    let [c, d] = entra_endpoints("login.windows.net");
-    let [e, f] = entra_endpoints("login.microsoft.com");
-    let [g, h] = entra_endpoints("sts.windows.net");
-    [a, b, c, d, e, f, g, h]
-};
+/// The token endpoints of Entra's public cloud, `/{tenant}/oauth2/v2.0/token` and the older
+/// `/{tenant}/oauth2/token`, on `login.microsoftonline.com` and its aliases, which answer the same
+/// token requests (a tool or a library may be set to any of them).
+const ENTRA_ENDPOINTS: &[Endpoint] = &[
+    Endpoint {
+        host: "login.microsoftonline.com",
+        method: Method::Post,
+        path: "/*/oauth2/v2.0/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.microsoftonline.com",
+        method: Method::Post,
+        path: "/*/oauth2/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.windows.net",
+        method: Method::Post,
+        path: "/*/oauth2/v2.0/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.windows.net",
+        method: Method::Post,
+        path: "/*/oauth2/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.microsoft.com",
+        method: Method::Post,
+        path: "/*/oauth2/v2.0/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.microsoft.com",
+        method: Method::Post,
+        path: "/*/oauth2/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "sts.windows.net",
+        method: Method::Post,
+        path: "/*/oauth2/v2.0/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "sts.windows.net",
+        method: Method::Post,
+        path: "/*/oauth2/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+];
 
 /// Microsoft Entra (`az login`, Git Credential Manager for Azure `DevOps`, VS Code's Azure
 /// sign-in): the OAuth token endpoint of the public cloud, `/{tenant}/oauth2/v2.0/token` and the
@@ -661,7 +706,7 @@ const ENTRA_ENDPOINTS: [Endpoint; 8] = {
 pub const ENTRA: Profile = Profile {
     id: "entra",
     name: "Microsoft Entra",
-    endpoints: &ENTRA_ENDPOINTS,
+    endpoints: ENTRA_ENDPOINTS,
     api_hosts: &[
         "management.azure.com",
         "management.core.windows.net",
@@ -797,31 +842,38 @@ const DOCKER_TOKEN_FIELDS: &[Field] = &[
 /// answer's `token` field, kept under its own slot (`resource`) so it never replaces the token the
 /// CLI's login made. A second token of the same kind gets the same stand-in, with the newer token
 /// behind it.
-const fn docker_created(resource: &'static str, prefix: &'static [&'static str]) -> [Field; 1] {
-    [Field {
-        path: "token",
-        resource: Some(resource),
-        role: Role::ApiKey,
-        prefixes: prefix,
-        keep_last: 0,
-        stand_in: StandInKind::Shaped,
-        only_prefixed: false,
-        scope: Scope::Api,
-        audience: Audience::Any,
-        keep: Keep::Stored,
-    }]
-}
+const DOCKER_CREATED_PAT: &[Field] = &[Field {
+    path: "token",
+    resource: Some("created"),
+    role: Role::ApiKey,
+    prefixes: &["dckr_pat_"],
+    keep_last: 0,
+    stand_in: StandInKind::Shaped,
+    only_prefixed: false,
+    scope: Scope::Api,
+    audience: Audience::Any,
+    keep: Keep::Stored,
+}];
+
+/// An organization's access token, as [`DOCKER_CREATED_PAT`].
+const DOCKER_CREATED_OAT: &[Field] = &[Field {
+    path: "token",
+    resource: Some("org"),
+    role: Role::ApiKey,
+    prefixes: &["dckr_oat_"],
+    keep_last: 0,
+    stand_in: StandInKind::Shaped,
+    only_prefixed: false,
+    scope: Scope::Api,
+    audience: Audience::Any,
+    keep: Keep::Stored,
+}];
 
 /// The registry's bearer token, which `auth.docker.io` mints for one repository and a few minutes
 /// (the answer has it twice, as `token` and `access_token`). It goes to the registry only.
 const DOCKER_REGISTRY_FIELDS: &[Field] = &[
-    docker_registry_field("token"),
-    docker_registry_field("access_token"),
-];
-
-const fn docker_registry_field(path: &'static str) -> Field {
     Field {
-        path,
+        path: "token",
         resource: Some("registry"),
         role: Role::Access,
         prefixes: &[],
@@ -831,8 +883,20 @@ const fn docker_registry_field(path: &'static str) -> Field {
         scope: Scope::Hosts(&["registry-1.docker.io"]),
         audience: Audience::Any,
         keep: Keep::Memory,
-    }
-}
+    },
+    Field {
+        path: "access_token",
+        resource: Some("registry"),
+        role: Role::Access,
+        prefixes: &[],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        only_prefixed: false,
+        scope: Scope::Hosts(&["registry-1.docker.io"]),
+        audience: Audience::Any,
+        keep: Keep::Memory,
+    },
+];
 
 /// Docker Hub (`docker login` through the browser, the device flow): the login host
 /// `login.docker.com` answers the poll with an access token (a JWT), an identity token (a JWT) and a
@@ -897,14 +961,14 @@ pub const DOCKER: Profile = Profile {
             method: Method::Post,
             path: "/v2/access-tokens",
             request_fields: &[],
-            fields: &docker_created("created", &["dckr_pat_"]),
+            fields: DOCKER_CREATED_PAT,
         },
         Endpoint {
             host: "hub.docker.com",
             method: Method::Post,
             path: "/v2/orgs/*/access-tokens",
             request_fields: &[],
-            fields: &docker_created("org", &["dckr_oat_"]),
+            fields: DOCKER_CREATED_OAT,
         },
         // No request field is swapped: the token is asked for with a `Basic` credential in a
         // header, which is swapped as any header is.

@@ -1123,7 +1123,7 @@ async fn vm_host_clones_a_public_repository_when_the_identity_is_not_signed_in_a
         })
         .unwrap();
     host.store()
-        .create_identity(identity("Work", REPO_HOST))
+        .create_identity(puddle_store::UserId::OWNER, identity("Work", REPO_HOST))
         .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
@@ -1214,7 +1214,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     // The first identity is the default: the new workspace gets it, and decrypts github.com.
     let work = host
         .store()
-        .create_identity(identity("Work", REPO_HOST))
+        .create_identity(puddle_store::UserId::OWNER, identity("Work", REPO_HOST))
         .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
@@ -1292,7 +1292,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     // connection with the CA the guest already had, and its remotes get its author.
     let lab = host
         .store()
-        .create_identity(identity("Lab", SECOND))
+        .create_identity(puddle_store::UserId::OWNER, identity("Lab", SECOND))
         .unwrap();
     let ca_before = termination.ca().certificate().clone();
     host.store()
@@ -2816,7 +2816,10 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceId, Ap
     let radar_identity = terminate.then(|| {
         vm.host
             .store()
-            .create_identity(identity_for("Radar", radar_tls_hosts()))
+            .create_identity(
+                puddle_store::UserId::OWNER,
+                identity_for("Radar", radar_tls_hosts()),
+            )
             .unwrap()
     });
     let api = Api::new(vm.host.url(), vm.host.token());

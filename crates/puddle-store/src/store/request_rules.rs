@@ -6,10 +6,11 @@
 use puddle_types::{Event, Methods, PathPattern, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use super::{Store, append, lock};
+use super::{Store, append_for, lock, users};
 use crate::audit::{AuditRecord, RequestRuleWire, RuleDeleteReason, actor_str};
 use crate::error::StoreError;
 use crate::rule::Actor;
+use crate::users::UserId;
 
 /// Most rules one scope (global, or one workspace) may hold.
 pub const MAX_REQUEST_RULES: usize = 500;
@@ -19,7 +20,9 @@ pub const MAX_REQUEST_RULES: usize = 500;
 pub struct RequestRule {
     /// Row id, never reused.
     pub id: i64,
-    /// The workspace it applies to; `None` for every workspace.
+    /// Whose it is: a global rule applies to every workspace of this user and no other.
+    pub user: UserId,
+    /// The workspace it applies to; `None` for every workspace of [`RequestRule::user`].
     pub workspace: Option<WorkspaceId>,
     /// The host pattern, `example.com` or `*.example.com`, as the proxy takes it.
     pub host: String,
@@ -69,7 +72,7 @@ pub struct NewRequestRule {
     pub created_by: Actor,
 }
 
-const COLUMNS: &str = "id, workspace_id, host, methods, path, created_at, created_by";
+const COLUMNS: &str = "id, workspace_id, host, methods, path, created_at, created_by, user_id";
 
 fn corrupt(id: i64, reason: String) -> StoreError {
     StoreError::Corrupt {
@@ -87,9 +90,11 @@ fn row_to_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<RequestRule, 
     let path: String = row.get(4)?;
     let created_at: i64 = row.get(5)?;
     let created_by: String = row.get(6)?;
+    let user: i64 = row.get(7)?;
     Ok((|| {
         Ok(RequestRule {
             id,
+            user: UserId::from_stored(user),
             workspace: workspace
                 .map(|w| WorkspaceId::new(&w).map_err(|e| corrupt(id, e.to_string())))
                 .transpose()?,
@@ -142,7 +147,7 @@ pub(super) fn delete_workspace_rows(
         [workspace.as_str()],
     )?;
     for rule in &rules {
-        append(
+        append_for(
             tx,
             &AuditRecord::RequestRuleDeleted {
                 ts: now,
@@ -150,6 +155,7 @@ pub(super) fn delete_workspace_rows(
                 reason: RuleDeleteReason::WorkspaceDeleted,
                 actor: actor_str(Actor::System),
             },
+            rule.user,
         )?;
     }
     if !rules.is_empty() {
@@ -159,8 +165,8 @@ pub(super) fn delete_workspace_rows(
 }
 
 impl Store {
-    /// Every rule on method and path, or the ones that apply to `workspace` (the global ones and
-    /// its own), in id order.
+    /// Every rule on method and path of every user, or the ones that apply to `workspace` (the
+    /// global ones of its user and its own), in id order.
     ///
     /// # Errors
     /// A database error, or a stored row that no longer reads.
@@ -171,20 +177,45 @@ impl Store {
         let conn = lock(&self.conn);
         match workspace {
             None => list(&conn, "", &[]),
-            Some(name) => list(
-                &conn,
-                "WHERE workspace_id IS NULL OR workspace_id = ?1",
-                &[&name.as_str()],
-            ),
+            Some(name) => {
+                let user = users::owner_in(&conn, name)?;
+                list(
+                    &conn,
+                    "WHERE (workspace_id IS NULL AND user_id = ?2) OR workspace_id = ?1",
+                    &[&name.as_str(), &user.get()],
+                )
+            }
         }
     }
 
-    /// Makes a rule and tells running workspaces to read their rules again.
+    /// The rules on method and path of `user`, global and of their workspaces, in id order.
+    ///
+    /// # Errors
+    /// A database error, or a stored row that no longer reads.
+    pub fn request_rules_of(&self, user: UserId) -> Result<Vec<RequestRule>, StoreError> {
+        list(&lock(&self.conn), "WHERE user_id = ?1", &[&user.get()])
+    }
+
+    /// Makes a rule of the owner (see [`Store::add_request_rule_as`]) and tells running
+    /// workspaces to read their rules again.
+    ///
+    /// # Errors
+    /// As [`Store::add_request_rule_as`].
+    pub fn add_request_rule(&self, new: &NewRequestRule) -> Result<RequestRule, StoreError> {
+        self.add_request_rule_as(UserId::OWNER, new)
+    }
+
+    /// Makes a rule of `user`: global for their workspaces, or for one of them.
     ///
     /// # Errors
     /// [`StoreError::SystemActor`], [`StoreError::RequestRuleInvalid`] over the per-scope limit
-    /// or an empty host, or a database error.
-    pub fn add_request_rule(&self, new: &NewRequestRule) -> Result<RequestRule, StoreError> {
+    /// or an empty host, [`StoreError::UnknownWorkspace`] for a workspace that is not `user`'s,
+    /// or a database error.
+    pub fn add_request_rule_as(
+        &self,
+        user: UserId,
+        new: &NewRequestRule,
+    ) -> Result<RequestRule, StoreError> {
         if new.created_by == Actor::System {
             return Err(StoreError::SystemActor);
         }
@@ -192,10 +223,13 @@ impl Store {
             return Err(StoreError::RequestRuleInvalid("a rule names a host".into()));
         }
         let rule = self.change(|tx, now, fx| {
+            if let Some(workspace) = &new.workspace {
+                users::require_owner(tx, workspace, user)?;
+            }
             let scope = new.workspace.as_ref().map(WorkspaceId::as_str);
             let held: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM request_rules WHERE workspace_id IS ?1",
-                [scope],
+                "SELECT COUNT(*) FROM request_rules WHERE workspace_id IS ?1 AND user_id = ?2",
+                params![scope, user.get()],
                 |r| r.get(0),
             )?;
             if usize::try_from(held).unwrap_or(usize::MAX) >= MAX_REQUEST_RULES {
@@ -206,8 +240,8 @@ impl Store {
             let now_i = i64::try_from(now).unwrap_or(i64::MAX);
             tx.execute(
                 "INSERT INTO request_rules
-                     (scope, workspace_id, host, methods, path, created_at, created_by)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     (scope, workspace_id, host, methods, path, created_at, created_by, user_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     if scope.is_some() {
                         "workspace"
@@ -220,15 +254,17 @@ impl Store {
                     new.path.to_string(),
                     now_i,
                     new.created_by.as_str(),
+                    user.get(),
                 ],
             )?;
             let rule = load(tx, tx.last_insert_rowid())?;
-            append(
+            append_for(
                 tx,
                 &AuditRecord::RequestRuleCreated {
                     ts: now,
                     rule: rule.wire(),
                 },
+                user,
             )?;
             fx.push(Event::RequestRulesChanged {});
             Ok(rule)
@@ -248,7 +284,7 @@ impl Store {
         let rule = self.change(|tx, now, fx| {
             let rule = load(tx, id)?;
             tx.execute("DELETE FROM request_rules WHERE id = ?1", [id])?;
-            append(
+            append_for(
                 tx,
                 &AuditRecord::RequestRuleDeleted {
                     ts: now,
@@ -256,6 +292,7 @@ impl Store {
                     reason: RuleDeleteReason::User,
                     actor: actor_str(actor),
                 },
+                rule.user,
             )?;
             fx.push(Event::RequestRulesChanged {});
             Ok(rule)

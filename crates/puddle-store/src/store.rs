@@ -31,6 +31,7 @@ use crate::pending::{
 };
 use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
 use crate::schema;
+use crate::users::UserId;
 
 mod devices;
 mod environment;
@@ -92,6 +93,9 @@ pub struct NewWorkspaceOp {
     pub op: WorkspaceOpKind,
     /// The workspace it was done to; `None` for an identity change that belongs to none.
     pub workspace: Option<WorkspaceId>,
+    /// Whose record it is when it names no workspace (`None`: the owner's). One that names a
+    /// workspace is that workspace's user's.
+    pub user: Option<UserId>,
     /// How it ended.
     pub outcome: WorkspaceOpOutcome,
     /// Who asked.
@@ -105,7 +109,7 @@ pub struct NewWorkspaceOp {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AuditFilter {
     /// Records of this user's workspaces and changes; every user's when `None`.
-    pub user: Option<crate::users::UserId>,
+    pub user: Option<UserId>,
     /// Records about this workspace.
     pub workspace: Option<WorkspaceId>,
     /// Records of this `type` (one of [`AuditRecord::KINDS`]).
@@ -310,11 +314,22 @@ impl Store {
         Arc::clone(&self.rules.read().unwrap_or_else(PoisonError::into_inner))
     }
 
-    /// Every rule, including expired ones the sweeper hasn't removed yet, and the entries of
-    /// the rule sets the user made (scope [`Scope::Set`]).
+    /// Every rule of every user, including expired ones the sweeper hasn't removed yet, and the
+    /// entries of the rule sets users made (scope [`Scope::Set`]).
     #[must_use]
     pub fn rules(&self) -> Vec<Rule> {
         self.snapshot().rules().to_vec()
+    }
+
+    /// [`Store::rules`] of one user.
+    #[must_use]
+    pub fn rules_of(&self, user: UserId) -> Vec<Rule> {
+        self.snapshot()
+            .rules()
+            .iter()
+            .filter(|rule| rule.user == user)
+            .cloned()
+            .collect()
     }
 
     /// The most open rows kept per workspace (R-45).
@@ -446,21 +461,24 @@ impl Store {
     }
 
     /// Commits `tx`, then emits `fx` and, if the transaction appended audit records (the audit's
-    /// newest id passed `head`), one [`Event::AuditAppended`]. Called with `conn` held, so
-    /// events leave in commit order.
+    /// newest id passed `head`), one [`Event::AuditAppended`] for each user the records belong
+    /// to. Called with `conn` held, so events leave in commit order.
     fn commit(&self, tx: Transaction<'_>, head: i64, fx: Vec<Event>) -> Result<(), StoreError> {
-        let newest = audit_head(&tx)?;
+        let appended = appended_since(&tx, head)?;
         tx.commit()?;
-        self.emit_all(fx, head, newest);
+        self.emit_all(fx, &appended);
         Ok(())
     }
 
-    fn emit_all(&self, fx: Vec<Event>, head: i64, newest: i64) {
+    fn emit_all(&self, fx: Vec<Event>, appended: &[(UserId, i64)]) {
         for event in fx {
             self.events.emit(event);
         }
-        if newest > head {
-            self.events.emit(Event::AuditAppended { id: newest });
+        for (user, id) in appended {
+            self.events.emit(Event::AuditAppended {
+                id: *id,
+                user: user.get(),
+            });
         }
     }
 
@@ -477,18 +495,34 @@ impl Store {
         let mut fx = Vec::new();
         let out = change(&tx, now, &mut fx)?;
         let set = sets::load_index(&tx)?;
-        let newest = audit_head(&tx)?;
+        let appended = appended_since(&tx, head)?;
         tx.commit()?;
         *self.rules.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(set);
-        self.emit_all(fx, head, newest);
+        self.emit_all(fx, &appended);
         Ok(out)
     }
 
-    /// Creates a rule and closes the open rows it now decides (R-16).
+    /// Creates a rule and closes the open rows it now decides (R-16). A workspace rule is the
+    /// workspace's user's, a set's entry the set's user's, and a global rule the owner's: see
+    /// [`Store::add_rule_as`] for a rule another user makes.
     ///
     /// # Errors
     /// [`StoreError::SystemActor`], [`StoreError::ExpiryNotInFuture`], or a database error.
     pub fn add_rule(&self, new: &NewRule) -> Result<Rule, StoreError> {
+        self.add_rule_by(None, new)
+    }
+
+    /// [`Store::add_rule`] by `user`: a global rule becomes theirs, and a workspace or set it
+    /// names must be theirs.
+    ///
+    /// # Errors
+    /// As [`Store::add_rule`], and [`StoreError::UnknownWorkspace`] or
+    /// [`StoreError::UnknownRuleSet`] for another user's workspace or set.
+    pub fn add_rule_as(&self, user: UserId, new: &NewRule) -> Result<Rule, StoreError> {
+        self.add_rule_by(Some(user), new)
+    }
+
+    fn add_rule_by(&self, user: Option<UserId>, new: &NewRule) -> Result<Rule, StoreError> {
         if new.created_by == Actor::System {
             return Err(StoreError::SystemActor);
         }
@@ -496,7 +530,7 @@ impl Store {
             if new.expires_at.is_some_and(|at| at <= now) {
                 return Err(StoreError::ExpiryNotInFuture);
             }
-            let rule = insert_rule(tx, new, now, None)?;
+            let rule = insert_rule(tx, user, new, now, None)?;
             // A pending row's `decided_by` takes the people's actors and `system`, so a rule
             // made by a workspace create closes the rows it decides as Puddle itself.
             let decider = match new.created_by {
@@ -521,6 +555,21 @@ impl Store {
             self.clock.now_ms(),
             SuffixAllows::Count,
         )
+    }
+
+    /// [`Store::peek`] for a workspace of `user` that is not made yet (`workspace` is a name no
+    /// workspace has): `user`'s global rules and sets.
+    #[must_use]
+    pub fn peek_as(&self, user: UserId, workspace: &WorkspaceId, host: &Host) -> Option<Decision> {
+        self.snapshot()
+            .decide_as(
+                user,
+                workspace,
+                host,
+                self.clock.now_ms(),
+                SuffixAllows::Count,
+            )
+            .map(Hit::decision)
     }
 
     /// Allows each of `hosts` for `workspace` that no rule decides yet, with an exact allow rule
@@ -560,7 +609,7 @@ impl Store {
         let rule = self.change(|tx, now, fx| {
             let rule = load_rule(tx, id)?;
             tx.execute("DELETE FROM rules WHERE id = ?1", [id.0])?;
-            append(
+            append_for(
                 tx,
                 &AuditRecord::RuleDeleted {
                     ts: now,
@@ -568,6 +617,7 @@ impl Store {
                     reason: RuleDeleteReason::User,
                     actor: actor_str(actor),
                 },
+                rule.user,
             )?;
             fx.push(Event::RulesChanged {});
             Ok(rule)
@@ -600,7 +650,7 @@ impl Store {
                 params![expires_at.map(sql_ts), id.0],
             )?;
             let after = load_rule(tx, id)?;
-            append(
+            append_for(
                 tx,
                 &AuditRecord::RuleUpdated {
                     ts: now,
@@ -608,6 +658,7 @@ impl Store {
                     rule: RuleWire::from(&after),
                     actor: actor_str(actor),
                 },
+                after.user,
             )?;
             fx.push(Event::RulesChanged {});
             Ok(after)
@@ -660,7 +711,9 @@ impl Store {
                 expires_at: resolution.expires_in.map(|d| plus(now, d)),
                 created_by: actor,
             };
-            let rule = insert_rule(tx, &new, now, Some(id))?;
+            // The rule is the user's whose workspace asked, global or not.
+            let user = users::owner_in(tx, &row.workspace)?;
+            let rule = insert_rule(tx, Some(user), &new, now, Some(id))?;
             decide_row(tx, &row, &rule, actor, now, fx)?;
             let also_closed = close_decided_rows(tx, &rule, Some(id), actor, now, fx)?;
             fx.push(Event::RulesChanged {});
@@ -776,7 +829,7 @@ impl Store {
     /// A database or audit error.
     pub fn record_workspace_op(&self, op: &NewWorkspaceOp) -> Result<(), StoreError> {
         self.change(|tx, now, _fx| {
-            append(
+            append_by(
                 tx,
                 &AuditRecord::WorkspaceOp {
                     ts: now,
@@ -786,6 +839,7 @@ impl Store {
                     actor: actor_str(op.actor),
                     detail: op.detail.clone(),
                 },
+                op.user,
             )
         })
     }
@@ -902,12 +956,13 @@ impl Store {
             drop(stmt);
             for rule in &rules {
                 tx.execute("DELETE FROM rules WHERE id = ?1", [rule.id.0])?;
-                append(
+                append_for(
                     tx,
                     &AuditRecord::RuleExpired {
                         ts: now,
                         rule: RuleWire::from(rule),
                     },
+                    rule.user,
                 )?;
             }
             if !rules.is_empty() {
@@ -1318,14 +1373,29 @@ fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
     u64::try_from(bytes).map_err(|_| corrupt("audit_size", 1, "negative byte count"))
 }
 
+/// Appends a record of the workspace's user it names; one that names none is the owner's (the
+/// install's own: Puddle's connections, a trim, the built-in sets and System managed).
 fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
+    append_by(conn, record, None)
+}
+
+/// Appends a record of `user`: one whose workspace (if it names one) is `user`'s.
+fn append_for(conn: &Connection, record: &AuditRecord, user: UserId) -> Result<(), StoreError> {
+    append_by(conn, record, Some(user))
+}
+
+fn append_by(
+    conn: &Connection,
+    record: &AuditRecord,
+    user: Option<UserId>,
+) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
         "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, workspace_name,
                             user_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
                  (SELECT name FROM workspace_names WHERE workspace_id = ?3),
-                 coalesce((SELECT user_id FROM workspace_owners WHERE workspace_id = ?3), 1))",
+                 coalesce((SELECT user_id FROM workspace_owners WHERE workspace_id = ?3), ?8, 1))",
         params![
             sql_ts(record.ts()),
             record.kind(),
@@ -1333,10 +1403,22 @@ fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
             record.host(),
             record.outcome().map(AuditOutcome::as_str),
             line,
-            record.search_text()
+            record.search_text(),
+            user.map(UserId::get)
         ],
     )?;
     Ok(())
+}
+
+/// For each user with records appended after `head`, their newest record's id.
+fn appended_since(conn: &Connection, head: i64) -> Result<Vec<(UserId, i64)>, StoreError> {
+    const NEWEST_PER_USER: &str =
+        "SELECT user_id, max(id) FROM audit WHERE id > ?1 GROUP BY user_id ORDER BY max(id)";
+    let mut stmt = conn.prepare_cached(NEWEST_PER_USER)?;
+    let rows = stmt.query_map([head], |row| {
+        Ok((UserId::from_stored(row.get(0)?), row.get(1)?))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// The newest audit record's id (0 for an empty audit). Ids only grow (`AUTOINCREMENT`), so a
@@ -1349,15 +1431,28 @@ fn audit_head(conn: &Connection) -> Result<i64, StoreError> {
     )
 }
 
+/// Writes a rule of `user` (see [`Store::add_rule_as`]; `None` takes the scope's user, and the
+/// owner for a global rule).
 fn insert_rule(
     tx: &Transaction<'_>,
+    user: Option<UserId>,
     new: &NewRule,
     now: u64,
     source: Option<PendingId>,
 ) -> Result<Rule, StoreError> {
-    if let Some(set) = new.scope.set() {
-        sets::require_user_set(tx, set)?;
-    }
+    let user = match (&new.scope, user) {
+        (Scope::Workspace(workspace), Some(user)) => {
+            users::require_owner(tx, workspace, user)?;
+            user
+        }
+        (Scope::Workspace(workspace), None) => users::owner_in(tx, workspace)?,
+        (Scope::Set(set), Some(user)) => {
+            sets::require_user_set(tx, user, *set)?;
+            user
+        }
+        (Scope::Set(set), None) => sets::set_user(tx, *set)?,
+        (Scope::Global, user) => user.unwrap_or(UserId::OWNER),
+    };
     let workspace = new.scope.workspace().map(WorkspaceId::as_str);
     let kind = match new.pattern {
         Pattern::Exact(_) => "exact",
@@ -1365,8 +1460,8 @@ fn insert_rule(
     };
     tx.execute(
         "INSERT INTO rules (scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
-                            created_at, created_by, source_pending_id)
-         VALUES (?1, ?2, ?10, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                            created_at, created_by, source_pending_id, user_id)
+         VALUES (?1, ?2, ?10, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11)",
         params![
             new.scope.as_str(),
             workspace,
@@ -1378,15 +1473,17 @@ fn insert_rule(
             new.created_by.as_str(),
             source.map(|id| id.0),
             new.scope.set(),
+            user.get(),
         ],
     )?;
     let rule = load_rule(tx, RuleId(tx.last_insert_rowid()))?;
-    append(
+    append_for(
         tx,
         &AuditRecord::RuleCreated {
             ts: now,
             rule: RuleWire::from(&rule),
         },
+        rule.user,
     )?;
     Ok(rule)
 }
@@ -1519,7 +1616,7 @@ fn expire_rows(
 }
 
 const RULE_COLUMNS: &str = "id, scope, workspace_id, pattern_kind, pattern, effect, expires_at, \
-                            created_at, created_by, source_pending_id, set_id";
+                            created_at, created_by, source_pending_id, set_id, user_id";
 
 /// A `rules` row as SQLite holds it, before validation.
 struct RawRule {
@@ -1534,6 +1631,7 @@ struct RawRule {
     created_by: String,
     source_pending_id: Option<i64>,
     set_id: Option<i64>,
+    user_id: i64,
 }
 
 fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
@@ -1549,6 +1647,7 @@ fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
         created_by: row.get(8)?,
         source_pending_id: row.get(9)?,
         set_id: row.get(10)?,
+        user_id: row.get(11)?,
     })
 }
 
@@ -1592,6 +1691,7 @@ fn rule_from_raw(raw: &RawRule) -> Result<Rule, StoreError> {
     };
     Ok(Rule {
         id: RuleId(raw.id),
+        user: UserId::from_stored(raw.user_id),
         scope,
         pattern,
         effect,

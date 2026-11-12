@@ -37,6 +37,7 @@ fn a_sweep_removes_what_no_identity_or_variable_names_and_keeps_the_rest() {
     let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Global,
             &EnvName::new("TOKEN").unwrap(),
             EnvDraft::secret(
@@ -107,6 +108,7 @@ fn a_sweep_also_keeps_listed_and_named_values_on_this_computer() {
     let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Global,
             &EnvName::new("TOKEN").unwrap(),
             EnvDraft::secret(

@@ -98,6 +98,7 @@ fn an_audit_record_carries_its_workspaces_user_and_a_filter_keeps_to_one_user() 
             .record_workspace_op(&NewWorkspaceOp {
                 op: WorkspaceOpKind::Create,
                 workspace: Some(ws(workspace)),
+                user: None,
                 outcome: WorkspaceOpOutcome::Succeeded,
                 actor: Actor::Api,
                 detail: None,

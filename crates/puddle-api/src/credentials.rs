@@ -16,6 +16,7 @@ use puddle_secrets::{
     SignIns, SourceError, SourceSpec, Sources, StoredId, TokenScope, ToolPaths, discover,
     pasted_token,
 };
+use puddle_store::UserId;
 
 /// Why a call could not be answered.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -50,10 +51,11 @@ pub trait CredentialService: Send + Sync {
     /// Reads the credential once and says whether that worked. Never interactive.
     fn check(&self, source: SourceSpec) -> BoxFuture<'_, Result<Check, CredentialsError>>;
 
-    /// Keeps a pasted token in the OS credential store and returns the source that names it. The
-    /// token is wiped when the call is done with it.
+    /// Keeps a pasted token of `user` in the OS credential store, under a name that says whose it
+    /// is, and returns the source that names it. The token is wiped when the call is done with it.
     fn store_token(
         &self,
+        user: UserId,
         scope: TokenScope,
         token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>>;
@@ -87,6 +89,7 @@ impl CredentialService for NoCredentials {
     }
     fn store_token(
         &self,
+        _user: UserId,
         _scope: TokenScope,
         _token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>> {
@@ -140,16 +143,6 @@ fn sign_in_error(err: SignInError) -> CredentialsError {
         // `SignInError` grows with the Azure CLI.
         _ => CredentialsError::Unavailable(said),
     }
-}
-
-/// A fresh id for a pasted token: `tok-` and 128 random bits.
-fn new_stored_id() -> Result<StoredId, CredentialsError> {
-    let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes).map_err(|err| CredentialsError::Internal(err.to_string()))?;
-    let id = bytes
-        .iter()
-        .fold(String::from("tok-"), |id, byte| format!("{id}{byte:02x}"));
-    StoredId::new(id).map_err(|err| CredentialsError::Internal(err.to_string()))
 }
 
 /// The real thing, over `puddle-secrets`. Cheap to share.
@@ -219,6 +212,7 @@ impl CredentialService for HostCredentials {
 
     fn store_token(
         &self,
+        user: UserId,
         scope: TokenScope,
         token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>> {
@@ -230,7 +224,8 @@ impl CredentialService for HostCredentials {
                 )
             })?;
             drop(token);
-            let id = new_stored_id()?;
+            // `tok-` and 128 random bits, with the user's mark.
+            let id = crate::stored_ids::fresh(user, "tok").map_err(CredentialsError::Internal)?;
             let (store, key) = (Arc::clone(&self.store), id.clone());
             tokio::task::spawn_blocking(move || store.set(&key, &secret))
                 .await
@@ -380,6 +375,7 @@ impl CredentialService for FakeCredentials {
 
     fn store_token(
         &self,
+        user: UserId,
         scope: TokenScope,
         token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>> {
@@ -388,7 +384,7 @@ impl CredentialService for FakeCredentials {
                 .map_err(|_| CredentialsError::Invalid("that is not a usable token".into()))?;
             let mut state = self.state();
             state.next_token += 1;
-            let id = format!("tok-fake-{}", state.next_token);
+            let id = crate::stored_ids::name(user, &format!("tok-fake-{}", state.next_token));
             state.tokens.insert(id.clone(), token.expose().to_owned());
             let id =
                 StoredId::new(id).map_err(|err| CredentialsError::Internal(err.to_string()))?;

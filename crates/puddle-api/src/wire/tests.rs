@@ -356,6 +356,7 @@ fn rules_map_with_their_scope_and_pattern_kind() {
     let workspace = WorkspaceId::new("box").unwrap();
     let rule = store::Rule {
         id: RuleId(3),
+        user: store::UserId::OWNER,
         scope: store::Scope::Workspace(workspace.clone()),
         pattern: store::Pattern::parse("*.example.com").unwrap(),
         effect: store::Effect::Deny,

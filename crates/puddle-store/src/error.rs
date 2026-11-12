@@ -129,6 +129,9 @@ pub enum StoreError {
     /// A user name was refused; the text says why.
     #[error("{0}")]
     UserName(String),
+    /// No workspace of this user has this id (another user's reads the same).
+    #[error("no workspace {0}")]
+    UnknownWorkspace(WorkspaceId),
     /// The workspace already belongs to another user; a workspace's user never changes.
     #[error("workspace {0} already belongs to another user")]
     WorkspaceOwned(WorkspaceId),

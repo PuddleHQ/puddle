@@ -3434,7 +3434,7 @@ export interface components {
         } | {
             /**
              * Format: int64
-             * @description The newest audit record's id.
+             * @description The newest audit record's id of that user.
              */
             id: number;
             /** @enum {string} */

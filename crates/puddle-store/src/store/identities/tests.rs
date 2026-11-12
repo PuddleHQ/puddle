@@ -24,11 +24,14 @@ fn made_as(store: &Store, label: &str) -> IdentityId {
     };
     let covers = Coverage::new([Owner::new("acme").unwrap()].into(), false).unwrap();
     store
-        .create_identity(IdentityDraft {
-            label: label.into(),
-            author: Author::new("Me", "me@example.com").unwrap(),
-            credentials: vec![CredentialBinding::new(&host, source, covers).unwrap()],
-        })
+        .create_identity(
+            UserId::OWNER,
+            IdentityDraft {
+                label: label.into(),
+                author: Author::new("Me", "me@example.com").unwrap(),
+                credentials: vec![CredentialBinding::new(&host, source, covers).unwrap()],
+            },
+        )
         .unwrap()
         .id
 }
@@ -42,13 +45,13 @@ fn a_hand_edited_identity_row_is_reported_as_corrupt() {
         .execute("UPDATE identities SET credentials = 'not json'", [])
         .unwrap();
     assert!(matches!(
-        store.identity(id),
+        store.identity(UserId::OWNER, id),
         Err(StoreError::Corrupt {
             table: "identities",
             ..
         })
     ));
-    assert!(store.identities().is_err());
+    assert!(store.identities(UserId::OWNER).is_err());
 }
 
 #[test]
@@ -95,7 +98,7 @@ fn a_hand_edited_signing_is_reported_as_corrupt() {
              UPDATE identities SET signing = 'gpg';
              PRAGMA ignore_check_constraints = OFF",
     );
-    let err = store.identity(id).unwrap_err();
+    let err = store.identity(UserId::OWNER, id).unwrap_err();
     assert_eq!(
         err.to_string(),
         format!("stored identities row {id} is invalid: unknown signing gpg")
@@ -141,16 +144,16 @@ fn an_identity_that_cannot_be_inserted_is_not_made() {
         author: Author::new("Me", "me@example.com").unwrap(),
         credentials: vec![],
     };
-    let err = store.create_identity(draft).unwrap_err();
+    let err = store.create_identity(UserId::OWNER, draft).unwrap_err();
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.identities().unwrap(), []);
+    assert_eq!(store.identities(UserId::OWNER).unwrap(), []);
 }
 
 #[test]
 fn an_identity_that_cannot_be_updated_keeps_what_it_had() {
     let store = store();
     let id = made(&store);
-    let before = store.identity(id).unwrap();
+    let before = store.identity(UserId::OWNER, id).unwrap();
     store.break_database(
         "CREATE TRIGGER identity_updates_fail BEFORE UPDATE ON identities
              BEGIN SELECT RAISE(ABORT, 'disk full'); END",
@@ -160,9 +163,9 @@ fn an_identity_that_cannot_be_updated_keeps_what_it_had() {
         author: before.author.clone(),
         credentials: before.credentials.clone(),
     };
-    let err = store.update_identity(id, draft).unwrap_err();
+    let err = store.update_identity(UserId::OWNER, id, draft).unwrap_err();
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.identity(id).unwrap(), before);
+    assert_eq!(store.identity(UserId::OWNER, id).unwrap(), before);
 }
 
 #[test]
@@ -170,9 +173,12 @@ fn deleting_an_identity_that_is_not_the_default_leaves_the_default_alone() {
     let store = store();
     let default = made(&store);
     let other = made_as(&store, "Personal");
-    assert_eq!(store.delete_identity(other).unwrap(), []);
-    assert_eq!(store.default_identity().unwrap().unwrap().id, default);
-    assert_eq!(store.identities().unwrap().len(), 1);
+    assert_eq!(store.delete_identity(UserId::OWNER, other).unwrap(), []);
+    assert_eq!(
+        store.default_identity(UserId::OWNER).unwrap().unwrap().id,
+        default
+    );
+    assert_eq!(store.identities(UserId::OWNER).unwrap().len(), 1);
 }
 
 #[test]

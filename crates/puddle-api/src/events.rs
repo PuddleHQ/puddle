@@ -83,9 +83,9 @@ fn wanted_for(workspace: Option<&WorkspaceId>, filter: Option<&WorkspaceId>) -> 
     }
 }
 
-/// Who one stream is for: the events of the principal's own workspaces, the signals that carry
-/// nothing (rules or problems changed), and the install's other events (the network, the audit,
-/// sign-ins) for the owner only.
+/// Who one stream is for: the events of the principal's own workspaces, their own audit records,
+/// the signals that carry nothing (rules, identities, the global environment or problems
+/// changed), and the install's other events (the network, sign-ins) for the owner only.
 pub(crate) struct Audience {
     user: UserId,
     role: Role,
@@ -106,6 +106,9 @@ impl Audience {
 
     /// Whether the stream may carry `event`. A user that can't be looked up gets nothing.
     async fn sees(&mut self, event: &Event) -> bool {
+        if let Event::AuditAppended { user, .. } = event {
+            return *user == self.user.get();
+        }
         let Some(workspace) = event.workspace() else {
             // Signals that carry nothing go to everyone, who refetch what they may see.
             return self.role == Role::Owner
@@ -114,6 +117,9 @@ impl Audience {
                     Event::RulesChanged {}
                         | Event::RequestRulesChanged {}
                         | Event::ProblemsChanged {}
+                        | Event::IdentitiesChanged {}
+                        | Event::GlobalEnvChanged {}
+                        | Event::RepoListsChanged {}
                 );
         };
         let user = if let Some(user) = self.known.get(workspace) {

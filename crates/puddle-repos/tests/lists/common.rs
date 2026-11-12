@@ -80,11 +80,14 @@ pub(crate) fn identities(specs: Vec<(&str, Vec<CredentialBinding>)>) -> Vec<Iden
         .into_iter()
         .map(|(label, credentials)| {
             store
-                .create_identity(IdentityDraft {
-                    label: label.to_owned(),
-                    author: Author::new(label, "me@example.org").unwrap(),
-                    credentials,
-                })
+                .create_identity(
+                    puddle_store::UserId::OWNER,
+                    IdentityDraft {
+                        label: label.to_owned(),
+                        author: Author::new(label, "me@example.org").unwrap(),
+                        credentials,
+                    },
+                )
                 .unwrap()
         })
         .collect()

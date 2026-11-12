@@ -11,6 +11,7 @@ use puddle_store::{IdentityId, WorkspaceOpKind};
 use puddle_types::EntryId;
 
 use crate::ApiErrorBody;
+use crate::authz::Principal;
 use crate::checkouts::AddRepository;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
@@ -70,22 +71,38 @@ pub(crate) async fn list_checkouts(
 )]
 pub(crate) async fn add_repository(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<AddRepositoryRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
     let id = workspace_id(&id)?;
     let store = state.store.clone();
-    let known: BTreeSet<IdentityId> =
-        blocking(move || Ok(store.identities()?.into_iter().map(|i| i.id).collect())).await?;
+    let known: BTreeSet<IdentityId> = blocking(move || {
+        Ok(store
+            .identities(principal.user)?
+            .into_iter()
+            .map(|i| i.id)
+            .collect())
+    })
+    .await?;
     let add = body.into_add(|identity| known.contains(&identity))?;
     let record = state.workspaces.get(&id).await?;
     let status = match &add {
         AddRepository::Clone(new) => {
             let requests: Vec<_> = git_request(new).into_iter().collect();
             let (store, name) = (state.store.clone(), record.id.clone());
-            blocking(move || Ok(store.check_repository_git(Some(&name), &requests)?)).await?;
+            blocking(move || {
+                Ok(store.check_repository_git(principal.user, Some(&name), &requests)?)
+            })
+            .await?;
             let hosts = repository_hosts::hosts_of(std::iter::once(new.repository.url.as_str()));
-            repository_hosts::refuse_blocked(&state.store, Some(record.id.clone()), hosts).await?;
+            repository_hosts::refuse_blocked(
+                &state.store,
+                principal.user,
+                Some(record.id.clone()),
+                hosts,
+            )
+            .await?;
             StatusCode::ACCEPTED
         }
         AddRepository::Existing { .. } => StatusCode::OK,
@@ -100,6 +117,7 @@ pub(crate) async fn add_repository(
     blocking(move || {
         record_op(
             &store,
+            principal.user,
             WorkspaceOpKind::RepoAdded,
             Some(&name),
             Some(format!("{directory} on the workspace's list")),
@@ -167,6 +185,7 @@ pub(crate) async fn clone_again(
 )]
 pub(crate) async fn remove_repository(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, entry)): Path<(String, String)>,
 ) -> Result<Json<Workspace>, ApiError> {
     let (id, entry) = (workspace_id(&id)?, entry_id(&entry)?);
@@ -183,6 +202,7 @@ pub(crate) async fn remove_repository(
     blocking(move || {
         record_op(
             &store,
+            principal.user,
             WorkspaceOpKind::RepoRemoved,
             Some(&name),
             Some(format!("{directory} off the workspace's list")),

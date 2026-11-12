@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use puddle_types::WorkspaceId;
-use rusqlite::{OptionalExtension, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{Store, corrupt, lock, sql_ts, stored_ts};
 use crate::account_secrets::AccountSecrets;
@@ -27,6 +27,46 @@ fn user_of(row: &Row<'_>) -> Result<User, StoreError> {
         name: row.get(2)?,
         created_at: stored_ts("users", id, row.get(3)?)?,
     })
+}
+
+/// Every recorded workspace user; a workspace with no row is the owner's.
+pub(super) fn load_owners(conn: &Connection) -> Result<HashMap<WorkspaceId, UserId>, StoreError> {
+    let mut stmt = conn.prepare("SELECT workspace_id, user_id FROM workspace_owners")?;
+    let mut rows = stmt.query([])?;
+    let mut map = HashMap::new();
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let workspace =
+            WorkspaceId::new(&id).map_err(|e| corrupt("workspace_owners", 0, e.to_string()))?;
+        map.insert(workspace, UserId::from_stored(row.get(1)?));
+    }
+    Ok(map)
+}
+
+/// The user `workspace` belongs to, read inside a transaction.
+pub(super) fn owner_in(conn: &Connection, workspace: &WorkspaceId) -> Result<UserId, StoreError> {
+    let id: Option<i64> = conn
+        .query_row(
+            "SELECT user_id FROM workspace_owners WHERE workspace_id = ?1",
+            [workspace.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(id.map_or(UserId::OWNER, UserId::from_stored))
+}
+
+/// Fails with [`StoreError::UnknownWorkspace`] unless `workspace` is `user`'s: another user's
+/// workspace reads as one that does not exist.
+pub(super) fn require_owner(
+    conn: &Connection,
+    workspace: &WorkspaceId,
+    user: UserId,
+) -> Result<(), StoreError> {
+    if owner_in(conn, workspace)? == user {
+        Ok(())
+    } else {
+        Err(StoreError::UnknownWorkspace(workspace.clone()))
+    }
 }
 
 impl Store {
@@ -109,15 +149,7 @@ impl Store {
     /// # Errors
     /// A database error.
     pub fn workspace_owner(&self, workspace: &WorkspaceId) -> Result<UserId, StoreError> {
-        let conn = lock(&self.conn);
-        let id: Option<i64> = conn
-            .query_row(
-                "SELECT user_id FROM workspace_owners WHERE workspace_id = ?1",
-                [workspace.as_str()],
-                |r| r.get(0),
-            )
-            .optional()?;
-        Ok(id.map_or(UserId::OWNER, UserId::from_stored))
+        owner_in(&lock(&self.conn), workspace)
     }
 
     /// Every recorded workspace user; a workspace that is not in the map is the owner's.
@@ -125,22 +157,12 @@ impl Store {
     /// # Errors
     /// A database error, or a stored id that is not a workspace id.
     pub fn workspace_owners(&self) -> Result<WorkspaceOwners, StoreError> {
-        let conn = lock(&self.conn);
-        let mut stmt = conn.prepare("SELECT workspace_id, user_id FROM workspace_owners")?;
-        let mut rows = stmt.query([])?;
-        let mut map = HashMap::new();
-        while let Some(row) = rows.next()? {
-            let id: String = row.get(0)?;
-            let workspace =
-                WorkspaceId::new(&id).map_err(|e| corrupt("workspace_owners", 0, e.to_string()))?;
-            map.insert(workspace, UserId::from_stored(row.get(1)?));
-        }
-        Ok(WorkspaceOwners(map))
+        Ok(WorkspaceOwners(load_owners(&lock(&self.conn))?))
     }
 
     /// Records that `workspace` belongs to `user`, before the workspace exists anywhere else. A
     /// workspace's user never changes: recording the same user again is a no-op, another one is
-    /// refused.
+    /// refused. From then on the rules decide its requests by `user`'s rules alone.
     ///
     /// # Errors
     /// [`StoreError::WorkspaceOwned`] when it already belongs to someone else,
@@ -150,33 +172,34 @@ impl Store {
         workspace: &WorkspaceId,
         user: UserId,
     ) -> Result<(), StoreError> {
-        let conn = lock(&self.conn);
-        let known: bool = conn.query_row(
-            "SELECT count(*) > 0 FROM users WHERE id = ?1",
-            [user.get()],
-            |r| r.get(0),
-        )?;
-        if !known {
-            return Err(StoreError::UnknownUser(user));
-        }
-        let stored: Option<i64> = conn
-            .query_row(
-                "SELECT user_id FROM workspace_owners WHERE workspace_id = ?1",
-                [workspace.as_str()],
+        self.change(|conn, _now, _fx| {
+            let known: bool = conn.query_row(
+                "SELECT count(*) > 0 FROM users WHERE id = ?1",
+                [user.get()],
                 |r| r.get(0),
-            )
-            .optional()?;
-        match stored {
-            Some(stored) if stored == user.get() => Ok(()),
-            Some(_) => Err(StoreError::WorkspaceOwned(workspace.clone())),
-            None => {
-                conn.execute(
-                    "INSERT INTO workspace_owners (workspace_id, user_id) VALUES (?1, ?2)",
-                    params![workspace.as_str(), user.get()],
-                )?;
-                Ok(())
+            )?;
+            if !known {
+                return Err(StoreError::UnknownUser(user));
             }
-        }
+            let stored: Option<i64> = conn
+                .query_row(
+                    "SELECT user_id FROM workspace_owners WHERE workspace_id = ?1",
+                    [workspace.as_str()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            match stored {
+                Some(stored) if stored == user.get() => Ok(()),
+                Some(_) => Err(StoreError::WorkspaceOwned(workspace.clone())),
+                None => {
+                    conn.execute(
+                        "INSERT INTO workspace_owners (workspace_id, user_id) VALUES (?1, ?2)",
+                        params![workspace.as_str(), user.get()],
+                    )?;
+                    Ok(())
+                }
+            }
+        })
     }
 }
 

@@ -8,11 +8,12 @@
 //! list is refused, so a new route cannot go out unchecked (a test also walks every route).
 //!
 //! The rule ([`Isolation`]): a user reaches only their own workspaces and what hangs off them
-//! (pending requests, rules, audit records, events). The owner is a user like any other here,
-//! with no way into another user's workspaces; the owner alone has the install's own settings
-//! and, for now, what is not split per user yet (identities, global environment, rule sets,
-//! stored credentials, making a workspace). A resource that is someone else's answers exactly as
-//! one that does not exist.
+//! (pending requests, rules, audit records, events) and their own collections (identities, Git
+//! defaults, global environment, rule sets and global rules, pasted tokens). The owner is a user
+//! like any other here, with no way into another user's; the owner alone has the install's own
+//! settings and the accounts signed in on the computer itself. A resource that is someone else's
+//! answers exactly as one that does not exist: by-id routes of a collection ask the store for the
+//! principal's own, so another user's id is unknown there.
 
 use std::sync::Arc;
 
@@ -21,7 +22,7 @@ use axum::http::request::Parts;
 use axum::http::{Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use puddle_store::{DeviceId, Role, Scope, Store, StoreError, UserId, WorkspaceOwners};
+use puddle_store::{DeviceId, Role, Store, StoreError, UserId, WorkspaceOwners};
 use puddle_types::{PendingId, RuleId, WorkspaceId};
 
 use crate::error::{ApiError, ErrorCode, blocking};
@@ -109,13 +110,18 @@ pub(crate) enum Action {
     ChangeIdentities,
     ReadGlobalEnvironment,
     ChangeGlobalEnvironment,
-    /// Stored Git tokens, signing in to a Git host, the account's repositories.
+    /// The principal's pasted tokens: keeping one, removing one, checking a credential or reading
+    /// its account's profile, the repositories their identities reach. A source other than the
+    /// principal's own pasted token is the owner's alone (see [`crate::stored_ids`]).
     UseCredentials,
     /// Signing in before there is a token (the page's first visit, a password, an invite, the
     /// session cookie): no principal yet, and the routes answer only a public address.
     SignIn,
     /// The signed-in user's own sessions: their devices and their password.
     ManageSessions,
+    /// The accounts signed in on this computer (the GitHub CLI's, Git's credential helper's):
+    /// listing them and signing in. They are the operator's.
+    UseComputerAccounts,
     /// The user list and its changes (the admin screen).
     #[cfg_attr(
         not(test),
@@ -131,7 +137,7 @@ pub(crate) enum Action {
 }
 
 impl Action {
-    /// Only the owner may do it: the install's own things, and what is not split per user yet.
+    /// Only the owner may do it: the install's own things.
     pub(crate) fn owner_only(self) -> bool {
         match self {
             Self::ReadService
@@ -146,9 +152,7 @@ impl Action {
             | Self::ChangeRules
             | Self::ReadAudit
             | Self::SignIn
-            | Self::ManageSessions => false,
-            Self::ReadInstall
-            | Self::ChangeInstall
+            | Self::ManageSessions
             | Self::CreateWorkspace
             | Self::ReadWorkspaceGit
             | Self::ChangeWorkspaceGit
@@ -158,7 +162,10 @@ impl Action {
             | Self::ChangeIdentities
             | Self::ReadGlobalEnvironment
             | Self::ChangeGlobalEnvironment
-            | Self::UseCredentials
+            | Self::UseCredentials => false,
+            Self::ReadInstall
+            | Self::ChangeInstall
+            | Self::UseComputerAccounts
             | Self::ManageUsers
             | Self::SetRemoteServing => true,
         }
@@ -258,13 +265,14 @@ impl Isolation {
                 };
                 (user, ApiError::from(StoreError::UnknownPending(*id)))
             }
+            // An unknown rule resolves to the owner, so for anyone else it answers as another
+            // user's would.
             ResourceRef::Rule(id) => {
-                let scope = self.store.rules().into_iter().find(|r| r.id == *id);
-                let user = match scope.map(|r| r.scope) {
-                    Some(Scope::Workspace(workspace)) => self.store.workspace_owner(&workspace)?,
-                    _ => UserId::OWNER,
-                };
-                (user, ApiError::from(StoreError::UnknownRule(*id)))
+                let rule = self.store.rules().into_iter().find(|r| r.id == *id);
+                (
+                    rule.map_or(UserId::OWNER, |r| r.user),
+                    ApiError::from(StoreError::UnknownRule(*id)),
+                )
             }
             ResourceRef::RequestRule(id) => {
                 let rule = self
@@ -272,11 +280,10 @@ impl Isolation {
                     .request_rules(None)?
                     .into_iter()
                     .find(|r| r.id == *id);
-                let user = match rule.and_then(|r| r.workspace) {
-                    Some(workspace) => self.store.workspace_owner(&workspace)?,
-                    None => UserId::OWNER,
-                };
-                (user, ApiError::from(StoreError::UnknownRequestRule(*id)))
+                (
+                    rule.map_or(UserId::OWNER, |r| r.user),
+                    ApiError::from(StoreError::UnknownRequestRule(*id)),
+                )
             }
         }))
     }
@@ -336,8 +343,8 @@ pub(crate) async fn owners(state: &AppState) -> Result<WorkspaceOwners, ApiError
     blocking(move || Ok(store.workspace_owners()?)).await
 }
 
-/// What making or changing a rule scoped to `workspace` (or to every workspace when `None`)
-/// needs: the workspace's own rules are its user's, the global ones are not split per user yet.
+/// What making or changing a rule scoped to `workspace` (or to every workspace of the principal
+/// when `None`) needs.
 pub(crate) fn rule_scope(workspace: Option<&WorkspaceId>) -> (Action, ResourceRef) {
     match workspace {
         Some(id) => (Action::ChangeRules, ResourceRef::Workspace(id.clone())),
@@ -518,16 +525,18 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         ) => (A::ChangeIdentities, T::Own),
         ("GET", "/api/env") => (A::ReadGlobalEnvironment, T::Own),
         ("PUT" | "DELETE", "/api/env/{name}") => (A::ChangeGlobalEnvironment, T::Own),
-        ("GET", "/api/credentials/found" | "/api/repos")
+        ("GET", "/api/repos")
         | (
             "POST",
             "/api/credentials/check"
             | "/api/credentials/profile"
-            | "/api/credentials/sign-in"
             | "/api/credentials/stored"
             | "/api/repos/refresh",
         )
         | ("DELETE", "/api/credentials/stored/{id}") => (A::UseCredentials, T::Own),
+        ("GET", "/api/credentials/found") | ("POST", "/api/credentials/sign-in") => {
+            (A::UseComputerAccounts, T::Install)
+        }
         _ => return None,
     };
     Some(Declared { action, target })

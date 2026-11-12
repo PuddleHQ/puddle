@@ -16,6 +16,7 @@ fn an_audit_record_carries_the_name_its_workspace_had_when_it_was_written() {
     let op = |workspace: Option<&WorkspaceId>| NewWorkspaceOp {
         op: WorkspaceOpKind::Rename,
         workspace: workspace.cloned(),
+        user: None,
         outcome: WorkspaceOpOutcome::Succeeded,
         actor: Actor::Ui,
         detail: None,
@@ -70,7 +71,7 @@ fn a_write_waits_for_another_connection_holding_the_file_instead_of_failing() {
         std::thread::sleep(Duration::from_millis(300));
         holder.execute_batch("COMMIT").unwrap();
     });
-    let made = store.create_rule_set("Waits", "", None, Actor::Ui);
+    let made = store.create_rule_set(UserId::OWNER, "Waits", "", None, Actor::Ui);
     release.join().unwrap();
     assert!(made.is_ok(), "{:?}", made.err());
 }
@@ -78,12 +79,14 @@ fn a_write_waits_for_another_connection_holding_the_file_instead_of_failing() {
 #[test]
 fn an_unreadable_set_colour_is_no_choice_and_does_not_break_the_list() {
     let (_, store) = store();
-    let made = store.create_rule_set("Odd", "", None, Actor::Ui).unwrap();
+    let made = store
+        .create_rule_set(UserId::OWNER, "Odd", "", None, Actor::Ui)
+        .unwrap();
     for bad in ["not json", r#"{"kind":"conic"}"#] {
         lock(&store.conn)
             .execute("UPDATE rule_sets SET fill = ?1", [bad])
             .unwrap();
-        let listed = store.rule_sets().unwrap();
+        let listed = store.rule_sets(UserId::OWNER).unwrap();
         let shown = listed.iter().find(|s| s.id == made.id).unwrap();
         assert_eq!(shown.fill, made.fill, "{bad}");
     }
@@ -165,7 +168,7 @@ fn a_negative_changed_at_is_corrupt_not_never_changed() {
         "UPDATE builtin_sets_seen SET changed_at = -5 WHERE slug = ?1",
         slug,
     );
-    let err = store.rule_sets().unwrap_err();
+    let err = store.rule_sets(UserId::OWNER).unwrap_err();
     assert!(is_corrupt(&err, "builtin_sets_seen"), "{err}");
 }
 
@@ -193,6 +196,7 @@ fn raw_rows_with_bad_fields_are_corrupt() {
         created_by: "cli".into(),
         source_pending_id: None,
         set_id: None,
+        user_id: 1,
     };
     assert!(rule_from_raw(&base()).is_ok());
     let cases: Vec<fn(&mut RawRule)> = vec![

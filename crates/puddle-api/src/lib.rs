@@ -65,6 +65,7 @@ mod routes;
 mod server;
 mod settings;
 mod signin;
+mod stored_ids;
 mod system_managed;
 mod terminals;
 mod token;

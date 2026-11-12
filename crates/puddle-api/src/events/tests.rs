@@ -121,7 +121,7 @@ async fn each_stream_carries_only_its_principals_events() {
         shutdown,
         std::future::pending(),
     ));
-    hub.emit(Event::AuditAppended { id: 7 });
+    hub.emit(Event::AuditAppended { id: 7, user: 1 });
     hub.emit(oom("owners"));
     hub.emit(oom("anns"));
     // Twice, so the second comes from the cache of who owns what.
@@ -133,7 +133,7 @@ async fn each_stream_carries_only_its_principals_events() {
     assert!(text(owners.next().await).contains("audit_appended"));
     assert!(text(owners.next().await).contains("owners"));
     hub.emit(oom("owners"));
-    hub.emit(Event::AuditAppended { id: 8 });
+    hub.emit(Event::AuditAppended { id: 8, user: 1 });
     hub.emit(Event::RulesChanged {});
     // A signal that carries nothing reaches everyone.
     assert!(
@@ -143,6 +143,41 @@ async fn each_stream_carries_only_its_principals_events() {
     assert!(text(owners.next().await).contains("owners"));
     assert!(text(owners.next().await).contains("audit_appended"));
     assert!(text(owners.next().await).contains("rules_changed"));
+    // Ann's audit records reach Ann alone; her identities and environment signals reach her too.
+    hub.emit(Event::AuditAppended {
+        id: 9,
+        user: ann.get(),
+    });
+    for signal in [
+        Event::IdentitiesChanged {},
+        Event::GlobalEnvChanged {},
+        Event::RepoListsChanged {},
+    ] {
+        hub.emit(signal);
+    }
+    hub.emit(Event::NetworkChanged { epoch: 1 });
+    hub.emit(Event::RulesChanged {});
+    let anns_own = text(anns.next().await);
+    assert!(
+        anns_own.contains("audit_appended") && anns_own.contains('9'),
+        "{anns_own}"
+    );
+    for kind in [
+        "identities_changed",
+        "global_env_changed",
+        "repo_lists_changed",
+        "rules_changed",
+    ] {
+        assert!(text(anns.next().await).contains(kind), "{kind}");
+    }
+    for kind in [
+        "identities_changed",
+        "global_env_changed",
+        "repo_lists_changed",
+        "network_changed",
+    ] {
+        assert!(text(owners.next().await).contains(kind), "{kind}");
+    }
 }
 
 #[tokio::test]

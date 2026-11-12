@@ -6,7 +6,12 @@ use super::*;
 
 fn entry_of(store: &Store, name: &str, draft: EnvDraft) -> EnvEntry {
     store
-        .set_env(&EnvScope::Global, &EnvName::new(name).unwrap(), draft)
+        .set_env(
+            UserId::OWNER,
+            &EnvScope::Global,
+            &EnvName::new(name).unwrap(),
+            draft,
+        )
         .unwrap()
         .entry
 }

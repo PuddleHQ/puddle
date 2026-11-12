@@ -30,6 +30,7 @@ use crate::backend::{Backend, WorkspaceLabel};
 use crate::badge::{self, OpenRequests};
 use crate::icon::{self, Wanted};
 use crate::notify::{self, Notice, Notifier, REQUEST_EXTRA};
+use crate::quit_shortcut;
 use crate::tray::{self, CloseAction, MENU_QUIT, MinimizeAction, Tray, TrayState};
 use crate::window::MAIN_LABEL;
 
@@ -229,13 +230,55 @@ pub fn install_quit_shortcut<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| {
         if event.id().as_ref() == MENU_QUIT {
-            app.exit(0);
+            quit_shortcut::pressed(app);
         }
     });
     if let Some(window) = app.get_webview_window(MAIN_LABEL) {
         window.hide_menu()?;
     }
     Ok(())
+}
+
+/// What the quit question says, or `None` when no terminal is open and the shortcut just quits.
+fn quit_question(open_terminals: usize) -> Option<String> {
+    let ends = match open_terminals {
+        0 => return None,
+        1 => "1 open terminal".to_owned(),
+        n => format!("{n} open terminals"),
+    };
+    Some(format!(
+        "Quit Puddle? This stops every workspace and ends {ends}."
+    ))
+}
+
+/// Answers the question: `true` quits.
+pub(crate) type QuitAnswer = Box<dyn FnOnce(bool) + Send>;
+
+/// Ctrl+Q was pressed. With no terminal open it quits at once; otherwise it hands the question to
+/// `ask`, quits when the answer is yes and ignores the shortcut while a question is still up.
+pub(crate) fn on_quit_pressed(
+    open_terminals: usize,
+    asking: &Arc<AtomicBool>,
+    ask: impl FnOnce(String, QuitAnswer),
+    quit: impl FnOnce() + Send + 'static,
+) {
+    let Some(question) = quit_question(open_terminals) else {
+        quit();
+        return;
+    };
+    if asking.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let asking = Arc::clone(asking);
+    ask(
+        question,
+        Box::new(move |yes| {
+            asking.store(false, Ordering::SeqCst);
+            if yes {
+                quit();
+            }
+        }),
+    );
 }
 
 /// Shows a notification, with the system sound when the flag is set.

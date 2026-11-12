@@ -153,6 +153,9 @@ pub type EndExtensionHosts =
 pub type WorkspaceLabel =
     Arc<dyn Fn(WorkspaceId) -> BoxFuture<'static, Option<String>> + Send + Sync>;
 
+/// How many terminals are open now, in every workspace; the quit shortcut asks before it ends them.
+pub type OpenTerminals = Arc<dyn Fn() -> usize + Send + Sync>;
+
 /// A running in-process backend.
 pub struct Backend {
     info: ConnectionInfo,
@@ -163,6 +166,7 @@ pub struct Backend {
     settings: Arc<dyn SettingsRepo>,
     extension_hosts: EndExtensionHosts,
     label: WorkspaceLabel,
+    open_terminals: OpenTerminals,
     stop: Mutex<Option<Stop>>,
 }
 
@@ -194,6 +198,7 @@ impl Backend {
                 Box::pin(async { Err("this backend runs no workspaces".to_owned()) })
             }),
             label: Arc::new(|_| Box::pin(async { None })),
+            open_terminals: Arc::new(|| 0),
             stop: Mutex::new(Some(stop)),
         })
     }
@@ -202,6 +207,13 @@ impl Backend {
     #[must_use]
     pub(crate) fn with_label(mut self, label: WorkspaceLabel) -> Self {
         self.label = label;
+        self
+    }
+
+    /// The same backend with `count` as its way to count the open terminals.
+    #[must_use]
+    pub(crate) fn with_open_terminals(mut self, count: OpenTerminals) -> Self {
+        self.open_terminals = count;
         self
     }
 
@@ -250,6 +262,12 @@ impl Backend {
                 Some(record.label().to_owned())
             })
         });
+        let counted = Arc::downgrade(&host);
+        let open_terminals: OpenTerminals = Arc::new(move || {
+            counted
+                .upgrade()
+                .map_or(0, |host| host.workspaces().open_terminals())
+        });
         Self::new(
             info,
             events,
@@ -258,7 +276,12 @@ impl Backend {
             settings,
             Box::new(move || Box::pin(async move { host.shutdown().await })),
         )
-        .map(|backend| backend.with_extension_hosts(ends).with_label(label))
+        .map(|backend| {
+            backend
+                .with_extension_hosts(ends)
+                .with_label(label)
+                .with_open_terminals(open_terminals)
+        })
     }
 
     /// The way to ask a workspace's guest to end its editor's extension hosts, for the windows'
@@ -272,6 +295,12 @@ impl Backend {
     #[must_use]
     pub fn label(&self) -> WorkspaceLabel {
         Arc::clone(&self.label)
+    }
+
+    /// How many terminals are open now, for the quit shortcut's question. The fixture runs none.
+    #[must_use]
+    pub fn open_terminals(&self) -> usize {
+        (self.open_terminals)()
     }
 
     /// The API's origin, `http://127.0.0.1:<port>/`: the address of the main window.

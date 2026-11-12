@@ -315,6 +315,19 @@ pub struct NetworkHealth {
     pub pull_proxy: PullProxyReport,
     /// Routes chosen so far in this network epoch, sorted by host (at most 100).
     pub routes: Vec<RouteDecision>,
+    /// What drives the company-network destination category.
+    pub company_network: CompanyNetworkReport,
+}
+
+/// What Puddle found on this computer that puts a destination on the company network. Both are
+/// empty when this computer can't be read for them, which leaves the category empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanyNetworkReport {
+    /// A private-access client (Zscaler, Netskope, WARP, Tailscale) is installed and active.
+    pub private_access_client: bool,
+    /// The DNS suffixes and namespaces of this computer, lower case, each once.
+    pub dns_suffixes: Vec<String>,
 }
 
 impl NetworkHealth {
@@ -358,6 +371,7 @@ impl NetworkHealth {
                 via_upstream: false,
             },
             routes: Vec::new(),
+            company_network: CompanyNetworkReport::default(),
         }
     }
 }

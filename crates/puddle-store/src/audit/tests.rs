@@ -832,6 +832,12 @@ fn search_text_is_the_lower_case_fields_a_person_would_type() {
         AuditRecord::Connection(connection).search_text().as_deref(),
         Some("api.example.com\nget\n/v1/items\nrule")
     );
+    let mut company = ConnectionRecord::from_event(9, &event());
+    company.category = Some("company_network".into());
+    assert_eq!(
+        AuditRecord::Connection(company).search_text().as_deref(),
+        Some("api.example.com\nget\n/v1/items\nrule\ncompany_network")
+    );
     let summary = AuditRecord::Connection(ConnectionRecord::suppressed_summary(1, Some(&sb()), 5));
     assert_eq!(summary.search_text().as_deref(), Some("suppressed"));
     let mut rule = rule_wire();

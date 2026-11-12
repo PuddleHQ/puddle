@@ -192,6 +192,11 @@
             {#if row.outcome}
               <span class="chip {row.outcome.tone}">{row.outcome.label}</span>
             {/if}
+            {#if row.company}
+              <span class="chip neutral" title={row.company.title}
+                >{row.company.label}</span
+              >
+            {/if}
           </td>
           <td class="muted" title={row.detail}>
             {#if row.requestRule === undefined}{row.detail}{:else}

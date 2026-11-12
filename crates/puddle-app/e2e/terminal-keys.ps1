@@ -55,7 +55,7 @@ public static class Native {
 '@
 
 [void][Native]::SetProcessDPIAware()
-$VK = @{ ctrl = 0x11; shift = 0x10; alt = 0x12; insert = 0x2D; f5 = 0x74 }
+$VK = @{ ctrl = 0x11; shift = 0x10; alt = 0x12; insert = 0x2D; f5 = 0x74; esc = 0x1B }
 $EXTENDED = @('insert')
 
 function Send([object[]]$inputs) {

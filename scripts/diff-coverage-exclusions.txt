@@ -160,9 +160,9 @@ crates/puddle-app/src/desktop.rs | fn on_window_event<R: Runtime>(window: &Webvi
 crates/puddle-app/src/desktop.rs | fn on_window_event<R: Runtime>(window: &WebviewWindow<R>, event: &WindowEvent, buttons: &Buttons) {\nmatch event { | the real-window event routing of `on_window_event` (see above)
 crates/puddle-app/src/desktop.rs | if buttons.on_close(window) { | the same real-window event routing
 crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT { | the application menu (see `install_quit_shortcut`)
-crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\napp.exit(0); | the application menu (see `install_quit_shortcut`)
-crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\napp.exit(0);\n} | closing lines of the excluded real-window routing and application menu above
-crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\napp.exit(0);\n}\n}); | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\nquit_shortcut::pressed(app); | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\nquit_shortcut::pressed(app);\n} | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\nquit_shortcut::pressed(app);\n}\n}); | closing lines of the excluded real-window routing and application menu above
 crates/puddle-app/src/desktop.rs | if let Some(window) = app.get_webview_window(MAIN_LABEL) { | x2 | the application menu (see `install_quit_shortcut`)
 crates/puddle-app/src/desktop.rs | let menu = Menu::with_items(app, &[&Submenu::with_items(app, "Puddle", true, &[&quit])?])?; | the application menu (see `install_quit_shortcut`)
 crates/puddle-app/src/desktop.rs | let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Puddle", true, Some("CmdOrCtrl+Q"))?; | the application menu (see `install_quit_shortcut`)
@@ -195,6 +195,7 @@ crates/puddle-app/src/notify.rs | pub fn show<R: Runtime>(app: &AppHandle<R>, no
 crates/puddle-app/src/notify.rs | tracing::warn!(%err, "could not show a notification"); | the operating system's notification service refusing a notice: a test would pop a real notification on a developer's desktop, and cannot make it refuse
 crates/puddle-app/src/notify.rs | tracing::warn!(%err, "could not show a notification");\n} | closing lines of `show`'s refused-notice branch above
 crates/puddle-app/src/notify.rs | tracing::warn!(%err, "could not show a notification");\n}\n} | closing lines of `show`'s refused-notice branch above
+crates/puddle-app/src/quit_shortcut.rs | * | the quit question in the operating system's own dialog needs the real window system, which the test runtime lacks; the question text and the answers are tested in `desktop::tests`, and the Windows job (`e2e/terminal-keys.mjs`, sessions 2 and 3) shows the dialog on a real WebView2
 crates/puddle-app/src/sandbox_window.rs | Some(features) => builder.window_features(features), | needs the opener's webview, which only a real webview gives (NewWindowFeatures cannot be built without one); the WebView2 attack test opens such a window
 crates/puddle-app/src/sandbox_window.rs | this.new_window(&app_for_popups, &popup_target, &url, Some(features)) | the callback a real webview calls for window.open, which the mock window system never does; the function it calls is tested directly and the WebView2 attack test runs the callback
 crates/puddle-app/src/sandbox_window.rs | this.new_window(&app_for_popups, &popup_target, &url, Some(features))\n}); | the closing line of the callback listed just above it; the reason there applies

@@ -88,7 +88,8 @@ fn backup_copies_a_live_database_and_names_what_it_leaves_out() {
     assert!(result.status.success(), "{result:?}");
     let stdout = String::from_utf8(result.stdout).unwrap();
     assert!(
-        stdout.contains("not included: stored logins and secrets"),
+        stdout.contains("not included: stored logins and secrets")
+            && stdout.contains("account passwords and open invites"),
         "{stdout}"
     );
     let restored = puddle_store::Store::open(
@@ -98,6 +99,34 @@ fn backup_copies_a_live_database_and_names_what_it_leaves_out() {
     )
     .unwrap();
     assert_eq!(restored.rules(), live.rules());
+}
+
+#[test]
+fn backup_reads_the_folder_the_environment_names_not_the_per_user_one() {
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    let live = puddle_store::Store::open(
+        &data.join("puddle.db"),
+        Arc::new(puddle_store::SystemClock),
+        puddle_store::Limits::default(),
+    )
+    .unwrap();
+    let out = root.path().join("out");
+    let result = Command::new(env!("CARGO_BIN_EXE_puddle"))
+        .args(["backup", out.to_str().unwrap()])
+        .env("PUDDLE_DATA_DIR", &data)
+        .output()
+        .expect("the Puddle binary runs");
+    assert!(result.status.success(), "{result:?}");
+    let copy = puddle_store::Store::open(
+        &out.join("puddle.db"),
+        Arc::new(puddle_store::SystemClock),
+        puddle_store::Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(copy.rules(), live.rules());
 }
 
 #[test]

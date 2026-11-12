@@ -3,7 +3,8 @@
 //!
 //! The copy holds the database (`puddle.db`: rules, pending requests, audit log, environment
 //! rows, git identities), the settings documents (`settings/`) and the workspace list
-//! (`workspaces.json`). It never holds what only makes sense on this machine or is secret: the
+//! (`workspaces.json`). The database copy has the users but not their password hashes or open
+//! invites ([`puddle_store::backup_database`]). It never holds what only makes sense on this machine or is secret: the
 //! credential store's contents live in the operating system and are not read; the login markers
 //! and the browser front's key halves, the connection file and the lock files stay behind; and
 //! the sandbox runtime and the workspace volumes are too large and have their own owner.

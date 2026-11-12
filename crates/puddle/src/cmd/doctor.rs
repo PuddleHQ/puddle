@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `puddle doctor [--json] [--no-boot]`: checks this machine's prerequisites and what can get in
-//! the way, with the exact fix for each problem ([`puddle_doctor`]). Exit code 0 when nothing
-//! failed, 1 when something must be fixed first, so scripts can gate on it.
+//! `puddle doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>]`: checks this
+//! machine's prerequisites and what can get in the way, with the exact fix for each problem
+//! ([`puddle_doctor`]). Exit code 0 when nothing failed, 1 when something must be fixed first, so
+//! scripts can gate on it. The data folder it checks is the one `puddle serve` would use
+//! ([`crate::cmd::data_folder`]).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -11,28 +13,38 @@ use puddle_doctor::{Options, Probe, Report, SystemProbe, diagnose};
 use puddle_host::{FileSettings, HostPaths, disk_limits, ssh_agent_pipe};
 
 use crate::cli::{Command, UsageError};
+use crate::cmd::data_folder;
+use crate::cmd::serve::options::Flags;
 
 /// How `puddle doctor` should report.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DoctorArgs {
     /// Print JSON (with `schema_version`) instead of text.
     pub json: bool,
     /// Skip the test boot.
     pub no_boot: bool,
+    /// `--data-dir` and `--config`, by option key; with the environment they pick the data folder
+    /// as `puddle serve` does.
+    pub flags: Flags,
 }
 
-/// Parses the arguments after `doctor`: `--json` and `--no-boot`, each at most once.
+/// Parses the arguments after `doctor`: `--json`, `--no-boot`, `--data-dir <path>` and `--config <path>`, each at most once.
 ///
 /// # Errors
 ///
-/// [`UsageError::UnknownArgument`] for anything else or a repeated flag.
+/// [`UsageError::UnknownArgument`] for anything else or a repeated flag, and
+/// [`UsageError::MissingArgument`] for a path option without its value.
 pub fn parse<I, S>(args: I) -> Result<Command, UsageError>
 where
     I: Iterator<Item = S>,
     S: AsRef<str>,
 {
     let mut parsed = DoctorArgs::default();
-    for arg in args {
+    let mut args = args;
+    while let Some(arg) = args.next() {
+        if data_folder::take_option(arg.as_ref(), &mut args, &mut parsed.flags)? {
+            continue;
+        }
         let flag = match arg.as_ref() {
             "--json" => &mut parsed.json,
             "--no-boot" => &mut parsed.no_boot,
@@ -54,8 +66,15 @@ where
     clippy::print_stderr,
     reason = "the report is the command's output"
 )]
-pub fn run(args: DoctorArgs) -> ExitCode {
-    let data = data_folder(puddle_fs::data_dir());
+pub fn run(args: &DoctorArgs) -> ExitCode {
+    let configured = match data_folder::configured_here(&args.flags) {
+        Ok(configured) => configured,
+        Err(e) => {
+            eprintln!("puddle: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let data = data_folder(configured.map_or_else(puddle_fs::data_dir, Ok));
     let probe = match std::env::current_exe()
         .map_err(|e| e.to_string())
         .and_then(|exe| SystemProbe::installed(&exe).map_err(|e| e.to_string()))
@@ -117,7 +136,7 @@ fn ssh_pipe(data: Option<&Path>) -> Option<String> {
 /// lines in bytes (warn, fail).
 pub(crate) fn report(
     probe: &dyn Probe,
-    args: DoctorArgs,
+    args: &DoctorArgs,
     disk_lines: (u64, u64),
 ) -> (String, ExitCode) {
     let options = Options {

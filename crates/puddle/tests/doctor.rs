@@ -12,13 +12,103 @@ use std::process::{Command, Output};
 
 /// Copies the built `puddle` into `dir` (no `runtime/` beside it) and runs it there.
 fn puddle_in(dir: &Path, args: &[&str]) -> Output {
+    puddle_with_env(dir, args, &[])
+}
+
+/// [`puddle_in`] with no `PUDDLE_` variable of the test run's environment, then `env`.
+fn puddle_with_env(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Output {
     let exe = dir.join(if cfg!(windows) {
         "puddle.exe"
     } else {
         "puddle"
     });
     std::fs::copy(env!("CARGO_BIN_EXE_puddle"), &exe).unwrap();
-    Command::new(&exe).args(args).output().unwrap()
+    let mut command = Command::new(&exe);
+    command.args(args).current_dir(dir);
+    for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("PUDDLE_")) {
+        command.env_remove(name);
+    }
+    command.envs(env.iter().copied()).output().unwrap()
+}
+
+/// The folder the report says it measured the free space of.
+fn measured_folder(out: &Output) -> String {
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let checks = v.get("checks").and_then(|c| c.as_array()).unwrap();
+    let check = checks
+        .iter()
+        .find(|c| c.get("id").is_some_and(|id| id == "disk_space"))
+        .unwrap();
+    check
+        .get("summary")
+        .and_then(|s| s.as_str())
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn the_data_folder_comes_from_the_environment_and_the_config_file_like_serves() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("bin");
+    std::fs::create_dir(&dir).unwrap();
+    let from_env = root.path().join("env-data");
+    let from_file = root.path().join("file-data");
+    let from_flag = root.path().join("flag-data");
+    for folder in [&from_env, &from_file, &from_flag] {
+        std::fs::create_dir(folder).unwrap();
+    }
+    let config = root.path().join("serve.toml");
+    std::fs::write(
+        &config,
+        format!("data_dir = {:?}\n", from_file.to_str().unwrap()),
+    )
+    .unwrap();
+    let say = |out: Output, folder: &Path| {
+        let summary = measured_folder(&out);
+        assert!(summary.contains(folder.to_str().unwrap()), "{summary}");
+    };
+    say(
+        puddle_with_env(
+            &dir,
+            &["doctor", "--json", "--no-boot"],
+            &[("PUDDLE_DATA_DIR", &from_env)],
+        ),
+        &from_env,
+    );
+    say(
+        puddle_with_env(
+            &dir,
+            &["doctor", "--json", "--no-boot"],
+            &[("PUDDLE_CONFIG", &config)],
+        ),
+        &from_file,
+    );
+    say(
+        puddle_with_env(
+            &dir,
+            &[
+                "doctor",
+                "--json",
+                "--no-boot",
+                "--data-dir",
+                from_flag.to_str().unwrap(),
+            ],
+            &[("PUDDLE_DATA_DIR", &from_env)],
+        ),
+        &from_flag,
+    );
+}
+
+#[test]
+fn an_unreadable_config_file_stops_the_doctor_with_its_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = puddle_in(
+        dir.path(),
+        &["doctor", "--no-boot", "--config", "absent.toml"],
+    );
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = String::from_utf8(out.stderr.clone()).unwrap();
+    assert!(stderr.contains("absent.toml"), "{stderr}");
 }
 
 #[test]

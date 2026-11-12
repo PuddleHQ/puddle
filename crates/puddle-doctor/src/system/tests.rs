@@ -108,3 +108,13 @@ fn a_probe_with_nothing_at_the_named_endpoint_says_unreachable() {
         "{got:?}"
     );
 }
+
+#[test]
+fn the_version_is_the_first_line_of_az_version() {
+    assert_eq!(
+        azure_cli_version("azure-cli                         2.64.0 *\n\ncore 2.64.0 *\n"),
+        Some("2.64.0".to_owned())
+    );
+    assert_eq!(azure_cli_version("core 2.64.0 *\n"), None);
+    assert_eq!(azure_cli_version(""), None);
+}

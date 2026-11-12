@@ -8,10 +8,10 @@ use std::time::{Duration, Instant};
 use puddle_runtime::RuntimeError;
 
 use crate::facts::{
-    AgentService, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity, CodeIntegrityFacts,
-    DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorApi,
-    HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, Protection, RuntimeFacts,
-    RuntimeState, SshAgentFacts, SwapFacts, WritableFolder,
+    AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
+    CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts,
+    HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, Protection,
+    RuntimeFacts, RuntimeState, SshAgentFacts, SwapFacts, WritableFolder,
 };
 use crate::report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
 
@@ -47,6 +47,8 @@ pub trait Probe {
     fn disk_encryption(&self) -> DiskEncryptionFacts;
     /// Asks the SSH agent Puddle would ask for its key list, waiting at most `limit`.
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts;
+    /// Asks the Azure CLI for its version, waiting at most `limit`.
+    fn az_cli(&self, limit: Duration) -> AzCliFacts;
 }
 
 /// What to run and how long it may take.
@@ -88,6 +90,9 @@ pub const DEFAULT_DISK_FAIL_BELOW: u64 = 5 * GIB;
 /// How long the SSH agent gets to answer: an agent that asks the user first (1Password, Bitwarden)
 /// is not waited for.
 pub const SSH_AGENT_LIMIT: Duration = Duration::from_secs(2);
+
+/// How long `az --version` gets: a cold `az` is slow, and the answer only names a version.
+pub const AZ_CLI_LIMIT: Duration = Duration::from_secs(10);
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
@@ -152,6 +157,7 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     checks.push(disk_encryption(os, &probe.disk_encryption()));
 
     checks.push(ssh_agent(os, &probe.ssh_agent(options.ssh_agent_limit)));
+    checks.push(az_cli(&probe.az_cli(AZ_CLI_LIMIT)));
 
     if let Some(gsa) = probe.global_secure_access() {
         checks.push(global_secure_access(&gsa));
@@ -1215,6 +1221,29 @@ that SSH_AUTH_SOCK is set, or name its socket in the settings (`ui.ssh_agent_pip
         "{SSH_AGENT_LIMITS}. {start} Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is not \
 affected."
     )
+}
+
+// ---- Azure CLI ----
+
+/// Warn only: the Azure CLI is optional, needed for the Azure DevOps sources and nothing else.
+fn az_cli(facts: &AzCliFacts) -> Check {
+    let id = CheckId::AzCli;
+    match facts {
+        AzCliFacts::NotFound => Check::new(
+            id,
+            Status::Warn,
+            "not found; needed only for Azure DevOps through `az`",
+        )
+        .finding(Finding::AzCliMissing)
+        .fix("Install the Azure CLI (`az`) only if you use Azure DevOps sources, then run `az login --tenant <tenant>` in a terminal."),
+        AzCliFacts::Found { version } => Check::new(id, Status::Ok, format!("version {version}")),
+        AzCliFacts::Unknown { detail } => Check::new(
+            id,
+            Status::Warn,
+            format!("found, but its version could not be read: {detail}"),
+        )
+        .fix("Azure DevOps sources need a working `az`; reinstall the Azure CLI if `az --version` fails."),
+    }
 }
 
 fn ssh_agent(os: Os, facts: &SshAgentFacts) -> Check {

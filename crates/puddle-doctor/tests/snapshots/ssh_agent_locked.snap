@@ -16,6 +16,7 @@ warn  SSH agent             the agent on \\.\pipe\openssh-ssh-agent is locked
       note: SSH to servers other than Git hosts gets no key from Puddle while the agent is
             locked. Unlock it (1Password, Bitwarden) or run ssh-add to add a key. Git hosts need
             no agent.
+ok    Azure CLI (az)        version 2.64.0
 ok    Global Secure Access  client not installed
 
 No problems found; 1 warning to know about. (1.2 s)
@@ -81,6 +82,11 @@ No problems found; 1 warning to know about. (1.2 s)
       "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent is locked",
       "finding": "ssh_agent_locked",
       "fix": "SSH to servers other than Git hosts gets no key from Puddle while the agent is locked. Unlock it (1Password, Bitwarden) or run ssh-add to add a key. Git hosts need no agent."
+    },
+    {
+      "id": "az_cli",
+      "status": "ok",
+      "summary": "version 2.64.0"
     },
     {
       "id": "global_secure_access",

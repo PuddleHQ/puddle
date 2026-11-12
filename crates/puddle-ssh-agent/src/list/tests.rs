@@ -10,7 +10,11 @@ fn a_read_timeout_on_the_request_thread_is_a_timeout_not_an_io_error() {
     let path = dir.path().join("silent.sock");
     let listener = UnixListener::bind(&path).unwrap();
     let limit = Duration::from_millis(50);
-    let result = ask(&AgentEndpoint::at(&path), limit);
+    let result = ask(
+        &AgentEndpoint::at(&path),
+        limit,
+        Box::new(|s| wire::exchange(s)),
+    );
     assert!(
         matches!(result, Err(AgentError::TimedOut(l)) if l == limit),
         "{result:?}"

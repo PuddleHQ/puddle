@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! One key-list request with a time limit.
+//! One request to the host's agent with a time limit: the key list, or a signature.
 
-use std::io;
+use std::io::{self, Read, Write};
 use std::sync::mpsc::{
     self,
     RecvTimeoutError::{Disconnected, Timeout},
@@ -12,10 +12,17 @@ use std::time::Duration;
 use crate::endpoint::AgentEndpoint;
 use crate::error::AgentError;
 use crate::identity::Identity;
-use crate::wire;
+use crate::{request, wire};
 
 /// What a request that lost its thread reports.
 const THREAD_ENDED: &str = "the request thread ended without an answer";
+
+/// A connection to the agent: a socket or a pipe.
+trait Stream: Read + Write {}
+impl<S: Read + Write> Stream for S {}
+
+/// One exchange on a fresh connection.
+type Exchange<T> = Box<dyn FnOnce(&mut dyn Stream) -> Result<T, AgentError> + Send>;
 
 /// Asks the agent at `endpoint` which keys it holds and waits at most `limit` for the answer,
 /// connecting included.
@@ -32,13 +39,44 @@ pub fn list_identities(
     endpoint: &AgentEndpoint,
     limit: Duration,
 ) -> Result<Vec<Identity>, AgentError> {
+    within(endpoint, limit, Box::new(|s| wire::exchange(s)))
+}
+
+/// Asks the agent at `endpoint` to sign `data` with the key whose public blob is `key` (`flags` as
+/// the client sent them) and waits at most `limit`, connecting included. Returns the signature blob
+/// as the agent wrote it.
+///
+/// # Errors
+///
+/// As [`list_identities`]; [`AgentError::Refused`] when the agent declines (a locked agent, or the
+/// user said no at its prompt), [`AgentError::Protocol`] for an answer that is not one signature.
+pub fn sign(
+    endpoint: &AgentEndpoint,
+    key: &[u8],
+    data: &[u8],
+    flags: u32,
+    limit: Duration,
+) -> Result<Vec<u8>, AgentError> {
+    let ask = request::sign_request(key, data, flags);
+    within(
+        endpoint,
+        limit,
+        Box::new(move |s| request::parse_signature(&wire::ask(s, &ask)?)),
+    )
+}
+
+fn within<T: Send + 'static>(
+    endpoint: &AgentEndpoint,
+    limit: Duration,
+    exchange: Exchange<T>,
+) -> Result<T, AgentError> {
     let (sender, receiver) = mpsc::channel();
     let endpoint = endpoint.clone();
     let worker = thread::Builder::new()
-        .name("ssh-agent-list".into())
+        .name("ssh-agent-request".into())
         .spawn(move || {
             // The receiver is gone when the limit passed first; nobody wants the answer then.
-            let _late = sender.send(ask(&endpoint, limit));
+            let _late = sender.send(ask(&endpoint, limit, exchange));
         })
         .map_err(AgentError::Io)?;
     match receiver.recv_timeout(limit) {
@@ -55,19 +93,27 @@ pub fn list_identities(
 
 /// One request on the host's kind of endpoint. The two bodies have their own names so that a
 /// mutation exclusion can name the Windows one (a Linux run never compiles it).
-fn ask(endpoint: &AgentEndpoint, limit: Duration) -> Result<Vec<Identity>, AgentError> {
+fn ask<T>(
+    endpoint: &AgentEndpoint,
+    limit: Duration,
+    exchange: Exchange<T>,
+) -> Result<T, AgentError> {
     #[cfg(unix)]
     {
-        ask_socket(endpoint, limit)
+        ask_socket(endpoint, limit, exchange)
     }
     #[cfg(windows)]
     {
-        ask_pipe(endpoint, limit)
+        ask_pipe(endpoint, limit, exchange)
     }
 }
 
 #[cfg(unix)]
-fn ask_socket(endpoint: &AgentEndpoint, limit: Duration) -> Result<Vec<Identity>, AgentError> {
+fn ask_socket<T>(
+    endpoint: &AgentEndpoint,
+    limit: Duration,
+    exchange: Exchange<T>,
+) -> Result<T, AgentError> {
     let mut stream = std::os::unix::net::UnixStream::connect(endpoint.path())
         .map_err(AgentError::Unreachable)?;
     // The caller stops waiting at `limit`; this makes the thread stop reading then too.
@@ -75,7 +121,7 @@ fn ask_socket(endpoint: &AgentEndpoint, limit: Duration) -> Result<Vec<Identity>
         .set_read_timeout(Some(limit))
         .and_then(|()| stream.set_write_timeout(Some(limit)))
         .map_err(AgentError::Io)?;
-    wire::exchange(&mut stream).map_err(|error| as_timeout(error, limit))
+    exchange(&mut stream).map_err(|error| as_timeout(error, limit))
 }
 
 /// A socket timeout set in [`ask_socket`] surfaces as `WouldBlock` (Linux, macOS) or `TimedOut`. When the
@@ -97,7 +143,11 @@ fn as_timeout(error: AgentError, limit: Duration) -> AgentError {
 }
 
 #[cfg(windows)]
-fn ask_pipe(endpoint: &AgentEndpoint, _limit: Duration) -> Result<Vec<Identity>, AgentError> {
+fn ask_pipe<T>(
+    endpoint: &AgentEndpoint,
+    _limit: Duration,
+    exchange: Exchange<T>,
+) -> Result<T, AgentError> {
     // A named pipe opens like a file. A pipe whose instances are all busy fails here at once
     // (`ERROR_PIPE_BUSY`), which reads as unreachable.
     let mut pipe = std::fs::OpenOptions::new()
@@ -105,7 +155,7 @@ fn ask_pipe(endpoint: &AgentEndpoint, _limit: Duration) -> Result<Vec<Identity>,
         .write(true)
         .open(endpoint.path())
         .map_err(AgentError::Unreachable)?;
-    wire::exchange(&mut pipe)
+    exchange(&mut pipe)
 }
 
 #[cfg(not(any(unix, windows)))]

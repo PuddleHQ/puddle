@@ -6724,6 +6724,9 @@ name = "puddle-ssh-agent"
 version = "0.0.0"
 dependencies = [
  "puddle-ipc",
+ "puddle-ssh-agent",
+ "signature",
+ "ssh-key",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

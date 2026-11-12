@@ -37,6 +37,17 @@ impl StreamHandler for Echo {
         }
     }
 
+    /// Answers an agent stream with `agent:` and what it read, so a test sees every byte arrive.
+    async fn ssh_agent(&self, mut stream: AgentStream) {
+        let mut buf = Vec::new();
+        if stream.read_to_end(&mut buf).await.is_ok() {
+            let _ = stream.write_all(b"agent:").await;
+            let _ = stream.write_all(&buf).await;
+            let _ = stream.flush().await;
+            let _ = stream.shutdown().await;
+        }
+    }
+
     async fn resolve(&self, query: ResolveQuery) -> ResolveAnswer {
         if query.name == "slow.example" {
             // A resolver that never answers within the test: the caller's own timeout ends the wait.
@@ -586,7 +597,7 @@ async fn reserved_and_malformed_stream_kinds_are_closed() {
     let mut h = start();
     for preamble in [
         StreamKind::Connect.preamble(),
-        StreamKind::SshAgent.preamble(),
+        b"\0puddle-ssh-agent/2\n",
         b"\0puddle-control/2\n",
         b"\0no newline in sixty-four bytes .................................................",
     ] {
@@ -1058,4 +1069,36 @@ async fn a_forward_opened_through_the_link_is_the_connection_once_the_agent_says
         link.open_forward(3000).await,
         Err(OpenError::Disconnected)
     ));
+}
+
+#[tokio::test]
+async fn an_ssh_agent_stream_reaches_the_handler_with_every_byte_after_its_preamble() {
+    let mut h = start();
+    let mut s = h.control.open_stream().await.unwrap();
+    // The preamble and the first request in one write: the bytes the host read ahead are not lost.
+    let mut first = StreamKind::SshAgent.preamble().to_vec();
+    first.extend_from_slice(b"\0\0\0\x01\x0b");
+    s.write_all(&first).await.unwrap();
+    s.write_all(b"more").await.unwrap();
+    s.shutdown().await.unwrap();
+    let mut answer = Vec::new();
+    tokio::time::timeout(WAIT, s.read_to_end(&mut answer))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(answer, b"agent:\0\0\0\x01\x0bmore");
+    h.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_handler_without_an_ssh_agent_closes_its_streams() {
+    let told = Arc::new(Told::default());
+    let mut h = start_handler(Arc::new(Listening(told)), HostConfig::default());
+    let mut s = h.control.open_stream().await.unwrap();
+    s.write_all(StreamKind::SshAgent.preamble()).await.unwrap();
+    s.write_all(b"\0\0\0\x01\x0b").await.unwrap();
+    let mut buf = [0u8; 1];
+    let read = tokio::time::timeout(WAIT, s.read(&mut buf)).await.unwrap();
+    assert!(matches!(read, Err(_) | Ok(0)), "{read:?}");
+    h.close().await.unwrap();
 }

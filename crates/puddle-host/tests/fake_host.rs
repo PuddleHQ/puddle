@@ -11,6 +11,9 @@
 
 mod support;
 
+#[path = "fake_host/dropped_requests.rs"]
+mod dropped_requests;
+
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -41,7 +44,7 @@ use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
 use puddle_workspace::{CLEAR_LOCKS_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH, PREPARE_SH};
 use rustls::pki_types::pem::PemObject;
 use serde_json::json;
-use support::{Api, TestDevCert, ended, hermetic_options};
+use support::{Api, TestDevCert, ended, hermetic_options, named_id_options};
 
 type Log = Arc<Mutex<Vec<String>>>;
 
@@ -677,11 +680,19 @@ struct Rig {
     rewrite_gate: Mutex<Option<RewriteGate>>,
     /// Starts the host with SSH host keys for Git over SSH.
     git_ssh: AtomicBool,
-    /// Where new ids come from, for a test about them; else ids made from names.
+    /// Where new ids come from, for a test about them; else random ids, as on a real host.
     ids: Mutex<Option<Arc<dyn puddle_api::IdSource>>>,
 }
 
 impl Rig {
+    /// A rig whose workspaces get ids made from their names (`acme` gets `acme`), for a test that
+    /// writes those ids into paths and URLs itself.
+    fn named_ids() -> Self {
+        let rig = Self::new();
+        *rig.ids.lock().unwrap() = Some(Arc::new(puddle_api::NameIds));
+        rig
+    }
+
     fn new() -> Self {
         let runtime = FakeRuntime::new();
         let guest = Arc::new(Guest::default());
@@ -914,7 +925,7 @@ async fn a_taken_api_port_is_reported_and_nothing_was_stopped_or_removed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_host_on_the_same_data_folder_is_refused_and_the_first_is_untouched() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let first = rig.start().await;
     let api = api(&first);
     let mut events = api.events().await;
@@ -959,7 +970,7 @@ async fn a_second_host_on_the_same_data_folder_is_refused_and_the_first_is_untou
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_daemon_serves_the_api_the_ui_and_the_event_stream() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
 
@@ -1090,7 +1101,7 @@ async fn the_apis_address_is_registered_so_no_guest_can_ask_the_proxy_for_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ending_the_extension_hosts_of_a_workspace_that_has_no_agent_says_it_is_not_running() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -1114,7 +1125,7 @@ async fn ending_the_extension_hosts_of_a_workspace_that_has_no_agent_says_it_is_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn switching_an_editor_build_needs_no_connected_window_and_a_running_agent() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -1144,7 +1155,7 @@ async fn switching_an_editor_build_needs_no_connected_window_and_a_running_agent
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_round_of_build_switches_asks_only_microsoft_workspaces_without_a_window() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
     let host = rig.start().await;
@@ -1337,7 +1348,7 @@ async fn the_system_check_looks_at_the_runtime_folder_the_host_was_started_with(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.guest.fail_sync.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -1469,7 +1480,7 @@ async fn make_work_identity(api: &Api) {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_clone_that_fails_fails_only_its_repository_and_every_clone_carries_its_git_settings() {
     const DOWN: &str = "https://unreachable.example/acme/docs.git";
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     *rig.guest.fail_clone_of.lock().unwrap() = Some(DOWN.to_owned());
     let host = rig.start().await;
     let seen = git_settings_at_each_clone(&rig, &host, "trio");
@@ -1604,7 +1615,7 @@ async fn checkouts_of(api: &Api, name: &str) -> serde_json::Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_added_clone_has_its_identity_and_table_row_before_it_runs_and_is_listed_after() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     make_work_identity(&api).await;
@@ -1680,7 +1691,7 @@ async fn an_added_clone_has_its_identity_and_table_row_before_it_runs_and_is_lis
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_clears_it() {
     const DOWN: &str = "https://unreachable.example/acme/docs.git";
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -1738,7 +1749,7 @@ async fn a_failed_added_clone_keeps_its_entry_and_one_problem_and_cloning_again_
 #[expect(clippy::too_many_lines, reason = "one scenario, one rig")]
 async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() {
     const MOVED: &str = "https://example.org/acme/moved.git";
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     make_work_identity(&api).await;
@@ -1852,7 +1863,7 @@ async fn managing_a_checkout_reads_its_remote_again_and_changes_nothing_in_it() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     make_work_identity(&api).await;
@@ -1907,7 +1918,7 @@ async fn removing_an_entry_keeps_the_checkout_its_table_row_and_its_identity() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_that_is_cloning_cannot_be_stopped_or_asked_for_a_second_clone() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -1972,7 +1983,7 @@ async fn a_workspace_that_is_cloning_cannot_be_stopped_or_asked_for_a_second_clo
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_workspace_lists_the_checkouts_it_had_and_refuses_an_add() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2046,7 +2057,7 @@ async fn after_boot_listing(rig: &Rig) {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_listing_says_why_a_remote_is_not_shown_and_a_checkout_it_cannot_read_cannot_be_managed()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2109,7 +2120,7 @@ async fn the_listing_says_why_a_remote_is_not_shown_and_a_checkout_it_cannot_rea
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_listing_the_guest_cannot_make_is_a_problem_in_the_answer_not_an_error() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2133,7 +2144,7 @@ async fn a_listing_the_guest_cannot_make_is_a_problem_in_the_answer_not_an_error
 
 #[tokio::test(flavor = "multi_thread")]
 async fn calls_that_wait_for_a_listing_share_the_one_that_starts_after_they_asked() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api0 = api(&host);
     let mut events = api0.events().await;
@@ -2174,7 +2185,7 @@ async fn calls_that_wait_for_a_listing_share_the_one_that_starts_after_they_aske
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_list_that_cannot_be_saved_changes_nothing_and_says_so() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2197,7 +2208,7 @@ async fn a_list_that_cannot_be_saved_changes_nothing_and_says_so() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_user_switch_that_cannot_be_saved_or_comes_at_shutdown_changes_nothing() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2219,7 +2230,7 @@ async fn a_user_switch_that_cannot_be_saved_or_comes_at_shutdown_changes_nothing
 
 #[tokio::test(flavor = "multi_thread")]
 async fn nothing_is_added_once_shutdown_has_begun() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2238,7 +2249,7 @@ async fn nothing_is_added_once_shutdown_has_begun() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entry_cannot_be_removed_while_its_workspace_is_being_created() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2265,7 +2276,7 @@ async fn an_entry_cannot_be_removed_while_its_workspace_is_being_created() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_clone_the_runtime_cannot_run_fails_the_operation_and_keeps_the_entry() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2297,7 +2308,7 @@ async fn a_clone_the_runtime_cannot_run_fails_the_operation_and_keeps_the_entry(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_with_no_repositories_is_made_without_a_clone_or_a_sync() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2329,7 +2340,7 @@ async fn a_workspace_with_no_repositories_is_made_without_a_clone_or_a_sync() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves_nothing() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2438,7 +2449,7 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_boot_leaves_nothing_behind_and_a_failed_start_says_crashed() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2477,7 +2488,7 @@ async fn a_failed_boot_leaves_nothing_behind_and_a_failed_start_says_crashed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dirty_workspace_is_deleted_only_with_the_fingerprint_the_user_saw() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2524,7 +2535,7 @@ async fn a_dirty_workspace_is_deleted_only_with_the_fingerprint_the_user_saw() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_running_workspace_cannot_be_deleted_and_busy_ones_refuse_a_second_operation() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2549,7 +2560,7 @@ async fn a_running_workspace_cannot_be_deleted_and_busy_ones_refuse_a_second_ope
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reclaim_trims_the_running_workspace() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2564,7 +2575,7 @@ async fn reclaim_trims_the_running_workspace() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn attach_opens_the_desktop_editor_through_the_launcher() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2739,7 +2750,7 @@ async fn browser_origin(rig: &Rig, api: &Api, workspace: &str) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_hands_the_launcher_the_fronts_origin_and_the_front_carries_a_request_to_the_editor()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2775,7 +2786,7 @@ async fn a_browser_attach_hands_the_launcher_the_fronts_origin_and_the_front_car
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_the_password() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     write_global_settings(
         &rig,
         &json!({"schema_version": 2, "workspace_defaults": {"zoom_hotkeys": false}}),
@@ -2819,7 +2830,7 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_signs_in_before_the_agents_hello_waits_for_it_and_gets_the_password() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -2866,7 +2877,7 @@ async fn browser_attach_over_damaged_settings(rig: &Rig) -> (Host<FakeRuntime>, 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_with_unreadable_global_settings_opens_no_window_and_says_why() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     // A user who turned the clipboard prompt off must never get a window that asks: with the
     // settings unreadable no window opens at all.
     let file = damage_global_settings(&rig);
@@ -2896,7 +2907,7 @@ async fn a_browser_attach_with_unreadable_global_settings_opens_no_window_and_sa
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_window() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     write_global_settings(
         &rig,
         &json!({"schema_version": 2, "workspace_defaults": {"clipboard_read": "deny"}}),
@@ -2942,7 +2953,7 @@ async fn a_browser_attach_with_an_unreadable_workspace_settings_file_opens_no_wi
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_to_microsoft_s_server_gives_the_window_its_connection_token() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
     let host = rig.start().await;
@@ -2962,7 +2973,7 @@ async fn a_browser_attach_to_microsoft_s_server_gives_the_window_its_connection_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_desktop_app() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.windowless.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -2988,7 +2999,7 @@ async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_deskto
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_cannot_open_says_why_in_the_browser_attach_answer() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3041,7 +3052,7 @@ async fn delete_and_wait(api: &Api, events: &mut support::Events, workspace: &'s
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stopping_a_workspace_closes_its_editor_windows() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3064,7 +3075,7 @@ async fn stopping_a_workspace_closes_its_editor_windows() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_headless_host_stops_and_deletes_with_no_window_to_close() {
     // `puddle serve` has no window: stopping and deleting work as they did.
-    let headless = Rig::new();
+    let headless = Rig::named_ids();
     headless.windowless.store(true, Ordering::SeqCst);
     let host = headless.start().await;
     let api = api(&host);
@@ -3078,7 +3089,7 @@ async fn a_headless_host_stops_and_deletes_with_no_window_to_close() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn deleting_a_workspace_deletes_the_editor_s_secret_key_and_the_windows_data() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
     let host = rig.start().await;
@@ -3125,7 +3136,7 @@ async fn deleting_a_workspace_deletes_the_editor_s_secret_key_and_the_windows_da
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_that_cannot_remove_the_editor_s_data_says_so_and_still_deletes() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3156,7 +3167,7 @@ async fn a_new_workspace_clears_browser_data_under_its_own_id_and_leaves_an_earl
     // folder and the key half behind. The id is never drawn again, so the data stays where it
     // is; the create still clears under its own id, a second guard for data a window wrote after
     // the draw. The recording launcher only notes the ask; the key half is a real file.
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let key = HostPaths::new(rig.dir.path().join("data"))
         .front_keys()
         .join("acme.key");
@@ -3173,7 +3184,7 @@ async fn a_new_workspace_clears_browser_data_under_its_own_id_and_leaves_an_earl
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refused_duplicate_create_leaves_the_running_workspaces_browser_data_alone() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3187,7 +3198,7 @@ async fn a_refused_duplicate_create_leaves_the_running_workspaces_browser_data_a
 
 #[tokio::test(flavor = "multi_thread")]
 async fn browser_data_a_delete_could_not_remove_stays_under_an_id_no_new_workspace_gets() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3220,7 +3231,7 @@ async fn browser_data_a_delete_could_not_remove_stays_under_an_id_no_new_workspa
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_create_that_cannot_clear_left_over_browser_data_is_refused() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     *rig.launcher.forget_fails_with.lock().unwrap() = Some("a window still holds it".into());
@@ -3392,7 +3403,7 @@ async fn a_front_port_that_cannot_be_stored_does_not_stop_the_host() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_forwarded_port_s_origin_reaches_that_guest_port_through_the_agent() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3443,7 +3454,7 @@ async fn a_forwarded_port_s_origin_reaches_that_guest_port_through_the_agent() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the_settings_say_now()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
     let host = rig.start().await;
@@ -3470,7 +3481,7 @@ async fn the_front_serves_the_server_the_workspace_was_started_with_not_what_the
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_front_serves_code_server_without_the_key_cookie_and_closes_with_the_host() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3492,7 +3503,7 @@ async fn the_front_serves_code_server_without_the_key_cookie_and_closes_with_the
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspace_gets_the_memory_the_settings_name() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3536,7 +3547,7 @@ async fn online_cpus(rig: &Rig, name: &str) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_boots_with_the_cpus_the_settings_name_and_a_change_applies_at_the_next_start()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3585,7 +3596,7 @@ fn damage_global_settings(rig: &Rig) -> PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_create_that_needs_the_default_memory_is_refused_while_the_settings_are_unreadable() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let file = damage_global_settings(&rig);
     let host = rig.start().await;
     let api = api(&host);
@@ -3671,7 +3682,7 @@ fn api_for(host: &Host<FakeRuntime>) -> Api {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_runs_the_steps_in_order_and_trims_then_stops_every_sandbox() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -3924,7 +3935,7 @@ async fn operations_are_refused_once_shutdown_has_begun() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_volume() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -3974,7 +3985,7 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
 /// the workspace volume never carries it.
 #[tokio::test(flavor = "multi_thread")]
 async fn every_sandbox_has_its_own_20_gib_disk_for_dockers_data_and_the_volume_does_not() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4035,7 +4046,7 @@ async fn every_sandbox_has_its_own_20_gib_disk_for_dockers_data_and_the_volume_d
 /// start keeps that sandbox (a start never names a size, so a sandbox made at 4 GiB stays there).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspaces_sandbox_gets_a_16_gib_root_disk_and_a_start_keeps_it() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4059,7 +4070,7 @@ async fn a_new_workspaces_sandbox_gets_a_16_gib_root_disk_and_a_start_keeps_it()
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4142,7 +4153,7 @@ async fn the_end_of_an_agent_session_finds_a_dead_vm_without_a_list() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4180,7 +4191,7 @@ async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspace_runs_as_agent_and_a_switch_to_root_applies_at_the_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4489,7 +4500,7 @@ fn list_path(rig: &Rig) -> PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_missing_workspace_list_keeps_every_workspace_volume() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4518,7 +4529,7 @@ async fn a_missing_workspace_list_keeps_every_workspace_volume() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_volume_no_listed_workspace_claims_is_kept() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4578,7 +4589,7 @@ async fn a_create_is_refused_when_the_workspace_list_cannot_be_saved() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_create_whose_last_save_fails_is_undone_and_says_why() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4604,7 +4615,7 @@ fn name_body(shown: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -4648,7 +4659,7 @@ async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn two_workspaces_never_share_a_label_and_a_create_cannot_take_one_in_use() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4681,7 +4692,7 @@ async fn two_workspaces_never_share_a_label_and_a_create_cannot_take_one_in_use(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_is_allowed_while_a_start_runs() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4705,7 +4716,7 @@ async fn a_rename_is_allowed_while_a_start_runs() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_is_refused_once_shutdown_has_begun() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4722,7 +4733,7 @@ async fn a_rename_is_refused_once_shutdown_has_begun() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_is_undone_when_the_workspace_list_cannot_be_saved() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4764,7 +4775,7 @@ fn op_summary(record: &serde_json::Value) -> (String, String, String) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_created_and_a_deleted_workspace_are_in_the_activity_log_with_who_asked() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4811,7 +4822,7 @@ async fn deleting_a_workspace_whose_volume_was_already_gone_says_so_in_the_activ
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_create_start_and_stop_are_failures_in_the_activity_log_that_the_filter_finds() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4879,7 +4890,7 @@ async fn a_failed_start_is_in_the_activity_log_and_a_start_that_worked_is_not() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_started_and_stopped_workspace_leaves_no_start_or_stop_records() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4900,7 +4911,7 @@ async fn a_started_and_stopped_workspace_leaves_no_start_or_stop_records() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_is_in_the_activity_log_and_so_is_one_that_could_not_be_saved() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -4981,7 +4992,7 @@ async fn a_version_2_list_of_the_previous_release_starts_with_the_display_name_a
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_activity_record_keeps_the_name_the_workspace_had_when_it_was_written() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5041,7 +5052,7 @@ async fn a_workspace_list_with_a_bad_name_stops_the_start() {
 #[tokio::test(flavor = "multi_thread")]
 async fn stopping_a_workspace_downloads_the_image_the_delete_check_boots() {
     const CHECK_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian";
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5080,7 +5091,7 @@ async fn stopping_a_workspace_downloads_the_image_the_delete_check_boots() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_is_refused_when_the_workspace_list_cannot_be_saved() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5116,7 +5127,7 @@ async fn a_delete_is_refused_when_the_workspace_list_cannot_be_saved() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5132,7 +5143,7 @@ async fn the_ssh_endpoint_exists_while_the_workspace_runs_with_direct_ssh_on() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspace_does_not_inherit_the_settings_of_a_deleted_one_of_the_same_name() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5164,7 +5175,7 @@ async fn a_new_workspace_does_not_inherit_the_settings_of_a_deleted_one_of_the_s
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5202,7 +5213,7 @@ async fn a_delete_that_cannot_remove_the_settings_file_says_so_and_still_deletes
 /// name, so the delete waits for it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_file_back() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5242,7 +5253,7 @@ async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_f
 /// is told through the event stream.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_ssh_session_the_runtime_cannot_serve_reaches_the_user_as_an_event() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5302,7 +5313,7 @@ async fn create_with_direct_ssh(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn with_direct_ssh_off_there_is_no_ssh_endpoint_and_the_gate_says_no() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5329,7 +5340,7 @@ async fn with_direct_ssh_off_there_is_no_ssh_endpoint_and_the_gate_says_no() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_desktop_attach_with_unreadable_settings_says_so_instead_of_blaming_the_switch() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     // The settings are read once and kept, so the damage is there from the start; the workspace
     // names its memory, so the damaged file does not refuse the create.
     damage_global_settings(&rig);
@@ -5360,7 +5371,7 @@ async fn a_desktop_attach_with_unreadable_settings_says_so_instead_of_blaming_th
 
 #[tokio::test(flavor = "multi_thread")]
 async fn turning_direct_ssh_on_and_off_opens_and_closes_the_endpoint_at_once() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5392,7 +5403,7 @@ async fn turning_direct_ssh_on_and_off_opens_and_closes_the_endpoint_at_once() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn login_capture_is_on_by_default_and_a_workspace_can_turn_it_off_for_its_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5457,7 +5468,7 @@ async fn login_capture_is_on_by_default_and_a_workspace_can_turn_it_off_for_its_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_kept_login_is_forgotten_through_the_api_by_the_services_short_name() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5484,7 +5495,7 @@ async fn a_kept_login_is_forgotten_through_the_api_by_the_services_short_name() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_kept_logins_list_says_nothing_is_kept_and_does_not_wait_on_the_credential_store() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5506,7 +5517,7 @@ async fn the_kept_logins_list_says_nothing_is_kept_and_does_not_wait_on_the_cred
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_global_default_decides_for_workspaces_without_their_own_switch() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5549,10 +5560,10 @@ fn ssh_hosts(rig: &Rig) -> Vec<String> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_runtime_gets_the_login_key_and_the_ssh_entry_follows_the_endpoint() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let factory = FakeFactory::new(&rig.runtime, &rig.log);
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
-    let mut options = hermetic_options();
+    let mut options = named_id_options();
     options.secret_store = Some(rig.secrets.clone());
     options.dev_cert = Some(rig.dev_cert.clone() as Arc<dyn DevCertSource>);
     let host = Host::start(prepared, &factory, options).await.unwrap();
@@ -5613,7 +5624,7 @@ async fn the_runtime_gets_the_login_key_and_the_ssh_entry_follows_the_endpoint()
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_that_follows_the_global_default_gets_its_entry_and_one_that_overrides_it_does_not()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5643,7 +5654,7 @@ async fn an_entry_left_by_a_crashed_run_is_gone_when_the_host_starts() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entry_that_cannot_be_written_is_a_problem_that_ends_when_it_can() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5684,7 +5695,7 @@ async fn an_entry_that_cannot_be_written_is_a_problem_that_ends_when_it_can() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entry_that_cannot_be_taken_out_is_a_problem_until_the_file_can_be_written() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5711,7 +5722,7 @@ async fn an_entry_that_cannot_be_taken_out_is_a_problem_until_the_file_can_be_wr
 #[tokio::test(flavor = "multi_thread")]
 async fn a_problem_with_direct_ssh_ends_when_the_switch_goes_off_or_the_workspace_stops() {
     for ending in ["off", "stop"] {
-        let rig = Rig::new();
+        let rig = Rig::named_ids();
         let host = rig.start().await;
         let api = api(&host);
         let mut events = api.events().await;
@@ -5735,7 +5746,7 @@ async fn a_problem_with_direct_ssh_ends_when_the_switch_goes_off_or_the_workspac
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_the_puddle_program_says_why_direct_ssh_has_no_entry() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let mut config = rig.config();
     config.ssh.bridge_program = None;
     let host = rig.start_with(config).await;
@@ -5751,7 +5762,7 @@ async fn a_host_without_the_puddle_program_says_why_direct_ssh_has_no_entry() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the_workspaces_ssh_host()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5799,7 +5810,7 @@ async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the
 #[tokio::test(flavor = "multi_thread")]
 async fn the_browser_editor_gets_the_same_place_to_open_as_the_desktop_one_with_the_server_already_running()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5831,7 +5842,7 @@ async fn the_browser_editor_gets_the_same_place_to_open_as_the_desktop_one_with_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_launcher_that_fails_says_why_in_the_answer() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5853,7 +5864,7 @@ async fn a_launcher_that_fails_says_why_in_the_answer() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_endpoint_that_cannot_open_is_reported_and_ends_when_it_can() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -5973,7 +5984,7 @@ async fn an_image_pull_is_audited_as_puddles_own_connection() {
 
 /// Seeds a workspace the list names whose volume is gone, then returns the rig and its host.
 async fn host_with_listed_workspace_whose_volume_is_gone() -> (Rig, Host<FakeRuntime>) {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -6080,7 +6091,7 @@ async fn a_restart_shows_a_workspace_whose_volume_is_gone_as_volume_missing_befo
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_keeps_a_workspace_with_its_volume_stopped() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -6162,7 +6173,7 @@ async fn a_restored_volume_lets_a_volume_missing_workspace_start() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_drawn_id_that_anything_is_kept_under_is_drawn_again_and_what_is_kept_stays() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let paths = HostPaths::new(rig.dir.path().join("data"));
     let id = |s: &str| WorkspaceId::new(s).unwrap();
     // Before the start: a kept volume, a key half, a settings file, a login marker and a
@@ -6429,7 +6440,7 @@ fn calls_of(rig: &Rig, op: &str) -> usize {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_new_workspace_trusts_its_own_ca_from_the_first_boot_and_decrypts_only_the_login_hosts_yet()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6489,7 +6500,7 @@ async fn a_new_workspace_trusts_its_own_ca_from_the_first_boot_and_decrypts_only
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_credential_for_any_host_applies_to_the_running_workspace_with_no_restart() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6575,7 +6586,7 @@ fn agent_settings(plan: &[u8]) -> std::collections::BTreeMap<String, String> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let mut config = rig.config();
     config.guest.code_server = Some(fake_code_server(&rig));
     let host = rig.start_with(config).await;
@@ -6637,7 +6648,7 @@ async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_workspaces_reconnection_grace_reaches_the_editor_server_at_the_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let mut config = rig.config();
     config.guest.code_server = Some(fake_code_server(&rig));
     let host = rig.start_with(config).await;
@@ -6695,7 +6706,7 @@ async fn editor_env_of_a_new_workspace(
 #[tokio::test(flavor = "multi_thread")]
 async fn microsofts_server_runs_after_consent_with_its_own_folder_and_the_telemetry_choice() {
     for (telemetry, auto_update) in [(false, true), (true, false)] {
-        let rig = Rig::new();
+        let rig = Rig::named_ids();
         let mut doc = microsoft_chosen(puddle_settings::MICROSOFT_TERMS_VERSION, telemetry);
         doc["vscode_server"]["auto_update"] = json!(auto_update);
         write_global_settings(&rig, &doc);
@@ -6740,7 +6751,7 @@ async fn microsofts_server_never_starts_on_the_choice_alone() {
             json!({"vscode_server": {"state": "granted", "at": 1, "terms_version": "https://example.test/old"}}),
         ),
     ] {
-        let rig = Rig::new();
+        let rig = Rig::named_ids();
         write_global_settings(
             &rig,
             &json!({
@@ -6765,7 +6776,7 @@ async fn microsofts_server_never_starts_on_the_choice_alone() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_code_server_and_without_microsofts_choice_runs_no_editor_server() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     // Consent recorded, choice not made: code-server, which this host does not bundle.
     write_global_settings(
         &rig,
@@ -6780,7 +6791,7 @@ async fn a_host_without_code_server_and_without_microsofts_choice_runs_no_editor
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_code_server_starts_guests_without_an_editor_server() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6792,7 +6803,7 @@ async fn a_host_without_code_server_starts_guests_without_an_editor_server() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6862,7 +6873,7 @@ async fn the_commit_authors_in_the_running_guest_follow_the_identities() {
 /// CRLF unless it is made with LF on purpose).
 #[tokio::test(flavor = "multi_thread")]
 async fn nothing_the_boot_plan_puts_into_the_guest_has_a_carriage_return() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6906,7 +6917,7 @@ async fn nothing_the_boot_plan_puts_into_the_guest_has_a_carriage_return() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_workspace_has_no_ca_and_each_start_makes_a_new_one() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -6995,7 +7006,7 @@ async fn no_file_in_the_data_folder_holds_a_key_or_the_ca_whether_the_workspace_
             }
         }
     }
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7077,10 +7088,10 @@ impl puddle_proxy::Injector for MarkedInjector {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn each_start_gets_an_injector_built_for_its_workspace_from_the_hosts_store() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let built = Arc::new(Mutex::new(Vec::new()));
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
-    let mut options = hermetic_options();
+    let mut options = named_id_options();
     let record = built.clone();
     options.injector = Some(Arc::new(
         move |inputs: &puddle_host::InjectorInputs, workspace: &WorkspaceId| {
@@ -7125,7 +7136,7 @@ async fn each_start_gets_an_injector_built_for_its_workspace_from_the_hosts_stor
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_that_fails_after_the_ca_was_made_leaves_no_ca_behind() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7152,7 +7163,7 @@ async fn a_start_that_fails_after_the_ca_was_made_leaves_no_ca_behind() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_it_starts() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7193,14 +7204,14 @@ async fn a_start_the_runtime_refuses_raises_a_problem_about_the_workspace_until_
 #[tokio::test(flavor = "multi_thread")]
 async fn the_company_roots_go_into_the_clients_that_verify_decrypted_hosts() {
     // A host with company roots starts: the TLS client for decrypted hosts is built with them.
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let mut platform = FakePlatform::new(&rig.log);
     platform.roots = company_roots();
     let prepared = prepare(rig.config(), &platform).unwrap();
     let host = Host::start(
         prepared,
         &FakeFactory::new(&rig.runtime, &rig.log),
-        hermetic_options(),
+        named_id_options(),
     )
     .await
     .unwrap();
@@ -7263,7 +7274,7 @@ const UNREADABLE_GIT_ROW: &str = "INSERT INTO workspace_repos \
 
 #[tokio::test(flavor = "multi_thread")]
 async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while_running() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7334,7 +7345,7 @@ async fn git_settings_the_host_cannot_read_stop_a_start_and_change_nothing_while
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rule_on_method_and_path_reaches_the_running_workspaces_and_decrypts_its_host() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7380,7 +7391,7 @@ fn problem_of(host: &Host<FakeRuntime>, key: &str) -> puddle_types::Problem {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_image_the_boot_plan_cannot_take_fails_the_start_and_leaves_nothing_behind() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let odd = ImageRef::new("example.org/odd:1").unwrap();
     rig.runtime.add_image(
         &odd,
@@ -7447,7 +7458,7 @@ fn attach_during_the_next_boot(rig: &Rig, host: &Host<FakeRuntime>, workspace: &
 
 #[tokio::test(flavor = "multi_thread")]
 async fn with_git_over_ssh_each_start_lists_its_own_host_keys_under_the_git_hosts() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.git_ssh.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -7499,7 +7510,7 @@ async fn with_git_over_ssh_each_start_lists_its_own_host_keys_under_the_git_host
 
 #[tokio::test(flavor = "multi_thread")]
 async fn with_git_over_ssh_an_identity_on_another_host_adds_that_name_and_keeps_the_keys() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.git_ssh.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -7528,7 +7539,7 @@ async fn with_git_over_ssh_an_identity_on_another_host_adds_that_name_and_keeps_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn without_git_over_ssh_the_guest_boots_with_no_host_keys() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7539,7 +7550,7 @@ async fn without_git_over_ssh_the_guest_boots_with_no_host_keys() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_change_made_while_the_guest_boots_reaches_it_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7560,7 +7571,7 @@ async fn a_change_made_while_the_guest_boots_reaches_it_once_it_is_up() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_change_made_while_a_stopped_workspace_starts_again_reaches_it_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7582,7 +7593,7 @@ async fn a_change_made_while_a_stopped_workspace_starts_again_reaches_it_once_it
 
 #[tokio::test(flavor = "multi_thread")]
 async fn settings_that_turn_unreadable_during_a_boot_do_not_fail_the_boot() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7601,7 +7612,7 @@ async fn settings_that_turn_unreadable_during_a_boot_do_not_fail_the_boot() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_change_retries() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7651,7 +7662,7 @@ async fn a_guest_that_cannot_take_new_authors_keeps_the_old_ones_and_the_next_ch
 
 #[tokio::test(flavor = "multi_thread")]
 async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_next_change_ends() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7715,7 +7726,7 @@ async fn settings_that_go_unreadable_while_a_rewrite_waits_are_a_problem_the_nex
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7762,7 +7773,7 @@ async fn a_git_too_old_for_the_author_rules_is_a_problem_until_it_is_updated() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7793,7 +7804,7 @@ async fn kubernetes_tools_are_a_problem_until_a_start_finds_none() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_merged_file_puddle_cannot_parse_is_a_notice_until_a_start_finds_it_repaired() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7871,7 +7882,7 @@ async fn problem_settles(host: &Host<FakeRuntime>, key: &str, want: bool) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plan_rewrite_in_a_running_workspace_raises_and_ends_the_merge_notice() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7909,7 +7920,7 @@ async fn a_plan_rewrite_in_a_running_workspace_raises_and_ends_the_merge_notice(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_git_too_old_is_noticed_at_a_start_too_but_only_when_author_rules_exist() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -7945,7 +7956,7 @@ fn old_binding_on_port(host_name: &str) -> puddle_store::CredentialBinding {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one_is_a_problem() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8052,7 +8063,7 @@ impl HeldRewrite {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_settings() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let held = Arc::new(HeldRewrite::default());
     *rig.rewrite_gate.lock().unwrap() = Some(held.gate());
     let host = rig.start().await;
@@ -8107,7 +8118,7 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
 async fn missed_events_are_made_up_for_by_looking_at_every_running_workspace_again() {
     // One thread: the host's tasks cannot run while this test emits, so the follower falls
     // behind the event buffer.
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8182,7 +8193,7 @@ fn guest_has(rig: &Rig, needle: &str) -> bool {
 async fn a_workspace_starts_with_its_variables_and_a_stand_in_for_each_secret_and_the_real_value_never_reaches_the_guest()
  {
     let logs = support::capture_logs();
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8262,7 +8273,7 @@ async fn a_workspace_starts_with_its_variables_and_a_stand_in_for_each_secret_an
 #[tokio::test(flavor = "multi_thread")]
 async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connection_with_no_restart()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8389,7 +8400,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
 #[tokio::test(flavor = "multi_thread")]
 async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_volume_and_an_unchanged_one_restarts_it()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8462,7 +8473,7 @@ async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_vo
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stand_in_is_the_same_at_every_start_so_files_the_workspace_wrote_with_it_keep_working() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8521,7 +8532,7 @@ async fn a_stand_in_is_the_same_at_every_start_so_files_the_workspace_wrote_with
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_whose_secret_cannot_be_read_fails_naming_it_and_works_once_it_is_set_again() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8566,7 +8577,7 @@ async fn a_start_whose_secret_cannot_be_read_fails_naming_it_and_works_once_it_i
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_variables_puddle_adds_to_keep_the_users_value_and_the_ones_it_owns_stay_puddles() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8612,7 +8623,7 @@ async fn the_variables_puddle_adds_to_keep_the_users_value_and_the_ones_it_owns_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_own_secrets() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8718,7 +8729,7 @@ async fn problems_of(api: &Api) -> Vec<(String, Option<String>, String, String)>
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_sync_that_cannot_be_cleaned_up_names_what_is_left_in_the_failure() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.guest.fail_sync.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -8742,7 +8753,7 @@ async fn a_failed_sync_that_cannot_be_cleaned_up_names_what_is_left_in_the_failu
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_boot_that_cannot_be_cleaned_up_names_what_is_left_in_the_failure() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.guest.fail_boot.store(true, Ordering::SeqCst);
     let host = rig.start().await;
     let api = api(&host);
@@ -8761,7 +8772,7 @@ async fn a_failed_boot_that_cannot_be_cleaned_up_names_what_is_left_in_the_failu
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stale_git_locks_that_could_not_be_cleared_are_a_problem_until_a_boot_clears_them() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     *rig.guest.locks_answer.lock().unwrap() = Some((3, "E\t.\tcannot enter /workspaces/acme\n"));
     let host = rig.start().await;
     let api = api(&host);
@@ -8788,7 +8799,7 @@ async fn stale_git_locks_that_could_not_be_cleared_are_a_problem_until_a_boot_cl
 #[tokio::test(flavor = "multi_thread")]
 async fn a_trim_that_failed_at_stop_and_a_stop_that_had_to_be_forced_are_problems_the_next_run_ends()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8825,7 +8836,7 @@ async fn a_trim_that_failed_at_stop_and_a_stop_that_had_to_be_forced_are_problem
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_trim_that_failed_when_puddle_quit_is_a_problem_at_the_next_start_until_a_trim_works() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -8871,7 +8882,7 @@ async fn a_trim_that_failed_when_puddle_quit_is_a_problem_at_the_next_start_unti
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_quit_whose_trim_works_leaves_no_note_and_a_foreign_note_file_is_ignored() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9142,7 +9153,7 @@ async fn listing_the_repositories_of_an_identity_is_in_the_activity_log_as_puddl
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_image_pull_that_cannot_be_cleaned_up_names_what_is_left() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9168,7 +9179,7 @@ async fn a_failed_image_pull_that_cannot_be_cleaned_up_names_what_is_left() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_that_cannot_make_its_folder_is_taken_down_again_and_the_leftovers_are_named() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9216,7 +9227,7 @@ async fn a_workspace_that_cannot_make_its_folder_is_taken_down_again_and_the_lef
 
 #[tokio::test(flavor = "multi_thread")]
 async fn locks_that_could_not_be_removed_one_by_one_are_listed_in_the_problem() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     *rig.guest.locks_answer.lock().unwrap() =
         Some((0, "E\tapi/.git/index.lock\tPermission denied\nD\n"));
     let host = rig.start().await;
@@ -9236,7 +9247,7 @@ async fn locks_that_could_not_be_removed_one_by_one_are_listed_in_the_problem() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn git_files_repaired_at_boot_are_audited_and_told_in_plain_words() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     *rig.guest.locks_answer.lock().unwrap() = Some((
         0,
         "R\tapi/.git/HEAD\tHEAD was zero-filled, rewritten: branch main\n\
@@ -9606,7 +9617,7 @@ fn is_event(kind: &'static str, workspace: &'static str) -> impl Fn(&serde_json:
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_saved_shell_init_reaches_a_running_workspace_read_only_and_through_a_file_puddle_owns() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9677,7 +9688,7 @@ async fn a_saved_shell_init_reaches_a_running_workspace_read_only_and_through_a_
 #[tokio::test(flavor = "multi_thread")]
 async fn a_script_that_prints_or_does_not_parse_is_refused_with_what_was_seen_and_nothing_is_saved()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9712,7 +9723,7 @@ async fn a_script_that_prints_or_does_not_parse_is_refused_with_what_was_seen_an
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_workspace_takes_a_save_unchecked_and_the_start_mounts_it_checks_it_and_raises_a_problem_if_it_prints()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9773,7 +9784,7 @@ async fn a_stopped_workspace_takes_a_save_unchecked_and_the_start_mounts_it_chec
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_that_finds_the_shell_init_changed_from_inside_puts_it_back_and_tells_the_user() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9839,7 +9850,7 @@ async fn a_start_that_finds_the_shell_init_changed_from_inside_puts_it_back_and_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_list_and_one_workspace_say_what_the_volume_takes_when_the_runtime_knows() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9888,7 +9899,7 @@ fn disk_warning(kind: &'static str) -> impl Fn(&serde_json::Value) -> bool {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_root_disk_at_the_threshold_is_flagged_and_announced_once_until_it_drops_below() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9954,7 +9965,7 @@ async fn a_root_disk_at_the_threshold_is_flagged_and_announced_once_until_it_dro
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_runtime_that_cannot_list_leaves_the_last_root_disk_figures() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -9975,7 +9986,7 @@ async fn a_runtime_that_cannot_list_leaves_the_last_root_disk_figures() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_full_volume_is_flagged_and_the_threshold_is_a_validated_setting() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10013,7 +10024,7 @@ async fn a_full_volume_is_flagged_and_the_threshold_is_a_validated_setting() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resetting_the_root_disk_needs_a_stopped_workspace_and_keeps_the_volume() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10111,7 +10122,7 @@ async fn grown_record(api: &Api) -> (String, String) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_running_workspaces_root_disk_grows_live_and_the_audit_log_says_so() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10143,7 +10154,7 @@ async fn a_running_workspaces_root_disk_grows_live_and_the_audit_log_says_so() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_root_disk_never_shrinks_and_never_grows_past_the_free_space() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10193,7 +10204,7 @@ async fn a_root_disk_never_shrinks_and_never_grows_past_the_free_space() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_grow_that_adds_most_of_the_free_space_is_allowed_with_a_warning() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10226,7 +10237,7 @@ async fn a_grow_that_adds_most_of_the_free_space_is_allowed_with_a_warning() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_workspaces_root_disk_grows_at_the_next_start_with_a_warning_and_a_reset_keeps_the_size()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10293,7 +10304,7 @@ async fn a_stopped_workspaces_root_disk_grows_at_the_next_start_with_a_warning_a
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_runtime_that_cannot_grow_live_gets_a_restart_that_loses_nothing() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.runtime.set_live_root_grow(false);
     let host = rig.start().await;
     let api = api(&host);
@@ -10324,7 +10335,7 @@ async fn a_runtime_that_cannot_grow_live_gets_a_restart_that_loses_nothing() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_grow_changes_nothing_and_is_audited() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10362,7 +10373,7 @@ async fn a_failed_grow_changes_nothing_and_is_audited() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_for_a_grow_that_fails_leaves_the_workspace_as_a_stop_or_a_start_would() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.runtime.set_live_root_grow(false);
     let host = rig.start().await;
     let api = api(&host);
@@ -10423,7 +10434,7 @@ async fn a_workspace_with_no_sandbox_yet_keeps_the_grown_size_for_its_first_star
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_did_not() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10464,9 +10475,48 @@ async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_d
     host.shutdown().await;
 }
 
+/// The id a real host draws is eight random characters, and the user never sees it: a problem's
+/// title and detail name the workspace as the user wrote it.
+#[tokio::test(flavor = "multi_thread")]
+async fn problem_text_names_a_workspace_by_its_display_name_never_by_its_random_id() {
+    let rig = Rig::new();
+    *rig.ids.lock().unwrap() = Some(Arc::new(puddle_api::RandomIds));
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    *rig.guest.boot_says.lock().unwrap() =
+        "puddle-boot: entrypoint exited with status 127: dockerd: not found\n\
+         puddle-boot: session user cannot become root: no sudo\n"
+            .to_owned();
+    let reply = api
+        .post("/api/workspaces", &new_workspace("Acme shop"))
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let id = reply.json()["id"].as_str().unwrap().to_owned();
+    assert_ne!(id, "acme-shop", "{id}");
+    events.until(ended(&id), Duration::from_secs(20)).await;
+    let problems = host.problems().list();
+    let titles: Vec<_> = problems.iter().map(|p| p.title.as_str()).collect();
+    assert!(
+        titles.contains(&"Acme shop has no sudo, so its user cannot become root"),
+        "{titles:?}"
+    );
+    assert!(
+        titles.contains(&"The image's entrypoint in Acme shop stopped"),
+        "{titles:?}"
+    );
+    for problem in &problems {
+        assert!(
+            !problem.title.contains(&id) && !problem.detail.contains(&id),
+            "the random id {id} is in a problem the user reads: {problem:?}"
+        );
+    }
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_image_with_no_sudo_is_a_problem_until_a_start_that_finds_sudo() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10551,7 +10601,7 @@ async fn an_image_with_no_sudo_is_a_problem_until_a_start_that_finds_sudo() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn deleting_a_workspace_removes_its_shell_init_and_the_folder() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10576,7 +10626,7 @@ async fn deleting_a_workspace_removes_its_shell_init_and_the_folder() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_changed_variable_reaches_the_login_shell_file_of_a_running_workspace_without_a_restart()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10647,7 +10697,7 @@ async fn a_changed_variable_reaches_the_login_shell_file_of_a_running_workspace_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_check_that_cannot_run_is_not_a_verdict_on_the_script() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10709,7 +10759,7 @@ fn block_shell_init_folder(rig: &Rig, workspace: &str) -> PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_shell_init_that_cannot_reach_the_running_guest_is_a_problem_until_a_save_gets_through() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10736,7 +10786,7 @@ async fn a_shell_init_that_cannot_reach_the_running_guest_is_a_problem_until_a_s
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_that_cannot_write_the_shell_init_folder_fails_and_leaves_the_workspace_stopped() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10752,7 +10802,7 @@ async fn a_start_that_cannot_write_the_shell_init_folder_fails_and_leaves_the_wo
         end["detail"]
             .as_str()
             .unwrap()
-            .contains("acme's shell init"),
+            .contains("cannot write the shell init"),
         "{end}"
     );
 
@@ -10765,7 +10815,7 @@ async fn a_start_that_cannot_write_the_shell_init_folder_fails_and_leaves_the_wo
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_change_to_the_variables_that_the_guest_cannot_take_says_so_and_keeps_the_change() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10796,7 +10846,7 @@ async fn a_change_to_the_variables_that_the_guest_cannot_take_says_so_and_keeps_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_create_that_cannot_write_the_shell_init_folder_fails_and_leaves_nothing_behind() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10821,7 +10871,7 @@ async fn a_create_that_cannot_write_the_shell_init_folder_fails_and_leaves_nothi
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_variable_set_while_the_guest_boots_reaches_its_login_shells_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10859,7 +10909,7 @@ fn during_the_next_boot_from_another_thread(rig: &Rig, change: impl FnOnce() + S
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_variable_set_before_the_first_boot_returns_reaches_the_guest_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10887,7 +10937,7 @@ async fn a_variable_set_before_the_first_boot_returns_reaches_the_guest_once_it_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_variable_set_while_a_stopped_workspace_boots_again_reaches_the_guest_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10927,7 +10977,7 @@ async fn a_variable_set_while_a_stopped_workspace_boots_again_reaches_the_guest_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_identity_attached_before_the_first_boot_returns_reaches_the_guest_once_it_is_up() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10945,7 +10995,7 @@ async fn an_identity_attached_before_the_first_boot_returns_reaches_the_guest_on
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plan_run_in_a_live_guest_tells_the_user_when_it_put_the_loader_back() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -10974,7 +11024,7 @@ async fn a_plan_run_in_a_live_guest_tells_the_user_when_it_put_the_loader_back()
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at_its_next_start() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.dev_cert.give();
     let host = rig.start().await;
     let api = api(&host);
@@ -11025,7 +11075,7 @@ async fn a_workspace_boots_with_the_development_certificate_and_a_renewed_one_at
 /// attach: closing an editor window and opening one again must not raise it a second time.
 #[tokio::test(flavor = "multi_thread")]
 async fn only_a_start_asks_for_the_development_certificate_never_an_attach() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.dev_cert.give();
     let host = rig.start().await;
     let api = api(&host);
@@ -11048,7 +11098,7 @@ async fn only_a_start_asks_for_the_development_certificate_never_an_attach() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_without_a_development_certificate_writes_nothing_for_it_into_the_guest() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11077,7 +11127,7 @@ fn last_plan(rig: &Rig) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_folder_reaches_the_login_shell_file_and_a_missing_one_is_a_problem_until_it_exists()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11162,7 +11212,7 @@ async fn stop_and_start(api: &Api, events: &mut support::Events, name: &'static 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_cannot_parse_is_a_problem()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11249,7 +11299,7 @@ async fn quiet_workspace(rig: &Rig, name: &'static str) -> (Host<FakeRuntime>, A
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_guest_that_cannot_look_for_the_start_folder_is_a_problem_until_it_can() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let (_host, api) = quiet_workspace(&rig, "acme").await;
     // The login-shell file is written (the first command); the look for the folder is the next.
     rig.runtime.inject(
@@ -11271,7 +11321,7 @@ async fn a_guest_that_cannot_look_for_the_start_folder_is_a_problem_until_it_can
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_folder_the_guest_cannot_be_given_is_a_problem_until_a_change_reaches_it() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let (_host, api) = quiet_workspace(&rig, "acme").await;
     rig.runtime
         .inject(Op::Exec, Fault::once(disk_error("exec")).only_for("acme"));
@@ -11296,7 +11346,7 @@ async fn a_start_folder_the_guest_cannot_be_given_is_a_problem_until_a_change_re
 #[tokio::test(flavor = "multi_thread")]
 async fn a_start_folder_changed_while_the_workspace_is_stopped_ends_the_problems_about_the_old_one()
 {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let (_host, api) = quiet_workspace(&rig, "acme").await;
     rig.runtime
         .inject(Op::Exec, Fault::once(disk_error("exec")).only_for("acme"));
@@ -11323,7 +11373,7 @@ async fn a_start_folder_changed_while_the_workspace_is_stopped_ends_the_problems
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_attach_that_cannot_list_or_write_the_editors_file_says_so_until_one_works() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let (_host, api) = quiet_workspace(&rig, "acme").await;
     let attach = || async {
         let reply = api
@@ -11390,7 +11440,7 @@ async fn wait_for_problem(host: &Host<FakeRuntime>, key: &str) -> puddle_types::
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_guest_cannot_widen() {
     use puddle_agent_proto::{AgentMessage, StubDnsTrouble};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11446,7 +11496,7 @@ async fn an_entrypoint_that_dies_later_and_failing_lookups_are_problems_the_gues
 async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_install_works_or_it_stops()
  {
     use puddle_agent_proto::{AgentMessage, EditorProblemKind};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11521,7 +11571,7 @@ async fn a_refused_editor_download_is_a_problem_on_its_workspace_until_an_instal
 async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_one_until_a_look_works()
  {
     use puddle_agent_proto::{AgentMessage, EditorProblemKind};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11573,7 +11623,7 @@ async fn a_newer_editor_build_that_was_refused_is_a_problem_beside_the_install_o
 async fn an_editor_server_that_runs_as_root_for_want_of_its_user_is_a_problem_until_a_start_finds_the_user()
  {
     use puddle_agent_proto::{AgentMessage, EditorProblemKind};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11624,7 +11674,7 @@ async fn an_editor_server_that_runs_as_root_for_want_of_its_user_is_a_problem_un
 async fn capture_rules_the_guest_tore_down_or_that_cannot_install_are_problems_until_they_are_fixed_or_it_stops()
  {
     use puddle_agent_proto::AgentMessage;
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11689,7 +11739,7 @@ async fn capture_rules_the_guest_tore_down_or_that_cannot_install_are_problems_u
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stop_that_fails_leaves_the_workspace_running_and_its_reports_still_count() {
     use puddle_agent_proto::{AgentMessage, StubDnsTrouble};
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11715,7 +11765,7 @@ async fn a_stop_that_fails_leaves_the_workspace_running_and_its_reports_still_co
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pinned_forward_follows_the_workspace_through_stop_start_and_delete() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;
@@ -11861,7 +11911,7 @@ fn files_of(dir: &std::path::Path) -> Vec<(PathBuf, Vec<u8>, std::time::SystemTi
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_starts_from_a_checkout_on_this_computer_and_the_checkout_is_left_as_it_was() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let tmp = support::scratch_dir();
@@ -11934,7 +11984,7 @@ async fn a_workspace_starts_from_a_checkout_on_this_computer_and_the_checkout_is
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_folder_that_cannot_be_started_from_is_refused_before_anything_exists() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let tmp = support::scratch_dir();
@@ -11988,7 +12038,7 @@ async fn a_folder_that_cannot_be_started_from_is_refused_before_anything_exists(
 #[tokio::test(flavor = "multi_thread")]
 async fn a_checkout_git_refuses_is_a_problem_and_a_boot_that_fails_after_the_import_leaves_no_volume()
  {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);
     let tmp = support::scratch_dir();
@@ -12248,7 +12298,7 @@ async fn a_restore_asks_for_an_address_when_the_disk_has_none_and_the_last_one_e
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restore_never_overwrites_a_list_entry_or_takes_a_disk_a_sandbox_holds() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
@@ -12367,7 +12417,7 @@ async fn terminal_output_until(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped_reason() {
-    let rig = Rig::new();
+    let rig = Rig::named_ids();
     rig.runtime.serve_terminals();
     let host = rig.start().await;
     let api = api(&host);

@@ -15,7 +15,8 @@ use std::time::Duration;
 
 use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::{
-    AgentReport, AgentReports, GuestStream, GuestWatcher, HostConfig, StreamHandler, UdpRefusal,
+    AgentReport, AgentReports, AgentStream, GuestStream, GuestWatcher, HostConfig, StreamHandler,
+    UdpRefusal,
 };
 use puddle_agent_proto::relay::splice;
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
@@ -259,6 +260,7 @@ pub struct Proxy {
     upstream: Option<Upstream>,
     terminations: Option<TerminationConfig>,
     git_ssh: Option<crate::ssh_git::GitSsh>,
+    ssh_agents: Option<Arc<crate::ssh_agent::SshAgents>>,
     guest: Option<Arc<dyn GuestWatcher>>,
     pub(crate) sink: Arc<dyn EventSink>,
     reports: Option<Arc<dyn AgentReports>>,
@@ -294,6 +296,7 @@ impl Proxy {
             upstream: None,
             terminations: None,
             git_ssh: None,
+            ssh_agents: None,
             guest: None,
             sink,
             reports: None,
@@ -379,6 +382,34 @@ impl Proxy {
     pub fn with_git_ssh(mut self, git: crate::ssh_git::GitSsh) -> Self {
         self.git_ssh = Some(git);
         self
+    }
+
+    /// Serves the guest's agent streams through the filtered SSH agent `agents` (see
+    /// [`crate::ssh_agent`]). Without it an agent stream is closed, and the agent is off for every
+    /// host whatever the terminations say.
+    #[must_use]
+    pub fn with_ssh_agent(mut self, agents: Arc<crate::ssh_agent::SshAgents>) -> Self {
+        self.ssh_agents = Some(agents);
+        self
+    }
+
+    /// The watch on a spliced connection's key exchange, for SSH announced to a host the
+    /// workspace has the filtered agent on for.
+    fn kex_watch(
+        &self,
+        request: &EgressRequest,
+        termination: Option<&terminate::Termination>,
+    ) -> Option<crate::ssh_agent::KexWatch> {
+        let agents = self.ssh_agents.as_ref()?;
+        let on = request.protocol == Some(ProtocolHint::Ssh)
+            && termination?.ssh_agent_hosts().contains_key(&request.host);
+        on.then(|| {
+            crate::ssh_agent::KexWatch::new(
+                Arc::clone(agents),
+                request.workspace.clone(),
+                request.host.clone(),
+            )
+        })
     }
 
     /// The Git SSH server and host for `request`, when SSH to its name is served by Puddle: a
@@ -631,6 +662,30 @@ impl StreamHandler for WorkspaceHandler {
             watcher.ports(&self.workspace, ports);
         }
         std::future::ready(())
+    }
+
+    async fn ssh_agent(&self, stream: AgentStream) {
+        let Some(agents) = &self.proxy.ssh_agents else {
+            tracing::warn!(workspace = %self.workspace, "ssh-agent stream with no filtered agent on this host, closed");
+            return;
+        };
+        let Ok(_permit) = Arc::clone(&self.streams).try_acquire_owned() else {
+            tracing::warn!(workspace = %self.workspace, "ssh-agent stream over the stream limit, closed");
+            return;
+        };
+        let terminations = self
+            .proxy
+            .terminations
+            .as_ref()
+            .map(|t| Arc::clone(&t.source));
+        crate::ssh_agent::serve(
+            Arc::clone(agents),
+            terminations,
+            self.workspace.clone(),
+            stream,
+            crate::ssh_agent::IDLE_LIMIT,
+        )
+        .await;
     }
 }
 
@@ -1009,12 +1064,15 @@ async fn note_tunnel(
     request: &EgressRequest,
     event: &mut ConnectionEvent,
 ) {
+    let termination = proxy.termination_of(request);
+    let kex = proxy.kex_watch(request, termination.as_deref());
     let end = tunnel(
         reader,
         stream,
         Some(request).filter(|request| proxy.is_git_ssh_name(request)),
         watch,
-        proxy.termination_of(request),
+        termination,
+        kex,
     )
     .await;
     event.http = end.http;
@@ -1610,6 +1668,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
     ssh_for: Option<&EgressRequest>,
     mut watch: Option<RouteWatch>,
     token_endpoints: Option<Arc<terminate::Termination>>,
+    kex: Option<crate::ssh_agent::KexWatch>,
 ) -> TunnelEnd {
     let early = reader.buffer().to_vec();
     let mut guest = ssh::Gate::new(
@@ -1619,7 +1678,8 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
             &early,
         ),
         ssh_for.is_some() && early.is_empty(),
-    );
+    )
+    .with_kex(kex);
     if guest.inner().refused() {
         abort(&server);
         return refuse_token_endpoint(&mut guest).await;

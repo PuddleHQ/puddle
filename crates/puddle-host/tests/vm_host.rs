@@ -30,7 +30,7 @@ use puddle_store::{
 use puddle_types::{WorkspaceId, WorkspaceStatus};
 use puddle_vm_tests::{RuntimePair, Settings};
 use serde_json::json;
-use support::{Api, TestDevCert, ended, hermetic_options};
+use support::{Api, TestDevCert, ended, named_id_options};
 #[cfg(not(windows))]
 use vm_support::start_vm_host_config;
 use vm_support::{
@@ -1130,7 +1130,7 @@ fn issuer_script(host: &str) -> String {
 /// decrypting proxy with no credential. What the Git injector does with a credential is tested
 /// in `puddle-inject` and the proxy's terminate tests.
 fn options_without_injection() -> HostOptions {
-    let mut options = hermetic_options();
+    let mut options = named_id_options();
     options.injector = Some(std::sync::Arc::new(|_, _| {
         std::sync::Arc::new(puddle_proxy::NoInjection)
     }));
@@ -1163,7 +1163,7 @@ fn identity(label: &str, host: &str) -> IdentityDraft {
 async fn vm_host_clones_a_public_repository_when_the_identity_is_not_signed_in_and_refuses_a_push()
 {
     let internet =
-        web_internet_with_github(&[SITE], WebOptions::default(), hermetic_options()).await;
+        web_internet_with_github(&[SITE], WebOptions::default(), named_id_options()).await;
     let VmHost {
         host,
         runtime,
@@ -1432,7 +1432,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_host_decrypts_an_unlisted_host_in_the_curated_mode_and_follows_the_global_setting() {
-    let internet = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let internet = web_internet(&[SITE], WebOptions::default(), named_id_options()).await;
     let VmHost {
         host,
         runtime,
@@ -1603,7 +1603,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
             alt_svc: Some(H3_ALT_SVC.to_owned()),
             ..WebOptions::default()
         },
-        hermetic_options(),
+        named_id_options(),
     )
     .await;
     let VmHost {
@@ -1864,7 +1864,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     let internet = web_internet(
         &[ALPHA, BETA, GAMMA],
         WebOptions::default(),
-        hermetic_options(),
+        named_id_options(),
     )
     .await;
     let VmHost {
@@ -2192,7 +2192,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
             responder: Some(std::sync::Arc::new(login_service)),
             ..WebOptions::default()
         },
-        hermetic_options(),
+        named_id_options(),
     )
     .await;
     let VmHost {
@@ -3735,7 +3735,7 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
         runtime,
         settings,
         ..
-    } = start_vm_host_config("edit", hermetic_options(), |config| {
+    } = start_vm_host_config("edit", named_id_options(), |config| {
         config.guest.code_server = Some(release);
     })
     .await;
@@ -3943,7 +3943,7 @@ async fn vm_host_ending_the_extension_hosts_takes_the_debuggees_with_them_and_le
         runtime,
         settings,
         ..
-    } = start_vm_host_config("exth", hermetic_options(), |config| {
+    } = start_vm_host_config("exth", named_id_options(), |config| {
         config.guest.code_server = Some(release);
     })
     .await;
@@ -4038,7 +4038,7 @@ async fn vm_host_the_editor_server_opens_a_window_with_every_checkout() {
         runtime,
         settings,
         ..
-    } = start_vm_host_config("mroot", hermetic_options(), |config| {
+    } = start_vm_host_config("mroot", named_id_options(), |config| {
         config.guest.code_server = Some(release);
     })
     .await;
@@ -4187,7 +4187,7 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
         settings,
         root,
         ..
-    } = start_vm_host_config("reach", hermetic_options(), |config| {
+    } = start_vm_host_config("reach", named_id_options(), |config| {
         config.guest.code_server = Some(release);
     })
     .await;

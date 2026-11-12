@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `list_identities` against a fake agent on a real owner-only pipe (Windows) or socket (Unix),
+//! `list_identities` and `sign` against a fake agent on a real owner-only pipe (Windows) or socket (Unix),
 //! the same endpoint kinds a real agent uses.
 
 #![expect(
@@ -10,7 +10,7 @@
 use std::time::{Duration, Instant};
 
 use puddle_ipc::IpcRoot;
-use puddle_ssh_agent::{AgentEndpoint, AgentError, list_identities};
+use puddle_ssh_agent::{AgentEndpoint, AgentError, list_identities, sign};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Clone, Copy)]
@@ -18,6 +18,7 @@ enum Behaviour {
     Keys,
     Failure,
     NoKeys,
+    Signs,
     Garbage,
     Silent,
 }
@@ -53,6 +54,11 @@ fn answer(behaviour: Behaviour) -> Option<Vec<u8>> {
         }
         Behaviour::NoKeys => Some(framed(&[12, 0, 0, 0, 0])),
         Behaviour::Failure => Some(framed(&[5])),
+        Behaviour::Signs => {
+            let mut m = vec![14];
+            string(&mut m, b"SIGNATURE BLOB");
+            Some(framed(&m))
+        }
         Behaviour::Garbage => Some(framed(&[200, 1, 2])),
         Behaviour::Silent => None,
     }
@@ -63,6 +69,7 @@ fn answer(behaviour: Behaviour) -> Option<Vec<u8>> {
 struct FakeAgent {
     endpoint: AgentEndpoint,
     requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    asked: std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
     _runtime: tokio::runtime::Runtime,
     _root: IpcRoot,
 }
@@ -75,16 +82,23 @@ fn fake_agent(behaviour: Behaviour) -> FakeAgent {
     let endpoint = AgentEndpoint::at(listener.endpoint().path());
     let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = requests.clone();
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = asked.clone();
     runtime.spawn(async move {
         // flake-ok: the accept loop of a fake server, not a wait for a condition.
         while let Ok(mut conn) = listener.accept().await {
             let counted = counted.clone();
+            let seen = seen.clone();
             tokio::spawn(async move {
-                let mut request = [0_u8; 5];
+                let mut len = [0_u8; 4];
+                if conn.read_exact(&mut len).await.is_err() {
+                    return;
+                }
+                let mut request = vec![0_u8; u32::from_be_bytes(len) as usize];
                 if conn.read_exact(&mut request).await.is_err() {
                     return;
                 }
-                assert_eq!(request, [0, 0, 0, 1, 11], "only the key list is asked");
+                seen.lock().unwrap().push(request);
                 counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 match answer(behaviour) {
                     Some(bytes) => {
@@ -98,6 +112,7 @@ fn fake_agent(behaviour: Behaviour) -> FakeAgent {
     FakeAgent {
         endpoint,
         requests,
+        asked,
         _runtime: runtime,
         _root: root,
     }
@@ -165,4 +180,43 @@ fn an_agent_that_never_answers_ends_at_the_limit() {
         "{result:?}"
     );
     assert!(took >= limit, "it waited the whole limit: {took:?}");
+}
+
+#[test]
+fn the_key_list_request_is_the_one_message_sent_for_a_list() {
+    let agent = fake_agent(Behaviour::Keys);
+    list_identities(&agent.endpoint, LIMIT).unwrap();
+    assert_eq!(*agent.asked.lock().unwrap(), vec![vec![11]]);
+}
+
+#[test]
+fn a_sign_request_names_the_key_the_data_and_the_flags_and_gives_the_signature() {
+    let agent = fake_agent(Behaviour::Signs);
+    let signature = sign(&agent.endpoint, b"KEY", b"DATA", 4, LIMIT).unwrap();
+    assert_eq!(signature, b"SIGNATURE BLOB");
+    let mut want = vec![13];
+    string(&mut want, b"KEY");
+    string(&mut want, b"DATA");
+    want.extend_from_slice(&4_u32.to_be_bytes());
+    assert_eq!(*agent.asked.lock().unwrap(), vec![want]);
+}
+
+#[test]
+fn a_sign_request_an_agent_refuses_or_garbles_or_never_answers_says_so() {
+    let refused = fake_agent(Behaviour::Failure);
+    assert!(matches!(
+        sign(&refused.endpoint, b"K", b"D", 0, LIMIT),
+        Err(AgentError::Refused)
+    ));
+    let garbled = fake_agent(Behaviour::Garbage);
+    assert!(matches!(
+        sign(&garbled.endpoint, b"K", b"D", 0, LIMIT),
+        Err(AgentError::Protocol("not a sign response"))
+    ));
+    let silent = fake_agent(Behaviour::Silent);
+    let limit = Duration::from_millis(200);
+    assert!(matches!(
+        sign(&silent.endpoint, b"K", b"D", 0, limit),
+        Err(AgentError::TimedOut(l)) if l == limit
+    ));
 }

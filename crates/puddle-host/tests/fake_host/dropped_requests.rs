@@ -210,3 +210,45 @@ async fn a_request_dropped_at_any_of_its_awaits_leaves_no_workspace_busy() {
     }
     host.shutdown().await;
 }
+
+/// A [`GitSetup`] that makes the workspace list unwritable, then waits once.
+struct GitThatBreaksTheList(PathBuf);
+
+impl GitSetup for GitThatBreaksTheList {
+    fn set_up<'a>(
+        &'a self,
+        _workspace: &'a WorkspaceId,
+        _repositories: &'a [NewRepository],
+    ) -> BoxFuture<'a, ()> {
+        make_unwritable(&self.0);
+        Box::pin(tokio::task::yield_now())
+    }
+}
+
+/// A create dropped after its entry was saved takes the entry out of the list Puddle shows even
+/// when the list cannot be saved again: the saved entry still says "being created", which the
+/// next start drops.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_create_whose_list_cannot_be_saved_is_still_gone() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let name = DisplayName::parse("unsaved").unwrap();
+    let list = list_path(&rig);
+    let git = GitThatBreaksTheList(list.clone());
+    let ended = {
+        let mut create = pin!(
+            host.workspaces()
+                .create(NewWorkspace::new(name, Vec::new()), &git)
+        );
+        // Dropped at the first wait after the git setup broke the list.
+        std::future::poll_fn(|cx| match create.as_mut().poll(cx) {
+            Poll::Ready(_) => Poll::Ready(true),
+            Poll::Pending if list.is_dir() => Poll::Ready(false),
+            Poll::Pending => Poll::Pending,
+        })
+        .await
+    };
+    assert!(!ended, "the create waited in its git setup");
+    let listed = host.workspaces().list().await.unwrap();
+    assert!(listed.is_empty(), "{listed:?}");
+}

@@ -23,7 +23,7 @@ use tokio::task::JoinHandle;
 use super::bridge::{self, SmartHttp};
 use super::{
     GitSshAccount, GitSshAccounts, GitSshCommand, GitSshContext, GitSshFailure, GitSshGreeting,
-    GitSshStream, GitSshUpstream, Reached,
+    GitSshStream, GitSshUpstream,
 };
 use crate::counted::Counted;
 use crate::destination::BoxFuture;
@@ -196,17 +196,14 @@ impl Leg<'_> {
         Ok(Open { send, done })
     }
 
-    /// Ends the connection and keeps where it went for the connection's record.
+    /// Ends the connection and keeps its outcome for the connection's record.
     async fn close(self) {
         let Some(open) = self.open else {
             return;
         };
         drop(open.send);
         if let Ok(Ok(outcome)) = tokio::time::timeout(OUTCOME_WAIT, open.done).await {
-            self.cx.reached(Reached {
-                ip: outcome.resolved_ip,
-                hop: outcome.hop,
-            });
+            self.cx.leg_closed(outcome);
         }
     }
 }

@@ -73,7 +73,7 @@ where
 pub(crate) const MAX_UNSWAPPED_STAND_INS: usize = 16;
 
 /// What a connection did, for the audit record.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each flag is one independent fact the connection record carries"

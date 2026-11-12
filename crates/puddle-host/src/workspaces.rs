@@ -189,8 +189,9 @@ pub(crate) struct Parts<R: Runtime + Clone> {
 struct Slot {
     record: WorkspaceRecord,
     creating: bool,
-    /// Being deleted: left out of the saved list, so a delete that went through can't come
-    /// back as a workspace without a volume.
+    /// Being deleted. The saved list keeps the entry marked until the delete has finished, so
+    /// a restart in the middle of it can tell what happened from the volume: gone, the delete
+    /// went through and the next start finishes the cleanup; still there, the workspace stays.
     deleting: bool,
     /// The start that is running was refused because the volume is gone; `conclude` turns it
     /// into the `volume_missing` state instead of `crashed`.
@@ -651,6 +652,21 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let mut slots = BTreeMap::new();
         let mut interrupted = false;
         for stored in restored {
+            if stored.deleting {
+                if status.get(&stored.id) == Some(&WorkspaceStatus::VolumeMissing) {
+                    // The delete got as far as the volume before Puddle died. The workspace is
+                    // gone: its id is retired, and the sweep that follows the start clears
+                    // everything else that is keyed by it.
+                    tracing::warn!(workspace = %stored.id, "finishing a delete that Puddle did not");
+                    retired.insert(stored.id);
+                    interrupted = true;
+                    continue;
+                }
+                // The volume is still there, so the delete never reached what holds the user's
+                // files: the workspace is listed again and the user can delete it again.
+                tracing::warn!(workspace = %stored.id, "a delete did not reach the volume; the workspace stays");
+                interrupted = true;
+            }
             if stored.creating {
                 // A create that never finished (Puddle died in it): there is no workspace, and
                 // reconcile removes the half-made volume. Its id is retired like a failed create's.
@@ -724,9 +740,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         service.note_names(&service.state());
         if interrupted && let Err(e) = service.persist(&service.state()) {
-            // Harmless: the entries still say "being created", so the next start drops them
-            // again, and every later save writes the list without them.
-            tracing::warn!(error = %e, "the workspace list was not saved after dropping unfinished creates");
+            // Harmless: the entries still say "being created" or "being deleted", so the next
+            // start settles them the same way, and every later save writes the list without them.
+            tracing::warn!(error = %e, "the workspace list was not saved after settling unfinished creates and deletes");
         }
         Ok(service)
     }
@@ -754,7 +770,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let stored = state
             .slots
             .values()
-            .filter(|slot| !slot.deleting)
             .map(|slot| Stored {
                 id: slot.record.id.clone(),
                 name: slot.record.name.clone(),
@@ -767,18 +782,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 disk_size_mib: slot.record.disk_size_mib,
                 root_disk_grown_mib: slot.record.root_disk_grown_mib,
                 creating: slot.creating,
+                deleting: slot.deleting,
             })
             .collect();
-        // A workspace being deleted leaves the list now, and its id is retired with it.
-        let mut retired = state.retired.clone();
-        retired.extend(
-            state
-                .slots
-                .values()
-                .filter(|slot| slot.deleting)
-                .map(|slot| slot.record.id.clone()),
-        );
-        self.inner.book.save(stored, &retired)?;
+        self.inner.book.save(stored, &state.retired)?;
         self.note_names(state);
         Ok(())
     }
@@ -1152,11 +1159,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let delete_note = slot.delete_note.take();
         let name = slot.record.id.clone();
         let mut status_changed = false;
-        // Only a failed create or delete leaves the list different from what is saved: the
-        // failed create's entry goes, the failed delete's entry comes back.
+        // A failed create, and a delete either way, leave the list different from what is saved:
+        // the failed create's entry goes, the failed delete's entry comes back unmarked, and the
+        // finished delete's entry goes with its id retired.
         let save = matches!(
             (&result, op),
-            (Err(_), Operation::Creating | Operation::Deleting)
+            (Err(_), Operation::Creating | Operation::Deleting) | (Ok(()), Operation::Deleting)
         );
         let mut result = result;
         let old_entry = slot.creating;
@@ -1169,7 +1177,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             (Ok(()), Operation::Deleting) => {
                 state.slots.remove(id);
-                // Saved as retired when the delete began; kept so every later save has it.
                 state.retired.insert(id.clone());
             }
             (Err(_), Operation::Starting) => {
@@ -1231,6 +1238,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 // The entry still says "being created", so the next start drops it and removes
                 // what is left of the volume: nothing the user worked on.
                 tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after a failed create");
+            } else if result.is_ok() {
+                // The saved entry still says "being deleted" and its volume is gone, so the next
+                // start finishes the delete the same way.
+                tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after a delete");
             } else if let Err(reason) = &mut result {
                 // The workspace is now missing from the saved list: the next start keeps its
                 // volume and reports it, but doesn't list the workspace.
@@ -3497,7 +3508,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// workspace has a new id, so it never inherits a stuck file.
     /// Under the settings routes' lock, so a settings change that read the file before this
     /// removal cannot write it back after.
-    async fn forget_settings_file(&self, id: &WorkspaceId, name: &DisplayName) {
+    async fn forget_settings_file(&self, id: &WorkspaceId, name: &str) {
         let inner = &self.inner;
         let key = problem_key("settings", id);
         let _lock = inner.settings_lock.lock().await;
@@ -3601,7 +3612,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Deletes what the browser editor kept for a deleted workspace. A failure is a notice: the
     /// data stays under an id no later workspace gets.
-    async fn forget_browser_state(&self, id: &WorkspaceId, name: &DisplayName) {
+    async fn forget_browser_state(&self, id: &WorkspaceId, name: &str) {
         let inner = &self.inner;
         let key = problem_key("browser-data", id);
         let failed = self.clear_browser_state(id).await;
@@ -3637,16 +3648,64 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map_err(|e| e.to_string())?;
         self.quiesce(&record.id, true).await;
         self.inner.reports.forget(&record.id);
-        // What the workspace held in Puddle's settings goes with it: its rules, its identities,
-        // its environment and the values of its own secrets.
-        inner.injection.forget(&record.id).await;
         inner.kit.shell_init().forget(&record.id);
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
-        self.forget_settings_file(&record.id, &record.name).await;
-        self.forget_browser_state(&record.id, &record.name).await;
+        self.forget_leftovers(&record.id, record.name.as_str())
+            .await;
         Ok(())
+    }
+
+    /// Removes what a deleted workspace left under its id outside the runtime: its rules, its
+    /// identities, its environment and the values of its own secrets, its settings file and the
+    /// browser editor's data. Every step finds nothing the second time, so the sweep at start
+    /// can run it again for any retired id; a step that fails is a notice and the next start
+    /// tries again.
+    async fn forget_leftovers(&self, id: &WorkspaceId, label: &str) {
+        self.inner.injection.forget(id).await;
+        self.forget_settings_file(id, label).await;
+        self.forget_browser_state(id, label).await;
+    }
+
+    /// Finishes what a delete that did not end left behind, for every retired id: a sandbox
+    /// still named after it, and the leftovers [`Self::forget_leftovers`] removes. Run once in
+    /// the background at start. A retired id belongs to nobody, so nothing here can touch a
+    /// workspace the user has.
+    pub(crate) async fn sweep_retired(&self) {
+        let retired: Vec<WorkspaceId> = self.state().retired.iter().cloned().collect();
+        if retired.is_empty() {
+            return;
+        }
+        let sandboxes: BTreeSet<String> = match self.inner.runtime.list().await {
+            Ok(list) => list.into_iter().map(|s| s.name).collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "the sandboxes of deleted workspaces were not looked for");
+                BTreeSet::new()
+            }
+        };
+        for id in retired {
+            if self.state().closed {
+                return;
+            }
+            if sandboxes.contains(id.as_str()) {
+                self.remove_left_sandbox(&id).await;
+            }
+            self.forget_leftovers(&id, id.as_str()).await;
+        }
+    }
+
+    /// Removes the sandbox a deleted workspace left. A failure is a notice.
+    async fn remove_left_sandbox(&self, id: &WorkspaceId) {
+        let key = problem_key("left-sandbox", id);
+        match self.inner.runtime.remove(&id.sandbox_name()).await {
+            Ok(()) => self.inner.problems.clear(&key),
+            Err(e) => self.inner.problems.raise(Problem::new(
+                key,
+                format!("The sandbox of the deleted workspace {id} was not removed"),
+                format!("{e}. Puddle tries again the next time it starts."),
+            )),
+        }
     }
 }
 

@@ -44,9 +44,13 @@ pub trait CompanySignals: Send + Sync {
         false
     }
 
-    /// What the host found, for a screen that lists it. Empty when the host reads nothing.
+    /// What the host found, for a screen that lists it. The default knows the client flag and no
+    /// suffixes; a host that reads suffixes lists them here.
     fn found(&self) -> CompanyFound {
-        CompanyFound::default()
+        CompanyFound {
+            dns_suffixes: Vec::new(),
+            private_access_client: self.private_access_client(),
+        }
     }
 }
 

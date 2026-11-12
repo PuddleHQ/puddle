@@ -195,3 +195,23 @@ fn a_host_that_reads_nothing_found_nothing() {
     assert_eq!(PacOnly.found(), CompanyFound::default());
     assert_eq!(NoSignals.found(), CompanyFound::default());
 }
+
+/// A host that reads only whether a private-access client is active.
+struct ClientOnly;
+
+impl CompanySignals for ClientOnly {
+    fn private_access_client(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn the_default_found_reports_the_client_the_host_read_and_no_suffixes() {
+    assert_eq!(
+        ClientOnly.found(),
+        CompanyFound {
+            dns_suffixes: Vec::new(),
+            private_access_client: true,
+        }
+    );
+}

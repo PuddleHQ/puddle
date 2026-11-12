@@ -9,6 +9,7 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
+use crate::authz::Principal;
 use crate::error::{ApiError, ErrorCode};
 use crate::token::ApiToken;
 
@@ -26,6 +27,8 @@ struct Inner {
     serves_ui: bool,
     /// The API's own origins plus the configured extra ones, lower case.
     origins: Vec<String>,
+    /// Who the holder of the token is.
+    principal: Principal,
 }
 
 /// Why a request was refused. The reason is logged; header values never are.
@@ -79,6 +82,7 @@ impl Guard {
                 hosts,
                 serves_ui: false,
                 origins,
+                principal: Principal::INSTALL,
             }),
         }
     }
@@ -92,6 +96,15 @@ impl Guard {
         self
     }
 
+    /// Makes the token's holder `principal` instead of the owner (tests call the routes as
+    /// another user this way).
+    pub(crate) fn acting_as(mut self, principal: Principal) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.principal = principal;
+        }
+        self
+    }
+
     /// Checks one request's head.
     pub(crate) fn check(&self, uri: &Uri, headers: &HeaderMap) -> Result<(), Refusal> {
         self.check_host(uri, headers)?;
@@ -99,24 +112,28 @@ impl Guard {
         self.check_token(headers)
     }
 
-    /// Like [`Guard::check`], but a read of the app's own files needs no token.
+    /// Like [`Guard::check`], but a read of the app's own files needs no token. The principal
+    /// behind the token, or `None` for a request that carries none.
     fn check_request(
         &self,
         method: &Method,
         uri: &Uri,
         headers: &HeaderMap,
-    ) -> Result<(), Refusal> {
+    ) -> Result<Option<Principal>, Refusal> {
         let is_read = method == Method::GET || method == Method::HEAD;
         if method == Method::GET && is_terminal_socket(uri.path()) {
             // The ticket in `Sec-WebSocket-Protocol` stands in for the token (a browser cannot
             // send it on a WebSocket); the route checks it, after these two.
             self.check_host(uri, headers)?;
-            self.check_origin(headers)
+            self.check_origin(headers)?;
+            Ok(None)
         } else if self.inner.serves_ui && is_read && !is_api_path(uri.path()) {
             self.check_host(uri, headers)?;
-            self.check_origin(headers)
+            self.check_origin(headers)?;
+            Ok(None)
         } else {
-            self.check(uri, headers)
+            self.check(uri, headers)?;
+            Ok(Some(self.inner.principal))
         }
     }
 
@@ -204,9 +221,18 @@ pub(crate) fn is_api_path(path: &str) -> bool {
 }
 
 /// axum middleware running [`Guard::check_request`] before the route.
-pub(crate) async fn guard(State(guard): State<Guard>, request: Request, next: Next) -> Response {
+pub(crate) async fn guard(
+    State(guard): State<Guard>,
+    mut request: Request,
+    next: Next,
+) -> Response {
     match guard.check_request(request.method(), request.uri(), request.headers()) {
-        Ok(()) => next.run(request).await,
+        Ok(principal) => {
+            if let Some(principal) = principal {
+                request.extensions_mut().insert(principal);
+            }
+            next.run(request).await
+        }
         Err(refusal) => {
             tracing::warn!(
                 reason = refusal.reason(),

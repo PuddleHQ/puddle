@@ -124,3 +124,19 @@ fn an_audit_record_carries_its_workspaces_user_and_a_filter_keeps_to_one_user() 
     assert!(owners[0].contains("ownerbox"), "{}", owners[0]);
     assert_eq!(lines(None).len(), 2);
 }
+
+/// What the user list (and the admin screen) is built from has exactly these fields: a new one
+/// fails to compile here, so a credential cannot be added to it unnoticed.
+#[test]
+fn a_user_carries_no_credential() {
+    let User {
+        id,
+        role,
+        name,
+        created_at,
+    } = store().user(UserId::OWNER).unwrap();
+    assert_eq!(
+        (id, role, name.as_str(), created_at > 0),
+        (UserId::OWNER, Role::Owner, "owner", true)
+    );
+}

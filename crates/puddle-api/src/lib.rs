@@ -45,6 +45,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod authz;
 mod checkouts;
 mod credentials;
 mod dev_cert;

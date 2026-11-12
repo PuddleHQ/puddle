@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.28.0"
+    "version": "0.29.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -12880,6 +12880,7 @@
           "misdirected_host",
           "forbidden_origin",
           "unauthorized",
+          "forbidden",
           "bad_request",
           "unsupported_media_type",
           "payload_too_large",

@@ -29,6 +29,9 @@ pub enum ErrorCode {
     ForbiddenOrigin,
     /// The bearer token is missing or wrong (401).
     Unauthorized,
+    /// The account may not do this: the install's own settings, or an action that needs the
+    /// install token (403).
+    Forbidden,
     /// The request is malformed: bad JSON, a bad path or query value (400).
     BadRequest,
     /// The body isn't `application/json` (415).

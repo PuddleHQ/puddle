@@ -9,6 +9,8 @@ use axum::response::{IntoResponse, Response};
 use puddle_types::WorkspaceId;
 use serde::Deserialize;
 
+use crate::authz::Principal;
+use crate::events::Audience;
 use crate::extract::Query;
 use crate::routes::AppState;
 
@@ -39,10 +41,12 @@ pub(crate) struct EventsQuery {
 )]
 pub(crate) async fn events(
     State(state): State<AppState>,
+    principal: Principal,
     Query(query): Query<EventsQuery>,
 ) -> Response {
     let stream = crate::events::stream(
         state.events.subscribe(),
+        Audience::new(principal, state.store.clone()),
         query.workspace,
         state.shutdown.clone(),
     );

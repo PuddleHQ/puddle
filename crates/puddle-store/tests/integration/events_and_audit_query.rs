@@ -109,7 +109,8 @@ fn a_new_request_opens_a_pending_row_and_appends_to_the_audit() {
     assert_eq!(
         events[1],
         Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         }
     );
 }
@@ -177,7 +178,8 @@ fn approving_closes_the_row_and_reports_the_rule_and_every_other_row_it_decides(
     assert_eq!(
         events.last(),
         Some(&Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         })
     );
 }
@@ -323,7 +325,8 @@ fn connection_records_and_flushed_summaries_emit_one_audit_event_per_commit() {
     assert_eq!(
         sink.take(),
         [Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         }]
     );
     // Over the per-second limit: counted, nothing written, nothing emitted.
@@ -335,7 +338,8 @@ fn connection_records_and_flushed_summaries_emit_one_audit_event_per_commit() {
     assert_eq!(
         sink.take(),
         [Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         }]
     );
     assert_eq!(
@@ -363,7 +367,8 @@ fn trimming_the_audit_emits_for_its_trim_record() {
     assert_eq!(
         sink.take().last(),
         Some(&Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         })
     );
 }
@@ -1148,6 +1153,7 @@ fn deleting_a_workspace_that_only_had_a_rule_set_switch_reports_rules_changed() 
     let (_, sink, store) = fixture(Limits::default());
     store
         .switch_rule_set(
+            puddle_store::UserId::OWNER,
             puddle_types::RuleSetId::BuiltIn("github"),
             Some(&sb("a")),
             Some(false),

@@ -395,6 +395,7 @@ impl Rule {
     pub(crate) fn from_store(rule: store::Rule) -> Result<Self, ApiError> {
         let store::Rule {
             id,
+            user: _,
             scope,
             pattern,
             effect,

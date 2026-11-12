@@ -7,7 +7,7 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_store::{Actor, NewRequestRule, UserId};
+use puddle_store::{Actor, NewRequestRule};
 use puddle_types::{Methods, PathPattern, WorkspaceId};
 use serde::Deserialize;
 
@@ -43,7 +43,6 @@ pub(crate) async fn list_request_rules(
     principal: Principal,
     Query(query): Query<RequestRuleQuery>,
 ) -> Result<Json<RequestRuleList>, ApiError> {
-    let owners = authz::owners(&state).await?;
     let workspace = query
         .workspace
         .map(|raw| {
@@ -56,13 +55,7 @@ pub(crate) async fn list_request_rules(
             .store
             .request_rules(workspace.as_ref())?
             .into_iter()
-            .filter(|rule| {
-                let user = rule
-                    .workspace
-                    .as_ref()
-                    .map_or(UserId::OWNER, |w| owners.of(w));
-                user == principal.user
-            })
+            .filter(|rule| rule.user == principal.user)
             .map(|rule| RequestRule::new(rule, &never))
             .collect())
     })
@@ -104,7 +97,7 @@ pub(crate) async fn create_request_rule(
         created_by: Actor::Api,
     };
     let rule = blocking(move || {
-        let rule = state.store.add_request_rule(&new)?;
+        let rule = state.store.add_request_rule_as(principal.user, &new)?;
         Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
     })
     .await?;

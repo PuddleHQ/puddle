@@ -160,7 +160,8 @@ pub enum Event {
     /// A rule on method and path was created or deleted. Global: refetch `GET /api/request-rules`.
     RequestRulesChanged {},
     /// The list of identities, their order, the default or an identity's author or credentials
-    /// changed. Carries no data: refetch `GET /api/identities`.
+    /// changed, or the Git defaults. Carries no data: refetch `GET /api/identities` (every
+    /// subscriber gets it, and each refetches its own).
     IdentitiesChanged {},
     /// A repository list Puddle renews in the background changed: a repository came or went, or
     /// the list could not be read, or a Git host started or stopped limiting requests. Carries no
@@ -172,8 +173,9 @@ pub enum Event {
         /// The workspace.
         workspace: WorkspaceId,
     },
-    /// The global environment (variables and secrets every workspace gets) changed. Carries no
-    /// data: refetch `GET /api/env`, and a workspace's page refetches its own list too.
+    /// A global environment (the variables and secrets every workspace of one user gets) changed.
+    /// Carries no data: refetch `GET /api/env`, and a workspace's page refetches its own list too
+    /// (every subscriber gets it, and each refetches its own).
     GlobalEnvChanged {},
     /// A workspace's own environment changed. Refetch `GET /api/workspaces/{id}/env`. Never carries
     /// a value.
@@ -329,11 +331,15 @@ pub enum Event {
         kind: UnknownTokenKind,
     },
     /// New audit records were committed. `id` is the newest record's id, so a client that holds
-    /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit,
-    /// not per record. Global: it goes to the owner's streams.
+    /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit and
+    /// user, not per record: it goes to the streams of the user the records belong to.
     AuditAppended {
-        /// The newest audit record's id.
+        /// The newest audit record's id of that user.
         id: i64,
+        /// The user the records belong to, as the store numbers users. Not sent: the stream is
+        /// already that user's.
+        #[serde(skip)]
+        user: i64,
     },
     /// The network or the system's proxy settings changed (after a quiet period), so what
     /// `GET /api/network-health` showed may be out of date. Global: it goes to the owner's

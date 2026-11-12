@@ -13162,7 +13162,7 @@
           },
           {
             "type": "object",
-            "description": "The list of identities, their order, the default or an identity's author or credentials\nchanged. Carries no data: refetch `GET /api/identities`.",
+            "description": "The list of identities, their order, the default or an identity's author or credentials\nchanged, or the Git defaults. Carries no data: refetch `GET /api/identities` (every\nsubscriber gets it, and each refetches its own).",
             "required": [
               "type"
             ],
@@ -13212,7 +13212,7 @@
           },
           {
             "type": "object",
-            "description": "The global environment (variables and secrets every workspace gets) changed. Carries no\ndata: refetch `GET /api/env`, and a workspace's page refetches its own list too.",
+            "description": "A global environment (the variables and secrets every workspace of one user gets) changed.\nCarries no data: refetch `GET /api/env`, and a workspace's page refetches its own list too\n(every subscriber gets it, and each refetches its own).",
             "required": [
               "type"
             ],
@@ -13658,7 +13658,7 @@
           },
           {
             "type": "object",
-            "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit,\nnot per record. Global: it goes to the owner's streams.",
+            "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit and\nuser, not per record: it goes to the streams of the user the records belong to.",
             "required": [
               "id",
               "type"
@@ -13667,7 +13667,7 @@
               "id": {
                 "type": "integer",
                 "format": "int64",
-                "description": "The newest audit record's id."
+                "description": "The newest audit record's id of that user."
               },
               "type": {
                 "type": "string",

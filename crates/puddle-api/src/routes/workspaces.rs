@@ -12,7 +12,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use futures_util::future::BoxFuture;
 use puddle_settings::{DiskWarningPercent, resolve};
-use puddle_store::{IdentityId, RepoGitRequest, RepoRef, Store};
+use puddle_store::{IdentityId, RepoGitRequest, RepoRef, Store, UserId};
 use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
@@ -26,7 +26,7 @@ use crate::wire::{
     GrowRootDiskRequest, NewWorkspaceIdentity, NewWorkspaceRequest, RenameWorkspaceRequest,
     SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
 };
-use crate::workspaces::{GitSetup, LocalSource, NewRepository};
+use crate::workspaces::{GitSetup, LocalSource, NewRepository, WorkspaceError};
 
 /// The id in a path. A string that can't be an id names no workspace.
 pub(super) fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
@@ -242,6 +242,8 @@ pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> 
 /// settings, and its entry in the answer says so; the workspace is not undone for it.
 pub(super) struct StoreGitSetup {
     store: Arc<Store>,
+    /// Whose a new workspace is, for a create; `None` (and the owner) records nothing.
+    user: Option<UserId>,
     /// Whether it also allows the hosts of the repositories no rule decides yet (a create, or
     /// adding a repository; not a clone again or an adopted volume).
     allow_hosts: bool,
@@ -253,6 +255,7 @@ impl StoreGitSetup {
     pub(super) fn new(store: Arc<Store>) -> Self {
         Self {
             store,
+            user: None,
             allow_hosts: false,
             started: Mutex::new(Vec::new()),
             allowed: Mutex::new(Vec::new()),
@@ -265,6 +268,14 @@ impl StoreGitSetup {
         Self {
             allow_hosts: true,
             ..Self::new(store)
+        }
+    }
+
+    /// Records a new workspace as `user`'s (see [`GitSetup::claim`]).
+    pub(super) fn for_user(self, user: UserId) -> Self {
+        Self {
+            user: Some(user),
+            ..self
         }
     }
 
@@ -330,6 +341,24 @@ fn warn_not_allowed(workspace: &WorkspaceId, err: &puddle_store::StoreError) {
 }
 
 impl GitSetup for StoreGitSetup {
+    fn claim(&self, workspace: &WorkspaceId) -> Result<(), WorkspaceError> {
+        // A workspace with no recorded user is the owner's, so the owner's creates write nothing.
+        match self.user {
+            Some(user) if user != UserId::OWNER => self
+                .store
+                .set_workspace_owner(workspace, user)
+                .map_err(|err| match err {
+                    puddle_store::StoreError::WorkspaceOwned(_) => {
+                        WorkspaceError::Conflict(format!("the workspace id {workspace} is taken"))
+                    }
+                    err => WorkspaceError::Unavailable(format!(
+                        "whose the new workspace is could not be saved ({err}); nothing was created"
+                    )),
+                }),
+            _ => Ok(()),
+        }
+    }
+
     fn set_up<'a>(
         &'a self,
         workspace: &'a WorkspaceId,
@@ -383,11 +412,13 @@ impl GitSetup for StoreGitSetup {
 )]
 pub(crate) async fn create_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<NewWorkspaceRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
     let store = state.store.clone();
+    let user = principal.user;
     let known: BTreeSet<IdentityId> =
-        blocking(move || Ok(store.identities()?.into_iter().map(|i| i.id).collect())).await?;
+        blocking(move || Ok(store.identities(user)?.into_iter().map(|i| i.id).collect())).await?;
     let mut paths = body.local_paths();
     // Looked at only for a list the create can take: each look reads the disk.
     if body.repositories.len() > crate::workspaces::MAX_REPOSITORIES {
@@ -409,11 +440,11 @@ pub(crate) async fn create_workspace(
     let new = body.into_new(|id| known.contains(&id), &locals)?;
     let store = state.store.clone();
     let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
-    blocking(move || Ok(store.check_repository_git(None, &requests)?)).await?;
+    blocking(move || Ok(store.check_repository_git(user, None, &requests)?)).await?;
     let hosts =
         repository_hosts::hosts_of(new.repositories.iter().map(|r| r.repository.url.as_str()));
-    repository_hosts::refuse_blocked(&state.store, None, hosts).await?;
-    let git = StoreGitSetup::allowing_hosts(state.store.clone());
+    repository_hosts::refuse_blocked(&state.store, user, None, hosts).await?;
+    let git = StoreGitSetup::allowing_hosts(state.store.clone()).for_user(user);
     let record = state.workspaces.create(new, &git).await?;
     // A new workspace may start with direct SSH on (the global default).
     crate::system_managed::refresh(&state).await;
@@ -708,12 +739,12 @@ pub(crate) async fn attach_workspace(
             match direct_ssh_on(&state, record).await {
                 Ok(true) => {}
                 Ok(false) => {
-                    return Err(crate::WorkspaceError::Conflict(
+                    return Err(WorkspaceError::Conflict(
                         "direct SSH is off for this workspace; allow it first".to_owned(),
                     )
                     .into());
                 }
-                Err(reason) => return Err(crate::WorkspaceError::Conflict(reason).into()),
+                Err(reason) => return Err(WorkspaceError::Conflict(reason).into()),
             }
         }
     }

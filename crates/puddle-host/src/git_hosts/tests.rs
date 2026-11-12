@@ -43,11 +43,15 @@ fn git(identities: Vec<(&str, Vec<CredentialBinding>)>) -> WorkspaceGit {
     let ws = WorkspaceId::new("alpha").unwrap();
     for (name, credentials) in identities {
         let identity = store
-            .create_identity(IdentityDraft {
-                label: name.to_owned(),
-                author: Author::new(name, &format!("{}@example.org", name.to_lowercase())).unwrap(),
-                credentials,
-            })
+            .create_identity(
+                puddle_store::UserId::OWNER,
+                IdentityDraft {
+                    label: name.to_owned(),
+                    author: Author::new(name, &format!("{}@example.org", name.to_lowercase()))
+                        .unwrap(),
+                    credentials,
+                },
+            )
             .unwrap();
         store.attach_identity(&ws, identity.id, None).unwrap();
     }

@@ -64,6 +64,7 @@ mod repos;
 mod routes;
 mod server;
 mod settings;
+mod stored_ids;
 mod system_managed;
 mod terminals;
 mod token;

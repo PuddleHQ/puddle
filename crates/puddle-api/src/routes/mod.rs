@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::SecretStore;
-use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
+use puddle_store::{
+    Actor, Clock, NewWorkspaceOp, Store, UserId, WorkspaceOpKind, WorkspaceOpOutcome,
+};
 use tokio::sync::{Mutex, watch};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -54,11 +56,12 @@ mod start_folder;
 mod terminals;
 mod workspaces;
 
-/// Writes a `workspace_op` record for a change a request made (all of them reach Puddle through
-/// the API, so the actor is `api`). The change has happened, so a record that cannot be written
+/// Writes a `workspace_op` record of `user` for a change a request made (all of them reach Puddle
+/// through the API, so the actor is `api`). The change has happened, so a record that cannot be written
 /// is logged and dropped rather than turned into an error the user would read as "not done".
 pub(crate) fn record_op(
     store: &Store,
+    user: UserId,
     op: WorkspaceOpKind,
     workspace: Option<&puddle_types::WorkspaceId>,
     detail: Option<String>,
@@ -66,6 +69,7 @@ pub(crate) fn record_op(
     let new = NewWorkspaceOp {
         op,
         workspace: workspace.cloned(),
+        user: Some(user),
         outcome: WorkspaceOpOutcome::Succeeded,
         actor: Actor::Api,
         detail,

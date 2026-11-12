@@ -29,6 +29,7 @@ fn a_sign_in_that_could_not_start_says_what_happened_and_what_to_try() {
 async fn the_fake_keeps_a_pasted_value_under_its_id_until_forgotten() {
     let fake = FakeCredentials::new();
     fake.store_token(
+        UserId::OWNER,
         TokenScope {
             host: puddle_secrets::HostName::new("github.com").unwrap(),
             org: None,

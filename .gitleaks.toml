@@ -49,3 +49,12 @@ condition = "AND"
 paths = ['''^crates/puddle-proxy/src/terminate/foreign\.rs$''']
 regexTarget = "match"
 regexes = ['''glpat-AbCdEfGhIjKlMnOpQrSt''']
+
+# History only: the made-up pasted tokens the per-user isolation tests once held as literals (they
+# are made at run time now; see the log canary entry for why it stays).
+[[allowlists]]
+description = "the made-up pasted tokens of the per-user isolation tests"
+condition = "AND"
+paths = ['''^crates/puddle-api/src/authz/tests\.rs$''']
+regexTarget = "match"
+regexes = ['''token\W{1,4}ghp_(owners|anns)0123456789''']

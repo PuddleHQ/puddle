@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use puddle_doctor::{
-    BootFacts, CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts,
-    GsaFacts, HypervisorFacts, JobFacts, Os, Probe, ProcessOutcome, Protection, RuntimeFacts,
-    SshAgentFacts, SwapArea, SwapFacts,
+    AzCliFacts, BootFacts, CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
+    DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os, Probe, ProcessOutcome, Protection,
+    RuntimeFacts, SshAgentFacts, SwapArea, SwapFacts,
 };
 use puddle_doctor::{CheckId, Finding, Options, Report, Status, SystemProbe, diagnose};
 use puddle_runtime::{
@@ -98,6 +98,9 @@ impl Probe for EncryptedHost {
     }
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
         self.0.ssh_agent(limit)
+    }
+    fn az_cli(&self, limit: Duration) -> AzCliFacts {
+        self.0.az_cli(limit)
     }
 }
 

@@ -35,7 +35,7 @@ mod name;
 
 pub use access::{LocalAccess, LocalAccessSource};
 pub use classify::{AddressClass, classify_ip, classify_with_signals};
-pub use company::{CompanySignals, NoSignals, StaticSignals};
+pub use company::{CompanyFound, CompanySignals, NoSignals, StaticSignals};
 pub use endpoints::{
     EndpointKind, HostAddrs, NameRegistration, OwnAddresses, PuddleEndpoints, Registration,
 };

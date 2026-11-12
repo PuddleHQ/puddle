@@ -12,6 +12,15 @@ import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import { asInboxEvent, type InboxEvent } from "#lib/decision/events.ts";
 import { localCategory, type LocalCategory } from "#lib/decision/local.ts";
+
+/**
+ * The local category a request's destination is in. The service knows the company network (it reads
+ * the host's signals); the browser only knows the address ranges.
+ */
+function categoryOf(request: PendingRequest): LocalCategory | null {
+  if (request.company_signal !== null) return "company_network";
+  return request.blocked_by ?? localCategory(request.host);
+}
 import type { Decided } from "#lib/decision/decided.ts";
 import { build, type Choice, type Target } from "#lib/decision/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
@@ -172,7 +181,8 @@ export class PendingStore {
 
   /** Why a request can't be approved yet: the toggle it needs is off (R-14). */
   blockedBy(request: PendingRequest): LocalCategory | null {
-    const category = localCategory(request.host);
+    // The service knows the company network (it reads the host's signals); the browser only the ranges.
+    const category = categoryOf(request);
     if (category === null) return null;
     const toggles = this.toggles[request.workspace];
     return toggles && !toggles[category] ? category : null;
@@ -227,7 +237,7 @@ export class PendingStore {
   async #loadToggles(): Promise<void> {
     const wanted = new Set(
       this.rows
-        .filter((r) => localCategory(r.request.host) !== null)
+        .filter((r) => categoryOf(r.request) !== null)
         .map((r) => r.request.workspace),
     );
     const next: Record<string, Toggles | null> = {};
@@ -283,7 +293,7 @@ export class PendingStore {
           return;
         }
         this.#setRows([{ request, domain }, ...this.rows]);
-        if (localCategory(request.host) !== null) void this.#loadToggles();
+        if (categoryOf(request) !== null) void this.#loadToggles();
         return;
       }
       case "pending_updated":

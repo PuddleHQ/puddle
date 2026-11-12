@@ -62,6 +62,7 @@ function asRequest(v: unknown): PendingRequest | undefined {
     rule_id: null,
     rule_set: null,
     blocked_by: null,
+    company_signal: null,
   };
 }
 

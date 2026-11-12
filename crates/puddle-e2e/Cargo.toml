@@ -33,6 +33,7 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 puddle-api = { workspace = true }
 puddle-logins = { workspace = true }
+puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true }
 puddle-repos = { workspace = true }
 puddle-secrets = { workspace = true }
@@ -69,7 +70,6 @@ puddle-fd-limit = { workspace = true }
 puddle-front = { workspace = true }
 puddle-inject = { workspace = true, features = ["testing"] }
 puddle-ipc = { workspace = true }
-puddle-netpolicy = { workspace = true }
 puddle-ports = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-upstream = { workspace = true, features = ["testing"] }

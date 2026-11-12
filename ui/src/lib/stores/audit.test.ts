@@ -47,6 +47,16 @@ describe("reading the log", () => {
     expect(store.hasMore).toBe(false);
     expect(store.epoch).toBe(1);
   });
+  it("asks only for company-network records when the destination filter is set", async () => {
+    api.entries.push(
+      connection(1),
+      connection(2, { category: "company_network", signal: "vpn_route" }),
+    );
+    const store = make();
+    await store.load({ ...ALL, category: "company_network" });
+    expect(api.queries[0]).toMatchObject({ category: "company_network" });
+    expect(ids(store)).toEqual([2]);
+  });
   it("pages back with `before` until the oldest, then stops asking", async () => {
     fill(450);
     const store = make();

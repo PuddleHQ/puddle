@@ -620,6 +620,13 @@ async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off
         async move { api.get(&path).await.json()["blocked_by"].clone() }
     };
     assert_eq!(one(company).await, "company_network");
+    let signal = |id: i64| {
+        let path = format!("/api/pending/{id}");
+        let api = &api;
+        async move { api.get(&path).await.json()["company_signal"].clone() }
+    };
+    assert_eq!(signal(company).await, "private_access_cgnat");
+    assert_eq!(signal(private).await, json!(null));
     // The category comes from the host's signals alone: other private addresses stay private.
     assert_eq!(one(private).await, "private");
     // The private toggle does not free it.
@@ -643,6 +650,54 @@ async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off
         .await;
     assert_eq!(put.status, 200, "{}", put.body);
     assert_eq!(one(company).await, json!(null));
+    // The signal stays, so a client that reads address ranges still knows it is the company's.
+    assert_eq!(signal(company).await, "private_access_cgnat");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_audit_log_filters_on_the_company_network_category() {
+    use puddle_types::{
+        CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason,
+    };
+    let api = start().await;
+    let ask = |host: &str| {
+        EgressRequest::new(
+            WorkspaceId::new("box").unwrap(),
+            Host::parse_normalised(host).unwrap(),
+            443,
+        )
+    };
+    let mut company = ConnectionEvent::new(
+        &ask("100.64.3.7"),
+        ConnectionDecision::Allow,
+        ConnectionReason::Rule,
+    );
+    company.company_network = Some(CompanySignal::VpnRoute);
+    api.store.record(&company);
+    api.store.record(&ConnectionEvent::new(
+        &ask("example.com"),
+        ConnectionDecision::Allow,
+        ConnectionReason::Rule,
+    ));
+    let hosts = |reply: crate::common::Reply| -> Vec<String> {
+        reply.json()["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["record"]["host"].as_str().map(str::to_owned))
+            .collect()
+    };
+    assert_eq!(
+        hosts(api.get("/api/audit?category=company_network").await),
+        ["100.64.3.7"]
+    );
+    // An empty category is no filter; an unknown one is refused.
+    assert_eq!(
+        hosts(api.get("/api/audit?category=").await),
+        ["example.com", "100.64.3.7"]
+    );
+    assert_eq!(api.get("/api/audit?category=other").await.status, 422);
     api.running.shutdown().await;
 }
 

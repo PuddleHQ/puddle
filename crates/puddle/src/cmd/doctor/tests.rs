@@ -109,6 +109,11 @@ impl Probe for Fake {
             families: vec!["ed25519".into()],
         }
     }
+    fn az_cli(&self, _limit: Duration) -> puddle_doctor::AzCliFacts {
+        puddle_doctor::AzCliFacts::Found {
+            version: "2.64.0".into(),
+        }
+    }
 }
 
 const GB: u64 = 1024 * 1024 * 1024;

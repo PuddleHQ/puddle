@@ -308,6 +308,31 @@
     {/if}
   </section>
 
+  <section class="card" aria-labelledby="h-company">
+    <h2 id="h-company">Company network</h2>
+    <p class="muted small">
+      Destinations that your company's VPN, private-access client or DNS
+      suffixes mark as internal. They are off by default; you can turn them on
+      under <a href="/settings#local-destinations"
+        >Settings, Network, Local destinations</a
+      >.
+    </p>
+    <dl>
+      <dt>Private-access client</dt>
+      <dd>
+        {report.company_network.private_access_client
+          ? "One is installed and active"
+          : "None found"}
+      </dd>
+      <dt>DNS suffixes</dt>
+      <dd>
+        {#each report.company_network.dns_suffixes as suffix, i (suffix)}{i > 0
+            ? ", "
+            : ""}<span class="mono">{suffix}</span>{:else}None found{/each}
+      </dd>
+    </dl>
+  </section>
+
   <section class="card" aria-labelledby="h-pull">
     <h2 id="h-pull">Image downloads</h2>
     <dl>

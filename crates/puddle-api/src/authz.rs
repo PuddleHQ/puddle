@@ -301,8 +301,8 @@ impl Authorizer for Isolation {
     }
 }
 
-/// [`Authorizer::check`] from a handler, for a resource the body names (a rule's workspace, a
-/// global scope).
+/// [`Authorizer::check`] from the route layer or a handler (for a resource the body names: a
+/// rule's workspace, a global scope).
 ///
 /// # Errors
 /// The denial as the response it becomes.
@@ -313,6 +313,14 @@ pub(crate) async fn check(
     resource: ResourceRef,
 ) -> Result<(), ApiError> {
     let authorizer = state.authorizer.clone();
+    // A resource that is nobody's needs no lookup, so it is checked at once: an event stream
+    // subscribes in the same turn as its request, before anything emitted meanwhile is missed.
+    if matches!(
+        resource,
+        ResourceRef::Service | ResourceRef::Install | ResourceRef::Own
+    ) {
+        return Ok(authorizer.check(&principal, action, &resource)?);
+    }
     blocking(move || Ok(authorizer.check(&principal, action, &resource)?)).await
 }
 

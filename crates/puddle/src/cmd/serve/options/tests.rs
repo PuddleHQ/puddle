@@ -680,3 +680,9 @@ fn a_negated_switch_is_reported_as_the_flag_that_was_typed() {
     let on = resolve(&flags, &|_| None, Path::new("/")).unwrap();
     assert!(on.render().contains("remote = true (flag --remote)\n"));
 }
+
+#[test]
+fn only_a_list_kind_is_made_of_items() {
+    assert_eq!(Kind::Port.parse_items(&["1"]), Err(Kind::Port.expects()));
+    assert_eq!(Kind::IpList.parse_items(&[]), Err(Kind::IpList.expects()));
+}

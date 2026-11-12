@@ -76,6 +76,7 @@ fn a_public_host_refuses_what_is_not_a_bare_authority() {
         "2001:db8::1",
         "[2001:db8::1",
         "[puddle.example.org]",
+        "[1.2.3.4]",
         "1.2.3.4.5",
     ] {
         let err = PublicHost::parse(text).unwrap_err();

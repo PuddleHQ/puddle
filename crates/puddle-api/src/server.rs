@@ -391,21 +391,14 @@ enum Admission {
 }
 
 impl Admission {
-    fn admits(&self, peer: IpAddr) -> bool {
+    pub(crate) fn admits(&self, peer: IpAddr) -> bool {
         match self {
             Self::Loopback => peer.is_loopback(),
             Self::Proxies { allowed, .. } => {
-                let peer = unmapped(peer);
-                allowed.iter().any(|a| unmapped(*a) == peer)
+                let peer = peer.to_canonical();
+                allowed.iter().any(|a| a.to_canonical() == peer)
             }
         }
-    }
-}
-
-fn unmapped(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
-        IpAddr::V4(_) => ip,
     }
 }
 
@@ -437,19 +430,15 @@ async fn bind_network(
 ) -> Result<BoundNetwork, ServeError> {
     let requested = SocketAddr::new(network.interface, network.port);
     let tls = tls_acceptor(&network.tls)?;
-    let listener =
-        TcpListener::bind(requested)
-            .await
-            .map_err(|source| ServeError::BindNetwork {
-                addr: requested,
-                source,
-            })?;
-    let addr = listener
-        .local_addr()
-        .map_err(|source| ServeError::BindNetwork {
-            addr: requested,
-            source,
-        })?;
+    let bound = async {
+        let listener = TcpListener::bind(requested).await?;
+        let addr = listener.local_addr()?;
+        Ok::<_, io::Error>((listener, addr))
+    };
+    let (listener, addr) = bound.await.map_err(|source| ServeError::BindNetwork {
+        addr: requested,
+        source,
+    })?;
     let registration = endpoints.register(addr, EndpointKind::RemoteApi);
     tracing::info!(%addr, "api listening for a reverse proxy (TLS)");
     Ok(BoundNetwork {
@@ -856,3 +845,6 @@ where
         tracing::debug!(error = %err, "api connection ended with an error");
     }
 }
+
+#[cfg(test)]
+mod tests;

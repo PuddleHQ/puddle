@@ -373,7 +373,7 @@ async fn a_host_started_with_remote_serving_answers_a_proxy_over_tls_and_a_loopb
     std::fs::write(
         dir.path().join("serve.toml"),
         format!(
-            "port = {port}\ndata_dir = \"data\"\nremote = true\npublic_hosts = [\"puddle.example.org\"]\n\
+            "port = {port}\ndata_dir = \"data\"\nremote = true\npublic_hosts = [\"puddle.example.org\", \"203.0.113.7\"]\n\
              listen_interface = \"127.0.0.1\"\nlisten_port = {listen}\nallowed_proxies = [\"127.0.0.1\"]\n"
         ),
     )
@@ -450,4 +450,46 @@ async fn a_host_started_with_remote_serving_answers_a_proxy_over_tls_and_a_loopb
 /// The certificate of a one-block PEM file, as DER.
 fn rustls_pemfile_free(pem: &[u8]) -> Vec<u8> {
     pem::parse(pem).unwrap().into_contents()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_listener_certificate_that_cannot_be_kept_stops_the_start_and_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    // A file where the certificate's folder belongs.
+    std::fs::write(data.join("remote-cert"), b"in the way").unwrap();
+    let flags = [
+        ("data_dir", Value::Path(data)),
+        ("remote", Value::Bool(true)),
+        (
+            "public_hosts",
+            Value::Hosts(vec!["puddle.example.org".to_owned()]),
+        ),
+        ("listen_interface", Value::Ip("127.0.0.1".parse().unwrap())),
+        ("listen_port", Value::Port(0)),
+        (
+            "allowed_proxies",
+            Value::IpList(vec!["127.0.0.1".parse().unwrap()]),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let options = serve::options::resolve(&flags, &|_| None, dir.path()).unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let mut config = serve::config(&options, &exe).unwrap();
+    let agent = dir.path().join("puddle-agent");
+    std::fs::write(&agent, b"#!agent\n").unwrap();
+    config.guest.agent_binary = agent;
+    let prepared = prepare(config, &QuietPlatform).unwrap();
+    let mut host_options = HostOptions::default();
+    host_options.secret_store = Some(Arc::new(MemoryStore::new()));
+    let Err(err) = Host::start(prepared, &FakeFactory, host_options).await else {
+        panic!("the start should fail");
+    };
+    assert!(
+        err.to_string()
+            .contains("the network listener's certificate"),
+        "{err}"
+    );
 }

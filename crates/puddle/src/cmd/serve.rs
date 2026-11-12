@@ -208,12 +208,9 @@ pub fn run(args: &ServeArgs) -> ExitCode {
         };
         println!("Puddle is up at {}", host.url());
         if let Some(listener) = host.remote_listener() {
-            println!("Network listener (TLS) on {}", listener.addr);
-            println!("  certificate SHA-256: {}", listener.fingerprint);
-            println!(
-                "  certificate file: {}",
-                listener.certificate_file.display()
-            );
+            for line in listener_lines(listener) {
+                println!("{line}");
+            }
         }
         match wait_for_shutdown().await {
             Ok(cause) => tracing::info!(cause = cause.as_str(), "shutting down"),
@@ -221,6 +218,19 @@ pub fn run(args: &ServeArgs) -> ExitCode {
         }
         exit_after(&host.shutdown().await.sandboxes)
     })
+}
+
+/// What `puddle serve` prints about the network listener: where it is, and what the proxy's
+/// operator trusts or pins.
+fn listener_lines(listener: &puddle_host::RemoteListener) -> [String; 3] {
+    [
+        format!("Network listener (TLS) on {}", listener.addr),
+        format!("  certificate SHA-256: {}", listener.fingerprint),
+        format!(
+            "  certificate file: {}",
+            listener.certificate_file.display()
+        ),
+    ]
 }
 
 /// Prints what is wrong with the sandboxes at exit, and picks the exit code.

@@ -578,3 +578,41 @@ async fn a_network_listener_without_remote_serving_or_without_a_proxy_does_not_b
         .unwrap();
     assert!(err.to_string().contains("TLS certificate"), "{err}");
 }
+
+#[tokio::test]
+async fn a_network_listener_on_a_taken_port_says_so() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let dir = tempfile::tempdir().unwrap();
+    let cert = puddle_certs::devcert::listener::ensure(
+        dir.path(),
+        &[IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        &[],
+        SystemTime::now(),
+    )
+    .unwrap();
+    let mut config = config(Some(serving(&["puddle.example.org"], None)));
+    config.network_listener = Some(NetworkListener {
+        interface: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        port,
+        allowed_proxies: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        tls: TlsIdentity::new(cert.cert_der().to_vec(), cert.key().pkcs8_der().to_vec()),
+    });
+    let clock = Arc::new(ManualClock::new(START_MS));
+    let services = Services::new(
+        Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap()),
+        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(EventHub::default()),
+        clock,
+    );
+    let err = ApiServer::bind(config, ApiToken::generate().unwrap(), services)
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        err.to_string().contains(&format!(
+            "cannot listen on 127.0.0.1:{port} for a reverse proxy"
+        )),
+        "{err}"
+    );
+}

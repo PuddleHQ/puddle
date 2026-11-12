@@ -81,3 +81,25 @@ fn the_certificate_alone_is_written_for_the_proxy() {
     ensure(dir.path(), &[ip("10.0.0.5")], &[], now).unwrap();
     assert_eq!(fs::read_to_string(&file).unwrap(), cert.cert_pem());
 }
+
+#[test]
+fn a_data_folder_that_cannot_hold_the_leaf_is_an_error_naming_the_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocked = dir.path().join("data");
+    fs::write(&blocked, b"a file where the data folder should be").unwrap();
+    let err = ensure(&blocked, &[ip("10.0.0.5")], &[], SystemTime::now()).unwrap_err();
+    assert!(err.to_string().contains("remote-cert"), "{err}");
+}
+
+#[test]
+fn extra_blocks_in_the_stored_file_do_not_stop_it_being_reused() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = SystemTime::now();
+    let first = ensure(dir.path(), &[ip("10.0.0.5")], &[], now).unwrap();
+    let file = dir.path().join(FOLDER).join(FILE);
+    let mut body = fs::read_to_string(&file).unwrap();
+    body.push_str(&pem::encode(&pem::Pem::new("NOTE", vec![1, 2, 3])));
+    puddle_fs::private::write_atomic(&file, body.as_bytes()).unwrap();
+    let again = ensure(dir.path(), &[ip("10.0.0.5")], &[], now).unwrap();
+    assert_eq!(first.cert_der(), again.cert_der());
+}

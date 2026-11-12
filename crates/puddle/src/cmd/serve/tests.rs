@@ -252,3 +252,22 @@ fn options_that_do_not_fit_together_refuse_to_start_with_the_whole_message() {
     let options = resolve(&args.flags, &|_| None, std::path::Path::new("/")).unwrap();
     assert!(options.remote().is_err());
 }
+
+#[test]
+fn the_start_up_lines_name_the_listener_its_fingerprint_and_its_certificate_file() {
+    let listener = puddle_host::RemoteListener {
+        addr: "192.168.1.10:8443".parse().unwrap(),
+        fingerprint: "ab".repeat(32),
+        certificate_file: "/srv/remote-cert/listener.crt".into(),
+    };
+    let lines = listener_lines(&listener);
+    assert_eq!(lines[0], "Network listener (TLS) on 192.168.1.10:8443");
+    assert_eq!(
+        lines[1],
+        format!("  certificate SHA-256: {}", "ab".repeat(32))
+    );
+    assert_eq!(
+        lines[2],
+        "  certificate file: /srv/remote-cert/listener.crt"
+    );
+}

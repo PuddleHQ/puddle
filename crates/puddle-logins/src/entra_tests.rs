@@ -12,12 +12,22 @@ use puddle_secrets::{MemoryStore, SecretStore};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
-use crate::profile::{Audience, ENTRA, Endpoint, Field, Method, Role, Scope, Slot, StandInKind};
+use crate::profile::{
+    Audience, ENTRA, Endpoint, Field, Keep, Method, Role, Scope, Slot, StandInKind,
+};
 use crate::vault::{Vault, slot_id};
 use crate::widened_tests::host;
 use crate::{LoginNotices, Logins, Marker, Problem, Profile, builtin};
 
 const LOGIN: &str = "login.microsoftonline.com";
+
+/// The other names of the public cloud's login host. Each answered a token request with Entra's
+/// own error when tried against the live service.
+const ALIASES: [&str; 3] = [
+    "login.windows.net",
+    "login.microsoft.com",
+    "sts.windows.net",
+];
 
 #[derive(Default)]
 struct Notices(Mutex<Vec<Problem>>);
@@ -90,9 +100,13 @@ fn id_token(exp: u64) -> String {
 }
 
 async fn answer(rig: &Rig, path: &str, body: &Value) -> Option<Value> {
+    answer_at(rig, LOGIN, path, body).await
+}
+
+async fn answer_at(rig: &Rig, login: &str, path: &str, body: &Value) -> Option<Value> {
     let mut exchange = rig
         .logins
-        .begin(&host(LOGIN), "POST", path)
+        .begin(&host(login), "POST", path)
         .expect("a token request of the profile");
     let bytes = serde_json::to_vec(body).unwrap();
     let head = AnswerHead {
@@ -311,13 +325,14 @@ async fn the_refresh_token_and_the_id_token_are_kept_and_replaced_too() {
         let hosts = ENTRA.hosts_for(Scope::TokenEndpoint);
         assert!(!hosts.contains(&host(api)), "{api}");
     }
+    // The two, and the access token of a resource the profile does not name.
     assert_eq!(
         ENTRA
             .slots()
             .into_iter()
             .filter(|(_, scope)| *scope == Scope::TokenEndpoint)
             .count(),
-        2
+        3
     );
 }
 
@@ -408,6 +423,22 @@ fn the_entra_profile_pins_its_requests_slots_scopes_and_entry_names() {
     }
     assert!(!is_exchange("POST", "/oauth2/v2.0/token"));
     assert!(!is_exchange("POST", "/a/b/oauth2/v2.0/token"));
+    // The public cloud's other login hosts answer the same requests, and are read the same way.
+    for alias in ALIASES {
+        for path in ["/common/oauth2/v2.0/token", "/contoso/oauth2/token"] {
+            let exchange = logins.begin(&host(alias), "POST", path);
+            assert_eq!(
+                exchange.map(|e| e.swap_fields().to_vec()),
+                Some(vec!["refresh_token".to_owned()]),
+                "{alias}{path}"
+            );
+        }
+        assert!(
+            logins
+                .begin(&host(alias), "POST", "/common/oauth2/v2.0/devicecode")
+                .is_none()
+        );
+    }
     let names: Vec<(String, Scope)> = ENTRA
         .slots()
         .into_iter()
@@ -416,11 +447,23 @@ fn the_entra_profile_pins_its_requests_slots_scopes_and_entry_names() {
     assert_eq!(
         names,
         [
-            ("entra-access-arm".to_owned(), Scope::Api),
-            ("entra-access-devops".to_owned(), Scope::Api),
-            ("entra-access-graph".to_owned(), Scope::Api),
-            ("entra-access-other".to_owned(), Scope::Api),
-            ("entra-access-vault".to_owned(), Scope::Api),
+            (
+                "entra-access-arm".to_owned(),
+                Scope::Hosts(&["management.azure.com", "management.core.windows.net"])
+            ),
+            (
+                "entra-access-devops".to_owned(),
+                Scope::Hosts(&["dev.azure.com", "*.dev.azure.com", "*.visualstudio.com"])
+            ),
+            (
+                "entra-access-graph".to_owned(),
+                Scope::Hosts(&["graph.microsoft.com", "graph.windows.net"])
+            ),
+            ("entra-access-other".to_owned(), Scope::TokenEndpoint),
+            (
+                "entra-access-vault".to_owned(),
+                Scope::Hosts(&["*.vault.azure.net"])
+            ),
             ("entra-refresh".to_owned(), Scope::TokenEndpoint),
             ("entra-id-token".to_owned(), Scope::TokenEndpoint),
         ]
@@ -466,6 +509,7 @@ static NAMED_ONLY: [Profile; 1] = [Profile {
             stand_in: StandInKind::Jwt,
             scope: Scope::Api,
             audience: Audience::Named(&["management.azure.com"]),
+            keep: Keep::Stored,
         }],
     }],
     api_hosts: &["management.azure.com"],
@@ -500,4 +544,81 @@ async fn a_token_that_no_field_of_the_profile_takes_fails_closed_and_is_not_kept
     assert!(answer.rewrite(&head, &body).await.is_none());
     assert_eq!(*notices.0.lock().unwrap(), [Problem::UnusableToken]);
     assert_eq!(registry.len(), 0);
+}
+
+#[tokio::test]
+async fn a_login_through_another_name_of_the_login_host_is_kept_and_its_refresh_swapped_there() {
+    for alias in ALIASES {
+        let rig = rig();
+        let real = jwt("https://management.azure.com", 1_893_456_000, 1500, 'A');
+        let body = v2(&real, "https://management.azure.com/user_impersonation");
+        let given = answer_at(&rig, alias, "/contoso/oauth2/v2.0/token", &body)
+            .await
+            .unwrap();
+        let text = given.to_string();
+        assert!(!text.contains(real.rsplit('.').next().unwrap()), "{alias}");
+        assert!(!text.contains(&refresh('R')), "{alias}");
+        assert_eq!(kept(&rig, slot("arm")).1, real, "{alias}");
+        // The refresh token's stand-in goes back to every name of the login host.
+        let refresh_hosts = ENTRA.hosts_for(Scope::TokenEndpoint);
+        for login in ALIASES.iter().chain([&LOGIN]) {
+            assert!(refresh_hosts.contains(&host(login)), "{login}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn each_access_token_is_swapped_toward_its_own_resources_hosts_only() {
+    let resources = [
+        (
+            "https://management.azure.com",
+            &["management.azure.com", "management.core.windows.net"][..],
+        ),
+        (
+            "00000003-0000-0000-c000-000000000000",
+            &["graph.microsoft.com", "graph.windows.net"][..],
+        ),
+        // The older Azure AD Graph goes in the same slot as Microsoft Graph.
+        (
+            "https://graph.windows.net",
+            &["graph.microsoft.com", "graph.windows.net"][..],
+        ),
+        (
+            "499b84ac-1321-427f-aa17-267ca6975798",
+            &["dev.azure.com", "myorg.visualstudio.com", "x.dev.azure.com"][..],
+        ),
+        ("https://vault.azure.net", &["kv1.vault.azure.net"][..]),
+        // A resource the profile does not name: toward no API at all.
+        ("https://storage.azure.com", &[][..]),
+    ];
+    let every_api = [
+        "management.azure.com",
+        "management.core.windows.net",
+        "graph.microsoft.com",
+        "graph.windows.net",
+        "dev.azure.com",
+        "x.dev.azure.com",
+        "myorg.visualstudio.com",
+        "kv1.vault.azure.net",
+    ];
+    for (aud, own) in resources {
+        let rig = rig();
+        let real = jwt(aud, 1_893_456_000, 1500, 'T');
+        let given = reply(&rig, &real, "openid profile").await.unwrap();
+        assert!(
+            registered(&rig, given["access_token"].as_str().unwrap(), &real),
+            "{aud}"
+        );
+        // The refresh and identity tokens of the same answer go to the login hosts only, so
+        // every API host here is the access token's.
+        let hosts = rig.registry.hosts();
+        for api in every_api {
+            assert_eq!(
+                hosts.contains(&host(api)),
+                own.contains(&api),
+                "{aud} toward {api}"
+            );
+        }
+        assert!(hosts.contains(&host(LOGIN)));
+    }
 }

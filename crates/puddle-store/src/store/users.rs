@@ -154,20 +154,23 @@ impl Store {
         if !known {
             return Err(StoreError::UnknownUser(user));
         }
-        conn.execute(
-            "INSERT INTO workspace_owners (workspace_id, user_id) VALUES (?1, ?2)
-             ON CONFLICT (workspace_id) DO NOTHING",
-            params![workspace.as_str(), user.get()],
-        )?;
-        let stored: i64 = conn.query_row(
-            "SELECT user_id FROM workspace_owners WHERE workspace_id = ?1",
-            [workspace.as_str()],
-            |r| r.get(0),
-        )?;
-        if stored == user.get() {
-            Ok(())
-        } else {
-            Err(StoreError::WorkspaceOwned(workspace.clone()))
+        let stored: Option<i64> = conn
+            .query_row(
+                "SELECT user_id FROM workspace_owners WHERE workspace_id = ?1",
+                [workspace.as_str()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match stored {
+            Some(stored) if stored == user.get() => Ok(()),
+            Some(_) => Err(StoreError::WorkspaceOwned(workspace.clone())),
+            None => {
+                conn.execute(
+                    "INSERT INTO workspace_owners (workspace_id, user_id) VALUES (?1, ?2)",
+                    params![workspace.as_str(), user.get()],
+                )?;
+                Ok(())
+            }
         }
     }
 }

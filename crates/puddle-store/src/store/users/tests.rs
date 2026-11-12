@@ -140,3 +140,29 @@ fn a_user_carries_no_credential() {
         (UserId::OWNER, Role::Owner, "owner", true)
     );
 }
+
+/// A database that fails to read or write is an error, never a guess at the owner.
+#[test]
+fn a_failing_database_is_an_error() {
+    let gone = store();
+    gone.break_database("ALTER TABLE users RENAME TO users_gone");
+    assert!(gone.add_user(&name("ann")).is_err());
+    assert!(gone.set_workspace_owner(&ws("a"), UserId::OWNER).is_err());
+    let unreadable = store();
+    unreadable.break_database("ALTER TABLE workspace_owners RENAME TO owners_gone");
+    assert!(
+        unreadable
+            .set_workspace_owner(&ws("a"), UserId::OWNER)
+            .is_err()
+    );
+    let unwritable = store();
+    unwritable.break_database(
+        "CREATE TRIGGER no_owner BEFORE INSERT ON workspace_owners
+         BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+    );
+    assert!(
+        unwritable
+            .set_workspace_owner(&ws("a"), UserId::OWNER)
+            .is_err()
+    );
+}

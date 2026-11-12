@@ -209,6 +209,21 @@ fn a_users_resources_are_theirs_alone_and_the_owner_has_no_way_in() {
     ));
 }
 
+/// A request the guard put no principal on is refused like a missing token.
+#[tokio::test]
+async fn a_request_without_a_principal_is_unauthorized() {
+    let (mut parts, ()) = axum::http::Request::new(()).into_parts();
+    let refused = Principal::from_request_parts(&mut parts, &())
+        .await
+        .unwrap_err();
+    assert_eq!(refused.into_response().status(), StatusCode::UNAUTHORIZED);
+    parts.extensions.insert(Principal::INSTALL);
+    let found = Principal::from_request_parts(&mut parts, &())
+        .await
+        .unwrap();
+    assert_eq!(found, Principal::INSTALL);
+}
+
 #[test]
 fn a_denial_becomes_its_status() {
     for denial in [Denial::OwnerOnly, Denial::InstallTokenOnly] {

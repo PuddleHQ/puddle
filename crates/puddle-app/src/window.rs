@@ -129,7 +129,7 @@ pub fn open_main<R: Runtime, M: Manager<R>>(
         crate::accelerators::turn_off(&window);
         let app = manager.app_handle().clone();
         crate::accelerators::on_ctrl_q(&window, move || {
-            crate::desktop::quit_shortcut_pressed(&app)
+            crate::desktop::quit_shortcut_pressed(&app);
         });
     }
     Ok(window)

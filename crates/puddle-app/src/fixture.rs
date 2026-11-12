@@ -14,6 +14,15 @@ use puddle_types::{EgressRequest, Host, Problems, SuffixAllows, WorkspaceId};
 
 use crate::backend::{Backend, BackendError};
 
+/// The variable that sets how many terminals the fixture says are open, so the quit question can
+/// be driven without a workspace.
+pub(crate) const FIXTURE_TERMINALS_VAR: &str = "PUDDLE_APP_FIXTURE_TERMINALS";
+
+/// The count `value` names; none (or text that is not a number) is zero.
+fn terminals_from(value: Option<&str>) -> usize {
+    value.and_then(|text| text.trim().parse().ok()).unwrap_or(0)
+}
+
 /// Starts the fixture backend on `127.0.0.1:<port>`.
 pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
     let fixture =
@@ -40,7 +49,8 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
         ApiServer::bind(ApiConfig::with_port(port), ApiToken::generate()?, services).await?;
     let info = server.connection_info();
     let running = server.spawn();
-    Backend::new(
+    let open_terminals = terminals_from(std::env::var(FIXTURE_TERMINALS_VAR).ok().as_deref());
+    let backend = Backend::new(
         info,
         events,
         problems,
@@ -55,5 +65,19 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
                 }
             })
         }),
-    )
+    )?;
+    Ok(backend.with_open_terminals(Arc::new(move || open_terminals)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fixture_has_the_terminals_its_variable_names_and_none_otherwise() {
+        assert_eq!(terminals_from(None), 0);
+        assert_eq!(terminals_from(Some("")), 0);
+        assert_eq!(terminals_from(Some("many")), 0);
+        assert_eq!(terminals_from(Some(" 2 ")), 2);
+    }
 }

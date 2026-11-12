@@ -73,8 +73,8 @@ pub(crate) fn on_ctrl_q<R: Runtime>(
             // calls write one integer each into locals that outlive them.
             #[expect(unsafe_code, reason = "WebView2 COM calls with no safe wrapper")]
             unsafe {
-                args.KeyEventKind(&mut kind)?;
-                args.VirtualKey(&mut key)?;
+                args.KeyEventKind(&raw mut kind)?;
+                args.VirtualKey(&raw mut key)?;
             }
             if is_quit_chord(kind, key, held(VK_CONTROL), held(VK_SHIFT), held(VK_MENU)) {
                 // SAFETY: as above; one boolean set on the same event.
@@ -93,7 +93,7 @@ pub(crate) fn on_ctrl_q<R: Runtime>(
         let added = unsafe {
             webview
                 .controller()
-                .add_AcceleratorKeyPressed(&handler, &mut token)
+                .add_AcceleratorKeyPressed(&handler, &raw mut token)
         };
         if let Err(err) = added {
             tracing::warn!(%err, "Ctrl+Q will not reach the quit question on this window");

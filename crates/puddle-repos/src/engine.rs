@@ -207,6 +207,7 @@ fn source_organisation(source: &SourceSpec) -> Option<String> {
         SourceSpec::Stored { scope, .. } => {
             scope.org.as_ref().map(|o| o.as_str().to_ascii_lowercase())
         }
+        SourceSpec::AzCli { org, .. } => org.as_ref().map(|o| o.as_str().to_ascii_lowercase()),
         SourceSpec::GitCredential { path, .. } => {
             path.as_str().split('/').next().map(str::to_ascii_lowercase)
         }
@@ -560,7 +561,7 @@ impl Inner {
             .secrets
             .get(&target.source)
             .await
-            .map_err(|err| Problem::from_source(&err))?;
+            .map_err(|err| Problem::from_source(&target.source, &err))?;
         let stored = matches!(target.source, SourceSpec::Stored { .. });
         let result = match &kind {
             Kind::GitHub(endpoint) => {
@@ -650,7 +651,7 @@ impl Inner {
             .secrets
             .get(source)
             .await
-            .map_err(|err| Problem::from_source(&err))?;
+            .map_err(|err| Problem::from_source(source, &err))?;
         let mut exchange = self.exchange("GitHub", source, limits::github, strikes);
         "account".clone_into(&mut exchange.missing);
         let authorization = Authorization::Bearer(credential.secret);

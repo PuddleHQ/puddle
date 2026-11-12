@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use puddle_secrets::SourceError;
+use puddle_secrets::{SourceError, SourceSpec};
 use puddle_store::IdentityId;
 
 /// Who can see a repository.
@@ -121,8 +121,11 @@ impl Problem {
         }
     }
 
-    pub(crate) fn from_source(err: &SourceError) -> Self {
+    pub(crate) fn from_source(source: &SourceSpec, err: &SourceError) -> Self {
         let message = match err {
+            _ if source.fix_step(err).is_some() => {
+                format!("{err}. {}", source.fix_step(err).unwrap_or_default())
+            }
             SourceError::NotSignedIn => "not signed in, or the sign-in has expired".to_owned(),
             SourceError::Timeout(tool) => format!(
                 "{} did not answer in time; it may be waiting for a sign-in",
@@ -135,7 +138,10 @@ impl Problem {
         } else {
             ProblemKind::SourceUnavailable
         };
-        Self::new(kind, message)
+        let mut problem = Self::new(kind, message);
+        // Puddle starts no sign-in for the Azure CLI; the message carries the step to take.
+        problem.needs_sign_in &= !matches!(source, SourceSpec::AzCli { .. });
+        problem
     }
 
     pub(crate) fn unreachable(why: impl std::fmt::Display) -> Self {

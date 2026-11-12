@@ -48,6 +48,13 @@ pub(crate) fn gcm(host_name: &str, path: &str) -> SourceSpec {
     }
 }
 
+pub(crate) fn az_cli(tenant: &str, org: Option<&str>) -> SourceSpec {
+    SourceSpec::AzCli {
+        tenant: puddle_secrets::TenantId::new(tenant).unwrap(),
+        org: org.map(|o| OrgName::new(o).unwrap()),
+    }
+}
+
 pub(crate) fn stored(id: &str, host_name: &str, org: Option<&str>) -> SourceSpec {
     SourceSpec::Stored {
         id: StoredId::new(id).unwrap(),

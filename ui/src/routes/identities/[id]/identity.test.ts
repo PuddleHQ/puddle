@@ -170,6 +170,42 @@ describe("one identity", () => {
     expect(stored.queryByRole("button", { name: /Sign in/ })).toBeNull();
   });
 
+  it("tells the user the exact step for an Azure CLI credential and offers no sign-in button", async () => {
+    const line =
+      "Azure CLI account in tenant contoso.onmicrosoft.com for contoso";
+    api.identities = [
+      identity(1, {
+        label: "Work",
+        credentials: [
+          credential({
+            host: "dev.azure.com",
+            source: {
+              kind: "az_cli",
+              tenant: "contoso.onmicrosoft.com",
+              org: "contoso",
+            },
+            owners: ["contoso"],
+            rest: false,
+          }),
+        ],
+      }),
+    ];
+    api.unreadable.add(line);
+    render(Page);
+    await screen.findByRole("heading", { level: 1, name: "Work" });
+    const row = within(cred(line));
+    expect(row.getByTestId("az-note")).toHaveTextContent(
+      "Install `az`, then run `az login --tenant contoso.onmicrosoft.com` in a terminal",
+    );
+    await fireEvent.click(row.getByRole("button", { name: /^Test Azure CLI/ }));
+    expect(await row.findByTestId("fix-step")).toHaveTextContent(
+      "Run `az login --tenant contoso.onmicrosoft.com` in a terminal and finish the sign-in.",
+    );
+    expect(row.getByText("Problem")).toBeInTheDocument();
+    expect(row.queryByRole("button", { name: /Sign in/ })).toBeNull();
+    expect(api.calls).not.toContain("POST /api/credentials/sign-in");
+  });
+
   it("shows what the host recorded of a credential's last read before anything is tested here", async () => {
     api.identities = [
       identity(1, {
@@ -181,6 +217,7 @@ describe("one identity", () => {
               readable: true,
               problem: null,
               needs_sign_in: false,
+              fix_step: null,
               checked_at: Date.now() - 4 * 60_000,
               by: "injection",
             },

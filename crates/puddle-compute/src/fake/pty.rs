@@ -12,6 +12,7 @@
 //! | `size` | `<rows> <cols>` of the last pty request or window change |
 //! | `whoami` | the user the client logged in as |
 //! | `term` | the `TERM` the pty was asked for |
+//! | `command` | the command the shell was started with (an exec request), empty for a plain shell request |
 //! | `flood` | output without end, until the connection closes (a program like `yes`) |
 //! | anything else | nothing, then a new prompt |
 //!
@@ -38,6 +39,7 @@ struct Shell {
     term: String,
     cols: u32,
     rows: u32,
+    started_with: String,
     line: Vec<u8>,
     flood: Option<JoinHandle<()>>,
 }
@@ -121,11 +123,16 @@ impl Handler for Shell {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if self.user == "noshell" {
-            return session.channel_failure(channel);
-        }
-        session.channel_success(channel)?;
-        session.data(channel, PROMPT.as_bytes().to_vec())
+        self.start(channel, "", session)
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.start(channel, &String::from_utf8_lossy(data), session)
     }
 
     async fn window_change_request(
@@ -176,6 +183,21 @@ impl Handler for Shell {
 }
 
 impl Shell {
+    /// Starts the shell, as a shell request (`command` empty) or an exec request.
+    fn start(
+        &mut self,
+        channel: ChannelId,
+        command: &str,
+        session: &mut Session,
+    ) -> Result<(), russh::Error> {
+        if self.user == "noshell" {
+            return session.channel_failure(channel);
+        }
+        command.clone_into(&mut self.started_with);
+        session.channel_success(channel)?;
+        session.data(channel, PROMPT.as_bytes().to_vec())
+    }
+
     /// Runs one line; `false` when the shell ended.
     fn run(
         &mut self,
@@ -200,6 +222,7 @@ impl Shell {
             ("size", _) => format!("{} {}\r\n", self.rows, self.cols),
             ("whoami", _) => format!("{}\r\n", self.user),
             ("term", _) => format!("{}\r\n", self.term),
+            ("command", _) => format!("{}\r\n", self.started_with),
             ("flood", _) => {
                 let handle = session.handle();
                 self.flood = Some(tokio::spawn(async move {
@@ -240,6 +263,7 @@ pub async fn serve<S: SshStream>(stream: S) -> Result<(), String> {
         term: String::new(),
         cols: 0,
         rows: 0,
+        started_with: String::new(),
         line: Vec::new(),
         flood: None,
     };

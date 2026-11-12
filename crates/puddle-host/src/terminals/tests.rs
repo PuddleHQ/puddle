@@ -474,3 +474,12 @@ async fn the_hub_counts_the_sessions_open_and_a_finished_one_leaves_the_count() 
 async fn eventually_count(hub: &Hub, wanted: usize) {
     puddle_test_kit::eventually("the hub's open count", STEP, || hub.count() == wanted).await;
 }
+
+#[tokio::test]
+async fn the_shell_is_asked_for_as_the_session_users_login_shell_in_its_home_directory() {
+    let hub = Hub::default();
+    let mut link = session(&hub, "agent").await;
+    bytes_until(&mut link, pty::PROMPT).await;
+    type_line(&link, "command").await;
+    bytes_until(&mut link, &format!("{LOGIN_SHELL}\r\n")).await;
+}

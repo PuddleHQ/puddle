@@ -6,6 +6,7 @@
   import Download from "@lucide/svelte/icons/download";
   import AuditTable from "#lib/components/AuditTable.svelte";
   import {
+    CATEGORIES,
     NO_FILTER,
     OUTCOMES,
     RANGES,
@@ -214,6 +215,14 @@
     <select id="f-outcome" bind:value={filter.outcome} onchange={apply}>
       <option value="">Any outcome</option>
       {#each OUTCOMES as o (o.value)}<option value={o.value}>{o.label}</option
+        >{/each}
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-category">Destination</label>
+    <select id="f-category" bind:value={filter.category} onchange={apply}>
+      <option value="">Any destination</option>
+      {#each CATEGORIES as c (c.value)}<option value={c.value}>{c.label}</option
         >{/each}
     </select>
   </div>

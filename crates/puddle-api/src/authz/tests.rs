@@ -43,8 +43,8 @@ fn every_route_declares_an_action_and_a_resource() {
     let operations = operations();
     assert_eq!(
         operations.len(),
-        114,
-        "113 documented operations and the contract"
+        125,
+        "124 documented operations and the contract"
     );
     let missing: Vec<String> = operations
         .iter()

@@ -164,6 +164,31 @@ describe("refresh", () => {
     expect(inbox.calls.filter((c) => c.includes("settings"))).toHaveLength(2);
   });
 
+  it("blocks a company-network destination the service named, by that toggle alone", async () => {
+    const { inbox, store } = setup();
+    inbox.add(
+      request(1, {
+        host: "100.64.3.7",
+        blocked_by: "company_network",
+        company_signal: "vpn_route",
+      }),
+      "100.64.3.7",
+    );
+    inbox.toggles["demo"] = { private: true, company_network: false };
+    await store.refresh();
+    expect(store.blockedBy(rowOf(store, 1).request)).toBe("company_network");
+    // The service no longer names a blocker once the toggle is on; the signal still says what the
+    // address is, so the browser's range for 100.64/10 ("special", off) doesn't take over.
+    inbox.toggles["demo"] = {
+      private: false,
+      special: false,
+      company_network: true,
+    };
+    inbox.open[0]!.request.blocked_by = null;
+    await store.refresh();
+    expect(store.blockedBy(rowOf(store, 1).request)).toBeNull();
+  });
+
   it("does not block when the settings can't be read", async () => {
     const { inbox, store } = setup();
     inbox.add(request(1, { host: "192.168.1.10" }), "192.168.1.10");

@@ -9,7 +9,10 @@
   import GlobalInterception from "#lib/components/GlobalInterception.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
+  import DevicesPanel from "#lib/components/DevicesPanel.svelte";
+  import { DevicesStore } from "#lib/stores/devices.svelte.ts";
   import ProxySignIn from "#lib/components/ProxySignIn.svelte";
+  import { session } from "#lib/session/session.svelte.ts";
   import Toast from "#lib/components/Toast.svelte";
   import EnvironmentTable from "#lib/components/EnvironmentTable.svelte";
   import { EnvironmentStore } from "#lib/stores/environment.svelte.ts";
@@ -89,12 +92,14 @@
     ["s-vsc", "Browser VS Code"],
     ["s-git", "Git and credentials"],
     ["s-env", "Environment"],
+    ["s-dev", "Devices"],
     ["s-priv", "Privacy"],
     ["s-about", "About"],
   ];
   const CATEGORIES: LocalCategory[] = [
     "loopback",
     "private",
+    "company_network",
     "link_local",
     "metadata",
     "special",
@@ -118,6 +123,7 @@
   let noticesFailed = $state(false);
 
   const env = new EnvironmentStore();
+  const devices = new DevicesStore();
   onMount(() => env.start({ kind: "global" }));
 
   onMount(() => {
@@ -901,7 +907,7 @@
             >Run the system check again</a
           >
         </div>
-        <h3>Local destinations</h3>
+        <h3 id="local-destinations">Local destinations</h3>
         <p class="desc">
           Off by default. Turning one on makes those destinations
           <b>approvable</b>: each one still needs a rule or your approval.
@@ -1121,6 +1127,11 @@
           once, not with the Save button above. {SECRET_NEVER_IN}
         </p>
         <EnvironmentTable store={env} label="Environment of every workspace" />
+      </section>
+
+      <section class="card" id="s-dev" aria-labelledby="h-dev">
+        <h2 id="h-dev">Devices and sign-in</h2>
+        <DevicesPanel {session} store={devices} />
       </section>
 
       <section class="card" id="s-priv" aria-labelledby="h-priv">

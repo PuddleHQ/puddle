@@ -8,12 +8,17 @@
 //! stand-in (an environment reference where the tool expands one, the stand-in itself where it
 //! does not), and the test says, per tool: did the install work, did the feed receive the real
 //! token, did the stand-in reach the feed unswapped, and is the real token anywhere in the guest.
+//! A second test does the same for the Azure Artifacts credential provider, whose
+//! `ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS` (the variant that takes a password; the
+//! plain `..._FEED_ENDPOINTS` takes a service principal's client id and certificate) carries the stand-in inside a JSON value.
+//!
 //! Tools and the `dotnet` SDK are installed in the guest from the live package mirrors, so the
 //! test is named `vm_radar_*`: the per-pull-request jobs skip it.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::print_stderr,
+    clippy::indexing_slicing,
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 
@@ -31,7 +36,7 @@ use puddle_store::{Actor, Effect, NewRule, Pattern, Scope, StartValue};
 use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended, named_id_options};
-use vm_support::{VmHost, guest_within, start_vm_host_platform, web_internet};
+use vm_support::{VmHost, WebInternet, guest_within, start_vm_host_platform, web_internet};
 
 const NPM: &str = "npm.feeds.invalid";
 const NUGET: &str = "nuget.feeds.invalid";
@@ -50,6 +55,15 @@ const MIRRORS: &[&str] = &[
     "ci.dot.net",
     "dotnetcli.azureedge.net",
     "dotnetcli.blob.core.windows.net",
+];
+
+/// Where the credential provider is downloaded from (a pinned release) and the hosts that
+/// download touches, on top of [`MIRRORS`].
+const PROVIDER_URL: &str = "https://github.com/microsoft/artifacts-credprovider/releases/download/v2.0.6/Microsoft.Net8.NuGet.CredentialProvider.tar.gz";
+const PROVIDER_HOSTS: &[&str] = &[
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
 ];
 
 /// Installs the four tools. `dotnet` is not in Debian: the SDK comes from Microsoft's script.
@@ -144,6 +158,51 @@ echo "tool=nuget rc=${{PIPESTATUS[0]}} installed=$(test -d ~/.nuget/packages/{id
     )
 }
 
+/// `dotnet restore` with the Azure Artifacts credential provider and no credential in
+/// `nuget.config`: the provider answers `NuGet`'s `401` from `ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS`,
+/// a JSON document the shell builds around the value of the shell variable `credential_var`. `tag` names the folder and the report line.
+fn provider_script(tag: &str, credential_var: &str) -> String {
+    let id = NUGET_PACKAGE.to_lowercase();
+    format!(
+        r#"rm -rf /tmp/{tag} ~/.nuget/packages/{id} && mkdir -p /tmp/{tag} && cd /tmp/{tag}
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 PATH=/opt/dotnet:$PATH
+WRONG_FEED_TOKEN=$(printf 'not-the-%s' feed-token)
+export NUGET_PLUGIN_PATHS=/root/.nuget/plugins/netcore/CredentialProvider.Microsoft/CredentialProvider.Microsoft.dll
+export ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS='{{"endpointCredentials":[{{"endpoint":"https://{NUGET}/v3/index.json","username":"feeduser","password":"'"${credential_var}"'"}}]}}'
+echo "endpoints-json-is-valid=$(printf %s "$ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS" | python3 -c 'import json,sys; json.load(sys.stdin); print("yes")' 2>&1)"
+cat > nuget.config <<'EOF'
+<configuration>
+  <packageSources><clear /><add key="private" value="https://{NUGET}/v3/index.json" /></packageSources>
+</configuration>
+EOF
+cat > probe.csproj <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+  <ItemGroup><PackageReference Include="{NUGET_PACKAGE}" Version="1.0.0" /></ItemGroup>
+</Project>
+EOF
+timeout 240 dotnet restore --no-cache 2>&1 | tail -12
+echo "tool={tag} rc=${{PIPESTATUS[0]}} installed=$(test -d ~/.nuget/packages/{id}/1.0.0 && echo yes || echo no)"
+"#
+    )
+}
+
+/// Installs `dotnet` and the credential provider, not the other tools.
+const PROVIDER_INSTALL: &str = r#"
+export DEBIAN_FRONTEND=noninteractive
+{ apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 curl ca-certificates libicu-dev; } >/tmp/apt.log 2>&1
+echo "apt=$?"
+curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh >/tmp/dotnet.log 2>&1 \
+  && bash /tmp/dotnet-install.sh --channel 8.0 --install-dir /opt/dotnet >>/tmp/dotnet.log 2>&1
+echo "dotnet_install=$?"
+mkdir -p /root/.nuget && curl -fsSL PROVIDER_URL -o /tmp/provider.tar.gz >/tmp/provider.log 2>&1 \
+  && tar -xzf /tmp/provider.tar.gz -C /root/.nuget >>/tmp/provider.log 2>&1
+echo "provider_install=$?"
+for f in /tmp/apt.log /tmp/dotnet.log /tmp/provider.log; do tail -n 5 $f; done
+ls /root/.nuget/plugins/netcore/CredentialProvider.Microsoft/CredentialProvider.Microsoft.dll
+true
+"#;
+
 fn maven_script() -> String {
     format!(
         r#"rm -rf /tmp/mv /tmp/m2 && mkdir -p /tmp/mv && cd /tmp/mv
@@ -231,9 +290,9 @@ fn reach(web: &puddle_e2e::lab::WebHost, host: &str, from: usize) -> Reach {
     r
 }
 
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_in() {
+/// A fake internet with the four private feeds, a workspace that may reach them and `extra`
+/// sites, one secret per `(variable, feed host)` holding [`REAL`], and the workspace started.
+async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost, WorkspaceId) {
     let net = web_internet(
         &[NPM, NUGET, PIP, MAVEN],
         WebOptions {
@@ -243,10 +302,10 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
         named_id_options(),
     )
     .await;
-    let vm = start_vm_host_platform("feed", net.options, &net.platform, |_| {}).await;
+    let vm = start_vm_host_platform("feed", net.options.clone(), &net.platform, |_| {}).await;
     let name = format!("{}-feed", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();
-    for site in [NPM, NUGET, PIP, MAVEN].iter().chain(MIRRORS) {
+    for site in [NPM, NUGET, PIP, MAVEN].iter().chain(extra) {
         vm.host
             .store()
             .add_rule(&NewRule {
@@ -259,19 +318,14 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
             .unwrap();
     }
     let api = Api::new(vm.host.url(), vm.host.token());
-    for (var, host) in [
-        ("NPM_FEED_TOKEN", NPM),
-        ("NUGET_FEED_TOKEN", NUGET),
-        ("PIP_FEED_TOKEN", PIP),
-        ("MAVEN_FEED_TOKEN", MAVEN),
-    ] {
+    for (var, host) in secrets {
         let reply = api
             .put(
                 &format!("/api/env/{var}"),
                 &json!({"kind": "secret", "value": REAL, "hosts": [host]}).to_string(),
             )
             .await;
-        assert_eq!(reply.status, 200, "{var}: {}", reply.body);
+        assert_eq!(reply.status, 200, "a feed secret was refused");
     }
     let mut events = api.events().await;
     let reply = api
@@ -281,11 +335,26 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
-    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let name_static: &'static str = Box::leak(name.into_boxed_str());
     let end = events
         .until(ended(name_static), Duration::from_secs(600))
         .await;
     assert_eq!(end["step"], "done", "{end}");
+    (net, vm, workspace)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_in() {
+    let (net, vm, workspace) = boot(
+        &[
+            ("NPM_FEED_TOKEN", NPM),
+            ("NUGET_FEED_TOKEN", NUGET),
+            ("PIP_FEED_TOKEN", PIP),
+            ("MAVEN_FEED_TOKEN", MAVEN),
+        ],
+        MIRRORS,
+    )
+    .await;
 
     let installed = run(&vm, &workspace, INSTALL, 25).await;
     assert!(
@@ -373,6 +442,91 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
         failures.push(format!("the real token is in the guest: {search}"));
     }
     assert!(failures.is_empty(), "private feeds: {failures:#?}");
+
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// The Azure Artifacts credential provider reads `ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS`, a
+/// JSON document, and hands the credential in it to `NuGet`. The guest's variable holds the
+/// secret's stand-in inside a JSON string; the test says whether the provider passes it on
+/// byte for byte, so the proxy's swap applies, and that a wrong password in the same JSON fails.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_radar_artifacts_credential_provider_hands_the_stand_in_to_nuget_unchanged() {
+    let sites: Vec<&str> = MIRRORS.iter().chain(PROVIDER_HOSTS).copied().collect();
+    let (net, vm, workspace) = boot(&[("NUGET_FEED_TOKEN", NUGET)], &sites).await;
+
+    let installed = run(
+        &vm,
+        &workspace,
+        &PROVIDER_INSTALL.replace("PROVIDER_URL", PROVIDER_URL),
+        25,
+    )
+    .await;
+    assert!(
+        installed.contains("apt=0")
+            && installed.contains("dotnet_install=0")
+            && installed.contains("provider_install=0"),
+        "the tools could not be installed (live third parties: the Debian mirrors, Microsoft's dotnet-install, GitHub releases): {installed}"
+    );
+
+    let from = net.web.seen().len();
+    let out = run(
+        &vm,
+        &workspace,
+        &provider_script("provider", "NUGET_FEED_TOKEN"),
+        15,
+    )
+    .await;
+    let worked = out.contains("tool=provider rc=0 installed=yes");
+    let valid_json = out.contains("endpoints-json-is-valid=yes");
+    let r = reach(&net.web, NUGET, from);
+
+    let from = net.web.seen().len();
+    let control = run(
+        &vm,
+        &workspace,
+        &provider_script("provider-control", "WRONG_FEED_TOKEN"),
+        5,
+    )
+    .await;
+    let control_reach = reach(&net.web, NUGET, from);
+
+    let stand_in = stand_in_of(&vm.host, &workspace, "NUGET_FEED_TOKEN");
+    eprintln!(
+        "provider: installed={worked} json={valid_json} feed-200={} real-token={} unswapped-stand-in={} refused={}",
+        r.ok, r.real, r.stand_in, r.refused
+    );
+    eprintln!(
+        "control (wrong password): feed-200={} refused={} stand-in held by the guest: {stand_in}",
+        control_reach.ok, control_reach.refused
+    );
+
+    let mut failures = Vec::new();
+    if !valid_json {
+        failures.push("the guest's endpoints variable is not valid JSON".to_owned());
+    }
+    if !worked {
+        failures.push("the restore through the credential provider did not work".to_owned());
+    }
+    if r.real == 0 {
+        failures.push("the feed never received the real token".to_owned());
+    }
+    if r.stand_in > 0 {
+        failures.push(format!(
+            "{} request(s) reached the feed with the stand-in",
+            r.stand_in
+        ));
+    }
+    if control.contains("tool=provider-control rc=0") || control_reach.real > 0 {
+        failures.push(format!(
+            "a wrong password in the same JSON still installed, so a pass proves nothing: {control}"
+        ));
+    }
+    assert!(
+        failures.is_empty(),
+        "azure artifacts credential provider: {failures:#?}"
+    );
 
     let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");

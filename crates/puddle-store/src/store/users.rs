@@ -13,12 +13,17 @@ use crate::account_secrets::AccountSecrets;
 use crate::error::StoreError;
 use crate::users::{Role, User, UserId, UserName};
 
+/// A stored role, or the corruption it is.
+pub(crate) fn role_of(user: i64, role: &str) -> Result<Role, StoreError> {
+    Role::parse(role).ok_or_else(|| corrupt("users", user, "unknown role"))
+}
+
 fn user_of(row: &Row<'_>) -> Result<User, StoreError> {
     let id: i64 = row.get(0)?;
     let role: String = row.get(1)?;
     Ok(User {
         id: UserId::from_stored(id),
-        role: Role::parse(&role).ok_or_else(|| corrupt("users", id, "unknown role"))?,
+        role: role_of(id, &role)?,
         name: row.get(2)?,
         created_at: stored_ts("users", id, row.get(3)?)?,
     })

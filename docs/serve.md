@@ -44,6 +44,9 @@ workspace_base_domain = "ws.example.net"
 listen_interface = "192.168.1.10"
 listen_port = 8443
 allowed_proxies = ["192.168.1.20"]
+
+# Several users (see "Signing in" below). Default false: everything belongs to the one owner.
+multi_user = true
 ```
 
 Puddle reads the file strictly. A syntax error, a key that appears twice, an unknown key, a value of
@@ -51,7 +54,7 @@ the wrong type or an invalid value stops the start with a message that names the
 what to write:
 
 ```text
-puddle: /etc/puddle/serve.toml:3: unknown key `prot`; the keys are port, connection_file, data_dir, log, remote, public_hosts, workspace_base_domain, listen_interface, listen_port, allowed_proxies; fix the spelling or remove the line
+puddle: /etc/puddle/serve.toml:3: unknown key `prot`; the keys are port, connection_file, data_dir, log, remote, public_hosts, workspace_base_domain, listen_interface, listen_port, allowed_proxies, multi_user; fix the spelling or remove the line
 ```
 
 A config file that is missing or cannot be read stops the start too. Puddle never falls back to the
@@ -71,6 +74,7 @@ defaults when the file you named is wrong.
 | `listen_interface` | string | The one interface address of the network listener. |
 | `listen_port` | integer, 0 to 65535 | The port of the network listener. |
 | `allowed_proxies` | array of strings | The proxy addresses that may connect to the network listener. |
+| `multi_user` | `true` or `false` | Whether users other than the owner may sign in. |
 
 A relative path in the file means the folder that holds the file.
 
@@ -89,12 +93,13 @@ A relative path in the file means the folder that holds the file.
 | Network listener interface | `--listen-interface <ip>` | `PUDDLE_LISTEN_INTERFACE` | `listen_interface` | no network listener |
 | Network listener port | `--listen-port <n>` | `PUDDLE_LISTEN_PORT` | `listen_port` | 8443 |
 | Allowed proxies | `--allowed-proxies <ip,...>` | `PUDDLE_ALLOWED_PROXIES` | `allowed_proxies` | none |
+| Several users | `--multi-user` or `--no-multi-user` | `PUDDLE_MULTI_USER` | `multi_user` | off |
 
 Every file key is also a flag, with the same name (`connection_file` is `--connection-file`), the
 same type and the same checks. A relative path in a flag or an environment variable means the
 working directory.
 
-A switch has no value on the command line: `--remote` turns it on and `--no-remote` turns it off, so
+A switch has no value on the command line: `--remote` turns it on and `--no-remote` turns it off (`--multi-user` and `--no-multi-user` likewise), so
 a flag can override a file that says the opposite. In the file it is `remote = true` or
 `remote = false`, and in the environment `PUDDLE_REMOTE=true` or `false`. A list is comma-separated
 in a flag and in the environment (`--public-hosts a.example.org,b.example.org`) and an array of
@@ -131,6 +136,7 @@ workspace_base_domain = subdomains of the first public host (default)
 listen_interface = no network listener (default)
 listen_port = 8443 (default)
 allowed_proxies = none (default)
+multi_user = off (default)
 ```
 
 ## Remote serving
@@ -149,8 +155,8 @@ With remote serving on, Puddle also accepts:
   (`Sec-Fetch-Site: same-origin`), or sends no such header (a program, not a browser);
 - the install token (the secret in the connection file) only for a `127.0.0.1` or `localhost`
   `Host`. A request that came in under a public name is never authorised by the install token, so
-  a stolen browser session cannot widen what is exposed. Signing in from a browser comes with
-  device sign-in; until then a public name serves the app's files and nothing behind `/api`.
+  a stolen browser session cannot widen what is exposed. A browser signs in with a password
+  instead (see "Signing in" below), and its session works under a public name only.
 
 The app's files carry `Cross-Origin-Opener-Policy: same-origin` too, so a page a workspace opened
 cannot navigate the tab that holds Puddle.
@@ -159,6 +165,48 @@ Guests never reach any of this. Remote serving registers the front's port (the p
 host) on every address of this machine, and blocks each public name, the workspace base domain and
 the names below it, whatever the network toggles and rules say. A reverse proxy on another machine is
 reached by name, so the name block is what stops a workspace from dialing it.
+
+### Signing in
+
+Under a public name a browser has to sign in; the desktop window and the command line on the server
+never do (they use the install token on `127.0.0.1`, and there are no accounts or passwords there).
+
+- **The first visitor makes the owner account.** There is no setup code: until the owner exists,
+  whoever reaches the public address first picks the owner's name and password, so open the address
+  yourself right after the first start. While no owner exists the server logs a warning at start. It
+  works once; resetting the owner's password later never opens it again.
+- **Passwords** are at least 12 characters and are stored as Argon2id hashes (19 MiB of memory, 2
+  passes, 1 lane, a random 16-byte salt each; the parameters are part of each stored hash, so raising
+  them later keeps old passwords working). Nothing in the database or in any response holds a
+  password, a hash or a session token that could be used again.
+- **Limits.** Puddle never trusts `X-Forwarded-*`, so it cannot tell clients behind one proxy apart
+  and has no per-address limit. Instead an account locks after 5 wrong passwords in a row, for 30
+  seconds and then twice as long for each further failure (up to 15 minutes); the right password does
+  not lift a lock, and a name nobody has locks the same way. At most 30 password checks run in any
+  minute, whoever asks. Both answer `429` with `Retry-After`. The state is in memory and a restart
+  clears it. The price: someone who knows the owner's name can keep password sign-in locked; browsers
+  already signed in are not affected and `puddle user reset` still works.
+- **Sessions.** Signing in adds the browser to the device list (Settings, Devices and sign-in). It
+  gets a 15-minute access token, which the page keeps in memory and sends as a bearer token, and a
+  refresh token in an `HttpOnly`, `Secure`, `SameSite=Strict`, `__Host-` cookie that only
+  `/api/auth/refresh` and `/api/auth/sign-out` read; those, and the sign-in routes, accept a request
+  only with an `Origin` of the page's own. A device that is not used for 30 days signs out. Signing a
+  device out (or a password change, or a reset) ends its tokens, its event stream and its terminals at
+  once.
+- **Admin settings (owner).** Password sign-in can be switched off in Settings once another way of
+  signing in exists; the last way that is on cannot be switched off. Passkeys, the other way, come
+  after the first release; until then password sign-in cannot be switched off.
+- **Several users.** `multi_user` is off by default and everything belongs to the one owner. With it
+  on, other users can sign in (the admin screen that creates them comes separately).
+- **Reset from the server.** `puddle user reset <name>` (same `--config`, `--data-dir` and environment
+  as the server) takes the user's password away, signs every one of their devices out, and prints a
+  one-time invite link, `https://<public host>/invite#<secret>`, valid for 24 hours. The secret is
+  in the fragment, so the server never logs it. It never prints or sets a password.
+
+One risk stays: a workspace's web app lives on a sibling subdomain and could show a page that looks
+like the sign-in form. A password typed there is the guest's. Passkeys, which a look-alike page
+cannot use, are the answer after the first release; until then sign in only at the address you
+typed or bookmarked, and keep workspaces you do not trust away from the public address.
 
 ### The reverse proxy on the same machine
 

@@ -596,7 +596,7 @@ impl SandboxWindows {
             window.on_window_event(self.on_event(target.workspace.clone()));
         }
         #[cfg(windows)]
-        accelerators::turn_off(&window);
+        crate::accelerators::turn_off(&window);
         Ok(window)
     }
 
@@ -802,42 +802,6 @@ fn debug_arguments(port: u16) -> String {
     format!(
         "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={port} --remote-allow-origins=*"
     )
-}
-
-#[cfg(windows)]
-mod accelerators {
-    //! WebView2's own shortcuts (F7's caret-browsing prompt, print, find) off, so the editor gets
-    //! every key. The setting has no portable counterpart: WebKitGTK has none to turn off.
-
-    use tauri::{Runtime, WebviewWindow};
-    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
-    use windows::core::Interface;
-
-    /// Turns the browser accelerator keys off in `window`'s webview. A failure is logged: the
-    /// window still works, with the browser's shortcuts on.
-    pub(super) fn turn_off<R: Runtime>(window: &WebviewWindow<R>) {
-        let label = window.label().to_owned();
-        let asked = window.with_webview(move |webview| {
-            // SAFETY: `controller()` is the live controller of this window's webview, called on
-            // the thread that owns it (`with_webview` runs this closure there); the calls only read
-            // the settings object it returns and set one boolean on it.
-            #[expect(unsafe_code, reason = "WebView2 COM call with no safe wrapper")]
-            let done = unsafe {
-                webview
-                    .controller()
-                    .CoreWebView2()
-                    .and_then(|core| core.Settings())
-                    .and_then(|settings| settings.cast::<ICoreWebView2Settings3>())
-                    .and_then(|settings| settings.SetAreBrowserAcceleratorKeysEnabled(false))
-            };
-            if let Err(err) = done {
-                tracing::warn!(%err, label, "the browser shortcuts stay on in an editor window");
-            }
-        });
-        if let Err(err) = asked {
-            tracing::warn!(%err, "the browser shortcuts stay on in an editor window");
-        }
-    }
 }
 
 #[cfg(test)]

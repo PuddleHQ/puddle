@@ -616,6 +616,7 @@ fn any_filter() -> impl Strategy<Value = AuditFilter> {
                 origin,
                 host_contains: host.map(str::to_owned),
                 q: q.map(str::to_owned),
+                category: None,
                 from: from.map(|t| T0 + t * 1000),
                 to: to.map(|t| T0 + t * 1000),
             },
@@ -708,6 +709,51 @@ fn filters_combine_and_the_host_is_case_folded() {
         }),
         [2, 3]
     );
+}
+
+#[test]
+fn the_category_filter_matches_company_network_connections_only() {
+    let mut company = connection(T0, "a", "nexus.corp.example", ConnectionDecision::Allow);
+    let mut refused = connection(T0 + 1, "a", "10.8.0.9", ConnectionDecision::Deny);
+    let mut lookalike = connection(
+        T0 + 2,
+        "a",
+        "company_network.example",
+        ConnectionDecision::Allow,
+    );
+    for (record, reason) in [
+        (&mut company, "rule"),
+        (&mut refused, "toggle:company_network"),
+    ] {
+        if let AuditRecord::Connection(c) = record {
+            c.reason = reason.into();
+            c.category = Some("company_network".into());
+        }
+    }
+    if let AuditRecord::Connection(c) = &mut lookalike {
+        c.reason = "toggle:company_network".into();
+    }
+    let records = vec![
+        company,
+        refused,
+        lookalike,
+        connection(T0 + 3, "a", "api.example.com", ConnectionDecision::Allow),
+    ];
+    let (_dir, store) = seeded(&records);
+    let found = |category: Option<&'static str>| {
+        ids(store
+            .audit_query(
+                &AuditFilter {
+                    category,
+                    ..AuditFilter::default()
+                },
+                AuditCursor::After(0),
+                100,
+            )
+            .unwrap())
+    };
+    assert_eq!(found(Some("company_network")), [1, 2]);
+    assert_eq!(found(None), [1, 2, 3, 4]);
 }
 
 #[test]
@@ -1087,6 +1133,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 origin: Some(ConnectionOrigin::Workspace),
                 q: Some("details".into()),
                 host_contains: Some("site7".into()),
+                category: None,
                 from: Some(T0),
                 to: Some(last),
             },

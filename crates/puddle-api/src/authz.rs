@@ -35,10 +35,6 @@ pub(crate) enum Via {
     /// The install token: the desktop window or the CLI on the server itself.
     Install,
     /// A signed-in browser.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "sign-in makes device principals")
-    )]
     Device(DeviceId),
 }
 
@@ -118,6 +114,11 @@ pub(crate) enum Action {
     /// its account's profile, the repositories their identities reach. A source other than the
     /// principal's own pasted token is the owner's alone (see [`crate::stored_ids`]).
     UseCredentials,
+    /// Signing in before there is a token (the page's first visit, a password, an invite, the
+    /// session cookie): no principal yet, and the routes answer only a public address.
+    SignIn,
+    /// The signed-in user's own sessions: their devices and their password.
+    ManageSessions,
     /// The accounts signed in on this computer (the GitHub CLI's, Git's credential helper's):
     /// listing them and signing in. They are the operator's.
     UseComputerAccounts,
@@ -150,6 +151,8 @@ impl Action {
             | Self::ReadRules
             | Self::ChangeRules
             | Self::ReadAudit
+            | Self::SignIn
+            | Self::ManageSessions
             | Self::CreateWorkspace
             | Self::ReadWorkspaceGit
             | Self::ChangeWorkspaceGit
@@ -386,6 +389,15 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
     let (action, target) = match (method.as_str(), path) {
         ("GET", "/api/health" | "/api/openapi.json") => (A::ReadService, T::Service),
         ("GET", "/api/events" | "/api/problems") => (A::ReadService, T::Own),
+        ("GET", "/api/auth/status")
+        | (
+            "POST",
+            "/api/auth/setup" | "/api/auth/sign-in" | "/api/auth/invite" | "/api/auth/refresh"
+            | "/api/auth/sign-out",
+        ) => (A::SignIn, T::Service),
+        ("PUT", "/api/auth/password")
+        | ("GET", "/api/devices")
+        | ("DELETE", "/api/devices/{id}") => (A::ManageSessions, T::Own),
         (
             "GET",
             "/api/network-health"
@@ -398,7 +410,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/interception"
             | "/api/interception/learned-limits"
             | "/api/interception/never-decrypt"
-            | "/api/orphan-volumes",
+            | "/api/orphan-volumes"
+            | "/api/auth/methods",
         ) => (A::ReadInstall, T::Install),
         (
             "PUT",
@@ -409,7 +422,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/app-icons/custom"
             | "/api/interception"
             | "/api/interception/learned-limits"
-            | "/api/interception/never-decrypt",
+            | "/api/interception/never-decrypt"
+            | "/api/auth/methods",
         )
         | ("DELETE", "/api/app-icons/custom" | "/api/proxy-sign-ins/{proxy}")
         | ("POST", "/api/dev-certificate/trust" | "/api/orphan-volumes/{id}/restore") => {
@@ -571,7 +585,7 @@ pub(crate) async fn authorize(
         tracing::error!(method = %request.method(), path, "route has no permission declaration");
         return ApiError::internal(&"route has no permission declaration").into_response();
     };
-    if declared.target == Target::Ticket {
+    if declared.target == Target::Ticket || declared.action == Action::SignIn {
         return next.run(request).await;
     }
     let Some(principal) = request.extensions().get::<Principal>().copied() else {

@@ -21,6 +21,7 @@ export function request(id: number, over: Partial<Req> = {}): Req {
     rule_id: null,
     rule_set: null,
     blocked_by: null,
+    company_signal: null,
     ...over,
   };
 }

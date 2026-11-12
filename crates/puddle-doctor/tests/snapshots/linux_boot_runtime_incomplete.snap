@@ -12,6 +12,7 @@ FAIL  Test boot           msb can't find its firmware library (libkrunfw) beside
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
+ok    Azure CLI (az)      version 2.64.0
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -65,6 +66,11 @@ ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed
       "id": "ssh_agent",
       "status": "ok",
       "summary": "the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)"
+    },
+    {
+      "id": "az_cli",
+      "status": "ok",
+      "summary": "version 2.64.0"
     }
   ],
   "elapsed_ms": 1234

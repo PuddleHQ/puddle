@@ -46,11 +46,11 @@ mod sys;
 mod system;
 
 pub use diagnose::{
-    DEFAULT_DISK_FAIL_BELOW, DEFAULT_DISK_WARN_BELOW, Options, PROBE_EXIT_CODE, Probe,
-    SSH_AGENT_LIMIT, diagnose,
+    AZ_CLI_LIMIT, DEFAULT_DISK_FAIL_BELOW, DEFAULT_DISK_WARN_BELOW, Options, PROBE_EXIT_CODE,
+    Probe, SSH_AGENT_LIMIT, diagnose,
 };
 pub use facts::{
-    AccessDenied, AgentService, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
+    AccessDenied, AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
     CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts,
     HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome, Protection,
     RuntimeFacts, RuntimeState, ServiceState, SshAgentFacts, SwapArea, SwapFacts, WritableFolder,

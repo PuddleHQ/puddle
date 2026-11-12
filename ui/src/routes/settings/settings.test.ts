@@ -132,6 +132,7 @@ describe("the screen", () => {
       "Browser VS Code",
       "Git and credentials",
       "Environment",
+      "Devices and sign-in",
       "Privacy",
       "About",
     ]);
@@ -230,6 +231,32 @@ describe("explicit Save", () => {
     expect(screen.getByText(/You have unsaved changes/)).toBeInTheDocument();
     expect(putBodies()).toHaveLength(0);
     expect(api.ui.sound).toBeNull();
+  });
+
+  it("shows the company network switch right under private networks, off, with its words", async () => {
+    await open();
+    const boxes = screen
+      .getAllByRole("checkbox")
+      .filter((b) => b.id.startsWith("set-local-"))
+      .map((b) => b.id);
+    expect(boxes).toEqual([
+      "set-local-loopback",
+      "set-local-private",
+      "set-local-company_network",
+      "set-local-link_local",
+      "set-local-metadata",
+      "set-local-special",
+    ]);
+    expect(screen.getByLabelText("Company network")).not.toBeChecked();
+    expect(
+      screen.getByText(
+        /VPN, private-access client or DNS suffixes mark as internal/,
+      ),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText("Company network"));
+    await save();
+    expect(api.layer.local_toggles.company_network).toBe(true);
+    expect(api.layer.local_toggles.private).toBeNull();
   });
 
   it("sends every edit as one change", async () => {

@@ -2,8 +2,10 @@
 //! A terminal's session: the host's own SSH connection to the runtime's SSH server over an
 //! in-memory stream, signed in with the login key, with a pseudo-terminal and a login shell.
 //!
-//! Nothing listens on the user's computer for it. The runtime's server does what it does for any
-//! SSH client: the session user, the workspace's environment and shell init, the start folder.
+//! Nothing listens on the user's computer for it. The runtime's server gives the session user a
+//! plain shell in `/` for any SSH client, so the session asks for a command that goes home and
+//! becomes the account's login shell (`LOGIN_SHELL`): that is what brings the workspace's
+//! environment and shell init, and the start folder.
 //! The session is a [`TerminalLink`]: bytes and control in, bytes and the end out. No terminal
 //! byte is logged.
 
@@ -25,6 +27,13 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 /// How long a failed sign-in waits for the server to say why it refused.
+/// What the runtime's SSH server is asked to run: it starts a plain `/bin/sh` in `/` for a shell
+/// request, and only an interactive login shell that starts in the home directory is moved to the
+/// start folder (and reads the workspace's environment and shell init). So go home, then become
+/// the account's own login shell.
+const LOGIN_SHELL: &str =
+    "cd 2>/dev/null; s=$(getent passwd \"$(id -un)\" | cut -d: -f7); exec \"${s:-/bin/sh}\" -l";
+
 const REFUSAL_WAIT: Duration = Duration::from_millis(500);
 
 /// What the host signs in with: the login key of direct SSH, read into memory.
@@ -53,6 +62,14 @@ impl Hub {
         open.retain(|(_, sender)| !sender.is_closed());
         open.push((workspace.clone(), tx));
         rx
+    }
+
+    /// How many sessions are open now, in every workspace.
+    pub(crate) fn count(&self) -> usize {
+        let open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
+        open.iter()
+            .filter(|(_, sender)| !sender.is_closed())
+            .count()
     }
 
     /// Ends every session of `workspace` with `reason`.
@@ -241,7 +258,7 @@ where
     // Not every server takes variables; the shell works without.
     let _ = channel.set_env(false, "COLORTERM", "truecolor").await;
     channel
-        .request_shell(true)
+        .exec(true, LOGIN_SHELL)
         .await
         .map_err(|e| Failure::Broke(e.to_string()))?;
     expect_success(&mut channel, "a shell").await?;

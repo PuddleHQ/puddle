@@ -766,6 +766,7 @@ impl AuditRecord {
                 r.method.clone(),
                 r.path.clone(),
                 Some(r.reason.clone()),
+                r.category.clone(),
             ],
             Self::RequestRuleCreated { rule, .. } | Self::RequestRuleDeleted { rule, .. } => {
                 vec![Some(rule.host.clone()), Some(rule.path.clone())]

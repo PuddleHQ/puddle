@@ -14,10 +14,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use puddle_doctor::{
-    AccessDenied, AgentService, BlockedBy, BlockedFolder, BootFacts, CheckId, CodeIntegrity,
-    CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts, DiskFacts, Finding,
-    GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os, Probe,
-    ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState, SshAgentFacts, Status,
+    AZ_CLI_LIMIT, AccessDenied, AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts,
+    CheckId, CodeIntegrity, CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
+    DiskFacts, Finding, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Options, Os,
+    Probe, ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState, SshAgentFacts, Status,
     SwapArea, SwapFacts, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
@@ -47,6 +47,7 @@ struct Fake {
     data_path: Option<DataPathFacts>,
     enc: DiskEncryptionFacts,
     ssh: SshAgentFacts,
+    az: AzCliFacts,
     launches: Cell<u32>,
     boots: Cell<u32>,
 }
@@ -131,6 +132,9 @@ fn windows() -> Fake {
             endpoint: WIN_PIPE.into(),
             families: vec!["ed25519".into(), "rsa".into()],
         },
+        az: AzCliFacts::Found {
+            version: "2.64.0".into(),
+        },
         launches: Cell::new(0),
         boots: Cell::new(0),
     }
@@ -208,6 +212,10 @@ impl Probe for Fake {
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
         assert_eq!(limit, Duration::from_secs(2), "the agent gets 2 s");
         self.ssh.clone()
+    }
+    fn az_cli(&self, limit: Duration) -> AzCliFacts {
+        assert_eq!(limit, AZ_CLI_LIMIT, "the Azure CLI gets its own limit");
+        self.az.clone()
     }
 }
 
@@ -1183,6 +1191,7 @@ fn json_schema_is_versioned_and_stable() {
             "guest_kernel",
             "disk_encryption",
             "ssh_agent",
+            "az_cli",
             "global_secure_access"
         ]
     );
@@ -1808,4 +1817,20 @@ fn drive_and_swap_both_unencrypted_on_an_unknown_os_gets_generic_advice() {
         fix.starts_with("The drive and the swap are not encrypted"),
         "{fix}"
     );
+}
+
+#[test]
+fn a_missing_azure_cli_is_a_warning_and_the_report_stays_ok() {
+    let fake = Fake {
+        az: AzCliFacts::NotFound,
+        ..windows()
+    };
+    let r = check(
+        "az_cli_missing",
+        &fake,
+        CheckId::AzCli,
+        Some(Finding::AzCliMissing),
+    );
+    assert!(r.ok, "the Azure CLI never fails the report");
+    assert_eq!(r.check(CheckId::AzCli).unwrap().status, Status::Warn);
 }

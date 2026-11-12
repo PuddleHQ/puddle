@@ -23,9 +23,10 @@ use tokio::time::{Instant, sleep_until, timeout_at};
 
 use super::grammar::{self, Command, GitHost, Refused, Repository};
 use super::{GitSsh, GitSshCommand, GitSshContext, GitSshLimits, GitSshUpstream};
-use crate::proxy::{ClientReader, WorkspaceHandler, admit, refuse};
+use crate::proxy::{ClientReader, WorkspaceHandler, admit, apply_reason, refuse};
 use crate::terminate::{
-    InjectContext, InjectDecision, InjectRefusal, Injector, Prefixed, RequestView, Termination,
+    InjectContext, InjectDecision, InjectRefusal, Injector, MAX_UNSWAPPED_STAND_INS, Outcome,
+    Prefixed, RequestView, Termination,
 };
 
 /// The audit code of a command that is none of the grammar's.
@@ -208,17 +209,53 @@ where
         .as_ref()
         .map(|(line, _)| line.clone())
         .or_else(|| summary.first.clone());
+    event.injected = summary.injected;
+    event.binding_id = summary.binding_id.clone();
+    apply_legs(&mut event, &ctx.route.legs());
+    // A refusal Puddle's own server gave is the connection's reason, over a rule's refusal
+    // inside an HTTPS leg.
     if let Some((_, code)) = &summary.refused {
         event.decision = ConnectionDecision::Blocked;
         event.reason = ConnectionReason::Refused(code);
     }
-    event.injected = summary.injected;
-    event.binding_id = summary.binding_id.clone();
-    if let Some(reached) = ctx.route.first_reached() {
-        event.resolved_ip = reached.ip;
-        event.upstream = reached.hop;
-    }
     event
+}
+
+/// Puts what the HTTPS legs of the commands saw on the connection's record, as a decrypted
+/// connection's own end does: the first leg's address, hop and connection outcome, the first
+/// refusal by a rule on method and path, the credentials and stand-ins of every leg. The legs'
+/// request lines stay off the record: it names the SSH command the guest sent.
+fn apply_legs(event: &mut ConnectionEvent, legs: &[Outcome]) {
+    let Some(first) = legs.first() else {
+        return;
+    };
+    event.resolved_ip = first.resolved_ip;
+    event.upstream.clone_from(&first.hop);
+    event.outcome = first.connect;
+    apply_reason(
+        event,
+        legs.iter()
+            .find(|l| l.refused_by_rule.is_some())
+            .unwrap_or(first),
+    );
+    for leg in legs {
+        if leg.injected && !event.injected {
+            event.injected = true;
+            event.binding_id.clone_from(&leg.binding_id);
+        }
+        for (all, more) in [
+            (&mut event.unswapped_stand_ins, &leg.unswapped_stand_ins),
+            (&mut event.scrubbed_stand_ins, &leg.scrubbed_stand_ins),
+            (&mut event.foreign_credentials, &leg.foreign_credentials),
+            (&mut event.answer_credentials, &leg.answer_credentials),
+        ] {
+            for id in more {
+                if all.len() < MAX_UNSWAPPED_STAND_INS && !all.contains(id) {
+                    all.push(id.clone());
+                }
+            }
+        }
+    }
 }
 
 /// Runs the SSH session and closes it when a limit passes.

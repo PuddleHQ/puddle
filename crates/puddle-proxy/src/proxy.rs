@@ -871,7 +871,7 @@ async fn refuse_over_limit(handler: &WorkspaceHandler, mut reader: GuestReader) 
 }
 
 /// The decision and reason a decrypted connection's end puts on its audit record.
-fn apply_reason(event: &mut ConnectionEvent, done: &terminate::Outcome) {
+pub(crate) fn apply_reason(event: &mut ConnectionEvent, done: &terminate::Outcome) {
     if let Some(refused) = &done.refused_by_rule {
         // A rule on method and path refused a request: the first one is the one recorded.
         event.decision = ConnectionDecision::Deny;

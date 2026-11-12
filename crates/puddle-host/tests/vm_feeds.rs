@@ -9,7 +9,8 @@
 //! does not), and the test says, per tool: did the install work, did the feed receive the real
 //! token, did the stand-in reach the feed unswapped, and is the real token anywhere in the guest.
 //! A second test does the same for the Azure Artifacts credential provider, whose
-//! `ARTIFACTS_CREDENTIALPROVIDER_FEED_ENDPOINTS` carries the stand-in inside a JSON value.
+//! `ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS` (the variant that takes a password; the
+//! plain `..._FEED_ENDPOINTS` takes a service principal's client id and certificate) carries the stand-in inside a JSON value.
 //!
 //! Tools and the `dotnet` SDK are installed in the guest from the live package mirrors, so the
 //! test is named `vm_radar_*`: the per-pull-request jobs skip it.
@@ -158,7 +159,7 @@ echo "tool=nuget rc=${{PIPESTATUS[0]}} installed=$(test -d ~/.nuget/packages/{id
 }
 
 /// `dotnet restore` with the Azure Artifacts credential provider and no credential in
-/// `nuget.config`: the provider answers `NuGet`'s `401` from `ARTIFACTS_CREDENTIALPROVIDER_FEED_ENDPOINTS`,
+/// `nuget.config`: the provider answers `NuGet`'s `401` from `ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS`,
 /// a JSON document the shell builds around `password`. `tag` names the folder and the report line.
 fn provider_script(tag: &str, password: &str) -> String {
     let id = NUGET_PACKAGE.to_lowercase();
@@ -166,8 +167,8 @@ fn provider_script(tag: &str, password: &str) -> String {
         r#"rm -rf /tmp/{tag} ~/.nuget/packages/{id} && mkdir -p /tmp/{tag} && cd /tmp/{tag}
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 PATH=/opt/dotnet:$PATH
 export NUGET_PLUGIN_PATHS=/root/.nuget/plugins/netcore/CredentialProvider.Microsoft/CredentialProvider.Microsoft.dll
-export ARTIFACTS_CREDENTIALPROVIDER_FEED_ENDPOINTS='{{"endpointCredentials":[{{"endpoint":"https://{NUGET}/v3/index.json","username":"feeduser","password":"'{password}'"}}]}}'
-echo "endpoints-json-is-valid=$(printf %s "$ARTIFACTS_CREDENTIALPROVIDER_FEED_ENDPOINTS" | python3 -c 'import json,sys; json.load(sys.stdin); print("yes")' 2>&1)"
+export ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS='{{"endpointCredentials":[{{"endpoint":"https://{NUGET}/v3/index.json","username":"feeduser","password":"'{password}'"}}]}}'
+echo "endpoints-json-is-valid=$(printf %s "$ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS" | python3 -c 'import json,sys; json.load(sys.stdin); print("yes")' 2>&1)"
 cat > nuget.config <<'EOF'
 <configuration>
   <packageSources><clear /><add key="private" value="https://{NUGET}/v3/index.json" /></packageSources>
@@ -196,7 +197,7 @@ echo "dotnet_install=$?"
 mkdir -p /root/.nuget && curl -fsSL PROVIDER_URL -o /tmp/provider.tar.gz >/tmp/provider.log 2>&1 \
   && tar -xzf /tmp/provider.tar.gz -C /root/.nuget >>/tmp/provider.log 2>&1
 echo "provider_install=$?"
-tail -5 /tmp/apt.log /tmp/dotnet.log /tmp/provider.log
+for f in /tmp/apt.log /tmp/dotnet.log /tmp/provider.log; do tail -n 5 $f; done
 ls /root/.nuget/plugins/netcore/CredentialProvider.Microsoft/CredentialProvider.Microsoft.dll
 true
 "#;
@@ -445,7 +446,7 @@ async fn vm_radar_private_feeds_install_with_the_real_tools_and_a_secret_stand_i
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
-/// The Azure Artifacts credential provider reads `ARTIFACTS_CREDENTIALPROVIDER_FEED_ENDPOINTS`, a
+/// The Azure Artifacts credential provider reads `ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS`, a
 /// JSON document, and hands the credential in it to `NuGet`. The guest's variable holds the
 /// secret's stand-in inside a JSON string; the test says whether the provider passes it on
 /// byte for byte, so the proxy's swap applies, and that a wrong password in the same JSON fails.

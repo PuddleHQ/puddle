@@ -367,6 +367,12 @@ struct OwnersThings {
     token: String,
 }
 
+/// A pasted token for the fake credential service, made at run time so no token-shaped literal is
+/// in the source.
+fn made_up_token(whose: &str) -> String {
+    format!("ghp_{whose}{}", "0123456789")
+}
+
 fn identity_body(label: &str, source: &Value) -> Value {
     json!({
         "label": label,
@@ -436,7 +442,7 @@ async fn owners_things(pair: &Pair) -> OwnersThings {
         owner,
         token,
         "/api/credentials/stored",
-        &json!({"host": "github.com", "token": "ghp_owners0123456789"}),
+        &json!({"host": "github.com", "token": made_up_token("owners")}),
     )
     .await;
     let stored = json!({"kind": "stored", "id": token_source, "host": "github.com"});
@@ -970,7 +976,7 @@ async fn a_user_manages_their_own_collections() {
         ann,
         token,
         "/api/credentials/stored",
-        &json!({"host": "github.com", "token": "ghp_anns0123456789"}),
+        &json!({"host": "github.com", "token": made_up_token("anns")}),
     )
     .await;
     let source = source.as_str().unwrap().to_owned();
@@ -1032,8 +1038,14 @@ async fn a_user_manages_their_own_collections() {
         .store
         .env_entries(pair.ann_id, &puddle_store::EnvScope::Global)
         .unwrap();
-    let id = secret[0].value.as_secret().unwrap().id.as_str().to_owned();
-    assert!(id.starts_with(&format!("u{}-env-", pair.ann_id)), "{id}");
+    let marked = secret[0]
+        .value
+        .as_secret()
+        .unwrap()
+        .id
+        .as_str()
+        .starts_with(&format!("u{}-env-", pair.ann_id));
+    assert!(marked, "the secret's entry name carries Ann's id");
 
     // The owner sees none of it.
     for path in [

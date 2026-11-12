@@ -742,7 +742,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if interrupted && let Err(e) = service.persist(&service.state()) {
             // Harmless: the entries still say "being created" or "being deleted", so the next
             // start settles them the same way, and every later save writes the list without them.
-            tracing::warn!(error = %e, "the workspace list was not saved after settling unfinished creates and deletes");
+            tracing::warn!(error = %e, "the workspace list was not saved after dropping unfinished creates");
         }
         Ok(service)
     }
@@ -1238,13 +1238,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 // The entry still says "being created", so the next start drops it and removes
                 // what is left of the volume: nothing the user worked on.
                 tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after a failed create");
-            } else if result.is_ok() {
-                // The saved entry still says "being deleted" and its volume is gone, so the next
-                // start finishes the delete the same way.
-                tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after a delete");
             } else if let Err(reason) = &mut result {
-                // The workspace is now missing from the saved list: the next start keeps its
-                // volume and reports it, but doesn't list the workspace.
+                // The saved entry still says "being deleted": the next start finds the volume
+                // there and lists the workspace again. (A finished delete whose save fails ends
+                // quietly: the volume is gone, so the next start finishes it.)
                 *reason = format!("{reason}; {e}; {SAVE_HINT}");
             }
         }
@@ -3674,32 +3671,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// workspace the user has.
     pub(crate) async fn sweep_retired(&self) {
         let retired: Vec<WorkspaceId> = self.state().retired.iter().cloned().collect();
-        if retired.is_empty() {
-            return;
-        }
-        let sandboxes: BTreeSet<String> = match self.inner.runtime.list().await {
-            Ok(list) => list.into_iter().map(|s| s.name).collect(),
-            Err(e) => {
-                tracing::warn!(error = %e, "the sandboxes of deleted workspaces were not looked for");
-                BTreeSet::new()
-            }
-        };
         for id in retired {
-            if self.state().closed {
-                return;
-            }
-            if sandboxes.contains(id.as_str()) {
-                self.remove_left_sandbox(&id).await;
-            }
+            self.remove_left_sandbox(&id).await;
             self.forget_leftovers(&id, id.as_str()).await;
         }
     }
 
-    /// Removes the sandbox a deleted workspace left. A failure is a notice.
+    /// Removes the sandbox a deleted workspace left, if there is one. A failure is a notice.
     async fn remove_left_sandbox(&self, id: &WorkspaceId) {
         let key = problem_key("left-sandbox", id);
         match self.inner.runtime.remove(&id.sandbox_name()).await {
-            Ok(()) => self.inner.problems.clear(&key),
+            Ok(()) | Err(ComputeError::NotFound { .. }) => self.inner.problems.clear(&key),
             Err(e) => self.inner.problems.raise(Problem::new(
                 key,
                 format!("The sandbox of the deleted workspace {id} was not removed"),

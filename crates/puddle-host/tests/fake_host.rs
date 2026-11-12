@@ -4587,6 +4587,37 @@ async fn a_retired_id_whose_cleanup_failed_is_cleaned_at_the_next_start() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_sandbox_of_a_deleted_workspace_that_cannot_be_removed_is_a_problem_and_the_rest_is_still_cleaned()
+ {
+    let rig = Rig::named_ids();
+    acme_with_leftovers(&rig).await;
+    let mut book = read_list(&rig);
+    book["workspaces"] = json!([]);
+    book["retired_ids"] = json!(["acme"]);
+    std::fs::write(list_path(&rig), book.to_string()).unwrap();
+    rig.runtime
+        .remove_volume(&name("acme").volume_name())
+        .await
+        .unwrap();
+    rig.runtime.inject(
+        Op::Remove,
+        Fault::always(disk_error("remove")).only_for("acme"),
+    );
+
+    let host = rig.start().await;
+    let problem = wait_for_problem(&host, "left-sandbox:acme").await;
+    assert!(problem.title.contains("acme"), "{problem:?}");
+    assert!(problem.detail.contains("no space left"), "{problem:?}");
+    // The sandbox stays, and the other leftovers are cleared all the same.
+    eventually("the leftovers of acme gone", APPLY, || {
+        (rig.secrets.ids().is_empty() && !acme_settings_file(&rig).exists()).then_some(())
+    })
+    .await;
+    assert_eq!(rig.runtime.list().await.unwrap().len(), 1);
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_missing_workspace_list_keeps_every_workspace_volume() {
     let rig = Rig::named_ids();
     let host = rig.start().await;

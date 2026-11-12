@@ -9,6 +9,7 @@ use puddle_types::{Decision, Host, RuleId, RuleSetId, SuffixAllows, WorkspaceId}
 use crate::catalogue;
 use crate::pattern::Pattern;
 use crate::rule::{Effect, Rule, Scope};
+use crate::users::UserId;
 
 /// An entry of a built-in set or of System managed: no rule row (R-36, R-41). System managed
 /// entries always allow; a built-in set's entries all share the set's effect.
@@ -26,33 +27,39 @@ pub(crate) struct SetEntry {
 }
 
 /// Which rule sets are switched on where (R-37): an override per workspace, a value for every
-/// workspace, and the set's own default, in that order.
+/// workspace of one user, and the set's own default, in that order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Switches {
-    global: HashMap<RuleSetId, bool>,
+    global: HashMap<(UserId, RuleSetId), bool>,
     workspace: HashMap<(RuleSetId, WorkspaceId), bool>,
 }
 
 impl Switches {
-    /// Records one stored switch.
-    pub(crate) fn insert(&mut self, set: RuleSetId, workspace: Option<WorkspaceId>, enabled: bool) {
+    /// Records one stored switch of `user` (for a workspace's switch, the workspace's user).
+    pub(crate) fn insert(
+        &mut self,
+        user: UserId,
+        set: RuleSetId,
+        workspace: Option<WorkspaceId>,
+        enabled: bool,
+    ) {
         match workspace {
             Some(workspace) => {
                 self.workspace.insert((set, workspace), enabled);
             }
             None => {
-                self.global.insert(set, enabled);
+                self.global.insert((user, set), enabled);
             }
         }
     }
 
-    /// The switch for every workspace, if set.
-    pub(crate) fn global(&self, set: RuleSetId) -> Option<bool> {
-        self.global.get(&set).copied()
+    /// `user`'s switch for every workspace, if set.
+    pub(crate) fn global(&self, user: UserId, set: RuleSetId) -> Option<bool> {
+        self.global.get(&(user, set)).copied()
     }
 
     /// The workspaces that override `set`, sorted by name.
-    pub(crate) fn overrides(&self, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
+    fn overrides(&self, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
         let mut out: Vec<_> = self
             .workspace
             .iter()
@@ -63,11 +70,11 @@ impl Switches {
         out
     }
 
-    /// Whether `set` is on for `workspace`.
-    pub(crate) fn is_on(&self, set: RuleSetId, workspace: &WorkspaceId) -> bool {
+    /// Whether `set` is on for `workspace`, which belongs to `user`.
+    fn is_on(&self, user: UserId, set: RuleSetId, workspace: &WorkspaceId) -> bool {
         self.workspace
             .get(&(set, workspace.clone()))
-            .or_else(|| self.global.get(&set))
+            .or_else(|| self.global.get(&(user, set)))
             .copied()
             .unwrap_or_else(|| default_on(set))
     }
@@ -174,13 +181,16 @@ enum Slot {
     Entry(usize),
 }
 
-/// An immutable snapshot of every rule, set entry and switch, indexed for matching. The store
-/// replaces it whole after each committed change (R-8), so a decision never sees half a change.
+/// An immutable snapshot of every rule, set entry, switch and workspace user, indexed for
+/// matching. The store replaces it whole after each committed change (R-8), so a decision never
+/// sees half a change.
 #[derive(Debug, Default)]
 pub(crate) struct RuleIndex {
     rules: Vec<Rule>,
     entries: Vec<SetEntry>,
     switches: Switches,
+    /// Each workspace's user, where one is recorded; the others are the owner's.
+    owners: HashMap<WorkspaceId, UserId>,
     /// Exact patterns and suffix bases (`.example.com` stored under `example.com`) to slots.
     exact: HashMap<String, Vec<Slot>>,
     suffix: HashMap<String, Vec<Slot>>,
@@ -220,8 +230,14 @@ fn set_key(hit: Hit<'_>) -> SetKey {
 }
 
 impl RuleIndex {
-    /// Indexes rule rows, built-in and System managed entries, and the switches.
-    pub(crate) fn new(rules: Vec<Rule>, entries: Vec<SetEntry>, switches: Switches) -> Self {
+    /// Indexes rule rows, built-in and System managed entries, the switches and who owns which
+    /// workspace.
+    pub(crate) fn new(
+        rules: Vec<Rule>,
+        entries: Vec<SetEntry>,
+        switches: Switches,
+        owners: HashMap<WorkspaceId, UserId>,
+    ) -> Self {
         let mut exact: HashMap<String, Vec<Slot>> = HashMap::new();
         let mut suffix: HashMap<String, Vec<Slot>> = HashMap::new();
         let mut add = |pattern: &Pattern, slot: Slot| match pattern {
@@ -241,9 +257,30 @@ impl RuleIndex {
             rules,
             entries,
             switches,
+            owners,
             exact,
             suffix,
         }
+    }
+
+    /// The user `workspace` belongs to.
+    pub(crate) fn owner_of(&self, workspace: &WorkspaceId) -> UserId {
+        self.owners.get(workspace).copied().unwrap_or(UserId::OWNER)
+    }
+
+    /// Whether `set` is on for `workspace` (R-37), by its user's switches.
+    pub(crate) fn is_on(&self, set: RuleSetId, workspace: &WorkspaceId) -> bool {
+        self.switches
+            .is_on(self.owner_of(workspace), set, workspace)
+    }
+
+    /// `user`'s workspaces that override `set`, sorted by name.
+    pub(crate) fn overrides(&self, user: UserId, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
+        self.switches
+            .overrides(set)
+            .into_iter()
+            .filter(|(workspace, _)| self.owner_of(workspace) == user)
+            .collect()
     }
 
     /// Every rule row, expired ones included until the sweeper removes them.
@@ -264,14 +301,34 @@ impl RuleIndex {
 
     /// What decides `host` requested by `workspace` at `now`, or `None`.
     ///
-    /// The user's own rules: non-expired global rules and non-expired rules of `workspace` (R-5,
-    /// R-7), ranked by R-6. Set entries: those of sets switched on for `workspace` (R-37), and
-    /// System managed entries for every workspace or for `workspace`. Then R-39: when an own rule
+    /// Only the rules of the workspace's user count. Their own rules: non-expired global rules
+    /// and non-expired rules of `workspace` (R-5, R-7), ranked by R-6. Set entries: those of sets
+    /// switched on for `workspace` (R-37; a set the user made only for its own user's
+    /// workspaces), and System managed entries for every workspace or for `workspace`. Then R-39: when an own rule
     /// matches, it decides, unless a set's deny is strictly more specific; when none does, the
     /// most specific set entry decides, deny over allow. With [`SuffixAllows::Ignore`], own
     /// suffix allows and every set allow are treated as no match (R-14, R-42).
     pub(crate) fn decide(
         &self,
+        workspace: &WorkspaceId,
+        host: &Host,
+        now: u64,
+        suffix_allows: SuffixAllows,
+    ) -> Option<Hit<'_>> {
+        self.decide_as(
+            self.owner_of(workspace),
+            workspace,
+            host,
+            now,
+            suffix_allows,
+        )
+    }
+
+    /// [`RuleIndex::decide`] for `workspace` as a workspace of `user`: for one that is not made
+    /// yet, whose user is not recorded.
+    pub(crate) fn decide_as(
+        &self,
+        user: UserId,
         workspace: &WorkspaceId,
         host: &Host,
         now: u64,
@@ -289,7 +346,8 @@ impl RuleIndex {
                     }
                     match &rule.scope {
                         Scope::Set(set) => {
-                            if !self.switches.is_on(RuleSetId::User(*set), workspace)
+                            if rule.user != user
+                                || !self.switches.is_on(user, RuleSetId::User(*set), workspace)
                                 || (ignore && rule.effect == Effect::Allow)
                             {
                                 continue;
@@ -297,7 +355,10 @@ impl RuleIndex {
                             Hit::Rule(rule)
                         }
                         scope => {
-                            let applies = scope.workspace().is_none_or(|s| s == workspace);
+                            let applies = match scope.workspace() {
+                                Some(s) => s == workspace,
+                                None => rule.user == user,
+                            };
                             let dropped = ignore
                                 && rule.effect == Effect::Allow
                                 && matches!(rule.pattern, Pattern::Suffix(_));
@@ -315,7 +376,7 @@ impl RuleIndex {
                     let applies = match (&entry.set, &entry.workspace) {
                         (RuleSetId::System, None) => true,
                         (RuleSetId::System, Some(s)) => s == workspace,
-                        (set, _) => self.switches.is_on(*set, workspace),
+                        (set, _) => self.switches.is_on(user, *set, workspace),
                     };
                     if !applies || (ignore && entry.effect == Effect::Allow) {
                         continue;

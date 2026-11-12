@@ -20,7 +20,9 @@ impl UserId {
         self.0
     }
 
-    pub(crate) fn from_stored(id: i64) -> Self {
+    /// A user id read back from where it was handed out (a session, a stored entry's name).
+    #[must_use]
+    pub fn from_stored(id: i64) -> Self {
         Self(id)
     }
 }

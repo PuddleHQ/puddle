@@ -1473,6 +1473,7 @@ impl AgentReports for KeptReports {
 struct Watched {
     link: std::sync::Mutex<Option<(WorkspaceId, puddle_agent_proto::forward::GuestLink)>>,
     ports: std::sync::Mutex<Vec<(WorkspaceId, Vec<u16>)>>,
+    ended: std::sync::Mutex<Vec<WorkspaceId>>,
 }
 
 impl puddle_agent_proto::host::GuestWatcher for Watched {
@@ -1482,6 +1483,10 @@ impl puddle_agent_proto::host::GuestWatcher for Watched {
 
     fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>) {
         self.ports.lock().unwrap().push((workspace.clone(), ports));
+    }
+
+    fn session_ended(&self, workspace: &WorkspaceId) {
+        self.ended.lock().unwrap().push(workspace.clone());
     }
 }
 
@@ -1567,6 +1572,17 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
     );
     let linked = watched.link.lock().unwrap().take().map(|(name, _)| name);
     assert_eq!(linked, Some(workspace("box")));
+
+    // The session ends with the guest's connection, and the watcher hears of it.
+    drop(control);
+    drop(guest);
+    puddle_test_kit::eventually(
+        "the end of the agent session arrived",
+        Duration::from_secs(5),
+        || !watched.ended.lock().unwrap().is_empty(),
+    )
+    .await;
+    assert_eq!(*watched.ended.lock().unwrap(), [workspace("box")]);
 }
 
 /// Whether anything still accepts on `path`.

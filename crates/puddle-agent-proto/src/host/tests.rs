@@ -43,6 +43,7 @@ impl StreamHandler for Echo {
         if stream.read_to_end(&mut buf).await.is_ok() {
             let _ = stream.write_all(b"agent:").await;
             let _ = stream.write_all(&buf).await;
+            let _ = stream.flush().await;
             let _ = stream.shutdown().await;
         }
     }

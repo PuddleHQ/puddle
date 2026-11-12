@@ -683,6 +683,10 @@ mod filtered_agent {
 
     /// Workspace `box` may reach `nas.test`, and has the agent on for it with every key.
     async fn agent_rig() -> AgentRig {
+        agent_rig_with(&puddle_proxy::ProxyConfig::default()).await
+    }
+
+    async fn agent_rig_with(config: &puddle_proxy::ProxyConfig) -> AgentRig {
         let policy = Arc::new(StaticPolicy::new());
         policy.allow(&host("nas.test"));
         let user = TestKey::ed25519(2);
@@ -702,6 +706,7 @@ mod filtered_agent {
             Proxy::new(policy, Arc::new(NullSink))
                 .with_resolver(Arc::new(StaticResolver::new().with("nas.test", &[LOCAL])))
                 .with_address_check(Arc::new(AnyAddress))
+                .with_config(*config)
                 .with_termination(terminations, puddle_upstream::TlsClient::new([]).unwrap())
                 .with_ssh_agent(Arc::clone(&agents)),
         );
@@ -751,6 +756,45 @@ mod filtered_agent {
                 .unwrap();
             stream
         }
+    }
+
+    /// The proxy closes `stream` without an answer.
+    async fn closed(mut stream: StreamHandle) {
+        let mut rest = Vec::new();
+        let read = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut rest))
+            .await
+            .expect("the proxy closes the stream");
+        assert!(read.is_err() || rest.is_empty(), "{read:?} {rest:?}");
+    }
+
+    #[tokio::test]
+    async fn a_host_without_a_filtered_agent_closes_agent_streams() {
+        let rig = Rig::new(&[]);
+        let mut guest = rig.guest().await;
+        let mut stream = guest.control.open_stream().await.unwrap();
+        stream
+            .write_all(StreamKind::SshAgent.preamble())
+            .await
+            .unwrap();
+        stream.write_all(&framed(&[11])).await.unwrap();
+        closed(stream).await;
+    }
+
+    #[tokio::test]
+    async fn an_agent_stream_over_the_stream_limit_is_closed_and_a_finished_one_frees_its_place() {
+        let mut rig =
+            agent_rig_with(&puddle_proxy::ProxyConfig::default().with_max_streams_per_workspace(1))
+                .await;
+        let mut first = rig.agent_stream().await;
+        assert_eq!(ask(&mut first, &[11]).await, request::identities(&[]));
+        let mut second = rig.agent_stream().await;
+        second.write_all(&framed(&[11])).await.unwrap();
+        closed(second).await;
+        // The guest ends the first; the proxy ends its side too and the place is free again.
+        first.shutdown().await.unwrap();
+        closed(first).await;
+        let mut third = rig.agent_stream().await;
+        assert_eq!(ask(&mut third, &[11]).await, request::identities(&[]));
     }
 
     async fn ask(stream: &mut StreamHandle, message: &[u8]) -> Vec<u8> {

@@ -299,6 +299,40 @@ async fn the_agent_at_an_endpoint_lists_and_signs_through_it() {
     assert_eq!(signature, b"SIGNED BY THE AGENT");
 }
 
+/// An agent whose client panics (a bug there must close one stream, not take the proxy down).
+struct PanickingAgent;
+
+impl HostAgent for PanickingAgent {
+    fn list(&self) -> Result<Vec<Identity>, AgentError> {
+        panic!("the agent client broke");
+    }
+
+    fn sign(&self, _key: &[u8], _data: &[u8], _flags: u32) -> Result<Vec<u8>, AgentError> {
+        panic!("the agent client broke");
+    }
+}
+
+#[tokio::test]
+async fn a_panic_while_answering_closes_only_that_stream() {
+    let mut w = world();
+    w.agents = Arc::new(SshAgents::new(Arc::new(PanickingAgent)));
+    let _tunnel = w.spliced("box", "build.example");
+    let (mut guest, served) = w.stream("box", IDLE_LIMIT);
+    assert_eq!(ask(&mut guest, &w.the_bind()).await, request::success());
+    guest.write_all(&framed(&[11])).await.unwrap();
+    closed(&mut guest, served).await;
+}
+
+#[tokio::test]
+async fn a_guest_gone_before_its_answer_ends_the_stream() {
+    let w = world();
+    let (mut guest, served) = w.stream("box", IDLE_LIMIT);
+    // The request is in the pipe; the guest's end is gone before the answer can be written.
+    guest.write_all(&framed(&[11])).await.unwrap();
+    drop(guest);
+    tokio::time::timeout(WAIT, served).await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn a_bad_length_closes_the_stream() {
     let w = world();

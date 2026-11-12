@@ -144,10 +144,10 @@ impl GitSshContext {
     /// Keeps what an upstream's HTTPS leg did, for the connection's record. A connection runs
     /// at most [`MAX_LEGS`] legs the record reads.
     pub(crate) fn leg_closed(&self, outcome: Outcome) {
-        let mut legs = self.legs.lock().unwrap_or_else(PoisonError::into_inner);
-        if legs.len() < MAX_LEGS {
-            legs.push(outcome);
-        }
+        keep_leg(
+            &mut self.legs.lock().unwrap_or_else(PoisonError::into_inner),
+            outcome,
+        );
     }
 
     /// The outcomes of the HTTPS legs that have closed, in the order they closed.
@@ -161,6 +161,13 @@ impl GitSshContext {
 
 /// How many closed legs a connection's record keeps.
 const MAX_LEGS: usize = 64;
+
+/// Adds `outcome` to `legs` unless [`MAX_LEGS`] are kept already.
+fn keep_leg(legs: &mut Vec<Outcome>, outcome: Outcome) {
+    if legs.len() < MAX_LEGS {
+        legs.push(outcome);
+    }
+}
 
 /// How Puddle reaches a Git host for a terminated SSH session: the seam each way of reaching it
 /// ([`GitSshHttps`] is the default) sits behind.

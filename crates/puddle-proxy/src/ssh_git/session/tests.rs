@@ -142,3 +142,23 @@ fn the_first_leg_gives_the_address_hop_and_connection_outcome_not_a_request_line
     );
     assert!(record.http.is_none(), "the record names the SSH command");
 }
+
+#[test]
+fn a_connection_keeps_at_most_the_cap_of_closed_legs_and_the_first_ones() {
+    let mut legs = Vec::new();
+    for n in 0..super::super::MAX_LEGS + 3 {
+        super::super::keep_leg(
+            &mut legs,
+            Outcome {
+                binding_id: Some(n.to_string()),
+                ..Outcome::default()
+            },
+        );
+    }
+    assert_eq!(legs.len(), super::super::MAX_LEGS);
+    assert_eq!(legs[0].binding_id.as_deref(), Some("0"));
+    assert_eq!(
+        legs[super::super::MAX_LEGS - 1].binding_id,
+        Some((super::super::MAX_LEGS - 1).to_string())
+    );
+}

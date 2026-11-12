@@ -11,6 +11,9 @@
 
 mod support;
 
+#[path = "fake_host/dropped_requests.rs"]
+mod dropped_requests;
+
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

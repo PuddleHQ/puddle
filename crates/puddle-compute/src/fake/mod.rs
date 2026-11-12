@@ -24,7 +24,7 @@
 //! Test controls: [`FakeRuntime::inject`] makes the next matching call(s) fail
 //! ([`Fault`]), [`FakeRuntime::calls`] returns every call in order, [`FakeRuntime::on_exec`]
 //! adds command handlers, [`FakeRuntime::crash`] kills a VM, [`FakeRuntime::add_image`] adds
-//! pullable images.
+//! pullable images, [`FakeRuntime::wait_in_every_call`] makes every call wait once.
 //!
 //! ```
 //! # tokio_test_block_on(async {
@@ -274,6 +274,8 @@ struct State {
     terminals: bool,
     /// [`FakeRuntime::set_live_root_grow`] turned off: a running sandbox grows at its next boot.
     no_live_root_grow: bool,
+    /// [`FakeRuntime::wait_in_every_call`]: each call waits once before it answers.
+    waits: bool,
 }
 
 impl State {
@@ -449,6 +451,20 @@ impl FakeRuntime {
         self.lock().calls.clone()
     }
 
+    /// Makes every call wait once (its future is pending one time) before it answers, the way a
+    /// real runtime's calls wait for msb. A test can then drop the caller at each of its awaits.
+    pub fn wait_in_every_call(&self, on: bool) {
+        self.lock().waits = on;
+    }
+
+    /// The wait [`FakeRuntime::wait_in_every_call`] turns on.
+    async fn turn(&self) {
+        let waits = self.lock().waits;
+        if waits {
+            WaitOnce(false).await;
+        }
+    }
+
     /// Makes every sandbox's `serve_ssh` an SSH server with a pseudo-terminal stand-in (see
     /// [`pty`]) instead of the banner-only fake.
     pub fn serve_terminals(&self) {
@@ -606,8 +622,8 @@ impl FakeRuntime {
 impl Runtime for FakeRuntime {
     type Sandbox = FakeSandbox;
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn probe(&self) -> Result<Capabilities, ComputeError> {
+        self.turn().await;
         self.lock().enter(Op::Probe, None, None)?;
         let c = &self.inner.config;
         Ok(Capabilities {
@@ -617,8 +633,8 @@ impl Runtime for FakeRuntime {
         })
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn pull_image(&self, image: &ImageRef) -> Result<ImageConfig, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::PullImage, Some(image.as_str()), None)?;
         state
@@ -631,8 +647,8 @@ impl Runtime for FakeRuntime {
             })
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn create(&self, spec: SandboxSpec) -> Result<FakeSandbox, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         let name = spec.name.clone();
         state.enter(Op::Create, Some(name.as_str()), None)?;
@@ -720,8 +736,8 @@ impl Runtime for FakeRuntime {
         Ok(self.handle(&name, boot, true))
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn start(&self, name: &SandboxName) -> Result<FakeSandbox, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::Start, Some(name.as_str()), None)?;
         let record = state
@@ -755,8 +771,8 @@ impl Runtime for FakeRuntime {
         Ok(self.handle(name, boot, true))
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn get(&self, name: &SandboxName) -> Result<FakeSandbox, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::Get, Some(name.as_str()), None)?;
         match state.sandboxes.get(name.as_str()) {
@@ -772,8 +788,8 @@ impl Runtime for FakeRuntime {
         }
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn set_memory(&self, name: &SandboxName, memory: MemoryMib) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::SetMemory, Some(name.as_str()), None)?;
         let record =
@@ -787,8 +803,8 @@ impl Runtime for FakeRuntime {
         Ok(())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn set_cpus(&self, name: &SandboxName, cpus: CpuCount) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::SetCpus, Some(name.as_str()), None)?;
         let record =
@@ -802,12 +818,12 @@ impl Runtime for FakeRuntime {
         Ok(())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn grow_root_disk(
         &self,
         name: &SandboxName,
         size: DiskSize,
     ) -> Result<RootDiskGrowth, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::GrowRootDisk, Some(name.as_str()), None)?;
         let live_capable = !state.no_live_root_grow;
@@ -847,8 +863,8 @@ impl Runtime for FakeRuntime {
         })
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn list(&self) -> Result<Vec<SandboxInfo>, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::List, None, None)?;
         let mut out: Vec<SandboxInfo> = state
@@ -871,8 +887,8 @@ impl Runtime for FakeRuntime {
         Ok(out)
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn remove(&self, name: &SandboxName) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::Remove, Some(name.as_str()), None)?;
         match state.sandboxes.get(name.as_str()) {
@@ -891,15 +907,15 @@ impl Runtime for FakeRuntime {
         }
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn stale_dirs(&self) -> Result<Vec<String>, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::StaleDirs, None, None)?;
         Ok(state.stale_dirs.iter().cloned().collect())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn remove_stale_dir(&self, name: &SandboxName) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::RemoveStaleDir, Some(name.as_str()), None)?;
         if state.stale_dirs.remove(name.as_str()) {
@@ -911,8 +927,8 @@ impl Runtime for FakeRuntime {
         }
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn create_volume(&self, spec: VolumeSpec) -> Result<VolumeInfo, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::CreateVolume, Some(spec.name.as_str()), None)?;
         if spec.size.as_mib() == 0 {
@@ -935,8 +951,8 @@ impl Runtime for FakeRuntime {
         Ok(info)
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn volume(&self, name: &VolumeName) -> Result<Option<VolumeInfo>, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::Volume, Some(name.as_str()), None)?;
         Ok(state
@@ -945,8 +961,8 @@ impl Runtime for FakeRuntime {
             .map(|v| state.volume_info(name.as_str(), v)))
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn list_volumes(&self) -> Result<Vec<VolumeInfo>, ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::ListVolumes, None, None)?;
         Ok(state
@@ -956,8 +972,8 @@ impl Runtime for FakeRuntime {
             .collect())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn remove_volume(&self, name: &VolumeName) -> Result<(), ComputeError> {
+        self.turn().await;
         let mut state = self.lock();
         state.enter(Op::RemoveVolume, Some(name.as_str()), None)?;
         if !state.volumes.contains_key(name.as_str()) {
@@ -1050,8 +1066,8 @@ impl Sandbox for FakeSandbox {
         self.forced.load(Ordering::Relaxed)
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn status(&self) -> Result<WorkspaceStatus, ComputeError> {
+        self.runtime.turn().await;
         let mut state = self.runtime.lock();
         state.enter(Op::Status, Some(self.name.as_str()), None)?;
         state
@@ -1063,8 +1079,8 @@ impl Sandbox for FakeSandbox {
             })
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn stop(&self) -> Result<(), ComputeError> {
+        self.runtime.turn().await;
         let mut state = self.runtime.lock();
         state.enter(Op::Stop, Some(self.name.as_str()), None)?;
         let r =
@@ -1088,8 +1104,8 @@ impl Sandbox for FakeSandbox {
         Ok(())
     }
 
-    #[expect(clippy::unused_async_trait_impl, reason = "the fake answers at once")]
     async fn exec(&self, request: ExecRequest) -> Result<ExecOutput, ComputeError> {
+        self.runtime.turn().await;
         let mut state = self.runtime.lock();
         let detail = std::iter::once(request.program.as_str())
             .chain(request.args.iter().map(String::as_str))
@@ -1101,6 +1117,7 @@ impl Sandbox for FakeSandbox {
     }
 
     async fn serve_ssh<S: SshStream>(&self, mut stream: S) -> Result<(), ComputeError> {
+        self.runtime.turn().await;
         {
             let mut state = self.runtime.lock();
             state.enter(Op::ServeSsh, Some(self.name.as_str()), None)?;
@@ -1123,6 +1140,25 @@ impl Sandbox for FakeSandbox {
         let mut sink = [0_u8; 4096];
         while stream.read(&mut sink).await.map_err(io)? > 0 {}
         Ok(())
+    }
+}
+
+/// A future that is pending once, asking to be polled again at once, then ready.
+struct WaitOnce(bool);
+
+impl Future for WaitOnce {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            return std::task::Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        std::task::Poll::Pending
     }
 }
 

@@ -29,7 +29,7 @@ use puddle_e2e::lab::{NameProxy, Seen, WebAnswer, WebHost, WebOptions};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
-use support::{Api, ended, hermetic_options};
+use support::{Api, ended, named_id_options};
 use vm_support::{VmHost, guest, start_vm_host_platform, web_internet};
 
 const TOKEN_HOST: &str = "platform.claude.com";
@@ -165,7 +165,7 @@ async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
             responder: Some(Arc::new(token_endpoint)),
             ..WebOptions::default()
         },
-        hermetic_options(),
+        named_id_options(),
     )
     .await;
     let vm = start_vm_host_platform(tag, internet.options, &internet.platform, |_| {}).await;

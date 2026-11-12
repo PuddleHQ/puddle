@@ -98,18 +98,14 @@ impl Copies {
         FileMount::read_only_dir(self.dir(id), guest_path(GUEST_DIR))
     }
 
-    /// Makes `id`'s folder hold exactly the text saved for `name` (an empty file when there is
+    /// Makes `id`'s folder hold exactly the text saved for `id` (an empty file when there is
     /// none) and nothing else. For a start: a workspace made again under a deleted id gets its
     /// folder from here.
     ///
     /// # Errors
     /// A message for the user when the database cannot be read or the folder cannot be written.
-    pub(crate) fn publish(
-        &self,
-        id: &WorkspaceId,
-        name: &WorkspaceId,
-    ) -> Result<Published, String> {
-        self.write(id, name, true)
+    pub(crate) fn publish(&self, id: &WorkspaceId) -> Result<Published, String> {
+        self.write(id, true)
     }
 
     /// Like [`Copies::publish`], for a save: nothing is written for a workspace that was deleted
@@ -117,20 +113,11 @@ impl Copies {
     ///
     /// # Errors
     /// A message for the user when the database cannot be read or the folder cannot be written.
-    pub(crate) fn refresh(
-        &self,
-        id: &WorkspaceId,
-        name: &WorkspaceId,
-    ) -> Result<Published, String> {
-        self.write(id, name, false)
+    pub(crate) fn refresh(&self, id: &WorkspaceId) -> Result<Published, String> {
+        self.write(id, false)
     }
 
-    fn write(
-        &self,
-        id: &WorkspaceId,
-        name: &WorkspaceId,
-        revive: bool,
-    ) -> Result<Published, String> {
+    fn write(&self, id: &WorkspaceId, revive: bool) -> Result<Published, String> {
         // Held from the read of the text, so a later save is never overwritten by an older one.
         let mut deleted = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         if revive {
@@ -140,22 +127,22 @@ impl Copies {
         }
         let wanted = self
             .store
-            .shell_init(name)
-            .map_err(|e| format!("cannot read {name}'s shell init: {e}"))?
+            .shell_init(id)
+            .map_err(|e| format!("cannot read the saved shell init: {e}"))?
             .map_or_else(String::new, |saved| saved.content.as_str().to_owned());
         publish_in(&self.dir(id), &wanted)
-            .map_err(|e| format!("cannot write {name}'s shell init for the workspace: {e}"))
+            .map_err(|e| format!("cannot write the shell init for the workspace: {e}"))
     }
 
-    /// The text saved for `name`, if any.
+    /// The text saved for `id`, if any.
     ///
     /// # Errors
     /// A message for the user when the database cannot be read.
-    pub(crate) fn saved(&self, name: &WorkspaceId) -> Result<Option<String>, String> {
+    pub(crate) fn saved(&self, id: &WorkspaceId) -> Result<Option<String>, String> {
         self.store
-            .shell_init(name)
+            .shell_init(id)
             .map(|saved| saved.map(|s| s.content.as_str().to_owned()))
-            .map_err(|e| format!("cannot read {name}'s shell init: {e}"))
+            .map_err(|e| format!("cannot read the saved shell init: {e}"))
     }
 
     /// Removes `id`'s folder (the workspace is gone). A folder that is not there is fine.

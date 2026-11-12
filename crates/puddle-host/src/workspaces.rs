@@ -415,6 +415,14 @@ fn room(added: u64, free: u64) -> Room {
     }
 }
 
+/// The title of the problem about the editor's file in `record`'s workspace.
+fn editor_file_title(record: &WorkspaceRecord) -> String {
+    format!(
+        "Puddle could not update the editor's file in {}",
+        record.label()
+    )
+}
+
 fn problem_key(kind: &str, name: &WorkspaceId) -> String {
     format!("{kind}:{name}")
 }
@@ -703,6 +711,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             tracing::warn!(error = %e, "the workspace list was not saved after dropping unfinished creates");
         }
         Ok(service)
+    }
+
+    /// What the user calls workspace `id`, for text they read. Never the id: a real host draws
+    /// random ones. A workspace the list no longer holds reads as its id, the one thing left.
+    fn label(&self, id: &WorkspaceId) -> String {
+        self.state().slots.get(id).map_or_else(
+            || id.to_string(),
+            |slot| slot.record.name.as_str().to_owned(),
+        )
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -1323,7 +1340,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         let image = image.map_err(|e| e.clone())?;
         self.progress(name, WorkspaceStep::Starting, None);
-        if let Err(reason) = self.publish_shell_init(id, name) {
+        if let Err(reason) = self.publish_shell_init(id) {
             return Err(self.abort_attachment(attachment, reason).await);
         }
         let route = match inner.kit.route(name) {
@@ -1489,10 +1506,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     problems,
                     name,
                     Some((
-                        format!("Puddle could not update what {name} decrypts"),
+                        format!(
+                            "Puddle could not update what {name} decrypts",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{reason}. {name} keeps the credentials it had; the next change to its \
-                             identities tries again."
+                             identities tries again.",
+                            name = self.label(name)
                         ),
                     )),
                 );
@@ -1507,7 +1528,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         GitProblem::Credentials.settle(
             &self.inner.problems,
             name,
-            credentials_problem(name, &hosts),
+            credentials_problem(&self.label(name), &hosts),
         );
     }
 
@@ -1519,13 +1540,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         wanted: &Authors,
     ) {
         self.report_credentials(name, git);
-        GitProblem::LeftOut.settle(&self.inner.problems, name, left_out_problem(name, wanted));
+        GitProblem::LeftOut.settle(
+            &self.inner.problems,
+            name,
+            left_out_problem(&self.label(name), wanted),
+        );
     }
 
     /// After a boot: Kubernetes tools in the guest are a problem on the workspace, since its
     /// kernel cannot route their Services. A stop ends it, so a start that finds none has none.
     fn settle_kubernetes(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
-        if let Some(problem) = kubernetes_problem(name, &report.kubernetes_tools()) {
+        if let Some(problem) =
+            kubernetes_problem(name, &self.label(name), &report.kubernetes_tools())
+        {
             self.inner.problems.raise(problem);
         }
     }
@@ -1535,7 +1562,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The file is left as it is, and the run goes on. A file the hook no longer leaves ends its
     /// notice, so a repair is noticed at the next run and a stop ends them all.
     fn settle_merge_notices(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
-        settle_merge_notices(&self.inner.problems, name, &report.left_files());
+        settle_merge_notices(
+            &self.inner.problems,
+            name,
+            &self.label(name),
+            &report.left_files(),
+        );
     }
 
     /// After the hook ran with `wanted` authors: a guest whose git is too old for the author rules
@@ -1549,7 +1581,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         GitProblem::OldGit.settle(
             &self.inner.problems,
             name,
-            old_git_problem(name, report.git_version(), wanted),
+            old_git_problem(&self.label(name), report.git_version(), wanted),
         );
     }
 
@@ -1589,7 +1621,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let git = match inner.injection.git(name) {
             Ok(git) => git,
             Err(reason) => {
-                Self::raise_author_sync(&inner.problems, name, &reason);
+                self.raise_author_sync(name, &reason);
                 return;
             }
         };
@@ -1621,17 +1653,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     state.ssh = listing;
                 }
             }
-            Err(reason) => Self::raise_author_sync(&inner.problems, name, &reason),
+            Err(reason) => self.raise_author_sync(name, &reason),
         }
     }
 
     /// Tells the user the commit authors in `name` could not be updated and why.
-    fn raise_author_sync(problems: &Problems, name: &WorkspaceId, reason: &str) {
+    fn raise_author_sync(&self, name: &WorkspaceId, reason: &str) {
         GitProblem::AuthorSync.settle(
-            problems,
+            &self.inner.problems,
             name,
             Some((
-                format!("Puddle could not update the commit authors in {name}"),
+                format!(
+                    "Puddle could not update the commit authors in {name}",
+                    name = self.label(name)
+                ),
                 format!(
                     "{reason}. The workspace keeps the authors it had; the next change to its \
                      identities tries again."
@@ -1670,7 +1705,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle could not look for {name}'s start folder {folder}"),
+                        format!(
+                            "Puddle could not look for {name}'s start folder {folder}",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{e}. New terminals and the editor may not open it; Puddle looks \
                              again at every start and attach."
@@ -1687,7 +1725,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.problems.raise(
                 Problem::new(
                     key,
-                    format!("{name}'s start folder {folder} does not exist"),
+                    format!(
+                        "{name}'s start folder {folder} does not exist",
+                        name = self.label(name)
+                    ),
                     format!(
                         "New terminals and the editor open the volume root instead. Create the \
                          folder {folder} in the workspace, or change the start folder in the \
@@ -1748,7 +1789,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle could not move {name}'s terminals to the new start folder"),
+                        format!(
+                            "Puddle could not move {name}'s terminals to the new start folder",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{reason}. The setting is saved; new terminals start where they did \
                              until the workspace starts again."
@@ -1794,7 +1838,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             inner.problems.raise(
                 Problem::new(
                     key.clone(),
-                    format!("Puddle could not update the editor's file in {name}"),
+                    editor_file_title(record),
                     format!(
                         "{reason}. The editor opens what it opened before until the next attach \
                          works."
@@ -1854,7 +1898,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Some((path, why)) => inner.problems.raise(
                 Problem::new(
                     key,
-                    format!("Puddle could not update the editor's file in {name}"),
+                    editor_file_title(record),
                     format!(
                         "{path} was left as it is: {why}. The editor opens it as it is, or \
                          the volume root when it lists no folder, until the file is fixed or \
@@ -1995,23 +2039,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     workspace: name.clone(),
                     reason: format!(
                         "the change is saved, but new terminals in {name} keep the old variables \
-                         until it restarts: {reason}"
+                         until it restarts: {reason}",
+                        name = self.label(name)
                     ),
                 });
             }
         }
     }
 
-    /// Writes `name`'s saved shell init to the folder its guest sees, for a start. A folder that
+    /// Writes the saved shell init of `id` to the folder its guest sees, for a start. A folder that
     /// held something else is put right and remembered, so `settle` tells the user.
-    fn publish_shell_init(&self, id: &WorkspaceId, name: &WorkspaceId) -> Result<(), String> {
-        let published = self.inner.kit.shell_init().publish(id, name)?;
+    fn publish_shell_init(&self, id: &WorkspaceId) -> Result<(), String> {
+        let published = self.inner.kit.shell_init().publish(id)?;
         if published == crate::shell_init::Published::Restored {
             self.inner
                 .shell_init_changed_inside
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .insert(name.clone());
+                .insert(id.clone());
         }
         Ok(())
     }
@@ -2027,14 +2072,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map(|(id, _)| id.clone());
         let Some(id) = id else { return };
         let key = problem_key("shell-init-copy", name);
-        match self.inner.kit.shell_init().refresh(&id, name) {
+        match self.inner.kit.shell_init().refresh(&id) {
             Ok(_) => self.inner.problems.clear(&key),
             Err(reason) => {
                 tracing::warn!(workspace = %name, %reason, "the workspace's shell init is not updated");
                 self.inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle could not update {name}'s shell init"),
+                        format!(
+                            "Puddle could not update {name}'s shell init",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{reason}. The workspace keeps the shell init it had; saving it again, \
                              or restarting the workspace, tries again."
@@ -2053,7 +2101,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     fn settle_entrypoint(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
         if let Some(failure) = report.entrypoint_failure() {
             tracing::warn!(workspace = %name, %failure, "the image's entrypoint exited at once");
-            self.inner.problems.raise(entrypoint_problem(name, failure));
+            self.inner
+                .problems
+                .raise(entrypoint_problem(name, &self.label(name), failure));
         }
     }
 
@@ -2063,7 +2113,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     fn settle_no_sudo(&self, name: &WorkspaceId, report: &puddle_boot::BootReport) {
         if report.session_user_has_no_sudo() {
             tracing::warn!(workspace = %name, "the image has no sudo for the session user");
-            self.inner.problems.raise(no_sudo_problem(name));
+            self.inner
+                .problems
+                .raise(no_sudo_problem(name, &self.label(name)));
         } else {
             clear_no_sudo(&self.inner.problems, name);
         }
@@ -2107,7 +2159,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Ok(Some(why)) => inner.problems.raise(
                 Problem::new(
                     key,
-                    format!("{name}'s shell init needs fixing"),
+                    format!("{name}'s shell init needs fixing", name = self.label(name)),
                     format!(
                         "{why}. The workspace started, but tools that read a shell's output may \
                          fail until you change it on the workspace's Shell init tab."
@@ -2120,7 +2172,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle could not check {name}'s shell init"),
+                        format!(
+                            "Puddle could not check {name}'s shell init",
+                            name = self.label(name)
+                        ),
                         format!("{reason}. It will be checked again at the next start."),
                     )
                     .about(name.clone()),
@@ -2193,7 +2248,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.raise(
             Problem::new(
                 key,
-                format!("Puddle could not clear the stale git lock files in {name}"),
+                format!(
+                    "Puddle could not clear the stale git lock files in {name}",
+                    name = self.label(name)
+                ),
                 format!(
                     "{why}. The workspace started, but git may say \"Another git process seems to \
                      be running\" until the .lock files in the repository's .git folder are \
@@ -2240,9 +2298,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         let detail = parts.join(" ");
         let title = if report.damaged.is_empty() {
-            format!("Puddle repaired git files in {name} after the last shutdown")
+            format!(
+                "Puddle repaired git files in {name} after the last shutdown",
+                name = self.label(name)
+            )
         } else {
-            format!("Puddle found damaged git files in {name} that it could not repair")
+            format!(
+                "Puddle found damaged git files in {name} that it could not repair",
+                name = self.label(name)
+            )
         };
         self.inner
             .problems
@@ -2581,7 +2645,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.raise(
             Problem::new(
                 problem_key("ssh", name),
-                format!("Direct SSH does not work in {name}"),
+                format!(
+                    "Direct SSH does not work in {name}",
+                    name = self.label(name)
+                ),
                 format!(
                     "{reason}. The workspace runs, but ssh and VS Code cannot connect to it; \
                      restarting the workspace tries again."
@@ -2603,7 +2670,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.inner.problems.raise(
                     Problem::new(
                         key,
-                        format!("Puddle's ssh config still names {name}"),
+                        format!(
+                            "Puddle's ssh config still names {name}",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{reason}. The entry points at an endpoint that is now closed, so \
                              `ssh {}` finds nothing; the file is written again, without the \
@@ -2751,7 +2821,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         record: WorkspaceRecord,
         imports: Vec<Import>,
     ) -> Result<(), String> {
-        self.inner.reports.begin(&record.id);
+        self.inner.reports.begin(&record.id, &record.name);
         let (imported, mut created_volume) = self.import_all(&record, &imports).await?;
         let mut created_by_boot = false;
         if let Err(reason) = self
@@ -3134,7 +3204,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.progress(name, WorkspaceStep::Starting, None);
         inner.problems.clear(&problem_key("forced-stop", name));
         inner.problems.clear(&problem_key("start-refused", name));
-        inner.reports.begin(name);
+        inner.reports.begin(name, &record.name);
         let exists = inner
             .runtime
             .list()
@@ -3187,7 +3257,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let name = &record.id;
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
-        self.publish_shell_init(&record.id, name)?;
+        self.publish_shell_init(&record.id)?;
         let (plan, _, guest) = self.plan_guest_for(record, config).await?;
         let made_with = inner
             .live
@@ -3261,7 +3331,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.inner.problems.raise(
             Problem::new(
                 problem_key("start-refused", name),
-                format!("{name} was not started"),
+                format!("{name} was not started", name = self.label(name)),
                 format!(
                     "The runtime refused to start it, and nothing was attached: {cause}. {}",
                     cause.way_out()
@@ -3294,7 +3364,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.inner.problems.raise(
                     Problem::new(
                         trim_key,
-                        format!("{name}'s disk was not trimmed when it stopped"),
+                        format!(
+                            "{name}'s disk was not trimmed when it stopped",
+                            name = self.label(name)
+                        ),
                         format!(
                             "{e}. The workspace stopped normally. Its disk file stays larger \
                              than the data in it until a later stop, or Reclaim space, trims it."
@@ -3310,7 +3383,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.problems.raise(
                 Problem::new(
                     problem_key("forced-stop", name),
-                    format!("{name} did not shut down in time and was ended by force"),
+                    format!(
+                        "{name} did not shut down in time and was ended by force",
+                        name = self.label(name)
+                    ),
                     "Files it had not written to its disk yet may be missing. Start it again \
                      and check the repositories with git status.",
                 )
@@ -3326,17 +3402,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// workspace has a new id, so it never inherits a stuck file.
     /// Under the settings routes' lock, so a settings change that read the file before this
     /// removal cannot write it back after.
-    async fn forget_settings_file(&self, name: &WorkspaceId) {
+    async fn forget_settings_file(&self, id: &WorkspaceId, name: &DisplayName) {
         let inner = &self.inner;
-        let key = problem_key("settings", name);
+        let key = problem_key("settings", id);
         let _lock = inner.settings_lock.lock().await;
-        match inner.settings.delete_workspace(name) {
+        match inner.settings.delete_workspace(id) {
             Ok(()) => inner.problems.clear(&key),
             Err(e) => inner.problems.raise(Problem::new(
                 key,
                 format!("{name}'s settings were not deleted"),
                 format!(
-                    "{e}. No later workspace gets the id {name}, so none inherits them; delete \
+                    "{e}. No later workspace gets the id {id}, so none inherits them; delete \
                      the file by hand to tidy up."
                 ),
             )),
@@ -3430,10 +3506,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Deletes what the browser editor kept for a deleted workspace. A failure is a notice: the
     /// data stays under an id no later workspace gets.
-    async fn forget_browser_state(&self, name: &WorkspaceId) {
+    async fn forget_browser_state(&self, id: &WorkspaceId, name: &DisplayName) {
         let inner = &self.inner;
-        let key = problem_key("browser-data", name);
-        let failed = self.clear_browser_state(name).await;
+        let key = problem_key("browser-data", id);
+        let failed = self.clear_browser_state(id).await;
         if failed.is_empty() {
             inner.problems.clear(&key);
         } else {
@@ -3441,7 +3517,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 key,
                 format!("{name}'s browser editor data was not deleted"),
                 format!(
-                    "{}. No later workspace gets the id {name}, so none reaches it; to tidy up, \
+                    "{}. No later workspace gets the id {id}, so none reaches it; to tidy up, \
                      close the editor windows and delete its folders under webview and front in \
                      Puddle's data folder.",
                     failed.join("; ")
@@ -3473,8 +3549,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
-        self.forget_settings_file(&record.id).await;
-        self.forget_browser_state(&record.id).await;
+        self.forget_settings_file(&record.id, &record.name).await;
+        self.forget_browser_state(&record.id, &record.name).await;
         Ok(())
     }
 }

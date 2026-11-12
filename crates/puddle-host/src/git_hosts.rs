@@ -321,15 +321,12 @@ impl GitProblem {
 }
 
 /// The problem for credentials Puddle never uses (see [`never_decrypted`]).
-pub(crate) fn credentials_problem(
-    workspace: &WorkspaceId,
-    hosts: &[String],
-) -> Option<(String, String)> {
+pub(crate) fn credentials_problem(name: &str, hosts: &[String]) -> Option<(String, String)> {
     if hosts.is_empty() {
         return None;
     }
     Some((
-        format!("{workspace} has credentials Puddle never uses"),
+        format!("{name} has credentials Puddle never uses"),
         format!(
             "Puddle adds credentials only to HTTPS on port 443 and only by host name, so git is \
              not given the one for {} and asks for its own. Remove the credential, or replace it \
@@ -340,15 +337,12 @@ pub(crate) fn credentials_problem(
 }
 
 /// The problem for authors or rules left out of `authors`.
-pub(crate) fn left_out_problem(
-    workspace: &WorkspaceId,
-    authors: &Authors,
-) -> Option<(String, String)> {
+pub(crate) fn left_out_problem(name: &str, authors: &Authors) -> Option<(String, String)> {
     if authors.left_out.is_empty() {
         return None;
     }
     Some((
-        format!("Some of {workspace}'s commit authors are not applied"),
+        format!("Some of {name}'s commit authors are not applied"),
         format!(
             "{}. A remote with no rule of its own gets the first identity's author.",
             authors.left_out.join("; ")
@@ -359,7 +353,7 @@ pub(crate) fn left_out_problem(
 /// The problem for a guest whose git (`version`, from the boot hook) ignores the author rules in
 /// `authors`: none when there are no rules to ignore, no git, or one that reads them.
 pub(crate) fn old_git_problem(
-    workspace: &WorkspaceId,
+    name: &str,
     version: Option<(u32, u32)>,
     authors: &Authors,
 ) -> Option<(String, String)> {
@@ -369,10 +363,10 @@ pub(crate) fn old_git_problem(
     }
     let (need_major, need_minor) = AUTHOR_RULES_NEED_GIT;
     Some((
-        format!("git {major}.{minor} in {workspace} ignores the commit author rules"),
+        format!("git {major}.{minor} in {name} ignores the commit author rules"),
         format!(
             "Puddle picks the commit author by the repository's remote, which needs git \
-             {need_major}.{need_minor} or newer. Every commit in {workspace} uses the first \
+             {need_major}.{need_minor} or newer. Every commit in {name} uses the first \
              identity's author until git there is updated; the next start checks again."
         ),
     ))

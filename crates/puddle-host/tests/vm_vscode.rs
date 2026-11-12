@@ -84,7 +84,7 @@ mod story {
     };
     use serde_json::json;
 
-    use crate::support::{Api, ended, hermetic_options};
+    use crate::support::{Api, ended, named_id_options};
     use crate::vm_support::{VmHost, guest, start_vm_host_config};
 
     /// Not a credential: the token the test extension answers with, so a `gho_` in a guest is this
@@ -301,7 +301,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         let out = out_dir(scratch.path());
         let seen = scratch.path().join("code-args");
         let bin = stub_code(scratch.path(), &seen);
-        let mut options: HostOptions = hermetic_options();
+        let mut options: HostOptions = named_id_options();
         options.launcher = Arc::new(VsCodeLauncher::with_program(&bin));
         let exe = std::env::current_exe().unwrap();
         let user_config = scratch.path().join("home/.ssh/config");

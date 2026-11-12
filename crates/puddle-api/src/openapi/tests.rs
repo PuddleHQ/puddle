@@ -161,3 +161,81 @@ fn committed_spec_is_current() {
         "crates/puddle-api/openapi/openapi.json is stale: run `cargo xtask openapi`"
     );
 }
+
+/// Every schema a response can carry, following references.
+fn response_schemas(s: &Value) -> BTreeSet<String> {
+    fn refs(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::String(r)) = map.get("$ref") {
+                    out.push(r.rsplit('/').next().unwrap_or_default().to_owned());
+                }
+                map.values().for_each(|v| refs(v, out));
+            }
+            Value::Array(items) => items.iter().for_each(|v| refs(v, out)),
+            _ => {}
+        }
+    }
+    let mut todo = Vec::new();
+    for item in s["paths"].as_object().unwrap().values() {
+        for op in item.as_object().unwrap().values() {
+            refs(&op["responses"], &mut todo);
+        }
+    }
+    let mut seen = BTreeSet::new();
+    while let Some(name) = todo.pop() {
+        if seen.insert(name.clone()) {
+            refs(&s["components"]["schemas"][&name], &mut todo);
+        }
+    }
+    seen
+}
+
+/// No answer of the API can carry a sign-in secret or a token: not a password or its hash, an
+/// invite's secret or digest, a session or a device's key. Whoever reads a response (the user
+/// list and the admin screen included) never gets one, by construction.
+#[test]
+fn no_response_can_carry_a_credential() {
+    const SECRET_NAMES: &[&str] = &[
+        "password",
+        "password_hash",
+        "hash",
+        "digest",
+        "invite_secret",
+        "invite_digest",
+        "session",
+        "session_token",
+        "access_token",
+        "refresh_token",
+        "token",
+        "device_key",
+        "public_key",
+        "private_key",
+        "secret",
+    ];
+    fn names(value: &Value, out: &mut BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::Object(props)) = map.get("properties") {
+                    out.extend(props.keys().cloned());
+                }
+                map.values().for_each(|v| names(v, out));
+            }
+            Value::Array(items) => items.iter().for_each(|v| names(v, out)),
+            _ => {}
+        }
+    }
+    let s = spec();
+    let reachable = response_schemas(&s);
+    assert!(reachable.contains("Workspace") && reachable.contains("ApiErrorBody"));
+    for name in &reachable {
+        let mut props = BTreeSet::new();
+        names(&s["components"]["schemas"][name], &mut props);
+        for prop in props {
+            assert!(
+                !SECRET_NAMES.contains(&prop.to_ascii_lowercase().as_str()),
+                "response schema {name} has a field {prop}"
+            );
+        }
+    }
+}

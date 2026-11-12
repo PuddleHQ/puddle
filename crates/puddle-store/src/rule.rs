@@ -4,6 +4,7 @@
 use puddle_types::{RuleId, WorkspaceId};
 
 use crate::pattern::Pattern;
+use crate::users::UserId;
 
 /// Which requests a rule applies to (R-5, R-38).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -126,6 +127,9 @@ impl Actor {
 pub struct Rule {
     /// Row id, never reused.
     pub id: RuleId,
+    /// Whose it is: the workspace's user for a workspace rule, the set's for a set's entry, and
+    /// the user who made it for a global rule. It decides only that user's workspaces.
+    pub user: UserId,
     /// Global or one workspace.
     pub scope: Scope,
     /// Exact host or suffix.

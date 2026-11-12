@@ -32,7 +32,12 @@ fn add_secret(store: &Store, vault: &MemoryStore, scope: &EnvScope, n: &str, hos
     vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
     let hosts = hosts.iter().map(|h| SecretHost::new(h).unwrap()).collect();
     store
-        .set_env(scope, &name(n), EnvDraft::secret(id, hosts).unwrap())
+        .set_env(
+            puddle_store::UserId::OWNER,
+            scope,
+            &name(n),
+            EnvDraft::secret(id, hosts).unwrap(),
+        )
         .unwrap();
 }
 
@@ -43,6 +48,7 @@ fn the_guest_gets_plain_values_and_stand_ins_and_the_proxy_gets_the_real_values(
     let shop = EnvScope::Workspace(ws("shop"));
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Global,
             &name("EDITOR"),
             EnvDraft::plain("vim").unwrap(),
@@ -96,7 +102,9 @@ fn each_secret_reaches_the_proxy_with_the_place_it_is_swapped_in() {
         vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
         let hosts = vec![SecretHost::new("api.example.com").unwrap()];
         let draft = EnvDraft::secret_in(id, hosts, place.clone()).unwrap();
-        store.set_env(&shop, &name(n), draft).unwrap();
+        store
+            .set_env(puddle_store::UserId::OWNER, &shop, &name(n), draft)
+            .unwrap();
     }
     let resolved = resolve(&store, &vault, &ws("shop")).unwrap();
     let got: Vec<(String, Placement)> = resolved
@@ -144,7 +152,12 @@ fn a_workspace_with_no_secret_never_asks_the_credential_store() {
     let vault = MemoryStore::new();
     vault.break_it();
     store
-        .set_env(&EnvScope::Global, &name("A"), EnvDraft::plain("1").unwrap())
+        .set_env(
+            puddle_store::UserId::OWNER,
+            &EnvScope::Global,
+            &name("A"),
+            EnvDraft::plain("1").unwrap(),
+        )
         .unwrap();
     let resolved = resolve(&store, &vault, &ws("a")).unwrap();
     assert_eq!(resolved.guest.get("A"), Some("1"));
@@ -160,6 +173,7 @@ fn a_secret_that_the_proxy_would_not_swap_stops_the_start_instead_of_starting_de
     vault.set(&id, &Secret::new("a\nb".to_owned())).unwrap();
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Global,
             &name("BAD"),
             EnvDraft::secret(id, vec![SecretHost::new("api.example.com").unwrap()]).unwrap(),

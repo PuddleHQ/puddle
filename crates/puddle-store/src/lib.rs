@@ -6,6 +6,7 @@
 //! The proxy asks for decisions through [`puddle_types::Policy`], which [`Store`] implements.
 #![forbid(unsafe_code)]
 
+mod account_secrets;
 mod audit;
 mod backup;
 mod catalogue;
@@ -24,8 +25,10 @@ mod store;
 mod sweeper;
 #[cfg(test)]
 mod test_support;
+mod users;
 mod workspace_git;
 
+pub use account_secrets::{AccountSecrets, MIN_INVITE_DIGEST_BYTES};
 pub use audit::{
     AuditError, AuditOutcome, AuditRecord, ConnectionRecord, MAX_FIELD_BYTES, MAX_LINE_BYTES,
     PendingExpiryReason, PendingWire, RequestRuleWire, RuleDeleteReason, RuleSetWire, RuleWire,
@@ -58,9 +61,10 @@ pub use store::{
     AuditCursor, AuditFilter, DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings,
     LearnedLimits, LearnedRow, Limits, MAX_REQUEST_RULES, NewRequestRule, NewWorkspaceOp,
     PinnedPort, RequestRule, RuleSetEntryInfo, RuleSetInfo, Store, SweepReport, SystemHost,
-    SystemPlan, WorkspaceDeletion, WorkspaceInterception, parse_rule_set,
+    SystemPlan, WorkspaceDeletion, WorkspaceInterception, WorkspaceOwners, parse_rule_set,
 };
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
+pub use users::{DeviceId, MAX_USER_NAME_CHARS, Role, User, UserId, UserName};
 pub use workspace_git::{
     GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
     SwitchSource, WorkspaceGit,

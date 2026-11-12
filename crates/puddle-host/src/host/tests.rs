@@ -70,18 +70,21 @@ async fn a_repository_list_renewed_behind_the_callers_back_is_announced_as_an_ev
     let clock = Arc::new(ManualClock::new(1_700_000_000_000));
     let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
     let identity = store
-        .create_identity(IdentityDraft {
-            label: "Me".to_owned(),
-            author: puddle_store::Author::new("Me", "me@example.org").unwrap(),
-            credentials: vec![
-                CredentialBinding::new(
-                    &host,
-                    source,
-                    Coverage::new(BTreeSet::new(), true).unwrap(),
-                )
-                .unwrap(),
-            ],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            IdentityDraft {
+                label: "Me".to_owned(),
+                author: puddle_store::Author::new("Me", "me@example.org").unwrap(),
+                credentials: vec![
+                    CredentialBinding::new(
+                        &host,
+                        source,
+                        Coverage::new(BTreeSet::new(), true).unwrap(),
+                    )
+                    .unwrap(),
+                ],
+            },
+        )
         .unwrap();
     // The token source answers the same for as long as it is asked.
     OneToken.invalidate(&SourceSpec::Gh {

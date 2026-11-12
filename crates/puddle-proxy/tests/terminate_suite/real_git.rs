@@ -238,7 +238,13 @@ async fn a_repository_no_identity_covers_works_with_the_token_git_has_and_fails_
         return;
     }
     let git = Git::new().await;
-    for identity in git.t.world.store.identities().unwrap() {
+    for identity in git
+        .t
+        .world
+        .store
+        .identities(puddle_store::UserId::OWNER)
+        .unwrap()
+    {
         git.t
             .world
             .store

@@ -365,7 +365,12 @@ async fn a_401_to_the_credential_puddle_added_is_ours_forgets_the_token_and_asks
 async fn a_request_no_identity_covers_goes_out_as_sent_and_its_401_is_the_servers_own() {
     let t = GitRig::new().await;
     // Detach both identities: nothing covers anything.
-    for identity in t.world.store.identities().unwrap() {
+    for identity in t
+        .world
+        .store
+        .identities(puddle_store::UserId::OWNER)
+        .unwrap()
+    {
         t.world
             .store
             .detach_identity(&t.world.workspace, identity.id)
@@ -446,7 +451,7 @@ async fn a_401_to_the_workspaces_own_header_is_the_servers_answer_as_without_pud
 
 /// The Work identity's source cannot be read because nobody is signed in.
 fn sign_out(world: &puddle_inject::testing::World) {
-    let identities = world.store.identities().unwrap();
+    let identities = world.store.identities(puddle_store::UserId::OWNER).unwrap();
     let source = &identities
         .first()
         .unwrap()

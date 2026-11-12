@@ -154,12 +154,14 @@ pub enum Event {
         #[cfg_attr(feature = "openapi", schema(required = true))]
         rule_id: Option<i64>,
     },
-    /// Rules were created, changed, deleted or expired. Global: every subscriber gets it.
+    /// Rules were created, changed, deleted or expired. Global: every subscriber gets it (it
+    /// carries nothing, so each refetches what it may see).
     RulesChanged {},
     /// A rule on method and path was created or deleted. Global: refetch `GET /api/request-rules`.
     RequestRulesChanged {},
     /// The list of identities, their order, the default or an identity's author or credentials
-    /// changed. Carries no data: refetch `GET /api/identities`.
+    /// changed, or the Git defaults. Carries no data: refetch `GET /api/identities` (every
+    /// subscriber gets it, and each refetches its own).
     IdentitiesChanged {},
     /// A repository list Puddle renews in the background changed: a repository came or went, or
     /// the list could not be read, or a Git host started or stopped limiting requests. Carries no
@@ -171,8 +173,9 @@ pub enum Event {
         /// The workspace.
         workspace: WorkspaceId,
     },
-    /// The global environment (variables and secrets every workspace gets) changed. Carries no
-    /// data: refetch `GET /api/env`, and a workspace's page refetches its own list too.
+    /// A global environment (the variables and secrets every workspace of one user gets) changed.
+    /// Carries no data: refetch `GET /api/env`, and a workspace's page refetches its own list too
+    /// (every subscriber gets it, and each refetches its own).
     GlobalEnvChanged {},
     /// A workspace's own environment changed. Refetch `GET /api/workspaces/{id}/env`. Never carries
     /// a value.
@@ -258,7 +261,7 @@ pub enum Event {
     },
     /// A workspace asked for a credential and the source of it cannot supply one (not signed in,
     /// or the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in
-    /// window. Global: every subscriber gets it. Names only, never a value.
+    /// window. Global: it goes to the owner's streams. Names only, never a value.
     CredentialSignInNeeded {
         /// The Git host the workspace was talking to.
         host: String,
@@ -328,14 +331,19 @@ pub enum Event {
         kind: UnknownTokenKind,
     },
     /// New audit records were committed. `id` is the newest record's id, so a client that holds
-    /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit,
-    /// not per record. Global: every subscriber gets it.
+    /// everything up to `after` reads on with `GET /api/audit?after=`. One event per commit and
+    /// user, not per record: it goes to the streams of the user the records belong to.
     AuditAppended {
-        /// The newest audit record's id.
+        /// The newest audit record's id of that user.
         id: i64,
+        /// The user the records belong to, as the store numbers users. Not sent: the stream is
+        /// already that user's.
+        #[serde(skip)]
+        user: i64,
     },
     /// The network or the system's proxy settings changed (after a quiet period), so what
-    /// `GET /api/network-health` showed may be out of date. Global: every subscriber gets it.
+    /// `GET /api/network-health` showed may be out of date. Global: it goes to the owner's
+    /// streams.
     NetworkChanged {
         /// The network epoch that began; it only grows while Puddle runs.
         epoch: u64,
@@ -343,7 +351,8 @@ pub enum Event {
     /// Signing in to the company proxy failed (it turned the credentials or the token down, or
     /// asked again and again), so what `GET /api/network-health` lists under sign-in has changed.
     /// Sent once when a proxy goes from signed in (or never tried) to failing, not on every retry.
-    /// Names the proxy and the scheme only, never a credential. Global: every subscriber gets it.
+    /// Names the proxy and the scheme only, never a credential. Global: it goes to the owner's
+    /// streams.
     ProxySignInFailed {
         /// The proxy as `host:port`.
         proxy: String,
@@ -353,13 +362,13 @@ pub enum Event {
         scheme: Option<String>,
     },
     /// The list of background problems changed (something Puddle does on its own failed, or the
-    /// cause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber
-    /// gets it.
+    /// cause went away). Carries no data: refetch `GET /api/problems`. Global: every
+    /// subscriber gets it (each refetches what it may see).
     ProblemsChanged {},
     /// The free space on the drive that holds Puddle's data moved across the warning or the
     /// failure line, or back above both (`level` is then `ok`). Sent when the level changes, not
     /// on every read; the first read after Puddle starts counts as a change when it is not `ok`.
-    /// Global: every subscriber gets it.
+    /// Global: it goes to the owner's streams.
     DiskSpaceChanged {
         /// Where the free space stands now.
         level: DiskSpaceLevel,

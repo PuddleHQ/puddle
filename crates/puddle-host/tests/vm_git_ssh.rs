@@ -105,11 +105,14 @@ async fn workspace(fake: &GitHost, tag: &str) -> (NameProxy, VmHost, WorkspaceId
     .unwrap();
     vm.host
         .store()
-        .create_identity(IdentityDraft {
-            label: "Work".to_owned(),
-            author: Author::new("Work", "work@example.org").unwrap(),
-            credentials: vec![binding],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            IdentityDraft {
+                label: "Work".to_owned(),
+                author: Author::new("Work", "work@example.org").unwrap(),
+                credentials: vec![binding],
+            },
+        )
         .unwrap();
     let api = Api::new(vm.host.url(), vm.host.token());
     let mut events = api.events().await;

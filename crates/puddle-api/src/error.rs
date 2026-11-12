@@ -29,6 +29,9 @@ pub enum ErrorCode {
     ForbiddenOrigin,
     /// The bearer token is missing or wrong (401).
     Unauthorized,
+    /// The account may not do this: the install's own settings, or an action that needs the
+    /// install token (403).
+    Forbidden,
     /// The request is malformed: bad JSON, a bad path or query value (400).
     BadRequest,
     /// The body isn't `application/json` (415).
@@ -173,7 +176,10 @@ impl From<StoreError> for ApiError {
             | StoreError::UnknownRuleSet(_)
             | StoreError::UnknownIdentity(_)
             | StoreError::UnknownRepo(_)
-            | StoreError::UnknownEnv { .. } => Self::not_found(err.to_string()),
+            | StoreError::UnknownEnv { .. }
+            // Worded as the workspace service words an unknown id, so another user's workspace
+            // answers exactly as one that does not exist.
+            | StoreError::UnknownWorkspace(_) => Self::not_found(err.to_string()),
             StoreError::IdentityCollision(_) => Self::new(
                 StatusCode::CONFLICT,
                 ErrorCode::IdentityCollision,

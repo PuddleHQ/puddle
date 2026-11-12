@@ -73,6 +73,8 @@ impl UiAssets for EmbeddedUi {
 pub(crate) struct UiService {
     assets: Arc<dyn UiAssets>,
     csp: HeaderValue,
+    /// Whether to send `Cross-Origin-Opener-Policy: same-origin` (remote serving).
+    opener_policy: bool,
 }
 
 const INDEX: &str = "index.html";
@@ -84,7 +86,19 @@ impl UiService {
             .map(|index| inline_script_hashes(&String::from_utf8_lossy(&index.body)))
             .unwrap_or_default();
         let csp = content_security_policy(&scripts);
-        Self { assets, csp }
+        Self {
+            assets,
+            csp,
+            opener_policy: false,
+        }
+    }
+
+    /// Adds `Cross-Origin-Opener-Policy: same-origin` to every file, so a page a guest opened
+    /// with a link to the UI cannot navigate the UI's tab away. Sent only with remote serving,
+    /// where a browser other than the desktop app's loads the UI.
+    pub(crate) fn with_opener_policy(mut self, on: bool) -> Self {
+        self.opener_policy = on;
+        self
     }
 
     /// Answers a request that is not for `/api`.
@@ -142,6 +156,12 @@ impl UiService {
             header::REFERRER_POLICY,
             HeaderValue::from_static("no-referrer"),
         );
+        if self.opener_policy {
+            headers.insert(
+                HeaderName::from_static("cross-origin-opener-policy"),
+                HeaderValue::from_static("same-origin"),
+            );
+        }
         response
     }
 }

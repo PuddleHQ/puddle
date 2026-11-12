@@ -196,3 +196,130 @@ fn refusals_map_to_statuses_and_codes() {
         assert_eq!(err.code(), code);
     }
 }
+
+fn remote_guard(listener: Listener) -> (Guard, ApiToken) {
+    let remote = RemoteServing::new(
+        vec![crate::remote::PublicHost::parse("puddle.example.org").unwrap()],
+        None,
+    )
+    .unwrap();
+    let (guard, token) = guard();
+    (guard.remote(&remote, listener), token)
+}
+
+#[test]
+fn remote_serving_off_knows_no_public_name() {
+    let (g, token) = guard();
+    let auth = format!("Bearer {}", token.expose());
+    let uri = Uri::from_static("/api/health");
+    let h = headers(&[("host", "puddle.example.org"), ("authorization", &auth)]);
+    assert_eq!(g.check(&uri, &h), Err(Refusal::Host));
+    let fetch = headers(&[
+        ("host", "127.0.0.1:4321"),
+        ("origin", "tauri://localhost"),
+        ("sec-fetch-site", "cross-site"),
+        ("authorization", &auth),
+    ]);
+    assert_eq!(
+        g.check(&uri, &fetch),
+        Ok(()),
+        "fetch metadata is not read when remote is off"
+    );
+}
+
+#[test]
+fn a_public_host_never_takes_the_install_token_and_a_loopback_host_still_does() {
+    let (g, token) = remote_guard(Listener::Loopback);
+    let auth = format!("Bearer {}", token.expose());
+    let uri = Uri::from_static("/api/health");
+    let public = |extra: &[(&str, &str)]| {
+        let mut pairs = vec![("host", "puddle.example.org")];
+        pairs.extend_from_slice(extra);
+        g.check(&uri, &headers(&pairs))
+    };
+    assert_eq!(
+        public(&[("authorization", &auth)]),
+        Err(Refusal::CredentialHost)
+    );
+    assert_eq!(
+        public(&[("authorization", "Bearer nope")]),
+        Err(Refusal::Token)
+    );
+    assert_eq!(public(&[]), Err(Refusal::Token));
+    let own = headers(&[("host", "127.0.0.1:4321"), ("authorization", &auth)]);
+    assert_eq!(g.check(&uri, &own), Ok(()));
+}
+
+#[test]
+fn the_network_listener_has_no_loopback_names() {
+    let (g, token) = remote_guard(Listener::Network);
+    let auth = format!("Bearer {}", token.expose());
+    let uri = Uri::from_static("/api/health");
+    for host in ["127.0.0.1:4321", "localhost:4321", "evil.example"] {
+        let h = headers(&[("host", host), ("authorization", &auth)]);
+        assert_eq!(g.check(&uri, &h), Err(Refusal::Host), "{host}");
+    }
+    let h = headers(&[("host", "puddle.example.org"), ("authorization", &auth)]);
+    assert_eq!(g.check(&uri, &h), Err(Refusal::CredentialHost));
+    // An absolute-form target must be of the same kind as the Host.
+    let loopback: Uri = "http://127.0.0.1:4321/api/health".parse().unwrap();
+    assert_eq!(g.check(&loopback, &h), Err(Refusal::Host));
+    let (lg, ltoken) = remote_guard(Listener::Loopback);
+    let lauth = format!("Bearer {}", ltoken.expose());
+    let lh = headers(&[("host", "puddle.example.org"), ("authorization", &lauth)]);
+    assert_eq!(lg.check(&loopback, &lh), Err(Refusal::Host));
+    let public: Uri = "https://puddle.example.org/api/health".parse().unwrap();
+    assert_eq!(lg.check(&public, &lh), Err(Refusal::CredentialHost));
+}
+
+#[test]
+fn behind_a_public_name_an_origin_is_the_public_one_and_fetch_metadata_says_same_origin() {
+    let (g, _) = remote_guard(Listener::Loopback);
+    let uri = Uri::from_static("/");
+    let with = |origin: &str, site: Option<&str>| {
+        let mut pairs = vec![("host", "puddle.example.org"), ("origin", origin)];
+        pairs.extend(site.map(|s| ("sec-fetch-site", s)));
+        g.check_origin(
+            &headers(&pairs),
+            g.check_host(&uri, &headers(&pairs)).unwrap(),
+        )
+    };
+    assert_eq!(with("https://puddle.example.org", None), Ok(()));
+    assert_eq!(
+        with("https://puddle.example.org", Some("same-origin")),
+        Ok(())
+    );
+    assert_eq!(
+        with("https://puddle.example.org", Some("Same-Origin")),
+        Ok(())
+    );
+    for site in ["cross-site", "same-site", "none", ""] {
+        assert_eq!(
+            with("https://puddle.example.org", Some(site)),
+            Err(Refusal::FetchSite),
+            "{site:?}"
+        );
+    }
+    for origin in [
+        "https://evil.example",
+        "http://puddle.example.org",
+        "tauri://localhost",
+        "http://127.0.0.1:4321",
+    ] {
+        assert_eq!(
+            with(origin, Some("same-origin")),
+            Err(Refusal::Origin),
+            "{origin}"
+        );
+    }
+}
+
+#[test]
+fn the_new_refusals_have_their_own_log_reason_and_answer() {
+    assert_eq!(Refusal::FetchSite.reason(), "fetch-site");
+    assert_eq!(Refusal::CredentialHost.reason(), "credential-host");
+    let error = ApiError::from(Refusal::FetchSite);
+    assert_eq!(error.status(), StatusCode::FORBIDDEN);
+    let error = ApiError::from(Refusal::CredentialHost);
+    assert_eq!(error.status(), StatusCode::UNAUTHORIZED);
+}

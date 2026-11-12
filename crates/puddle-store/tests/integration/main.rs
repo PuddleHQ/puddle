@@ -5,4 +5,5 @@ mod events_and_audit_query;
 mod identities_spec;
 mod rule_sets_spec;
 mod rules_spec;
+mod users_spec;
 mod workspace_create_allow_spec;

@@ -1173,6 +1173,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let new = NewWorkspaceOp {
             op,
             workspace: Some(name.clone()),
+            user: None,
             outcome,
             actor: Actor::Api,
             detail,
@@ -2210,6 +2211,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.store.note_workspace_op(&NewWorkspaceOp {
                 op: WorkspaceOpKind::GitRepaired,
                 workspace: Some(name.clone()),
+                user: None,
                 outcome: WorkspaceOpOutcome::Succeeded,
                 actor: Actor::System,
                 detail: Some(repair.clone()),
@@ -3622,6 +3624,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         self.id_taken(&state, &runtime_names, id)
                     })
                     .map_err(|e| WorkspaceError::Unavailable(e.to_string()))?;
+                // Whose it is, before it is listed or announced.
+                git.claim(&id)?;
                 let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
                 record.start_folder.clone_from(&new.start_folder);
                 record.image = new

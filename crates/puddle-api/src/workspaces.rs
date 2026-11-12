@@ -908,6 +908,18 @@ pub trait GitSetup: Send + Sync {
         workspace: &'a WorkspaceId,
         repositories: &'a [NewRepository],
     ) -> BoxFuture<'a, ()>;
+
+    /// Records whose the new workspace `workspace` is. A create calls it once its id is drawn and
+    /// before the workspace is listed, saved or announced anywhere, so nothing about it is ever
+    /// seen as another user's. The default records nothing: the workspace is the owner's.
+    ///
+    /// # Errors
+    ///
+    /// The record could not be written; the create stops and nothing of it exists.
+    fn claim(&self, workspace: &WorkspaceId) -> Result<(), WorkspaceError> {
+        let _ = workspace;
+        Ok(())
+    }
 }
 
 /// A [`GitSetup`] that sets nothing up, for services and tests with no store.

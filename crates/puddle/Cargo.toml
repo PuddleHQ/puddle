@@ -15,6 +15,7 @@ publish.workspace = true
 embedded-ui = ["puddle-host/embedded-ui"]
 
 [dependencies]
+puddle-api = { workspace = true }
 puddle-doctor = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-host = { workspace = true }
@@ -43,6 +44,9 @@ puddle-vm-tests = { workspace = true }
 puddle-ipc = { workspace = true }
 puddle-store = { workspace = true }
 tempfile = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+pem = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
 
 [lints]

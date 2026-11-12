@@ -7365,11 +7365,14 @@ fn attach_a_new_identity(store: &puddle_store::Store, workspace: &WorkspaceId) {
     )
     .unwrap();
     let identity = store
-        .create_identity(puddle_store::IdentityDraft {
-            label: "Ada".to_owned(),
-            author: puddle_store::Author::new("Ada", "ada@example.org").unwrap(),
-            credentials: vec![credential],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            puddle_store::IdentityDraft {
+                label: "Ada".to_owned(),
+                author: puddle_store::Author::new("Ada", "ada@example.org").unwrap(),
+                credentials: vec![credential],
+            },
+        )
         .unwrap();
     // The first identity becomes the default, which a new workspace gets at its create; attach
     // is idempotent for this test's purpose.
@@ -7912,11 +7915,14 @@ async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one
     // One a database from before already holds is said to be useless, while its workspace runs.
     let old = host
         .store()
-        .create_identity(puddle_store::IdentityDraft {
-            label: "Old".to_owned(),
-            author: puddle_store::Author::new("Old", "old@example.org").unwrap(),
-            credentials: vec![old_binding_on_port("ghe.example:8443")],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            puddle_store::IdentityDraft {
+                label: "Old".to_owned(),
+                author: puddle_store::Author::new("Old", "old@example.org").unwrap(),
+                credentials: vec![old_binding_on_port("ghe.example:8443")],
+            },
+        )
         .unwrap();
     host.store()
         .attach_identity(&name("acme"), old.id, None)
@@ -7999,11 +8005,14 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
     let booted = rig.guest.boots();
     let old = host
         .store()
-        .create_identity(puddle_store::IdentityDraft {
-            label: "Old".to_owned(),
-            author: puddle_store::Author::new("Old", "old@example.org").unwrap(),
-            credentials: vec![old_binding_on_port("ghe.example:8443")],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            puddle_store::IdentityDraft {
+                label: "Old".to_owned(),
+                author: puddle_store::Author::new("Old", "old@example.org").unwrap(),
+                credentials: vec![old_binding_on_port("ghe.example:8443")],
+            },
+        )
         .unwrap();
 
     // The store announces each change itself. The rewrite for the attach starts first and waits at the gate.
@@ -8520,6 +8529,7 @@ async fn the_variables_puddle_adds_to_keep_the_users_value_and_the_ones_it_owns_
     // favour of Puddle's own value.
     host.store()
         .set_env(
+            puddle_store::UserId::OWNER,
             &puddle_store::EnvScope::Global,
             &puddle_store::EnvName::existing("HTTPS_PROXY").unwrap(),
             puddle_store::EnvDraft::plain("http://elsewhere:1").unwrap(),
@@ -8597,13 +8607,16 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
     .await;
     assert!(
         host.store()
-            .env_entries(&puddle_store::EnvScope::Workspace(name("acme")))
+            .env_entries(
+                puddle_store::UserId::OWNER,
+                &puddle_store::EnvScope::Workspace(name("acme"))
+            )
             .unwrap()
             .is_empty()
     );
     assert_eq!(
         host.store()
-            .env_entries(&puddle_store::EnvScope::Global)
+            .env_entries(puddle_store::UserId::OWNER, &puddle_store::EnvScope::Global)
             .unwrap()
             .len(),
         1
@@ -10759,6 +10772,7 @@ async fn a_variable_set_while_the_guest_boots_reaches_its_login_shells_once_it_i
     *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
         store
             .set_env(
+                puddle_store::UserId::OWNER,
                 &puddle_store::EnvScope::Workspace(name("acme")),
                 &puddle_store::EnvName::new("EDITOR").unwrap(),
                 puddle_store::EnvDraft::plain("vim").unwrap(),
@@ -10796,6 +10810,7 @@ async fn a_variable_set_before_the_first_boot_returns_reaches_the_guest_once_it_
     during_the_next_boot_from_another_thread(&rig, move || {
         store
             .set_env(
+                puddle_store::UserId::OWNER,
                 &puddle_store::EnvScope::Workspace(name("acme")),
                 &puddle_store::EnvName::new("EDITOR").unwrap(),
                 puddle_store::EnvDraft::plain("vim").unwrap(),
@@ -10827,6 +10842,7 @@ async fn a_variable_set_while_a_stopped_workspace_boots_again_reaches_the_guest_
     during_the_next_boot_from_another_thread(&rig, move || {
         store
             .set_env(
+                puddle_store::UserId::OWNER,
                 &puddle_store::EnvScope::Workspace(name("acme")),
                 &puddle_store::EnvName::new("EDITOR").unwrap(),
                 puddle_store::EnvDraft::plain("vim").unwrap(),
@@ -10883,6 +10899,7 @@ async fn a_plan_run_in_a_live_guest_tells_the_user_when_it_put_the_loader_back()
         "puddle-boot: replaced /etc/profile.d/02-puddle-shell-init.sh\n".to_owned();
     host.store()
         .set_env(
+            puddle_store::UserId::OWNER,
             &puddle_store::EnvScope::Workspace(name("acme")),
             &puddle_store::EnvName::new("EDITOR").unwrap(),
             puddle_store::EnvDraft::plain("vim").unwrap(),

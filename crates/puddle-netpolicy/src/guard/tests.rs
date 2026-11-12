@@ -483,3 +483,85 @@ fn the_company_refusal_names_the_switch_and_does_not_promise_access() {
         company_network_message(&host, None, Some(CompanySignal::DnsSuffix))
     );
 }
+
+#[test]
+fn a_blocked_public_name_is_refused_at_the_name_stage_whatever_the_toggles() {
+    let target = |h: &str| normalise_host(h).unwrap();
+    let (g, _api) = guard(all_on());
+    let check = |g: &NetPolicy, h: &str| g.check_target(&workspace(), &target(h), 443);
+    assert_eq!(check(&g, "puddle.example.org"), None, "not blocked yet");
+    let front = g
+        .endpoints()
+        .block_name("puddle.example.org", false, EndpointKind::ExternalFront);
+    let apps = g
+        .endpoints()
+        .block_name("ws.example.net", true, EndpointKind::ExternalFront);
+    for name in [
+        "puddle.example.org",
+        "PUDDLE.example.org",
+        "ws.example.net",
+        "box.ws.example.net",
+    ] {
+        assert_eq!(check(&g, name), Some(BlockReason::PuddleEndpoint), "{name}");
+    }
+    for name in [
+        "example.org",
+        "sub.puddle.example.org",
+        "evilws.example.net",
+        "example.com",
+    ] {
+        assert_eq!(check(&g, name), None, "{name}");
+    }
+    drop(front);
+    assert_eq!(
+        check(&g, "puddle.example.org"),
+        None,
+        "dropping lifts the block"
+    );
+    assert_eq!(
+        check(&g, "ws.example.net"),
+        Some(BlockReason::PuddleEndpoint)
+    );
+    drop(apps);
+    assert_eq!(check(&g, "ws.example.net"), None);
+}
+
+#[test]
+fn a_guest_cannot_reach_the_front_or_the_network_listener_with_every_toggle_on() {
+    let target = |h: &str| normalise_host(h).unwrap();
+    let (g, _api) = guard(all_on());
+    let dials = ["192.168.1.10:443", "127.0.0.1:443", "192.168.1.10:8443"];
+    // The control: nothing registered, so a toggle that is on lets the rules decide.
+    for dial in dials {
+        assert!(
+            !matches!(
+                g.check_address(&workspace(), sa(dial)),
+                AddressVerdict::Block(_)
+            ),
+            "{dial} unregistered"
+        );
+    }
+    let _front = g
+        .endpoints()
+        .register(sa("0.0.0.0:443"), EndpointKind::ExternalFront);
+    let _listener = g
+        .endpoints()
+        .register(sa("192.168.1.10:8443"), EndpointKind::RemoteApi);
+    for dial in dials {
+        assert_eq!(
+            g.check_address(&workspace(), sa(dial)),
+            AddressVerdict::Block(BlockReason::PuddleEndpoint),
+            "{dial}"
+        );
+    }
+    // By literal at the name stage too, before the rules are asked.
+    assert_eq!(
+        g.check_target(&workspace(), &target("192.168.1.10"), 8443),
+        Some(BlockReason::PuddleEndpoint)
+    );
+    // Another host's port 443 is not ours.
+    assert_eq!(
+        g.check_address(&workspace(), sa("8.8.8.8:443")),
+        AddressVerdict::Allow
+    );
+}

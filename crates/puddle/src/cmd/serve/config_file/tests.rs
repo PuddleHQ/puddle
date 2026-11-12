@@ -53,7 +53,7 @@ fn an_unknown_key_names_the_file_the_line_and_the_keys() {
     assert_eq!(
         err.to_string(),
         format!(
-            "{}:3: unknown key `prot`; the keys are port, connection_file, data_dir, log; fix the spelling or remove the line",
+            "{}:3: unknown key `prot`; the keys are port, connection_file, data_dir, log, remote, public_hosts, workspace_base_domain, listen_interface, listen_port, allowed_proxies; fix the spelling or remove the line",
             file.display()
         )
     );
@@ -191,4 +191,80 @@ fn positions_count_lines_and_columns_from_one() {
     assert_eq!(position("ab\ncd", 4), (2, 2));
     assert_eq!(position("ab\ncd", 99), (2, 3));
     assert_eq!(position("é=1", 3), (1, 3));
+}
+
+#[test]
+fn the_remote_serving_keys_take_a_boolean_strings_and_arrays_of_strings() {
+    let values = check(
+        "remote = true\n\
+         public_hosts = [\"Puddle.Example.org\", \"alt.example.org:8443\"]\n\
+         workspace_base_domain = \"ws.example.net\"\n\
+         listen_interface = \"192.168.1.10\"\n\
+         listen_port = 9443\n\
+         allowed_proxies = [\"192.168.1.20\"]\n",
+    )
+    .unwrap();
+    assert_eq!(values.get("remote"), Some(&Value::Bool(true)));
+    assert_eq!(
+        values.get("public_hosts"),
+        Some(&Value::Hosts(vec![
+            "puddle.example.org".to_owned(),
+            "alt.example.org:8443".to_owned()
+        ]))
+    );
+    assert_eq!(
+        values.get("allowed_proxies"),
+        Some(&Value::IpList(vec!["192.168.1.20".parse().unwrap()]))
+    );
+    assert_eq!(
+        check("remote = false\n").unwrap().get("remote"),
+        Some(&Value::Bool(false))
+    );
+}
+
+#[test]
+fn a_remote_key_of_the_wrong_type_or_value_says_the_line_and_what_to_write() {
+    let cases = [
+        (
+            "remote = \"yes\"\n",
+            ":1: `remote` must be true or false, found a string; write it as `remote = true`",
+        ),
+        ("remote = 1\n", "found an integer"),
+        (
+            "public_hosts = \"a.example.org\"\n",
+            "`public_hosts` must be a comma-separated list of host names",
+        ),
+        ("public_hosts = []\n", "found the array []"),
+        (
+            "public_hosts = [\"https://a.example.org\"]\n",
+            "found the array",
+        ),
+        ("public_hosts = [1]\n", "found an array with an integer"),
+        (
+            "public_hosts = [\"a.example.org,b.example.org\"]\n",
+            "found the item",
+        ),
+        (
+            "allowed_proxies = [\"example.org\"]\n",
+            "must be a comma-separated list of IP addresses",
+        ),
+        (
+            "listen_interface = 5\n",
+            "`listen_interface` must be an IP address, found an integer",
+        ),
+        ("listen_interface = \"nope\"\n", "found the string \"nope\""),
+        (
+            "workspace_base_domain = \"a b\"\n",
+            "`workspace_base_domain` must be a domain name",
+        ),
+        (
+            "listen_port = 70000\n",
+            "`listen_port` must be a port number",
+        ),
+    ];
+    for (text, expected) in cases {
+        let err = message(text);
+        assert!(err.contains(expected), "{text:?}: {err}");
+        assert!(err.contains(":1:"), "{err}");
+    }
 }

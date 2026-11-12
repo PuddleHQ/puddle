@@ -69,9 +69,10 @@ exclude_re = [
     # `eol` is the offset of a line break or the end of the text, and no comment starts there, so
     # `c.start < eol` and `c.start <= eol` agree.
     'json\.rs:\d+:34: replace < with <= in insert',
-    # `Store::rule_set` reads a user set directly; without that arm it lists every set and finds the
-    # id, which returns the same set, or the same `UnknownRuleSet` error for an id that is not there.
-    "sets\\.rs:\\d+:\\d+: delete match arm RuleSetId::User\\(user\\) in Store::rule_set",
+    # `Store::rule_set` reads a user set directly; without that arm it lists the user's sets and
+    # finds the id, which returns the same set, or the same `UnknownRuleSet` error for an id that is
+    # not there or another user's.
+    "sets\\.rs:\\d+:\\d+: delete match arm RuleSetId::User\\(set\\) in Store::rule_set",
     # `close_decided_rows` skips the row it was told to leave (`except`) or one the rule's pattern does
     # not match. The left row is already decided when the query runs, so it is never in the list, and a
     # row the pattern does not match cannot have this rule as its winner, so `||` and `&&` close the same rows.

@@ -740,6 +740,7 @@ impl WorkspaceService for FakeWorkspaces {
                         new.name
                     )));
                 }
+                git.claim(&id)?;
                 state.entries.insert(
                     id,
                     Entry {

@@ -53,18 +53,20 @@ fn a_variable_is_set_listed_replaced_and_removed_per_scope() {
     let global = EnvScope::Global;
     let shop = EnvScope::Workspace(ws("shop"));
     let made = store
-        .set_env(&global, &name("EDITOR"), plain("vim"))
+        .set_env(UserId::OWNER, &global, &name("EDITOR"), plain("vim"))
         .unwrap();
     assert_eq!(made.replaced, None);
     assert_eq!(made.entry.value, EnvValue::Plain("vim".into()));
     assert_eq!(made.entry.scope, EnvScope::Global);
     store
-        .set_env(&shop, &name("EDITOR"), plain("nano"))
+        .set_env(UserId::OWNER, &shop, &name("EDITOR"), plain("nano"))
         .unwrap();
-    store.set_env(&shop, &name("A"), plain("1")).unwrap();
+    store
+        .set_env(UserId::OWNER, &shop, &name("A"), plain("1"))
+        .unwrap();
 
     let second = store
-        .set_env(&global, &name("EDITOR"), plain("emacs"))
+        .set_env(UserId::OWNER, &global, &name("EDITOR"), plain("emacs"))
         .unwrap();
     assert_eq!(
         second.replaced.unwrap().value,
@@ -73,7 +75,7 @@ fn a_variable_is_set_listed_replaced_and_removed_per_scope() {
     assert_eq!(second.entry.id, made.entry.id, "the row stays");
     let names = |scope: &EnvScope| -> Vec<(String, EnvValue)> {
         store
-            .env_entries(scope)
+            .env_entries(UserId::OWNER, scope)
             .unwrap()
             .into_iter()
             .map(|e| (e.name.to_string(), e.value))
@@ -91,18 +93,30 @@ fn a_variable_is_set_listed_replaced_and_removed_per_scope() {
         ]
     );
     assert_eq!(
-        store.env_entry(&shop, &name("A")).unwrap().unwrap().value,
+        store
+            .env_entry(UserId::OWNER, &shop, &name("A"))
+            .unwrap()
+            .unwrap()
+            .value,
         EnvValue::Plain("1".into())
     );
-    assert!(store.env_entry(&shop, &name("B")).unwrap().is_none());
+    assert!(
+        store
+            .env_entry(UserId::OWNER, &shop, &name("B"))
+            .unwrap()
+            .is_none()
+    );
 
-    let gone = store.delete_env(&shop, &name("A")).unwrap();
+    let gone = store.delete_env(UserId::OWNER, &shop, &name("A")).unwrap();
     assert_eq!(gone.name, name("A"));
     assert!(matches!(
-        store.delete_env(&shop, &name("A")),
+        store.delete_env(UserId::OWNER, &shop, &name("A")),
         Err(StoreError::UnknownEnv { .. })
     ));
-    let text = store.delete_env(&shop, &name("A")).unwrap_err().to_string();
+    let text = store
+        .delete_env(UserId::OWNER, &shop, &name("A"))
+        .unwrap_err()
+        .to_string();
     assert_eq!(text, "no variable A in shop's environment");
 }
 
@@ -110,14 +124,25 @@ fn a_variable_is_set_listed_replaced_and_removed_per_scope() {
 fn a_workspace_sees_its_own_variables_and_the_global_ones_it_does_not_hide() {
     let store = store();
     store
-        .set_env(&EnvScope::Global, &name("EDITOR"), plain("vim"))
+        .set_env(
+            UserId::OWNER,
+            &EnvScope::Global,
+            &name("EDITOR"),
+            plain("vim"),
+        )
         .unwrap();
     store
-        .set_env(&EnvScope::Global, &name("LANG_X"), plain("en"))
+        .set_env(
+            UserId::OWNER,
+            &EnvScope::Global,
+            &name("LANG_X"),
+            plain("en"),
+        )
         .unwrap();
     let shop = ws("shop");
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Workspace(shop.clone()),
             &name("EDITOR"),
             plain("nano"),
@@ -125,6 +150,7 @@ fn a_workspace_sees_its_own_variables_and_the_global_ones_it_does_not_hide() {
         .unwrap();
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Workspace(ws("other")),
             &name("ZZ"),
             plain("not mine"),
@@ -158,6 +184,7 @@ fn a_secret_keeps_its_id_and_hosts_and_never_a_value() {
     let scope = EnvScope::Workspace(ws("shop"));
     let made = store
         .set_env(
+            UserId::OWNER,
             &scope,
             &name("NPM_TOKEN"),
             secret("env-1", &["registry.npmjs.org"]),
@@ -190,7 +217,12 @@ fn a_secret_keeps_its_place_changes_it_and_a_workspace_starts_with_it() {
     };
     let appid = SecretPlace::Query(puddle_types::QueryName::new("appid").unwrap());
     let made = store
-        .set_env(&scope, &name("OWM_KEY"), draft(appid.clone()))
+        .set_env(
+            UserId::OWNER,
+            &scope,
+            &name("OWM_KEY"),
+            draft(appid.clone()),
+        )
         .unwrap();
     assert_eq!(made.entry.value.as_secret().unwrap().place, appid);
     assert!(matches!(
@@ -206,18 +238,33 @@ fn a_secret_keeps_its_place_changes_it_and_a_workspace_starts_with_it() {
 
     for place in [SecretPlace::Path, SecretPlace::Header] {
         store
-            .set_env(&scope, &name("OWM_KEY"), draft(place.clone()))
+            .set_env(
+                UserId::OWNER,
+                &scope,
+                &name("OWM_KEY"),
+                draft(place.clone()),
+            )
             .unwrap();
-        let entry = store.env_entry(&scope, &name("OWM_KEY")).unwrap().unwrap();
+        let entry = store
+            .env_entry(UserId::OWNER, &scope, &name("OWM_KEY"))
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.value.as_secret().unwrap().place, place);
     }
     assert_eq!(column(&store), None, "header values: no place stored");
 
     // A secret that becomes plain loses its place; the database refuses a plain one with one.
     store
-        .set_env(&scope, &name("OWM_KEY"), draft(SecretPlace::Path))
+        .set_env(
+            UserId::OWNER,
+            &scope,
+            &name("OWM_KEY"),
+            draft(SecretPlace::Path),
+        )
         .unwrap();
-    store.set_env(&scope, &name("OWM_KEY"), plain("x")).unwrap();
+    store
+        .set_env(UserId::OWNER, &scope, &name("OWM_KEY"), plain("x"))
+        .unwrap();
     assert_eq!(column(&store), None);
     let refused = lock(&store.conn).execute("UPDATE env_vars SET place = 'path'", []);
     assert!(refused.is_err(), "a plain variable has no place");
@@ -228,6 +275,7 @@ fn a_damaged_place_is_reported_as_corrupt() {
     let store = store();
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Global,
             &name("T"),
             secret("env-1", &["api.example.com"]),
@@ -236,7 +284,9 @@ fn a_damaged_place_is_reported_as_corrupt() {
     lock(&store.conn)
         .execute("UPDATE env_vars SET place = 'query:a&b'", [])
         .unwrap();
-    let err = store.env_entries(&EnvScope::Global).unwrap_err();
+    let err = store
+        .env_entries(UserId::OWNER, &EnvScope::Global)
+        .unwrap_err();
     assert!(
         matches!(
             err,
@@ -254,6 +304,7 @@ fn a_stand_in_is_made_once_per_workspace_and_secret_and_kept() {
     let store = store();
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Global,
             &name("TOKEN"),
             secret("env-g", &["api.example.com"]),
@@ -269,6 +320,7 @@ fn a_stand_in_is_made_once_per_workspace_and_secret_and_kept() {
     // A new value or new hosts under the same row keep the stand-in.
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Global,
             &name("TOKEN"),
             secret("env-g", &["other.example.com"]),
@@ -282,10 +334,13 @@ fn a_stand_in_is_made_once_per_workspace_and_secret_and_kept() {
     ));
 
     // Removing the secret and making it again is a new secret with a new stand-in.
-    store.delete_env(&EnvScope::Global, &name("TOKEN")).unwrap();
+    store
+        .delete_env(UserId::OWNER, &EnvScope::Global, &name("TOKEN"))
+        .unwrap();
     assert_eq!(start(&store, "a"), []);
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Global,
             &name("TOKEN"),
             secret("env-g2", &["api.example.com"]),
@@ -299,13 +354,18 @@ fn a_secret_that_becomes_plain_loses_its_stand_ins() {
     let store = store();
     let scope = EnvScope::Workspace(ws("a"));
     store
-        .set_env(&scope, &name("T"), secret("env-1", &["x.example.com"]))
+        .set_env(
+            UserId::OWNER,
+            &scope,
+            &name("T"),
+            secret("env-1", &["x.example.com"]),
+        )
         .unwrap();
     start(&store, "a");
     let n = |sql: &str| -> i64 { lock(&store.conn).query_row(sql, [], |r| r.get(0)).unwrap() };
     assert_eq!(n("SELECT count(*) FROM env_stand_ins"), 1);
     let change = store
-        .set_env(&scope, &name("T"), plain("now plain"))
+        .set_env(UserId::OWNER, &scope, &name("T"), plain("now plain"))
         .unwrap();
     assert!(matches!(
         change.replaced.unwrap().value,
@@ -323,13 +383,19 @@ fn the_workspace_entry_wins_over_the_global_one_at_start_and_only_the_winner_has
     let store = store();
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Global,
             &name("T"),
             secret("env-g", &["g.example.com"]),
         )
         .unwrap();
     store
-        .set_env(&EnvScope::Workspace(ws("a")), &name("T"), plain("mine"))
+        .set_env(
+            UserId::OWNER,
+            &EnvScope::Workspace(ws("a")),
+            &name("T"),
+            plain("mine"),
+        )
         .unwrap();
     let vars = start(&store, "a");
     assert_eq!(vars.len(), 1);
@@ -355,6 +421,7 @@ fn a_stand_in_that_cannot_be_made_stops_the_start_with_its_reason() {
     let store = store();
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Global,
             &name("T"),
             secret("env-g", &["g.example.com"]),
@@ -377,18 +444,25 @@ fn a_scope_holds_at_most_256_variables_and_256_kib() {
     let scope = EnvScope::Workspace(ws("a"));
     for i in 0..MAX_ENTRIES_PER_SCOPE {
         store
-            .set_env(&scope, &name(&format!("V{i}")), plain("x"))
+            .set_env(UserId::OWNER, &scope, &name(&format!("V{i}")), plain("x"))
             .unwrap();
     }
     let err = store
-        .set_env(&scope, &name("ONE_MORE"), plain("x"))
+        .set_env(UserId::OWNER, &scope, &name("ONE_MORE"), plain("x"))
         .unwrap_err();
     assert!(err.to_string().contains("256 variables"), "{err}");
     // Replacing one is not adding one.
-    store.set_env(&scope, &name("V0"), plain("y")).unwrap();
+    store
+        .set_env(UserId::OWNER, &scope, &name("V0"), plain("y"))
+        .unwrap();
     // Another scope is counted on its own.
     store
-        .set_env(&EnvScope::Global, &name("ONE_MORE"), plain("x"))
+        .set_env(
+            UserId::OWNER,
+            &EnvScope::Global,
+            &name("ONE_MORE"),
+            plain("x"),
+        )
         .unwrap();
 
     let big = EnvScope::Workspace(ws("big"));
@@ -396,16 +470,25 @@ fn a_scope_holds_at_most_256_variables_and_256_kib() {
     let fits = MAX_SCOPE_BYTES / (chunk.len() + 2);
     for i in 0..fits {
         store
-            .set_env(&big, &name(&format!("B{i:x}")), plain(&chunk))
+            .set_env(
+                UserId::OWNER,
+                &big,
+                &name(&format!("B{i:x}")),
+                plain(&chunk),
+            )
             .unwrap();
     }
     let err = store
-        .set_env(&big, &name("BIG"), plain(&chunk))
+        .set_env(UserId::OWNER, &big, &name("BIG"), plain(&chunk))
         .unwrap_err();
     assert!(err.to_string().contains("256 KiB"), "{err}");
     // A shorter value of an existing name that frees room is accepted.
-    store.set_env(&big, &name("B0"), plain("")).unwrap();
-    store.set_env(&big, &name("BIG"), plain(&chunk)).unwrap();
+    store
+        .set_env(UserId::OWNER, &big, &name("B0"), plain(""))
+        .unwrap();
+    store
+        .set_env(UserId::OWNER, &big, &name("BIG"), plain(&chunk))
+        .unwrap();
 }
 
 #[test]
@@ -422,15 +505,22 @@ fn changes_say_which_scope_changed() {
         .unwrap()
         .with_events(events.clone());
     store
-        .set_env(&EnvScope::Global, &name("A"), plain("1"))
+        .set_env(UserId::OWNER, &EnvScope::Global, &name("A"), plain("1"))
         .unwrap();
     store
-        .set_env(&EnvScope::Workspace(ws("shop")), &name("A"), plain("1"))
+        .set_env(
+            UserId::OWNER,
+            &EnvScope::Workspace(ws("shop")),
+            &name("A"),
+            plain("1"),
+        )
         .unwrap();
     store
-        .delete_env(&EnvScope::Workspace(ws("shop")), &name("A"))
+        .delete_env(UserId::OWNER, &EnvScope::Workspace(ws("shop")), &name("A"))
         .unwrap();
-    store.delete_env(&EnvScope::Global, &name("A")).unwrap();
+    store
+        .delete_env(UserId::OWNER, &EnvScope::Global, &name("A"))
+        .unwrap();
     assert_eq!(
         *events.0.lock().unwrap(),
         [
@@ -452,6 +542,7 @@ fn deleting_a_workspace_removes_its_variables_and_every_stand_in_it_held() {
     let shop = ws("shop");
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Global,
             &name("G"),
             secret("env-g", &["g.example.com"]),
@@ -459,16 +550,23 @@ fn deleting_a_workspace_removes_its_variables_and_every_stand_in_it_held() {
         .unwrap();
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Workspace(shop.clone()),
             &name("W"),
             secret("env-w", &["w.example.com"]),
         )
         .unwrap();
     store
-        .set_env(&EnvScope::Workspace(shop.clone()), &name("P"), plain("p"))
+        .set_env(
+            UserId::OWNER,
+            &EnvScope::Workspace(shop.clone()),
+            &name("P"),
+            plain("p"),
+        )
         .unwrap();
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Workspace(ws("other")),
             &name("W"),
             secret("env-o", &["w.example.com"]),
@@ -487,11 +585,22 @@ fn deleting_a_workspace_removes_its_variables_and_every_stand_in_it_held() {
         [("W", "env-w")],
         "only the workspace's own secrets: the global one still serves the others"
     );
-    assert_eq!(store.env_entries(&EnvScope::Workspace(shop)).unwrap(), []);
-    assert_eq!(store.env_entries(&EnvScope::Global).unwrap().len(), 1);
     assert_eq!(
         store
-            .env_entries(&EnvScope::Workspace(ws("other")))
+            .env_entries(UserId::OWNER, &EnvScope::Workspace(shop))
+            .unwrap(),
+        []
+    );
+    assert_eq!(
+        store
+            .env_entries(UserId::OWNER, &EnvScope::Global)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        store
+            .env_entries(UserId::OWNER, &EnvScope::Workspace(ws("other")))
             .unwrap()
             .len(),
         1
@@ -518,17 +627,24 @@ fn a_scope_may_hold_exactly_256_kib_and_not_a_byte_more() {
     let fits = MAX_SCOPE_BYTES / (chunk.len() + 2);
     for i in 0..fits {
         store
-            .set_env(&scope, &name(&format!("B{i:x}")), plain(&chunk))
+            .set_env(
+                UserId::OWNER,
+                &scope,
+                &name(&format!("B{i:x}")),
+                plain(&chunk),
+            )
             .unwrap();
     }
     let left = MAX_SCOPE_BYTES - fits * (chunk.len() + 2);
     let exact = "y".repeat(left - 2);
     let over = "y".repeat(left - 1);
     let err = store
-        .set_env(&scope, &name("EX"), plain(&over))
+        .set_env(UserId::OWNER, &scope, &name("EX"), plain(&over))
         .unwrap_err();
     assert!(err.to_string().contains("256 KiB"), "{err}");
-    store.set_env(&scope, &name("EX"), plain(&exact)).unwrap();
+    store
+        .set_env(UserId::OWNER, &scope, &name("EX"), plain(&exact))
+        .unwrap();
 }
 
 #[test]
@@ -559,7 +675,12 @@ fn deleting_a_workspace_says_its_environment_changed_only_when_it_held_something
     };
     // Its own variable, no stand-in.
     store
-        .set_env(&EnvScope::Workspace(ws("own")), &name("A"), plain("1"))
+        .set_env(
+            UserId::OWNER,
+            &EnvScope::Workspace(ws("own")),
+            &name("A"),
+            plain("1"),
+        )
         .unwrap();
     events.0.lock().unwrap().clear();
     store.delete_workspace(&ws("own")).unwrap();
@@ -568,6 +689,7 @@ fn deleting_a_workspace_says_its_environment_changed_only_when_it_held_something
     // No variable of its own, only a stand-in for a global secret.
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Global,
             &name("G"),
             secret("env-g", &["g.example.com"]),
@@ -588,13 +710,18 @@ fn a_row_edited_by_hand_to_something_that_does_not_parse_is_reported() {
     let store = store();
     let scope = EnvScope::Workspace(ws("a"));
     store
-        .set_env(&scope, &name("T"), secret("env-1", &["x.example.com"]))
+        .set_env(
+            UserId::OWNER,
+            &scope,
+            &name("T"),
+            secret("env-1", &["x.example.com"]),
+        )
         .unwrap();
     lock(&store.conn)
         .execute("UPDATE env_vars SET hosts = 'not json'", [])
         .unwrap();
     assert!(matches!(
-        store.env_entries(&scope),
+        store.env_entries(UserId::OWNER, &scope),
         Err(StoreError::Corrupt {
             table: "env_vars",
             ..
@@ -604,7 +731,7 @@ fn a_row_edited_by_hand_to_something_that_does_not_parse_is_reported() {
         .execute("UPDATE env_vars SET hosts = '[\"*.com\"]'", [])
         .unwrap();
     assert!(
-        store.env_entries(&scope).is_err(),
+        store.env_entries(UserId::OWNER, &scope).is_err(),
         "a host list that fails its own rules"
     );
     lock(&store.conn)
@@ -614,13 +741,16 @@ fn a_row_edited_by_hand_to_something_that_does_not_parse_is_reported() {
         )
         .unwrap();
     assert!(
-        store.env_entries(&scope).is_err(),
+        store.env_entries(UserId::OWNER, &scope).is_err(),
         "an id the credential store would not take"
     );
     lock(&store.conn)
         .execute("UPDATE env_vars SET name = '1bad', secret_id = 'env-1'", [])
         .unwrap();
-    assert!(store.env_entries(&scope).is_err(), "a name that is not one");
+    assert!(
+        store.env_entries(UserId::OWNER, &scope).is_err(),
+        "a name that is not one"
+    );
 }
 
 #[test]
@@ -628,6 +758,7 @@ fn the_ids_in_use_are_not_listed_when_a_secret_row_is_damaged() {
     let store = store();
     store
         .set_env(
+            UserId::OWNER,
             &EnvScope::Global,
             &name("TOKEN"),
             secret("env-1", &["a.example.com"]),
@@ -651,7 +782,12 @@ fn a_row_of_the_wrong_shape_is_reported_even_if_the_table_checks_were_bypassed()
     let store = store();
     let scope = EnvScope::Workspace(ws("a"));
     store
-        .set_env(&scope, &name("T"), secret("env-1", &["x.example.com"]))
+        .set_env(
+            UserId::OWNER,
+            &scope,
+            &name("T"),
+            secret("env-1", &["x.example.com"]),
+        )
         .unwrap();
     // A plain variable that also has a secret's id: the table's own checks refuse it, so the
     // checks are switched off for the one edit.
@@ -662,7 +798,10 @@ fn a_row_of_the_wrong_shape_is_reported_even_if_the_table_checks_were_bypassed()
                  PRAGMA ignore_check_constraints = OFF;",
         )
         .unwrap();
-    let err = store.env_entries(&scope).unwrap_err().to_string();
+    let err = store
+        .env_entries(UserId::OWNER, &scope)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("wrong shape"), "{err}");
 }
 
@@ -670,13 +809,15 @@ fn a_row_of_the_wrong_shape_is_reported_even_if_the_table_checks_were_bypassed()
 fn a_name_a_later_release_reserves_stays_listable_and_removable() {
     let store = store();
     let scope = EnvScope::Workspace(ws("a"));
-    store.set_env(&scope, &name("T"), plain("v")).unwrap();
+    store
+        .set_env(UserId::OWNER, &scope, &name("T"), plain("v"))
+        .unwrap();
     lock(&store.conn)
         .execute("UPDATE env_vars SET name = 'HTTPS_PROXY'", [])
         .unwrap();
-    let listed = store.env_entries(&scope).unwrap();
+    let listed = store.env_entries(UserId::OWNER, &scope).unwrap();
     assert_eq!(listed[0].name.as_str(), "HTTPS_PROXY");
     let proxy = EnvName::existing("HTTPS_PROXY").unwrap();
-    store.delete_env(&scope, &proxy).unwrap();
-    assert_eq!(store.env_entries(&scope).unwrap(), []);
+    store.delete_env(UserId::OWNER, &scope, &proxy).unwrap();
+    assert_eq!(store.env_entries(UserId::OWNER, &scope).unwrap(), []);
 }

@@ -9,14 +9,15 @@ use puddle_types::{Event, Fill, PendingId, RuleId, RuleSetId, SuffixAllows, Work
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{
-    PENDING_COLUMNS, Store, append, decide_row_by, load_rules, lock, pending_from_raw, raw_pending,
-    sql_ts, stored_ts,
+    PENDING_COLUMNS, Store, append, append_for, decide_row_by, load_rules, lock, pending_from_raw,
+    raw_pending, sql_ts, stored_ts, users,
 };
 use crate::audit::{AuditRecord, RuleDeleteReason, RuleSetWire, RuleWire, actor_str};
 use crate::catalogue::{self, BUILT_IN_SETS, SystemReason};
 use crate::engine::{RuleIndex, SetEntry, Switches, default_on};
 use crate::error::StoreError;
 use crate::rule::{Actor, Effect, Rule, Scope};
+use crate::users::UserId;
 
 /// The longest rule set name, in characters.
 const MAX_SET_NAME: usize = 64;
@@ -146,23 +147,29 @@ pub(super) fn load_index(conn: &Connection) -> Result<RuleIndex, StoreError> {
             });
         }
     }
-    Ok(RuleIndex::new(rules, entries, load_switches(conn)?))
+    Ok(RuleIndex::new(
+        rules,
+        entries,
+        load_switches(conn)?,
+        users::load_owners(conn)?,
+    ))
 }
 
 fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
-    let mut stmt =
-        conn.prepare("SELECT rowid, rule_set, workspace_id, enabled FROM rule_set_switches")?;
+    let mut stmt = conn
+        .prepare("SELECT rowid, rule_set, workspace_id, enabled, user_id FROM rule_set_switches")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, Option<String>>(2)?,
             row.get::<_, i64>(3)?,
+            row.get::<_, i64>(4)?,
         ))
     })?;
     let mut switches = Switches::default();
     for row in rows {
-        let (rowid, set, workspace, enabled) = row?;
+        let (rowid, set, workspace, enabled, user) = row?;
         // A switch of a built-in set this version no longer ships is kept but means nothing.
         let Some(set) = parse_rule_set(&set) else {
             continue;
@@ -179,7 +186,7 @@ fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
             },
             None => None,
         };
-        switches.insert(set, workspace, enabled != 0);
+        switches.insert(UserId::from_stored(user), set, workspace, enabled != 0);
     }
     Ok(switches)
 }
@@ -264,11 +271,27 @@ pub(super) fn note_built_in_changes(conn: &mut Connection, now: u64) -> Result<(
     Ok(())
 }
 
-/// Fails unless the user made a set with this id.
-pub(super) fn require_user_set(conn: &Connection, id: i64) -> Result<RuleSetWire, StoreError> {
+/// The user a set made by a user belongs to.
+pub(super) fn set_user(conn: &Connection, id: i64) -> Result<UserId, StoreError> {
+    conn.query_row("SELECT user_id FROM rule_sets WHERE id = ?1", [id], |row| {
+        row.get(0)
+    })
+    .optional()?
+    .map(UserId::from_stored)
+    .ok_or_else(|| StoreError::UnknownRuleSet(RuleSetId::User(id).to_string()))
+}
+
+/// Fails unless `user` made a set with this id. Another user's set is unknown, as one that does
+/// not exist.
+pub(super) fn require_user_set(
+    conn: &Connection,
+    user: UserId,
+    id: i64,
+) -> Result<RuleSetWire, StoreError> {
     conn.query_row(
-        "SELECT id, name, description, created_at, created_by, fill FROM rule_sets WHERE id = ?1",
-        [id],
+        "SELECT id, name, description, created_at, created_by, fill FROM rule_sets
+         WHERE id = ?1 AND user_id = ?2",
+        params![id, user.get()],
         |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -307,15 +330,16 @@ fn stored_fill(id: i64, text: Option<&str>) -> Option<Fill> {
     }
 }
 
-/// Fails unless the set the user made is on for `workspace`: approving into a set that is off
-/// there would not allow the request (R-38).
+/// Fails unless the set is one the workspace's user made and is on for `workspace`: approving
+/// into a set that is off there would not allow the request (R-38).
 pub(super) fn require_on(
     conn: &Connection,
     id: i64,
     workspace: &WorkspaceId,
 ) -> Result<(), StoreError> {
-    require_user_set(conn, id)?;
-    if load_switches(conn)?.is_on(RuleSetId::User(id), workspace) {
+    let index = load_index(conn)?;
+    require_user_set(conn, index.owner_of(workspace), id)?;
+    if index.is_on(RuleSetId::User(id), workspace) {
         Ok(())
     } else {
         Err(StoreError::RuleSetOff {
@@ -326,9 +350,10 @@ pub(super) fn require_on(
 }
 
 /// A trimmed name of 1 to [`MAX_SET_NAME`] characters without control characters, not used by
-/// another set (case-insensitive), and a description of at most [`MAX_SET_DESCRIPTION`].
+/// another set of `user` (case-insensitive), and a description of at most [`MAX_SET_DESCRIPTION`].
 fn checked_names(
     conn: &Connection,
+    user: UserId,
     name: &str,
     description: &str,
     except: Option<i64>,
@@ -354,8 +379,9 @@ fn checked_names(
     }
     let taken: Option<i64> = conn
         .query_row(
-            "SELECT id FROM rule_sets WHERE name = ?1 COLLATE NOCASE AND id IS NOT ?2",
-            params![name, except],
+            "SELECT id FROM rule_sets
+             WHERE name = ?1 COLLATE NOCASE AND id IS NOT ?2 AND user_id = ?3",
+            params![name, except, user.get()],
             |row| row.get(0),
         )
         .optional()?;
@@ -369,11 +395,13 @@ fn checked_names(
     Ok((name.to_owned(), description.to_owned()))
 }
 
-/// Closes the open rows (in `workspace`, or in any workspace) that `index` now decides, the way it
-/// decides them (R-37: like a new rule, R-16). Returns the rows it closed.
+/// Closes the open rows (in `workspace`, or in any workspace of `user`, or of anyone when `None`)
+/// that `index` now decides, the way it decides them (R-37: like a new rule, R-16). Returns the
+/// rows it closed.
 fn close_rows_now_decided(
     tx: &Transaction<'_>,
     index: &RuleIndex,
+    user: Option<UserId>,
     workspace: Option<&WorkspaceId>,
     actor: Actor,
     now: u64,
@@ -390,6 +418,9 @@ fn close_rows_now_decided(
     drop(stmt);
     let mut closed = Vec::new();
     for row in &open {
+        if user.is_some_and(|user| index.owner_of(&row.workspace) != user) {
+            continue;
+        }
         let Some(hit) = index.decide(&row.workspace, &row.host, now, SuffixAllows::Count) else {
             continue;
         };
@@ -400,11 +431,12 @@ fn close_rows_now_decided(
 }
 
 impl Store {
-    /// Every rule set: the built-in ones in catalogue order, then the user's by name.
+    /// Every rule set `user` sees: the built-in ones in catalogue order with `user`'s switches,
+    /// then the ones `user` made, by name.
     ///
     /// # Errors
     /// A database error.
-    pub fn rule_sets(&self) -> Result<Vec<RuleSetInfo>, StoreError> {
+    pub fn rule_sets(&self, user: UserId) -> Result<Vec<RuleSetInfo>, StoreError> {
         let index = self.snapshot();
         let conn = lock(&self.conn);
         let mut out = Vec::new();
@@ -427,8 +459,8 @@ impl Store {
                 description: set.description.to_owned(),
                 fill: set.fill,
                 default_on: set.default_on,
-                global: index.switches().global(id),
-                overrides: index.switches().overrides(id),
+                global: index.switches().global(user, id),
+                overrides: index.overrides(user, id),
                 entries: set
                     .entries
                     .iter()
@@ -444,43 +476,46 @@ impl Store {
                 created_at: None,
             });
         }
-        let mut stmt = conn.prepare("SELECT id FROM rule_sets ORDER BY name COLLATE NOCASE, id")?;
+        let mut stmt = conn.prepare(
+            "SELECT id FROM rule_sets WHERE user_id = ?1 ORDER BY name COLLATE NOCASE, id",
+        )?;
         let ids = stmt
-            .query_map([], |row| row.get::<_, i64>(0))?
+            .query_map([user.get()], |row| row.get::<_, i64>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         drop(stmt);
         for id in ids {
-            out.push(user_set_info(&conn, &index, id)?);
+            out.push(user_set_info(&conn, &index, user, id)?);
         }
         Ok(out)
     }
 
-    /// One rule set.
+    /// One rule set, as `user` sees it.
     ///
     /// # Errors
     /// [`StoreError::UnknownRuleSet`] (also for System managed, which is not a set: see
-    /// [`Store::system_managed`]), or a database error.
-    pub fn rule_set(&self, id: RuleSetId) -> Result<RuleSetInfo, StoreError> {
+    /// [`Store::system_managed`], and for a set another user made), or a database error.
+    pub fn rule_set(&self, user: UserId, id: RuleSetId) -> Result<RuleSetInfo, StoreError> {
         match id {
-            RuleSetId::User(user) => {
+            RuleSetId::User(set) => {
                 let index = self.snapshot();
-                user_set_info(&lock(&self.conn), &index, user)
+                user_set_info(&lock(&self.conn), &index, user, set)
             }
             _ => self
-                .rule_sets()?
+                .rule_sets(user)?
                 .into_iter()
                 .find(|set| set.id == id)
                 .ok_or_else(|| StoreError::UnknownRuleSet(id.to_string())),
         }
     }
 
-    /// Makes an empty rule set, on by default (R-38). Without a `fill` the set gets the default
-    /// colour of its number.
+    /// Makes an empty rule set of `user`, on by default for their workspaces (R-38). Without a
+    /// `fill` the set gets the default colour of its number.
     ///
     /// # Errors
     /// [`StoreError::RuleSetName`], [`StoreError::SystemActor`], or a database error.
     pub fn create_rule_set(
         &self,
+        user: UserId,
         name: &str,
         description: &str,
         fill: Option<Fill>,
@@ -490,33 +525,34 @@ impl Store {
             return Err(StoreError::SystemActor);
         }
         let id = self.change(|tx, now, fx| {
-            let (name, description) = checked_names(tx, name, description, None)?;
+            let (name, description) = checked_names(tx, user, name, description, None)?;
             tx.execute(
-                "INSERT INTO rule_sets (name, description, created_at, created_by, fill)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO rule_sets (name, description, created_at, created_by, fill, user_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     name,
                     description,
                     sql_ts(now),
                     actor.as_str(),
-                    fill.map(Fill::to_json)
+                    fill.map(Fill::to_json),
+                    user.get()
                 ],
             )?;
             let id = tx.last_insert_rowid();
             let record = AuditRecord::RuleSetCreated {
                 ts: now,
-                rule_set: require_user_set(tx, id)?,
+                rule_set: require_user_set(tx, user, id)?,
                 actor: actor_str(actor),
             };
-            append(tx, &record)?;
+            append_for(tx, &record, user)?;
             fx.push(Event::RulesChanged {});
             Ok(id)
         })?;
         tracing::info!(set = id, "rule set created");
-        self.rule_set(RuleSetId::User(id))
+        self.rule_set(user, RuleSetId::User(id))
     }
 
-    /// Renames a rule set the user made, or changes its description or colour (`None` keeps the
+    /// Renames a rule set `user` made, or changes its description or colour (`None` keeps the
     /// colour it has).
     ///
     /// # Errors
@@ -524,6 +560,7 @@ impl Store {
     /// [`StoreError::SystemActor`], or a database error.
     pub fn update_rule_set(
         &self,
+        user: UserId,
         id: i64,
         name: &str,
         description: &str,
@@ -534,8 +571,8 @@ impl Store {
             return Err(StoreError::SystemActor);
         }
         self.change(|tx, now, fx| {
-            let before = require_user_set(tx, id)?;
-            let (name, description) = checked_names(tx, name, description, Some(id))?;
+            let before = require_user_set(tx, user, id)?;
+            let (name, description) = checked_names(tx, user, name, description, Some(id))?;
             tx.execute(
                 "UPDATE rule_sets SET name = ?2, description = ?3, fill = coalesce(?4, fill)
                  WHERE id = ?1",
@@ -544,27 +581,32 @@ impl Store {
             let record = AuditRecord::RuleSetUpdated {
                 ts: now,
                 before,
-                rule_set: require_user_set(tx, id)?,
+                rule_set: require_user_set(tx, user, id)?,
                 actor: actor_str(actor),
             };
-            append(tx, &record)?;
+            append_for(tx, &record, user)?;
             fx.push(Event::RulesChanged {});
             Ok(())
         })?;
-        self.rule_set(RuleSetId::User(id))
+        self.rule_set(user, RuleSetId::User(id))
     }
 
-    /// Deletes a rule set the user made, with its entries and switches.
+    /// Deletes a rule set `user` made, with its entries and switches.
     ///
     /// # Errors
     /// [`StoreError::UnknownRuleSet`], [`StoreError::SystemActor`], or a database error.
-    pub fn delete_rule_set(&self, id: i64, actor: Actor) -> Result<RuleSetInfo, StoreError> {
+    pub fn delete_rule_set(
+        &self,
+        user: UserId,
+        id: i64,
+        actor: Actor,
+    ) -> Result<RuleSetInfo, StoreError> {
         if actor == Actor::System {
             return Err(StoreError::SystemActor);
         }
-        let info = self.rule_set(RuleSetId::User(id))?;
+        let info = self.rule_set(user, RuleSetId::User(id))?;
         self.change(|tx, now, fx| {
-            let set = require_user_set(tx, id)?;
+            let set = require_user_set(tx, user, id)?;
             let entries: Vec<Rule> = load_rules(tx)?
                 .into_iter()
                 .filter(|rule| rule.scope == Scope::Set(id))
@@ -577,7 +619,7 @@ impl Store {
                     reason: RuleDeleteReason::SetDeleted,
                     actor: actor_str(actor),
                 };
-                append(tx, &record)?;
+                append_for(tx, &record, user)?;
             }
             tx.execute(
                 "DELETE FROM rule_set_switches WHERE rule_set = ?1",
@@ -589,7 +631,7 @@ impl Store {
                 rule_set: set,
                 actor: actor_str(actor),
             };
-            append(tx, &record)?;
+            append_for(tx, &record, user)?;
             fx.push(Event::RulesChanged {});
             Ok(())
         })?;
@@ -597,15 +639,17 @@ impl Store {
         Ok(info)
     }
 
-    /// Switches a set on or off for every workspace (`workspace` `None`) or for one, or back to
-    /// following the next level (`enabled` `None`), and closes the open requests the set now
-    /// decides (R-37). Returns the rows it closed.
+    /// Switches a set on or off for every workspace of `user` (`workspace` `None`) or for one of
+    /// theirs, or back to following the next level (`enabled` `None`), and closes the open
+    /// requests the set now decides (R-37). Returns the rows it closed.
     ///
     /// # Errors
-    /// [`StoreError::NotSwitchable`] for System managed, [`StoreError::UnknownRuleSet`],
+    /// [`StoreError::NotSwitchable`] for System managed, [`StoreError::UnknownRuleSet`] (also a
+    /// set another user made), [`StoreError::UnknownWorkspace`] for another user's workspace,
     /// [`StoreError::SystemActor`], or a database error.
     pub fn switch_rule_set(
         &self,
+        user: UserId,
         set: RuleSetId,
         workspace: Option<&WorkspaceId>,
         enabled: Option<bool>,
@@ -619,7 +663,10 @@ impl Store {
                 return Err(StoreError::NotSwitchable);
             }
             if let RuleSetId::User(id) = set {
-                require_user_set(tx, id)?;
+                require_user_set(tx, user, id)?;
+            }
+            if let Some(workspace) = workspace {
+                users::require_owner(tx, workspace, user)?;
             }
             // Built-in slugs this Puddle doesn't ship, and sets of a kind added later, don't parse.
             if parse_rule_set(&set.to_string()) != Some(set) {
@@ -628,14 +675,16 @@ impl Store {
             let key = set.to_string();
             let name = workspace.map(WorkspaceId::as_str);
             tx.execute(
-                "DELETE FROM rule_set_switches WHERE rule_set = ?1 AND workspace_id IS ?2",
-                params![key, name],
+                "DELETE FROM rule_set_switches
+                 WHERE rule_set = ?1 AND workspace_id IS ?2 AND user_id = ?3",
+                params![key, name, user.get()],
             )?;
             if let Some(on) = enabled {
                 tx.execute(
-                    "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![key, name, i64::from(on), sql_ts(now)],
+                    "INSERT INTO rule_set_switches
+                         (rule_set, workspace_id, enabled, changed_at, user_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![key, name, i64::from(on), sql_ts(now), user.get()],
                 )?;
             }
             let record = AuditRecord::RuleSetSwitched {
@@ -645,9 +694,9 @@ impl Store {
                 enabled,
                 actor: actor_str(actor),
             };
-            append(tx, &record)?;
+            append_for(tx, &record, user)?;
             let index = load_index(tx)?;
-            let closed = close_rows_now_decided(tx, &index, workspace, actor, now, fx)?;
+            let closed = close_rows_now_decided(tx, &index, Some(user), workspace, actor, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(closed)
         })?;
@@ -735,7 +784,7 @@ impl Store {
                 append(tx, &record)?;
             }
             let index = load_index(tx)?;
-            let closed = close_rows_now_decided(tx, &index, None, Actor::System, now, fx)?;
+            let closed = close_rows_now_decided(tx, &index, None, None, Actor::System, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(closed)
         })?;
@@ -744,9 +793,14 @@ impl Store {
     }
 }
 
-/// A set the user made, with its switches from `index` and its entries.
-fn user_set_info(conn: &Connection, index: &RuleIndex, id: i64) -> Result<RuleSetInfo, StoreError> {
-    let wire = require_user_set(conn, id)?;
+/// A set `user` made, with its switches from `index` and its entries.
+fn user_set_info(
+    conn: &Connection,
+    index: &RuleIndex,
+    user: UserId,
+    id: i64,
+) -> Result<RuleSetInfo, StoreError> {
+    let wire = require_user_set(conn, user, id)?;
     let set = RuleSetId::User(id);
     Ok(RuleSetInfo {
         id: set,
@@ -754,8 +808,8 @@ fn user_set_info(conn: &Connection, index: &RuleIndex, id: i64) -> Result<RuleSe
         description: wire.description,
         fill: wire.fill.unwrap_or_else(|| Fill::default_for_user_set(id)),
         default_on: default_on(set),
-        global: index.switches().global(set),
-        overrides: index.switches().overrides(set),
+        global: index.switches().global(user, set),
+        overrides: index.overrides(user, set),
         entries: index
             .rules()
             .iter()

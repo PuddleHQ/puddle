@@ -2930,7 +2930,7 @@ export interface components {
          * @description What went wrong, as a stable code a client can switch on.
          * @enum {string}
          */
-        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "unavailable" | "internal";
+        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "forbidden" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "unavailable" | "internal";
         /**
          * @description Something the user should hear about. Serialised as one internally tagged enum
          *     (`{"type":"oom_kill",...}`, ADR 0002).
@@ -3181,7 +3181,7 @@ export interface components {
         } | {
             /**
              * Format: int64
-             * @description The newest audit record's id.
+             * @description The newest audit record's id of that user.
              */
             id: number;
             /** @enum {string} */

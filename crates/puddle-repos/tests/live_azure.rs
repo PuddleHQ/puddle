@@ -95,11 +95,14 @@ fn identity(organisation: &str) -> Identity {
         CredentialBinding::new(&host, source, Coverage::new(owners, false).unwrap()).unwrap();
     Store::open_in_memory(Arc::new(ManualClock::new(0)), Limits::default())
         .unwrap()
-        .create_identity(IdentityDraft {
-            label: "Work".to_owned(),
-            author: Author::new("Work", "me@example.org").unwrap(),
-            credentials: vec![binding],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            IdentityDraft {
+                label: "Work".to_owned(),
+                author: Author::new("Work", "me@example.org").unwrap(),
+                credentials: vec![binding],
+            },
+        )
         .unwrap()
 }
 

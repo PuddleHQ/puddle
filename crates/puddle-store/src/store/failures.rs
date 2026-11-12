@@ -255,11 +255,17 @@ fn a_decision_is_logged_with_its_effect() {
 fn a_rule_in_a_set_that_is_off_leaves_the_open_requests_it_matches_open() {
     let store = store();
     let created = store
-        .create_rule_set("Blocks", "", None, Actor::Ui)
+        .create_rule_set(UserId::OWNER, "Blocks", "", None, Actor::Ui)
         .unwrap();
     let set: i64 = created.id.to_string()[5..].parse().unwrap();
     store
-        .switch_rule_set(RuleSetId::User(set), None, Some(false), Actor::Ui)
+        .switch_rule_set(
+            UserId::OWNER,
+            RuleSetId::User(set),
+            None,
+            Some(false),
+            Actor::Ui,
+        )
         .unwrap();
     let id = new_pending(&store, "x.example");
 
@@ -490,6 +496,7 @@ fn a_workspace_operation_that_cannot_be_recorded_is_logged_and_dropped() {
     let op = NewWorkspaceOp {
         op: WorkspaceOpKind::Create,
         workspace: Some(WorkspaceId::new("acme").unwrap()),
+        user: None,
         outcome: WorkspaceOpOutcome::Succeeded,
         actor: Actor::Api,
         detail: None,

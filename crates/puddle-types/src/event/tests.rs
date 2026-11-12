@@ -248,7 +248,7 @@ fn pending_rule_and_audit_events_have_fixed_shapes() {
             Some(WorkspaceId::new("box").unwrap()),
         ),
         (
-            Event::AuditAppended { id: 99 },
+            Event::AuditAppended { id: 99, user: 0 },
             r#"{"type":"audit_appended","id":99}"#,
             None,
         ),
@@ -637,4 +637,12 @@ fn a_learned_pass_through_host_has_a_fixed_shape() {
     assert_eq!(serde_json::to_string(&event).unwrap(), json);
     assert_eq!(serde_json::from_str::<Event>(json).unwrap(), event);
     assert_eq!(event.workspace(), Some(&WorkspaceId::new("box").unwrap()));
+}
+
+#[test]
+fn the_user_an_audit_event_is_for_is_never_sent() {
+    assert_eq!(
+        serde_json::to_string(&Event::AuditAppended { id: 7, user: 2 }).unwrap(),
+        r#"{"type":"audit_appended","id":7}"#
+    );
 }

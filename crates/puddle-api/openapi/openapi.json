@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.28.0"
+    "version": "0.29.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -12880,6 +12880,7 @@
           "misdirected_host",
           "forbidden_origin",
           "unauthorized",
+          "forbidden",
           "bad_request",
           "unsupported_media_type",
           "payload_too_large",
@@ -13131,7 +13132,7 @@
           },
           {
             "type": "object",
-            "description": "Rules were created, changed, deleted or expired. Global: every subscriber gets it.",
+            "description": "Rules were created, changed, deleted or expired. Global: every subscriber gets it (it\ncarries nothing, so each refetches what it may see).",
             "required": [
               "type"
             ],
@@ -13161,7 +13162,7 @@
           },
           {
             "type": "object",
-            "description": "The list of identities, their order, the default or an identity's author or credentials\nchanged. Carries no data: refetch `GET /api/identities`.",
+            "description": "The list of identities, their order, the default or an identity's author or credentials\nchanged, or the Git defaults. Carries no data: refetch `GET /api/identities` (every\nsubscriber gets it, and each refetches its own).",
             "required": [
               "type"
             ],
@@ -13211,7 +13212,7 @@
           },
           {
             "type": "object",
-            "description": "The global environment (variables and secrets every workspace gets) changed. Carries no\ndata: refetch `GET /api/env`, and a workspace's page refetches its own list too.",
+            "description": "A global environment (the variables and secrets every workspace of one user gets) changed.\nCarries no data: refetch `GET /api/env`, and a workspace's page refetches its own list too\n(every subscriber gets it, and each refetches its own).",
             "required": [
               "type"
             ],
@@ -13467,7 +13468,7 @@
           },
           {
             "type": "object",
-            "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in\nwindow. Global: every subscriber gets it. Names only, never a value.",
+            "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in\nwindow. Global: it goes to the owner's streams. Names only, never a value.",
             "required": [
               "host",
               "source",
@@ -13657,7 +13658,7 @@
           },
           {
             "type": "object",
-            "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit,\nnot per record. Global: every subscriber gets it.",
+            "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit and\nuser, not per record: it goes to the streams of the user the records belong to.",
             "required": [
               "id",
               "type"
@@ -13666,7 +13667,7 @@
               "id": {
                 "type": "integer",
                 "format": "int64",
-                "description": "The newest audit record's id."
+                "description": "The newest audit record's id of that user."
               },
               "type": {
                 "type": "string",
@@ -13678,7 +13679,7 @@
           },
           {
             "type": "object",
-            "description": "The network or the system's proxy settings changed (after a quiet period), so what\n`GET /api/network-health` showed may be out of date. Global: every subscriber gets it.",
+            "description": "The network or the system's proxy settings changed (after a quiet period), so what\n`GET /api/network-health` showed may be out of date. Global: it goes to the owner's\nstreams.",
             "required": [
               "epoch",
               "type"
@@ -13700,7 +13701,7 @@
           },
           {
             "type": "object",
-            "description": "Signing in to the company proxy failed (it turned the credentials or the token down, or\nasked again and again), so what `GET /api/network-health` lists under sign-in has changed.\nSent once when a proxy goes from signed in (or never tried) to failing, not on every retry.\nNames the proxy and the scheme only, never a credential. Global: every subscriber gets it.",
+            "description": "Signing in to the company proxy failed (it turned the credentials or the token down, or\nasked again and again), so what `GET /api/network-health` lists under sign-in has changed.\nSent once when a proxy goes from signed in (or never tried) to failing, not on every retry.\nNames the proxy and the scheme only, never a credential. Global: it goes to the owner's\nstreams.",
             "required": [
               "proxy",
               "scheme",
@@ -13728,7 +13729,7 @@
           },
           {
             "type": "object",
-            "description": "The list of background problems changed (something Puddle does on its own failed, or the\ncause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber\ngets it.",
+            "description": "The list of background problems changed (something Puddle does on its own failed, or the\ncause went away). Carries no data: refetch `GET /api/problems`. Global: every\nsubscriber gets it (each refetches what it may see).",
             "required": [
               "type"
             ],
@@ -13743,7 +13744,7 @@
           },
           {
             "type": "object",
-            "description": "The free space on the drive that holds Puddle's data moved across the warning or the\nfailure line, or back above both (`level` is then `ok`). Sent when the level changes, not\non every read; the first read after Puddle starts counts as a change when it is not `ok`.\nGlobal: every subscriber gets it.",
+            "description": "The free space on the drive that holds Puddle's data moved across the warning or the\nfailure line, or back above both (`level` is then `ok`). Sent when the level changes, not\non every read; the first read after Puddle starts counts as a change when it is not `ok`.\nGlobal: it goes to the owner's streams.",
             "required": [
               "level",
               "free_mib",

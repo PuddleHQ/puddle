@@ -6,3 +6,4 @@ pub mod data_folder;
 pub mod doctor;
 pub mod serve;
 pub mod ssh_bridge;
+pub mod user;

@@ -64,7 +64,10 @@ pub use store::{
     SystemPlan, WorkspaceDeletion, WorkspaceInterception, WorkspaceOwners, parse_rule_set,
 };
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
-pub use users::{DeviceId, MAX_USER_NAME_CHARS, Role, User, UserId, UserName};
+pub use users::{
+    Device, DeviceId, DeviceSession, MAX_DEVICE_NAME_CHARS, MAX_USER_NAME_CHARS, Role,
+    SignInMethod, User, UserId, UserName, device_name,
+};
 pub use workspace_git::{
     GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
     SwitchSource, WorkspaceGit,

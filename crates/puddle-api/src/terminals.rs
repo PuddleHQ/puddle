@@ -337,6 +337,8 @@ struct Entry {
     workspace: WorkspaceId,
     size: TerminalSize,
     ticket: Option<(String, Instant)>,
+    /// The signed-in browser the terminal was made for, if it was not made with the install token.
+    device: Option<puddle_store::DeviceId>,
 }
 
 /// The tickets handed out and the terminals they open, with the limits on both. A terminal counts
@@ -386,9 +388,34 @@ impl Registry {
                 workspace: workspace.clone(),
                 size,
                 ticket: Some((ticket, now)),
+                device: None,
             },
         );
         Ok(id)
+    }
+
+    /// Records that terminal `id` belongs to the signed-in browser `device`, so it ends when that
+    /// device is signed out.
+    pub(crate) fn bind(&self, id: u64, device: puddle_store::DeviceId) {
+        if let Some(entry) = self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entries
+            .get_mut(&id)
+        {
+            entry.device = Some(device);
+        }
+    }
+
+    /// The signed-in browser terminal `id` was made for.
+    pub(crate) fn device_of(&self, id: u64) -> Option<puddle_store::DeviceId> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entries
+            .get(&id)
+            .and_then(|entry| entry.device)
     }
 
     /// Uses the ticket of terminal `id` of `workspace`: works once, within its lifetime, for that

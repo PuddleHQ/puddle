@@ -36,3 +36,28 @@ fn the_network_listener_admits_the_listed_proxies_only_also_when_written_as_mapp
     assert!(!admission.admits(ip("192.168.1.21")));
     assert!(!admission.admits(ip("127.0.0.1")));
 }
+
+#[tokio::test]
+async fn the_unclaimed_warning_runs_while_no_owner_exists() {
+    use puddle_store::{Limits, ManualClock, Store};
+    let clock = Arc::new(ManualClock::new(1_000_000));
+    let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
+    let secrets = Arc::new(store.take_account_secrets().unwrap());
+    let sign_in = Arc::new(SignIn::new(store, secrets, clock, false).unwrap());
+    assert!(sign_in.status().await.unwrap().setup_open);
+    warn_while_unclaimed(&sign_in).await;
+}
+
+#[tokio::test]
+async fn the_unclaimed_warning_is_left_out_once_the_owner_exists() {
+    use puddle_store::{Limits, ManualClock, Store, UserName};
+    let clock = Arc::new(ManualClock::new(1_000_000));
+    let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
+    let secrets = Arc::new(store.take_account_secrets().unwrap());
+    secrets
+        .create_owner(&UserName::new("Tijs").unwrap(), "$argon2id$x")
+        .unwrap();
+    let sign_in = Arc::new(SignIn::new(store, secrets, clock, false).unwrap());
+    assert!(!sign_in.status().await.unwrap().setup_open);
+    warn_while_unclaimed(&sign_in).await;
+}

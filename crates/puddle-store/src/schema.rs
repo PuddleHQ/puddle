@@ -12,11 +12,11 @@ use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 20;
+pub const SCHEMA_VERSION: u32 = 21;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -663,6 +663,29 @@ CREATE TABLE git_defaults_v20 (
 INSERT INTO git_defaults_v20 SELECT 1, only_push_listed, only_pull_listed FROM git_defaults;
 DROP TABLE git_defaults;
 ALTER TABLE git_defaults_v20 RENAME TO git_defaults;
+";
+
+/// Browser sign-in.
+///
+/// - `account_sessions`: the digest of each device's refresh token (a SHA-256 of 32 random
+///   bytes), written and read only through `AccountSecrets`. A device with no row can't refresh.
+/// - `account_setup`: one row once the first visitor made the owner account, so resetting the
+///   owner's password never reopens the first-visitor flow.
+/// - `sign_in_methods`: which ways of signing in are switched on. Only passwords exist so far.
+const V21: &str = r"
+CREATE TABLE account_sessions (
+    device_id      INTEGER PRIMARY KEY REFERENCES devices (id) ON DELETE CASCADE,
+    refresh_digest BLOB    NOT NULL UNIQUE CHECK (length(refresh_digest) >= 16)
+) STRICT;
+CREATE TABLE account_setup (
+    id           INTEGER PRIMARY KEY CHECK (id = 1),
+    completed_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE sign_in_methods (
+    method  TEXT    PRIMARY KEY CHECK (method IN ('password', 'passkey')),
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
+) STRICT;
+INSERT INTO sign_in_methods (method, enabled) VALUES ('password', 1);
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.

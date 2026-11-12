@@ -170,3 +170,71 @@ fn backup_to_a_relative_destination_lands_in_the_working_folder() {
     assert!(result.status.success(), "{result:?}");
     assert!(root.path().join("out").join("puddle.db").is_file());
 }
+
+#[test]
+fn user_reset_without_a_name_exits_2() {
+    assert_eq!(puddle(&["user", "reset"]).status.code(), Some(2));
+    assert_eq!(puddle(&["user"]).status.code(), Some(2));
+}
+
+#[test]
+fn user_reset_prints_one_link_and_sets_no_password() {
+    use std::sync::Arc;
+
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    drop(
+        puddle_store::Store::open(
+            &data.join("puddle.db"),
+            Arc::new(puddle_store::SystemClock),
+            puddle_store::Limits::default(),
+        )
+        .unwrap(),
+    );
+    let config = root.path().join("serve.toml");
+    std::fs::write(
+        &config,
+        "data_dir = \"data\"\nremote = true\npublic_hosts = [\"puddle.example.org\"]\n",
+    )
+    .unwrap();
+    let out = puddle(&[
+        "user",
+        "reset",
+        "--config",
+        config.to_str().unwrap(),
+        "owner",
+    ]);
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let link = stdout.trim_end();
+    assert!(
+        link.starts_with("https://puddle.example.org/invite#"),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "the link is the only thing on stdout"
+    );
+    assert!(stderr.contains("password is removed"), "{stderr}");
+    assert!(
+        !stderr.contains(link.rsplit('#').next().unwrap()),
+        "the secret is only on stdout"
+    );
+
+    let unknown = puddle(&[
+        "user",
+        "reset",
+        "--config",
+        config.to_str().unwrap(),
+        "ghost",
+    ]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(
+        String::from_utf8(unknown.stderr)
+            .unwrap()
+            .contains("no user named ghost")
+    );
+}

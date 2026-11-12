@@ -18,7 +18,7 @@ use puddle_netpolicy::{
     CompanySignals, EndpointKind, NameRegistration, NoSignals, PuddleEndpoints, Registration,
 };
 use puddle_secrets::SecretStore;
-use puddle_store::{Clock, Store};
+use puddle_store::{AccountSecrets, Clock, Store};
 use puddle_types::Problems;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, watch};
@@ -41,6 +41,7 @@ use crate::remote::{NetworkListener, PublicHost, RemoteError, RemoteServing};
 use crate::repos::{NoRepos, RepoService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
+use crate::signin::SignIn;
 use crate::terminals::{NoTerminals, Registry, TerminalService};
 use crate::token::{ApiToken, ConnectionInfo};
 use crate::ui::{UiAssets, UiService};
@@ -86,6 +87,9 @@ pub struct ApiConfig {
     pub remote: Option<RemoteServing>,
     /// A second listener for a reverse proxy on another machine. Needs [`Self::remote`].
     pub network_listener: Option<NetworkListener>,
+    /// Whether users other than the owner may sign in. Off by default: everything belongs to the
+    /// one owner.
+    pub multi_user: bool,
 }
 
 impl Default for ApiConfig {
@@ -102,6 +106,7 @@ impl Default for ApiConfig {
             ui,
             remote: None,
             network_listener: None,
+            multi_user: false,
         }
     }
 }
@@ -181,6 +186,9 @@ pub struct Services {
     /// loopback toggle on. [`Services::new`] starts with an empty registry of its own; give the
     /// one the proxy uses with [`Services::with_endpoints`].
     pub endpoints: PuddleEndpoints,
+    /// The sign-in secrets browsers sign in against (`Store::take_account_secrets`). Without
+    /// them, remote serving has no sign-in: the routes answer 503 and no browser is let in.
+    pub account_secrets: Option<Arc<AccountSecrets>>,
 }
 
 impl Services {
@@ -211,7 +219,15 @@ impl Services {
             proxy_sign_ins: Arc::new(NoProxySignIns),
             company_signals: Arc::new(NoSignals),
             endpoints: PuddleEndpoints::new(),
+            account_secrets: None,
         }
+    }
+
+    /// These services with browser sign-in over `secrets`.
+    #[must_use]
+    pub fn with_account_secrets(mut self, secrets: AccountSecrets) -> Self {
+        self.account_secrets = Some(Arc::new(secrets));
+        self
     }
 
     /// These services listing the problems raised into `problems`.
@@ -342,6 +358,9 @@ pub enum ServeError {
     /// The listener's certificate or key cannot be used.
     #[error("the network listener's TLS certificate cannot be used: {0}")]
     Tls(String),
+    /// Sign-in could not start (the system gave no randomness).
+    #[error("browser sign-in cannot start: {0}")]
+    SignIn(String),
 }
 
 /// A bound, not yet serving API.
@@ -481,6 +500,52 @@ fn name_blocks(remote: &RemoteServing, endpoints: &PuddleEndpoints) -> Vec<NameR
     blocks
 }
 
+/// Binds the network listener when one is configured, which needs remote serving.
+async fn bind_network_for(
+    config: &ApiConfig,
+    endpoints: &PuddleEndpoints,
+) -> Result<Option<BoundNetwork>, ServeError> {
+    match (&config.remote, &config.network_listener) {
+        (None, Some(_)) => Err(RemoteError::ListenerWithoutRemote.into()),
+        (_, Some(network)) => {
+            network.check()?;
+            Ok(Some(bind_network(network, endpoints).await?))
+        }
+        (_, None) => Ok(None),
+    }
+}
+
+/// Browser sign-in, when remote serving is on and the host gave the API its sign-in secrets.
+async fn sign_in_for(
+    config: &ApiConfig,
+    services: &Services,
+) -> Result<Option<Arc<SignIn>>, ServeError> {
+    let (Some(_), Some(secrets)) = (&config.remote, services.account_secrets.clone()) else {
+        return Ok(None);
+    };
+    let sign_in = Arc::new(
+        SignIn::new(
+            services.store.clone(),
+            secrets,
+            services.clock.clone(),
+            config.multi_user,
+        )
+        .map_err(|e| ServeError::SignIn(e.reason().to_owned()))?,
+    );
+    warn_while_unclaimed(&sign_in).await;
+    Ok(Some(sign_in))
+}
+
+/// Says so in the log while nobody has made the owner account: the first visitor to the public
+/// address would.
+async fn warn_while_unclaimed(sign_in: &Arc<SignIn>) {
+    if sign_in.status().await.is_ok_and(|status| status.setup_open) {
+        tracing::warn!(
+            "no owner account exists yet: the first visitor to the public address will create it"
+        );
+    }
+}
+
 impl ApiServer {
     /// Binds `127.0.0.1:<config.port>` and builds the routes.
     ///
@@ -512,27 +577,19 @@ impl ApiServer {
         let addr = listener.local_addr().map_err(bind_err)?;
         // Registered before anything can serve, so there is no moment a guest could reach it.
         let registration = services.endpoints.register(addr, EndpointKind::Api);
-        let network = match (&config.remote, &config.network_listener) {
-            (None, Some(_)) => return Err(RemoteError::ListenerWithoutRemote.into()),
-            (_, Some(network)) => {
-                network.check()?;
-                Some(bind_network(network, &services.endpoints).await?)
-            }
-            (_, None) => None,
-        };
-        let fronts = config
-            .remote
-            .as_ref()
-            .map(|remote| front_registrations(remote, &services.endpoints));
-        let names = config
-            .remote
-            .as_ref()
-            .map(|remote| name_blocks(remote, &services.endpoints));
+        let network = bind_network_for(&config, &services.endpoints).await?;
+        let fronts_names = config.remote.as_ref().map(|remote| {
+            (
+                front_registrations(remote, &services.endpoints),
+                name_blocks(remote, &services.endpoints),
+            )
+        });
         let (stop, shutdown) = watch::channel(false);
         let settings_lock = services
             .workspaces
             .settings_lock()
             .unwrap_or_else(|| Arc::new(Mutex::new(())));
+        let sign_in = sign_in_for(&config, &services).await?;
         let state = AppState {
             authorizer: Arc::new(Isolation::new(services.store.clone())),
             store: services.store,
@@ -554,6 +611,7 @@ impl ApiServer {
             terminals: Arc::new(Registry::default()),
             proxy_sign_ins: services.proxy_sign_ins,
             company_signals: services.company_signals,
+            sign_in: sign_in.clone(),
             shutdown,
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).
@@ -566,10 +624,13 @@ impl ApiServer {
             let guard = Guard::new(token.clone(), addr.port(), &config.extra_origins)
                 .serving_ui(ui.is_some())
                 .acting_as(principal);
-            match &config.remote {
-                Some(remote) => guard.remote(remote, listener),
-                None => guard,
-            }
+            let guard = sign_in
+                .iter()
+                .fold(guard, |guard, sign_in| guard.signing_in(sign_in.clone()));
+            config
+                .remote
+                .iter()
+                .fold(guard, |guard, remote| guard.remote(remote, listener))
         };
         let router = build_router(
             state.clone(),
@@ -577,7 +638,7 @@ impl ApiServer {
             config.request_timeout,
             ui.clone(),
         );
-        let remote = fronts.zip(names).map(|(fronts, names)| RemoteBound {
+        let remote = fronts_names.map(|(fronts, names)| RemoteBound {
             network: network.map(|bound| NetworkBound {
                 router: build_router(
                     state.clone(),

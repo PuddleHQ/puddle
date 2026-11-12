@@ -100,3 +100,24 @@ async fn the_limits_count_open_terminals_and_unused_tickets_and_free_with_the_so
         "unused tickets run out"
     );
 }
+
+#[test]
+fn a_terminal_made_for_a_signed_in_browser_remembers_which() {
+    let registry = Registry::default();
+    let a = id("a");
+    let made = registry.create(&a, size(), "t".into()).unwrap();
+    assert_eq!(
+        registry.device_of(made),
+        None,
+        "made with the install token"
+    );
+    registry.bind(made, puddle_store::DeviceId::from_stored(7));
+    assert_eq!(
+        registry.device_of(made),
+        Some(puddle_store::DeviceId::from_stored(7))
+    );
+    // Binding a terminal that is gone, or asking about one, changes nothing.
+    registry.release(made);
+    registry.bind(made, puddle_store::DeviceId::from_stored(8));
+    assert_eq!(registry.device_of(made), None);
+}

@@ -151,4 +151,13 @@ pub enum StoreError {
     /// An invite's digest was refused (too short to be a hash).
     #[error("an invite digest must be at least 16 bytes")]
     InviteInvalid,
+    /// A device name was refused; the text says why.
+    #[error("{0}")]
+    DeviceName(String),
+    /// The owner account is already made: the first visitor's chance is gone.
+    #[error("the owner account is already set up")]
+    SetupDone,
+    /// Turning a sign-in method off would leave none, or the method does not exist yet.
+    #[error("{0}")]
+    SignInMethod(String),
 }

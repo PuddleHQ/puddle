@@ -131,5 +131,82 @@ impl DeviceId {
     }
 }
 
+/// The longest device name, in characters.
+pub const MAX_DEVICE_NAME_CHARS: usize = 64;
+
+/// One signed-in browser, as its user sees it in the list: never a credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Device {
+    /// The id.
+    pub id: DeviceId,
+    /// What the browser calls itself, as the user can recognise it.
+    pub name: String,
+    /// When it signed in, epoch ms.
+    pub created_at: u64,
+    /// When it last asked for an access token, epoch ms.
+    pub last_seen_at: u64,
+    /// When it stops working unless it is used again, epoch ms.
+    pub expires_at: u64,
+}
+
+/// Who a device signs in as, while it is neither revoked nor expired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceSession {
+    /// The device.
+    pub device: DeviceId,
+    /// Its user.
+    pub user: UserId,
+    /// That user's role.
+    pub role: Role,
+}
+
+/// A way of signing in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SignInMethod {
+    /// A password.
+    Password,
+    /// A passkey (not built yet; the row exists only once passkeys do).
+    Passkey,
+}
+
+impl SignInMethod {
+    /// The stored spelling.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Password => "password",
+            Self::Passkey => "passkey",
+        }
+    }
+
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        match text {
+            "password" => Some(Self::Password),
+            "passkey" => Some(Self::Passkey),
+            _ => None,
+        }
+    }
+}
+
+/// A device name: 1 to [`MAX_DEVICE_NAME_CHARS`] characters, no control characters; surrounding
+/// space is trimmed.
+///
+/// # Errors
+/// [`crate::StoreError::DeviceName`] saying what is wrong.
+pub fn device_name(text: &str) -> Result<String, crate::StoreError> {
+    let text = text.trim();
+    let refuse = |why: &str| Err(crate::StoreError::DeviceName(why.to_owned()));
+    if text.is_empty() {
+        return refuse("a device name can't be empty");
+    }
+    if text.chars().count() > MAX_DEVICE_NAME_CHARS {
+        return refuse("a device name has at most 64 characters");
+    }
+    if text.chars().any(char::is_control) {
+        return refuse("a device name can't contain control characters");
+    }
+    Ok(text.to_owned())
+}
+
 #[cfg(test)]
 mod tests;

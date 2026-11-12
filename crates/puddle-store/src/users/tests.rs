@@ -29,3 +29,11 @@ fn the_owner_is_user_one_and_ids_show_as_numbers() {
     assert_eq!(UserId::from_stored(7).to_string(), "7");
     assert_eq!(DeviceId::from_stored(3).get(), 3);
 }
+
+#[test]
+fn a_sign_in_method_reads_back_as_written_and_an_unknown_one_does_not() {
+    for method in [SignInMethod::Password, SignInMethod::Passkey] {
+        assert_eq!(SignInMethod::parse(method.as_str()), Some(method));
+    }
+    assert_eq!(SignInMethod::parse("magic link"), None);
+}

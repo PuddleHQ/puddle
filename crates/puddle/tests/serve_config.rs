@@ -133,7 +133,8 @@ fn print_config_prints_the_effective_options_and_starts_nothing() {
              workspace_base_domain = subdomains of the first public host (default)\n\
              listen_interface = no network listener (default)\n\
              listen_port = 8443 (default)\n\
-             allowed_proxies = none (default)\n",
+             allowed_proxies = none (default)\n\
+             multi_user = off (default)\n",
             api = dir.path().join("api.json").display(),
         )
     );
@@ -443,6 +444,26 @@ async fn a_host_started_with_remote_serving_answers_a_proxy_over_tls_and_a_loopb
     assert_eq!(
         over_tls("127.0.0.1").await,
         "HTTP/1.1 421 Misdirected Request"
+    );
+
+    // The host gave the API its sign-in secrets: under the public name the sign-in page can ask
+    // whether the owner account is still to be made, with no token.
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    stream
+        .write_all(
+            b"GET /api/auth/status HTTP/1.1\r\nHost: puddle.example.org\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut reply = Vec::new();
+    let _ = stream.read_to_end(&mut reply).await;
+    let reply = text(&reply);
+    assert!(reply.starts_with("HTTP/1.1 200 OK"), "{reply}");
+    assert!(
+        reply.ends_with(r#"{"setup_open":true,"password_login":true}"#),
+        "{reply}"
     );
     host.shutdown().await;
 }

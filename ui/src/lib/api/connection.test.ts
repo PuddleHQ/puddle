@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { authHeaders, bootstrapToken } from "./connection.ts";
+import {
+  activeToken,
+  authHeaders,
+  bootstrapToken,
+  useSessionToken,
+} from "./connection.ts";
 
 describe("bootstrapToken", () => {
   it("reads the token the shell set on the page", () => {
@@ -42,5 +47,23 @@ describe("authHeaders", () => {
   it("is a bearer header with a token and empty without", () => {
     expect(authHeaders("t")).toEqual({ Authorization: "Bearer t" });
     expect(authHeaders(undefined)).toEqual({});
+  });
+});
+
+describe("activeToken", () => {
+  it("is the shell's token first, then this browser's, then none", () => {
+    useSessionToken(() => undefined);
+    expect(activeToken()).toBeUndefined();
+    useSessionToken(() => "session");
+    expect(activeToken()).toBe("session");
+    (globalThis as { __PUDDLE__?: { token: string } }).__PUDDLE__ = {
+      token: "shell",
+    };
+    try {
+      expect(activeToken()).toBe("shell");
+    } finally {
+      delete (globalThis as { __PUDDLE__?: unknown }).__PUDDLE__;
+      useSessionToken(() => undefined);
+    }
   });
 });

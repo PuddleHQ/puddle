@@ -237,6 +237,15 @@ fn az_failures_name_the_missing_piece() {
             "ERROR: The user does not have access to this organization",
             SourceError::NoAccess,
         ),
+        // Each half of the tenant wording alone says nothing about the tenant.
+        (
+            "ERROR: Please run 'az login --tenant contoso.example' to setup account.",
+            SourceError::NotSignedIn,
+        ),
+        (
+            "ERROR: The subscription 'x' was not found.",
+            SourceError::CouldNotRun(Tool::Az),
+        ),
         (
             "Traceback (most recent call last): boom",
             SourceError::CouldNotRun(Tool::Az),

@@ -33,6 +33,7 @@ export function report(over: Partial<NetworkHealth> = {}): NetworkHealth {
     },
     pull_proxy: { active: true, via_upstream: true },
     routes: [],
+    company_network: { private_access_client: false, dns_suffixes: [] },
     ...over,
   };
 }

@@ -173,3 +173,45 @@ fn a_signal_the_host_cannot_read_never_widens_access() {
     assert_eq!(signal("100.64.3.7", "other.corp.example"), None);
     assert_eq!(signal("10.8.0.9", "other.corp.example"), None);
 }
+
+#[test]
+fn what_a_host_found_lists_each_suffix_once_and_the_client() {
+    let s = StaticSignals::new()
+        .with_dns_suffix("Corp.Example.")
+        .with_dns_suffix("corp.example")
+        .with_dns_suffix("ad.example")
+        .with_private_access_client();
+    assert_eq!(
+        s.found(),
+        CompanyFound {
+            dns_suffixes: vec!["ad.example".into(), "corp.example".into()],
+            private_access_client: true,
+        }
+    );
+}
+
+#[test]
+fn a_host_that_reads_nothing_found_nothing() {
+    assert_eq!(PacOnly.found(), CompanyFound::default());
+    assert_eq!(NoSignals.found(), CompanyFound::default());
+}
+
+/// A host that reads only whether a private-access client is active.
+struct ClientOnly;
+
+impl CompanySignals for ClientOnly {
+    fn private_access_client(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn the_default_found_reports_the_client_the_host_read_and_no_suffixes() {
+    assert_eq!(
+        ClientOnly.found(),
+        CompanyFound {
+            dns_suffixes: Vec::new(),
+            private_access_client: true,
+        }
+    );
+}

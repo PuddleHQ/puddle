@@ -121,7 +121,13 @@ async fn the_real_report_shows_the_setup_and_never_a_secret() {
 
     let clock = Arc::new(ManualClock::new(START_MS));
     let health = Arc::new(
-        HostNetworkHealth::new(discovery.clone(), clock as Arc<dyn Clock>).with_chain(chain),
+        HostNetworkHealth::new(discovery.clone(), clock as Arc<dyn Clock>)
+            .with_chain(chain)
+            .with_company_signals(Arc::new(
+                puddle_netpolicy::StaticSignals::new()
+                    .with_dns_suffix("Corp.Test.")
+                    .with_private_access_client(),
+            )),
     );
     health.set_roots(Arc::new(CorporateRoots::select(
         &root_snapshot(),
@@ -144,6 +150,10 @@ async fn the_real_report_shows_the_setup_and_never_a_secret() {
     assert_eq!(proxy_part["https_proxy"], "static.corp:3128");
     assert_eq!(proxy_part["last_change_at"], Value::Null);
     assert_eq!(proxy_part["dead_proxies"][0]["proxy"], "static.corp:3128");
+    assert_eq!(
+        body["company_network"],
+        json!({"private_access_client": true, "dns_suffixes": ["corp.test"]})
+    );
     assert_eq!(body["sign_in"]["methods"], json!(["basic"]));
     let attempt = &body["sign_in"]["attempts"][0];
     assert_eq!(attempt["proxy"], proxy.proxy_addr().to_string());

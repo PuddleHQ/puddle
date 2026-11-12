@@ -21,6 +21,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { onChildEnd } from "./child-end.mjs";
 
 const exe = process.env.PUDDLE_APP_EXE;
 if (!exe) throw new Error("set PUDDLE_APP_EXE to the built puddle-app");
@@ -50,7 +51,7 @@ app.stderr.on("data", (chunk) => {
 let appExited = false;
 let appExitCode;
 const exited = new Promise((resolve) =>
-  app.on("exit", (code) => {
+  onChildEnd(app, (code) => {
     appExited = true;
     appExitCode = code;
     console.log(`puddle-app exited (${code})`);

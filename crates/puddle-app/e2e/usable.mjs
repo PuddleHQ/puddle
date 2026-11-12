@@ -35,6 +35,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Uia } from "./uia.mjs";
+import { onChildEnd } from "./child-end.mjs";
 
 const local = process.env.LOCALAPPDATA;
 if (!local) throw new Error("LOCALAPPDATA is not set: this runs on Windows");
@@ -77,7 +78,7 @@ const lab = spawn(process.env.USABLE_LAB_BIN, ["--name", forge, "--port", "443",
 let labLog = "";
 lab.stderr.on("data", (c) => (labLog += c));
 let labExited = false;
-lab.on("exit", () => (labExited = true));
+onChildEnd(lab, () => (labExited = true));
 let info;
 let rootStored = false;
 async function startForge() {
@@ -117,7 +118,7 @@ app.stderr.on("data", (chunk) => {
   process.stderr.write(chunk);
 });
 let appExited = false;
-app.on("exit", (code) => {
+onChildEnd(app, (code) => {
   appExited = true;
   console.log(`puddle-app exited (${code})`);
 });

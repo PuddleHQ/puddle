@@ -180,7 +180,7 @@ cat > probe.csproj <<'EOF'
   <ItemGroup><PackageReference Include="{NUGET_PACKAGE}" Version="1.0.0" /></ItemGroup>
 </Project>
 EOF
-timeout 240 dotnet restore 2>&1 | tail -12
+timeout 240 dotnet restore --no-cache 2>&1 | tail -12
 echo "tool={tag} rc=${{PIPESTATUS[0]}} installed=$(test -d ~/.nuget/packages/{id}/1.0.0 && echo yes || echo no)"
 "#
     )

@@ -479,3 +479,111 @@ describe("the account behind a credential", () => {
     await waitFor(() => expect(api.tokens).toHaveLength(0));
   });
 });
+
+describe("the Azure CLI", () => {
+  const azLine =
+    "Azure CLI account in tenant contoso.onmicrosoft.com for contoso";
+  const choose = () =>
+    fireEvent.click(screen.getByLabelText("Use the Azure CLI (Azure DevOps)"));
+
+  it("tells the user to sign in to az in a terminal and adds no sign-in of its own", async () => {
+    mount();
+    await choose();
+    await type("Microsoft Entra tenant", "contoso.onmicrosoft.com");
+    expect(
+      screen.getByText("az login --tenant contoso.onmicrosoft.com"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/does not sign in for you/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Sign in/ })).toBeNull();
+  });
+
+  it("adds the credential for dev.azure.com, covering only the organisation it names", async () => {
+    mount();
+    await choose();
+    await type("Microsoft Entra tenant", " contoso.onmicrosoft.com ");
+    await type(/Azure DevOps organisation/, "Contoso");
+    expect(
+      screen.getByLabelText(
+        /Owners or organisations it covers on dev.azure.com/,
+      ),
+    ).toHaveValue("Contoso");
+    expect(
+      screen.getByLabelText(/The rest of dev.azure.com/),
+    ).not.toBeChecked();
+    await submit();
+    expect(onAdd).toHaveBeenCalledWith(
+      {
+        host: "dev.azure.com",
+        source: {
+          kind: "az_cli",
+          tenant: "contoso.onmicrosoft.com",
+          org: "Contoso",
+        },
+        covers: { owners: ["contoso"], rest_of_host: false },
+      },
+      null,
+    );
+    expect(api.tokens).toHaveLength(0);
+  });
+
+  it("checks the tenant and organisation before it asks, and focuses the first problem", async () => {
+    mount();
+    await choose();
+    await submit();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Microsoft Entra tenant",
+    );
+    expect(screen.getByLabelText("Microsoft Entra tenant")).toHaveFocus();
+    await type("Microsoft Entra tenant", "--help");
+    await submit();
+    expect(screen.getByRole("alert")).toHaveTextContent("letters, digits");
+    await type("Microsoft Entra tenant", "contoso.onmicrosoft.com");
+    await type(/Azure DevOps organisation/, "bad/org");
+    await submit();
+    expect(screen.getByRole("alert")).toHaveTextContent("organisation");
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("will not ask az about a tenant that is not one", async () => {
+    mount();
+    await choose();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Check the Azure CLI" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Microsoft Entra tenant",
+    );
+    expect(screen.queryByTestId("az-check")).toBeNull();
+    expect(api.calls).not.toContain("POST /api/credentials/check");
+  });
+
+  it("says what is missing and the exact step when az cannot give a token", async () => {
+    api.unreadable.add(azLine);
+    mount();
+    await choose();
+    await type("Microsoft Entra tenant", "contoso.onmicrosoft.com");
+    await type(/Azure DevOps organisation/, "contoso");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Check the Azure CLI" }),
+    );
+    const result = await screen.findByTestId("az-check");
+    expect(result).toHaveTextContent("not signed in");
+    expect(screen.getByTestId("fix-step")).toHaveTextContent(
+      "Run `az login --tenant contoso.onmicrosoft.com` in a terminal",
+    );
+    expect(screen.queryByRole("button", { name: /Sign in/ })).toBeNull();
+  });
+
+  it("says when az gives a token", async () => {
+    mount();
+    await choose();
+    await type("Microsoft Entra tenant", "contoso.onmicrosoft.com");
+    await type(/Azure DevOps organisation/, "contoso");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Check the Azure CLI" }),
+    );
+    expect(await screen.findByTestId("az-check")).toHaveTextContent(
+      "Puddle can read a token from the Azure CLI",
+    );
+  });
+});

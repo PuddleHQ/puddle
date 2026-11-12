@@ -85,13 +85,18 @@ struct Rig {
     _server: DnsServer,
 }
 
+/// A stub with an empty cache and no stand-in addresses handed out.
+fn fresh_stub() -> Stub<Host> {
+    Stub::new(Host, StandIns::in_memory(), Limits::default())
+}
+
 impl Rig {
     fn new() -> Self {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("a current-thread runtime");
-        let stub = Stub::new(Host, StandIns::in_memory(), Limits::default());
+        let stub = fresh_stub();
         let server = runtime
             .block_on(DnsServer::bind(stub.clone(), ([127, 0, 0, 1], 0).into()))
             .expect("a loopback port");
@@ -381,6 +386,13 @@ pub(crate) fn dns_tcp_stream(stream: &Stream) {
     let input = stream.bytes();
     RIG.with(|rig| {
         rig.runtime.block_on(async {
+            // The stub keeps a cache, and an answer can depend on it (a type the stub does not
+            // forward gets `NXDOMAIN` once an `A` query for the name was answered so). Two stubs
+            // that start empty, one for the expected answers and one for the connection, so the
+            // expected pass does not warm the cache the connection then reads, and an earlier
+            // input leaves nothing behind.
+            let oracle = fresh_stub();
+            let stub = fresh_stub();
             let mut want = Vec::new();
             let mut rest = input.as_slice();
             while let Some((len, tail)) = rest.split_first_chunk::<2>() {
@@ -391,7 +403,7 @@ pub(crate) fn dns_tcp_stream(stream: &Stream) {
                 let Some((message, tail)) = tail.split_at_checked(len) else {
                     break;
                 };
-                let Some(answer) = rig.stub.answer(message, false).await else {
+                let Some(answer) = oracle.answer(message, false).await else {
                     break;
                 };
                 want.extend_from_slice(
@@ -405,7 +417,7 @@ pub(crate) fn dns_tcp_stream(stream: &Stream) {
 
             let (client, server) = tokio::io::duplex(64 * 1024);
             let (mut read, mut write) = tokio::io::split(client);
-            let handler = tcp_connection(server, rig.stub.clone(), Duration::from_secs(5));
+            let handler = tcp_connection(server, stub, Duration::from_secs(5));
             let writer = async {
                 // The handler may have closed already (a bad prefix), so a failed write is fine.
                 let _ = write.write_all(&input).await;

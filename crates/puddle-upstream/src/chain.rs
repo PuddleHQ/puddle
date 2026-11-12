@@ -806,6 +806,51 @@ async fn drain(stream: &mut TcpStream, len: usize, within: Duration) -> bool {
 /// the next address.
 const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 
+/// How many more times a connect is tried when the system could not pick it a local port.
+const PORT_RETRIES: u32 = 6;
+const PORT_RETRY_DELAY: Duration = Duration::from_millis(20);
+
+/// True for a connect that failed because the system could not give it a local port or buffer
+/// right then, not because of the destination. Windows picks a random port from its dynamic range
+/// and answers `WSAENOBUFS` (10055) when its draws keep landing on ports in use, which happens
+/// with thousands of connections open at once; a fresh attempt draws again and usually succeeds.
+fn is_port_pressure(err: &io::Error) -> bool {
+    #[cfg(windows)]
+    const NO_BUFFERS: i32 = 10055;
+    #[cfg(target_os = "linux")]
+    const NO_BUFFERS: i32 = 105;
+    #[cfg(target_os = "macos")]
+    const NO_BUFFERS: i32 = 55;
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    const NO_BUFFERS: i32 = -1;
+    err.raw_os_error() == Some(NO_BUFFERS)
+        || matches!(
+            err.kind(),
+            io::ErrorKind::AddrInUse | io::ErrorKind::AddrNotAvailable
+        )
+}
+
+/// Runs `connect`, and again after a short pause when it failed for want of a local port or
+/// buffer ([`is_port_pressure`]), up to [`PORT_RETRIES`] more times. Any other error returns at once.
+async fn connect_through_port_pressure<F, Fut, T>(mut connect: F) -> io::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = io::Result<T>>,
+{
+    let mut delay = PORT_RETRY_DELAY;
+    for _ in 0..PORT_RETRIES {
+        match connect().await {
+            Err(err) if is_port_pressure(&err) => {
+                tracing::debug!(error = %err, "connect found no local port, trying again");
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+            }
+            other => return other,
+        }
+    }
+    connect().await
+}
+
 /// Connects to the first address that answers, racing them as RFC 8305 does: the families alternate
 /// (the first address's first), and each attempt runs alone for 250 ms before the next starts
 /// beside it, or at once when it fails. Each attempt gives up after `per_address`.
@@ -820,11 +865,12 @@ pub async fn connect_first(
     let mut attempts = tokio::task::JoinSet::new();
     let start = |attempts: &mut tokio::task::JoinSet<_>, addr: SocketAddr| {
         attempts.spawn(async move {
-            let connected = tokio::time::timeout(per_address, TcpStream::connect(addr))
-                .await
-                .unwrap_or_else(|_| {
-                    Err(io::Error::new(io::ErrorKind::TimedOut, "connect timed out"))
-                });
+            let connected = tokio::time::timeout(
+                per_address,
+                connect_through_port_pressure(|| TcpStream::connect(addr)),
+            )
+            .await
+            .unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::TimedOut, "connect timed out")));
             (addr, connected)
         });
     };

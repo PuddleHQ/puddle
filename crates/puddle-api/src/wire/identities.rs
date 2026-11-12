@@ -4,7 +4,9 @@
 
 use std::collections::BTreeSet;
 
-use puddle_secrets::{AccountName, HostName, OrgName, SourceSpec, StoredId, TokenScope, UrlPath};
+use puddle_secrets::{
+    AccountName, HostName, OrgName, SourceSpec, StoredId, TenantId, TokenScope, UrlPath,
+};
 use puddle_store as store;
 use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
@@ -16,9 +18,10 @@ fn bad(what: &str) -> ApiError {
     ApiError::invalid(format!("not a valid {what}"))
 }
 
-/// Where the host reads a credential's value. A closed list; there is no command-line source.
+/// Where the host reads a credential's value. A closed list; there is no command-line source, and
+/// a field the list does not know (a `command`, say) is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CredentialSource {
     /// The token of a named, signed-in GitHub CLI account.
     Gh {
@@ -49,6 +52,16 @@ pub enum CredentialSource {
         #[schema(required = true)]
         org: Option<String>,
     },
+    /// The Microsoft Entra token of the account signed in to the Azure CLI (`az`), for Azure
+    /// DevOps. The user signs in to `az` in a terminal; Puddle only reads a token.
+    AzCli {
+        /// The tenant to ask `az` for: a directory id or a domain such as `contoso.onmicrosoft.com`.
+        tenant: String,
+        /// The Azure DevOps organisation the token is meant for.
+        #[serde(default)]
+        #[schema(required = true)]
+        org: Option<String>,
+    },
 }
 
 impl CredentialSource {
@@ -71,6 +84,10 @@ impl CredentialSource {
                 id: id.to_string(),
                 host: scope.host.to_string(),
                 org: scope.org.as_ref().map(ToString::to_string),
+            },
+            SourceSpec::AzCli { tenant, org } => Self::AzCli {
+                tenant: tenant.to_string(),
+                org: org.as_ref().map(ToString::to_string),
             },
             _ => return None,
         })
@@ -115,6 +132,13 @@ impl CredentialSource {
                         .map_err(|_| bad("organisation"))?,
                 },
             },
+            Self::AzCli { tenant, org } => SourceSpec::AzCli {
+                tenant: TenantId::new(tenant).map_err(|_| bad("Azure tenant"))?,
+                org: org
+                    .map(OrgName::new)
+                    .transpose()
+                    .map_err(|_| bad("organisation"))?,
+            },
         })
     }
 }
@@ -149,6 +173,9 @@ pub struct LastCheck {
     pub problem: Option<String>,
     /// True when the way out is for the user to sign in.
     pub needs_sign_in: bool,
+    /// The exact step the user takes to fix it, when there is one; `null` otherwise.
+    #[schema(required = true)]
+    pub fix_step: Option<String>,
     /// Epoch ms the read finished.
     pub checked_at: u64,
     /// What asked for it.
@@ -168,15 +195,18 @@ pub enum CheckedBy {
 }
 
 impl LastCheck {
-    pub(crate) fn from_read(read: &puddle_secrets::LastRead) -> Self {
+    pub(crate) fn from_read(source: &SourceSpec, read: &puddle_secrets::LastRead) -> Self {
         let result = read
             .problem
             .as_ref()
-            .map_or_else(super::CheckResult::readable, super::CheckResult::from_error);
+            .map_or_else(super::CheckResult::readable, |err| {
+                super::CheckResult::from_error(source, err)
+            });
         Self {
             readable: result.readable,
             problem: result.problem,
             needs_sign_in: result.needs_sign_in,
+            fix_step: result.fix_step,
             checked_at: read
                 .at
                 .duration_since(std::time::UNIX_EPOCH)
@@ -219,7 +249,7 @@ impl IdentityCredentialView {
             last_check: credentials
                 .last_read(&binding.source)
                 .as_ref()
-                .map(LastCheck::from_read),
+                .map(|read| LastCheck::from_read(&binding.source, read)),
         })
     }
 }

@@ -49,7 +49,7 @@ fn internet(host: &GitHost) -> Internet {
     let proxy =
         tokio::task::block_in_place(|| rt.block_on(NameProxy::start(&[(NAME, host.addr())])));
     let options = with_fake_names(
-        through_company_proxy(support::hermetic_options(), &proxy),
+        through_company_proxy(support::named_id_options(), &proxy),
         [NAME],
     );
     let platform = platform_trusting([host.root()]);

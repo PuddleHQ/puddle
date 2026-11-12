@@ -27,7 +27,7 @@ use std::time::Duration;
 use puddle_e2e::lab::WebOptions;
 use puddle_test_kit::eventually_async;
 use serde_json::json;
-use support::{Api, hermetic_options};
+use support::{Api, named_id_options};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use vm_support::{VmHost, create_workspace_from, guest_as, start_vm_host_platform, web_internet};
 
@@ -247,7 +247,7 @@ fn asked_for(vm: &VmHost, workspace: &puddle_types::WorkspaceId) -> Vec<String> 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_nested_docker_real_registries_testcontainers_and_aspire() {
     // No fake names: every name goes to the real internet through the company proxy.
-    let net = web_internet(&[], WebOptions::default(), hermetic_options()).await;
+    let net = web_internet(&[], WebOptions::default(), named_id_options()).await;
     let vm =
         start_vm_host_platform("nestedradar", net.options.clone(), &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());

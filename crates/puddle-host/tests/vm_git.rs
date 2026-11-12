@@ -54,7 +54,7 @@ fn internet(hosts: &[(&str, &GitHost)]) -> Internet {
         hosts.iter().map(|(n, h)| (*n, h.addr())).collect();
     let proxy = tokio::task::block_in_place(|| rt.block_on(NameProxy::start(&names)));
     let options = with_fake_names(
-        through_company_proxy(support::hermetic_options(), &proxy),
+        through_company_proxy(support::named_id_options(), &proxy),
         hosts.iter().map(|(n, _)| *n),
     );
     let platform = platform_trusting(hosts.iter().map(|(_, h)| h.root()));

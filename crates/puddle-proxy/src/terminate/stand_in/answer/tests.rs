@@ -925,3 +925,115 @@ async fn a_scrubbed_body_says_what_it_knows_of_its_end_and_size() {
     assert_eq!(data, 1);
     assert!(body.is_end_stream());
 }
+
+/// `size` zero bytes, compressed in each coding Puddle reads that the tests can produce.
+fn bombs(size: usize) -> Vec<(&'static str, Vec<u8>)> {
+    let zeros = vec![0_u8; size];
+    vec![
+        ("gzip", gzip(&zeros)),
+        ("deflate", zlib(&zeros)),
+        ("deflate", raw_deflate(&zeros)),
+        ("zstd", zstd::stream::encode_all(&zeros[..], 3).unwrap()),
+    ]
+}
+
+#[test]
+fn a_frame_that_inflates_past_the_limit_stops_decoding_there() {
+    const LIMIT: usize = 1024 * 1024;
+    for (encoding, packed) in bombs(48 * LIMIT) {
+        assert!(packed.len() < LIMIT, "{encoding}: {}", packed.len());
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = Vec::new();
+        let pushed = decoder.push(&packed, &mut out, LIMIT).unwrap();
+        assert_eq!(pushed, Pushed::Full, "{encoding}");
+        // The decoder's own write size is all it may run over by.
+        assert!(
+            (LIMIT..=LIMIT + 256 * 1024).contains(&out.len()),
+            "{encoding}: {}",
+            out.len()
+        );
+        // It is spent: nothing more comes out, and the end gives no more either.
+        assert_eq!(
+            decoder.push(&packed, &mut out, LIMIT).unwrap(),
+            Pushed::Full
+        );
+        let held = out.len();
+        assert_eq!(decoder.finish(&mut out, LIMIT).unwrap(), Pushed::Full);
+        assert_eq!(out.len(), held, "{encoding}");
+    }
+}
+
+#[test]
+fn a_frame_under_the_limit_decodes_whole_in_every_coding() {
+    let plain = format!("{{\"echo\":\"Bearer {REAL_GH} done\"}}");
+    let zstd = zstd::stream::encode_all(plain.as_bytes(), 3).unwrap();
+    for (encoding, packed) in [
+        ("gzip", gzip(plain.as_bytes())),
+        ("deflate", zlib(plain.as_bytes())),
+        ("deflate", raw_deflate(plain.as_bytes())),
+        ("br", BROTLI.to_vec()),
+        ("zstd", zstd),
+    ] {
+        let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static(encoding)))
+            .unwrap()
+            .unwrap();
+        let mut out = Vec::new();
+        assert_eq!(
+            decoder.push(&packed, &mut out, 1 << 20).unwrap(),
+            Pushed::All
+        );
+        assert_eq!(decoder.finish(&mut out, 1 << 20).unwrap(), Pushed::All);
+        assert_eq!(String::from_utf8(out).unwrap(), plain, "{encoding}");
+    }
+}
+
+/// The sizes of the data frames of the scrubbed answer, or the error that ended it.
+async fn scrubbed_frames(encoding: &str, body: Vec<u8>) -> Result<Vec<usize>, String> {
+    let response = answered(&registry(), 200, Some(encoding), body).await;
+    let mut body = response.into_body();
+    let mut sizes = Vec::new();
+    while let Some(frame) = body.frame().await {
+        match frame {
+            Ok(frame) => {
+                if let Ok(data) = frame.into_data() {
+                    sizes.push(data.len());
+                }
+            }
+            Err(err) => return Err(err.to_string()),
+        }
+    }
+    Ok(sizes)
+}
+
+#[tokio::test]
+async fn a_frame_that_inflates_a_lot_reaches_the_guest_in_bounded_pieces() {
+    const SIZE: usize = 32 * 1024 * 1024;
+    for (encoding, packed) in bombs(SIZE).into_iter().filter(|(c, _)| *c != "zstd") {
+        let sizes = scrubbed_frames(encoding, packed).await.unwrap();
+        assert_eq!(
+            sizes.iter().sum::<usize>(),
+            SIZE,
+            "{encoding}: nothing is lost"
+        );
+        let largest = sizes.iter().max().copied().unwrap_or_default();
+        assert!(
+            largest <= MAX_DECODED_STEP,
+            "{encoding}: a frame of {largest} bytes"
+        );
+        assert!(sizes.len() > 1, "{encoding}: {} frames", sizes.len());
+    }
+}
+
+#[tokio::test]
+async fn a_step_that_inflates_past_the_step_limit_ends_the_answer_with_an_error() {
+    let zstd = zstd::stream::encode_all(&vec![0_u8; 3 * MAX_DECODED_STEP][..], 3).unwrap();
+    assert!(
+        zstd.len() <= DECODE_STEP,
+        "one step of the input: {}",
+        zstd.len()
+    );
+    let err = scrubbed_frames("zstd", zstd).await.unwrap_err();
+    assert!(err.contains("inflates too far"), "{err}");
+}

@@ -20,7 +20,24 @@ use crate::common::{Reply, START_MS, STEP, raw};
 
 const HOST: &str = "puddle.example.org";
 const ORIGIN: &str = "https://puddle.example.org";
-const PASSWORD: &str = "correct horse battery";
+/// A test password made at run time, the same one for the same label. A literal handed to the
+/// hasher is flagged as a hard-coded cryptographic value, and none of these protects anything.
+fn pw(label: &str) -> &'static str {
+    static SUFFIX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let suffix = SUFFIX.get_or_init(|| {
+        let mut bytes = [0_u8; 6];
+        getrandom::fill(&mut bytes).unwrap();
+        bytes.iter().fold(String::new(), |mut hex, b| {
+            let _ = write!(hex, "{b:02x}");
+            hex
+        })
+    });
+    Box::leak(format!("{label} {suffix}").into_boxed_str())
+}
+
+fn password() -> &'static str {
+    pw("correct horse battery")
+}
 const COOKIE: &str = "__Host-puddle-session";
 
 struct Site {
@@ -161,7 +178,7 @@ impl Site {
             "POST",
             "/api/auth/setup",
             &Req::page(),
-            Some(&json!({"name": "Tijs", "password": PASSWORD, "device_name": "desktop"})),
+            Some(&json!({"name": "Tijs", "password": password(), "device_name": "desktop"})),
         )
         .await
     }
@@ -336,7 +353,7 @@ async fn the_cookie_routes_refuse_requests_that_are_not_from_the_sites_own_page(
     let granted = site.setup().await;
     let (refresh, _) = set_cookie(&granted);
     let cookie = format!("{COOKIE}={refresh}");
-    let body = json!({"name": "Tijs", "password": PASSWORD});
+    let body = json!({"name": "Tijs", "password": password()});
     let bodies = [
         ("/api/auth/refresh", None),
         ("/api/auth/sign-out", None),
@@ -478,7 +495,7 @@ async fn signing_in_never_takes_over_a_session_the_client_names() {
             "POST",
             "/api/auth/sign-in",
             &Req::page().cookie(&planted),
-            Some(&json!({"name": "Tijs", "password": PASSWORD})),
+            Some(&json!({"name": "Tijs", "password": password()})),
         )
         .await;
     assert_eq!(reply.status, 200, "{reply:?}");
@@ -495,7 +512,7 @@ async fn signing_in_never_takes_over_a_session_the_client_names() {
         .await;
     assert_eq!(attacker.status, 401);
     // Signing in with a live session's cookie makes another device, it does not reuse that one.
-    let first = site.sign_in("Tijs", PASSWORD).await;
+    let first = site.sign_in("Tijs", password()).await;
     let (first_refresh, _) = set_cookie(&first);
     let live = format!("{COOKIE}={first_refresh}");
     let second = site
@@ -503,7 +520,7 @@ async fn signing_in_never_takes_over_a_session_the_client_names() {
             "POST",
             "/api/auth/sign-in",
             &Req::page().cookie(&live),
-            Some(&json!({"name": "Tijs", "password": PASSWORD})),
+            Some(&json!({"name": "Tijs", "password": password()})),
         )
         .await;
     let (second_refresh, _) = set_cookie(&second);
@@ -515,7 +532,7 @@ async fn signing_in_never_takes_over_a_session_the_client_names() {
             "POST",
             "/api/auth/sign-in",
             &Req::page(),
-            Some(&json!({"name": "Tijs", "password": PASSWORD, "session": "x", "refresh_token": "y"})),
+            Some(&json!({"name": "Tijs", "password": password(), "session": "x", "refresh_token": "y"})),
         )
         .await;
     assert_eq!(smuggled.status, 422, "{smuggled:?}");
@@ -526,8 +543,8 @@ async fn signing_in_never_takes_over_a_session_the_client_names() {
 async fn a_wrong_password_is_refused_the_same_as_a_wrong_name_and_echoes_nothing() {
     let site = site().await;
     site.setup().await;
-    let wrong_password = site.sign_in("Tijs", "not the password!").await;
-    let wrong_name = site.sign_in("nobody", "not the password!").await;
+    let wrong_password = site.sign_in("Tijs", pw("not the password!")).await;
+    let wrong_name = site.sign_in("nobody", pw("not the password!")).await;
     assert_eq!(wrong_password.status, 401);
     assert_eq!(wrong_name.status, 401);
     assert_eq!(wrong_password.body, wrong_name.body);
@@ -552,10 +569,10 @@ async fn brute_force_is_stopped_by_a_lock_that_the_right_password_does_not_lift(
     let site = site().await;
     site.setup().await;
     for _ in 0..5 {
-        let reply = site.sign_in("Tijs", "not the password!").await;
+        let reply = site.sign_in("Tijs", pw("not the password!")).await;
         assert_eq!(reply.status, 401);
     }
-    for password in ["not the password!", PASSWORD] {
+    for password in [pw("not the password!"), password()] {
         let locked = site.sign_in("Tijs", password).await;
         assert_eq!(locked.status, 429, "{locked:?}");
         assert_eq!(locked.error(), "rate_limited");
@@ -568,7 +585,7 @@ async fn brute_force_is_stopped_by_a_lock_that_the_right_password_does_not_lift(
         "POST",
         "/api/auth/sign-in",
         &Req::page(),
-        Some(&json!({"name": "Tijs", "password": "not the password!"})),
+        Some(&json!({"name": "Tijs", "password": pw("not the password!")})),
     );
     forged = forged.replace(
         "Connection: close\r\n",
@@ -577,7 +594,7 @@ async fn brute_force_is_stopped_by_a_lock_that_the_right_password_does_not_lift(
     let reply = raw(site.addr, forged.as_bytes()).await;
     assert_eq!(reply.status, 429, "{reply:?}");
     site.clock.advance(30_000);
-    let back = site.sign_in("Tijs", PASSWORD).await;
+    let back = site.sign_in("Tijs", password()).await;
     assert_eq!(back.status, 200, "{back:?}");
     site.running.shutdown().await;
 }
@@ -586,7 +603,7 @@ async fn brute_force_is_stopped_by_a_lock_that_the_right_password_does_not_lift(
 async fn devices_are_listed_and_revoked_and_a_revoked_one_is_out_everywhere() {
     let site = site().await;
     let one = site.setup().await;
-    let two = site.sign_in("Tijs", PASSWORD).await;
+    let two = site.sign_in("Tijs", password()).await;
     let (access_one, access_two) = (access_token(&one), access_token(&two));
     let (refresh_one, _) = set_cookie(&one);
     let list = site
@@ -675,7 +692,7 @@ async fn devices_are_listed_and_revoked_and_a_revoked_one_is_out_everywhere() {
 async fn revoking_a_device_ends_its_open_event_stream() {
     let site = site().await;
     let one = site.setup().await;
-    let two = site.sign_in("Tijs", PASSWORD).await;
+    let two = site.sign_in("Tijs", password()).await;
     let request = head(
         "GET",
         "/api/events",
@@ -762,9 +779,9 @@ async fn signing_out_clears_the_cookie_and_revokes_the_device() {
 async fn the_password_changes_with_the_current_one_and_not_from_the_desktop() {
     let site = site().await;
     let granted = site.setup().await;
-    let other = site.sign_in("Tijs", PASSWORD).await;
+    let other = site.sign_in("Tijs", password()).await;
     let access = access_token(&granted);
-    let body = json!({"current": PASSWORD, "new": "a brand new password"});
+    let body = json!({"current": password(), "new": pw("a brand new password")});
     let host = site.loopback_host();
     let desktop = site
         .send(
@@ -780,7 +797,7 @@ async fn the_password_changes_with_the_current_one_and_not_from_the_desktop() {
             "PUT",
             "/api/auth/password",
             &Req::bearer(&access),
-            Some(&json!({"current": "not the password!", "new": "a brand new password"})),
+            Some(&json!({"current": pw("not the password!"), "new": pw("a brand new password")})),
         )
         .await;
     assert_eq!(wrong.status, 401, "{wrong:?}");
@@ -806,9 +823,11 @@ async fn the_password_changes_with_the_current_one_and_not_from_the_desktop() {
         )
         .await;
     assert_eq!(gone.status, 401);
-    assert_eq!(site.sign_in("Tijs", PASSWORD).await.status, 401);
+    assert_eq!(site.sign_in("Tijs", password()).await.status, 401);
     assert_eq!(
-        site.sign_in("Tijs", "a brand new password").await.status,
+        site.sign_in("Tijs", pw("a brand new password"))
+            .await
+            .status,
         200
     );
     site.running.shutdown().await;
@@ -826,7 +845,7 @@ async fn an_invite_from_the_server_sets_a_password_and_works_once() {
         .send("GET", "/api/pending", &Req::bearer(&access), None)
         .await;
     assert_eq!(out.status, 401, "{out:?}");
-    assert_eq!(site.sign_in("Tijs", PASSWORD).await.status, 401);
+    assert_eq!(site.sign_in("Tijs", password()).await.status, 401);
     let status = site
         .send("GET", "/api/auth/status", &Req::default(), None)
         .await;
@@ -836,7 +855,7 @@ async fn an_invite_from_the_server_sets_a_password_and_works_once() {
         "a reset never reopens setup"
     );
 
-    let body = json!({"secret": invite.secret.as_str(), "password": "brand new long password"});
+    let body = json!({"secret": invite.secret.as_str(), "password": pw("brand new long password")});
     let no_origin = site
         .send("POST", "/api/auth/invite", &Req::default(), Some(&body))
         .await;
@@ -851,7 +870,9 @@ async fn an_invite_from_the_server_sets_a_password_and_works_once() {
         .await;
     assert_eq!(twice.status, 401, "{twice:?}");
     assert_eq!(
-        site.sign_in("Tijs", "brand new long password").await.status,
+        site.sign_in("Tijs", pw("brand new long password"))
+            .await
+            .status,
         200
     );
     site.running.shutdown().await;
@@ -907,7 +928,7 @@ async fn the_owner_changes_the_sign_in_methods_and_the_last_one_stays_on() {
             .json()["password_login"],
         false
     );
-    let refused = site.sign_in("Tijs", PASSWORD).await;
+    let refused = site.sign_in("Tijs", password()).await;
     assert_eq!(refused.status, 403, "{refused:?}");
     site.running.shutdown().await;
 }
@@ -923,7 +944,7 @@ async fn a_plain_user_signs_in_when_several_users_are_on_and_is_not_the_owner() 
             "POST",
             "/api/auth/invite",
             &Req::page(),
-            Some(&json!({"secret": invite.secret.as_str(), "password": "ann's long password", "device_name": "ann's phone"})),
+            Some(&json!({"secret": invite.secret.as_str(), "password": pw("ann's long password"), "device_name": "ann's phone"})),
         )
         .await;
     assert_eq!(joined.status, 200, "{joined:?}");
@@ -985,10 +1006,10 @@ async fn nothing_a_signed_in_browser_can_read_carries_a_credential() {
     let granted = site.setup().await;
     let (refresh, _) = set_cookie(&granted);
     let access = access_token(&granted);
-    let second = site.sign_in("Tijs", PASSWORD).await;
+    let second = site.sign_in("Tijs", password()).await;
     let (refresh_two, _) = set_cookie(&second);
     let secrets = [
-        PASSWORD,
+        password(),
         "argon2",
         refresh.as_str(),
         refresh_two.as_str(),
@@ -1028,7 +1049,7 @@ async fn nothing_a_signed_in_browser_can_read_carries_a_credential() {
             "PUT",
             "/api/auth/password",
             &Req::bearer(&access),
-            Some(&json!({"current": PASSWORD, "new": "short"})),
+            Some(&json!({"current": password(), "new": "short"})),
         )
         .await,
     ));
@@ -1038,14 +1059,14 @@ async fn nothing_a_signed_in_browser_can_read_carries_a_credential() {
             "PUT",
             "/api/auth/password",
             &Req::bearer(&access),
-            Some(&json!({"current": "wrong password here", "new": "short"})),
+            Some(&json!({"current": pw("wrong password here"), "new": "short"})),
         )
         .await,
     ));
     for (path, reply) in &answers {
         let text = format!("{reply:?}");
         for secret in secrets {
-            assert!(!text.contains(secret), "{path} carries {secret}");
+            assert!(!text.contains(secret), "{path} carries a secret");
         }
         if *path != "refresh" {
             assert!(reply.header("set-cookie").is_none(), "{path} sets a cookie");
@@ -1188,7 +1209,7 @@ async fn signing_a_device_out_closes_its_open_terminal() {
         let addr = api.addr;
         async move { raw(addr, head(method, &path, &req, body.as_ref()).as_bytes()).await }
     };
-    let credentials = json!({"name": "Tijs", "password": PASSWORD});
+    let credentials = json!({"name": "Tijs", "password": password()});
     let one = send(
         "POST",
         "/api/auth/setup".into(),

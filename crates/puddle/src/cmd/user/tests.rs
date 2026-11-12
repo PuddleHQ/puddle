@@ -127,3 +127,28 @@ fn a_config_file_that_is_wrong_stops_the_reset_with_its_message() {
     let args = config_in(dir.path(), "prot = 1\n");
     assert!(execute(&args).unwrap_err().contains("unknown key `prot`"));
 }
+
+struct Broken;
+
+impl Write for Broken {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn the_link_is_written_on_its_own_line_and_a_failed_write_fails_the_command() {
+    let mut out = Vec::new();
+    assert_eq!(
+        print_link(&mut out, "https://x/invite#s"),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(out, b"https://x/invite#s\n");
+    assert_eq!(
+        print_link(&mut Broken, "https://x/invite#s"),
+        ExitCode::FAILURE
+    );
+}

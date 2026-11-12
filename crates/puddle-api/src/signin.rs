@@ -578,4 +578,4 @@ pub fn reset_account(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

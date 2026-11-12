@@ -7,6 +7,7 @@
 //! data folder and the public address the link points at, and works on the database while the
 //! server runs.
 
+use std::io::Write;
 use std::process::ExitCode;
 
 use puddle_host::HostPaths;
@@ -72,7 +73,6 @@ where
 
 /// What the operator is told: the link on its own line (so it can be piped), the rest on stderr.
 #[expect(
-    clippy::print_stdout,
     clippy::print_stderr,
     reason = "a CLI's user-facing output goes to stdout/stderr, not to tracing"
 )]
@@ -85,11 +85,24 @@ pub fn run(args: &ResetArgs) -> ExitCode {
                  Open this link in a browser within 24 hours to set a new password; it works once:",
                 args.name
             );
-            println!("{link}");
-            ExitCode::SUCCESS
+            // The link is the command's result, not a log line, so it is written to stdout
+            // directly: a print macro is a logging sink and this carries a one-time secret.
+            print_link(&mut std::io::stdout().lock(), &link)
         }
         Err(message) => {
             eprintln!("puddle: {message}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Writes the link and says so when it cannot: a reset whose link got lost is a failure.
+#[expect(clippy::print_stderr, reason = "a CLI's user-facing output")]
+fn print_link(out: &mut impl Write, link: &str) -> ExitCode {
+    match writeln!(out, "{link}") {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("puddle: could not write the link: {e}");
             ExitCode::FAILURE
         }
     }

@@ -497,15 +497,14 @@ async fn wait_until_downloaded(
 /// The busy mark an accepted operation put on its workspace. [`HostWorkspaces::run`] takes it
 /// and hands the mark to the task that does the work. Dropped before that (the API dropped the
 /// request at its time limit or for a closed connection, or the request gave up with an error),
-/// it takes the mark off and puts the workspace back as it was, so no workspace stays busy for
-/// an operation that never ran.
+/// it takes the mark off, so no workspace stays busy for an operation that never ran. It leaves
+/// the status as it is: an operation whose `enter` changes the status (start, stop) must reach
+/// `run` with no await after `accept`.
 #[must_use = "dropping the ticket takes the busy mark off again"]
 struct Ticket<R: Runtime + Clone> {
     service: HostWorkspaces<R>,
     record: WorkspaceRecord,
     op: Operation,
-    /// The workspace's status before the operation changed it.
-    before: WorkspaceStatus,
     /// Cleared once `run` has spawned the work.
     armed: bool,
 }
@@ -520,7 +519,7 @@ impl<R: Runtime + Clone> Ticket<R> {
 impl<R: Runtime + Clone> Drop for Ticket<R> {
     fn drop(&mut self) {
         if self.armed {
-            self.service.withdraw(&self.record.id, self.op, self.before);
+            self.service.withdraw(&self.record.id, self.op);
         }
     }
 }
@@ -952,28 +951,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             )));
         }
         check(&slot.record)?;
-        let before = slot.record.status;
         slot.record.busy = Some(op);
         enter(&mut slot.record);
-        Ok(self.ticket(slot.record.clone(), op, before))
+        Ok(self.ticket(slot.record.clone(), op))
     }
 
-    /// The ticket of an operation that has just marked `record` busy; `before` is its status
-    /// from before the operation.
-    fn ticket(&self, record: WorkspaceRecord, op: Operation, before: WorkspaceStatus) -> Ticket<R> {
+    /// The ticket of an operation that has just marked `record` busy.
+    fn ticket(&self, record: WorkspaceRecord, op: Operation) -> Ticket<R> {
         Ticket {
             service: self.clone(),
             record,
             op,
-            before,
             armed: true,
         }
     }
 
-    /// Takes off the busy mark of an operation that never started its work, and puts the
-    /// workspace back as it was. A create that never started leaves nothing to keep: its entry
-    /// goes and its id is retired, like a failed create's.
-    fn withdraw(&self, id: &WorkspaceId, op: Operation, before: WorkspaceStatus) {
+    /// Takes off the busy mark of an operation that never started its work. A create that never
+    /// started leaves nothing to keep: its entry goes and its id is retired, like a failed
+    /// create's. The status stays: whatever set it since (a crash the monitor saw) still holds.
+    fn withdraw(&self, id: &WorkspaceId, op: Operation) {
         let mut state = self.state();
         let Some(slot) = state.slots.get_mut(id) else {
             return;
@@ -990,7 +986,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         slot.record.busy = None;
         slot.deleting = false;
         slot.delete_note = None;
-        slot.record.status = before;
         let record = slot.record.clone();
         drop(state);
         tracing::info!(workspace = %id, %op, "a request was dropped before its work began");
@@ -3728,7 +3723,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 state
                     .slots
                     .insert(id.clone(), Slot::new(record.clone(), true));
-                self.ticket(record, Operation::Creating, WorkspaceStatus::Stopped)
+                self.ticket(record, Operation::Creating)
             };
             let record = ticket.record().clone();
             let id = record.id.clone();

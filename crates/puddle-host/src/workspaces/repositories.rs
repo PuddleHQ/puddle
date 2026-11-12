@@ -269,8 +269,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
             slot.record.busy = Some(Operation::Cloning);
-            let before = slot.record.status;
-            self.ticket(slot.record.clone(), Operation::Cloning, before)
+            self.ticket(slot.record.clone(), Operation::Cloning)
         };
         let record = ticket.record().clone();
         git.set_up(&record.id, std::slice::from_ref(&new)).await;

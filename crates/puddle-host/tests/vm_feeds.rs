@@ -325,7 +325,7 @@ async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost,
                 &json!({"kind": "secret", "value": REAL, "hosts": [host]}).to_string(),
             )
             .await;
-        assert_eq!(reply.status, 200, "{var}: status {}", reply.status);
+        assert_eq!(reply.status, 200, "a feed secret was refused");
     }
     let mut events = api.events().await;
     let reply = api

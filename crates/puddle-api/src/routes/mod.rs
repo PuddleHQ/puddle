@@ -11,6 +11,7 @@ use tokio::sync::{Mutex, watch};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::authz::Authorizer;
 use crate::credentials::CredentialService;
 use crate::dev_cert::DevCertService;
 use crate::doctor::DoctorService;
@@ -76,6 +77,8 @@ pub(crate) fn record_op(
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) store: Arc<Store>,
+    /// Who may do what; every route asks it before its handler runs.
+    pub(crate) authorizer: Arc<dyn Authorizer>,
     pub(crate) settings: Arc<dyn SettingsRepo>,
     /// Serialises settings read-modify-write cycles.
     pub(crate) settings_lock: Arc<Mutex<()>>,

@@ -212,7 +212,7 @@ fn credentials_json(credentials: &[CredentialBinding]) -> Result<String, StoreEr
 fn defaults_of(conn: &Connection) -> Result<GitDefaults, StoreError> {
     Ok(conn
         .query_row(
-            "SELECT only_push_listed, only_pull_listed FROM git_defaults WHERE id = 1",
+            "SELECT only_push_listed, only_pull_listed FROM git_defaults WHERE user_id = 1",
             [],
             |r| {
                 Ok(GitDefaults {
@@ -652,8 +652,8 @@ impl Store {
             };
             if next != now {
                 tx.execute(
-                    "INSERT INTO git_defaults (id, only_push_listed, only_pull_listed) VALUES (1, ?1, ?2)
-                     ON CONFLICT (id) DO UPDATE SET only_push_listed = ?1, only_pull_listed = ?2",
+                    "INSERT INTO git_defaults (user_id, only_push_listed, only_pull_listed) VALUES (1, ?1, ?2)
+                     ON CONFLICT (user_id) DO UPDATE SET only_push_listed = ?1, only_pull_listed = ?2",
                     params![next.only_push_listed, next.only_pull_listed],
                 )?;
                 changed_for(fx, Vec::new());

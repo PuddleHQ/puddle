@@ -604,6 +604,7 @@ fn any_filter() -> impl Strategy<Value = AuditFilter> {
     )
         .prop_map(
             |(workspace, kind, outcome, origin, host, q, from, to)| AuditFilter {
+                user: None,
                 workspace: workspace.map(sb),
                 kind,
                 outcome,
@@ -1074,6 +1075,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
         (
             "everything at once",
             AuditFilter {
+                user: Some(puddle_store::UserId::OWNER),
                 workspace: Some(sb("gamma")),
                 kind: Some("connection"),
                 outcome: Some(AuditOutcome::Pending),

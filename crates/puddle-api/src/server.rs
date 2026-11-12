@@ -27,6 +27,7 @@ use tokio_rustls::TlsAcceptor;
 use tower_http::timeout::TimeoutLayer;
 
 use crate::auth::{Guard, Listener, guard};
+use crate::authz::{Isolation, Principal, authorize};
 use crate::credentials::{CredentialService, NoCredentials, NoSecretStore};
 use crate::dev_cert::{DevCertService, NoDevCert};
 use crate::doctor::{DoctorService, NoDoctor};
@@ -491,6 +492,16 @@ impl ApiServer {
         token: ApiToken,
         services: Services,
     ) -> Result<Self, ServeError> {
+        Self::bind_as(config, token, services, Principal::INSTALL).await
+    }
+
+    /// [`ApiServer::bind`] with the token standing for `principal`.
+    pub(crate) async fn bind_as(
+        config: ApiConfig,
+        token: ApiToken,
+        services: Services,
+        principal: Principal,
+    ) -> Result<Self, ServeError> {
         let bind_err = |source| ServeError::Bind {
             port: config.port,
             source,
@@ -523,6 +534,7 @@ impl ApiServer {
             .settings_lock()
             .unwrap_or_else(|| Arc::new(Mutex::new(())));
         let state = AppState {
+            authorizer: Arc::new(Isolation::new(services.store.clone())),
             store: services.store,
             settings: services.settings,
             settings_lock,
@@ -552,7 +564,8 @@ impl ApiServer {
             .map(|assets| UiService::new(assets).with_opener_policy(config.remote.is_some()));
         let guard_for = |listener| {
             let guard = Guard::new(token.clone(), addr.port(), &config.extra_origins)
-                .serving_ui(ui.is_some());
+                .serving_ui(ui.is_some())
+                .acting_as(principal);
             match &config.remote {
                 Some(remote) => guard.remote(remote, listener),
                 None => guard,
@@ -727,6 +740,8 @@ fn build_router(
 ) -> Router {
     let (router, _spec) = api_router().split_for_parts();
     let (slow, _spec) = slow_router().split_for_parts();
+    // Every route, and only routes (not the app's files), goes through its declared check.
+    let checked = axum::middleware::from_fn_with_state(state.clone(), authorize);
     router
         .route(
             "/api/openapi.json",
@@ -737,6 +752,7 @@ fn build_router(
                 )
             }),
         )
+        .route_layer(checked.clone())
         .fallback(move |method: Method, uri: Uri| {
             let ui = ui.clone();
             async move {
@@ -752,10 +768,13 @@ fn build_router(
             StatusCode::REQUEST_TIMEOUT,
             request_timeout,
         ))
-        .merge(slow.layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            SLOW_REQUEST_TIMEOUT,
-        )))
+        .merge(
+            slow.route_layer(checked)
+                .layer(TimeoutLayer::with_status_code(
+                    StatusCode::REQUEST_TIMEOUT,
+                    SLOW_REQUEST_TIMEOUT,
+                )),
+        )
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(axum::middleware::from_fn_with_state(guard_state, guard))
         .with_state(state)

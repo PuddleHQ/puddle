@@ -17,6 +17,7 @@ use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
 use crate::WorkspaceRecord;
+use crate::authz::{self, Principal};
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::{AppState, repository_hosts};
@@ -144,11 +145,23 @@ fn present(record: WorkspaceRecord, d: DirectSsh) -> Workspace {
 )]
 pub(crate) async fn list_workspaces(
     State(state): State<AppState>,
+    principal: Principal,
 ) -> Result<Json<WorkspaceList>, ApiError> {
-    let workspaces = state.workspaces.list().await?;
+    let workspaces = own(&state, principal, state.workspaces.list().await?).await?;
     Ok(Json(WorkspaceList {
         workspaces: views(&state, workspaces).await,
     }))
+}
+
+/// The workspaces of `records` that are `principal`'s.
+async fn own(
+    state: &AppState,
+    principal: Principal,
+    mut records: Vec<WorkspaceRecord>,
+) -> Result<Vec<WorkspaceRecord>, ApiError> {
+    let owners = authz::owners(state).await?;
+    records.retain(|r| owners.of(&r.id) == principal.user);
+    Ok(records)
 }
 
 /// What `GET /api/workspaces/lookup` takes.
@@ -174,13 +187,14 @@ pub(crate) struct LookupQuery {
 )]
 pub(crate) async fn lookup_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Query(query): crate::extract::Query<LookupQuery>,
 ) -> Result<axum::response::Response, ApiError> {
     use axum::response::IntoResponse;
     if query.q.trim().is_empty() {
         return Err(ApiError::invalid("q must not be empty"));
     }
-    let records = state.workspaces.list().await?;
+    let records = own(&state, principal, state.workspaces.list().await?).await?;
     let found = crate::workspaces::lookup(&records, &query.q);
     let matches: Vec<WorkspaceMatch> = found
         .iter()

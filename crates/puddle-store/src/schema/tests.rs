@@ -385,10 +385,10 @@ fn v7_keeps_switches_written_before_it_as_explicit_values() {
         .query_row("SELECT count(*) FROM git_defaults", [], |r| r.get(0))
         .unwrap();
     assert_eq!(defaults, 0);
-    // The defaults table holds one row at most.
+    // The defaults table holds one row per user at most.
     let add = "INSERT INTO git_defaults VALUES (?1, 1, 0)";
     conn.execute(add, [1]).unwrap();
-    assert!(conn.execute(add, [2]).is_err());
+    assert!(conn.execute(add, [1]).is_err());
 }
 
 /// A database from before pinned forwards: every row stays, the new table starts empty, and the
@@ -565,7 +565,7 @@ fn v19_adds_an_empty_history_of_refused_hosts_and_keeps_the_rest() {
     )
     .unwrap();
     assert_eq!(migrate(&mut conn).unwrap(), 18);
-    assert_eq!(version(&conn), 19);
+    assert_eq!(version(&conn), SCHEMA_VERSION);
     let kept: i64 = conn
         .query_row("SELECT count(*) FROM workspace_interception", [], |r| {
             r.get(0)
@@ -587,5 +587,104 @@ fn v19_adds_an_empty_history_of_refused_hosts_and_keeps_the_rest() {
     assert!(
         insert("y.example", 0).is_err(),
         "a refused host was refused at least once"
+    );
+}
+
+/// A database from before users: the owner is user 1 and owns every row, each workspace keeps its
+/// identity list through the identities rebuild, names become unique per user, and the owner and
+/// a workspace's user are fixed.
+#[test]
+fn v20_gives_everything_to_the_owner_and_keeps_every_row() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", true).unwrap();
+    migrate_up_to(&mut conn, 19).unwrap();
+    conn.execute_batch(
+        "INSERT INTO identities (label, author_name, author_email, credentials, position, is_default, created_at, changed_at)
+             VALUES ('work', 'n', 'e@x', '[]', 0, 1, 1, 1), ('home', 'n', 'h@x', '[]', 1, 0, 1, 1);
+         DELETE FROM identities WHERE label = 'home';
+         INSERT INTO identities (label, author_name, author_email, credentials, position, is_default, created_at, changed_at)
+             VALUES ('home', 'n', 'h@x', '[]', 1, 0, 1, 1);
+         INSERT INTO workspace_identities VALUES ('box', 1, 0), ('box', 3, 1);
+         INSERT INTO git_defaults VALUES (1, 0, 1);
+         INSERT INTO rule_sets (name, created_at, created_by) VALUES ('Mine', 1, 'ui');
+         INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
+             VALUES ('global', 'exact', 'a.example', 'allow', 1, 'ui');
+         INSERT INTO env_vars (workspace_id, name, kind, value, changed_at) VALUES (NULL, 'A', 'plain', 'v', 1);",
+    )
+    .unwrap();
+    assert_eq!(migrate(&mut conn).unwrap(), 19);
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let one = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(
+        one("SELECT count(*) FROM users WHERE id = 1 AND role = 'owner'"),
+        1
+    );
+    for table in ["rules", "rule_sets", "env_vars", "identities"] {
+        assert_eq!(
+            one(&format!("SELECT count(*) FROM {table} WHERE user_id <> 1")),
+            0,
+            "{table}"
+        );
+    }
+    assert_eq!(one("SELECT count(*) FROM identities"), 2);
+    let kept: String = conn
+        .query_row(
+            "SELECT group_concat(identity_id, ',') FROM
+                 (SELECT identity_id FROM workspace_identities ORDER BY position)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(kept, "1,3", "the workspace keeps its identities in order");
+    assert_eq!(
+        one("SELECT only_pull_listed FROM git_defaults WHERE user_id = 1"),
+        1
+    );
+    // A deleted identity's id is still never reused.
+    conn.execute(
+        "INSERT INTO identities (label, author_name, author_email, credentials, position, created_at, changed_at)
+             VALUES ('new', 'n', 'e@x', '[]', 2, 1, 1)",
+        [],
+    )
+    .unwrap();
+    assert_eq!(conn.last_insert_rowid(), 4);
+    // Names and the one default are unique per user, not per install.
+    conn.execute(
+        "INSERT INTO users (role, name, created_at) VALUES ('user', 'ann', 1)",
+        [],
+    )
+    .unwrap();
+    let identity = "INSERT INTO identities (user_id, label, author_name, author_email, credentials, position, is_default, created_at, changed_at)
+                        VALUES (?1, 'WORK', 'n', 'e@x', '[]', 0, 1, 1, 1)";
+    assert!(conn.execute(identity, [1]).is_err());
+    conn.execute(identity, [2]).unwrap();
+    let set = "INSERT INTO rule_sets (user_id, name, created_at, created_by) VALUES (?1, 'mine', 1, 'ui')";
+    assert!(conn.execute(set, [1]).is_err());
+    conn.execute(set, [2]).unwrap();
+    let env = "INSERT INTO env_vars (user_id, workspace_id, name, kind, value, changed_at) VALUES (?1, NULL, 'A', 'plain', 'v', 1)";
+    assert!(conn.execute(env, [1]).is_err());
+    conn.execute(env, [2]).unwrap();
+    // The owner stays, one owner only, and a workspace's user never changes.
+    assert!(conn.execute("DELETE FROM users WHERE id = 1", []).is_err());
+    assert!(
+        conn.execute("UPDATE users SET role = 'owner' WHERE id = 2", [])
+            .is_err()
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO users (role, name, created_at) VALUES ('owner', 'x', 1)",
+            []
+        )
+        .is_err()
+    );
+    conn.execute("INSERT INTO workspace_owners VALUES ('box', 2)", [])
+        .unwrap();
+    assert!(
+        conn.execute("UPDATE workspace_owners SET user_id = 1", [])
+            .is_err()
+    );
+    assert!(
+        conn.execute("INSERT INTO workspace_owners VALUES ('other', 9)", [])
+            .is_err()
     );
 }

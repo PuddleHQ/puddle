@@ -3,7 +3,7 @@
 //! answers the guest's agent streams.
 //!
 //! - **Seen sessions.** On a `CONNECT` that announces SSH to a host the workspace has the agent on
-//!   for, the tunnel feeds the server's bytes to a [`KexObserver`] ([`KexWatch`]); the host key and
+//!   for, the tunnel feeds the server's bytes to a [`KexObserver`]; the host key and
 //!   signature of the first key exchange are kept, with the host's name, for as long as the tunnel
 //!   lasts. A session bind from the guest holds only for one of these.
 //! - **Agent streams.** Each client of the guest's agent socket is one `ssh-agent` stream; every

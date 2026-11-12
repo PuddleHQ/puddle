@@ -39,7 +39,7 @@ fn added_users_are_plain_users_with_unique_names() {
     assert_ne!(ann.id, UserId::OWNER);
     assert_eq!(store.user(ann.id).unwrap(), ann);
     let err = store.add_user(&name("ANN")).unwrap_err();
-    assert!(matches!(err, StoreError::UserName(_)), "{err}");
+    assert!(matches!(err, StoreError::UserName(_)));
     let ids: Vec<UserId> = store.users().unwrap().iter().map(|u| u.id).collect();
     assert_eq!(ids, [UserId::OWNER, ann.id]);
     assert!(matches!(

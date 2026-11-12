@@ -4084,6 +4084,36 @@ async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_vm_that_dies_while_puddle_runs_shows_crashed_and_start_recovers_it() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+
+    // The VM process dies (out of memory, a monitor crash) with no request to Puddle.
+    assert!(rig.runtime.crash(&SandboxName::new("acme").unwrap()));
+    // The list reads the sandboxes, as the host's pass every minute does.
+    let listed = api.get("/api/workspaces").await.json()["workspaces"][0].clone();
+    assert_eq!(listed["status"], "crashed", "{listed}");
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "crashed");
+    events
+        .until(
+            |e| e["type"] == "status_changed" && e["status"] == "crashed",
+            Duration::from_secs(5),
+        )
+        .await;
+
+    // What the VM held is released, so a start works and the workspace runs again.
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
     let rig = Rig::new();
     let host = rig.start().await;

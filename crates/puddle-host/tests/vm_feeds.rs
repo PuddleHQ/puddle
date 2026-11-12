@@ -160,14 +160,15 @@ echo "tool=nuget rc=${{PIPESTATUS[0]}} installed=$(test -d ~/.nuget/packages/{id
 
 /// `dotnet restore` with the Azure Artifacts credential provider and no credential in
 /// `nuget.config`: the provider answers `NuGet`'s `401` from `ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS`,
-/// a JSON document the shell builds around `password`. `tag` names the folder and the report line.
-fn provider_script(tag: &str, password: &str) -> String {
+/// a JSON document the shell builds around the value of the shell variable `credential_var`. `tag` names the folder and the report line.
+fn provider_script(tag: &str, credential_var: &str) -> String {
     let id = NUGET_PACKAGE.to_lowercase();
     format!(
         r#"rm -rf /tmp/{tag} ~/.nuget/packages/{id} && mkdir -p /tmp/{tag} && cd /tmp/{tag}
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 PATH=/opt/dotnet:$PATH
+WRONG_FEED_TOKEN=$(printf 'not-the-%s' feed-token)
 export NUGET_PLUGIN_PATHS=/root/.nuget/plugins/netcore/CredentialProvider.Microsoft/CredentialProvider.Microsoft.dll
-export ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS='{{"endpointCredentials":[{{"endpoint":"https://{NUGET}/v3/index.json","username":"feeduser","password":"'{password}'"}}]}}'
+export ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS='{{"endpointCredentials":[{{"endpoint":"https://{NUGET}/v3/index.json","username":"feeduser","password":"'"${credential_var}"'"}}]}}'
 echo "endpoints-json-is-valid=$(printf %s "$ARTIFACTS_CREDENTIALPROVIDER_EXTERNAL_FEED_ENDPOINTS" | python3 -c 'import json,sys; json.load(sys.stdin); print("yes")' 2>&1)"
 cat > nuget.config <<'EOF'
 <configuration>
@@ -324,7 +325,7 @@ async fn boot(secrets: &[(&str, &str)], extra: &[&str]) -> (WebInternet, VmHost,
                 &json!({"kind": "secret", "value": REAL, "hosts": [host]}).to_string(),
             )
             .await;
-        assert_eq!(reply.status, 200, "{var}: {}", reply.body);
+        assert_eq!(reply.status, 200, "{var}: status {}", reply.status);
     }
     let mut events = api.events().await;
     let reply = api
@@ -473,7 +474,7 @@ async fn vm_radar_artifacts_credential_provider_hands_the_stand_in_to_nuget_unch
     let out = run(
         &vm,
         &workspace,
-        &provider_script("provider", "$NUGET_FEED_TOKEN"),
+        &provider_script("provider", "NUGET_FEED_TOKEN"),
         15,
     )
     .await;
@@ -485,7 +486,7 @@ async fn vm_radar_artifacts_credential_provider_hands_the_stand_in_to_nuget_unch
     let control = run(
         &vm,
         &workspace,
-        &provider_script("provider-control", "wrong-password"),
+        &provider_script("provider-control", "WRONG_FEED_TOKEN"),
         5,
     )
     .await;

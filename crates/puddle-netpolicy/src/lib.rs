@@ -36,7 +36,9 @@ mod name;
 pub use access::{LocalAccess, LocalAccessSource};
 pub use classify::{AddressClass, classify_ip, classify_with_signals};
 pub use company::{CompanySignals, NoSignals, StaticSignals};
-pub use endpoints::{EndpointKind, HostAddrs, OwnAddresses, PuddleEndpoints, Registration};
+pub use endpoints::{
+    EndpointKind, HostAddrs, NameRegistration, OwnAddresses, PuddleEndpoints, Registration,
+};
 pub use guard::{
     AddressVerdict, NetPolicy, block_message, company_network_message, git_https_remote,
 };

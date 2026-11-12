@@ -21,6 +21,10 @@ pub enum EndpointKind {
     BrowserFront,
     /// A pinned port forward.
     PinnedForward,
+    /// The API's listener for a reverse proxy on another machine.
+    RemoteApi,
+    /// The reverse proxy in front of Puddle (its port on every own address, or its public name).
+    ExternalFront,
     /// Any other listener.
     Other,
 }
@@ -34,6 +38,8 @@ impl EndpointKind {
             Self::PullProxy => "image-pull proxy",
             Self::BrowserFront => "browser front",
             Self::PinnedForward => "pinned port forward",
+            Self::RemoteApi => "remote API listener",
+            Self::ExternalFront => "reverse proxy in front of Puddle",
             Self::Other => "listener",
         }
     }
@@ -84,9 +90,18 @@ struct Entry {
     kind: EndpointKind,
 }
 
+#[derive(Debug)]
+struct NameEntry {
+    id: u64,
+    name: String,
+    subdomains: bool,
+    kind: EndpointKind,
+}
+
 #[derive(Debug, Default)]
 struct Inner {
     entries: RwLock<Vec<Entry>>,
+    names: RwLock<Vec<NameEntry>>,
     next_id: AtomicU64,
 }
 
@@ -127,6 +142,27 @@ impl Drop for Registration {
     }
 }
 
+/// A blocked name's registration; dropping it lifts the block. Keep it as long as the name must
+/// stay blocked.
+#[derive(Debug)]
+#[must_use = "dropping the registration lifts the block at once"]
+pub struct NameRegistration {
+    endpoints: PuddleEndpoints,
+    id: u64,
+}
+
+impl Drop for NameRegistration {
+    fn drop(&mut self) {
+        let mut names = self
+            .endpoints
+            .inner
+            .names
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        names.retain(|e| e.id != self.id);
+    }
+}
+
 impl PuddleEndpoints {
     /// An empty registry.
     #[must_use]
@@ -146,6 +182,46 @@ impl PuddleEndpoints {
             endpoints: self.clone(),
             id,
         }
+    }
+
+    /// Blocks a public name (and, with `subdomains`, every name below it) for guests whatever its
+    /// address is. A reverse proxy off this machine is reached by name, so no port or address of
+    /// this host stands for it.
+    pub fn block_name(&self, name: &str, subdomains: bool, kind: EndpointKind) -> NameRegistration {
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .names
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(NameEntry {
+                id,
+                name: name.trim_end_matches('.').to_ascii_lowercase(),
+                subdomains,
+                kind,
+            });
+        NameRegistration {
+            endpoints: self.clone(),
+            id,
+        }
+    }
+
+    /// What a guest asking for `name` would reach, when the name is blocked.
+    #[must_use]
+    pub fn find_name(&self, name: &str) -> Option<EndpointKind> {
+        let name = name.trim_end_matches('.').to_ascii_lowercase();
+        self.inner
+            .names
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|e| {
+                e.name == name
+                    || (e.subdomains
+                        && name
+                            .strip_suffix(e.name.as_str())
+                            .is_some_and(|rest| rest.ends_with('.')))
+            })
+            .map(|e| e.kind)
     }
 
     /// The listener a connection to `dest` would reach, if any: same port, and an address that

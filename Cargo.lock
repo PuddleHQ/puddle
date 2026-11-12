@@ -5997,6 +5997,8 @@ checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 name = "puddle"
 version = "0.0.0"
 dependencies = [
+ "pem",
+ "puddle-api",
  "puddle-boot",
  "puddle-certs",
  "puddle-compute",
@@ -6016,10 +6018,12 @@ dependencies = [
  "puddle-test-kit",
  "puddle-types",
  "puddle-vm-tests",
+ "rustls",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-rustls",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
@@ -6111,6 +6115,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite 0.30.0",
  "tower-http 0.7.1",
  "tracing",

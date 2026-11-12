@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::SystemTime;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, HostCredentials, HostNetworkHealth, Launcher,
@@ -427,6 +428,7 @@ impl Drop for AbortOnDrop {
 pub struct Host<R: Runtime + Clone> {
     info: puddle_api::ConnectionInfo,
     url: Url,
+    remote_listener: Option<RemoteListener>,
     events: Arc<EventHub>,
     problems: Arc<Problems>,
     quit_trims: QuitTrims,
@@ -749,6 +751,7 @@ impl<R: Runtime + Clone> Host<R> {
         Ok(Self {
             info: served.info,
             url: served.url,
+            remote_listener: served.remote_listener,
             events,
             problems,
             quit_trims,
@@ -787,6 +790,12 @@ impl<R: Runtime + Clone> Host<R> {
     #[must_use]
     pub fn url(&self) -> &Url {
         &self.url
+    }
+
+    /// The network listener for a reverse proxy on another machine, when remote serving has one.
+    #[must_use]
+    pub fn remote_listener(&self) -> Option<&RemoteListener> {
+        self.remote_listener.as_ref()
     }
 
     /// The API token. Never log it.
@@ -1266,7 +1275,19 @@ impl Egress {
 struct ServedApi {
     info: puddle_api::ConnectionInfo,
     url: Url,
+    remote_listener: Option<RemoteListener>,
     api: RunningApi,
+}
+
+/// The network listener of remote serving, as the operator needs it to set up the proxy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteListener {
+    /// The address and port it listens on.
+    pub addr: std::net::SocketAddr,
+    /// The SHA-256 of its certificate, lower-case hex, for a proxy that pins.
+    pub fingerprint: String,
+    /// The certificate as PEM (no key), for a proxy that trusts it.
+    pub certificate_file: PathBuf,
 }
 
 async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi, HostError> {
@@ -1277,6 +1298,13 @@ async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi,
     if let Some(ui) = &config.api.ui {
         api_config.ui = Some(ui.clone());
     }
+    api_config.remote.clone_from(&config.api.remote);
+    let mut certificate = None;
+    if let Some(listener) = &config.api.network_listener {
+        let (network, cert_file) = network_listener(config, listener)?;
+        certificate = Some((network.tls.fingerprint(), cert_file));
+        api_config.network_listener = Some(network);
+    }
     let server = ApiServer::bind(api_config, ApiToken::generate()?, services).await?;
     let info = server.connection_info();
     if let Some(file) = &config.api.connection_file {
@@ -1286,8 +1314,70 @@ async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi,
         what: "the API address",
         reason: e.to_string(),
     })?;
+    let remote_listener =
+        server
+            .network_addr()
+            .zip(certificate)
+            .map(|(addr, (fingerprint, certificate_file))| RemoteListener {
+                addr,
+                fingerprint,
+                certificate_file,
+            });
     let api = server.spawn();
-    Ok(ServedApi { info, url, api })
+    Ok(ServedApi {
+        info,
+        url,
+        remote_listener,
+        api,
+    })
+}
+
+/// The listener's settings with its certificate: made for the interface address and the public
+/// host names, kept under the data folder. Returns the listener and the file the proxy's
+/// operator copies.
+fn network_listener(
+    config: &HostConfig,
+    settings: &crate::NetworkListenerSettings,
+) -> Result<(puddle_api::NetworkListener, PathBuf), HostError> {
+    let mut ips = vec![settings.interface];
+    let mut names = Vec::new();
+    for host in config
+        .api
+        .remote
+        .iter()
+        .flat_map(puddle_api::RemoteServing::public_hosts)
+    {
+        match host
+            .host()
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+        {
+            Ok(ip) => ips.push(ip),
+            Err(_) => names.push(host.host().to_owned()),
+        }
+    }
+    ips.sort_unstable();
+    ips.dedup();
+    names.sort_unstable();
+    names.dedup();
+    let data = config.paths.data();
+    let cert = puddle_certs::devcert::listener::ensure(data, &ips, &names, SystemTime::now())
+        .map_err(|e| HostError::State {
+            what: "the network listener's certificate",
+            reason: e.to_string(),
+        })?;
+    let identity =
+        puddle_api::TlsIdentity::new(cert.cert_der().to_vec(), cert.key().pkcs8_der().to_vec());
+    let file = data
+        .join(puddle_certs::devcert::listener::FOLDER)
+        .join(puddle_certs::devcert::listener::CERT_FILE);
+    let listener = puddle_api::NetworkListener {
+        interface: settings.interface,
+        port: settings.port,
+        allowed_proxies: settings.allowed_proxies.clone(),
+        tls: identity,
+    };
+    Ok((listener, file))
 }
 
 /// What reconcile works from: the workspaces Puddle knows, the sandboxes they own and which of

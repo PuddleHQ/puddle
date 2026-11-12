@@ -78,6 +78,7 @@ cases! {
     routes_and_no_network_are_accepted => "observed on msb 0.7.6 (network spec accepted); guest network behaviour is covered by the VM tests",
     memory_change_applies_at_next_start => "the memory setting: modify().memory().next_start() on msb, checked by the VM tests",
     cpus_change_applies_at_next_start => "the cpus setting: modify().cpus().next_start() on msb, checked by the VM tests",
+    env_change_applies_at_next_start_and_keeps_the_root_disk => "modify().env()/remove_env().next_start() on msb, checked by the VM tests",
 }
 
 /// Awaits a runtime call with [`STEP_TIMEOUT`] and turns its error into a case failure.
@@ -981,6 +982,57 @@ async fn cpus_change_applies_at_next_start<R: Runtime>(c: &Case<'_, R>) -> Outco
     let err = fails(
         "set cpus of an unknown sandbox",
         rt.set_cpus(&c.sandbox("nope")?, CpuCount::MIN),
+    )
+    .await?;
+    check!(
+        matches!(err, ComputeError::NotFound { .. }),
+        "want NotFound, got {err:?}"
+    );
+    Ok(())
+}
+
+async fn env_and_marker<S: Sandbox>(sb: &S) -> Result<String, String> {
+    let out = sh(
+        sb,
+        "echo \"${KEPT-unset} ${CHANGED-unset} ${ADDED-unset} ${GONE-unset}\"; cat /root-disk-marker",
+    )
+    .await?;
+    Ok(out.stdout_text().into_owned())
+}
+
+fn guest_env(pairs: &[(&str, &str)]) -> Result<GuestEnv, String> {
+    let mut env = GuestEnv::new();
+    for (k, v) in pairs {
+        env.set(k, v).map_err(|e| e.to_string())?;
+    }
+    Ok(env)
+}
+
+async fn env_change_applies_at_next_start_and_keeps_the_root_disk<R: Runtime>(
+    c: &Case<'_, R>,
+) -> Outcome {
+    let rt = c.runtime();
+    let name = c.sandbox("a")?;
+    let made_with = guest_env(&[("KEPT", "same"), ("CHANGED", "old"), ("GONE", "1")])?;
+    let sb = step("create", rt.create(spec(c, &name).with_env(&made_with))).await?;
+    sh(&sb, "echo on-the-root-disk > /root-disk-marker && sync").await?;
+    let now = guest_env(&[("KEPT", "same"), ("CHANGED", "new"), ("ADDED", "yes")])?;
+    step("set env", rt.set_env(&name, &now)).await?;
+    let running = env_and_marker(&sb).await?;
+    check!(
+        running == "same old unset 1\non-the-root-disk\n",
+        "the running sandbox changed its variables: {running:?}"
+    );
+    step("stop", sb.stop()).await?;
+    let sb = step("start", rt.start(&name)).await?;
+    let after = env_and_marker(&sb).await?;
+    check!(
+        after == "same new yes unset\non-the-root-disk\n",
+        "after the restart: {after:?}, want the new variables and the root disk file"
+    );
+    let err = fails(
+        "set env of an unknown sandbox",
+        rt.set_env(&c.sandbox("nope")?, &now),
     )
     .await?;
     check!(

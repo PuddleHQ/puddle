@@ -5,7 +5,9 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 
-use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{
+    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{ComputeError, DiskSize, ExecOutput, ExecRequest, SandboxSpec};
@@ -254,6 +256,20 @@ pub trait Runtime: Send + Sync + 'static {
         &self,
         name: &SandboxName,
         cpus: CpuCount,
+    ) -> impl Future<Output = Result<(), ComputeError>> + Send;
+
+    /// Replaces the environment a sandbox's processes start with, from its **next** start on:
+    /// variables not in `env` are removed, the others set. The root disk and everything else of
+    /// the sandbox stays, which is why a changed variable needs no new sandbox. A running sandbox
+    /// keeps the environment of its processes until it is stopped and started again.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::NotFound`].
+    fn set_env(
+        &self,
+        name: &SandboxName,
+        env: &GuestEnv,
     ) -> impl Future<Output = Result<(), ComputeError>> + Send;
 
     /// Grows the root disk of a sandbox to `size`: now when it runs and the runtime can grow a

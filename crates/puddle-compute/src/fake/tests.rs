@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use puddle_types::{GuestPath, ImageRef, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{GuestEnv, GuestPath, ImageRef, SandboxName, VolumeName, WorkspaceStatus};
 
 use super::*;
 use crate::{FileMount, OwnedDisk, VolumeMount};
@@ -84,6 +84,7 @@ async fn every_operation_can_fail() {
         Op::Get,
         Op::SetMemory,
         Op::SetCpus,
+        Op::SetEnv,
         Op::GrowRootDisk,
         Op::List,
         Op::Remove,
@@ -115,6 +116,7 @@ async fn every_operation_can_fail() {
         rt.get(&n).await.err(),
         rt.set_memory(&n, MemoryMib::MIN).await.err(),
         rt.set_cpus(&n, CpuCount::MIN).await.err(),
+        rt.set_env(&n, &GuestEnv::new()).await.err(),
         rt.grow_root_disk(&n, DiskSize::mib(99_999)).await.err(),
         rt.list().await.err(),
         rt.remove(&n).await.err(),

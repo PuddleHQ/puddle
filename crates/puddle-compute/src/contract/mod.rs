@@ -561,6 +561,7 @@ macro_rules! contract_tests {
             routes_and_no_network_are_accepted,
             memory_change_applies_at_next_start,
             cpus_change_applies_at_next_start,
+            env_change_applies_at_next_start_and_keeps_the_root_disk,
         );
     };
     (@cases $env:path; $($case:ident),* $(,)?) => {

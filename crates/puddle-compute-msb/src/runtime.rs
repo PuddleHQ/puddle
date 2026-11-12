@@ -15,7 +15,9 @@ use puddle_compute::{
     Capabilities, ComputeError, ImageConfig, RootDiskGrowth, Runtime, SandboxInfo, SandboxSpec,
     VolumeInfo, VolumeSpec,
 };
-use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{
+    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+};
 
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
@@ -618,6 +620,41 @@ impl Runtime for MsbRuntime {
             self.sdk(change.apply())
                 .await
                 .map_err(|e| map("set cpus of", name.as_str(), e))?;
+            Ok(())
+        })
+    }
+
+    fn set_env(
+        &self,
+        name: &SandboxName,
+        env: &GuestEnv,
+    ) -> impl Future<Output = Result<(), ComputeError>> + Send {
+        Box::pin(async move {
+            let record = self.existing(name).await?;
+            let stored = record
+                .config()
+                .map_err(|e| map("read the environment of", name.as_str(), e))?
+                .spec
+                .env;
+            let mut change = record.modify();
+            let mut changed = false;
+            for var in &stored {
+                if env.get(&var.key).is_none() {
+                    change = change.remove_env(var.key.clone());
+                    changed = true;
+                }
+            }
+            for (key, value) in env.iter() {
+                if !stored.iter().any(|v| v.key == key && v.value == value) {
+                    change = change.env(key, value);
+                    changed = true;
+                }
+            }
+            if changed {
+                self.sdk(change.next_start().apply())
+                    .await
+                    .map_err(|e| map("set the environment of", name.as_str(), e))?;
+            }
             Ok(())
         })
     }

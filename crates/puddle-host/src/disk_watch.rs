@@ -3,7 +3,9 @@
 //!
 //! The list and every finished operation already read the disks' use; a root disk or volume that
 //! fills during a long run changes none of those, so the host reads it again now and then and
-//! warns when a disk crosses the threshold.
+//! warns when a disk crosses the threshold. The same read finds a VM that died: a workspace that
+//! shows Running while its sandbox is down becomes Crashed. Every minute is slow for that, so
+//! the end of an agent session starts a short run of reads too.
 
 use std::time::Duration;
 
@@ -23,9 +25,17 @@ pub(crate) fn spawn<R: Runtime + Clone>(
         let mut tick = tokio::time::interval(READ_PERIOD);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         tick.tick().await;
+        let mut ended = workspaces.agent_sessions_ended();
         loop {
-            tick.tick().await;
-            workspaces.refresh_disk_use().await;
+            tokio::select! {
+                _ = tick.tick() => workspaces.refresh_disk_use().await,
+                gone = ended.recv() => match gone {
+                    Ok(workspace) => workspaces.check_after_session_end(&workspace).await,
+                    // Behind: the next tick reads every sandbox anyway.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                },
+            }
         }
     })
 }

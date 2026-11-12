@@ -129,6 +129,14 @@ impl StreamHandler for Route {
     }
 }
 
+#[tokio::test]
+async fn an_ended_agent_session_is_announced_by_workspace() {
+    let rig = rig("ended").await;
+    let mut ended = rig.ports.agent_sessions_ended();
+    GuestWatcher::session_ended(&rig.ports, &rig.workspace);
+    assert_eq!(ended.recv().await.unwrap(), rig.workspace);
+}
+
 struct Rig {
     ports: Ports,
     pins: Arc<MemoryPins>,

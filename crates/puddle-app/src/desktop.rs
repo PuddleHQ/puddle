@@ -20,7 +20,6 @@ use puddle_types::Event;
 use serde_json::Value;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow, WindowEvent};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_notification::{ActionPerformed, NotificationExt};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
@@ -31,6 +30,7 @@ use crate::backend::{Backend, WorkspaceLabel};
 use crate::badge::{self, OpenRequests};
 use crate::icon::{self, Wanted};
 use crate::notify::{self, Notice, Notifier, REQUEST_EXTRA};
+use crate::quit_shortcut;
 use crate::tray::{self, CloseAction, MENU_QUIT, MinimizeAction, Tray, TrayState};
 use crate::window::MAIN_LABEL;
 
@@ -228,10 +228,9 @@ pub fn install_quit_shortcut<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()
     let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Puddle", true, Some("CmdOrCtrl+Q"))?;
     let menu = Menu::with_items(app, &[&Submenu::with_items(app, "Puddle", true, &[&quit])?])?;
     app.set_menu(menu)?;
-    app.manage(QuitAsking::default());
     app.on_menu_event(|app, event| {
         if event.id().as_ref() == MENU_QUIT {
-            quit_shortcut_pressed(app);
+            quit_shortcut::pressed(app);
         }
     });
     if let Some(window) = app.get_webview_window(MAIN_LABEL) {
@@ -253,11 +252,11 @@ fn quit_question(open_terminals: usize) -> Option<String> {
 }
 
 /// Answers the question: `true` quits.
-type QuitAnswer = Box<dyn FnOnce(bool) + Send>;
+pub(crate) type QuitAnswer = Box<dyn FnOnce(bool) + Send>;
 
 /// Ctrl+Q was pressed. With no terminal open it quits at once; otherwise it hands the question to
 /// `ask`, quits when the answer is yes and ignores the shortcut while a question is still up.
-fn on_quit_pressed(
+pub(crate) fn on_quit_pressed(
     open_terminals: usize,
     asking: &Arc<AtomicBool>,
     ask: impl FnOnce(String, QuitAnswer),
@@ -279,41 +278,6 @@ fn on_quit_pressed(
                 quit();
             }
         }),
-    );
-}
-
-/// Whether the quit question is on screen, kept as app state so the menu accelerator and the
-/// Windows key hook share it. Without the state (no shortcut installed) nothing is shared.
-#[derive(Default)]
-struct QuitAsking(Arc<AtomicBool>);
-
-/// The shell's own dialog for [`on_quit_pressed`]: the count comes from the backend, never from
-/// the page. The tray's Quit and a close button set to quit do not come through here.
-pub(crate) fn quit_shortcut_pressed<R: Runtime>(app: &AppHandle<R>) {
-    let asking = app
-        .try_state::<QuitAsking>()
-        .map_or_else(Arc::default, |state| Arc::clone(&state.0));
-    let asking = &asking;
-    let open = app
-        .try_state::<Backend>()
-        .map_or(0, |backend| backend.open_terminals());
-    let quitting = app.clone();
-    let dialogs = app.clone();
-    on_quit_pressed(
-        open,
-        asking,
-        move |question, answer| {
-            dialogs
-                .dialog()
-                .message(question)
-                .title("Quit Puddle")
-                .buttons(MessageDialogButtons::OkCancelCustom(
-                    "Quit".to_owned(),
-                    "Cancel".to_owned(),
-                ))
-                .show(answer);
-        },
-        move || quitting.exit(0),
     );
 }
 

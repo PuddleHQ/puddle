@@ -160,9 +160,9 @@ crates/puddle-app/src/desktop.rs | fn on_window_event<R: Runtime>(window: &Webvi
 crates/puddle-app/src/desktop.rs | fn on_window_event<R: Runtime>(window: &WebviewWindow<R>, event: &WindowEvent, buttons: &Buttons) {\nmatch event { | the real-window event routing of `on_window_event` (see above)
 crates/puddle-app/src/desktop.rs | if buttons.on_close(window) { | the same real-window event routing
 crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT { | the application menu (see `install_quit_shortcut`)
-crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\napp.exit(0); | the application menu (see `install_quit_shortcut`)
-crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\napp.exit(0);\n} | closing lines of the excluded real-window routing and application menu above
-crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\napp.exit(0);\n}\n}); | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\nquit_shortcut::pressed(app); | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\nquit_shortcut::pressed(app);\n} | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\nquit_shortcut::pressed(app);\n}\n}); | closing lines of the excluded real-window routing and application menu above
 crates/puddle-app/src/desktop.rs | if let Some(window) = app.get_webview_window(MAIN_LABEL) { | x2 | the application menu (see `install_quit_shortcut`)
 crates/puddle-app/src/desktop.rs | let menu = Menu::with_items(app, &[&Submenu::with_items(app, "Puddle", true, &[&quit])?])?; | the application menu (see `install_quit_shortcut`)
 crates/puddle-app/src/desktop.rs | let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Puddle", true, Some("CmdOrCtrl+Q"))?; | the application menu (see `install_quit_shortcut`)
@@ -921,3 +921,4 @@ crates/xtask/src/source.rs | let tree =\nrun(git_command() | the line only chang
 crates/xtask/src/source.rs | repo_url: format!("https://github.com/{slug}"),\ncommit,\nfork_tag, | the GitHub source reads the libkrunfw fork's release tag and Makefile through `gh api`; no unit test has network, and the fixture source (DirSource) runs the same firmware facts through the build and the NOTICE
 crates/xtask/src/source.rs | run(git_command()\n.arg("-C") | the line only changed from Command::new("git") to the env-stripping helper (or a rustfmt re-wrap of that call); the code runs git against GitHub and no unit test does
 ui/src/lib/stores/rule-sets.svelte.ts | onDecidedElsewhere: () => void live.refresh(), | the app-wide instance's badge hook; tests build their own store and check the hook with a counter (rule-sets.test.ts)
+crates/puddle-app/src/quit_shortcut.rs | * | the quit question in the operating system's own dialog needs the real window system, which the test runtime lacks; the question text and the answers are tested in `desktop::tests`, and the Windows job (`e2e/terminal-keys.mjs`, sessions 2 and 3) shows the dialog on a real WebView2

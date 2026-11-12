@@ -50,7 +50,7 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
     let info = server.connection_info();
     let running = server.spawn();
     let open_terminals = terminals_from(std::env::var(FIXTURE_TERMINALS_VAR).ok().as_deref());
-    let backend = Backend::new(
+    Backend::new(
         info,
         events,
         problems,
@@ -65,8 +65,8 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
                 }
             })
         }),
-    )?;
-    Ok(backend.with_open_terminals(Arc::new(move || open_terminals)))
+    )
+    .map(|backend| backend.with_open_terminals(Arc::new(move || open_terminals)))
 }
 
 #[cfg(test)]

@@ -46,6 +46,7 @@ pub mod launcher;
 pub mod links;
 pub mod navigation;
 pub mod notify;
+mod quit_shortcut;
 pub mod sandbox_window;
 pub mod shell;
 pub mod tray;

@@ -48,7 +48,7 @@ jobs:
         run: echo "STRESS_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - name: Rust toolchain
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-nextest@0.9.146
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -100,12 +100,13 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
+      # Same keys as ci.yml: `ui` saves Chromium under playwright-*, `ui-webkit` saves WebKit under playwright-webkit-*.
+      # `playwright install` does nothing for a browser the restored entry already holds, so a wrong hit cannot go red.
       - name: Playwright browsers cache
-        id: browsers
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+          key: ${{ matrix.project == 'webkit' && 'playwright-webkit' || 'playwright' }}-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
       - name: Playwright browser and its system libraries
         timeout-minutes: 10
         run: |
@@ -113,9 +114,7 @@ jobs:
           cd ui
           npm ci --ignore-scripts --no-audit --no-fund
           ../ci/apt-retry.sh npx playwright install-deps "$STRESS_PROJECTS"
-          if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
-            npx playwright install "$STRESS_PROJECTS"
-          fi
+          npx playwright install "$STRESS_PROJECTS"
       # The fixture server embeds the built UI, and the starved run must not spend its time compiling.
       - name: build the UI and the fixture server before the starved run
         run: |

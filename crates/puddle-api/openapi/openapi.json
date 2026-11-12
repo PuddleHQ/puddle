@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.27.0"
+    "version": "0.29.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -2612,6 +2612,136 @@
         }
       }
     },
+    "/api/interception": {
+      "get": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "The global interception setting: the mode workspaces follow, whether the user has chosen one,\nlearning from rejections, and the curated list.",
+        "operationId": "get_interception_settings",
+        "responses": {
+          "200": {
+            "description": "the global setting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterceptionSettingsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "Changes the global setting. A running workspace that follows it applies the change at once.",
+        "operationId": "put_interception_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterceptionSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "saved; the setting now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterceptionSettingsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/interception/learned-limits": {
       "get": {
         "tags": [
@@ -4058,6 +4188,97 @@
           },
           "503": {
             "description": "not available in this build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/repository-hosts": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Says which hosts the repositories of a create form are on and where each stands: `new` hosts\nare the ones the create would allow for the workspace, `blocked` ones refuse the create.",
+        "operationId": "repository_hosts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepositoryHostsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the hosts and where each stands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryHosts"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "a bad workspace id or more than 100 addresses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
             "content": {
               "application/json": {
                 "schema": {
@@ -5543,7 +5764,7 @@
             }
           },
           "409": {
-            "description": "another workspace has that name (ignoring case), or two identities of the list cover the same place (`identity_collision`)",
+            "description": "another workspace has that name (ignoring case), two identities of the list cover the same place (`identity_collision`), or a block rule covers the host of a repository (the create never overrides a block)",
             "content": {
               "application/json": {
                 "schema": {
@@ -7041,6 +7262,118 @@
         }
       }
     },
+    "/api/workspaces/{id}/grow-root-disk": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Makes the workspace's root disk bigger. The root disk holds the home directory, tool caches\nand installed packages, and only ever grows. A running workspace has the room at once when\nthe runtime can grow a disk under a running guest; otherwise Puddle restarts it, which loses\nnothing that was saved to disk. A stopped workspace has the room at its next start. The size\nis kept when the root disk is reset. Answers 202; the workspace is busy\n(`growing_root_disk`) until it is done.",
+        "operationId": "grow_root_disk",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrowRootDiskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "growing started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "busy, or starting or stopping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not above the current size, or more than this computer has free",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/identities": {
       "put": {
         "tags": [
@@ -7430,7 +7763,7 @@
         "tags": [
           "interception"
         ],
-        "summary": "Changes the switch and/or the workspace's never-decrypt names. A running workspace applies it\nat once: the next connection to a host is decrypted or passed through accordingly. A host with\na credential, secret or login capture is always decrypted, whatever the list says.",
+        "summary": "Changes the mode and/or the workspace's never-decrypt names. A running workspace applies it\nat once: the next connection to a host is decrypted or passed through accordingly. A host with\na credential, secret or login capture is always decrypted, whatever the list says.",
         "operationId": "put_interception",
         "parameters": [
           {
@@ -7532,7 +7865,7 @@
         "tags": [
           "interception"
         ],
-        "summary": "The hosts the running workspace's tools refused Puddle's certificate for, which Puddle now\npasses through untouched. The list is empty for a workspace that is not running. A client\nrefetches on the `pass_through_learned` event.",
+        "summary": "The hosts the workspace's tools refused Puddle's certificate for, with when each was first\nand last refused and how many times, and whether Puddle passes it through now. A workspace\nthat is not running passes nothing through. A client refetches on the\n`pass_through_learned` event.",
         "operationId": "list_learned",
         "parameters": [
           {
@@ -7612,7 +7945,7 @@
         "tags": [
           "interception"
         ],
-        "summary": "Decrypts every learned host of the workspace again from the next connection. Connections\nalready open keep going as they are.",
+        "summary": "Decrypts every host the workspace passes through again from the next connection. Connections\nalready open keep going as they are; the history of refusals stays.",
         "operationId": "clear_learned",
         "parameters": [
           {
@@ -7687,7 +8020,7 @@
         "tags": [
           "interception"
         ],
-        "summary": "Decrypts one learned host again from the next connection. If the tool still refuses\nPuddle's certificate, the host is learned again, and the user is told again.",
+        "summary": "Decrypts one learned host again from the next connection; its history stays. If the tool\nstill refuses Puddle's certificate, the host is learned again, and the user is told again.",
         "operationId": "forget_learned",
         "parameters": [
           {
@@ -7734,7 +8067,7 @@
             }
           },
           "404": {
-            "description": "no such workspace, or the host is not on the list",
+            "description": "no such workspace, or the host is not passed through",
             "content": {
               "application/json": {
                 "schema": {
@@ -7745,6 +8078,110 @@
           },
           "421": {
             "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/interception/learned/{host}/permanent": {
+      "post": {
+        "tags": [
+          "interception"
+        ],
+        "summary": "Never decrypts a learned host again, in this workspace or in every workspace: the host joins\nthat never-decrypt list and leaves the learned list, history included.",
+        "operationId": "make_permanent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "path",
+            "description": "the learned host name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MakePermanentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "the host is on the never-decrypt list and off the learned list"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace, or the host is not on the learned list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the never-decrypt list is full",
             "content": {
               "application/json": {
                 "schema": {
@@ -8443,7 +8880,7 @@
             }
           },
           "409": {
-            "description": "the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), or the identities collide (`identity_collision`)",
+            "description": "the workspace is not running or is busy, the list is full, the repository or directory is already listed, the directory exists (clone) or is no checkout or has no usable remote (existing), the identities collide (`identity_collision`), or a block rule covers the repository's host (clone)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8495,7 +8932,7 @@
         }
       }
     },
-    "/api/workspaces/{id}/repositories/{directory}": {
+    "/api/workspaces/{id}/repositories/{entry}": {
       "delete": {
         "tags": [
           "workspaces"
@@ -8513,9 +8950,9 @@
             }
           },
           {
-            "name": "directory",
+            "name": "entry",
             "in": "path",
-            "description": "the entry's directory",
+            "description": "the entry's id (not its directory)",
             "required": true,
             "schema": {
               "type": "string"
@@ -8606,7 +9043,7 @@
         }
       }
     },
-    "/api/workspaces/{id}/repositories/{directory}/clone": {
+    "/api/workspaces/{id}/repositories/{entry}/clone": {
       "post": {
         "tags": [
           "workspaces"
@@ -8624,9 +9061,9 @@
             }
           },
           {
-            "name": "directory",
+            "name": "entry",
             "in": "path",
-            "description": "the entry's directory",
+            "description": "the entry's id (not its directory)",
             "required": true,
             "schema": {
               "type": "string"
@@ -9754,7 +10191,8 @@
           "cli",
           "ui",
           "api",
-          "system"
+          "system",
+          "workspace_create"
         ]
       },
       "AddRepositoryRequest": {
@@ -9857,6 +10295,25 @@
           }
         ],
         "description": "`POST /api/workspaces/{id}/repositories`: what to add."
+      },
+      "AllowedHost": {
+        "type": "object",
+        "description": "A host a create (or adding a repository) allowed for a workspace.",
+        "required": [
+          "host",
+          "rule_id"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The host."
+          },
+          "rule_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The rule that allows it, visible on the Rules screen as made by the create."
+          }
+        }
       },
       "ApiErrorBody": {
         "type": "object",
@@ -10170,6 +10627,7 @@
               "unswapped_stand_ins",
               "scrubbed_stand_ins",
               "foreign_credentials",
+              "answer_credentials",
               "method",
               "path",
               "path_truncated",
@@ -10179,6 +10637,13 @@
               "type"
             ],
             "properties": {
+              "answer_credentials": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The kinds of token the answers held that Puddle does not hold, each once:\n`github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,\n`azure_devops_token`, `anthropic_key`, `openai_key` or `jwt_with_refresh_token`. Never\na value. Records written before it existed, and connections of a workspace that turned\nthe warning off, read as empty."
+              },
               "binding_id": {
                 "type": [
                   "string",
@@ -12237,6 +12702,14 @@
           }
         }
       },
+      "EntryId": {
+        "type": "string",
+        "description": "A repository entry's id: eight characters of lowercase Crockford base32, the first a letter. Unique within its workspace.",
+        "example": "a0000000",
+        "maxLength": 8,
+        "minLength": 8,
+        "pattern": "^[a-hjkmnp-tv-z][0-9a-hjkmnp-tv-z]{7}$"
+      },
       "EnvKind": {
         "type": "string",
         "description": "What a variable is.",
@@ -12407,6 +12880,7 @@
           "misdirected_host",
           "forbidden_origin",
           "unauthorized",
+          "forbidden",
           "bad_request",
           "unsupported_media_type",
           "payload_too_large",
@@ -12658,7 +13132,7 @@
           },
           {
             "type": "object",
-            "description": "Rules were created, changed, deleted or expired. Global: every subscriber gets it.",
+            "description": "Rules were created, changed, deleted or expired. Global: every subscriber gets it (it\ncarries nothing, so each refetches what it may see).",
             "required": [
               "type"
             ],
@@ -12688,7 +13162,7 @@
           },
           {
             "type": "object",
-            "description": "The list of identities, their order, the default or an identity's author or credentials\nchanged. Carries no data: refetch `GET /api/identities`.",
+            "description": "The list of identities, their order, the default or an identity's author or credentials\nchanged, or the Git defaults. Carries no data: refetch `GET /api/identities` (every\nsubscriber gets it, and each refetches its own).",
             "required": [
               "type"
             ],
@@ -12738,7 +13212,7 @@
           },
           {
             "type": "object",
-            "description": "The global environment (variables and secrets every workspace gets) changed. Carries no\ndata: refetch `GET /api/env`, and a workspace's page refetches its own list too.",
+            "description": "A global environment (the variables and secrets every workspace of one user gets) changed.\nCarries no data: refetch `GET /api/env`, and a workspace's page refetches its own list too\n(every subscriber gets it, and each refetches its own).",
             "required": [
               "type"
             ],
@@ -12966,9 +13440,16 @@
             "required": [
               "workspace",
               "host",
+              "count",
               "type"
             ],
             "properties": {
+              "count": {
+                "type": "integer",
+                "format": "int32",
+                "description": "How many times Puddle has stopped decrypting this host in this workspace because a\ntool refused its certificate, this one included. The app raises a notice from the\nthird time.",
+                "minimum": 0
+              },
               "host": {
                 "type": "string",
                 "description": "The host, lower case."
@@ -12987,7 +13468,7 @@
           },
           {
             "type": "object",
-            "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in\nwindow. Global: every subscriber gets it. Names only, never a value.",
+            "description": "A workspace asked for a credential and the source of it cannot supply one (not signed in,\nor the sign-in ran out). The user signs in from Puddle; a request never opens a sign-in\nwindow. Global: it goes to the owner's streams. Names only, never a value.",
             "required": [
               "host",
               "source",
@@ -13147,7 +13628,37 @@
           },
           {
             "type": "object",
-            "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit,\nnot per record. Global: every subscriber gets it.",
+            "description": "An answer to a request of the workspace held a token of a known kind that Puddle does not\nhold, and the warning is on. The answer went to the workspace as it was. `host` is the\nhost that sent it and `kind` says what the token looked like; never a part of its value.",
+            "required": [
+              "workspace",
+              "host",
+              "kind",
+              "type"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "The host that answered."
+              },
+              "kind": {
+                "$ref": "#/components/schemas/UnknownTokenKind",
+                "description": "What kind of token it looked like."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unknown_token_in_answer"
+                ]
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId",
+                "description": "The workspace that got the answer."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "New audit records were committed. `id` is the newest record's id, so a client that holds\neverything up to `after` reads on with `GET /api/audit?after=`. One event per commit and\nuser, not per record: it goes to the streams of the user the records belong to.",
             "required": [
               "id",
               "type"
@@ -13156,7 +13667,7 @@
               "id": {
                 "type": "integer",
                 "format": "int64",
-                "description": "The newest audit record's id."
+                "description": "The newest audit record's id of that user."
               },
               "type": {
                 "type": "string",
@@ -13168,7 +13679,7 @@
           },
           {
             "type": "object",
-            "description": "The network or the system's proxy settings changed (after a quiet period), so what\n`GET /api/network-health` showed may be out of date. Global: every subscriber gets it.",
+            "description": "The network or the system's proxy settings changed (after a quiet period), so what\n`GET /api/network-health` showed may be out of date. Global: it goes to the owner's\nstreams.",
             "required": [
               "epoch",
               "type"
@@ -13190,7 +13701,7 @@
           },
           {
             "type": "object",
-            "description": "Signing in to the company proxy failed (it turned the credentials or the token down, or\nasked again and again), so what `GET /api/network-health` lists under sign-in has changed.\nSent once when a proxy goes from signed in (or never tried) to failing, not on every retry.\nNames the proxy and the scheme only, never a credential. Global: every subscriber gets it.",
+            "description": "Signing in to the company proxy failed (it turned the credentials or the token down, or\nasked again and again), so what `GET /api/network-health` lists under sign-in has changed.\nSent once when a proxy goes from signed in (or never tried) to failing, not on every retry.\nNames the proxy and the scheme only, never a credential. Global: it goes to the owner's\nstreams.",
             "required": [
               "proxy",
               "scheme",
@@ -13218,7 +13729,7 @@
           },
           {
             "type": "object",
-            "description": "The list of background problems changed (something Puddle does on its own failed, or the\ncause went away). Carries no data: refetch `GET /api/problems`. Global: every subscriber\ngets it.",
+            "description": "The list of background problems changed (something Puddle does on its own failed, or the\ncause went away). Carries no data: refetch `GET /api/problems`. Global: every\nsubscriber gets it (each refetches what it may see).",
             "required": [
               "type"
             ],
@@ -13233,7 +13744,7 @@
           },
           {
             "type": "object",
-            "description": "The free space on the drive that holds Puddle's data moved across the warning or the\nfailure line, or back above both (`level` is then `ok`). Sent when the level changes, not\non every read; the first read after Puddle starts counts as a change when it is not `ok`.\nGlobal: every subscriber gets it.",
+            "description": "The free space on the drive that holds Puddle's data moved across the warning or the\nfailure line, or back above both (`level` is then `ok`). Sent when the level changes, not\non every read; the first read after Puddle starts counts as a change when it is not `ok`.\nGlobal: it goes to the owner's streams.",
             "required": [
               "level",
               "free_mib",
@@ -13665,6 +14176,22 @@
           }
         }
       },
+      "GrowRootDiskRequest": {
+        "type": "object",
+        "description": "`POST /api/workspaces/{id}/grow-root-disk`.",
+        "required": [
+          "size_mib"
+        ],
+        "properties": {
+          "size_mib": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The new root disk size in MiB. It must be above the current size: a root disk only grows.\nRequired.",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "Health": {
         "type": "object",
         "description": "The API's identity, for a client to check it reached Puddle.",
@@ -13957,16 +14484,29 @@
           }
         }
       },
+      "InterceptionMode": {
+        "type": "string",
+        "description": "Which hosts on port 443 Puddle decrypts, beyond the ones with a credential, secret, login\ncapture profile or rule on method and path (those are always decrypted).",
+        "enum": [
+          "all",
+          "all_except_curated",
+          "known_only"
+        ]
+      },
       "InterceptionRequest": {
         "type": "object",
         "description": "A change to a workspace's interception. A field that is absent stays as it is.",
         "properties": {
-          "decrypt_all": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Turns decrypting every host on or off. It applies to the running workspace at once."
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceMode",
+                "description": "Sets the workspace's own mode. It applies to the running workspace at once."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "never_decrypt": {
             "type": [
@@ -13980,19 +14520,87 @@
           }
         }
       },
+      "InterceptionSettingsRequest": {
+        "type": "object",
+        "description": "A change to the global interception setting. A field that is absent stays as it is.",
+        "properties": {
+          "learn_from_rejections": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Turns learning from rejections on or off."
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InterceptionMode",
+                "description": "Chooses the mode."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notice_seen": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Records that the user has seen the notice."
+          }
+        }
+      },
+      "InterceptionSettingsView": {
+        "type": "object",
+        "description": "The global interception setting.",
+        "required": [
+          "mode",
+          "chosen",
+          "learn_from_rejections",
+          "notice_seen",
+          "curated"
+        ],
+        "properties": {
+          "chosen": {
+            "type": "boolean",
+            "description": "Whether the user has chosen a mode. While `false`, the app offers the choice once."
+          },
+          "curated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The curated list passed through in `all_except_curated`: built in, \"System managed\",\nsorted."
+          },
+          "learn_from_rejections": {
+            "type": "boolean",
+            "description": "Whether a host whose tool refuses Puddle's certificate is passed through for a while and\nput on the learned list. Meaningful in the modes that decrypt unlisted hosts. On unless\nturned off."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/InterceptionMode",
+            "description": "The mode every workspace without its own follows. An install that has not chosen is on\n`known_only`."
+          },
+          "notice_seen": {
+            "type": "boolean",
+            "description": "Whether the user has seen the notice that offers the choice (existing installs)."
+          }
+        }
+      },
       "InterceptionView": {
         "type": "object",
-        "description": "How a workspace decrypts hosts beyond the ones it has a credential for.",
+        "description": "How a workspace decrypts hosts beyond the ones it has a credential, secret, login capture or\nrule on method and path for.",
         "required": [
           "workspace",
-          "decrypt_all",
+          "mode",
+          "effective_mode",
           "never_decrypt",
           "global_never_decrypt"
         ],
         "properties": {
-          "decrypt_all": {
-            "type": "boolean",
-            "description": "Whether Puddle decrypts every host on port 443, not only the hosts with a credential,\nsecret or login capture. Off unless turned on."
+          "effective_mode": {
+            "$ref": "#/components/schemas/InterceptionMode",
+            "description": "The mode in force: the workspace's own, or the global one."
           },
           "global_never_decrypt": {
             "type": "array",
@@ -14001,12 +14609,16 @@
             },
             "description": "The names no workspace decrypts, sorted. Changed through the global route."
           },
+          "mode": {
+            "$ref": "#/components/schemas/WorkspaceMode",
+            "description": "The workspace's own choice; `inherit` follows the global setting."
+          },
           "never_decrypt": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The names this workspace never decrypts while the switch is on (`example.com`,\n`*.example.com`), sorted."
+            "description": "The names this workspace never decrypts while it decrypts unlisted hosts (`example.com`,\n`*.example.com`), sorted."
           },
           "workspace": {
             "$ref": "#/components/schemas/WorkspaceId",
@@ -14118,27 +14730,56 @@
       },
       "LearnedHost": {
         "type": "object",
-        "description": "A host Puddle stopped decrypting in a workspace because a tool there refused Puddle's\ncertificate for it.",
+        "description": "A host a tool in a workspace refused Puddle's certificate for.",
         "required": [
           "host",
-          "expires_in_secs"
+          "passed_through",
+          "expires_in_secs",
+          "first_rejected_at",
+          "last_rejected_at",
+          "count"
         ],
         "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many times Puddle stopped decrypting the host after a refusal. From the third time on\nthe app suggests making the host permanent.",
+            "minimum": 0
+          },
           "expires_in_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Seconds until Puddle decrypts the host again by itself; `null` unless `passed_through`.",
+            "minimum": 0
+          },
+          "first_rejected_at": {
             "type": "integer",
             "format": "int64",
-            "description": "Seconds until Puddle decrypts the host again by itself.",
+            "description": "When a tool first refused the certificate for this host, milliseconds since the epoch.",
             "minimum": 0
           },
           "host": {
             "type": "string",
             "description": "The host name, lower case."
+          },
+          "last_rejected_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When a tool last refused it, milliseconds since the epoch.",
+            "minimum": 0
+          },
+          "passed_through": {
+            "type": "boolean",
+            "description": "Whether Puddle passes the host through now. `false` once the time is up or the user\ndecrypted it again (the host stays listed with its history), and for a workspace that is\nnot running: nothing is passed through then."
           }
         }
       },
       "LearnedHosts": {
         "type": "object",
-        "description": "The hosts a running workspace passes through because its tools refused Puddle's certificate.",
+        "description": "The hosts a workspace's tools refused Puddle's certificate for.",
         "required": [
           "hosts"
         ],
@@ -14148,7 +14789,7 @@
             "items": {
               "$ref": "#/components/schemas/LearnedHost"
             },
-            "description": "Soonest to expire first. Empty for a workspace that is not running: the list is kept in\nmemory and a start begins with none."
+            "description": "The hosts passed through now first, soonest to expire first; then the others, the most\nrecently refused first. The history is kept in the database; the pass-through is held in\nmemory by the running workspace, so a start begins with none passed through."
           }
         }
       },
@@ -14256,6 +14897,19 @@
           "capture_off",
           "unknown"
         ]
+      },
+      "MakePermanentRequest": {
+        "type": "object",
+        "description": "Makes a learned host permanent.",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/PermanentScope",
+            "description": "Which never-decrypt list gets the host."
+          }
+        }
       },
       "NetworkHealth": {
         "type": "object",
@@ -14807,6 +15461,14 @@
             "description": "The workspace that asked."
           }
         }
+      },
+      "PermanentScope": {
+        "type": "string",
+        "description": "Where a learned host is never decrypted from now on.",
+        "enum": [
+          "workspace",
+          "global"
+        ]
       },
       "PortEntry": {
         "type": "object",
@@ -15533,6 +16195,81 @@
           "internal",
           "unknown"
         ]
+      },
+      "RepositoryHost": {
+        "type": "object",
+        "description": "One host of the repositories.",
+        "required": [
+          "host",
+          "state",
+          "blocked_by"
+        ],
+        "properties": {
+          "blocked_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `blocked`: which rule or rule set blocks it, in words; `null` otherwise."
+          },
+          "host": {
+            "type": "string",
+            "description": "The host, lower case."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RepositoryHostState",
+            "description": "Where it stands."
+          }
+        }
+      },
+      "RepositoryHostState": {
+        "type": "string",
+        "description": "Where a repository host stands with the rules.",
+        "enum": [
+          "new",
+          "allowed",
+          "blocked"
+        ]
+      },
+      "RepositoryHosts": {
+        "type": "object",
+        "description": "The hosts of the addresses, in the order they first appear, each once.",
+        "required": [
+          "hosts"
+        ],
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepositoryHost"
+            },
+            "description": "One entry per host."
+          }
+        }
+      },
+      "RepositoryHostsRequest": {
+        "type": "object",
+        "description": "`POST /api/repository-hosts`: the repositories of a create form, or of a repository to add.",
+        "required": [
+          "urls"
+        ],
+        "properties": {
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The repository addresses. One that is not an HTTPS address of a repository has no host\nhere; the create refuses it by itself."
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workspace the repositories are for; leave it out for one that does not exist yet."
+          }
+        },
+        "additionalProperties": false
       },
       "RequestRule": {
         "type": "object",
@@ -17200,6 +17937,20 @@
         },
         "additionalProperties": false
       },
+      "UnknownTokenKind": {
+        "type": "string",
+        "description": "What Puddle can tell about a token in an answer that it does not hold: by its bytes alone\n(see [`Event::UnknownTokenInAnswer`]).",
+        "enum": [
+          "github_token",
+          "github_fine_grained_token",
+          "gitlab_token",
+          "npm_token",
+          "azure_devops_token",
+          "anthropic_key",
+          "openai_key",
+          "jwt_with_refresh_token"
+        ]
+      },
       "VsCodeServer": {
         "type": "object",
         "description": "Options for the VS Code server in the guest. `null` means Puddle's default.",
@@ -17259,9 +18010,17 @@
           "direct_ssh",
           "settings_error",
           "first_connect_notice_due",
-          "identities"
+          "identities",
+          "allowed_hosts"
         ],
         "properties": {
+          "allowed_hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowedHost"
+            },
+            "description": "The hosts creating the workspace, or adding a repository to it, allowed for it because no\nrule decided them (each is a rule made by the create, on the Rules screen). Only those\nanswers fill it; every other answer has an empty list."
+          },
           "busy": {
             "oneOf": [
               {
@@ -17541,6 +18300,16 @@
           }
         }
       },
+      "WorkspaceMode": {
+        "type": "string",
+        "description": "A workspace's own choice of interception mode.",
+        "enum": [
+          "inherit",
+          "all",
+          "all_except_curated",
+          "known_only"
+        ]
+      },
       "WorkspaceOpKind": {
         "type": "string",
         "description": "What a `workspace_op` record is about.",
@@ -17559,7 +18328,8 @@
           "repo_added",
           "repo_switched",
           "repo_removed",
-          "git_repaired"
+          "git_repaired",
+          "root_disk_grown"
         ]
       },
       "WorkspaceOpOutcome": {
@@ -17579,6 +18349,7 @@
           "stopping",
           "reclaiming",
           "resetting_root_disk",
+          "growing_root_disk",
           "cloning",
           "deleting"
         ]
@@ -17609,6 +18380,7 @@
         "type": "object",
         "description": "One repository Puddle manages for a workspace. Its identity and its Pull and Push toggles are\nthe workspace's Git settings (`GET /api/workspaces/{id}/git`), matched in the repository\ntable's spelling.",
         "required": [
+          "entry",
           "url",
           "directory"
         ],
@@ -17616,6 +18388,10 @@
           "directory": {
             "$ref": "#/components/schemas/CheckoutDir",
             "description": "The checkout it is cloned into, directly under the volume root."
+          },
+          "entry": {
+            "$ref": "#/components/schemas/EntryId",
+            "description": "The entry's id, unique within the workspace: what `/api/workspaces/{id}/repositories/{entry}`\nand the `clone:<id>:<entry>` problem key use. It never changes while the entry is on the\nlist."
           },
           "url": {
             "type": "string",
@@ -17691,6 +18467,7 @@
           "checking",
           "reclaiming",
           "resetting_root_disk",
+          "growing_root_disk",
           "stopping",
           "removing",
           "done",

@@ -212,7 +212,7 @@ async fn a_push_off_the_list_is_refused_in_one_readable_line_and_recorded() {
     assert_eq!(answer.header("x-puddle-blocked"), Some("push_denied"));
     assert_eq!(
         answer.text(),
-        "puddle: push to bound.test/acme/other is not on this workspace's push list; add it, or turn off \"Only push to listed repos\" on the workspace's Git tab\n"
+        "puddle: push to bound.test/acme/other is not on this workspace's push list yet, as with a repository the workspace just created or forked; click \"Allow push for other\" in the notice (it works at once, no restart), or turn off \"Only push to listed repos\" on the workspace's Git tab, then try again\n"
     );
     assert!(t.server.recorded().is_empty(), "nothing went upstream");
     assert_eq!(
@@ -248,7 +248,7 @@ async fn the_pull_list_refuses_a_fetch_with_the_same_kind_of_line() {
     assert_eq!(answer.header("x-puddle-blocked"), Some("pull_denied"));
     assert_eq!(
         answer.text(),
-        "puddle: pull from bound.test/someone/else is not on this workspace's pull list; add it, or turn off \"Only pull from listed repos\" on the workspace's Git tab\n"
+        "puddle: pull from bound.test/someone/else is not on this workspace's pull list yet, as with a repository the workspace just created or forked; click \"Allow pull for else\" in the notice (it works at once, no restart), or turn off \"Only pull from listed repos\" on the workspace's Git tab, then try again\n"
     );
     assert_eq!(
         t.raised(),
@@ -365,7 +365,12 @@ async fn a_401_to_the_credential_puddle_added_is_ours_forgets_the_token_and_asks
 async fn a_request_no_identity_covers_goes_out_as_sent_and_its_401_is_the_servers_own() {
     let t = GitRig::new().await;
     // Detach both identities: nothing covers anything.
-    for identity in t.world.store.identities().unwrap() {
+    for identity in t
+        .world
+        .store
+        .identities(puddle_store::UserId::OWNER)
+        .unwrap()
+    {
         t.world
             .store
             .detach_identity(&t.world.workspace, identity.id)
@@ -446,7 +451,7 @@ async fn a_401_to_the_workspaces_own_header_is_the_servers_answer_as_without_pud
 
 /// The Work identity's source cannot be read because nobody is signed in.
 fn sign_out(world: &puddle_inject::testing::World) {
-    let identities = world.store.identities().unwrap();
+    let identities = world.store.identities(puddle_store::UserId::OWNER).unwrap();
     let source = &identities
         .first()
         .unwrap()

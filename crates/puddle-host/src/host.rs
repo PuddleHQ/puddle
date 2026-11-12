@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::SystemTime;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, HostCredentials, HostNetworkHealth, Launcher,
@@ -322,6 +323,9 @@ pub struct HostOptions {
     /// ([`puddle_api::RandomIds`]); tests give [`puddle_api::NameIds`], so a workspace called
     /// `acme` gets the id `acme`.
     pub workspace_ids: Option<Arc<dyn puddle_api::IdSource>>,
+    /// Where a root disk grow reads the free space of the data folder's drive. Without one, the
+    /// real drive; tests give a fixed figure so a grow never depends on the machine's disk.
+    pub free_space: Option<Arc<dyn crate::Space>>,
 }
 
 impl Default for HostOptions {
@@ -337,6 +341,7 @@ impl Default for HostOptions {
             rewrite_gate: None,
             git_ssh: true,
             workspace_ids: None,
+            free_space: None,
         }
     }
 }
@@ -423,6 +428,7 @@ impl Drop for AbortOnDrop {
 pub struct Host<R: Runtime + Clone> {
     info: puddle_api::ConnectionInfo,
     url: Url,
+    remote_listener: Option<RemoteListener>,
     events: Arc<EventHub>,
     problems: Arc<Problems>,
     quit_trims: QuitTrims,
@@ -677,11 +683,17 @@ impl<R: Runtime + Clone> Host<R> {
                     .clone()
                     .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
                 login_markers: config.paths.login_markers(),
+                space: crate::space_watch::space_or_drive(
+                    options.free_space.clone(),
+                    config.paths.data(),
+                ),
             },
             stored,
             retired,
             &status,
         )?;
+        // Downloads the image the delete check boots now, while nobody is waiting on it.
+        service.warm_maintenance_image_for_listed().await;
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
         let editor_windows = front.windows().clone();
         let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
@@ -725,7 +737,10 @@ impl<R: Runtime + Clone> Host<R> {
         .with_dev_cert(dev_cert)
         .with_ports(Arc::new(HostPorts::new(ports)))
         .with_terminals(Arc::new(service.clone()))
-        .with_learned(Arc::new(HostLearned::new(injecting.terminations.clone())))
+        .with_learned(Arc::new(HostLearned::new(
+            injecting.terminations.clone(),
+            Arc::clone(&store),
+        )))
         .with_proxy_sign_ins(sign_ins)
         .with_company_signals(signals)
         .with_endpoints(endpoints.clone());
@@ -736,6 +751,7 @@ impl<R: Runtime + Clone> Host<R> {
         Ok(Self {
             info: served.info,
             url: served.url,
+            remote_listener: served.remote_listener,
             events,
             problems,
             quit_trims,
@@ -774,6 +790,12 @@ impl<R: Runtime + Clone> Host<R> {
     #[must_use]
     pub fn url(&self) -> &Url {
         &self.url
+    }
+
+    /// The network listener for a reverse proxy on another machine, when remote serving has one.
+    #[must_use]
+    pub fn remote_listener(&self) -> Option<&RemoteListener> {
+        self.remote_listener.as_ref()
     }
 
     /// The API token. Never log it.
@@ -1253,7 +1275,19 @@ impl Egress {
 struct ServedApi {
     info: puddle_api::ConnectionInfo,
     url: Url,
+    remote_listener: Option<RemoteListener>,
     api: RunningApi,
+}
+
+/// The network listener of remote serving, as the operator needs it to set up the proxy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteListener {
+    /// The address and port it listens on.
+    pub addr: std::net::SocketAddr,
+    /// The SHA-256 of its certificate, lower-case hex, for a proxy that pins.
+    pub fingerprint: String,
+    /// The certificate as PEM (no key), for a proxy that trusts it.
+    pub certificate_file: PathBuf,
 }
 
 async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi, HostError> {
@@ -1264,6 +1298,13 @@ async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi,
     if let Some(ui) = &config.api.ui {
         api_config.ui = Some(ui.clone());
     }
+    api_config.remote.clone_from(&config.api.remote);
+    let mut certificate = None;
+    if let Some(listener) = &config.api.network_listener {
+        let (network, cert_file) = network_listener(config, listener)?;
+        certificate = Some((network.tls.fingerprint(), cert_file));
+        api_config.network_listener = Some(network);
+    }
     let server = ApiServer::bind(api_config, ApiToken::generate()?, services).await?;
     let info = server.connection_info();
     if let Some(file) = &config.api.connection_file {
@@ -1273,8 +1314,70 @@ async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi,
         what: "the API address",
         reason: e.to_string(),
     })?;
+    let remote_listener =
+        server
+            .network_addr()
+            .zip(certificate)
+            .map(|(addr, (fingerprint, certificate_file))| RemoteListener {
+                addr,
+                fingerprint,
+                certificate_file,
+            });
     let api = server.spawn();
-    Ok(ServedApi { info, url, api })
+    Ok(ServedApi {
+        info,
+        url,
+        remote_listener,
+        api,
+    })
+}
+
+/// The listener's settings with its certificate: made for the interface address and the public
+/// host names, kept under the data folder. Returns the listener and the file the proxy's
+/// operator copies.
+fn network_listener(
+    config: &HostConfig,
+    settings: &crate::NetworkListenerSettings,
+) -> Result<(puddle_api::NetworkListener, PathBuf), HostError> {
+    let mut ips = vec![settings.interface];
+    let mut names = Vec::new();
+    for host in config
+        .api
+        .remote
+        .iter()
+        .flat_map(puddle_api::RemoteServing::public_hosts)
+    {
+        match host
+            .host()
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+        {
+            Ok(ip) => ips.push(ip),
+            Err(_) => names.push(host.host().to_owned()),
+        }
+    }
+    ips.sort_unstable();
+    ips.dedup();
+    names.sort_unstable();
+    names.dedup();
+    let data = config.paths.data();
+    let cert = puddle_certs::devcert::listener::ensure(data, &ips, &names, SystemTime::now())
+        .map_err(|e| HostError::State {
+            what: "the network listener's certificate",
+            reason: e.to_string(),
+        })?;
+    let identity =
+        puddle_api::TlsIdentity::new(cert.cert_der().to_vec(), cert.key().pkcs8_der().to_vec());
+    let file = data
+        .join(puddle_certs::devcert::listener::FOLDER)
+        .join(puddle_certs::devcert::listener::CERT_FILE);
+    let listener = puddle_api::NetworkListener {
+        interface: settings.interface,
+        port: settings.port,
+        allowed_proxies: settings.allowed_proxies.clone(),
+        tls: identity,
+    };
+    Ok((listener, file))
 }
 
 /// What reconcile works from: the workspaces Puddle knows, the sandboxes they own and which of
@@ -1420,127 +1523,4 @@ fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> Vec<Problem
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_api::MemorySettings;
-    use puddle_repos::{ApiReply, FakeApi, Freshness, Read, Secrets};
-    use puddle_secrets::{Credential, Secret, SourceError, SourceSpec};
-    use puddle_settings::WorkspaceSettings;
-    use puddle_types::LocalCategory;
-    use serde_json::json;
-
-    use super::*;
-
-    fn name() -> WorkspaceId {
-        WorkspaceId::new("acme").unwrap()
-    }
-
-    #[test]
-    fn local_access_follows_the_settings_when_they_can_be_read() {
-        let repo = MemorySettings::default();
-        let mut own = WorkspaceSettings::default();
-        own.overrides.local_toggles.private = Some(true);
-        repo.save_workspace(&name(), own.to_document()).unwrap();
-        let access = local_access(&repo, &name());
-        assert!(access.is_on(LocalCategory::Private));
-        assert!(!access.is_on(LocalCategory::Loopback));
-    }
-
-    #[test]
-    fn damaged_settings_block_every_local_destination_and_say_why() {
-        let repo = MemorySettings::default();
-        repo.save_global(json!("not an object")).unwrap();
-        assert_eq!(local_access(&repo, &name()), LocalAccess::UNREADABLE);
-        let reason = local_access_checked(&repo, &name()).unwrap_err();
-        assert!(reason.contains("global settings are not valid"), "{reason}");
-
-        let repo = MemorySettings::default();
-        repo.save_workspace(&name(), json!([1])).unwrap();
-        assert_eq!(local_access(&repo, &name()), LocalAccess::UNREADABLE);
-        let reason = local_access_checked(&repo, &name()).unwrap_err();
-        assert!(reason.contains("workspace acme"), "{reason}");
-    }
-
-    struct OneToken;
-
-    impl Secrets for OneToken {
-        fn get<'a>(
-            &'a self,
-            _spec: &'a SourceSpec,
-        ) -> futures_util::future::BoxFuture<'a, Result<Credential, SourceError>> {
-            Box::pin(async {
-                Ok(Credential {
-                    username: None,
-                    secret: Arc::new(Secret::new("CANARY-host-token".to_owned())),
-                })
-            })
-        }
-
-        fn invalidate(&self, _spec: &SourceSpec) {}
-    }
-
-    #[tokio::test]
-    async fn a_repository_list_renewed_behind_the_callers_back_is_announced_as_an_event() {
-        use std::collections::BTreeSet;
-
-        use puddle_store::{
-            Coverage, CredentialBinding, IdentityDraft, Limits, ManualClock, Store,
-        };
-
-        let host = puddle_secrets::HostName::new("github.com").unwrap();
-        let source = SourceSpec::Gh {
-            host: host.clone(),
-            account: puddle_secrets::AccountName::new("octocat").unwrap(),
-        };
-        let clock = Arc::new(ManualClock::new(1_700_000_000_000));
-        let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
-        let identity = store
-            .create_identity(IdentityDraft {
-                label: "Me".to_owned(),
-                author: puddle_store::Author::new("Me", "me@example.org").unwrap(),
-                credentials: vec![
-                    CredentialBinding::new(
-                        &host,
-                        source,
-                        Coverage::new(BTreeSet::new(), true).unwrap(),
-                    )
-                    .unwrap(),
-                ],
-            })
-            .unwrap();
-        // The token source answers the same for as long as it is asked.
-        OneToken.invalidate(&SourceSpec::Gh {
-            host: host.clone(),
-            account: puddle_secrets::AccountName::new("octocat").unwrap(),
-        });
-        let api = Arc::new(FakeApi::new());
-        let path = "/user/repos?per_page=100&sort=full_name&direction=asc";
-        api.reply("api.github.com", path, ApiReply::new(200, "[]"));
-        let repos = Repos::new(api.clone(), Arc::new(OneToken), clock.clone());
-        let hub = Arc::new(EventHub::default());
-        let mut stream = hub.subscribe();
-        announce_renewals(&repos, hub.clone());
-        let read = Read {
-            only: None,
-            freshness: Freshness::Cached,
-        };
-        repos.lists(std::slice::from_ref(&identity), read).await;
-
-        // A repository appears; the next ask after the list went stale is answered with the old
-        // list and the new one is announced.
-        api.clear("api.github.com", path);
-        api.reply(
-            "api.github.com",
-            path,
-            ApiReply::new(200, r#"[{"id":1,"name":"new","full_name":"octo/new","private":false,"html_url":"https://github.com/octo/new"}]"#),
-        );
-        clock.advance(11 * 60_000);
-        let served = repos.lists(std::slice::from_ref(&identity), read).await;
-
-        assert!(served[0].repos.is_empty());
-        let event = tokio::time::timeout(std::time::Duration::from_secs(5), stream.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(event, Event::RepoListsChanged {});
-    }
-}
+mod tests;

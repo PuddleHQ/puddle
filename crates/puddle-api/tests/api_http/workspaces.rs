@@ -5,13 +5,35 @@ use puddle_api::DisplayName;
 use puddle_api::{
     Listing, Operation, RepoFindings, RepoUrl, Repository, SettingsRepo, Unsaved, WorkspaceRecord,
 };
-use puddle_types::{WorkspaceId, WorkspaceStatus};
+use puddle_types::{EntryId, WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};
 
-use crate::common::{Api, START_MS, start, start_without_workspaces};
+use crate::common::{Api, Reply, START_MS, start, start_without_workspaces};
 use crate::events::Stream;
 
 const REPO: &str = "https://github.com/acme/api.git";
+
+/// The list of repositories without its generated entry ids, after checking that each has a
+/// well-formed one and that no two are alike.
+fn without_entries(list: &Value) -> Value {
+    let mut list = list.clone();
+    let entries: Vec<EntryId> = list
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .map(|r| {
+            let entry = r.as_object_mut().unwrap().remove("entry").unwrap();
+            EntryId::new(entry.as_str().unwrap()).unwrap()
+        })
+        .collect();
+    let distinct: std::collections::BTreeSet<_> = entries.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        entries.len(),
+        "each entry has an id of its own"
+    );
+    list
+}
 
 async fn create(api: &Api, name: &str) -> Value {
     let reply = api
@@ -25,7 +47,7 @@ async fn create(api: &Api, name: &str) -> Value {
     reply.json()
 }
 
-async fn post(api: &Api, path: &str) -> crate::common::Reply {
+async fn post(api: &Api, path: &str) -> Reply {
     api.send("POST", path, Some(&json!({}))).await
 }
 
@@ -52,6 +74,7 @@ fn seed(api: &Api, name: &str, status: WorkspaceStatus, unsaved: Unsaved) {
         WorkspaceId::new(name).unwrap(),
         DisplayName::parse(name).unwrap(),
         vec![Repository::at_default_directory(
+            EntryId::from_random([7; 5]),
             RepoUrl::parse(REPO).unwrap(),
         )],
     );
@@ -100,7 +123,11 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
         json!({
             "id": "web",
             "name": "web",
-            "repositories": [{"url": REPO, "directory": "api"}],
+            "repositories": [{
+                "entry": ws["repositories"][0]["entry"],
+                "url": REPO,
+                "directory": "api"
+            }],
             "start_folder": null,
             "session_user": "agent",
             "image": puddle_api::DEFAULT_IMAGE,
@@ -121,7 +148,9 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
                 "identity": null,
                 "basis": "none",
                 "warning": ws["identities"][0]["warning"]
-            }]
+            }],
+            // Nothing allowed github.com yet, so the create did, with the first rule of the store.
+            "allowed_hosts": [{"host": "github.com", "rule_id": 1}]
         })
     );
     assert!(ws["identities"][0]["warning"].is_string());
@@ -249,8 +278,9 @@ async fn create_with_three_repositories_sets_each_up_and_answers_their_identitie
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     let ws = reply.json();
+    let list = without_entries(&ws["repositories"]);
     assert_eq!(
-        ws["repositories"],
+        list,
         json!([
             {"url": "https://github.com/acme/web.git", "directory": "web"},
             {"url": "https://github.com/me/notes", "directory": "my-notes"},
@@ -529,6 +559,14 @@ async fn start_and_stop_walk_the_states_and_report_them() {
         assert_eq!(busy.status, 409, "{path}");
         assert!(busy.json()["message"].as_str().unwrap().contains("busy"));
     }
+    let busy = api
+        .send(
+            "POST",
+            "/api/workspaces/web/grow-root-disk",
+            Some(&json!({"size_mib": 99999})),
+        )
+        .await;
+    assert_eq!(busy.status, 409, "{}", busy.body);
     api.workspaces.release();
     api.workspaces.idle().await;
     assert_eq!(
@@ -646,6 +684,49 @@ async fn the_root_disk_figures_and_warnings_follow_the_threshold_and_a_reset_emp
     api.running.shutdown().await;
 }
 
+async fn grow(api: &Api, size: u64) -> Reply {
+    api.send(
+        "POST",
+        "/api/workspaces/web/grow-root-disk",
+        Some(&json!({"size_mib": size})),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn growing_the_root_disk_answers_202_and_a_size_that_is_not_bigger_is_422() {
+    let api = start().await;
+    let mut record = WorkspaceRecord::new(
+        WorkspaceId::new("web").unwrap(),
+        DisplayName::parse("web").unwrap(),
+        Vec::new(),
+    );
+    record.status = WorkspaceStatus::Running;
+    record.root_disk_size_mib = Some(4096);
+    api.workspaces.seed(record, Unsaved::default());
+    let reply = grow(&api, 30000).await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    assert_eq!(reply.json()["busy"], "growing_root_disk");
+    api.workspaces.idle().await;
+    let ws = api.get("/api/workspaces/web").await.json();
+    assert_eq!(ws["root_disk_size_mib"], 30000, "{ws}");
+    assert_eq!(ws["busy"], Value::Null);
+    for size in [30000, 100] {
+        let refused = grow(&api, size).await;
+        assert_eq!(refused.status, 422, "{}", refused.body);
+        assert!(refused.body.contains("only grows"), "{}", refused.body);
+    }
+    let unknown = api
+        .send(
+            "POST",
+            "/api/workspaces/web/grow-root-disk",
+            Some(&json!({"size_mib": 40000, "extra": 1})),
+        )
+        .await;
+    assert_eq!(unknown.status, 422, "{}", unknown.body);
+    api.running.shutdown().await;
+}
+
 #[tokio::test]
 async fn unknown_workspaces_are_404_on_every_route() {
     let api = start().await;
@@ -657,6 +738,11 @@ async fn unknown_workspaces_are_404_on_every_route() {
             ("POST", format!("{base}/stop"), Some(json!({}))),
             ("POST", format!("{base}/reclaim"), Some(json!({}))),
             ("POST", format!("{base}/reset-root-disk"), Some(json!({}))),
+            (
+                "POST",
+                format!("{base}/grow-root-disk"),
+                Some(json!({"size_mib": 20000})),
+            ),
             ("GET", format!("{base}/delete-check"), None),
             ("DELETE", base.clone(), Some(json!({"confirm": true}))),
             (
@@ -1092,12 +1178,12 @@ async fn attach_refuses_unknown_modes_and_fields() {
     api.running.shutdown().await;
 }
 
-async fn rename(api: &Api, id: &str, body: &Value) -> crate::common::Reply {
+async fn rename(api: &Api, id: &str, body: &Value) -> Reply {
     api.send("PATCH", &format!("/api/workspaces/{id}"), Some(body))
         .await
 }
 
-async fn lookup(api: &Api, q: &str) -> crate::common::Reply {
+async fn lookup(api: &Api, q: &str) -> Reply {
     let q: String = q
         .bytes()
         .map(|b| {
@@ -1409,6 +1495,11 @@ async fn without_a_workspaces_service_every_route_says_unavailable() {
         ("POST", "/api/workspaces/a/stop", Some(json!({}))),
         ("POST", "/api/workspaces/a/reclaim", Some(json!({}))),
         ("POST", "/api/workspaces/a/reset-root-disk", Some(json!({}))),
+        (
+            "POST",
+            "/api/workspaces/a/grow-root-disk",
+            Some(json!({"size_mib": 20000})),
+        ),
         ("GET", "/api/workspaces/a/delete-check", None),
         (
             "DELETE",
@@ -1521,7 +1612,7 @@ async fn the_session_user_is_set_and_read_back_and_only_agent_or_root_is_taken()
     api.running.shutdown().await;
 }
 
-async fn put_start_folder(api: &Api, id: &str, body: &Value) -> crate::common::Reply {
+async fn put_start_folder(api: &Api, id: &str, body: &Value) -> Reply {
     api.send(
         "PUT",
         &format!("/api/workspaces/{id}/start-folder"),

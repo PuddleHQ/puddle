@@ -95,15 +95,37 @@ fn identity(organisation: &str) -> Identity {
         CredentialBinding::new(&host, source, Coverage::new(owners, false).unwrap()).unwrap();
     Store::open_in_memory(Arc::new(ManualClock::new(0)), Limits::default())
         .unwrap()
-        .create_identity(IdentityDraft {
-            label: "Work".to_owned(),
-            author: Author::new("Work", "me@example.org").unwrap(),
-            credentials: vec![binding],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            IdentityDraft {
+                label: "Work".to_owned(),
+                author: Author::new("Work", "me@example.org").unwrap(),
+                credentials: vec![binding],
+            },
+        )
         .unwrap()
 }
 
+/// How often a question is asked while the service answers something it has no rule for.
+const ATTEMPTS: u32 = 4;
+
+/// What the service made of `token`. A server error (`503` and the like) says the service was busy,
+/// not how it refuses a bad token, so only that answer is asked again, a few seconds apart; a
+/// service that keeps failing still fails the test with its last answer in the log.
 async fn problem_for(token: &'static str, organisation: &str) -> Option<ProblemKind> {
+    let mut attempt = 1;
+    // flake-ok: asks the service again after a server error (an operation retried, with the last answer returned), not a wait for a condition.
+    loop {
+        let problem = ask(token, organisation).await;
+        if problem != Some(ProblemKind::BadAnswer) || attempt == ATTEMPTS {
+            return problem;
+        }
+        attempt += 1;
+        tokio::time::sleep(std::time::Duration::from_secs(u64::from(attempt) * 2)).await;
+    }
+}
+
+async fn ask(token: &'static str, organisation: &str) -> Option<ProblemKind> {
     let repos = Repos::new(
         live_api(),
         Arc::new(Made(token)),

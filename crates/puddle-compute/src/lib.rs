@@ -14,6 +14,7 @@
 //! | create and boot | [`Runtime::create`] with a [`SandboxSpec`] → owning [`Sandbox`] handle |
 //! | boot again | [`Runtime::start`] → owning handle |
 //! | memory for the next start | [`Runtime::set_memory`] |
+//! | a bigger root disk, live or at the next start | [`Runtime::grow_root_disk`] |
 //! | vCPUs for the next start | [`Runtime::set_cpus`] |
 //! | re-adopt a running sandbox | [`Runtime::get`] → non-owning handle |
 //! | list / delete | [`Runtime::list`], [`Runtime::remove`] |
@@ -55,8 +56,8 @@ mod spec;
 pub use error::{ComputeError, StartRefusal};
 pub use exec::{ExecOutput, ExecRequest, ExitStatus};
 pub use runtime::{
-    Capabilities, ImageConfig, RootDiskUse, Runtime, Sandbox, SandboxInfo, SshStream, VolumeInfo,
-    VolumeSpec,
+    Capabilities, ImageConfig, RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo,
+    SshStream, VolumeInfo, VolumeSpec,
 };
 pub use spec::{
     DiskSize, FileMount, MountKind, NetworkPolicy, OwnedDisk, SandboxSpec, VolumeMount, VsockRoute,

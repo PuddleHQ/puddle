@@ -146,7 +146,7 @@ async fn a_push_to_a_repository_that_is_not_listed_is_refused_and_says_how_to_ad
     assert_eq!((status, code), (403, "push_denied"));
     assert_eq!(
         message,
-        "push to github.com/acme/other is not on this workspace's push list; add it, or turn off \"Only push to listed repos\" on the workspace's Git tab"
+        "push to github.com/acme/other is not on this workspace's push list yet, as with a repository the workspace just created or forked; click \"Allow push for other\" in the notice (it works at once, no restart), or turn off \"Only push to listed repos\" on the workspace's Git tab, then try again"
     );
     assert_eq!(
         w.events.take(),
@@ -232,7 +232,10 @@ async fn an_azure_devops_project_with_a_space_can_be_listed_and_is_refused_with_
         message.contains("dev.azure.com/org/my project/the repo"),
         "{message}"
     );
-    assert!(message.contains("add it"), "{message}");
+    assert!(
+        message.contains("Allow push for my project/the repo"),
+        "{message}"
+    );
     assert_eq!(
         w.events.take(),
         [Event::GitAccessDenied {
@@ -362,7 +365,7 @@ async fn a_fetch_from_anywhere_is_allowed_until_the_pull_list_is_turned_on() {
     assert_eq!((status, code), (403, "pull_denied"));
     assert_eq!(
         message,
-        "pull from github.com/someone/private is not on this workspace's pull list; add it, or turn off \"Only pull from listed repos\" on the workspace's Git tab"
+        "pull from github.com/someone/private is not on this workspace's pull list yet, as with a repository the workspace just created or forked; click \"Allow pull for private\" in the notice (it works at once, no restart), or turn off \"Only pull from listed repos\" on the workspace's Git tab, then try again"
     );
     assert!(matches!(
         w.events.take().as_slice(),
@@ -647,14 +650,14 @@ async fn a_tool_that_retries_with_its_own_credential_is_not_told_off() {
 #[tokio::test]
 async fn an_identity_is_picked_by_owner_and_changes_apply_at_the_next_request() {
     let w = world();
-    let personal = w.store.identities().unwrap()[1].id;
+    let personal = w.store.identities(puddle_store::UserId::OWNER).unwrap()[1].id;
     assert!(injected(
         &w.decide("github.com", "GET", "/acme/x.git/info/refs", &[])
             .await,
         &token_header("CANARY-WORK")
     ));
     // Detaching Work: acme falls to the rest of the host, at once.
-    let work = w.store.identities().unwrap()[0].id;
+    let work = w.store.identities(puddle_store::UserId::OWNER).unwrap()[0].id;
     w.store.detach_identity(&w.workspace, work).unwrap();
     assert!(injected(
         &w.decide("github.com", "GET", "/acme/x.git/info/refs", &[])
@@ -683,8 +686,8 @@ async fn two_candidates_are_refused_never_guessed() {
     );
     let mut git = WorkspaceGit::unconfigured();
     git.identities = vec![
-        w.store.identity(a.id).unwrap(),
-        w.store.identity(b.id).unwrap(),
+        w.store.identity(puddle_store::UserId::OWNER, a.id).unwrap(),
+        w.store.identity(puddle_store::UserId::OWNER, b.id).unwrap(),
     ];
     git.only_push_listed = false;
     let settings = StaticSettings::new(git);
@@ -774,7 +777,7 @@ async fn azure_devops_takes_a_pat_as_basic_an_entra_token_as_a_bearer_and_every_
 async fn a_push_with_a_source_that_needs_a_sign_in_is_a_502_that_says_so_and_never_a_401() {
     tokio::time::pause();
     let w = world();
-    let work = &w.store.identities().unwrap()[0];
+    let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
     let source = work.credentials[0].source.clone();
     w.credentials.fail(&source, SourceError::NotSignedIn);
     for (method, target) in [
@@ -808,7 +811,7 @@ async fn a_push_with_a_source_that_needs_a_sign_in_is_a_502_that_says_so_and_nev
 async fn a_read_with_a_source_that_needs_a_sign_in_goes_out_with_no_credential() {
     tokio::time::pause();
     let w = world();
-    let work = &w.store.identities().unwrap()[0];
+    let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
     let source = work.credentials[0].source.clone();
     for error in [SourceError::NotSignedIn, SourceError::Timeout(Tool::Gh)] {
         w.credentials.fail(&source, error);
@@ -850,7 +853,7 @@ async fn a_read_with_a_source_that_needs_a_sign_in_goes_out_with_no_credential()
 async fn a_request_that_reads_like_a_read_but_writes_never_goes_out_anonymously() {
     tokio::time::pause();
     let w = world();
-    let work = &w.store.identities().unwrap()[0];
+    let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
     w.credentials
         .fail(&work.credentials[0].source, SourceError::NotSignedIn);
     for (method, target) in [
@@ -889,7 +892,7 @@ async fn the_repository_table_still_gates_an_anonymous_read() {
     tokio::time::pause();
     let w = world();
     w.switches(true, true);
-    let work = &w.store.identities().unwrap()[0];
+    let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
     w.credentials
         .fail(&work.credentials[0].source, SourceError::NotSignedIn);
     // Not on the pull list: refused by the table before the credential is asked for.
@@ -909,7 +912,7 @@ async fn the_repository_table_still_gates_an_anonymous_read() {
 async fn an_anonymous_read_carries_no_header_of_puddles() {
     tokio::time::pause();
     let w = world();
-    let work = &w.store.identities().unwrap()[0];
+    let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
     w.credentials
         .fail(&work.credentials[0].source, SourceError::NotSignedIn);
     let decision = w.decide("github.com", "GET", FETCH, &[]).await;
@@ -927,7 +930,7 @@ async fn an_anonymous_read_carries_no_header_of_puddles() {
 async fn a_push_with_a_broken_source_is_a_502_without_a_sign_in_notice_and_a_read_goes_out_anonymously()
  {
     let w = world();
-    let work = &w.store.identities().unwrap()[0];
+    let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
     w.credentials.fail(
         &work.credentials[0].source,
         SourceError::ToolMissing(Tool::Gh),
@@ -968,7 +971,10 @@ async fn a_credential_for_somewhere_else_is_never_sent() {
     let w = World::new();
     // A hand-edited store row: the source is for another host than the credential's.
     let made = w.identity("Work", "github.com", &["acme"], false, "CANARY-WORK");
-    let mut identity = w.store.identity(made.id).unwrap();
+    let mut identity = w
+        .store
+        .identity(puddle_store::UserId::OWNER, made.id)
+        .unwrap();
     let mut json = serde_json::to_value(&identity.credentials).unwrap();
     json[0]["source"] = serde_json::json!({
         "kind": "stored", "id": "t-work", "scope": {"host": "gitlab.example"}
@@ -1041,7 +1047,7 @@ async fn no_refusal_or_log_line_carries_a_secret() {
         let decision = w.decide("github.com", method, target, headers).await;
         let _ = write!(seen, "{decision:?}");
     }
-    let work = &w.store.identities().unwrap()[0];
+    let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
     w.credentials
         .fail(&work.credentials[0].source, SourceError::NotSignedIn);
     let refused = w.decide("github.com", "GET", FETCH, &[]).await;
@@ -1061,7 +1067,7 @@ fn the_injector_prints_no_settings() {
 #[tokio::test]
 async fn forgetting_and_reading_go_through_the_credential_source() {
     let w = world();
-    let work = &w.store.identities().unwrap()[0];
+    let work = &w.store.identities(puddle_store::UserId::OWNER).unwrap()[0];
     let source = &work.credentials[0].source;
     let before = w.credentials.reads();
     let _ = w.decide("github.com", "GET", FETCH, &[]).await;
@@ -1208,13 +1214,17 @@ async fn a_workspace_that_never_set_a_switch_is_held_to_the_global_default_live(
     ));
 
     // The user turns the default's pull list on: the very next fetch is refused, no restart.
-    w.store.set_git_defaults(None, Some(true)).unwrap();
+    w.store
+        .set_git_defaults(puddle_store::UserId::OWNER, None, Some(true))
+        .unwrap();
     assert_eq!(
         refusal(&injector.decide(&context, &fetch).await).1,
         "pull_denied"
     );
     // And the push list off: an unlisted push now passes.
-    w.store.set_git_defaults(Some(false), None).unwrap();
+    w.store
+        .set_git_defaults(puddle_store::UserId::OWNER, Some(false), None)
+        .unwrap();
     assert!(
         matches!(
             injector.decide(&context, &push).await,
@@ -1226,7 +1236,9 @@ async fn a_workspace_that_never_set_a_switch_is_held_to_the_global_default_live(
     w.store
         .set_git_switches(&w.workspace, Some(true), None)
         .unwrap();
-    w.store.set_git_defaults(Some(false), Some(false)).unwrap();
+    w.store
+        .set_git_defaults(puddle_store::UserId::OWNER, Some(false), Some(false))
+        .unwrap();
     assert_eq!(
         refusal(&injector.decide(&context, &push).await).1,
         "push_denied"

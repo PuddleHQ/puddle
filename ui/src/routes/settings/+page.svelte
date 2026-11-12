@@ -6,6 +6,7 @@
   import DirectSshDialog from "#lib/components/DirectSshDialog.svelte";
   import MicrosoftServerDialog from "#lib/components/MicrosoftServerDialog.svelte";
   import AppIconSettings from "#lib/components/AppIconSettings.svelte";
+  import GlobalInterception from "#lib/components/GlobalInterception.svelte";
   import GlobalNeverDecrypt from "#lib/components/GlobalNeverDecrypt.svelte";
   import LearnedLimitsSetting from "#lib/components/LearnedLimitsSetting.svelte";
   import ProxySignIn from "#lib/components/ProxySignIn.svelte";
@@ -780,7 +781,8 @@
               Puddle cannot tell your own token from one that leaked, so this
               catches mistakes, not a workspace that hides what it sends. A
               workspace can set its own switch; a change applies to the next
-              request.
+              request. The same switch covers a token of a known kind that a
+              website sends the workspace in an answer and Puddle does not hold.
             </p>
           </div>
           <input
@@ -952,6 +954,7 @@
           />
         </div>
 
+        <GlobalInterception />
         <GlobalNeverDecrypt />
         <LearnedLimitsSetting />
       </section>

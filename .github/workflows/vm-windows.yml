@@ -30,6 +30,11 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
+    inputs:
+      vscode_only:
+        description: "Run only the desktop VS Code job (the partitions are skipped; the vm-windows result then reports their skip)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -117,7 +122,7 @@ jobs:
       # No Rust cache here: this job's nextest archive build restored an entry on 0 of the last 22 pull
       # requests, and with the windows entry restored it was within noise of a cold build, so the
       # restore only cost time and the repo's 10 GB cap more space (cache-gc.yml, budget table).
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -193,7 +198,7 @@ jobs:
   tests:
     name: vm-windows tests (partition ${{ matrix.partition }} of 12)
     needs: [build, agent]
-    if: needs.build.outputs.run == 'true'
+    if: ${{ needs.build.outputs.run == 'true' && !inputs.vscode_only }}
     permissions:
       contents: read
       actions: write
@@ -232,7 +237,7 @@ jobs:
             "### vm-windows partition ${{ matrix.partition }}: SKIPPED, WHP not usable on the runner (infrastructure)" >> $env:GITHUB_STEP_SUMMARY
             "ok=false" >> $env:GITHUB_OUTPUT
           }
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         if: steps.whp.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -326,6 +331,105 @@ jobs:
             target/nextest/vm/junit.xml
             ${{ runner.temp }}/vm-tests.log
             ${{ runner.temp }}/vm-processes.txt
+            ${{ runner.temp }}/pvm/**/logs/**
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
+  # The desktop VS Code tests (vm_vscode_*, crates/puddle-host/tests/vm_vscode.rs): the pinned desktop VS Code with Remote-SSH,
+  # driven over the DevTools Protocol, attached to a real microVM workspace; the VS Code half of the hands-on checks. Nightly
+  # and by hand only, on one runner, beside the partitions (ci/vm-filter.sh keeps these tests out of them). It is not part of
+  # the `vm-windows` result: a pull request never waits for it, and a red run shows on the nightly (nightly-signal.yml).
+  # Needs the runner's desktop session (an Electron window); no secret and no sign-in: the GitHub token the test shows
+  # reaching the guest is a canary a test extension hands out.
+  vscode:
+    name: vm-windows desktop VS Code (nightly)
+    needs: [build, agent]
+    if: ${{ needs.build.outputs.run == 'true' && contains(fromJSON('["schedule","workflow_dispatch"]'), github.event_name) }}
+    permissions:
+      contents: read
+      actions: write
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: WHP preflight (infrastructure)
+        id: whp
+        shell: pwsh
+        run: |
+          $cs = Get-CimInstance Win32_ComputerSystem
+          $whp = (Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State
+          "HypervisorPresent=$($cs.HypervisorPresent) HypervisorPlatform=$whp"
+          if ($cs.HypervisorPresent -and "$whp" -eq 'Enabled') {
+            "ok=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "::warning title=vm-windows desktop VS Code skipped::Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp); VM tests did not run (infrastructure, not a test result)"
+            "ok=false" >> $env:GITHUB_OUTPUT
+          }
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        if: steps.whp.outputs.ok == 'true'
+        with:
+          tool: cargo-nextest@0.9.146
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.whp.outputs.ok == 'true'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: msb runtime (fork tag release assets; download, verify)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: |
+          dir=$(cygpath -w "$RUNNER_TEMP")
+          ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
+          echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
+          echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
+      - name: pinned VS Code with Remote-SSH, and Playwright's driver from the UI lockfile
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: |
+          ci/fetch-vscode.sh "$RUNNER_TEMP/vscode"
+          (cd ui && npm ci --ignore-scripts --no-audit --no-fund)
+          echo "PUDDLE_VSCODE_DIR=$(cygpath -w "$RUNNER_TEMP")\\vscode" >> "$GITHUB_ENV"
+          echo "PUDDLE_VM_BROWSER_MODULES=$(cygpath -w "$PWD")\\ui\\node_modules" >> "$GITHUB_ENV"
+          echo "PUDDLE_VSCODE_OUT=$(cygpath -w "$RUNNER_TEMP")\\vscode-out" >> "$GITHUB_ENV"
+      - name: the test archive from the build job
+        if: steps.whp.outputs.ok == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-build
+          path: ${{ runner.temp }}/bundle
+      - name: the guest agent from the agent job
+        if: steps.whp.outputs.ok == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-agent
+          path: ${{ runner.temp }}/bundle
+      - name: desktop VS Code tests (vm_vscode_*)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          export PUDDLE_AGENT_BIN
+          PUDDLE_AGENT_BIN=$(cygpath -w "$RUNNER_TEMP/bundle/puddle-agent")
+          mkdir -p "$RUNNER_TEMP/vmx" "$RUNNER_TEMP/vscode-out"
+          # The tests' own binary is the ssh bridge, so nextest's `--extract-to` copy is the one the config names.
+          PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            cargo-nextest nextest run --profile vm \
+            --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/vm-tests.tar.zst" \
+            --extract-to "$(cygpath -m "$RUNNER_TEMP")/vmx" --workspace-remap . \
+            -E "$(ci/vm-filter.sh vscode)" --no-tests=fail
+      - name: upload pictures, VS Code logs and msb logs
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-windows-vscode-results
+          path: |
+            ${{ runner.temp }}/vscode-out/**
+            ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
             ${{ runner.temp }}/pvm/**/logs/**
           retention-days: 14
           if-no-files-found: ignore

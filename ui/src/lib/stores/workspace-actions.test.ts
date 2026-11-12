@@ -120,6 +120,37 @@ describe("renaming", () => {
   });
 });
 
+describe("growing the root disk", () => {
+  it("sends the size in MiB, marks the workspace busy and says nothing yet", async () => {
+    api.list = [
+      workspace("up", { status: "running", root_disk_size_mib: 10_240 }),
+    ];
+    await store.refresh();
+    expect(await actions.growRootDisk(w("up"), 20)).toBeNull();
+    expect(api.calls).toContain("POST /api/workspaces/{id}/grow-root-disk");
+    expect(api.bodies.at(-1)).toEqual({ size_mib: 20_480 });
+    expect(w("up").busy).toBe("growing_root_disk");
+    expect(w("up").root_disk_size_mib).toBe(20_480);
+    expect(messages()).toEqual([]);
+  });
+
+  it("hands the service's refusal back to the dialog, with no toast", async () => {
+    api.list = [workspace("up", { root_disk_size_mib: 10_240 })];
+    await store.refresh();
+    const message = await actions.growRootDisk(w("up"), 5);
+    expect(message).toContain("a root disk only grows");
+    expect(w("up").busy).toBeNull();
+    expect(messages()).toEqual([]);
+  });
+
+  it("says the service is not answering when it is down", async () => {
+    api.down = true;
+    expect(await actions.growRootDisk(w("up"), 20)).toBe(
+      "Puddle's service isn't answering.",
+    );
+  });
+});
+
 describe("connecting", () => {
   it("opens the connect step for a workspace and opens nothing yet", () => {
     actions.connect(w("up"));
@@ -529,6 +560,10 @@ describe("settledMessage", () => {
     [
       { operation: "resetting_root_disk", failed: false, detail: null },
       "Reset the root disk of w; it is made again at the next start.",
+    ],
+    [
+      { operation: "growing_root_disk", failed: false, detail: null },
+      "Made the root disk of w bigger.",
     ],
     [
       { operation: "cloning", failed: false, detail: null },

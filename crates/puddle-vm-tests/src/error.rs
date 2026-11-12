@@ -95,6 +95,14 @@ pub enum HarnessError {
         /// The folder searched.
         dir: PathBuf,
     },
+    /// The folder named by `PUDDLE_VSCODE_DIR` is not a release `ci/fetch-vscode.sh` made.
+    #[error(
+        "{dir} has no app/Code.exe and remote-ssh.vsix: make it with `ci/fetch-vscode.sh <dir>` and point PUDDLE_VSCODE_DIR at it"
+    )]
+    VsCodeRelease {
+        /// The folder searched.
+        dir: PathBuf,
+    },
     /// The browser client could not load a page or read its result.
     #[error("browser client: {detail}")]
     Browser {
@@ -137,6 +145,25 @@ pub enum HarnessError {
         /// Its budget.
         limit: Duration,
     },
+    /// A node process did not end within its budget (it was killed). Carries what it printed and
+    /// how far it got, so a hang on a CI runner says where it stood.
+    #[error(
+        "node process took longer than {limit:?} (pid {pid:?}, started after {spawn_took:?}): {stage}\nstdout: {stdout:?}\nstderr: {stderr:?}"
+    )]
+    NodeHung {
+        /// Its budget.
+        limit: Duration,
+        /// Its process id, when the OS gave one.
+        pid: Option<u32>,
+        /// How long `spawn` took to return.
+        spawn_took: Duration,
+        /// Which steps had finished: input written, process exited, each pipe closed.
+        stage: String,
+        /// What it had printed to standard output, lossily decoded.
+        stdout: String,
+        /// What it had printed to standard error, lossily decoded.
+        stderr: String,
+    },
 }
 
 impl HarnessError {
@@ -159,37 +186,4 @@ pub(crate) fn clip(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn clip_keeps_short_values_and_cuts_long_ones() {
-        assert_eq!(clip("abc"), "abc");
-        assert_eq!(clip(&"x".repeat(100)).len(), 64);
-    }
-
-    #[test]
-    fn messages_name_what_to_fix() {
-        let missing = HarnessError::MissingVar {
-            var: "PUDDLE_VM_RUNTIME_DIR",
-            hint: "a directory with msb and libkrunfw",
-        };
-        assert_eq!(
-            missing.to_string(),
-            "PUDDLE_VM_RUNTIME_DIR is not set: a directory with msb and libkrunfw"
-        );
-        let ambient = HarnessError::AmbientMsbVar { var: "MSB_HOME" };
-        assert!(ambient.to_string().starts_with("MSB_HOME is set"));
-        let timeout = HarnessError::Timeout {
-            what: "create",
-            limit: Duration::from_secs(3),
-        };
-        assert_eq!(timeout.to_string(), "create took longer than 3s");
-        let level = HarnessError::InvalidLogLevel {
-            value: "loud".into(),
-        };
-        assert!(level.to_string().contains("\"loud\": use error, warn"));
-        let io = HarnessError::io("create", "/x", std::io::Error::other("boom"));
-        assert_eq!(io.to_string(), "create /x: boom");
-    }
-}
+mod tests;

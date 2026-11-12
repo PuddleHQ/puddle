@@ -39,7 +39,8 @@ use puddle_api::{EndReason, TerminalError, TerminalLink, TerminalService, Termin
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
 use puddle_compute::{
-    ComputeError, DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _, StartRefusal,
+    ComputeError, DiskSize, ExecRequest, ImageConfig, RootDiskGrowth, Runtime, Sandbox as _,
+    StartRefusal,
 };
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
@@ -48,8 +49,9 @@ use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, WorkspaceSetti
 use puddle_ssh::SshEndpoint;
 use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
-    CheckoutDir, CpuCount, DiskKind, Event, EventSink, GuestEnv, GuestFile, GuestPath, ImageRef,
-    MemoryMib, Problem, Problems, SessionUser, WorkspaceId, WorkspaceStatus, WorkspaceStep,
+    CheckoutDir, CpuCount, DiskKind, EntryId, Event, EventSink, GuestEnv, GuestFile, GuestPath,
+    ImageRef, MemoryMib, Problem, Problems, SessionUser, WorkspaceId, WorkspaceStatus,
+    WorkspaceStep,
 };
 
 use crate::ssh_config::{SshSetup, ssh_host};
@@ -59,7 +61,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::HostError;
-use crate::boot::{BootKit, GuestInputs};
+use crate::boot::{BootKit, GuestInputs, root_disk_size};
 use crate::files::{Stored, WorkspaceBook};
 use crate::front::Flavours;
 use crate::git_hosts::{
@@ -70,10 +72,8 @@ use crate::injection::Injection;
 use crate::kubernetes::{kubernetes_key, kubernetes_problem};
 use crate::merge_notice::{merge_notice_prefix, settle_merge_notices};
 
-#[path = "repositories.rs"]
 mod repositories;
 
-#[path = "orphans.rs"]
 pub(crate) mod orphans;
 
 impl<R: Runtime + Clone> crate::editor_updates::Builds for HostWorkspaces<R> {
@@ -182,6 +182,8 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) ids: Arc<dyn puddle_api::IdSource>,
     /// The folder of the login markers, which a new id must not find one of its own in.
     pub(crate) login_markers: std::path::PathBuf,
+    /// The free space of the drive that holds Puddle's data: the one a root disk grows into.
+    pub(crate) space: Arc<dyn crate::Space>,
 }
 
 struct Slot {
@@ -308,10 +310,13 @@ struct Inner<R: Runtime + Clone> {
     front_halves: Arc<dyn puddle_front::ServerHalves>,
     ids: Arc<dyn puddle_api::IdSource>,
     login_markers: std::path::PathBuf,
+    space: Arc<dyn crate::Space>,
     state: Mutex<State>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceId, Live<R>>>,
     tasks: tokio::sync::Mutex<JoinSet<()>>,
     running: watch::Sender<usize>,
+    /// Whether the image the delete check boots is in the cache; see [`HostWorkspaces::maintenance_ready`].
+    maintenance_image: watch::Sender<Warmth>,
     /// Workspaces whose start found their shell-init folder changed from inside, until `settle`
     /// has said so (with what the boot hook found, as one notice).
     shell_init_changed_inside: Mutex<BTreeSet<WorkspaceId>>,
@@ -388,13 +393,35 @@ fn with_leftovers(reason: String, leftovers: &[String]) -> String {
 }
 
 /// The key of a problem about one workspace.
+/// How the room a root-disk grow adds compares with the free space of the drive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Room {
+    /// Less than half of what is free.
+    Plenty,
+    /// More than half of what is free, but it fits: allowed, with a warning.
+    Tight,
+    /// More than is free: refused.
+    TooBig,
+}
+
+/// Judges `added` bytes of room against `free` bytes free.
+fn room(added: u64, free: u64) -> Room {
+    if added > free {
+        Room::TooBig
+    } else if added > free / 2 {
+        Room::Tight
+    } else {
+        Room::Plenty
+    }
+}
+
 fn problem_key(kind: &str, name: &WorkspaceId) -> String {
     format!("{kind}:{name}")
 }
 
 /// The key of the problem about one repository of a workspace that could not be cloned.
-fn clone_problem_key(name: &WorkspaceId, directory: &CheckoutDir) -> String {
-    format!("{}:{directory}", problem_key("clone", name))
+fn clone_problem_key(name: &WorkspaceId, entry: &EntryId) -> String {
+    format!("{}:{entry}", problem_key("clone", name))
 }
 
 fn not_found(id: &WorkspaceId) -> WorkspaceError {
@@ -426,6 +453,62 @@ fn listing(l: &puddle_workspace::Listing) -> Listing {
     out.items.clone_from(&l.items);
     out.more = l.more;
     out
+}
+
+/// How long a delete or its check waits for the image it boots to be downloaded before it asks
+/// the user to try again: under the API's 30 s request limit, so the answer is ours and not a 408.
+const MAINTENANCE_WAIT: Duration = Duration::from_secs(15);
+
+/// Where the download of the image the delete check boots stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Warmth {
+    /// Not asked for yet.
+    Cold,
+    /// A task of the service is pulling it.
+    Warming,
+    /// In the cache.
+    Ready,
+    /// The last pull failed (the log says why).
+    Failed,
+}
+
+/// Waits up to `within` for the download in `warmth` to end. A download that failed is no reason
+/// to stop: the check asks for the image itself and says why it can't have it, at once.
+async fn wait_until_downloaded(
+    warmth: &mut watch::Receiver<Warmth>,
+    within: Duration,
+) -> Result<(), WorkspaceError> {
+    // Only a copy of the state: the borrow `wait_for` returns must not live across awaits.
+    let settled = tokio::time::timeout(within, warmth.wait_for(|w| *w != Warmth::Warming))
+        .await
+        .map(|r| r.map(|w| w.clone()));
+    match settled {
+        Ok(Ok(Warmth::Ready | Warmth::Failed)) => Ok(()),
+        _ => Err(WorkspaceError::Unavailable(
+            "Puddle is still downloading the image it checks a workspace with before deleting it; try again in a minute"
+                .to_owned(),
+        )),
+    }
+}
+
+/// Clears the busy mark a delete put on a workspace unless it is disarmed, so a request that is
+/// dropped before its work starts (the API's request limit, a closed connection) does not leave
+/// the workspace "deleting" for good.
+struct DeleteMark<'a, R: Runtime + Clone> {
+    service: &'a HostWorkspaces<R>,
+    id: &'a WorkspaceId,
+    armed: bool,
+}
+
+impl<R: Runtime + Clone> Drop for DeleteMark<'_, R> {
+    fn drop(&mut self) {
+        if self.armed
+            && let Some(slot) = self.service.state().slots.get_mut(self.id)
+        {
+            slot.record.busy = None;
+            slot.deleting = false;
+        }
+    }
 }
 
 fn delete_check(report: &puddle_workspace::DeleteReport) -> DeleteCheck {
@@ -487,7 +570,7 @@ fn no_link_message(workspace: &WorkspaceId, why: NoLink) -> String {
 
 /// What the user is told when the guest gave no editor password. An image the editor cannot run
 /// in never gets one, so that case says why instead of "yet".
-fn password_failure(err: &puddle_front::Unreachable) -> String {
+fn editor_login_failure(err: &puddle_front::Unreachable) -> String {
     if err.0 == NEEDS_GLIBC {
         format!("{err}; use desktop VS Code over direct SSH or a glibc image")
     } else {
@@ -512,7 +595,7 @@ impl EditorLogin for GuestLogin {
             editor
                 .password()
                 .await
-                .map_err(|err| LaunchError::new(password_failure(&err)))
+                .map_err(|err| LaunchError::new(editor_login_failure(&err)))
         })
     }
 }
@@ -563,6 +646,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             })?;
             record.created_at = stored.created_at;
             record.disk_size_mib = stored.disk_size_mib;
+            record.root_disk_grown_mib = stored.root_disk_grown_mib;
             record.status = match status.get(&id) {
                 Some(WorkspaceStatus::Crashed) => WorkspaceStatus::Crashed,
                 Some(WorkspaceStatus::VolumeMissing) => WorkspaceStatus::VolumeMissing,
@@ -595,6 +679,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 front_halves: parts.front_halves,
                 ids: parts.ids,
                 login_markers: parts.login_markers,
+                space: parts.space,
                 rewrite_gate: parts.rewrite_gate,
                 state: Mutex::new(State {
                     slots,
@@ -604,6 +689,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 live: tokio::sync::Mutex::new(BTreeMap::new()),
                 tasks: tokio::sync::Mutex::new(JoinSet::new()),
                 running: watch::channel(0).0,
+                maintenance_image: watch::channel(Warmth::Cold).0,
                 shell_init_changed_inside: Mutex::new(BTreeSet::new()),
                 env_missed_while_booting: Mutex::new(BTreeSet::new()),
                 listings: Mutex::new(BTreeMap::new()),
@@ -642,6 +728,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 memory_mib: slot.record.memory.get(),
                 created_at: slot.record.created_at,
                 disk_size_mib: slot.record.disk_size_mib,
+                root_disk_grown_mib: slot.record.root_disk_grown_mib,
                 creating: slot.creating,
             })
             .collect();
@@ -990,6 +1077,30 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             )
             | (Ok(()), Operation::Reclaiming | Operation::ResettingRootDisk)
             | (_, Operation::Cloning) => {}
+            (Ok(()), Operation::GrowingRootDisk) => {
+                // A grow that had to restart the workspace ends with it running again.
+                if slot.record.status == WorkspaceStatus::Starting {
+                    slot.record.status = WorkspaceStatus::Running;
+                    status_changed = true;
+                }
+            }
+            (Err(_), Operation::GrowingRootDisk) => match slot.record.status {
+                // The restart failed in its start, or in its stop.
+                WorkspaceStatus::Starting => {
+                    slot.record.status = if std::mem::take(&mut slot.volume_missing) {
+                        WorkspaceStatus::VolumeMissing
+                    } else {
+                        WorkspaceStatus::Crashed
+                    };
+                    status_changed = true;
+                }
+                WorkspaceStatus::Draining => {
+                    slot.record.status = WorkspaceStatus::Running;
+                    status_changed = true;
+                    self.inner.reports.resume(&name);
+                }
+                _ => {}
+            },
             (Ok(()), Operation::Creating | Operation::Starting) => {
                 slot.record.status = WorkspaceStatus::Running;
                 slot.creating = false;
@@ -1062,6 +1173,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let new = NewWorkspaceOp {
             op,
             workspace: Some(name.clone()),
+            user: None,
             outcome,
             actor: Actor::Api,
             detail,
@@ -1099,6 +1211,57 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .pull_image(image)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// Starts pulling the image the delete check boots on a task the service owns, unless it is
+    /// cached or a pull runs. The check can't go ahead without it, and the first pull of an image
+    /// that isn't the workspace's own takes minutes, longer than a request may.
+    pub(crate) async fn warm_maintenance_image(&self) {
+        let start = self.inner.maintenance_image.send_if_modified(|w| {
+            let idle = matches!(w, Warmth::Cold | Warmth::Failed);
+            if idle {
+                *w = Warmth::Warming;
+            }
+            idle
+        });
+        if !start {
+            return;
+        }
+        let this = self.clone();
+        let mut tasks = self.inner.tasks.lock().await;
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn(async move {
+            let image = this.inner.workspaces.config().maintenance_image.clone();
+            let next = match this.inner.runtime.pull_image(&image).await {
+                Ok(_) => Warmth::Ready,
+                Err(e) => {
+                    tracing::warn!(image = %image, error = %e, "the image the delete check boots was not downloaded");
+                    Warmth::Failed
+                }
+            };
+            this.inner.maintenance_image.send_replace(next);
+        });
+    }
+
+    /// [`HostWorkspaces::warm_maintenance_image`] when the service starts with workspaces
+    /// listed: one of them may be deleted at once.
+    pub(crate) async fn warm_maintenance_image_for_listed(&self) {
+        let listed = !self.state().slots.is_empty();
+        if listed {
+            self.warm_maintenance_image().await;
+        }
+    }
+
+    /// Waits (up to [`MAINTENANCE_WAIT`]) for the image the delete check boots to be in the
+    /// cache, starting the download when nothing has. A request that cannot wait that long gets
+    /// an answer that says what is going on; the download goes on without it.
+    async fn maintenance_ready(&self) -> Result<(), WorkspaceError> {
+        self.warm_maintenance_image().await;
+        wait_until_downloaded(
+            &mut self.inner.maintenance_image.subscribe(),
+            MAINTENANCE_WAIT,
+        )
+        .await
     }
 
     /// Creates a sandbox on workspace `record`'s volume and boots it through the hook.
@@ -1180,6 +1343,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 inner
                     .kit
                     .spec(name, image, record.memory, &env, &route)
+                    .with_root_disk(root_disk_size(record.root_disk_grown_mib))
                     .with_cpus(self.cpus(name).get()),
             )
             .with_file_mount(inner.kit.shell_init().mount(id));
@@ -2047,6 +2211,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.store.note_workspace_op(&NewWorkspaceOp {
                 op: WorkspaceOpKind::GitRepaired,
                 workspace: Some(name.clone()),
+                user: None,
                 outcome: WorkspaceOpOutcome::Succeeded,
                 actor: Actor::System,
                 detail: Some(repair.clone()),
@@ -2703,7 +2868,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             any_cloned = true;
             self.progress_cloning(&record.id, repository);
-            let key = clone_problem_key(&record.id, &repository.directory);
+            let key = clone_problem_key(&record.id, &repository.entry);
             let cloned = workspaces
                 .clone_checkout(
                     sandbox,
@@ -2809,9 +2974,158 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .map_err(|e| e.to_string())?;
             self.inner.workspaces.sandbox_removed(&sandbox);
         }
+        self.inner.problems.clear(&problem_key("root-copy", name));
         // A route left from an earlier boot belongs to a sandbox that no longer exists.
         self.quiesce(name, true).await;
         Ok(())
+    }
+
+    /// Sets the workspace's status and tells the windows.
+    fn set_status(&self, id: &WorkspaceId, status: WorkspaceStatus) {
+        let record = {
+            let mut state = self.state();
+            let Some(slot) = state.slots.get_mut(id) else {
+                return;
+            };
+            slot.record.status = status;
+            slot.record.clone()
+        };
+        self.status_event(&record);
+    }
+
+    /// Makes the workspace's root disk `size` big and writes what came of it into the audit log.
+    /// `from_mib` is the size it had; `room` how the added room compares with the free space.
+    async fn grow_root_disk_work(
+        &self,
+        record: WorkspaceRecord,
+        from_mib: u64,
+        size: DiskSize,
+        room: Room,
+    ) -> Result<(), String> {
+        let result = self.grow_root_disk_steps(&record, size).await;
+        let (outcome, detail) = match &result {
+            Ok(how) => (
+                WorkspaceOpOutcome::Succeeded,
+                format!(
+                    "root disk grown from {from_mib} MiB to {} MiB, {how}",
+                    size.as_mib()
+                ),
+            ),
+            Err(reason) => (
+                WorkspaceOpOutcome::Failed,
+                format!(
+                    "root disk not grown from {from_mib} MiB to {} MiB: {reason}",
+                    size.as_mib()
+                ),
+            ),
+        };
+        self.record_op(
+            WorkspaceOpKind::RootDiskGrown,
+            &record.id,
+            outcome,
+            Some(detail),
+        );
+        let key = problem_key("root-room", &record.id);
+        if result.is_ok() && room == Room::Tight {
+            self.inner.problems.raise(
+                Problem::new(
+                    key,
+                    format!(
+                        "{}'s root disk is bigger than most of the free space left",
+                        record.name
+                    ),
+                    format!(
+                        "Its root disk can now hold {} GiB. The file only takes room on this \
+                         computer as the workspace writes to it, so nothing more is used yet, \
+                         but a workspace that fills it would use most of what is free.",
+                        size.as_mib() / 1024
+                    ),
+                )
+                .about(record.id.clone()),
+            );
+        } else {
+            self.inner.problems.clear(&key);
+        }
+        result.map(|_| ())
+    }
+
+    /// The grow itself; on success says how it took effect, for the audit entry.
+    async fn grow_root_disk_steps(
+        &self,
+        record: &WorkspaceRecord,
+        size: DiskSize,
+    ) -> Result<&'static str, String> {
+        let inner = &self.inner;
+        let name = &record.id;
+        self.progress(name, WorkspaceStep::GrowingRootDisk, None);
+        let sandbox = name.sandbox_name();
+        let exists = inner
+            .runtime
+            .list()
+            .await
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|s| s.name == sandbox.as_str());
+        let growth = if exists {
+            Some(
+                inner
+                    .runtime
+                    .grow_root_disk(&sandbox, size)
+                    .await
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
+        // Saved only now: the size is a promise that the disk has the room (or will at its next
+        // start), so a refused grow leaves the old one.
+        {
+            let mut state = self.state();
+            if let Some(slot) = state.slots.get_mut(name) {
+                slot.record.root_disk_grown_mib = Some(size.as_mib());
+            }
+            self.persist(&state)
+                .map_err(|e| format!("{e}; {SAVE_HINT}"))?;
+        }
+        match growth {
+            None => Ok("for the first start"),
+            Some(RootDiskGrowth::Live) => Ok("while it ran"),
+            Some(RootDiskGrowth::NextStart) if record.status == WorkspaceStatus::Running => {
+                self.progress(
+                    name,
+                    WorkspaceStep::GrowingRootDisk,
+                    Some(
+                        "this computer cannot make a running disk bigger, so the workspace is \
+                         restarted; what was saved to disk stays"
+                            .to_owned(),
+                    ),
+                );
+                self.set_status(name, WorkspaceStatus::Draining);
+                inner.reports.pause(name);
+                self.stop_work(record.clone()).await?;
+                self.set_status(name, WorkspaceStatus::Starting);
+                self.start_work(record.clone()).await?;
+                Ok("with a restart")
+            }
+            Some(RootDiskGrowth::NextStart) => {
+                inner.problems.raise(
+                    Problem::new(
+                        problem_key("root-copy", name),
+                        format!(
+                            "{}'s old root disk file is still on this computer",
+                            record.name
+                        ),
+                        "Growing a stopped workspace's root disk makes a bigger copy of the file \
+                         and leaves the old one behind, so for now the workspace takes room on \
+                         this computer twice. Resetting the root disk or deleting the \
+                         workspace frees it."
+                            .to_owned(),
+                    )
+                    .about(name.clone()),
+                );
+                Ok("at its next start")
+            }
+        }
     }
 
     async fn start_work(&self, record: WorkspaceRecord) -> Result<(), String> {
@@ -3310,6 +3624,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         self.id_taken(&state, &runtime_names, id)
                     })
                     .map_err(|e| WorkspaceError::Unavailable(e.to_string()))?;
+                // Whose it is, before it is listed or announced.
+                git.claim(&id)?;
                 let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
                 record.start_folder.clone_from(&new.start_folder);
                 record.image = new
@@ -3419,6 +3735,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             )?;
             self.inner.reports.pause(&record.id);
             self.status_event(&record);
+            // A stopped workspace is the one a user deletes next: have the delete check's image
+            // ready by then.
+            self.warm_maintenance_image().await;
             let this = self.clone();
             let work = record.clone();
             self.run(&record, Operation::Stopping, async move {
@@ -3499,6 +3818,71 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         })
     }
 
+    fn grow_root_disk<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        size_mib: u32,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let size = DiskSize::mib(size_mib);
+            let current = {
+                let state = self.state();
+                let slot = state.slots.get(id).ok_or_else(|| not_found(id))?;
+                slot.record.root_disk_size_mib.unwrap_or_else(|| {
+                    u64::from(root_disk_size(slot.record.root_disk_grown_mib).as_mib())
+                })
+            };
+            if u64::from(size_mib) <= current {
+                return Err(WorkspaceError::Invalid(format!(
+                    "a root disk only grows: {size_mib} MiB is not above its {current} MiB"
+                )));
+            }
+            let added = (u64::from(size_mib) - current) * 1024 * 1024;
+            let space = self.inner.space.clone();
+            let free = tokio::task::spawn_blocking(move || space.free_bytes())
+                .await
+                .ok()
+                .and_then(Result::ok);
+            let room = match free {
+                Some(free) => room(added, free),
+                None => Room::Plenty,
+            };
+            if room == Room::TooBig {
+                return Err(WorkspaceError::Invalid(format!(
+                    "this computer has {} GiB free, which is less than the {} GiB this adds to \
+                     the root disk; choose a smaller size or free some space",
+                    free.unwrap_or(0) / (1024 * 1024 * 1024),
+                    added / (1024 * 1024 * 1024)
+                )));
+            }
+            let record = self.accept(
+                id,
+                Operation::GrowingRootDisk,
+                |r| {
+                    if matches!(
+                        r.status,
+                        WorkspaceStatus::Starting | WorkspaceStatus::Draining
+                    ) {
+                        Err(WorkspaceError::Conflict(format!(
+                            "{} is {}; try again in a moment",
+                            r.name, r.status
+                        )))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_| {},
+            )?;
+            let this = self.clone();
+            let work = record.clone();
+            self.run(&record, Operation::GrowingRootDisk, async move {
+                this.grow_root_disk_work(work, current, size, room).await
+            })
+            .await;
+            Ok(record)
+        })
+    }
+
     fn delete_check<'a>(
         &'a self,
         id: &'a WorkspaceId,
@@ -3507,6 +3891,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             if !self.state().slots.contains_key(id) {
                 return Err(not_found(id));
             }
+            self.maintenance_ready().await?;
             let report = self
                 .inner
                 .workspaces
@@ -3538,7 +3923,13 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 },
                 |_| {},
             )?;
+            let mut mark = DeleteMark {
+                service: self,
+                id,
+                armed: true,
+            };
             // The check runs before the call returns, so a refusal reaches the caller.
+            self.maintenance_ready().await?;
             let checked = self
                 .inner
                 .workspaces
@@ -3584,16 +3975,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             });
             let report = match verdict {
                 Ok(report) => report,
-                Err(e) => {
-                    if let Some(slot) = self.state().slots.get_mut(id) {
-                        slot.record.busy = None;
-                        slot.deleting = false;
-                    }
-                    return Err(e);
-                }
+                Err(e) => return Err(e),
             };
             let this = self.clone();
             let work = record.clone();
+            mark.armed = false;
             self.run(&record, Operation::Deleting, async move {
                 this.delete_work(work, report).await
             })
@@ -3849,18 +4235,18 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn clone_again<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        directory: &'a CheckoutDir,
+        entry: &'a EntryId,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async move { self.clone_entry_again(id, directory, git).await })
+        Box::pin(async move { self.clone_entry_again(id, entry, git).await })
     }
 
     fn remove_repository<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        directory: &'a CheckoutDir,
+        entry: &'a EntryId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async move { self.remove_entry(id, directory) })
+        Box::pin(async move { self.remove_entry(id, entry) })
     }
 
     fn settings_changed(&self) -> BoxFuture<'_, ()> {
@@ -3892,54 +4278,13 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
 }
 
 #[cfg(test)]
-mod kept_login_rows {
-    use super::*;
-
-    #[test]
-    fn a_row_carries_the_short_name_the_display_name_and_the_time() {
-        let row = kept_login_row(&puddle_logins::KeptLogin {
-            profile: "claude",
-            name: "Claude Code",
-            since_ms: Some(1_761_480_000_000),
-        });
-        assert_eq!(
-            row,
-            KeptLogin {
-                service: "claude".to_owned(),
-                name: "Claude Code".to_owned(),
-                since: Some(1_761_480_000_000),
-            }
-        );
-    }
-}
+mod room_for_a_grow;
 
 #[cfg(test)]
-mod no_link_words {
-    use super::*;
+mod kept_login_rows;
 
-    #[test]
-    fn a_running_workspace_whose_agent_is_late_is_not_called_stopped_and_the_user_is_not_blamed() {
-        let acme = WorkspaceId::new("acme").unwrap();
-        assert_eq!(
-            no_link_message(&acme, NoLink::NotRunning),
-            "acme is not running; start it first"
-        );
-        let late = no_link_message(&acme, NoLink::NotConnected);
-        assert!(late.starts_with("acme is running"), "{late}");
-        assert!(late.contains("open the editor again in a moment"), "{late}");
-    }
+#[cfg(test)]
+mod no_link_words;
 
-    #[test]
-    fn an_image_the_editor_cannot_run_in_is_named_not_waited_for() {
-        let musl = puddle_front::Unreachable(NEEDS_GLIBC.to_owned());
-        let said = password_failure(&musl);
-        assert!(said.starts_with(NEEDS_GLIBC), "{said}");
-        assert!(said.contains("desktop VS Code over direct SSH"), "{said}");
-        assert!(!said.contains("yet"), "{said}");
-        let early = password_failure(&puddle_front::Unreachable("not started".to_owned()));
-        assert_eq!(
-            early,
-            "the editor has no password to sign in with yet: not started"
-        );
-    }
-}
+#[cfg(test)]
+mod download_wait_tests;

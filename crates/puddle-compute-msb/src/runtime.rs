@@ -12,15 +12,17 @@ use microsandbox::sandbox::{SandboxHandle, SandboxStatus as SdkStatus};
 use microsandbox::volume::Volume;
 use microsandbox::{Backend, LocalBackend, MicrosandboxError, Sandbox};
 use puddle_compute::{
-    Capabilities, ComputeError, ImageConfig, Runtime, SandboxInfo, SandboxSpec, VolumeInfo,
-    VolumeSpec,
+    Capabilities, ComputeError, ImageConfig, RootDiskGrowth, Runtime, SandboxInfo, SandboxSpec,
+    VolumeInfo, VolumeSpec,
 };
 use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
 
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
 use crate::volume::{Mounter, holders, info, mounted_volumes, mounter};
-use crate::{MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, image, logs, root_disk, spec};
+use crate::{
+    MsbConfig, OWNER_LABEL, OWNER_LABEL_VALUE, grow_orphans, image, logs, root_disk, spec,
+};
 
 struct Inner {
     config: MsbConfig,
@@ -271,6 +273,13 @@ impl MsbRuntime {
         self.inner.sandboxes_dir.join(name)
     }
 
+    /// Deletes the root images a grow of this stopped sandbox left behind (see [`grow_orphans`]):
+    /// call it after a grow that took the next-start path, and `start` runs it as well. A failure
+    /// is logged and never fails the caller, since the sandbox works with the orphans in place.
+    pub(crate) fn prune_grow_orphans(&self, name: &str) {
+        grow_orphans::prune_logged(name, &self.sandbox_dir(name));
+    }
+
     /// Copies the sandbox's msb logs to [`MsbConfig::keep_logs_dir`], when one is set.
     fn keep_logs(&self, name: &str) {
         if let Some(dir) = &self.inner.config.keep_logs_dir {
@@ -320,6 +329,56 @@ const LOG_TAIL_BYTES: usize = 4096;
 pub(crate) fn is_boot_race(error: &MicrosandboxError) -> bool {
     matches!(error, MicrosandboxError::BootStart { err, .. }
         if err.message.contains("before agent relay became available"))
+}
+
+/// The SDK's message when the runtime binary does not answer its own version or capability
+/// query within the SDK's fixed 2 s limit (`runtime/launch_contract.rs`, `bounded_probe`).
+const PROBE_TIMEOUT_MESSAGE: &str = "runtime version probe timed out";
+
+/// Waits between attempts after a probe timeout: four attempts, 35 s of waiting at most.
+const PROBE_RETRY_PAUSES: [Duration; 3] = [
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(20),
+];
+
+/// The SDK starts the runtime binary for a short query before every create and start and gives
+/// it 2 s. A host at load average 20 to 40 can take longer to schedule and page in that
+/// process, and the SDK reports the miss as a failed start. Nothing is wrong with the
+/// sandbox, so the call is repeated.
+pub(crate) fn is_probe_timeout(error: &MicrosandboxError) -> bool {
+    matches!(error, MicrosandboxError::Runtime(message) if message.contains(PROBE_TIMEOUT_MESSAGE))
+}
+
+/// Runs `attempt`, repeating it after each of `pauses` while it fails with a probe timeout and
+/// `untouched` says the failed attempt left nothing behind. Any other result, and the last
+/// timeout, is returned as it is.
+pub(crate) async fn retry_probe_timeouts<T, A, AF, U, UF>(
+    pauses: &[Duration],
+    mut attempt: A,
+    mut untouched: U,
+) -> Result<T, MicrosandboxError>
+where
+    A: FnMut() -> AF,
+    AF: Future<Output = Result<T, MicrosandboxError>>,
+    U: FnMut() -> UF,
+    UF: Future<Output = bool>,
+{
+    let mut result = attempt().await;
+    for pause in pauses {
+        match &result {
+            Err(e) if is_probe_timeout(e) && untouched().await => {
+                tracing::warn!(
+                    ?pause,
+                    "msb's runtime probe timed out (host busy), trying again"
+                );
+                tokio::time::sleep(*pause).await;
+                result = attempt().await;
+            }
+            _ => break,
+        }
+    }
+    result
 }
 
 /// The last `max` bytes of every file in `dir`, each under its name; empty if there are none.
@@ -429,7 +488,18 @@ impl Runtime for MsbRuntime {
             // Checked again right before msb opens them: a pull can take minutes, and a checkout
             // is a folder the user's own programs may change meanwhile.
             self.check_mounts(&spec)?;
-            match self.sdk(spec::builder(&spec).create()).await {
+            let created = retry_probe_timeouts(
+                &PROBE_RETRY_PAUSES,
+                || self.sdk(spec::builder(&spec).create()),
+                || async {
+                    // A timeout after msb began making the sandbox would make a repeat fail
+                    // with "already exists"; only repeat while nothing of it is there.
+                    matches!(self.record(name.as_str()).await, Ok(None))
+                        && !self.sandbox_dir(name.as_str()).exists()
+                },
+            )
+            .await;
+            match created {
                 Ok(sdk) => self.handle_for(&name, sdk).await,
                 Err(e) => {
                     if is_boot_race(&e) {
@@ -467,7 +537,17 @@ impl Runtime for MsbRuntime {
                     .map(|v| (v, None))
                     .collect();
             self.check_volumes(name.as_str(), &mounts).await?;
-            match self.sdk(Sandbox::start(name.as_str())).await {
+            self.prune_grow_orphans(name.as_str());
+            let started = retry_probe_timeouts(
+                &PROBE_RETRY_PAUSES,
+                || self.sdk(Sandbox::start(name.as_str())),
+                || async {
+                    matches!(self.record(name.as_str()).await, Ok(Some(r))
+                        if status(r.status_snapshot()).is_down())
+                },
+            )
+            .await;
+            match started {
                 Ok(sdk) => self.handle_for(name, sdk).await,
                 Err(e) => {
                     if is_boot_race(&e) {
@@ -539,6 +619,24 @@ impl Runtime for MsbRuntime {
                 .await
                 .map_err(|e| map("set cpus of", name.as_str(), e))?;
             Ok(())
+        })
+    }
+
+    // Msb answers these calls only in a real VM: the VM tests cover this fn.
+    fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: puddle_compute::DiskSize,
+    ) -> impl Future<Output = Result<RootDiskGrowth, ComputeError>> + Send {
+        Box::pin(async move {
+            let record = self.existing(name).await?;
+            root_disk::grow(&MsbGrow {
+                runtime: self,
+                record: &record,
+                name: name.as_str(),
+                mib: size.as_mib(),
+            })
+            .await
         })
     }
 
@@ -735,253 +833,46 @@ fn dir_names(
     Ok(out)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::MsbConfig;
+/// The msb calls of a root-disk grow on one sandbox record.
+struct MsbGrow<'a> {
+    runtime: &'a MsbRuntime,
+    record: &'a SandboxHandle,
+    name: &'a str,
+    mib: u32,
+}
 
-    #[test]
-    fn only_the_relay_race_counts_as_a_boot_race() {
-        let boot = |message: &str| MicrosandboxError::BootStart {
-            name: "a".into(),
-            err: microsandbox_runtime::boot_error::BootError {
-                t: "2026-10-06T00:00:00.000Z".into(),
-                stage: microsandbox_runtime::boot_error::BootErrorStage::Other,
-                reason: None,
-                errno: None,
-                message: message.into(),
-            },
-        };
-        assert!(is_boot_race(&boot(
-            "sandbox process exited (exit code: 0) before agent relay became available"
-        )));
-        assert!(!is_boot_race(&boot("rootfs mount failed")));
-        assert!(!is_boot_race(&MicrosandboxError::Runtime(
-            "before agent relay became available".into()
-        )));
+impl root_disk::GrowSdk for MsbGrow<'_> {
+    async fn plan(&self) -> Result<root_disk::GrowPlan, ComputeError> {
+        let plan = self
+            .runtime
+            .sdk(self.record.modify().root_disk_size(self.mib).dry_run())
+            .await
+            .map_err(|e| map("plan the root disk growth of", self.name, e))?;
+        Ok(root_disk::grow_plan(&plan))
     }
 
-    #[test]
-    fn log_tails_name_each_file_and_keep_the_end() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().to_path_buf();
-        std::fs::create_dir_all(dir.join("sub")).unwrap();
-        std::fs::write(dir.join("b.log"), "0123456789").unwrap();
-        std::fs::write(dir.join("a.log"), "hello").unwrap();
-        let tail = log_tail(&dir, 4);
-        assert_eq!(tail, "--- a.log\nello\n--- b.log\n6789\n");
-        assert_eq!(log_tail(&dir.join("missing"), 4), "");
+    async fn apply_live(&self) -> Result<(), ComputeError> {
+        self.runtime
+            .sdk(self.record.modify().root_disk_size(self.mib).apply())
+            .await
+            .map_err(|e| map("grow the root disk of", self.name, e))?;
+        Ok(())
     }
 
-    #[test]
-    fn dir_names_keep_directories_and_fail_on_what_they_cannot_read() {
-        use std::ffi::OsString;
-        let ok = |n: &str, dir: bool| Ok((OsString::from(n), Ok(dir)));
-        let names = dir_names(vec![ok("a", true), ok("file", false), ok("b", true)].into_iter());
-        assert_eq!(names.unwrap().into_iter().collect::<Vec<_>>(), ["a", "b"]);
-
-        let denied = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-        let entry_err = dir_names(vec![ok("a", true), Err(denied())].into_iter());
-        assert!(
-            entry_err
-                .unwrap_err()
-                .to_string()
-                .contains("list stale dirs")
-        );
-        let type_err = dir_names(vec![Ok((OsString::from("a"), Err(denied())))].into_iter());
-        assert!(type_err.is_err());
-
-        // An entry removed between listing and stat is not an error.
-        let vanished = || std::io::Error::from(std::io::ErrorKind::NotFound);
-        let names = dir_names(
-            vec![
-                ok("a", true),
-                Err(vanished()),
-                Ok((OsString::from("b"), Err(vanished()))),
-            ]
-            .into_iter(),
-        );
-        assert_eq!(names.unwrap().into_iter().collect::<Vec<_>>(), ["a"]);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_directory_name_that_is_not_utf8_is_listed_so_reconcile_can_call_it_foreign() {
-        use std::os::unix::ffi::OsStringExt;
-        let bad = std::ffi::OsString::from_vec(vec![0x66, 0xff]);
-        let names = dir_names(std::iter::once(Ok((bad, Ok(true))))).unwrap();
-        assert_eq!(names.into_iter().collect::<Vec<_>>(), ["f\u{fffd}"]);
-    }
-
-    #[tokio::test]
-    async fn open_gives_the_sdk_the_runtime_pair_and_home_as_arguments() {
-        let tmp = puddle_test_kit::private_tempdir();
-        let base = tmp.path().to_path_buf();
-        let config = MsbConfig::new(
-            base.join("home"),
-            base.join("no-msb"),
-            base.join("no-libkrunfw"),
-            base.join("s"),
-        );
-        let rt = MsbRuntime::open(config).await.unwrap();
-
-        let resolved = rt.inner.local.config();
-        assert_eq!(resolved.home(), base.join("home"));
-        assert_eq!(
-            resolved.paths.msb.as_deref(),
-            Some(base.join("no-msb").as_path())
-        );
-        assert_eq!(
-            resolved.paths.libkrunfw.as_deref(),
-            Some(base.join("no-libkrunfw").as_path())
-        );
-    }
-
-    #[tokio::test]
-    async fn create_refuses_a_mount_outside_the_share_or_of_the_wrong_kind_before_any_vm_work() {
-        use puddle_compute::{FileMount, SandboxSpec};
-        use puddle_types::GuestPath;
-
-        let tmp = puddle_test_kit::private_tempdir();
-        let base = tmp.path().to_path_buf();
-        let share = base.join("home").join("guest-share");
-        std::fs::create_dir_all(share.join("tree")).unwrap();
-        std::fs::write(share.join("file"), b"x").unwrap();
-        std::fs::write(base.join("secret"), b"x").unwrap();
-        // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
-        let config = MsbConfig::new(base.join("home"), "/no/msb", "/no/libkrunfw", &share);
-        let rt = MsbRuntime::open(config).await.unwrap();
-
-        let spec = |mount: FileMount| {
-            SandboxSpec::new(
-                SandboxName::new("mounts").unwrap(),
-                ImageRef::new("debian:12").unwrap(),
+    async fn apply_next_start(&self) -> Result<(), ComputeError> {
+        self.runtime
+            .sdk(
+                self.record
+                    .modify()
+                    .root_disk_size(self.mib)
+                    .next_start()
+                    .apply(),
             )
-            .with_file_mount(mount)
-        };
-        let guest = || GuestPath::new("/mnt/x").unwrap();
-        let refusal = |mount: FileMount| {
-            let rt = &rt;
-            async move { rt.create(spec(mount)).await.err().unwrap().to_string() }
-        };
-        let outside = refusal(FileMount::read_only_dir(&base, guest())).await;
-        assert!(
-            outside.contains("outside the guest-share root"),
-            "{outside}"
-        );
-        let outside = refusal(FileMount::read_only(base.join("secret"), guest())).await;
-        assert!(
-            outside.contains("outside the guest-share root"),
-            "{outside}"
-        );
-        let wrong = refusal(FileMount::read_only_dir(share.join("file"), guest())).await;
-        assert!(wrong.contains("is not a directory"), "{wrong}");
-        let wrong = refusal(FileMount::read_only(share.join("tree"), guest())).await;
-        assert!(wrong.contains("is not a file"), "{wrong}");
-        drop(rt);
-    }
-
-    #[tokio::test]
-    async fn create_refuses_a_checkout_that_breaks_its_rule_or_has_a_route_before_any_vm_work() {
-        use puddle_compute::{FileMount, SandboxSpec, VsockRoute};
-        use puddle_types::GuestPath;
-
-        let tmp = puddle_test_kit::private_tempdir();
-        let base = dunce::canonicalize(tmp.path()).unwrap();
-        let home = base.join("data").join("msb");
-        let share = base.join("data").join("guest-share");
-        std::fs::create_dir_all(&share).unwrap();
-        let git_dir = |at: &Path| {
-            let git = at.join(".git");
-            std::fs::create_dir_all(git.join("objects")).unwrap();
-            std::fs::create_dir_all(git.join("refs")).unwrap();
-            std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
-            git
-        };
-        let checkout = git_dir(&base.join("api"));
-        let in_data = git_dir(&base.join("data").join("settings"));
-        let config = MsbConfig::new(&home, "/no/msb", "/no/libkrunfw", &share)
-            .with_protected_dir(base.join("data"));
-        let rt = MsbRuntime::open(config).await.unwrap();
-        let spec = |git: &Path| {
-            SandboxSpec::new(
-                SandboxName::new("import").unwrap(),
-                ImageRef::new("debian:12").unwrap(),
-            )
-            .with_file_mount(FileMount::checkout(
-                git,
-                GuestPath::new("/puddle/import/0").unwrap(),
-            ))
-        };
-        let refusal = |spec: SandboxSpec| {
-            let rt = &rt;
-            async move { rt.create(spec).await.err().unwrap().to_string() }
-        };
-        let routed =
-            refusal(spec(&checkout).with_route(VsockRoute::new(5000, "/run/p.sock"))).await;
-        assert!(
-            routed.contains("may only go to a sandbox with no route"),
-            "{routed}"
-        );
-        let inside = refusal(spec(&in_data)).await;
-        assert!(inside.contains("lies inside Puddle's folder"), "{inside}");
-        let climbing = base.join("api").join("..").join("api").join(".git");
-        let climbing = refusal(spec(&climbing)).await;
-        assert!(climbing.contains("canonical path"), "{climbing}");
-        drop(rt);
-    }
-
-    #[test]
-    fn the_database_folder_is_listed_with_sizes_and_ages_for_the_evidence_of_a_failed_open() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("db");
-        assert!(database_files(&dir, SystemTime::now()).starts_with("cannot be listed"));
-        std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(database_files(&dir, SystemTime::now()), "empty");
-        std::fs::write(dir.join("msb.db"), [0u8; 10]).unwrap();
-        std::fs::write(dir.join("msb.db-journal"), [0u8; 3]).unwrap();
-        // A file newer than the clock reading has no age to give.
-        assert!(database_files(&dir, SystemTime::UNIX_EPOCH).contains("msb.db 10 B, age unknown"),);
-        let later = SystemTime::now() + Duration::from_secs(60);
-        let listed = database_files(&dir, later);
-        assert!(
-            listed.starts_with("msb.db 10 B, 6") && listed.contains("; msb.db-journal 3 B, 6"),
-            "{listed}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_database_that_cannot_open_says_how_long_it_took_and_what_its_folder_holds() {
-        let tmp = tempfile::tempdir().unwrap();
-        let base = tmp.path().to_path_buf();
-        let home = base.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        // A file where msb wants its database folder.
-        std::fs::write(home.join("db"), b"not a folder").unwrap();
-        // flake-ok: a path that must not exist; on Windows it is rooted on the current drive and still does not exist
-        let config = MsbConfig::new(home, "/no/msb", "/no/libkrunfw", base.join("share"));
-        let error = MsbRuntime::open(config).await.err().unwrap().to_string();
-        assert!(
-            error.contains("(after ")
-                && error.contains("database folder")
-                && error.contains("cannot be listed"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn every_sdk_status_maps_one_to_one() {
-        let pairs = [
-            (SdkStatus::Created, WorkspaceStatus::Created),
-            (SdkStatus::Starting, WorkspaceStatus::Starting),
-            (SdkStatus::Running, WorkspaceStatus::Running),
-            (SdkStatus::Draining, WorkspaceStatus::Draining),
-            (SdkStatus::Paused, WorkspaceStatus::Paused),
-            (SdkStatus::Stopped, WorkspaceStatus::Stopped),
-            (SdkStatus::Crashed, WorkspaceStatus::Crashed),
-        ];
-        for (sdk, ours) in pairs {
-            assert_eq!(status(sdk), ours);
-        }
+            .await
+            .map_err(|e| map("grow the root disk of", self.name, e))?;
+        Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

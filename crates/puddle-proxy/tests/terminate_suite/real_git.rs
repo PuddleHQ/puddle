@@ -186,7 +186,7 @@ async fn a_refused_push_is_readable_in_git_s_own_output_and_nothing_is_sent() {
     assert!(!ran.ok);
     assert!(
         ran.stderr.contains(
-            "remote: puddle: push to bound.test/acme/other is not on this workspace's push list; add it, or turn off \"Only push to listed repos\" on the workspace's Git tab"
+            "remote: puddle: push to bound.test/acme/other is not on this workspace's push list yet, as with a repository the workspace just created or forked; click \"Allow push for other\" in the notice (it works at once, no restart), or turn off \"Only push to listed repos\" on the workspace's Git tab, then try again"
         ),
         "{}",
         ran.stderr
@@ -223,7 +223,7 @@ async fn a_refused_fetch_is_readable_when_the_pull_list_is_on() {
     assert!(!ran.ok);
     assert!(
         ran.stderr.contains(
-            "remote: puddle: pull from bound.test/someone/else is not on this workspace's pull list; add it, or turn off \"Only pull from listed repos\" on the workspace's Git tab"
+            "remote: puddle: pull from bound.test/someone/else is not on this workspace's pull list yet, as with a repository the workspace just created or forked; click \"Allow pull for else\" in the notice (it works at once, no restart), or turn off \"Only pull from listed repos\" on the workspace's Git tab, then try again"
         ),
         "{}",
         ran.stderr
@@ -238,7 +238,13 @@ async fn a_repository_no_identity_covers_works_with_the_token_git_has_and_fails_
         return;
     }
     let git = Git::new().await;
-    for identity in git.t.world.store.identities().unwrap() {
+    for identity in git
+        .t
+        .world
+        .store
+        .identities(puddle_store::UserId::OWNER)
+        .unwrap()
+    {
         git.t
             .world
             .store

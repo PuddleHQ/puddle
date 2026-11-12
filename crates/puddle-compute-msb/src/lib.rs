@@ -33,6 +33,7 @@
 mod checkout;
 mod config;
 pub mod error;
+mod grow_orphans;
 mod image;
 mod logs;
 mod root_disk;

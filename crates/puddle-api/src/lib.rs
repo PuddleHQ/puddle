@@ -45,6 +45,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod authz;
 mod checkouts;
 mod credentials;
 mod dev_cert;
@@ -58,10 +59,12 @@ mod network_health;
 mod openapi;
 mod ports;
 mod proxy_sign_in;
+mod remote;
 mod repos;
 mod routes;
 mod server;
 mod settings;
+mod stored_ids;
 mod system_managed;
 mod terminals;
 mod token;
@@ -90,6 +93,9 @@ pub use network_health::{
 pub use openapi::{API_VERSION, openapi, openapi_json};
 pub use ports::{FakePorts, NoPorts, PortsService, PortsServiceError};
 pub use proxy_sign_in::{FakeProxySignIns, NoProxySignIns, ProxySignInError, ProxySignInService};
+pub use remote::{
+    NetworkListener, PublicHost, RemoteError, RemoteServing, TlsIdentity, WorkspaceNames,
+};
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
@@ -110,5 +116,6 @@ pub use workspaces::{
     NoFreeId, NoGitSetup, NoWorkspaces, OpenTarget, Operation, RandomIds, RepoFindings, RepoUrl,
     Repository, RepositoryDraft, ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError,
     WorkspaceRecord, WorkspaceService, check_rename, check_repositories, check_repositories_with,
-    check_session_user_change, check_start_folder_change, label_taken,
+    check_session_user_change, check_start_folder_change, entry_id_from_text, label_taken,
+    new_entry_id,
 };

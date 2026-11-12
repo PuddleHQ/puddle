@@ -69,20 +69,21 @@ pub use backup::{
 };
 pub use config::{
     AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, FreeSpaceTiming, GuestSettings, HostConfig,
-    UpstreamSettings,
+    NetworkListenerSettings, UpstreamSettings,
 };
 pub use dev_cert::{DevCertSource, GuestCertSource};
 pub use doctor::{disk_limits, ssh_agent_pipe};
 pub use error::HostError;
 pub use files::FileSettings;
 pub use host::{
-    Host, HostOptions, HostShutdown, MsbFactory, PREPARE_STEPS, Prepared, RuntimeFactory,
-    RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
+    Host, HostOptions, HostShutdown, MsbFactory, PREPARE_STEPS, Prepared, RemoteListener,
+    RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
 };
 pub use injection::{InjectorFactory, InjectorInputs};
 pub use paths::HostPaths;
 pub use platform::{Platform, SystemPlatform};
 pub use proxy_passwords::{ProxyPasswordError, ProxyPasswords};
+pub use space_watch::Space;
 pub use ssh_config::{SshSettings, ssh_host};
 pub use vscode::VsCodeLauncher;
 pub use workspaces::{EndExtensionHostsError, HostWorkspaces, RewriteGate, SwitchEditorBuildError};

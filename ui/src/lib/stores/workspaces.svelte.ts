@@ -126,6 +126,16 @@ export class WorkspaceStore {
     return this.byId(id)?.name ?? id;
   }
 
+  /**
+   * `labelOf` for a sentence a person hears (an accessible name, a toast): the display name alone,
+   * and only when another listed workspace shares it, followed by the id so the two can be told apart.
+   */
+  spokenLabelOf(id: string): string {
+    const name = this.labelOf(id);
+    const clash = this.list.some((w) => w.id !== id && w.name === name);
+    return clash ? `${name} (${id})` : name;
+  }
+
   /** Reads the list; never throws. Calls that overlap share one run, and one more follows. */
   refresh(): Promise<void> {
     if (this.#refreshing) {
@@ -353,6 +363,24 @@ export class WorkspaceStore {
   stopWorkspace = (id: string) => this.#operate(id, "stop");
   reclaim = (id: string) => this.#operate(id, "reclaim");
   resetRootDisk = (id: string) => this.#operate(id, "reset-root-disk");
+
+  /** Makes the root disk `sizeMib` big; it only grows, and the workspace is busy until it is done. */
+  async growRootDisk(
+    id: string,
+    sizeMib: number,
+  ): Promise<ActionResult<Workspace>> {
+    const before = this.#endedCount(id);
+    const result = await this.#post(() =>
+      this.#api.POST("/api/workspaces/{id}/grow-root-disk", {
+        params: { path: { id } },
+        body: { size_mib: sizeMib },
+      }),
+    );
+    if (result.ok) {
+      this.#accept(result.value.id, before, result.value, true);
+    }
+    return result;
+  }
 
   /** What deleting would lose. */
   checkDelete(id: string): Promise<ActionResult<DeleteCheck>> {

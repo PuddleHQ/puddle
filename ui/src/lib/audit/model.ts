@@ -2,6 +2,7 @@
 // What the activity screen shows of an audit record, and how its filters turn into an API query
 // and a page address. Pure: nothing here touches the page or the network.
 import type { components } from "#lib/api/schema.d.ts";
+import { actorLabel } from "#lib/rules/model.ts";
 
 type Schemas = components["schemas"];
 export type AuditEntry = Schemas["AuditEntry"];
@@ -214,9 +215,9 @@ const REASONS: Record<string, string> = {
   settings_unreadable: "unreadable settings",
   puddle_request: "Puddle's own request",
   push_denied:
-    'the push is not on the workspace\'s push list (add it on its Git tab, or turn off "Only push to listed repos")',
+    'the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
   pull_denied:
-    'the fetch is not on the workspace\'s pull list (add it on its Git tab, or turn off "Only pull from listed repos")',
+    'the fetch is not on the workspace\'s pull list yet (click "Allow pull" in the notice, or turn off "Only pull from listed repos" on its Git tab)',
   bad_git_path:
     "the Git address is not one Puddle reads, or names the repository in more than one way (use owner/repository)",
   ssh_command_unsupported:
@@ -375,6 +376,10 @@ const WORKSPACE_OPS: Record<
     done: "Repository removed",
     failed: "Removing a repository failed",
   },
+  root_disk_grown: {
+    done: "Root disk made bigger",
+    failed: "Making the root disk bigger failed",
+  },
   git_repaired: {
     done: "Git repaired after a crash",
     failed: "Repairing git after a crash failed",
@@ -512,6 +517,9 @@ function connectionDetail(
   if (record.foreign_credentials.length > 0) {
     parts.push(foreignNote(record.foreign_credentials));
   }
+  if (record.answer_credentials.length > 0) {
+    parts.push(unknownTokenNote(record.answer_credentials));
+  }
   if (record.scrubbed_stand_ins.length > 0) {
     const names = record.scrubbed_stand_ins.map(standInLabel).join(", ");
     parts.push(
@@ -534,6 +542,23 @@ const FOREIGN_KINDS: Record<string, string> = {
 function foreignNote(kinds: readonly string[]): string {
   const names = kinds.map((k) => FOREIGN_KINDS[k] ?? k).join(", ");
   return `the workspace sent ${names} that Puddle did not add; it went out as it was`;
+}
+
+const UNKNOWN_TOKEN_KINDS: Record<string, string> = {
+  github_token: "a GitHub token",
+  github_fine_grained_token: "a fine-grained GitHub token",
+  gitlab_token: "a GitLab token",
+  npm_token: "an npm token",
+  azure_devops_token: "an Azure DevOps token",
+  anthropic_key: "an Anthropic key",
+  openai_key: "an OpenAI key",
+  jwt_with_refresh_token: "a sign-in token with a refresh token",
+};
+
+/** The kinds of token the answers held that Puddle does not hold; never a value. */
+function unknownTokenNote(kinds: readonly string[]): string {
+  const names = kinds.map((k) => UNKNOWN_TOKEN_KINDS[k] ?? k).join(", ");
+  return `the answer held ${names} that Puddle does not hold; the workspace got it as it was`;
 }
 
 /**
@@ -651,7 +676,7 @@ export function describe(record: AuditRecord): RowView {
           ? `${ruleLabel(record.rule)}, by ${record.actor}, ${record.reason}`
           : record.type === "rule_updated"
             ? `${ruleLabel(record.rule)}, by ${record.actor}`
-            : `${ruleLabel(record.rule)}${record.type === "rule_created" ? `, by ${record.rule.created_by}` : ""}`;
+            : `${ruleLabel(record.rule)}${record.type === "rule_created" ? `, by ${actorLabel(record.rule.created_by)}` : ""}`;
       return {
         ts: record.ts,
         workspace: record.rule.workspace_id,
@@ -666,7 +691,7 @@ export function describe(record: AuditRecord): RowView {
       const detail =
         record.type === "request_rule_deleted"
           ? `${requestRuleLabel(record.rule)}, by ${record.actor}, ${record.reason}`
-          : `${requestRuleLabel(record.rule)}, by ${record.rule.created_by}`;
+          : `${requestRuleLabel(record.rule)}, by ${actorLabel(record.rule.created_by)}`;
       return {
         ts: record.ts,
         workspace: record.rule.workspace_id,

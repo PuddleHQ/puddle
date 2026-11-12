@@ -10,11 +10,11 @@ use crate::error::StoreError;
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 16;
+pub const SCHEMA_VERSION: u32 = 20;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -452,7 +452,6 @@ pub(crate) fn migrate(conn: &mut Connection) -> Result<u32, StoreError> {
     migrate_with(conn, MIGRATIONS)
 }
 
-/// Migrates only up to `version`, to build the database an older Puddle left behind.
 /// The name a workspace had when an audit record was written, so a record of a renamed or
 /// deleted workspace still reads as the user knew it. `workspace_names` holds the current name
 /// of each workspace (the host keeps it up to date); a new audit row copies it. Rows written
@@ -465,6 +464,206 @@ CREATE TABLE workspace_names (
 ALTER TABLE audit ADD COLUMN workspace_name TEXT;
 ";
 
+/// A rule may be made by a workspace create (`workspace_create`): the create allows the host of a
+/// new workspace's repositories. SQLite cannot change a `CHECK`, so the table is rebuilt (as in
+/// version 4) with the `AUTOINCREMENT` high-water mark carried over.
+const V17: &str = r"
+CREATE TABLE rules_v17 (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope             TEXT    NOT NULL CHECK (scope IN ('global', 'workspace', 'set')),
+    workspace_id      TEXT,
+    set_id            INTEGER REFERENCES rule_sets (id),
+    pattern_kind      TEXT    NOT NULL CHECK (pattern_kind IN ('exact', 'suffix')),
+    pattern           TEXT    NOT NULL,
+    effect            TEXT    NOT NULL CHECK (effect IN ('allow', 'deny')),
+    expires_at        INTEGER,
+    created_at        INTEGER NOT NULL,
+    created_by        TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api', 'workspace_create')),
+    source_pending_id INTEGER,
+    CHECK ((scope = 'workspace') = (workspace_id IS NOT NULL)),
+    CHECK ((scope = 'set') = (set_id IS NOT NULL))
+) STRICT;
+INSERT INTO rules_v17 (id, scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
+                       created_at, created_by, source_pending_id)
+    SELECT id, scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
+           created_at, created_by, source_pending_id
+    FROM rules;
+DELETE FROM sqlite_sequence WHERE name = 'rules_v17';
+INSERT INTO sqlite_sequence (name, seq) SELECT 'rules_v17', seq FROM sqlite_sequence WHERE name = 'rules';
+DROP TABLE rules;
+ALTER TABLE rules_v17 RENAME TO rules;
+CREATE INDEX rules_workspace ON rules (workspace_id);
+CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
+";
+
+/// Three interception modes instead of one switch. A global row holds the user's mode
+/// (`NULL` until they choose: the install then behaves as before) and the learning switch; a
+/// workspace's own mode is `NULL` to follow it. Each workspace row of the old switch keeps what
+/// it did: on is `all` (every host, learned hosts passed through), off is `known_only`.
+const V18: &str = r"
+CREATE TABLE interception_settings (
+    id          INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    mode        TEXT CHECK (mode IN ('all', 'all_except_curated', 'known_only')),
+    learn       INTEGER NOT NULL CHECK (learn IN (0, 1)),
+    notice_seen INTEGER NOT NULL CHECK (notice_seen IN (0, 1))
+) STRICT;
+CREATE TABLE workspace_interception_new (
+    workspace_id TEXT NOT NULL PRIMARY KEY,
+    mode         TEXT CHECK (mode IN ('all', 'all_except_curated', 'known_only'))
+) STRICT;
+INSERT INTO workspace_interception_new (workspace_id, mode)
+    SELECT workspace_id, CASE decrypt_all WHEN 1 THEN 'all' ELSE 'known_only' END
+    FROM workspace_interception;
+DROP TABLE workspace_interception;
+ALTER TABLE workspace_interception_new RENAME TO workspace_interception;
+";
+
+/// The hosts a workspace's tools refused Puddle's certificate for, kept past the in-memory pass-through
+/// list: when a host was first and last refused and how many times, so a restart or an expired
+/// pass-through does not forget a host that keeps refusing.
+const V19: &str = r"
+CREATE TABLE learned_hosts (
+    workspace_id TEXT    NOT NULL,
+    host         TEXT    NOT NULL,
+    first_at     INTEGER NOT NULL,
+    last_at      INTEGER NOT NULL,
+    count        INTEGER NOT NULL CHECK (count >= 1),
+    PRIMARY KEY (workspace_id, host)
+) STRICT;
+";
+
+/// Users, their devices and who owns what (storage spec, users and ownership).
+///
+/// - `users`: one owner (the operator, user 1, made here and owning everything that exists) and
+///   any number of plain users. No credential lives in this table or in `devices`.
+/// - `account_passwords`, `account_invites`: the sign-in secrets (a password's hash, an invite's
+///   digest), read and written only through `AccountSecrets`, never through `Store`.
+/// - `workspace_owners`: the user of each workspace made by a user other than the owner. A
+///   workspace with no row is the owner's; rows stay when the workspace is deleted (ids are never
+///   reused), so its pending requests and audit records keep their user.
+/// - `user_id` on the rows that are not tied to one workspace (global and set rules, rule sets,
+///   their switches, rules on method and path, identities, environment variables, the Git
+///   defaults, audit records), every existing row the owner's; names and the one default identity
+///   become unique per user. Only `audit.user_id` is written from the workspace's user so far;
+///   the others stay the owner's until writes become per user (reads take the user from the
+///   workspace meanwhile). `identities` is rebuilt for that (its label was `UNIQUE` inline); the
+///   workspaces' identity lists are kept aside meanwhile, because dropping the table would cascade
+///   into them. `git_defaults` is rebuilt keyed by user.
+const V20: &str = r"
+CREATE TABLE users (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    role       TEXT    NOT NULL CHECK (role IN ('owner', 'user')),
+    name       TEXT    NOT NULL COLLATE NOCASE UNIQUE CHECK (length(name) BETWEEN 1 AND 64),
+    created_at INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX users_one_owner ON users (role) WHERE role = 'owner';
+INSERT INTO users (id, role, name, created_at)
+    VALUES (1, 'owner', 'owner', CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+CREATE TRIGGER users_owner_kept
+BEFORE DELETE ON users
+WHEN OLD.role = 'owner'
+BEGIN
+    SELECT RAISE(ABORT, 'the owner is never deleted');
+END;
+CREATE TRIGGER users_role_fixed
+BEFORE UPDATE OF id, role ON users
+WHEN NEW.id IS NOT OLD.id OR NEW.role IS NOT OLD.role
+BEGIN
+    SELECT RAISE(ABORT, 'a user''s id and role never change');
+END;
+
+CREATE TABLE devices (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    name         TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
+    created_at   INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL,
+    revoked_at   INTEGER
+) STRICT;
+CREATE INDEX devices_user ON devices (user_id);
+
+CREATE TABLE account_passwords (
+    user_id    INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    hash       TEXT    NOT NULL CHECK (hash <> ''),
+    changed_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE account_invites (
+    user_id    INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    digest     BLOB    NOT NULL UNIQUE CHECK (length(digest) >= 16),
+    expires_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE workspace_owners (
+    workspace_id TEXT    NOT NULL PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users (id)
+) STRICT;
+CREATE INDEX workspace_owners_user ON workspace_owners (user_id);
+CREATE TRIGGER workspace_owner_fixed
+BEFORE UPDATE ON workspace_owners
+BEGIN
+    SELECT RAISE(ABORT, 'a workspace''s user never changes');
+END;
+
+ALTER TABLE rules ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE request_rules ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE audit ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE rule_sets ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+DROP INDEX rule_sets_name;
+CREATE UNIQUE INDEX rule_sets_name ON rule_sets (user_id, name COLLATE NOCASE);
+
+ALTER TABLE rule_set_switches ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+DROP INDEX rule_set_switches_key;
+CREATE UNIQUE INDEX rule_set_switches_key
+    ON rule_set_switches (user_id, rule_set, ifnull(workspace_id, ''));
+
+ALTER TABLE env_vars ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+DROP INDEX env_vars_key;
+CREATE UNIQUE INDEX env_vars_key ON env_vars (user_id, ifnull(workspace_id, ''), name);
+
+CREATE TEMP TABLE workspace_identities_kept AS SELECT * FROM workspace_identities;
+CREATE TABLE identities_v20 (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL DEFAULT 1 REFERENCES users (id),
+    label        TEXT    NOT NULL COLLATE NOCASE,
+    author_name  TEXT    NOT NULL,
+    author_email TEXT    NOT NULL,
+    credentials  TEXT    NOT NULL,
+    signing      TEXT    NOT NULL DEFAULT 'none' CHECK (signing IN ('none')),
+    position     INTEGER NOT NULL,
+    is_default   INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    created_at   INTEGER NOT NULL,
+    changed_at   INTEGER NOT NULL,
+    UNIQUE (user_id, label)
+) STRICT;
+INSERT INTO identities_v20 (id, user_id, label, author_name, author_email, credentials, signing,
+                            position, is_default, created_at, changed_at)
+    SELECT id, 1, label, author_name, author_email, credentials, signing, position, is_default,
+           created_at, changed_at
+    FROM identities;
+DELETE FROM sqlite_sequence WHERE name = 'identities_v20';
+INSERT INTO sqlite_sequence (name, seq)
+    SELECT 'identities_v20', seq FROM sqlite_sequence WHERE name = 'identities';
+DROP TABLE identities;
+ALTER TABLE identities_v20 RENAME TO identities;
+CREATE UNIQUE INDEX identities_one_default ON identities (user_id) WHERE is_default = 1;
+DELETE FROM workspace_identities;
+INSERT INTO workspace_identities SELECT * FROM workspace_identities_kept;
+DROP TABLE workspace_identities_kept;
+
+CREATE TABLE git_defaults_v20 (
+    user_id          INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    only_push_listed INTEGER NOT NULL CHECK (only_push_listed IN (0, 1)),
+    only_pull_listed INTEGER NOT NULL CHECK (only_pull_listed IN (0, 1))
+) STRICT;
+INSERT INTO git_defaults_v20 SELECT 1, only_push_listed, only_pull_listed FROM git_defaults;
+DROP TABLE git_defaults;
+ALTER TABLE git_defaults_v20 RENAME TO git_defaults;
+";
+
+/// Migrates only up to `version`, to build the database an older Puddle left behind.
 #[cfg(test)]
 pub(crate) fn migrate_up_to(conn: &mut Connection, version: usize) -> Result<u32, StoreError> {
     migrate_with(conn, &MIGRATIONS[..version])
@@ -489,470 +688,4 @@ fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, Store
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn version(conn: &Connection) -> u32 {
-        conn.pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap()
-    }
-
-    #[test]
-    fn fresh_database_migrates_to_latest() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 0);
-        assert_eq!(version(&conn), SCHEMA_VERSION);
-        assert_eq!(MIGRATIONS.len(), SCHEMA_VERSION as usize);
-    }
-
-    #[test]
-    fn v3_keeps_every_rule_and_never_reuses_a_deleted_id() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate_up_to(&mut conn, 2).unwrap();
-        conn.execute_batch(
-            "INSERT INTO rules (scope, sandbox_id, pattern_kind, pattern, effect, created_at, created_by)
-                VALUES ('global', NULL, 'exact', 'a.example', 'allow', 1, 'cli'),
-                       ('sandbox', 'box', 'suffix', '.example.com', 'deny', 2, 'ui'),
-                       ('global', NULL, 'exact', 'gone.example', 'allow', 3, 'api');
-             DELETE FROM rules WHERE pattern = 'gone.example';
-             INSERT INTO pending (sandbox_id, host, port, first_seen, last_seen)
-                VALUES ('box', 'x.example', 443, 1, 1);",
-        )
-        .unwrap();
-        conn.pragma_update(None, "foreign_keys", true).unwrap();
-        migrate(&mut conn).unwrap();
-        let kept: Vec<(i64, String, Option<String>, Option<i64>)> = conn
-            .prepare("SELECT id, scope, workspace_id, set_id FROM rules ORDER BY id")
-            .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(
-            kept,
-            vec![
-                (1, "global".into(), None, None),
-                (2, "workspace".into(), Some("box".into()), None)
-            ]
-        );
-        conn.execute(
-            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-             VALUES ('global', 'exact', 'new.example', 'allow', 4, 'cli')",
-            [],
-        )
-        .unwrap();
-        assert_eq!(
-            conn.last_insert_rowid(),
-            4,
-            "id 3 was deleted before and stays unused"
-        );
-        // A set entry needs its set, and a set scope needs a set id.
-        assert!(
-            conn.execute(
-                "INSERT INTO rules (scope, set_id, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('set', 9, 'exact', 'a.example', 'allow', 4, 'cli')",
-                [],
-            )
-            .is_err()
-        );
-        assert!(
-            conn.execute(
-                "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('set', 'exact', 'a.example', 'allow', 4, 'cli')",
-                [],
-            )
-            .is_err()
-        );
-        let rule_set: Option<String> = conn
-            .query_row("SELECT rule_set FROM pending", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(rule_set, None);
-    }
-
-    /// A version 3 database with a row in every table that names the owner, migrated to the latest.
-    fn migrated_from_the_rename() -> Connection {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate_up_to(&mut conn, 3).unwrap();
-        conn.execute_batch(
-            "INSERT INTO rules (scope, sandbox_id, pattern_kind, pattern, effect, created_at, created_by)
-                VALUES ('global', NULL, 'exact', 'a.example', 'allow', 1, 'cli'),
-                       ('sandbox', 'box', 'suffix', '.example.com', 'deny', 2, 'ui'),
-                       ('global', NULL, 'exact', 'gone.example', 'allow', 3, 'api');
-             DELETE FROM rules WHERE pattern = 'gone.example';
-             INSERT INTO rule_sets (name, created_at, created_by) VALUES ('mine', 1, 'ui');
-             INSERT INTO rules (scope, set_id, pattern_kind, pattern, effect, created_at, created_by)
-                VALUES ('set', 1, 'exact', 'set.example', 'allow', 4, 'ui');
-             INSERT INTO pending (sandbox_id, host, port, first_seen, last_seen)
-                VALUES ('box', 'x.example', 443, 1, 1);
-             INSERT INTO audit (ts, type, sandbox_id, line)
-                VALUES (5, 'connection', 'box', '{\"type\":\"connection\",\"sandbox_id\":\"box\"}');
-             INSERT INTO rule_set_switches (rule_set, sandbox_id, enabled, changed_at)
-                VALUES ('builtin:x', NULL, 1, 1), ('builtin:x', 'box', 0, 2);
-             INSERT INTO system_reasons (sandbox_id, reason) VALUES ('box', 'why');",
-        )
-        .unwrap();
-        conn.pragma_update(None, "foreign_keys", true).unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 3);
-        assert_eq!(version(&conn), SCHEMA_VERSION);
-        conn
-    }
-
-    /// A database a Puddle from before the rename left behind: rows in every table that names the
-    /// owner, then migrated.
-    /// A set written before sets had a colour reads back with none stored, and a stored colour
-    /// that is not readable is the same as none.
-    #[test]
-    fn v13_adds_the_colour_column_and_old_sets_have_none() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate_up_to(&mut conn, 12).unwrap();
-        conn.execute_batch(
-            "INSERT INTO rule_sets (name, created_at, created_by) VALUES ('old', 1, 'ui');",
-        )
-        .unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 12);
-        assert_eq!(version(&conn), SCHEMA_VERSION);
-        let fill: Option<String> = conn
-            .query_row("SELECT fill FROM rule_sets WHERE name = 'old'", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(fill, None);
-    }
-
-    #[test]
-    fn v4_renames_the_owner_everywhere_and_keeps_the_rows() {
-        let conn = migrated_from_the_rename();
-        let rules: Vec<(i64, String, Option<String>)> = conn
-            .prepare("SELECT id, scope, workspace_id FROM rules ORDER BY id")
-            .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(
-            rules,
-            vec![
-                (1, "global".into(), None),
-                (2, "workspace".into(), Some("box".into())),
-                (4, "set".into(), None),
-            ]
-        );
-        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
-        assert_eq!(
-            count("SELECT count(*) FROM pending WHERE workspace_id = 'box'"),
-            1
-        );
-        assert_eq!(
-            count("SELECT count(*) FROM audit WHERE workspace_id = 'box'"),
-            1
-        );
-        assert_eq!(
-            count("SELECT count(*) FROM rule_set_switches WHERE workspace_id = 'box'"),
-            1
-        );
-        assert_eq!(
-            count("SELECT count(*) FROM rule_set_switches WHERE workspace_id IS NULL"),
-            1
-        );
-        assert_eq!(
-            count("SELECT count(*) FROM system_reasons WHERE workspace_id = 'box'"),
-            1
-        );
-        // The audit line is kept as it was written.
-        let line: String = conn
-            .query_row("SELECT line FROM audit", [], |r| r.get(0))
-            .unwrap();
-        assert!(line.contains("sandbox_id"));
-        // Nothing of the old name is left in the schema, apart from the stored lines.
-        assert_eq!(
-            count("SELECT count(*) FROM sqlite_schema WHERE sql LIKE '%sandbox%'"),
-            0
-        );
-    }
-
-    #[test]
-    fn v4_keeps_the_guards_of_the_rules_and_pending_tables() {
-        let conn = migrated_from_the_rename();
-        // A rule's owner and scope agree, a deleted rule's id is not reused, a pending row's
-        // owner never changes, and the one-open-row key still applies.
-        assert!(
-            conn.execute(
-                "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('workspace', 'exact', 'a.example', 'allow', 4, 'cli')",
-                [],
-            )
-            .is_err()
-        );
-        assert!(
-            conn.execute(
-                "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('sandbox', 'box', 'exact', 'a.example', 'allow', 4, 'cli')",
-                [],
-            )
-            .is_err()
-        );
-        conn.execute(
-            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-             VALUES ('global', 'exact', 'new.example', 'allow', 5, 'cli')",
-            [],
-        )
-        .unwrap();
-        assert_eq!(conn.last_insert_rowid(), 5, "ids 3 and 4 stay used");
-        assert!(
-            conn.execute("UPDATE pending SET workspace_id = 'other'", [])
-                .is_err()
-        );
-        assert!(
-            conn.execute(
-                "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
-                 VALUES ('box', 'x.example', 443, 1, 1)",
-                [],
-            )
-            .is_err()
-        );
-    }
-
-    /// A database from before identities: every row stays, the new tables start empty, and the
-    /// switches' defaults apply to a workspace that has no row.
-    #[test]
-    fn v5_adds_the_identity_tables_and_keeps_every_older_row() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate_up_to(&mut conn, 4).unwrap();
-        conn.execute_batch(
-            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-                VALUES ('global', 'exact', 'a.example', 'allow', 1, 'cli');
-             INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
-                VALUES ('box', 'x.example', 443, 1, 1);",
-        )
-        .unwrap();
-        conn.pragma_update(None, "foreign_keys", true).unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 4);
-        assert_eq!(version(&conn), SCHEMA_VERSION);
-        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
-        assert_eq!(count("SELECT count(*) FROM rules"), 1);
-        assert_eq!(count("SELECT count(*) FROM pending"), 1);
-        for table in [
-            "identities",
-            "workspace_identities",
-            "workspace_git",
-            "workspace_repos",
-        ] {
-            assert_eq!(
-                count(&format!("SELECT count(*) FROM {table}")),
-                0,
-                "{table}"
-            );
-        }
-        conn.execute(
-            "INSERT INTO workspace_git (workspace_id) VALUES ('box')",
-            [],
-        )
-        .unwrap();
-        let switches: (Option<i64>, Option<i64>) = conn
-            .query_row(
-                "SELECT only_push_listed, only_pull_listed FROM workspace_git",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(switches, (None, None), "a new row follows the defaults");
-        // One default at most, and a workspace's order has no gaps in its key.
-        let add = "INSERT INTO identities (label, author_name, author_email, credentials, position, is_default, created_at, changed_at)
-                   VALUES (?1, 'n', 'e@x', '[]', ?2, 1, 1, 1)";
-        conn.execute(add, ("a", 0)).unwrap();
-        assert!(conn.execute(add, ("b", 1)).is_err());
-    }
-
-    /// A database from before environment variables: every row stays, the new tables start empty,
-    /// and the table's own checks keep a secret's value out of it.
-    #[test]
-    fn v6_adds_the_environment_tables_and_refuses_a_row_of_the_wrong_shape() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate_up_to(&mut conn, 5).unwrap();
-        conn.execute_batch(
-            "INSERT INTO identities (label, author_name, author_email, credentials, position, is_default, created_at, changed_at)
-                VALUES ('a', 'n', 'e@x', '[]', 0, 1, 1, 1);",
-        )
-        .unwrap();
-        conn.pragma_update(None, "foreign_keys", true).unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 5);
-        assert_eq!(version(&conn), SCHEMA_VERSION);
-        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
-        assert_eq!(count("SELECT count(*) FROM identities"), 1);
-        assert_eq!(count("SELECT count(*) FROM env_vars"), 0);
-        assert_eq!(count("SELECT count(*) FROM env_stand_ins"), 0);
-        let insert = |kind: &str,
-                      value: Option<&str>,
-                      secret: Option<&str>,
-                      hosts: Option<&str>| {
-            conn.execute(
-                "INSERT INTO env_vars (workspace_id, name, kind, value, secret_id, hosts, changed_at)
-                 VALUES (NULL, 'A', ?1, ?2, ?3, ?4, 1)",
-                (kind, value, secret, hosts),
-            )
-        };
-        // A plain variable has a value and nothing of a secret; a secret has its id and hosts and no value.
-        assert!(insert("plain", None, None, None).is_err());
-        assert!(insert("plain", Some("v"), Some("id"), None).is_err());
-        assert!(insert("secret", Some("v"), Some("id"), Some("[]")).is_err());
-        assert!(insert("secret", None, None, Some("[]")).is_err());
-        assert!(insert("secret", None, Some("id"), None).is_err());
-        assert!(insert("other", Some("v"), None, None).is_err());
-        insert("secret", None, Some("id"), Some("[]")).unwrap();
-        // One name per scope, in both the global and a workspace's scope.
-        assert!(insert("plain", Some("v"), None, None).is_err());
-        conn.execute(
-            "INSERT INTO env_vars (workspace_id, name, kind, value, changed_at) VALUES ('box', 'A', 'plain', 'v', 1)",
-            [],
-        )
-        .unwrap();
-        assert!(
-            conn.execute(
-                "INSERT INTO env_vars (workspace_id, name, kind, value, changed_at) VALUES ('box', 'A', 'plain', 'w', 1)",
-                [],
-            )
-            .is_err()
-        );
-        // A stand-in goes with its variable.
-        conn.execute(
-            "INSERT INTO env_stand_ins (workspace_id, env_id, stand_in) VALUES ('box', 1, 'puddle-secret-A-0')",
-            [],
-        )
-        .unwrap();
-        conn.execute("DELETE FROM env_vars WHERE id = 1", [])
-            .unwrap();
-        assert_eq!(count("SELECT count(*) FROM env_stand_ins"), 0);
-    }
-
-    /// A secret stored before places existed keeps its row and is swapped in header values (no
-    /// place); only a secret can have a place.
-    #[test]
-    fn v13_gives_existing_secrets_no_place_and_a_plain_variable_none() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate_up_to(&mut conn, 12).unwrap();
-        conn.execute_batch(
-            "INSERT INTO env_vars (workspace_id, name, kind, value, secret_id, hosts, changed_at)
-                VALUES (NULL, 'S', 'secret', NULL, 'id', '[\"a.example.com\"]', 1);
-             INSERT INTO env_vars (workspace_id, name, kind, value, changed_at)
-                VALUES (NULL, 'P', 'plain', 'v', 1);",
-        )
-        .unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 12);
-        let place = |name: &str| -> Option<String> {
-            conn.query_row("SELECT place FROM env_vars WHERE name = ?1", [name], |r| {
-                r.get(0)
-            })
-            .unwrap()
-        };
-        assert_eq!((place("S"), place("P")), (None, None));
-        conn.execute("UPDATE env_vars SET place = 'path' WHERE name = 'S'", [])
-            .unwrap();
-        assert!(
-            conn.execute("UPDATE env_vars SET place = 'path' WHERE name = 'P'", [])
-                .is_err()
-        );
-    }
-
-    /// A workspace that set its switches before the defaults existed keeps them as explicit
-    /// values, and the defaults table starts empty (so the built-in defaults apply).
-    #[test]
-    fn v7_keeps_switches_written_before_it_as_explicit_values() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate_up_to(&mut conn, 6).unwrap();
-        conn.execute_batch(
-            "INSERT INTO workspace_git VALUES ('box', 0, 1);
-             INSERT INTO workspace_git VALUES ('other', 1, 0);",
-        )
-        .unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 6);
-        let read = |ws: &str| -> (Option<i64>, Option<i64>) {
-            conn.query_row(
-                "SELECT only_push_listed, only_pull_listed FROM workspace_git WHERE workspace_id = ?1",
-                [ws],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap()
-        };
-        assert_eq!(read("box"), (Some(0), Some(1)));
-        assert_eq!(read("other"), (Some(1), Some(0)));
-        let defaults: i64 = conn
-            .query_row("SELECT count(*) FROM git_defaults", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(defaults, 0);
-        // The defaults table holds one row at most.
-        let add = "INSERT INTO git_defaults VALUES (?1, 1, 0)";
-        conn.execute(add, [1]).unwrap();
-        assert!(conn.execute(add, [2]).is_err());
-    }
-
-    /// A database from before pinned forwards: every row stays, the new table starts empty, and the
-    /// table's own checks keep a port inside what a port can be.
-    #[test]
-    fn v8_adds_the_pinned_ports_table_and_refuses_a_port_outside_the_range() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate_up_to(&mut conn, 7).unwrap();
-        conn.execute_batch("INSERT INTO git_defaults VALUES (1, 1, 0);")
-            .unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 7);
-        assert_eq!(version(&conn), SCHEMA_VERSION);
-        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
-        assert_eq!(count("SELECT count(*) FROM git_defaults"), 1);
-        assert_eq!(count("SELECT count(*) FROM pinned_ports"), 0);
-        let add = "INSERT INTO pinned_ports VALUES (?1, ?2, ?3)";
-        conn.execute(add, ("box", 3000, 3000)).unwrap();
-        for (guest, host) in [(0, 3000), (3000, 0), (65_536, 80), (80, 65_536)] {
-            assert!(
-                conn.execute(add, ("box", guest, host)).is_err(),
-                "{guest} {host}"
-            );
-        }
-        assert!(
-            conn.execute(add, ("box", 3000, 3001)).is_err(),
-            "one pin per guest port"
-        );
-    }
-
-    #[test]
-    fn migrating_twice_is_a_no_op() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate(&mut conn).unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), SCHEMA_VERSION);
-        assert_eq!(version(&conn), SCHEMA_VERSION);
-    }
-
-    #[test]
-    fn newer_schema_is_refused() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
-            .unwrap();
-        assert!(matches!(
-            migrate(&mut conn),
-            Err(StoreError::SchemaTooNew { found, supported })
-                if found == SCHEMA_VERSION + 1 && supported == SCHEMA_VERSION
-        ));
-    }
-
-    #[test]
-    fn later_migrations_apply_in_order_and_failures_roll_back() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        let steps = [
-            "CREATE TABLE a (x INTEGER);",
-            "ALTER TABLE a ADD COLUMN y INTEGER;",
-        ];
-        migrate_with(&mut conn, &steps[..1]).unwrap();
-        assert_eq!(version(&conn), 1);
-        migrate_with(&mut conn, &steps).unwrap();
-        assert_eq!(version(&conn), 2);
-        let broken = [steps[0], steps[1], "CREATE TABLE b (x INTEGER); NOT SQL;"];
-        assert!(migrate_with(&mut conn, &broken).is_err());
-        assert_eq!(version(&conn), 2);
-        let b_exists: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_schema WHERE name = 'b'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(b_exists, 0);
-    }
-}
+mod tests;

@@ -435,5 +435,19 @@ pub(crate) fn hermetic_options() -> HostOptions {
     let mut options = HostOptions::default();
     options.dev_cert = Some(Arc::new(NoDevCert));
     options.workspace_ids = Some(Arc::new(puddle_api::NameIds));
+    options.free_space = Some(Arc::new(FixedSpace(FIXED_FREE_BYTES)));
     options
+}
+
+/// The free space every hermetic host sees on its drive: a test about a grow never depends on
+/// the machine it runs on.
+pub(crate) const FIXED_FREE_BYTES: u64 = 512 * 1024 * 1024 * 1024;
+
+/// A drive with a fixed figure of free space.
+pub(crate) struct FixedSpace(pub(crate) u64);
+
+impl puddle_host::Space for FixedSpace {
+    fn free_bytes(&self) -> std::io::Result<u64> {
+        Ok(self.0)
+    }
 }

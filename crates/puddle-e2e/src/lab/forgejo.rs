@@ -25,14 +25,14 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rustls::pki_types::CertificateDer;
 
 use super::git_host::issue;
 use super::{
-    LOCAL, Prefix, READY, StartCost, configured_or_skip, free_port, on_free_port, read,
-    require_file, stop, try_ready,
+    LOCAL, Prefix, READY, StartCost, configured_or_skip, free_port, is_address_in_use,
+    on_free_port, read, require_file, stop, try_answers,
 };
 
 /// The account that owns every repository of the fixture.
@@ -172,6 +172,114 @@ fn generate_secret(bin: &std::ffi::OsStr, kind: &str) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
+/// Where an instance's HTTP API is and how to reach it as [`OWNER`].
+struct Endpoint<'a> {
+    root_pem: &'a Path,
+    name: &'a str,
+    port: u16,
+    token: &'a str,
+}
+
+/// One call to the HTTP API of the instance on `port` as [`OWNER`]: the status and the body. `Err`
+/// is curl's own message (a refused connection, a failed handshake).
+fn call(
+    at: &Endpoint<'_>,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    max_secs: u32,
+) -> Result<(u16, String), String> {
+    let mut curl = Command::new("curl");
+    curl.args([
+        "--silent",
+        "--show-error",
+        "--max-time",
+        &max_secs.to_string(),
+    ]);
+    // Windows' curl checks revocation through Schannel, which a private root has no answer for.
+    if cfg!(windows) {
+        curl.arg("--ssl-no-revoke");
+    }
+    curl.arg("--cacert")
+        .arg(at.root_pem)
+        .arg("--resolve")
+        .arg(format!("{}:{}:{LOCAL}", at.name, at.port))
+        .args(["--request", method])
+        .args(["--header", "Content-Type: application/json"])
+        .args(["--header", &format!("Authorization: token {}", at.token)])
+        .args(["--write-out", "\n%{http_code}"]);
+    if let Some(body) = body {
+        curl.args(["--data", body]);
+    }
+    curl.arg(format!("https://{}:{}/api/v1{path}", at.name, at.port));
+    let output = curl.stdin(Stdio::null()).output().unwrap();
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let (body, status) = text.rsplit_once('\n').unwrap();
+    Ok((status.trim().parse().unwrap(), body.to_owned()))
+}
+
+/// Whether the SSH server on `port` greets with an SSH banner.
+fn ssh_greets(port: u16) -> bool {
+    use std::io::Read as _;
+    let addr = SocketAddr::from((LOCAL, port));
+    let Ok(mut conn) = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)) else {
+        return false;
+    };
+    if conn.set_read_timeout(Some(Duration::from_secs(2))).is_err() {
+        return false;
+    }
+    let mut banner = [0_u8; 4];
+    conn.read_exact(&mut banner).is_ok() && &banner == b"SSH-"
+}
+
+/// The two ports of an instance.
+struct Ports {
+    http: u16,
+    ssh: u16,
+}
+
+/// Waits until Forgejo itself answers on both ports: the API over TLS with the run's root (the
+/// SSH one second, so a taken SSH port shows in the log before the instance is called ready). A
+/// port that merely accepts proves nothing: a stranger holding the port Forgejo failed to bind
+/// accepts too, and when it lets go the next connect is refused. Forgejo that failed to bind exits
+/// or logs it, and either comes back as `Err` with its log.
+fn await_up(
+    child: &mut Child,
+    root_pem: &Path,
+    name: &str,
+    ports: &Ports,
+    token: &str,
+    log: &Path,
+) -> Result<(), String> {
+    let log_text = || read(log);
+    let http_up = || {
+        let at = Endpoint {
+            root_pem,
+            name,
+            port: ports.http,
+            token,
+        };
+        call(&at, "GET", "/version", None, 2).is_ok_and(|(status, _)| status == 200)
+    };
+    let ssh_up = || ssh_greets(ports.ssh);
+    let probes: [&dyn Fn() -> bool; 2] = [&http_up, &ssh_up];
+    for up in probes {
+        try_answers(
+            Some(&mut *child),
+            READY,
+            &log_text,
+            up,
+            Duration::ZERO,
+            // Forgejo stays up with its other listener when one bind fails.
+            || is_address_in_use(&log_text()),
+        )?;
+    }
+    Ok(())
+}
+
 impl Forgejo {
     /// Starts Forgejo answering to `name`, or `None` (skip) when none is configured; see the
     /// module docs. Its certificate names `name`, signed by a root made for the run.
@@ -243,8 +351,7 @@ impl Forgejo {
         let (ca, leaf, key) = issue("Puddle lab Forgejo root", &[name.to_owned()], (2020, 2090));
         fs::write(root_dir.join("cert.pem"), leaf.pem()).unwrap();
         fs::write(root_dir.join("key.pem"), key.serialize_pem()).unwrap();
-        let root_pem = root_dir.join("root.pem");
-        fs::write(&root_pem, ca.pem()).unwrap();
+        fs::write(root_dir.join("root.pem"), ca.pem()).unwrap();
         let secrets = Secrets {
             internal: generate_secret(bin, "INTERNAL_TOKEN"),
             secret: generate_secret(bin, "SECRET_KEY"),
@@ -290,6 +397,7 @@ impl Forgejo {
         )?
         .trim()
         .to_owned();
+        let root_pem = root_dir.join("root.pem");
         let log = root_dir.join("forgejo.log");
         let mut child = Command::new(bin)
             .arg("--config")
@@ -304,14 +412,13 @@ impl Forgejo {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        // Both listeners come up in the same breath; the SSH one second, so a taken SSH port
-        // shows in the log before the instance is called ready.
-        let log_text = || read(&log);
-        for port in [http_port, ssh_port] {
-            if let Err(why) = try_ready(port, Some(&mut child), READY, log_text) {
-                stop(&mut child);
-                return Err(why);
-            }
+        let ports = Ports {
+            http: http_port,
+            ssh: ssh_port,
+        };
+        if let Err(why) = await_up(&mut child, &root_pem, name, &ports, &token, &log) {
+            stop(&mut child);
+            return Err(why);
         }
         let started = StartCost::measure(&prefix, begun, Some(&child));
         Ok(Self {
@@ -377,37 +484,20 @@ impl Forgejo {
     /// When `curl` cannot run or its answer has no status.
     #[must_use]
     pub fn api(&self, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
-        let mut curl = Command::new("curl");
-        curl.args(["--silent", "--show-error", "--max-time", "60"]);
-        // Windows' curl checks revocation through Schannel, which a private root has no answer for.
-        if cfg!(windows) {
-            curl.arg("--ssl-no-revoke");
-        }
-        curl.arg("--cacert")
-            .arg(&self.root_pem)
-            .arg("--resolve")
-            .arg(format!("{}:{}:{LOCAL}", self.name, self.http_port))
-            .args(["--request", method])
-            .args(["--header", "Content-Type: application/json"])
-            .args(["--header", &format!("Authorization: token {}", self.token)])
-            .args(["--write-out", "\n%{http_code}"]);
-        if let Some(body) = body {
-            curl.args(["--data", body]);
-        }
-        curl.arg(format!(
-            "https://{}:{}/api/v1{path}",
-            self.name, self.http_port
-        ));
-        let output = curl.stdin(Stdio::null()).output().unwrap();
         // The command line holds the token, so a failure names the path and not the command.
-        assert!(
-            output.status.success(),
-            "curl {method} {path}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let text = String::from_utf8_lossy(&output.stdout).into_owned();
-        let (body, status) = text.rsplit_once('\n').unwrap();
-        (status.trim().parse().unwrap(), body.to_owned())
+        call(
+            &Endpoint {
+                root_pem: &self.root_pem,
+                name: &self.name,
+                port: self.http_port,
+                token: &self.token,
+            },
+            method,
+            path,
+            body,
+            60,
+        )
+        .unwrap_or_else(|why| panic!("curl {method} {path}: {why}"))
     }
 
     /// Makes the repository `owner/name` of [`OWNER`] (`owner` must be [`OWNER`]) on branch `main`

@@ -1,0 +1,9 @@
+<!-- The fix: text interpolation and a component; a comment may name innerHTML. -->
+<script lang="ts">
+  import Badge from "./Badge.svelte";
+  let { note }: { note: string } = $props();
+  // innerHTML is banned here; the text is escaped by the interpolation.
+</script>
+
+<p>{note}</p>
+<Badge label={note} />

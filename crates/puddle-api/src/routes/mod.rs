@@ -6,11 +6,14 @@ use std::sync::Arc;
 
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::SecretStore;
-use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
+use puddle_store::{
+    Actor, Clock, NewWorkspaceOp, Store, UserId, WorkspaceOpKind, WorkspaceOpOutcome,
+};
 use tokio::sync::{Mutex, watch};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::authz::Authorizer;
 use crate::credentials::CredentialService;
 use crate::dev_cert::DevCertService;
 use crate::doctor::DoctorService;
@@ -43,6 +46,7 @@ mod problems;
 mod proxy_sign_in;
 mod repos;
 mod repositories;
+mod repository_hosts;
 mod request_rules;
 mod rule_sets;
 mod rules;
@@ -52,11 +56,12 @@ mod start_folder;
 mod terminals;
 mod workspaces;
 
-/// Writes a `workspace_op` record for a change a request made (all of them reach Puddle through
-/// the API, so the actor is `api`). The change has happened, so a record that cannot be written
+/// Writes a `workspace_op` record of `user` for a change a request made (all of them reach Puddle
+/// through the API, so the actor is `api`). The change has happened, so a record that cannot be written
 /// is logged and dropped rather than turned into an error the user would read as "not done".
 pub(crate) fn record_op(
     store: &Store,
+    user: UserId,
     op: WorkspaceOpKind,
     workspace: Option<&puddle_types::WorkspaceId>,
     detail: Option<String>,
@@ -64,6 +69,7 @@ pub(crate) fn record_op(
     let new = NewWorkspaceOp {
         op,
         workspace: workspace.cloned(),
+        user: Some(user),
         outcome: WorkspaceOpOutcome::Succeeded,
         actor: Actor::Api,
         detail,
@@ -75,6 +81,8 @@ pub(crate) fn record_op(
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) store: Arc<Store>,
+    /// Who may do what; every route asks it before its handler runs.
+    pub(crate) authorizer: Arc<dyn Authorizer>,
     pub(crate) settings: Arc<dyn SettingsRepo>,
     /// Serialises settings read-modify-write cycles.
     pub(crate) settings_lock: Arc<Mutex<()>>,
@@ -150,8 +158,10 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(workspaces::stop_workspace))
         .routes(routes!(workspaces::reclaim_workspace))
         .routes(routes!(workspaces::reset_root_disk))
+        .routes(routes!(workspaces::grow_root_disk))
         .routes(routes!(workspaces::delete_check))
         .routes(routes!(workspaces::attach_workspace))
+        .routes(routes!(repository_hosts::repository_hosts))
         .routes(routes!(repositories::list_checkouts))
         .routes(routes!(repositories::add_repository))
         .routes(routes!(repositories::clone_again))
@@ -262,6 +272,10 @@ fn environment_router() -> OpenApiRouter<AppState> {
             interception::put_interception
         ))
         .routes(routes!(
+            interception::get_interception_settings,
+            interception::put_interception_settings
+        ))
+        .routes(routes!(
             interception::get_global_never_decrypt,
             interception::put_global_never_decrypt
         ))
@@ -270,6 +284,7 @@ fn environment_router() -> OpenApiRouter<AppState> {
             interception::clear_learned
         ))
         .routes(routes!(interception::forget_learned))
+        .routes(routes!(interception::make_permanent))
         .routes(routes!(
             interception::get_learned_limits,
             interception::put_learned_limits

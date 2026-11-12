@@ -227,6 +227,180 @@ async fn vm_host_boots_a_new_workspace_with_a_16_gib_sparse_root_disk() {
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
+/// What the guest's `df` says `/` holds, in MiB.
+async fn guest_root_mib(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> u64 {
+    let size = guest_within(
+        runtime,
+        sandbox,
+        "df -BM --output=size / | tail -n 1 | tr -dc 0-9",
+        Duration::from_secs(60),
+    )
+    .await;
+    size.trim().parse().expect("df printed a size in MiB")
+}
+
+/// A root disk grows in a real guest: live while the workspace runs (on Windows, until the libkrun
+/// change lands, with a restart that loses nothing saved to disk), offline while it is stopped, and
+/// "Reset root disk" makes the fresh one as big as the grown size. A file written to the root disk
+/// before the grow has the same checksum after each step.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+async fn vm_host_grows_a_root_disk_live_and_offline_and_a_reset_keeps_the_size() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("growroot").await;
+    let name = format!("{}-growroot", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let before = guest_root_mib(&runtime, &sandbox).await;
+    assert!((15_000..=16_384).contains(&before), "df {before} MiB");
+
+    // Data on the root disk, and the kernel's boot id, which only a restart changes (/tmp is on
+    // the root disk here, so a file there survives a restart and proves nothing).
+    let sum = guest_within(
+        &runtime,
+        &sandbox,
+        "dd if=/dev/urandom of=/seed bs=1M count=64 2>/dev/null && sync && sha256sum /seed | cut -d' ' -f1",
+        Duration::from_secs(120),
+    )
+    .await;
+    let sum = sum.trim().to_owned();
+    assert_eq!(sum.len(), 64, "{sum:?}");
+    let boot_id = || {
+        guest_within(
+            &runtime,
+            &sandbox,
+            "cat /proc/sys/kernel/random/boot_id",
+            Duration::from_secs(60),
+        )
+    };
+    let boot_before = boot_id().await.trim().to_owned();
+    assert!(!boot_before.is_empty(), "no boot id");
+    let seed_sum = || {
+        guest_within(
+            &runtime,
+            &sandbox,
+            "sha256sum /seed | cut -d' ' -f1",
+            Duration::from_secs(120),
+        )
+    };
+
+    // Live (or restarted) grow to 20 GiB.
+    let reply = api
+        .post(
+            &format!("/api/workspaces/{name}/grow-root-disk"),
+            r#"{"size_mib": 20480}"#,
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let grown = guest_root_mib(&runtime, &sandbox).await;
+    eprintln!("guest df after the grow: {grown} MiB");
+    assert!(
+        (19_000..=20_480).contains(&grown),
+        "df {grown} MiB after growing to 20480"
+    );
+    assert_eq!(seed_sum().await.trim(), sum, "the file changed");
+    let boot_after = boot_id().await.trim().to_owned();
+    eprintln!("boot id before {boot_before} after {boot_after}");
+    // Live grow on Windows waits for the libkrun fork fix (the raw disk handle keeps its old
+    // length, so the guest's online ext4 expansion fails): there the host restarts the guest.
+    assert_eq!(
+        boot_before == boot_after,
+        !cfg!(windows),
+        "the guest restarted exactly when the grow is not live"
+    );
+    let workspace = api.get(&format!("/api/workspaces/{name}")).await.json();
+    assert_eq!(workspace["root_disk_size_mib"], 20_480, "{workspace}");
+    assert_eq!(workspace["status"], "running", "{workspace}");
+
+    // Offline grow to 24 GiB.
+    let reply = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    let reply = api
+        .post(
+            &format!("/api/workspaces/{name}/grow-root-disk"),
+            r#"{"size_mib": 24576}"#,
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let reply = api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let offline = guest_root_mib(&runtime, &sandbox).await;
+    eprintln!("guest df after the offline grow: {offline} MiB");
+    assert!(
+        (23_000..=24_576).contains(&offline),
+        "df {offline} MiB after growing to 24576"
+    );
+    assert_eq!(seed_sum().await.trim(), sum, "the file changed");
+
+    // A reset makes a fresh root disk that is still 24 GiB: the seed is gone, the room is not.
+    let reply = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    let reply = api
+        .post(&format!("/api/workspaces/{name}/reset-root-disk"), "")
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    let reply = api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let fresh = guest_root_mib(&runtime, &sandbox).await;
+    assert!(
+        (23_000..=24_576).contains(&fresh),
+        "df {fresh} MiB after a reset"
+    );
+    let seed = guest_within(
+        &runtime,
+        &sandbox,
+        "test -e /seed && echo there || echo gone",
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_eq!(seed.trim(), "gone");
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
 /// A workspace boots with the CPU count the settings name (the global default here), and a change
 /// in its own settings reaches the guest at the next start and not before: `nproc` in the guest
 /// says how many CPUs it really has.
@@ -402,6 +576,15 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
         )
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
+    let missing_entry = reply.json()["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["directory"] == "missing")
+        .unwrap()["entry"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
     let end = events
         .until(ended(name_static), Duration::from_mins(15))
@@ -431,7 +614,7 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
         .filter(|p| p["workspace"] == name)
         .collect();
     assert_eq!(failed.len(), 1, "{problems}");
-    assert_eq!(failed[0]["key"], format!("clone:{name}:missing"));
+    assert_eq!(failed[0]["key"], format!("clone:{name}:{missing_entry}"));
     assert!(
         failed[0]["title"].as_str().unwrap().contains(&unreachable),
         "{problems}"
@@ -576,12 +759,11 @@ async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
         "pre-auto-gc",
     ] {
         let path = git_dir.join("hooks").join(hook);
-        std::fs::write(&path, format!("#!/bin/sh\n{mark}\n")).unwrap();
+        let text = format!("#!/bin/sh\n{mark}\n");
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        puddle_test_kit::write_executable(&path, &text);
+        #[cfg(not(unix))]
+        std::fs::write(&path, text).unwrap();
     }
     let before = host_files(&base);
 
@@ -804,10 +986,11 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
         )
         .await;
     assert_eq!(managed.status, 200, "{}", managed.body);
-    assert_eq!(
-        managed.json()["repositories"][1],
-        json!({"url": manual, "directory": "manual"})
-    );
+    let managed = managed.json();
+    let kept = &managed["repositories"][1];
+    assert_eq!(kept["url"], manual, "{managed}");
+    assert_eq!(kept["directory"], "manual", "{managed}");
+    assert!(kept["entry"].is_string(), "{managed}");
     let ssh = api
         .post(
             &format!("/api/workspaces/{name}/repositories"),
@@ -831,6 +1014,15 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
         )
         .await;
     assert_eq!(added.status, 202, "{}", added.body);
+    let spoon_entry = added.json()["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["directory"] == "Spoon-Knife")
+        .unwrap()["entry"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let end = events
         .until(ended(name_static), Duration::from_mins(10))
         .await;
@@ -841,7 +1033,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
     // Taking the entry off the list changes the list only.
     let removed = api
         .delete(
-            &format!("/api/workspaces/{name}/repositories/Spoon-Knife"),
+            &format!("/api/workspaces/{name}/repositories/{spoon_entry}"),
             None,
         )
         .await;
@@ -931,7 +1123,7 @@ async fn vm_host_clones_a_public_repository_when_the_identity_is_not_signed_in_a
         })
         .unwrap();
     host.store()
-        .create_identity(identity("Work", REPO_HOST))
+        .create_identity(puddle_store::UserId::OWNER, identity("Work", REPO_HOST))
         .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
@@ -1022,7 +1214,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     // The first identity is the default: the new workspace gets it, and decrypts github.com.
     let work = host
         .store()
-        .create_identity(identity("Work", REPO_HOST))
+        .create_identity(puddle_store::UserId::OWNER, identity("Work", REPO_HOST))
         .unwrap();
     let api = Api::new(host.url(), host.token());
     let mut events = api.events().await;
@@ -1100,7 +1292,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     // connection with the CA the guest already had, and its remotes get its author.
     let lab = host
         .store()
-        .create_identity(identity("Lab", SECOND))
+        .create_identity(puddle_store::UserId::OWNER, identity("Lab", SECOND))
         .unwrap();
     let ca_before = termination.ca().certificate().clone();
     host.store()
@@ -1169,6 +1361,135 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
         .await;
     assert_eq!(end["step"], "done", "{end}");
     assert!(host.workspaces().termination(&sandbox).is_none());
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// In the "all except curated" mode a workspace decrypts a host no credential, secret or identity
+/// names, and its guest trusts the certificate Puddle makes for it; the mode follows the global
+/// setting until the workspace picks its own, and a change applies to the next connection with no
+/// restart. (The curated list is empty, so nothing is passed through for being on it yet: the
+/// proxy and host unit tests cover that half.)
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_decrypts_an_unlisted_host_in_the_curated_mode_and_follows_the_global_setting() {
+    let internet = web_internet(&[SITE], WebOptions::default(), hermetic_options()).await;
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_platform("curated", internet.options, &internet.platform, |_| {}).await;
+    let name = format!("{}-curated", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    host.store()
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse(SITE).unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    let ca_name = format!("Puddle CA for {name}");
+
+    // An install that has not chosen behaves as before: the host is spliced and shows its own issuer.
+    let before = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
+    assert!(!before.to_lowercase().contains("puddle"), "{before}");
+
+    // The user chooses the curated mode globally; the running workspace follows at once.
+    let chosen = api
+        .put(
+            "/api/interception",
+            &json!({"mode": "all_except_curated"}).to_string(),
+        )
+        .await;
+    assert_eq!(chosen.status, 200, "{}", chosen.body);
+    let view = api
+        .get(&format!("/api/workspaces/{name}/interception"))
+        .await;
+    assert!(
+        view.body
+            .contains(r#""effective_mode":"all_except_curated""#),
+        "{}",
+        view.body
+    );
+    puddle_test_kit::eventually_async(
+        "the unlisted host is decrypted with Puddle's certificate",
+        Duration::from_secs(60),
+        || async {
+            let issuer = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
+            if issuer.contains(&ca_name) {
+                Ok(())
+            } else {
+                Err(format!("issuer {issuer:?}"))
+            }
+        },
+    )
+    .await;
+
+    // The workspace's own mode wins over the global one, and going back to inherit follows it again.
+    let own = api
+        .put(
+            &format!("/api/workspaces/{name}/interception"),
+            &json!({"mode": "known_only"}).to_string(),
+        )
+        .await;
+    assert_eq!(own.status, 200, "{}", own.body);
+    puddle_test_kit::eventually_async(
+        "the host is spliced again in the workspace's own mode",
+        Duration::from_secs(60),
+        || async {
+            let issuer = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
+            if issuer.to_lowercase().contains("puddle") {
+                Err(format!("issuer {issuer:?}"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .await;
+    let inherit = api
+        .put(
+            &format!("/api/workspaces/{name}/interception"),
+            &json!({"mode": "inherit"}).to_string(),
+        )
+        .await;
+    assert_eq!(inherit.status, 200, "{}", inherit.body);
+    puddle_test_kit::eventually_async(
+        "the host is decrypted again once the workspace follows the global mode",
+        Duration::from_secs(60),
+        || async {
+            let issuer = guest(&runtime, &sandbox, &issuer_script(SITE)).await;
+            if issuer.contains(&ca_name) {
+                Ok(())
+            } else {
+                Err(format!("issuer {issuer:?}"))
+            }
+        },
+    )
+    .await;
+
+    let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(120))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
@@ -2495,7 +2816,10 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceId, Ap
     let radar_identity = terminate.then(|| {
         vm.host
             .store()
-            .create_identity(identity_for("Radar", radar_tls_hosts()))
+            .create_identity(
+                puddle_store::UserId::OWNER,
+                identity_for("Radar", radar_tls_hosts()),
+            )
             .unwrap()
     });
     let api = Api::new(vm.host.url(), vm.host.token());
@@ -4471,14 +4795,7 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
 
     // A forward from this computer's loopback reaches the guest server, on each address it
     // listens on; the agent's own proxy port is refused.
-    let free = || {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
-    };
-    let (pinned_port, plain_port) = (free(), free());
+    let (pinned_port, plain_port) = (puddle_test_kit::quiet_port(), puddle_test_kit::quiet_port());
     let put = api
         .put(
             &format!("{path}/8000"),
@@ -4495,7 +4812,7 @@ async fn vm_host_ports_are_listed_forwarded_and_pinned_across_a_restart() {
     assert_eq!(put.status, 200, "{}", put.body);
     assert_eq!(greeting(pinned_port).await, "hello from loopback\n");
     assert_eq!(greeting(plain_port).await, "hello from wildcard\n");
-    let proxy_port = free();
+    let proxy_port = puddle_test_kit::quiet_port();
     api.put(
         &format!("{path}/3128"),
         &json!({"host_port": proxy_port}).to_string(),

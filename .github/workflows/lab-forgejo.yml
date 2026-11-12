@@ -10,6 +10,10 @@
 #   vm        `vm_radar_forgejo_*`: in a real microVM the guest's git clones, pushes a branch and
 #             deletes it through the host's wiring, a push to an unlisted repository is refused,
 #             and the guest is searched for the token.
+# The `windows` job runs the same two on a windows-2025 runner (WHP, msb microVMs) against Gitea's
+# Windows release (Forgejo ships none; `ci/fetch-forgejo.sh <dir> "" windows`, pinned in
+# ci/forgejo.sha256): the fixture's HTTPS half, and the VM test, so vm-windows has a real Git
+# server too. Its ssh half stays Unix-only.
 # Nightly on develop, by hand (`gh workflow run lab-forgejo.yml`), and on a pull request that touches
 # the fixture, its pin, this file or the VM test. Not a required check. A red nightly opens
 # "Nightly red: lab-forgejo" through nightly-signal.yml and a green run closes it. Never retried.
@@ -63,7 +67,7 @@ jobs:
           test -r /dev/kvm && test -w /dev/kvm
       - name: Toolchain (from rust-toolchain.toml)
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-nextest@0.9.146
       - name: Forgejo (pinned release; download, verify)
@@ -99,6 +103,83 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lab-forgejo-results
+          path: |
+            target/nextest/vm/junit.xml
+            ${{ runner.temp }}/pvm/**/logs/**
+          retention-days: 14
+          if-no-files-found: ignore
+
+  windows:
+    name: lab Gitea on Windows (clone, push, delete branch, refusal, token search)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: WHP preflight (infrastructure)
+        id: whp
+        shell: pwsh
+        run: |
+          $cs = Get-CimInstance Win32_ComputerSystem
+          $whp = (Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform).State
+          "HypervisorPresent=$($cs.HypervisorPresent) HypervisorPlatform=$whp"
+          if ($cs.HypervisorPresent -and "$whp" -eq 'Enabled') {
+            "ok=true" >> $env:GITHUB_OUTPUT
+          } else {
+            # Same policy as ci/vm-skip-policy.sh: a pull request must not pass without running the test.
+            $reason = "Windows Hypervisor Platform is not usable on this runner (HypervisorPresent=$($cs.HypervisorPresent), HypervisorPlatform=$whp)"
+            if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+              "::error title=lab-forgejo windows cannot run::$reason"
+              exit 1
+            }
+            "::warning title=lab-forgejo windows skipped::$reason; the VM test did not run (infrastructure, not a test result)"
+            "ok=false" >> $env:GITHUB_OUTPUT
+          }
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        if: steps.whp.outputs.ok == 'true'
+        with:
+          tool: cargo-nextest@0.9.146
+      - name: Gitea (pinned Windows release; download, verify)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: |
+          ci/fetch-forgejo.sh "$(cygpath -u "$RUNNER_TEMP")/forgejo" "" windows
+          "$(cygpath -u "$RUNNER_TEMP")/forgejo/forgejo.exe" --version
+          {
+            echo "PUDDLE_FORGEJO_BIN=$(cygpath -w "$RUNNER_TEMP")\\forgejo\\forgejo.exe"
+            echo "PUDDLE_REQUIRE_FORGEJO=1"
+          } >> "$GITHUB_ENV"
+      - name: the fixture (git over HTTPS against Gitea)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: cargo nextest run --locked -p puddle-e2e --test integration --no-fail-fast -E 'test(forgejo_lab::)'
+      - name: msb runtime (fork tag release assets; download, verify)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: |
+          dir=$(cygpath -w "$RUNNER_TEMP")
+          ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
+          echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
+          echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
+      - name: guest agent (static musl build)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: echo "PUDDLE_AGENT_BIN=$(cygpath -w "$PWD/$(ci/build-agent.sh --locked)")" >> "$GITHUB_ENV"
+      - name: the VM test (never retried)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: |
+          PUDDLE_VM_PREFIX="w${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            cargo nextest run -p puddle-host --profile vm --locked --no-capture \
+              -E 'test(/(^|::)vm_radar_forgejo_/)' --no-tests=fail
+      - name: upload test results and msb logs
+        if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lab-forgejo-windows-results
           path: |
             target/nextest/vm/junit.xml
             ${{ runner.temp }}/pvm/**/logs/**

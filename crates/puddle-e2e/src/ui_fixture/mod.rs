@@ -28,9 +28,9 @@ use puddle_api::{
     DoctorService, EventHub, FakeCredentials, FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned,
     FakeNetworkHealth, FakePorts, FakeProxySignIns, FakeTerminals, FakeWorkspaces, Found,
     FoundList, Launcher, LearnedService, Listing, MemorySettings, NetworkHealthService, Operation,
-    PortsService, ProxySignInService, RemoteNote, RepoFindings, RepoService, RepositoryDraft,
-    RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord,
-    check_repositories,
+    PortsService, ProxySignInService, RemoteNote, RepoFindings, RepoService, Repository,
+    RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck, StartFolder, Unsaved,
+    WorkspaceRecord, check_repositories, entry_id_from_text,
 };
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
@@ -763,13 +763,21 @@ impl State {
                 workspace: name,
                 host,
                 expires_in_secs,
+                count,
             } => {
                 let name = workspace(name)?;
-                self.learned
-                    .learn(&name, host, expires_in_secs.unwrap_or(12 * 3600));
+                let count = count.unwrap_or(1);
+                self.learned.learn_with_history(
+                    &name,
+                    host,
+                    Some(expires_in_secs.unwrap_or(12 * 3600)),
+                    count,
+                    now,
+                );
                 self.events.emit(Event::PassThroughLearned {
                     workspace: name,
                     host: host.clone(),
+                    count,
                 });
             }
             Step::ShellInitCheck { refuses } => self.workspaces.set_shell_init_check(
@@ -812,6 +820,14 @@ impl State {
         );
         self.settings
             .save_global(document)
+            .map_err(|err| err.to_string())?;
+        // A finished setup includes the interception step, so the notice for installs that
+        // predate it stays away; a test of that notice turns the flag back off.
+        self.store
+            .set_interception_settings(puddle_store::InterceptionSettings {
+                notice_seen: true,
+                ..puddle_store::InterceptionSettings::default()
+            })
             .map_err(|err| err.to_string())
     }
 
@@ -833,7 +849,10 @@ impl State {
         let repositories = check_repositories(&drafts, |_| false)
             .map_err(|err| at(&err))?
             .into_iter()
-            .map(|r| r.repository)
+            .map(|r| Repository {
+                entry: entry_id_from_text(&format!("{}:{}", seed.name, r.repository.directory)),
+                ..r.repository
+            })
             .collect();
         let mut record = WorkspaceRecord::new(id.clone(), name, repositories);
         record.start_folder = seed
@@ -893,7 +912,7 @@ impl State {
     fn identity_ids(&self) -> Result<Vec<(String, IdentityId)>, String> {
         Ok(self
             .store
-            .identities()
+            .identities(puddle_store::UserId::OWNER)
             .map_err(|err| err.to_string())?
             .into_iter()
             .map(|identity| (identity.label.clone(), identity.id))
@@ -910,7 +929,7 @@ impl State {
                 let draft = request.clone().into_store_draft()?;
                 let made = self
                     .store
-                    .create_identity(draft)
+                    .create_identity(puddle_store::UserId::OWNER, draft)
                     .map_err(|err| format!("identity {label:?}: {err}"))?;
                 Ok((label, made.id))
             })
@@ -942,7 +961,7 @@ impl State {
             }
         };
         self.store
-            .set_env(scope, &name, draft)
+            .set_env(puddle_store::UserId::OWNER, scope, &name, draft)
             .map(|_| ())
             .map_err(|err| at(&err))
     }

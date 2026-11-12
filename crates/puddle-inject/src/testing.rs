@@ -244,7 +244,11 @@ impl World {
                     .unwrap(),
             ],
         };
-        let id = self.store.create_identity(draft).unwrap().id;
+        let id = self
+            .store
+            .create_identity(puddle_store::UserId::OWNER, draft)
+            .unwrap()
+            .id;
         Made { id, source }
     }
 

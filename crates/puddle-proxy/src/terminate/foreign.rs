@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use ::http::header::HeaderMap;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use puddle_types::{Event, EventSink, ForeignCredentialKind, Host, WorkspaceId};
+use puddle_types::{Event, EventSink, ForeignCredentialKind, Host, UnknownTokenKind, WorkspaceId};
 use zeroize::Zeroizing;
 
 use super::stale;
@@ -47,6 +47,7 @@ const MAX_SEEN: usize = 256;
 pub struct ForeignCredentialWarning {
     enabled: Arc<dyn Fn() -> bool + Send + Sync>,
     told: Mutex<HashSet<(String, ForeignCredentialKind)>>,
+    told_answers: Mutex<HashSet<(String, UnknownTokenKind)>>,
 }
 
 impl ForeignCredentialWarning {
@@ -56,6 +57,7 @@ impl ForeignCredentialWarning {
         Self {
             enabled: Arc::new(enabled),
             told: Mutex::new(HashSet::new()),
+            told_answers: Mutex::new(HashSet::new()),
         }
     }
 
@@ -84,10 +86,7 @@ impl ForeignCredentialWarning {
             if !flagged.iter().any(|seen| seen == name) {
                 flagged.push(name.to_owned());
             }
-            let first = {
-                let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-                told.len() < MAX_SEEN && told.insert((host.to_string(), *kind))
-            };
+            let first = first_sight(&self.told, host, *kind);
             if first {
                 tracing::info!(%workspace, %host, kind = name, "a request carried a credential Puddle did not add");
                 sink.emit(Event::ForeignCredential {
@@ -98,6 +97,48 @@ impl ForeignCredentialWarning {
             }
         }
     }
+}
+
+impl ForeignCredentialWarning {
+    /// Notes that an answer from `host` held a token of `kind` that Puddle does not hold: the
+    /// kind joins `flagged` (the connection record's list) once, and the first sight of a host
+    /// and kind raises the notice. Nothing when the warning is off. Only the host and the kind
+    /// are read, logged or sent. The same setting turns this and the warning about requests off.
+    pub(crate) fn note_answer(
+        &self,
+        workspace: &WorkspaceId,
+        host: &Host,
+        sink: &dyn EventSink,
+        flagged: &mut Vec<String>,
+        kind: UnknownTokenKind,
+    ) {
+        if !self.is_on() {
+            return;
+        }
+        let name = kind.as_str();
+        if !flagged.iter().any(|seen| seen == name) {
+            flagged.push(name.to_owned());
+        }
+        if first_sight(&self.told_answers, host, kind) {
+            tracing::info!(%workspace, %host, kind = name, "an answer held a token Puddle does not hold");
+            sink.emit(Event::UnknownTokenInAnswer {
+                workspace: workspace.clone(),
+                host: host.to_string(),
+                kind,
+            });
+        }
+    }
+}
+
+/// Whether this is the first time `host` and `kind` are seen, remembering them (up to
+/// [`MAX_SEEN`] pairs: past that nothing is new, so the list cannot grow without bound).
+fn first_sight<K: std::hash::Hash + Eq>(
+    told: &Mutex<HashSet<(String, K)>>,
+    host: &Host,
+    kind: K,
+) -> bool {
+    let mut told = told.lock().unwrap_or_else(PoisonError::into_inner);
+    told.len() < MAX_SEEN && told.insert((host.to_string(), kind))
 }
 
 impl Default for ForeignCredentialWarning {
@@ -238,12 +279,18 @@ fn has_checksummed_body(token: &[u8], prefix: &[u8]) -> bool {
 }
 
 fn is_github(token: &[u8]) -> bool {
-    if GITHUB_PREFIXES
+    is_github_checksummed(token) || is_fine_grained(token)
+}
+
+/// A classic GitHub token: a prefix, then 36 base62 characters ending in their checksum.
+pub(super) fn is_github_checksummed(token: &[u8]) -> bool {
+    GITHUB_PREFIXES
         .iter()
         .any(|prefix| has_checksummed_body(token, prefix))
-    {
-        return true;
-    }
+}
+
+/// A fine-grained GitHub token, read by its shape.
+pub(super) fn is_fine_grained(token: &[u8]) -> bool {
     token.strip_prefix(FINE_GRAINED_PREFIX).is_some_and(|body| {
         body.len() == FINE_GRAINED_ID + 1 + FINE_GRAINED_SECRET
             && body.get(FINE_GRAINED_ID) == Some(&b'_')
@@ -252,11 +299,11 @@ fn is_github(token: &[u8]) -> bool {
     })
 }
 
-fn is_npm(token: &[u8]) -> bool {
+pub(super) fn is_npm(token: &[u8]) -> bool {
     has_checksummed_body(token, NPM_PREFIX)
 }
 
-fn is_gitlab(token: &[u8]) -> bool {
+pub(super) fn is_gitlab(token: &[u8]) -> bool {
     token.strip_prefix(GITLAB_PREFIX).is_some_and(|body| {
         (GITLAB_MIN_BODY..=GITLAB_MAX_BODY).contains(&body.len())
             && body
@@ -265,317 +312,11 @@ fn is_gitlab(token: &[u8]) -> bool {
     })
 }
 
-fn is_azure_devops(token: &[u8]) -> bool {
+pub(super) fn is_azure_devops(token: &[u8]) -> bool {
     token.len() == AZURE_LEN
         && is_base62(token)
         && token.get(AZURE_MARK_AT..AZURE_MARK_AT + AZURE_MARK.len()) == Some(AZURE_MARK)
 }
 
 #[cfg(test)]
-mod tests {
-    use ::http::header::{AUTHORIZATION, HeaderName, HeaderValue};
-
-    use super::*;
-
-    /// A made-up 36-character body whose last six characters are the checksum of the first
-    /// thirty, built with the same function the check uses.
-    fn checksummed(prefix: &str, entropy: &str) -> String {
-        assert_eq!(entropy.len(), 30);
-        let tail = stale::checksum_of(entropy.as_bytes());
-        format!("{prefix}{entropy}{}", std::str::from_utf8(&tail).unwrap())
-    }
-
-    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
-        let mut map = HeaderMap::new();
-        for (name, value) in pairs {
-            map.append(
-                HeaderName::from_bytes(name.as_bytes()).unwrap(),
-                HeaderValue::from_str(value).unwrap(),
-            );
-        }
-        map
-    }
-
-    fn kinds(pairs: &[(&str, &str)], git: bool) -> Vec<ForeignCredentialKind> {
-        kinds_in_headers(&headers(pairs), &[], git, &|_| false)
-    }
-
-    const NONE: [ForeignCredentialKind; 0] = [];
-
-    const ENTROPY: &str = "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5";
-
-    #[test]
-    fn a_github_token_with_a_valid_checksum_is_named_on_any_path() {
-        for prefix in ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"] {
-            let token = checksummed(prefix, ENTROPY);
-            for git in [false, true] {
-                assert_eq!(
-                    kinds(&[("authorization", &format!("Bearer {token}"))], git),
-                    [ForeignCredentialKind::GithubToken],
-                    "{prefix} git={git}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_github_token_with_a_wrong_checksum_is_not_named_here() {
-        let token = format!("ghp_{ENTROPY}AAAAAA");
-        assert_eq!(
-            kinds(&[("authorization", &format!("token {token}"))], false),
-            NONE
-        );
-    }
-
-    #[test]
-    fn a_fine_grained_github_token_is_read_by_its_shape() {
-        let token = format!("github_pat_{}_{}", "A1b2C3d4E5f6G7h8I9j0K1", "x".repeat(59));
-        assert_eq!(
-            kinds(&[("authorization", &format!("Bearer {token}"))], false),
-            [ForeignCredentialKind::GithubToken]
-        );
-        let short = format!("github_pat_{}_{}", "A1b2C3d4E5f6G7h8I9j0K1", "x".repeat(58));
-        assert_eq!(
-            kinds(&[("authorization", &format!("Bearer {short}"))], false),
-            NONE
-        );
-    }
-
-    #[test]
-    fn an_npm_token_with_a_valid_checksum_is_named() {
-        let token = checksummed("npm_", ENTROPY);
-        assert_eq!(
-            kinds(&[("authorization", &format!("Bearer {token}"))], false),
-            [ForeignCredentialKind::NpmToken]
-        );
-        let broken = format!("npm_{ENTROPY}000000");
-        assert_eq!(
-            kinds(&[("authorization", &format!("Bearer {broken}"))], false),
-            NONE
-        );
-    }
-
-    #[test]
-    fn a_gitlab_token_is_read_by_prefix_and_shape_including_the_private_token_header() {
-        let token = "glpat-AbCdEfGhIjKlMnOpQrSt";
-        assert_eq!(
-            kinds(&[("authorization", &format!("Bearer {token}"))], false),
-            [ForeignCredentialKind::GitlabToken]
-        );
-        assert_eq!(
-            kinds(&[("private-token", token)], false),
-            [ForeignCredentialKind::GitlabToken]
-        );
-        assert_eq!(
-            kinds(&[("authorization", "Bearer glpat-short")], false),
-            NONE
-        );
-    }
-
-    #[test]
-    fn a_newer_azure_devops_token_is_named_inside_basic_credentials() {
-        let mut token = "B".repeat(AZURE_LEN);
-        token.replace_range(AZURE_MARK_AT..AZURE_MARK_AT + 4, "AZDO");
-        let basic = format!("Basic {}", STANDARD.encode(format!(":{token}")));
-        assert_eq!(
-            kinds(&[("authorization", &basic)], false),
-            [ForeignCredentialKind::AzureDevopsToken]
-        );
-        let mut unmarked = token.clone();
-        unmarked.replace_range(AZURE_MARK_AT..AZURE_MARK_AT + 4, "ABCD");
-        let basic = format!("Basic {}", STANDARD.encode(format!(":{unmarked}")));
-        assert_eq!(kinds(&[("authorization", &basic)], false), NONE);
-    }
-
-    #[test]
-    fn a_known_token_as_the_password_of_basic_credentials_is_named() {
-        let token = checksummed("ghp_", ENTROPY);
-        let basic = format!(
-            "Basic {}",
-            STANDARD.encode(format!("x-access-token:{token}"))
-        );
-        assert_eq!(
-            kinds(&[("authorization", &basic)], true),
-            [ForeignCredentialKind::GithubToken]
-        );
-    }
-
-    #[test]
-    fn a_token_after_basic_that_is_not_base64_is_read_as_it_stands() {
-        let token = checksummed("ghp_", ENTROPY);
-        assert_eq!(
-            kinds(&[("authorization", &format!("Basic {token}"))], false),
-            [ForeignCredentialKind::GithubToken]
-        );
-    }
-
-    #[derive(Default)]
-    struct Seen(Mutex<Vec<Event>>);
-
-    impl EventSink for Seen {
-        fn emit(&self, event: Event) {
-            self.0.lock().unwrap().push(event);
-        }
-    }
-
-    fn note(
-        warning: &ForeignCredentialWarning,
-        host: &str,
-        sink: &Seen,
-        flagged: &mut Vec<String>,
-        kinds: &[ForeignCredentialKind],
-    ) {
-        warning.note(
-            &WorkspaceId::new("box").unwrap(),
-            &Host::parse_normalised(host).unwrap(),
-            sink,
-            flagged,
-            kinds,
-        );
-    }
-
-    #[test]
-    fn a_finding_is_flagged_once_and_raised_once_for_each_host_and_kind() {
-        let warning = ForeignCredentialWarning::default();
-        let sink = Seen::default();
-        let mut flagged = Vec::new();
-        let kinds = [
-            ForeignCredentialKind::GithubToken,
-            ForeignCredentialKind::NpmToken,
-        ];
-        note(&warning, "a.test", &sink, &mut flagged, &kinds);
-        note(&warning, "a.test", &sink, &mut flagged, &kinds);
-        assert_eq!(flagged, ["github_token", "npm_token"]);
-        assert_eq!(sink.0.lock().unwrap().len(), 2);
-        note(&warning, "b.test", &sink, &mut flagged, &kinds[..1]);
-        assert_eq!(flagged.len(), 2);
-        assert_eq!(sink.0.lock().unwrap().len(), 3);
-    }
-
-    #[test]
-    fn nothing_is_noted_when_the_warning_is_off_or_nothing_was_found() {
-        let sink = Seen::default();
-        let mut flagged = Vec::new();
-        let kinds = [ForeignCredentialKind::GithubToken];
-        let off = ForeignCredentialWarning::new(|| false);
-        assert!(!off.is_on());
-        note(&off, "a.test", &sink, &mut flagged, &kinds);
-        let on = ForeignCredentialWarning::default();
-        note(&on, "a.test", &sink, &mut flagged, &[]);
-        assert_eq!(flagged, Vec::<String>::new());
-        assert_eq!(sink.0.lock().unwrap().len(), 0);
-    }
-
-    #[test]
-    fn the_remembered_findings_stop_at_the_limit() {
-        let warning = ForeignCredentialWarning::default();
-        let sink = Seen::default();
-        let mut flagged = Vec::new();
-        for i in 0..=MAX_SEEN {
-            note(
-                &warning,
-                &format!("h{i}.test"),
-                &sink,
-                &mut flagged,
-                &[ForeignCredentialKind::GithubToken],
-            );
-        }
-        assert_eq!(sink.0.lock().unwrap().len(), MAX_SEEN);
-    }
-
-    #[test]
-    fn the_debug_form_names_the_type_and_nothing_else() {
-        let text = format!("{:?}", ForeignCredentialWarning::default());
-        assert!(text.contains("ForeignCredentialWarning"), "{text}");
-    }
-
-    #[test]
-    fn a_value_of_exactly_the_limit_is_read_and_one_byte_more_is_not() {
-        let token = checksummed("ghp_", ENTROPY);
-        let at_limit = format!("Bearer {token}{}", " ".repeat(MAX_VALUE - token.len() - 7));
-        assert_eq!(at_limit.len(), MAX_VALUE);
-        let named = [ForeignCredentialKind::GithubToken];
-        assert_eq!(kinds(&[("authorization", &at_limit)], false), named);
-        let over = format!("{at_limit} ");
-        assert_eq!(kinds(&[("authorization", &over)], false), NONE);
-    }
-
-    #[test]
-    fn a_checksummed_body_with_a_character_outside_base62_is_not_a_token() {
-        let token = checksummed("ghp_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o-");
-        assert_eq!(
-            kinds(&[("authorization", &format!("Bearer {token}"))], false),
-            NONE
-        );
-    }
-
-    #[test]
-    fn any_authorization_on_a_git_path_counts_and_off_a_git_path_it_stays_silent() {
-        let value = "Bearer an-opaque-value-of-no-known-kind";
-        assert_eq!(
-            kinds(&[("authorization", value)], true),
-            [ForeignCredentialKind::GitAuthorization]
-        );
-        assert_eq!(kinds(&[("authorization", value)], false), NONE);
-        // Another header never counts as an Authorization.
-        assert_eq!(kinds(&[("x-custom", value)], true), NONE);
-        // Nothing to name when the value is empty.
-        assert_eq!(kinds(&[("authorization", "")], true), NONE);
-    }
-
-    #[test]
-    fn a_stale_stand_in_is_left_to_its_own_check_and_not_counted_as_an_authorization() {
-        let stale_one = "puddle-secret-API_KEY-00112233445566778899aabbccddeeff";
-        assert_eq!(
-            kinds(&[("authorization", &format!("Bearer {stale_one}"))], true),
-            NONE
-        );
-        let wrong_sum = format!("gho_{ENTROPY}AAAAAA");
-        assert_eq!(
-            kinds(&[("authorization", &format!("token {wrong_sum}"))], true),
-            NONE
-        );
-    }
-
-    #[test]
-    fn a_header_that_holds_one_of_the_workspaces_stand_ins_is_not_looked_at() {
-        let token = checksummed("ghp_", ENTROPY);
-        let map = headers(&[("authorization", &format!("Bearer {token}"))]);
-        let held = kinds_in_headers(&map, &[], true, &|_| true);
-        assert_eq!(held, NONE);
-    }
-
-    #[test]
-    fn a_header_puddle_injected_is_not_looked_at() {
-        let token = checksummed("ghp_", ENTROPY);
-        let map = headers(&[("authorization", &format!("Bearer {token}"))]);
-        let skip = [&AUTHORIZATION];
-        assert_eq!(kinds_in_headers(&map, &skip, true, &|_| false), NONE);
-    }
-
-    #[test]
-    fn each_kind_is_named_once_and_in_header_order() {
-        let github = checksummed("ghp_", ENTROPY);
-        let npm = checksummed("npm_", ENTROPY);
-        let map = headers(&[
-            ("authorization", &format!("Bearer {github}")),
-            ("authorization", &format!("Bearer {github}")),
-            ("private-token", "glpat-AbCdEfGhIjKlMnOpQrSt"),
-            ("authorization", &format!("Bearer {npm}")),
-        ]);
-        assert_eq!(
-            kinds_in_headers(&map, &[], false, &|_| false),
-            [
-                ForeignCredentialKind::GithubToken,
-                ForeignCredentialKind::NpmToken,
-                ForeignCredentialKind::GitlabToken,
-            ]
-        );
-    }
-
-    #[test]
-    fn a_value_over_the_limit_is_not_read() {
-        let long = format!("Bearer {}", "a".repeat(MAX_VALUE));
-        assert_eq!(kinds(&[("authorization", &long)], true), NONE);
-    }
-}
+mod tests;

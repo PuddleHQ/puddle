@@ -22,7 +22,6 @@ use puddle_types::{
 use pull_support::{LOCAL, connect, echo, http_server, pull_proxy, pull_proxy_logged, send};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
 #[tokio::test]
 async fn the_listener_is_loopback_only_and_registered_while_it_serves() {
@@ -46,6 +45,36 @@ async fn the_listener_is_loopback_only_and_registered_while_it_serves() {
     let a = PullProxy::bind(&endpoints).unwrap();
     let b = PullProxy::bind(&endpoints).unwrap();
     assert_ne!(a.token().expose(), b.token().expose());
+}
+
+/// `shutdown` returns only once the listener is gone and open tunnels are reset: the caller
+/// may rebind the address or tear down what the tunnels reach straight away. The checks run
+/// with no await in between, so a shutdown that left the cancelling to the runtime fails them.
+#[tokio::test]
+async fn a_shut_down_pull_proxy_has_closed_its_listener_and_its_tunnels_on_return() {
+    let endpoints = PuddleEndpoints::new();
+    let server = echo().await;
+    let (route, good) = pull_proxy(&endpoints, Some(LOCAL));
+    let addr = route.local_addr();
+    let target = format!("registry.test:{}", server.addr.port());
+    let (head, mut tunnel) = send(addr, &connect(&target, Some(&format!("Basic {good}")))).await;
+    assert!(head.starts_with("HTTP/1.1 200 "), "{head}");
+    tunnel.write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    tunnel.read_exact(&mut back).await.unwrap();
+    assert_eq!(&back, b"ping");
+
+    route.shutdown().await;
+
+    let rebound = std::net::TcpListener::bind(addr);
+    assert!(
+        rebound.is_ok(),
+        "the address must be free again when shutdown returns: {rebound:?}"
+    );
+    let ended = tokio::time::timeout(Duration::from_secs(5), tunnel.read(&mut back))
+        .await
+        .expect("an open tunnel must be reset by shutdown, not left hanging");
+    assert!(matches!(ended, Ok(0) | Err(_)), "{ended:?}");
 }
 
 #[tokio::test]
@@ -242,9 +271,8 @@ async fn unresolvable_and_unreachable_registries_are_502() {
     .await;
     assert!(head.starts_with("HTTP/1.1 502 "), "{head}");
     // A loopback port nothing listens on.
-    let closed = TcpListener::bind((LOCAL, 0)).await.unwrap();
-    let port = closed.local_addr().unwrap().port();
-    drop(closed);
+    let closed = puddle_test_kit::ReservedPort::new();
+    let port = closed.port();
     let (head, _) = send(
         route.local_addr(),
         &connect(&format!("127.0.0.1:{port}"), Some(&auth)),
@@ -506,8 +534,11 @@ async fn shutdown_returns_only_when_the_listener_and_its_connections_are_gone() 
         matches!(open.try_read(&mut buf), Ok(0) | Err(_)),
         "the open connection is closed"
     );
-    assert!(
-        std::net::TcpStream::connect(addr).is_err(),
+    // Not "the port refuses connections": the proxy bound port 0, and another test's socket can hold
+    // that number by now. The proxy answers a request with a wrong token 407; a stranger does not.
+    assert_ne!(
+        puddle_test_kit::http_status(addr, "/", "wrong"),
+        Some(407),
         "the listener is closed"
     );
 }

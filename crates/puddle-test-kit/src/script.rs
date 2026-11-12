@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A script a test can run straight after writing it.
 
+use std::io::Write as _;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 
 /// Writes `contents` to `path` and makes it executable (mode 0755), so the caller can execute it
 /// at once without `ETXTBSY` ("Text file busy").
@@ -31,65 +32,48 @@ pub fn write_executable(path: &Path, contents: &str) {
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::thread;
+/// Like [`write_executable`] for contents that are not text (a stand-in binary): the bytes reach
+/// the file through the stdin of a short-lived `sh` child, so this process never holds a writable
+/// descriptor on it either.
+///
+/// # Panics
+/// When `sh` cannot run or fails to write the file.
+pub fn write_executable_bytes(path: &Path, contents: &[u8]) {
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(r#"cat > "$1" && chmod 755 "$1""#)
+        .arg("sh")
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("run sh to write a test program");
+    feed_stdin(&mut child, contents);
+    let status = child.wait().expect("wait for sh");
+    assert!(
+        status.success(),
+        "sh failed to write the program {}: {status}",
+        path.display()
+    );
+}
 
-    use super::*;
-
-    #[test]
-    fn the_file_holds_the_exact_text_and_is_executable() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("tool");
-        let text = "#!/bin/sh\necho 'it''s' \"$1\" %s \\n $HOME\n";
-        write_executable(&path, text);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+/// Sends `bytes` to the child's stdin and closes it.
+///
+/// A child can exit before it reads (a script that fails on its arguments first), which closes the
+/// pipe and fails the write with `BrokenPipe`. That is the child's outcome, which the caller reads
+/// from its exit status and output, so it is not an error here; any other write error panics.
+///
+/// # Panics
+/// When the child has no piped stdin, or the write fails for a reason other than a closed pipe.
+pub fn feed_stdin(child: &mut Child, bytes: &[u8]) {
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    if let Err(e) = stdin.write_all(bytes) {
         assert_eq!(
-            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o755
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "send the input to the child: {e}"
         );
-        let out = Command::new(&path).arg("x").output().unwrap();
-        assert!(out.status.success());
-    }
-
-    #[test]
-    fn a_path_with_spaces_and_a_replaced_file_work() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a b $c");
-        write_executable(&path, "#!/bin/sh\necho one\n");
-        write_executable(&path, "#!/bin/sh\necho two\n");
-        let out = Command::new(&path).output().unwrap();
-        assert_eq!(String::from_utf8(out.stdout).unwrap(), "two\n");
-    }
-
-    #[test]
-    #[should_panic(expected = "sh failed to write the script")]
-    fn a_folder_that_does_not_exist_fails_loudly() {
-        let dir = tempfile::tempdir().unwrap();
-        write_executable(&dir.path().join("missing").join("tool"), "#!/bin/sh\n");
-    }
-
-    /// The race itself: threads that write then run a script while their siblings fork constantly.
-    #[test]
-    fn running_a_script_right_after_writing_it_never_hits_text_file_busy() {
-        let threads: Vec<_> = (0..8)
-            .map(|n| {
-                thread::spawn(move || {
-                    let dir = tempfile::tempdir().unwrap();
-                    for i in 0..60 {
-                        let path = dir.path().join(format!("s{n}-{i}"));
-                        write_executable(&path, "#!/bin/sh\nexit 0\n");
-                        let status = Command::new(&path)
-                            .status()
-                            .unwrap_or_else(|e| panic!("run script {n}-{i}: {e}"));
-                        assert!(status.success());
-                    }
-                })
-            })
-            .collect();
-        for t in threads {
-            t.join().unwrap();
-        }
     }
 }
+
+#[cfg(test)]
+mod tests;

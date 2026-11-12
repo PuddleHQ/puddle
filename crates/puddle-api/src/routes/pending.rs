@@ -7,11 +7,12 @@ use std::collections::HashMap;
 
 use puddle_netpolicy::{CompanySignals, Target, classify_with_signals};
 use puddle_settings::resolve;
-use puddle_store::{Actor, PendingRow, PendingState};
+use puddle_store::{Actor, PendingRow, PendingState, ScopeChoice};
 use puddle_types::{Host, LocalCategory, PendingId, WorkspaceId};
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
+use crate::authz::{self, Action, Principal, ResourceRef};
 use crate::error::{ApiError, blocking};
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
@@ -101,10 +102,13 @@ async fn present(state: &AppState, rows: Vec<PendingRow>) -> Result<Vec<PendingR
 )]
 pub(crate) async fn list_pending(
     State(state): State<AppState>,
+    principal: Principal,
     Query(query): Query<PendingQuery>,
 ) -> Result<Json<PendingList>, ApiError> {
     let store = state.store.clone();
-    let rows = blocking(move || Ok(store.open_pending(query.workspace.as_ref())?)).await?;
+    let mut rows = blocking(move || Ok(store.open_pending(query.workspace.as_ref())?)).await?;
+    let owners = authz::owners(&state).await?;
+    rows.retain(|row| owners.of(&row.workspace) == principal.user);
     Ok(Json(PendingList {
         requests: present(&state, rows).await?,
     }))
@@ -117,11 +121,21 @@ pub(crate) async fn list_pending(
     tag = "pending",
     responses((status = OK, description = "the inbox", body = Inbox))
 )]
-pub(crate) async fn inbox(State(state): State<AppState>) -> Result<Json<Inbox>, ApiError> {
+pub(crate) async fn inbox(
+    State(state): State<AppState>,
+    principal: Principal,
+) -> Result<Json<Inbox>, ApiError> {
     let store = state.store.clone();
     let groups = blocking(move || Ok(store.inbox()?)).await?;
+    let owners = authz::owners(&state).await?;
     let mut out = Vec::with_capacity(groups.len());
-    for group in groups {
+    for mut group in groups {
+        group
+            .rows
+            .retain(|row| owners.of(&row.workspace) == principal.user);
+        if group.rows.is_empty() {
+            continue;
+        }
         out.push(InboxGroup {
             registrable_domain: group.registrable_domain,
             requests: present(&state, group.rows).await?,
@@ -170,10 +184,11 @@ pub(crate) async fn get_pending(
 )]
 pub(crate) async fn approve(
     state: State<AppState>,
+    principal: Principal,
     id: Path<i64>,
     body: crate::extract::Json<DecisionRequest>,
 ) -> Result<Json<DecisionOutcome>, ApiError> {
-    decide(state, id, body, Effect::Allow).await
+    decide(state, principal, id, body, Effect::Allow).await
 }
 
 /// Denies an open request: creates a deny rule (this workspace, exact host, permanent unless the
@@ -193,19 +208,33 @@ pub(crate) async fn approve(
 )]
 pub(crate) async fn deny(
     state: State<AppState>,
+    principal: Principal,
     id: Path<i64>,
     body: crate::extract::Json<DecisionRequest>,
 ) -> Result<Json<DecisionOutcome>, ApiError> {
-    decide(state, id, body, Effect::Deny).await
+    decide(state, principal, id, body, Effect::Deny).await
 }
 
 async fn decide(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<i64>,
     crate::extract::Json(body): crate::extract::Json<DecisionRequest>,
     effect: Effect,
 ) -> Result<Json<DecisionOutcome>, ApiError> {
     let resolution = body.into_resolution(effect)?;
+    // The request is the principal's (checked on the route). A rule beyond its workspace is a
+    // global rule or a set entry of the workspace's user, which the store makes it; changing those
+    // is an action of its own.
+    if resolution.scope != ScopeChoice::Workspace {
+        authz::check(
+            &state,
+            principal,
+            Action::ChangeGlobalRules,
+            ResourceRef::Own,
+        )
+        .await?;
+    }
     let decided = blocking(move || {
         Ok(state
             .store

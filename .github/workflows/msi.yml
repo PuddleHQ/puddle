@@ -9,8 +9,8 @@
 # green run on the commit), and by hand. The MSI of the run is kept as an artifact.
 #
 # The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI
-# this run built, per user, starts the installed app, and drives it through the REST API its screens call
-# (crates/puddle-app/e2e/usable.mjs; a release build has no DevTools port): an SSH remote is refused with the explicit message, a workspace
+# this run built, per user, starts the installed app, and drives its real window with Windows UI Automation, plus the REST API for what
+# no screen shows (crates/puddle-app/e2e/usable.mjs, uia.mjs, uia.ps1; a release build has no DevTools port): an SSH remote is refused with the explicit message, a workspace
 # is created from the lab's own Git forge (Gitea's Windows release, pinned: Forgejo ships none; its account,
 # token and certificate are made for the run, so no outside host, account or
 # secret is used and a pull request from a fork can run it), requests are approved in the inbox, the browser
@@ -38,6 +38,8 @@ on:
       - crates/puddle-app/wix/**
       - crates/puddle-app/build.rs
       - crates/puddle-app/e2e/usable.mjs
+      - crates/puddle-app/e2e/uia.mjs
+      - crates/puddle-app/e2e/uia.ps1
       - ci/fetch-forgejo.sh
       - ci/forgejo.sha256
       - crates/puddle-e2e/src/lab/forgejo.rs
@@ -88,7 +90,7 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-about@0.9.2
@@ -248,7 +250,7 @@ jobs:
           $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', "`"$log`"") -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec exited with $($p.ExitCode); see $log" }
           Get-ChildItem "$env:LOCALAPPDATA\Programs\Puddle" | Select-Object -First 20 Name
-      - name: the usable run (installed app, through its API)
+      - name: the usable run (installed app, through its window)
         if: steps.whp.outputs.ok == 'true'
         shell: bash
         timeout-minutes: 60
@@ -275,6 +277,7 @@ jobs:
             ${{ runner.temp }}/usable-out/*.png
             ${{ runner.temp }}/usable-out/*.log
             ${{ runner.temp }}/usable-out/*.out
+            ${{ runner.temp }}/usable-out/uia-tree-*.txt
             ${{ runner.temp }}/usable-out/forgejo-server.log
             ${{ runner.temp }}/usable-out/runtime-logs/**
           retention-days: 14

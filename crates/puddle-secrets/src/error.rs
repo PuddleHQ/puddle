@@ -86,14 +86,4 @@ impl SourceError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::Tool;
-
-    #[test]
-    fn a_tool_is_named_the_way_the_user_knows_it() {
-        assert_eq!(
-            (Tool::Gh.name(), Tool::Git.name(), Tool::Az.name()),
-            ("gh", "git", "az")
-        );
-    }
-}
+mod tests;

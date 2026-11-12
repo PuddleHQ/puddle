@@ -109,7 +109,8 @@ fn a_new_request_opens_a_pending_row_and_appends_to_the_audit() {
     assert_eq!(
         events[1],
         Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         }
     );
 }
@@ -177,7 +178,8 @@ fn approving_closes_the_row_and_reports_the_rule_and_every_other_row_it_decides(
     assert_eq!(
         events.last(),
         Some(&Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         })
     );
 }
@@ -323,7 +325,8 @@ fn connection_records_and_flushed_summaries_emit_one_audit_event_per_commit() {
     assert_eq!(
         sink.take(),
         [Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         }]
     );
     // Over the per-second limit: counted, nothing written, nothing emitted.
@@ -335,7 +338,8 @@ fn connection_records_and_flushed_summaries_emit_one_audit_event_per_commit() {
     assert_eq!(
         sink.take(),
         [Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         }]
     );
     assert_eq!(
@@ -363,7 +367,8 @@ fn trimming_the_audit_emits_for_its_trim_record() {
     assert_eq!(
         sink.take().last(),
         Some(&Event::AuditAppended {
-            id: newest_audit_id(&store)
+            id: newest_audit_id(&store),
+            user: 1,
         })
     );
 }
@@ -441,6 +446,7 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         unswapped_stand_ins: Vec::new(),
         scrubbed_stand_ins: Vec::new(),
         foreign_credentials: Vec::new(),
+        answer_credentials: Vec::new(),
         method: None,
         path: None,
         path_truncated: false,
@@ -603,6 +609,7 @@ fn any_filter() -> impl Strategy<Value = AuditFilter> {
     )
         .prop_map(
             |(workspace, kind, outcome, origin, host, q, from, to)| AuditFilter {
+                user: None,
                 workspace: workspace.map(sb),
                 kind,
                 outcome,
@@ -1073,6 +1080,7 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
         (
             "everything at once",
             AuditFilter {
+                user: Some(puddle_store::UserId::OWNER),
                 workspace: Some(sb("gamma")),
                 kind: Some("connection"),
                 outcome: Some(AuditOutcome::Pending),
@@ -1098,14 +1106,26 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
             plan.iter().any(|line| line.contains(step)),
             "{name}: expected `{step}` in the plan, got {plan:?}"
         );
-        let (rows, cpu) = cpu_time(|| store.audit_query(&filter, cursor, 100).unwrap());
+        // Best of three: thread CPU time still inflates on a shared 2-vCPU runner when another
+        // job bursts on the same host (CI run 42824928536: the full scans took 44 ms, then 203 ms,
+        // then 501 ms within one second, against 17 ms on a free machine). A burst that long does
+        // not cover three runs in a row, and a quadratic query is slow in all three.
+        let mut best = Duration::MAX;
+        let mut rows = Vec::new();
+        for _ in 0..3 {
+            let (got, cpu) = cpu_time(|| store.audit_query(&filter, cursor, 100).unwrap());
+            best = best.min(cpu);
+            rows = got;
+        }
+        let cpu = best;
         assert!(rows.len() <= 100);
         eprintln!("audit query {name}: {cpu:?} of CPU");
-        // The bar is on this thread's CPU time, so a loaded machine does not move it; it catches a
-        // query that went quadratic. The slowest case (a full scan) used 29 ms on Linux and 47 ms on Windows (3 ticks), the indexed ones 0.1 ms on Linux.
+        // The bar is on this thread's CPU time, so a loaded machine barely moves it; it catches a
+        // query that went quadratic (a per-row rescan costs seconds). The slowest case (a full
+        // scan) used 17 to 44 ms on Linux and 47 ms on Windows (3 ticks), the indexed ones 0.1 ms.
         assert!(
             cpu < Duration::from_millis(250),
-            "{name} used {cpu:?} of CPU"
+            "{name} used {cpu:?} of CPU (best of three)"
         );
     }
     // The filtered results are right, not just fast.
@@ -1133,6 +1153,7 @@ fn deleting_a_workspace_that_only_had_a_rule_set_switch_reports_rules_changed() 
     let (_, sink, store) = fixture(Limits::default());
     store
         .switch_rule_set(
+            puddle_store::UserId::OWNER,
             puddle_types::RuleSetId::BuiltIn("github"),
             Some(&sb("a")),
             Some(false),

@@ -11,9 +11,9 @@
 //!
 //! Needs `PUDDLE_FORGEJO_BIN` (`ci/fetch-forgejo.sh`); without it the test skips unless
 //! `PUDDLE_REQUIRE_FORGEJO` is set (`.github/workflows/lab-forgejo.yml` sets it). Forgejo has no
-//! Windows release, so this is the Linux tier's (`vm_radar_*` is left out of the per-pull-request
-//! VM jobs: ci/vm-filter.sh).
-#![cfg(unix)]
+//! Windows release, so the Windows runner runs Gitea's Windows release (`ci/fetch-forgejo.sh <dir>
+//! "" windows`) through the same fixture (`vm_radar_*` is left out of the per-pull-request VM jobs:
+//! ci/vm-filter.sh; lab-forgejo.yml runs it on both).
 
 mod support;
 mod vm_support;
@@ -127,11 +127,14 @@ async fn vm_radar_forgejo_clones_pushes_and_deletes_a_branch_and_the_guest_never
     .unwrap();
     vm.host
         .store()
-        .create_identity(IdentityDraft {
-            label: "Work".to_owned(),
-            author: Author::new("Work", "work@example.org").unwrap(),
-            credentials: vec![binding],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            IdentityDraft {
+                label: "Work".to_owned(),
+                author: Author::new("Work", "work@example.org").unwrap(),
+                credentials: vec![binding],
+            },
+        )
         .unwrap();
 
     // The workspace is created by cloning the private repository: its first request carries the

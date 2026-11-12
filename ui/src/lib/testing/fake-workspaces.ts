@@ -7,6 +7,11 @@ import type { Checkout, CheckoutListing } from "#lib/workspaces/checkouts.ts";
 
 type Layer = components["schemas"]["SettingsLayer"];
 
+/** The entry id the fake gives the list entry in `directory`: never the directory itself. */
+export function entryOf(directory: string): string {
+  return `e-${directory}`;
+}
+
 export function workspace(
   name: string,
   over: Partial<Workspace> = {},
@@ -15,9 +20,14 @@ export function workspace(
     id: "w-" + name,
     name,
     repositories: [
-      { url: `https://github.com/acme/${name}.git`, directory: name },
+      {
+        entry: entryOf(name),
+        url: `https://github.com/acme/${name}.git`,
+        directory: name,
+      },
     ],
     start_folder: null,
+    allowed_hosts: [],
     session_user: "agent",
     image: "mcr.microsoft.com/devcontainers/base:debian",
     memory_mib: 8192,
@@ -152,15 +162,21 @@ export class FakeWorkspaces {
       store_readable: boolean;
     }
   > = {};
-  /** How each workspace decrypts hosts, by id; the default (off, no names) when unset. */
+  /** How each workspace decrypts hosts, by id; the default (inherit, no names) when unset. */
   interception: Record<
     string,
-    { decrypt_all: boolean; never_decrypt: string[] }
+    {
+      mode: components["schemas"]["WorkspaceMode"];
+      never_decrypt: string[];
+    }
   > = {};
+  /** The global interception mode the workspaces that inherit follow. */
+  globalInterceptionMode: components["schemas"]["InterceptionMode"] =
+    "known_only";
   /** The names no workspace decrypts. */
   globalNeverDecrypt: string[] = [];
   /** The hosts each workspace's tools refused Puddle's certificate for, by workspace id. */
-  learned: Record<string, { host: string; expires_in_secs: number }[]> = {};
+  learned: Record<string, components["schemas"]["LearnedHost"][]> = {};
   /** The background problems the host lists. */
   problems: {
     key: string;
@@ -349,6 +365,13 @@ export class FakeWorkspaces {
       const asked = (body["repositories"] ?? []) as { url: string }[];
       const created = workspace(name, {
         repositories: asked.map((r) => ({
+          entry: entryOf(
+            r.url
+              .replace(/\/+$/, "")
+              .split("/")
+              .pop()!
+              .replace(/\.git$/, ""),
+          ),
           url: r.url,
           directory: r.url
             .replace(/\/+$/, "")
@@ -366,6 +389,26 @@ export class FakeWorkspaces {
     const id = init.params?.path?.["id"];
     const found = this.find(id);
     if (!found) return this.reply(404, undefined, "no such workspace");
+    if (path === "/api/workspaces/{id}/interception/learned/{host}/permanent") {
+      const host = String(init.params?.path?.["host"]);
+      const had = this.learned[found.id] ?? [];
+      if (!had.some((l) => l.host === host))
+        return this.reply(404, undefined, "not on the learned list");
+      if (init.body?.["scope"] === "global") {
+        this.globalNeverDecrypt = [...this.globalNeverDecrypt, host].sort();
+      } else {
+        const own = this.interception[found.id] ?? {
+          mode: "inherit" as const,
+          never_decrypt: [],
+        };
+        this.interception[found.id] = {
+          ...own,
+          never_decrypt: [...own.never_decrypt, host].sort(),
+        };
+      }
+      this.learned[found.id] = had.filter((l) => l.host !== host);
+      return { data: undefined, response: { status: 204, ok: true } };
+    }
     if (path === "/api/workspaces/{id}/repositories") {
       const body = init.body ?? {};
       const url = String(body["url"]);
@@ -380,14 +423,35 @@ export class FakeWorkspaces {
       const cloning = body["kind"] === "clone";
       const next: Workspace = {
         ...found,
-        repositories: [...found.repositories, { url, directory }],
+        repositories: [
+          ...found.repositories,
+          { entry: entryOf(directory), url, directory },
+        ],
         ...(cloning ? { busy: "cloning" as const } : {}),
       };
       this.list = this.list.map((w) => (w.id === found.id ? next : w));
       return this.reply(cloning ? 202 : 200, next);
     }
-    if (path === "/api/workspaces/{id}/repositories/{directory}/clone") {
+    if (path === "/api/workspaces/{id}/repositories/{entry}/clone") {
       const next: Workspace = { ...found, busy: "cloning" };
+      this.list = this.list.map((w) => (w.id === found.id ? next : w));
+      return this.reply(202, next);
+    }
+    if (path === "/api/workspaces/{id}/grow-root-disk") {
+      const size = Number(init.body?.["size_mib"]);
+      const current = found.root_disk_size_mib ?? 0;
+      if (size <= current)
+        return this.reply(
+          400,
+          undefined,
+          `a root disk only grows: ${size} MiB is not above its ${current} MiB`,
+        );
+      const next: Workspace = {
+        ...found,
+        busy: "growing_root_disk",
+        root_disk_size_mib: size,
+        disk_warnings: found.disk_warnings.filter((k) => k !== "root"),
+      };
       this.list = this.list.map((w) => (w.id === found.id ? next : w));
       return this.reply(202, next);
     }
@@ -449,13 +513,22 @@ export class FakeWorkspaces {
     if (path === "/api/workspaces/{id}/interception/learned/{host}") {
       const gone = (init.params.path as { host?: string }).host;
       const had = this.learned[found.id] ?? [];
-      this.learned[found.id] = had.filter((l) => l.host !== gone);
-      return had.some((l) => l.host === gone)
+      const live = had.some((l) => l.host === gone && l.passed_through);
+      this.learned[found.id] = had.map((l) =>
+        l.host === gone
+          ? { ...l, passed_through: false, expires_in_secs: null }
+          : l,
+      );
+      return live
         ? { data: undefined, response: { status: 204, ok: true } }
-        : this.reply(404, undefined, "not on the list");
+        : this.reply(404, undefined, "not passed through");
     }
     if (path === "/api/workspaces/{id}/interception/learned") {
-      this.learned[found.id] = [];
+      this.learned[found.id] = (this.learned[found.id] ?? []).map((l) => ({
+        ...l,
+        passed_through: false,
+        expires_in_secs: null,
+      }));
       return { data: undefined, response: { status: 204, ok: true } };
     }
     if (path === "/api/workspaces/{id}/logins/{service}") {
@@ -469,11 +542,11 @@ export class FakeWorkspaces {
       }
       return { data: undefined, response: { status: 204, ok: true } };
     }
-    if (path === "/api/workspaces/{id}/repositories/{directory}") {
-      const gone = (init.params.path as { directory?: string }).directory;
+    if (path === "/api/workspaces/{id}/repositories/{entry}") {
+      const gone = (init.params.path as { entry?: string }).entry;
       const next: Workspace = {
         ...found,
-        repositories: found.repositories.filter((r) => r.directory !== gone),
+        repositories: found.repositories.filter((r) => r.entry !== gone),
       };
       this.list = this.list.map((w) => (w.id === found.id ? next : w));
       return this.reply(200, next);
@@ -485,12 +558,14 @@ export class FakeWorkspaces {
 
   private interceptionView(w: Workspace) {
     const own = this.interception[w.id] ?? {
-      decrypt_all: false,
+      mode: "inherit" as const,
       never_decrypt: [],
     };
     return {
       workspace: w.id,
-      decrypt_all: own.decrypt_all,
+      mode: own.mode,
+      effective_mode:
+        own.mode === "inherit" ? this.globalInterceptionMode : own.mode,
       never_decrypt: own.never_decrypt,
       global_never_decrypt: this.globalNeverDecrypt,
     };
@@ -516,13 +591,16 @@ export class FakeWorkspaces {
     if (path === "/api/workspaces/{id}/interception") {
       const asked = init as unknown as {
         params: { path: { id: string } };
-        body: { decrypt_all?: boolean; never_decrypt?: string[] };
+        body: {
+          mode?: components["schemas"]["WorkspaceMode"];
+          never_decrypt?: string[];
+        };
       };
       const found = this.find(asked.params.path.id);
       if (!found) return this.reply(404, undefined, "no such workspace");
       const before = this.interceptionView(found);
       this.interception[found.id] = {
-        decrypt_all: asked.body.decrypt_all ?? before.decrypt_all,
+        mode: asked.body.mode ?? before.mode,
         never_decrypt: asked.body.never_decrypt
           ? [...asked.body.never_decrypt].sort()
           : before.never_decrypt,

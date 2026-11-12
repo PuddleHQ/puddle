@@ -16,6 +16,7 @@ use puddle_secrets::{
     SignIns, SourceError, SourceSpec, Sources, StoredId, TokenScope, ToolPaths, discover,
     pasted_token,
 };
+use puddle_store::UserId;
 
 /// Why a call could not be answered.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -50,10 +51,11 @@ pub trait CredentialService: Send + Sync {
     /// Reads the credential once and says whether that worked. Never interactive.
     fn check(&self, source: SourceSpec) -> BoxFuture<'_, Result<Check, CredentialsError>>;
 
-    /// Keeps a pasted token in the OS credential store and returns the source that names it. The
-    /// token is wiped when the call is done with it.
+    /// Keeps a pasted token of `user` in the OS credential store, under a name that says whose it
+    /// is, and returns the source that names it. The token is wiped when the call is done with it.
     fn store_token(
         &self,
+        user: UserId,
         scope: TokenScope,
         token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>>;
@@ -87,6 +89,7 @@ impl CredentialService for NoCredentials {
     }
     fn store_token(
         &self,
+        _user: UserId,
         _scope: TokenScope,
         _token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>> {
@@ -140,16 +143,6 @@ fn sign_in_error(err: SignInError) -> CredentialsError {
         // `SignInError` grows with the Azure CLI.
         _ => CredentialsError::Unavailable(said),
     }
-}
-
-/// A fresh id for a pasted token: `tok-` and 128 random bits.
-fn new_stored_id() -> Result<StoredId, CredentialsError> {
-    let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes).map_err(|err| CredentialsError::Internal(err.to_string()))?;
-    let id = bytes
-        .iter()
-        .fold(String::from("tok-"), |id, byte| format!("{id}{byte:02x}"));
-    StoredId::new(id).map_err(|err| CredentialsError::Internal(err.to_string()))
 }
 
 /// The real thing, over `puddle-secrets`. Cheap to share.
@@ -219,6 +212,7 @@ impl CredentialService for HostCredentials {
 
     fn store_token(
         &self,
+        user: UserId,
         scope: TokenScope,
         token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>> {
@@ -230,7 +224,8 @@ impl CredentialService for HostCredentials {
                 )
             })?;
             drop(token);
-            let id = new_stored_id()?;
+            // `tok-` and 128 random bits, with the user's mark.
+            let id = crate::stored_ids::fresh(user, "tok").map_err(CredentialsError::Internal)?;
             let (store, key) = (Arc::clone(&self.store), id.clone());
             tokio::task::spawn_blocking(move || store.set(&key, &secret))
                 .await
@@ -380,6 +375,7 @@ impl CredentialService for FakeCredentials {
 
     fn store_token(
         &self,
+        user: UserId,
         scope: TokenScope,
         token: Secret,
     ) -> BoxFuture<'_, Result<SourceSpec, CredentialsError>> {
@@ -388,7 +384,7 @@ impl CredentialService for FakeCredentials {
                 .map_err(|_| CredentialsError::Invalid("that is not a usable token".into()))?;
             let mut state = self.state();
             state.next_token += 1;
-            let id = format!("tok-fake-{}", state.next_token);
+            let id = crate::stored_ids::name(user, &format!("tok-fake-{}", state.next_token));
             state.tokens.insert(id.clone(), token.expose().to_owned());
             let id =
                 StoredId::new(id).map_err(|err| CredentialsError::Internal(err.to_string()))?;
@@ -421,102 +417,4 @@ impl CredentialService for FakeCredentials {
 }
 
 #[cfg(test)]
-mod tests {
-    use puddle_secrets::Tool;
-
-    use super::*;
-    use crate::error::ApiError;
-
-    #[test]
-    fn a_sign_in_that_could_not_start_says_what_happened_and_what_to_try() {
-        let said = |err| sign_in_error(err).to_string();
-        assert_eq!(
-            said(SignInError::NoPrompt(
-                Tool::Gh,
-                "x509: unknown authority".into()
-            )),
-            "gh did not show a sign-in code: x509: unknown authority; try again, or sign in from a terminal"
-        );
-        assert_eq!(
-            said(SignInError::Ended(Tool::Git, String::new())),
-            "git ended without signing in; Git Credential Manager is what signs in here, so check that Git can run it"
-        );
-        assert_eq!(
-            said(SignInError::Source(SourceError::ToolMissing(Tool::Gh))),
-            "gh is not installed or not on PATH"
-        );
-        assert!(said(SignInError::NothingToSignIn).starts_with("a pasted token has nothing"));
-    }
-
-    #[tokio::test]
-    async fn the_fake_keeps_a_pasted_value_under_its_id_until_forgotten() {
-        let fake = FakeCredentials::new();
-        fake.store_token(
-            TokenScope {
-                host: puddle_secrets::HostName::new("github.com").unwrap(),
-                org: None,
-            },
-            Secret::new("ghp_0123456789abcdef".into()),
-        )
-        .await
-        .unwrap();
-        let [kept] = fake.tokens().try_into().unwrap();
-        let id = StoredId::new(kept).unwrap();
-        assert_eq!(fake.tokens(), [id.as_str()]);
-        assert_eq!(
-            fake.token_value(id.as_str()).as_deref(),
-            Some("ghp_0123456789abcdef")
-        );
-        fake.forget_token(id.clone()).await.unwrap();
-        assert_eq!(fake.token_value(id.as_str()), None);
-        fake.forget_all_tokens();
-        assert_eq!(fake.tokens(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_build_without_a_credential_store_keeps_nothing_and_says_so_at_every_call() {
-        let id = StoredId::new("env-1").unwrap();
-        let none = NoSecretStore;
-        assert!(none.get(&id).is_err());
-        assert!(none.set(&id, &Secret::new("v".into())).is_err());
-        assert!(none.delete(&id).is_err());
-    }
-
-    #[test]
-    fn every_refusal_has_its_status_and_the_services_describe_themselves_without_a_value() {
-        use axum::http::StatusCode;
-        for (err, status) in [
-            (
-                CredentialsError::Unavailable("x".into()),
-                StatusCode::SERVICE_UNAVAILABLE,
-            ),
-            (
-                CredentialsError::Invalid("x".into()),
-                StatusCode::UNPROCESSABLE_ENTITY,
-            ),
-            (
-                CredentialsError::Internal("x".into()),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            ),
-        ] {
-            assert_eq!(ApiError::from(err).status(), status);
-        }
-        let real = HostCredentials::new(
-            ToolPaths::new(None, None),
-            Arc::new(puddle_secrets::MemoryStore::new()),
-        )
-        .with_sign_ins(SignIns::new(ToolPaths::new(None, None)));
-        assert_eq!(format!("{real:?}"), "HostCredentials { .. }");
-        let nothing = NoCredentials;
-        let gh = SourceSpec::Gh {
-            host: puddle_secrets::HostName::new("github.com").unwrap(),
-            account: puddle_secrets::AccountName::new("me").unwrap(),
-        };
-        assert_eq!(nothing.last_read(&gh), None);
-        assert_eq!(real.last_read(&gh), None);
-        assert_eq!(
-            format!("{:?}", FakeCredentials::new()),
-            "FakeCredentials { .. }"
-        );
-    }
-}
+mod tests;

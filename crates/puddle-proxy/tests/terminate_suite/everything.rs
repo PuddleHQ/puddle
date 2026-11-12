@@ -500,9 +500,11 @@ async fn a_client_that_asks_for_another_name_is_passed_through_not_refused() {
     );
 }
 
-/// An address nothing listens on.
-fn closed_port() -> std::io::Result<std::net::SocketAddr> {
-    std::net::TcpListener::bind(("127.0.0.1", 0))?.local_addr()
+/// An address nothing listens on, and the hold that keeps another test from taking its port.
+fn closed_port() -> (puddle_test_kit::ReservedPort, std::net::SocketAddr) {
+    let held = puddle_test_kit::ReservedPort::new();
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], held.port()));
+    (held, addr)
 }
 
 #[tokio::test]
@@ -533,8 +535,9 @@ async fn a_record_that_looks_like_a_hello_but_is_not_one_is_passed_through() {
 #[tokio::test]
 async fn a_pass_through_to_a_server_that_cannot_be_reached_just_ends_the_connection() {
     let pki = Pki::new();
+    let (_held, dead) = closed_port();
     let rig = RigBuilder::new(&pki)
-        .name("dead.test", closed_port().unwrap())
+        .name("dead.test", dead)
         .allow(vec!["bound.test", "dead.test"])
         .injector(adds_nothing())
         .decrypting_all(true, &[])
@@ -557,8 +560,9 @@ async fn a_pass_through_to_a_server_that_cannot_be_reached_just_ends_the_connect
 #[tokio::test]
 async fn a_decrypted_host_that_cannot_be_reached_gets_an_error_the_tool_can_read() {
     let pki = Pki::new();
+    let (_held, dead) = closed_port();
     let rig = RigBuilder::new(&pki)
-        .name("dead.test", closed_port().unwrap())
+        .name("dead.test", dead)
         .allow(vec!["bound.test", "dead.test"])
         .injector(adds_nothing())
         .decrypting_all(true, &[])

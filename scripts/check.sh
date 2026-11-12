@@ -102,6 +102,16 @@ coverage_scrub() {
     find "$1/llvm-cov-target/debug" -maxdepth 2 -type f -perm -u+x ! -name '*.so' ! -name '*.d' -delete 2>/dev/null || true
     find "$1/llvm-cov-target" -maxdepth 1 -name '*.profraw' -type f -delete 2>/dev/null || true
 }
+# Unlinks the read-only files of the instrumented directory (`<target>/llvm-cov-target`) before plain cargo builds in it.
+# mbx restores a cached output as a read-only hard link to its store object, and rustc stops with `output file ... is not
+# writable` when it must rebuild one of them. Unlinking drops only this directory's name for the file: the store object
+# and the other checkouts' links keep their mode and content (never chmod it: rustc would then write into the shared
+# object). Cargo rebuilds what is missing. A directory only plain cargo has built holds none, so this finds nothing.
+coverage_unlock() {
+    [ -d "$1/llvm-cov-target" ] || return 0
+    locked=$(find "$1/llvm-cov-target" -type f ! -perm -u+w -print -delete 2>/dev/null | grep -c . || true)
+    [ "${locked:-0}" = 0 ] || echo "coverage: unlinked $locked read-only file(s) in $1/llvm-cov-target (mbx cache links); cargo rebuilds them" >&2
+}
 # Runs the diff-coverage script for one language: $1 label, $2 lcov file, $3 extensions, then
 # extra arguments. Needs a base; without one it fails.
 diff_coverage() {
@@ -182,7 +192,7 @@ run_gate() {
     hooks)
         scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/gate-sched-test.sh &&
             scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
-            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
+            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-tauri-cli-test.sh && ci/check-runtime-layout-test.sh &&
             ci/scope-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
             ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh
         ;;
@@ -191,10 +201,10 @@ run_gate() {
         GIT_ENV_CARGO="$cargo" GIT_ENV_EXCLUDE="$skip_app" scripts/git-env-test.sh
         ;;
     platform-literals)
-        # The per-OS runtime file names live in puddle-runtime's table (platform.rs) and nowhere
-        # else in the Rust code: a string literal naming msb or its firmware is a hard-coded OS.
+        # The per-OS runtime file names live in puddle-runtime's table (platform.rs, whose unit tests are
+        # platform/tests.rs and assert the table) and nowhere else in the Rust code: a string literal naming msb or its firmware is a hard-coded OS.
         # Versioned names (libkrunfw.so.5.6.1) are msb-release facts, not table entries.
-        hits=$(git grep -nE '"(msb\.exe|libkrunfw\.(dll|so(\.5)?|dylib|5\.dylib))"' -- 'crates/*.rs' ':!crates/puddle-runtime/src/platform.rs' || true)
+        hits=$(git grep -nE '"(msb\.exe|libkrunfw\.(dll|so(\.5)?|dylib|5\.dylib))"' -- 'crates/*.rs' ':!crates/puddle-runtime/src/platform.rs' ':!crates/puddle-runtime/src/platform/tests.rs' || true)
         if [ -n "$hits" ]; then
             echo "$hits" >&2
             echo "platform-literals: use puddle_runtime::HostOs::runtime_files() instead of these literals" >&2
@@ -357,6 +367,7 @@ run_gate() {
         # coverage-baseline workflow raises the baseline in its own pull request).
         ui_install
         target=${CARGO_TARGET_DIR:-target}
+        coverage_unlock "$target"
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
@@ -432,6 +443,7 @@ run_gate() {
         target=${CARGO_TARGET_DIR:-target}
         lcov=$target/diff-coverage-fast.lcov
         echo "diff-coverage-fast: tests with coverage for:$packages"
+        coverage_unlock "$target"
         coverage_scrub "$target"
         trap 'coverage_scrub "$target"; check_tmp_cleanup' EXIT
         # The build selects the whole workspace like the `coverage` gate (a `-p` selection resolves other features

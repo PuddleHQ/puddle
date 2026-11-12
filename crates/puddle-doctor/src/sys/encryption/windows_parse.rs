@@ -13,21 +13,35 @@ pub(super) fn drive_letter(path: &str) -> Option<char> {
     (chars.next() == Some(':')).then(|| letter.to_ascii_uppercase())
 }
 
-/// What the shell's `System.Volume.BitLockerProtection` value (`x` when it read nothing) means:
-/// 1, 3 and 5 are protection on, off and 4 and 2 and 0 are off; anything else is not told.
+/// What the shell's `System.Volume.BitLockerProtection` value (`x` when it read nothing) means,
+/// as measured on a Windows Server 2025 runner: 1 protection on (also while encrypting), 2 off
+/// (never encrypted, or decrypting), 3 and 4 a paused encryption or decryption, 5 suspended
+/// protection, 6 locked, and 0 for every drive when the caller is not elevated (a standard user
+/// and an administrator without elevation both get it, encrypted drive or not).
 fn bitlocker(value: &str) -> Protection {
     match value {
-        "1" | "3" | "5" => Protection::Encrypted {
+        "1" | "6" => Protection::Encrypted {
             by: "BitLocker".into(),
         },
-        "0" | "2" | "4" => Protection::NotEncrypted,
-        "x" => Protection::Unknown {
-            why: "Windows gave no BitLocker state for the drive".into(),
-        },
+        "2" => Protection::NotEncrypted,
+        "0" => unknown(
+            "Windows gives the BitLocker state only to an elevated (administrator) process, \
+             and answered 0 for the drive",
+        ),
+        "3" | "4" => unknown("BitLocker encryption or decryption of the drive is paused"),
+        "5" => unknown(
+            "BitLocker protection is suspended: the drive is encrypted but its key is stored in \
+             the clear until protection is resumed",
+        ),
+        "x" => unknown("Windows gave no BitLocker state for the drive"),
         other => Protection::Unknown {
             why: format!("Windows gave BitLocker state {other}, which this check does not know"),
         },
     }
+}
+
+fn unknown(why: &str) -> Protection {
+    Protection::Unknown { why: why.into() }
 }
 
 /// The parsed line: `puddle-encryption data=<v> pagefile-encrypted=<0|1> pagefiles=<D>:<v>,...`.
@@ -76,59 +90,4 @@ pub(super) fn parse(line: &str) -> Option<Answer> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn drive_letters() {
-        assert_eq!(drive_letter(r"c:\Users\dev"), Some('C'));
-        assert_eq!(drive_letter(r"\\?\D:\data"), Some('D'));
-        assert_eq!(drive_letter(r"\\server\share"), None);
-        assert_eq!(drive_letter("relative"), None);
-        assert_eq!(drive_letter(""), None);
-    }
-
-    #[test]
-    fn a_protected_drive_with_its_page_file_on_it() {
-        let a =
-            parse("puddle-encryption extra=1 data=1 pagefile-encrypted=0 pagefiles=C:1").unwrap();
-        assert_eq!(
-            a.data,
-            Protection::Encrypted {
-                by: "BitLocker".into()
-            }
-        );
-        let areas = a.swap.areas();
-        assert_eq!(areas[0].name, r"C:\pagefile.sys");
-        assert!(matches!(areas[0].protection, Protection::Encrypted { .. }));
-    }
-
-    #[test]
-    fn an_encrypted_page_file_setting_covers_an_unprotected_drive() {
-        let a = parse("puddle-encryption data=2 pagefile-encrypted=1 pagefiles=D:2").unwrap();
-        assert_eq!(a.data, Protection::NotEncrypted);
-        let areas = a.swap.areas();
-        assert!(
-            matches!(&areas[0].protection, Protection::Encrypted { by } if by.contains("page file"))
-        );
-    }
-
-    #[test]
-    fn no_page_file_and_odd_values() {
-        let a = parse("puddle-encryption data=x pagefile-encrypted=0 pagefiles=").unwrap();
-        assert!(matches!(a.data, Protection::Unknown { .. }));
-        assert_eq!(a.swap, SwapFacts::None);
-        let b = parse("puddle-encryption data=9 pagefile-encrypted=0 pagefiles=C:0,D:x").unwrap();
-        assert!(matches!(b.data, Protection::Unknown { .. }));
-        let areas = b.swap.areas();
-        assert_eq!(areas[0].protection, Protection::NotEncrypted);
-        assert!(matches!(areas[1].protection, Protection::Unknown { .. }));
-    }
-
-    #[test]
-    fn other_output_is_not_an_answer() {
-        assert!(parse("").is_none());
-        assert!(parse("Cannot be loaded because running scripts is disabled").is_none());
-        assert!(parse("puddle-encryption pagefile-encrypted=0 pagefiles=").is_none());
-    }
-}
+mod tests;

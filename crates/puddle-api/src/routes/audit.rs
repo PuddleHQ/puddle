@@ -8,6 +8,7 @@ use puddle_types::WorkspaceId;
 use serde::Deserialize;
 
 use crate::ApiErrorBody;
+use crate::authz::Principal;
 use crate::error::{ApiError, blocking};
 use crate::extract::Query;
 use crate::routes::AppState;
@@ -89,6 +90,7 @@ impl AuditQuery {
             return Err(ApiError::invalid("from must be before to"));
         }
         let filter = AuditFilter {
+            user: None,
             workspace,
             kind: self.kind.map(AuditType::tag),
             outcome: self.outcome.map(Into::into),
@@ -130,10 +132,12 @@ impl AuditQuery {
 )]
 pub(crate) async fn audit(
     State(state): State<AppState>,
+    principal: Principal,
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<AuditPage>, ApiError> {
     let after = query.after;
-    let (filter, cursor, limit) = query.parse()?;
+    let (mut filter, cursor, limit) = query.parse()?;
+    filter.user = Some(principal.user);
     let (lines, mut names) = blocking(move || {
         let lines = state.store.audit_query(&filter, cursor, limit)?;
         let ids: Vec<i64> = lines.iter().map(|(id, _)| *id).collect();

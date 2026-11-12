@@ -2,14 +2,19 @@
 //! The event hub: Puddle's components emit [`Event`]s into it ([`EventSink`]), and every SSE
 //! subscriber gets a copy.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
+use std::sync::Arc;
 
 use axum::response::sse;
 use futures_util::{Stream, StreamExt};
+use puddle_store::{Role, Store, UserId};
 use puddle_types::{Event, EventSink, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 use utoipa::ToSchema;
+
+use crate::authz::Principal;
 
 /// Events buffered per subscriber before the slowest one starts missing some.
 pub const DEFAULT_EVENT_BUFFER: usize = 1024;
@@ -78,6 +83,59 @@ fn wanted_for(workspace: Option<&WorkspaceId>, filter: Option<&WorkspaceId>) -> 
     }
 }
 
+/// Who one stream is for: the events of the principal's own workspaces, their own audit records,
+/// the signals that carry nothing (rules, identities, the global environment or problems
+/// changed), and the install's other events (the network, sign-ins) for the owner only.
+pub(crate) struct Audience {
+    user: UserId,
+    role: Role,
+    store: Arc<Store>,
+    /// Each workspace's user as first looked up; it never changes.
+    known: HashMap<WorkspaceId, UserId>,
+}
+
+impl Audience {
+    pub(crate) fn new(principal: Principal, store: Arc<Store>) -> Self {
+        Self {
+            user: principal.user,
+            role: principal.role,
+            store,
+            known: HashMap::new(),
+        }
+    }
+
+    /// Whether the stream may carry `event`. A user that can't be looked up gets nothing.
+    async fn sees(&mut self, event: &Event) -> bool {
+        if let Event::AuditAppended { user, .. } = event {
+            return *user == self.user.get();
+        }
+        let Some(workspace) = event.workspace() else {
+            // Signals that carry nothing go to everyone, who refetch what they may see.
+            return self.role == Role::Owner
+                || matches!(
+                    event,
+                    Event::RulesChanged {}
+                        | Event::RequestRulesChanged {}
+                        | Event::ProblemsChanged {}
+                        | Event::IdentitiesChanged {}
+                        | Event::GlobalEnvChanged {}
+                        | Event::RepoListsChanged {}
+                );
+        };
+        let user = if let Some(user) = self.known.get(workspace) {
+            *user
+        } else {
+            let store = self.store.clone();
+            let id = workspace.clone();
+            match crate::error::blocking(move || Ok(store.workspace_owner(&id)?)).await {
+                Ok(user) => *self.known.entry(workspace.clone()).or_insert(user),
+                Err(_) => return false,
+            }
+        };
+        user == self.user
+    }
+}
+
 fn to_sse(event: &Event) -> sse::Event {
     sse::Event::default()
         .json_data(event)
@@ -101,20 +159,21 @@ fn lagged(missed: u64) -> sse::Event {
 /// The SSE stream for one subscriber. It ends when the hub is dropped or the server shuts down.
 pub(crate) fn stream(
     rx: broadcast::Receiver<Event>,
+    audience: Audience,
     filter: Option<WorkspaceId>,
     mut shutdown: watch::Receiver<bool>,
 ) -> impl Stream<Item = Result<sse::Event, Infallible>> {
-    let events = futures_util::stream::unfold(rx, move |mut rx| {
+    let events = futures_util::stream::unfold((rx, audience), move |(mut rx, mut audience)| {
         let filter = filter.clone();
         async move {
             loop {
                 match rx.recv().await {
-                    Ok(event) if wanted(&event, filter.as_ref()) => {
-                        return Some((Ok(to_sse(&event)), rx));
+                    Ok(event) if wanted(&event, filter.as_ref()) && audience.sees(&event).await => {
+                        return Some((Ok(to_sse(&event)), (rx, audience)));
                     }
                     Ok(_) => {}
                     Err(broadcast::error::RecvError::Lagged(missed)) => {
-                        return Some((Ok(lagged(missed)), rx));
+                        return Some((Ok(lagged(missed)), (rx, audience)));
                     }
                     Err(broadcast::error::RecvError::Closed) => return None,
                 }
@@ -128,73 +187,4 @@ pub(crate) fn stream(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use puddle_types::WorkspaceStatus;
-
-    use super::*;
-
-    fn name(s: &str) -> WorkspaceId {
-        WorkspaceId::new(s).unwrap()
-    }
-
-    fn oom(s: &str) -> Event {
-        Event::oom_kill(name(s), 1, "x")
-    }
-
-    #[test]
-    fn filter_keeps_its_workspace_and_global_events() {
-        let a = name("a");
-        assert!(wanted(&oom("a"), Some(&a)));
-        assert!(!wanted(&oom("b"), Some(&a)));
-        assert!(wanted(&oom("b"), None));
-        // Global events (`Event::workspace()` is `None`) reach filtered subscribers too. No real
-        // global variant exists yet, so the rule is checked on the workspace alone.
-        assert!(wanted_for(None, Some(&a)));
-        assert!(wanted_for(None, None));
-    }
-
-    #[test]
-    fn emitting_without_subscribers_is_fine() {
-        let hub = EventHub::new(0);
-        hub.emit(oom("a"));
-        assert_eq!(hub.subscribers(), 0);
-        let _rx = hub.subscribe();
-        assert_eq!(hub.subscribers(), 1);
-    }
-
-    #[tokio::test]
-    async fn stream_filters_reports_lag_and_ends_on_shutdown() {
-        let hub = EventHub::new(2);
-        let (stop, shutdown) = watch::channel(false);
-        let mut s = Box::pin(stream(hub.subscribe(), Some(name("a")), shutdown));
-        hub.emit(oom("b"));
-        hub.emit(Event::StatusChanged {
-            workspace: name("a"),
-            status: WorkspaceStatus::Running,
-        });
-        assert!(s.next().await.is_some(), "the status event for a");
-        for _ in 0..5 {
-            hub.emit(oom("a"));
-        }
-        // Five events into a buffer of two: the subscriber learns it missed three.
-        let next = s.next().await.unwrap().unwrap();
-        assert!(format!("{next:?}").contains("lagged"), "{next:?}");
-        stop.send(true).unwrap();
-        let end = tokio::time::timeout(Duration::from_secs(5), async {
-            while s.next().await.is_some() {}
-        })
-        .await;
-        assert!(end.is_ok(), "stream ended on shutdown");
-    }
-
-    #[tokio::test]
-    async fn stream_ends_when_the_hub_goes() {
-        let hub = EventHub::default();
-        let (_stop, shutdown) = watch::channel(false);
-        let mut s = Box::pin(stream(hub.subscribe(), None, shutdown));
-        drop(hub);
-        assert!(s.next().await.is_none());
-    }
-}
+mod tests;

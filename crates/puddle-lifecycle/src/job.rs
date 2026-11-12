@@ -47,11 +47,4 @@ pub(crate) fn release_kill_on_close() -> Result<(), LifecycleError> {
 }
 
 #[cfg(all(test, not(windows)))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn outside_windows_there_is_no_job() {
-        assert_eq!(contain_this_process().unwrap(), Containment::NotNeeded);
-    }
-}
+mod tests;

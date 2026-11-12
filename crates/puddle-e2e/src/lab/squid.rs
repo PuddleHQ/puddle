@@ -7,6 +7,7 @@
 //! Squid a failure (CI sets it).
 
 use std::fs;
+use std::io::{Read as _, Write as _};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     BASIC_USER, LOCAL, Prefix, READY, StartCost, basic_password, configured_or_skip, free_port,
-    on_free_port, read, require_file, stop, try_ready,
+    is_address_in_use, on_free_port, read, require_file, stop, try_answers,
 };
 
 /// How long [`Squid::access_log_with`] waits for its line (a loaded machine needs seconds).
@@ -123,14 +124,12 @@ fn remove_shared_memory(name: &str) {
 fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
     let helper = dir.join("basic-helper.sh");
     let password = basic_password();
-    fs::write(
+    puddle_test_kit::write_executable(
         &helper,
-        format!(
+        &format!(
             "#!/bin/sh\nwhile read -r user pass; do\n  if [ \"$user\" = \"{BASIC_USER}\" ] && [ \"$pass\" = \"{password}\" ]; then echo OK; else echo ERR; fi\ndone\n"
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     fs::write(
         dir.join("hosts"),
         format!("127.0.0.1 {}\n", options.names.join(" ")),
@@ -176,7 +175,8 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
              {parent}\
              cache deny all\n\
              buffered_logs off\n\
-             access_log daemon:{access_log}\n\
+             acl readiness_probe urlpath_regex ^/{PROBE_PATH}$\n\
+             access_log daemon:{access_log} squid !readiness_probe\n\
              cache_log stdio:{cache}\n\
              pid_filename {pid}\n\
              coredump_dir {core}\n\
@@ -189,6 +189,34 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
         ),
     )
     .unwrap();
+}
+
+/// The path of the request that [`squid_answers`] sends; Squid does not log it.
+const PROBE_PATH: &str = "puddle-lab-ready";
+
+/// Whether Squid itself answers on `port`. A port that merely accepts proves nothing: a stranger
+/// holding the port Squid failed to bind accepts too, and when it lets go the next connect is
+/// refused. The probe asks for a URL on a port no lab Squid allows, so Squid denies it at once
+/// without reaching out, and only Squid's error page carries its `Server: squid` or
+/// `X-Squid-Error` header.
+fn squid_answers(port: u16) -> bool {
+    let probe = || -> std::io::Result<String> {
+        let addr = std::net::SocketAddr::from((LOCAL, port));
+        let mut conn = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1))?;
+        let timeout = Some(Duration::from_secs(2));
+        conn.set_read_timeout(timeout)?;
+        conn.set_write_timeout(timeout)?;
+        conn.write_all(format!("GET http://{LOCAL}:1/{PROBE_PATH} HTTP/1.0\r\n\r\n").as_bytes())?;
+        // HTTP/1.0: Squid closes after its answer. A stranger that stays silent ends on the
+        // read timeout, which is an error and so not an answer.
+        let mut answer = Vec::new();
+        conn.read_to_end(&mut answer)?;
+        Ok(String::from_utf8_lossy(&answer).to_ascii_lowercase())
+    };
+    probe().is_ok_and(|head| {
+        head.starts_with("http/")
+            && (head.contains("\r\nserver: squid") || head.contains("\r\nx-squid-error:"))
+    })
 }
 
 impl Squid {
@@ -308,7 +336,19 @@ impl Squid {
                 read(&dir.join("cache.log"))
             )
         };
-        try_ready(self.port, child, READY, diagnostics)?;
+        let port = self.port;
+        let logs = [dir.join("squid.stderr"), dir.join("cache.log")];
+        try_answers(
+            child,
+            READY,
+            &diagnostics,
+            || squid_answers(port),
+            // A child that dies right after something else answered is a collision too.
+            Duration::from_millis(100),
+            // Squid exits on a failed bind, but a container's exit is only seen below: its log
+            // names the cause at once.
+            || logs.iter().any(|log| is_address_in_use(&read(log))),
+        )?;
         if let Some(name) = &container {
             // Something else may answer on a taken port while the container's Squid has exited.
             let running = Command::new("docker")
@@ -390,87 +430,4 @@ impl Squid {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A `Squid` around a process that is not Squid, in an empty directory.
-    fn stand_in(command: &mut Command) -> Squid {
-        Squid {
-            // Nothing binds or connects to this port: it only names the shared memory the drop removes.
-            port: 0,
-            prefix: Prefix::new("squid"),
-            dir: tempfile::tempdir().unwrap(),
-            stop: Stop::Process(command.stdout(Stdio::null()).spawn().unwrap()),
-            started: StartCost::default(),
-        }
-    }
-
-    #[test]
-    fn an_empty_access_log_is_explained_with_the_directory_and_cache_log() {
-        let squid = stand_in(Command::new("sleep").arg("60"));
-        fs::write(squid.dir.path().join("cache.log"), "cache says hi").unwrap();
-        let log = squid.access_log();
-        assert!(log.starts_with("(empty access log; files "), "{log}");
-        assert!(log.contains("cache says hi"), "{log}");
-    }
-
-    #[test]
-    fn a_squid_with_a_parent_proxy_sends_every_tunnel_to_it() {
-        let dir = tempfile::tempdir().unwrap();
-        write_config(
-            dir.path(),
-            dir.path(),
-            &SquidOptions::open(&[443]).through(4242),
-            3128,
-        );
-        let conf = read(&dir.path().join("squid.conf"));
-        assert!(
-            conf.contains(
-                "cache_peer 127.0.0.1 parent 4242 0 no-query no-digest\nnever_direct allow all\n"
-            ),
-            "{conf}"
-        );
-        write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), 3128);
-        assert!(!read(&dir.path().join("squid.conf")).contains("cache_peer"));
-    }
-
-    #[test]
-    fn a_line_written_after_the_call_is_waited_for() {
-        let squid = stand_in(Command::new("sleep").arg("60"));
-        let path = squid.dir.path().join("access.log");
-        let writer = std::thread::spawn(move || {
-            // flake-ok: simulated latency of Squid's log daemon, the thing the wait covers.
-            std::thread::sleep(Duration::from_millis(700));
-            fs::write(path, "TCP_TUNNEL/200 x").unwrap();
-        });
-        assert_eq!(squid.access_log_with("TCP_TUNNEL/200"), "TCP_TUNNEL/200 x");
-        writer.join().unwrap();
-    }
-
-    #[test]
-    fn a_line_that_never_comes_returns_the_log_as_it_stands() {
-        let squid = stand_in(Command::new("sleep").arg("60"));
-        fs::write(squid.dir.path().join("access.log"), "GET x").unwrap();
-        let wait = Duration::from_millis(200);
-        let started = Instant::now();
-        assert_eq!(squid.access_log_within("TCP_TUNNEL/200", wait), "GET x");
-        assert!(started.elapsed() >= wait);
-    }
-
-    #[test]
-    fn a_written_access_log_is_returned_as_is() {
-        let squid = stand_in(Command::new("sleep").arg("60"));
-        fs::write(squid.dir.path().join("access.log"), "GET x").unwrap();
-        assert_eq!(squid.access_log(), "GET x");
-    }
-
-    #[test]
-    #[should_panic(expected = "squid.stderr:\nboom\ncache.log:\ncache says hi")]
-    fn a_squid_that_dies_at_start_shows_both_logs() {
-        let mut squid = stand_in(&mut Command::new("false"));
-        fs::write(squid.dir.path().join("squid.stderr"), "boom").unwrap();
-        fs::write(squid.dir.path().join("cache.log"), "cache says hi").unwrap();
-        let why = squid.wait().unwrap_err();
-        panic!("{why}");
-    }
-}
+mod tests;

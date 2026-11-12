@@ -30,13 +30,23 @@ pub enum UsageError {
     /// No command given.
     #[error("no command given")]
     Missing,
+    /// An option's value is not one the option takes.
+    #[error("{option} must be {expected}, found {value:?}")]
+    InvalidValue {
+        /// The flag.
+        option: &'static str,
+        /// What it takes.
+        expected: &'static str,
+        /// What was given.
+        value: String,
+    },
     /// A command lacks its argument; holds the usage of that command.
     #[error("missing argument: {0}")]
     MissingArgument(&'static str),
 }
 
 /// Usage text for `--help` and for usage errors.
-pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] | serve [--port <n>] [--connection-file <path>] | backup [--data-dir <path>] <dest> | ssh-bridge <endpoint>]";
+pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] | serve [--config <path>] [--print-config] [--port <n>] [--connection-file <path>] [--data-dir <path>] [--log <filter>] [--remote | --no-remote] [--public-hosts <host,...>] [--workspace-base-domain <domain>] [--listen-interface <ip>] [--listen-port <n>] [--allowed-proxies <ip,...>] | backup [--data-dir <path>] <dest> | ssh-bridge <endpoint>]\nserve options and the config file: https://github.com/PuddleHQ/puddle/blob/main/docs/serve.md";
 
 /// Parse the arguments after the program name.
 ///
@@ -68,35 +78,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_flags() {
-        assert_eq!(parse(["--version"]), Ok(Command::Version));
-        assert_eq!(parse(["-V"]), Ok(Command::Version));
-    }
-
-    #[test]
-    fn help_flags() {
-        assert_eq!(parse(["--help"]), Ok(Command::Help));
-        assert_eq!(parse(["-h"]), Ok(Command::Help));
-    }
-
-    #[test]
-    fn no_arguments_is_an_error() {
-        assert_eq!(parse(Vec::<String>::new()), Err(UsageError::Missing));
-    }
-
-    #[test]
-    fn unknown_and_extra_arguments_are_errors() {
-        assert_eq!(
-            parse(["--bogus"]),
-            Err(UsageError::UnknownArgument("--bogus".into()))
-        );
-        assert_eq!(
-            parse(["--version", "extra"]),
-            Err(UsageError::UnknownArgument("extra".into()))
-        );
-    }
-}
+mod tests;

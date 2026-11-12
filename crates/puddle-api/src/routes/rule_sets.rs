@@ -8,6 +8,7 @@ use puddle_store::{Actor, parse_rule_set};
 use puddle_types::RuleSetId;
 
 use crate::ApiErrorBody;
+use crate::authz::{self, Principal};
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
@@ -66,10 +67,23 @@ fn wire_system_hosts(
 )]
 pub(crate) async fn list_rule_sets(
     State(state): State<AppState>,
+    principal: Principal,
 ) -> Result<Json<RuleSetList>, ApiError> {
+    let owners = authz::owners(&state).await?;
     let list = blocking(move || {
-        let sets = state.store.rule_sets()?;
-        let system = state.store.system_managed()?;
+        let sets = state.store.rule_sets(principal.user)?;
+        // The hosts allowed for every workspace (the install's own choices, which decide the
+        // principal's requests too, so they may see them), and for the principal's own.
+        let system = state
+            .store
+            .system_managed()?
+            .into_iter()
+            .filter(|host| {
+                host.workspace
+                    .as_ref()
+                    .is_none_or(|w| owners.of(w) == principal.user)
+            })
+            .collect();
         let (system_managed, _left_out) = wire_system_hosts(system, SystemManagedHost::from_store);
         Ok(RuleSetList {
             sets: sets.into_iter().map(RuleSetView::from_store).collect(),
@@ -94,12 +108,17 @@ pub(crate) async fn list_rule_sets(
 )]
 pub(crate) async fn create_rule_set(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<NewRuleSetRequest>,
 ) -> Result<(StatusCode, Json<RuleSetView>), ApiError> {
     let set = blocking(move || {
-        Ok(state
-            .store
-            .create_rule_set(&body.name, &body.description, body.fill, Actor::Api)?)
+        Ok(state.store.create_rule_set(
+            principal.user,
+            &body.name,
+            &body.description,
+            body.fill,
+            Actor::Api,
+        )?)
     })
     .await?;
     Ok((StatusCode::CREATED, Json(RuleSetView::from_store(set))))
@@ -120,14 +139,20 @@ pub(crate) async fn create_rule_set(
 )]
 pub(crate) async fn update_rule_set(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<RuleSetUpdateRequest>,
 ) -> Result<Json<RuleSetView>, ApiError> {
     let id = user_set(&id)?;
     let set = blocking(move || {
-        Ok(state
-            .store
-            .update_rule_set(id, &body.name, &body.description, body.fill, Actor::Api)?)
+        Ok(state.store.update_rule_set(
+            principal.user,
+            id,
+            &body.name,
+            &body.description,
+            body.fill,
+            Actor::Api,
+        )?)
     })
     .await?;
     Ok(Json(RuleSetView::from_store(set)))
@@ -147,10 +172,16 @@ pub(crate) async fn update_rule_set(
 )]
 pub(crate) async fn delete_rule_set(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<RuleSetView>, ApiError> {
     let id = user_set(&id)?;
-    let set = blocking(move || Ok(state.store.delete_rule_set(id, Actor::Api)?)).await?;
+    let set = blocking(move || {
+        Ok(state
+            .store
+            .delete_rule_set(principal.user, id, Actor::Api)?)
+    })
+    .await?;
     Ok(Json(RuleSetView::from_store(set)))
 }
 
@@ -170,17 +201,22 @@ pub(crate) async fn delete_rule_set(
 )]
 pub(crate) async fn switch_rule_set(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<RuleSetSwitchRequest>,
 ) -> Result<Json<RuleSetSwitched>, ApiError> {
     let id = set_id(&id)?;
+    let user = principal.user;
     let switched = blocking(move || {
-        let closed =
-            state
-                .store
-                .switch_rule_set(id, body.workspace.as_ref(), body.enabled, Actor::Api)?;
+        let closed = state.store.switch_rule_set(
+            user,
+            id,
+            body.workspace.as_ref(),
+            body.enabled,
+            Actor::Api,
+        )?;
         Ok(RuleSetSwitched {
-            set: RuleSetView::from_store(state.store.rule_set(id)?),
+            set: RuleSetView::from_store(state.store.rule_set(user, id)?),
             closed: closed.into_iter().map(|p| p.0).collect(),
         })
     })
@@ -189,38 +225,4 @@ pub(crate) async fn switch_rule_set(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn host(pattern: &'static str) -> puddle_store::SystemHost {
-        puddle_store::SystemHost {
-            pattern,
-            note: "",
-            reason: puddle_store::SystemReason::CodeServer,
-            workspace: None,
-        }
-    }
-
-    #[test]
-    fn a_host_whose_reason_is_unknown_is_left_out_and_counted() {
-        let hosts = vec![host("a.example.com"), host("b.example.com")];
-        let (shown, left_out) = wire_system_hosts(hosts, |h| {
-            if h.pattern == "b.example.com" {
-                None
-            } else {
-                SystemManagedHost::from_store(h)
-            }
-        });
-        assert_eq!(left_out, 1);
-        assert_eq!(shown.len(), 1);
-        assert_eq!(shown[0].pattern, "a.example.com");
-    }
-
-    #[test]
-    fn hosts_with_known_reasons_are_all_shown() {
-        let (shown, left_out) =
-            wire_system_hosts(vec![host("a.example.com")], SystemManagedHost::from_store);
-        assert_eq!(left_out, 0);
-        assert_eq!(shown.len(), 1);
-    }
-}
+mod tests;

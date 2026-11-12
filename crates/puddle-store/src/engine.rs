@@ -9,6 +9,7 @@ use puddle_types::{Decision, Host, RuleId, RuleSetId, SuffixAllows, WorkspaceId}
 use crate::catalogue;
 use crate::pattern::Pattern;
 use crate::rule::{Effect, Rule, Scope};
+use crate::users::UserId;
 
 /// An entry of a built-in set or of System managed: no rule row (R-36, R-41). System managed
 /// entries always allow; a built-in set's entries all share the set's effect.
@@ -26,33 +27,39 @@ pub(crate) struct SetEntry {
 }
 
 /// Which rule sets are switched on where (R-37): an override per workspace, a value for every
-/// workspace, and the set's own default, in that order.
+/// workspace of one user, and the set's own default, in that order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Switches {
-    global: HashMap<RuleSetId, bool>,
+    global: HashMap<(UserId, RuleSetId), bool>,
     workspace: HashMap<(RuleSetId, WorkspaceId), bool>,
 }
 
 impl Switches {
-    /// Records one stored switch.
-    pub(crate) fn insert(&mut self, set: RuleSetId, workspace: Option<WorkspaceId>, enabled: bool) {
+    /// Records one stored switch of `user` (for a workspace's switch, the workspace's user).
+    pub(crate) fn insert(
+        &mut self,
+        user: UserId,
+        set: RuleSetId,
+        workspace: Option<WorkspaceId>,
+        enabled: bool,
+    ) {
         match workspace {
             Some(workspace) => {
                 self.workspace.insert((set, workspace), enabled);
             }
             None => {
-                self.global.insert(set, enabled);
+                self.global.insert((user, set), enabled);
             }
         }
     }
 
-    /// The switch for every workspace, if set.
-    pub(crate) fn global(&self, set: RuleSetId) -> Option<bool> {
-        self.global.get(&set).copied()
+    /// `user`'s switch for every workspace, if set.
+    pub(crate) fn global(&self, user: UserId, set: RuleSetId) -> Option<bool> {
+        self.global.get(&(user, set)).copied()
     }
 
     /// The workspaces that override `set`, sorted by name.
-    pub(crate) fn overrides(&self, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
+    fn overrides(&self, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
         let mut out: Vec<_> = self
             .workspace
             .iter()
@@ -63,11 +70,11 @@ impl Switches {
         out
     }
 
-    /// Whether `set` is on for `workspace`.
-    pub(crate) fn is_on(&self, set: RuleSetId, workspace: &WorkspaceId) -> bool {
+    /// Whether `set` is on for `workspace`, which belongs to `user`.
+    fn is_on(&self, user: UserId, set: RuleSetId, workspace: &WorkspaceId) -> bool {
         self.workspace
             .get(&(set, workspace.clone()))
-            .or_else(|| self.global.get(&set))
+            .or_else(|| self.global.get(&(user, set)))
             .copied()
             .unwrap_or_else(|| default_on(set))
     }
@@ -174,13 +181,16 @@ enum Slot {
     Entry(usize),
 }
 
-/// An immutable snapshot of every rule, set entry and switch, indexed for matching. The store
-/// replaces it whole after each committed change (R-8), so a decision never sees half a change.
+/// An immutable snapshot of every rule, set entry, switch and workspace user, indexed for
+/// matching. The store replaces it whole after each committed change (R-8), so a decision never
+/// sees half a change.
 #[derive(Debug, Default)]
 pub(crate) struct RuleIndex {
     rules: Vec<Rule>,
     entries: Vec<SetEntry>,
     switches: Switches,
+    /// Each workspace's user, where one is recorded; the others are the owner's.
+    owners: HashMap<WorkspaceId, UserId>,
     /// Exact patterns and suffix bases (`.example.com` stored under `example.com`) to slots.
     exact: HashMap<String, Vec<Slot>>,
     suffix: HashMap<String, Vec<Slot>>,
@@ -220,8 +230,14 @@ fn set_key(hit: Hit<'_>) -> SetKey {
 }
 
 impl RuleIndex {
-    /// Indexes rule rows, built-in and System managed entries, and the switches.
-    pub(crate) fn new(rules: Vec<Rule>, entries: Vec<SetEntry>, switches: Switches) -> Self {
+    /// Indexes rule rows, built-in and System managed entries, the switches and who owns which
+    /// workspace.
+    pub(crate) fn new(
+        rules: Vec<Rule>,
+        entries: Vec<SetEntry>,
+        switches: Switches,
+        owners: HashMap<WorkspaceId, UserId>,
+    ) -> Self {
         let mut exact: HashMap<String, Vec<Slot>> = HashMap::new();
         let mut suffix: HashMap<String, Vec<Slot>> = HashMap::new();
         let mut add = |pattern: &Pattern, slot: Slot| match pattern {
@@ -241,9 +257,30 @@ impl RuleIndex {
             rules,
             entries,
             switches,
+            owners,
             exact,
             suffix,
         }
+    }
+
+    /// The user `workspace` belongs to.
+    pub(crate) fn owner_of(&self, workspace: &WorkspaceId) -> UserId {
+        self.owners.get(workspace).copied().unwrap_or(UserId::OWNER)
+    }
+
+    /// Whether `set` is on for `workspace` (R-37), by its user's switches.
+    pub(crate) fn is_on(&self, set: RuleSetId, workspace: &WorkspaceId) -> bool {
+        self.switches
+            .is_on(self.owner_of(workspace), set, workspace)
+    }
+
+    /// `user`'s workspaces that override `set`, sorted by name.
+    pub(crate) fn overrides(&self, user: UserId, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
+        self.switches
+            .overrides(set)
+            .into_iter()
+            .filter(|(workspace, _)| self.owner_of(workspace) == user)
+            .collect()
     }
 
     /// Every rule row, expired ones included until the sweeper removes them.
@@ -264,14 +301,34 @@ impl RuleIndex {
 
     /// What decides `host` requested by `workspace` at `now`, or `None`.
     ///
-    /// The user's own rules: non-expired global rules and non-expired rules of `workspace` (R-5,
-    /// R-7), ranked by R-6. Set entries: those of sets switched on for `workspace` (R-37), and
-    /// System managed entries for every workspace or for `workspace`. Then R-39: when an own rule
+    /// Only the rules of the workspace's user count. Their own rules: non-expired global rules
+    /// and non-expired rules of `workspace` (R-5, R-7), ranked by R-6. Set entries: those of sets
+    /// switched on for `workspace` (R-37; a set the user made only for its own user's
+    /// workspaces), and System managed entries for every workspace or for `workspace`. Then R-39: when an own rule
     /// matches, it decides, unless a set's deny is strictly more specific; when none does, the
     /// most specific set entry decides, deny over allow. With [`SuffixAllows::Ignore`], own
     /// suffix allows and every set allow are treated as no match (R-14, R-42).
     pub(crate) fn decide(
         &self,
+        workspace: &WorkspaceId,
+        host: &Host,
+        now: u64,
+        suffix_allows: SuffixAllows,
+    ) -> Option<Hit<'_>> {
+        self.decide_as(
+            self.owner_of(workspace),
+            workspace,
+            host,
+            now,
+            suffix_allows,
+        )
+    }
+
+    /// [`RuleIndex::decide`] for `workspace` as a workspace of `user`: for one that is not made
+    /// yet, whose user is not recorded.
+    pub(crate) fn decide_as(
+        &self,
+        user: UserId,
         workspace: &WorkspaceId,
         host: &Host,
         now: u64,
@@ -289,7 +346,8 @@ impl RuleIndex {
                     }
                     match &rule.scope {
                         Scope::Set(set) => {
-                            if !self.switches.is_on(RuleSetId::User(*set), workspace)
+                            if rule.user != user
+                                || !self.switches.is_on(user, RuleSetId::User(*set), workspace)
                                 || (ignore && rule.effect == Effect::Allow)
                             {
                                 continue;
@@ -297,7 +355,8 @@ impl RuleIndex {
                             Hit::Rule(rule)
                         }
                         scope => {
-                            let applies = scope.workspace().is_none_or(|s| s == workspace);
+                            let applies = rule.user == user
+                                && scope.workspace().is_none_or(|s| s == workspace);
                             let dropped = ignore
                                 && rule.effect == Effect::Allow
                                 && matches!(rule.pattern, Pattern::Suffix(_));
@@ -315,7 +374,7 @@ impl RuleIndex {
                     let applies = match (&entry.set, &entry.workspace) {
                         (RuleSetId::System, None) => true,
                         (RuleSetId::System, Some(s)) => s == workspace,
-                        (set, _) => self.switches.is_on(*set, workspace),
+                        (set, _) => self.switches.is_on(user, *set, workspace),
                     };
                     if !applies || (ignore && entry.effect == Effect::Allow) {
                         continue;
@@ -382,779 +441,4 @@ impl RuleIndex {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::rule::Actor;
-    use proptest::prelude::*;
-    use puddle_types::PatternKind;
-
-    pub(crate) fn rule(id: i64, scope: Option<&str>, pattern: &str, effect: Effect) -> Rule {
-        Rule {
-            id: RuleId(id),
-            scope: scope.map_or(Scope::Global, |s| {
-                Scope::Workspace(WorkspaceId::new(s).unwrap())
-            }),
-            pattern: Pattern::parse(pattern).unwrap(),
-            effect,
-            expires_at: None,
-            created_at: 0,
-            created_by: Actor::Cli,
-            source_pending_id: None,
-        }
-    }
-
-    fn sb(s: &str) -> WorkspaceId {
-        WorkspaceId::new(s).unwrap()
-    }
-
-    fn host(s: &str) -> Host {
-        Host::parse_normalised(s).unwrap()
-    }
-
-    fn index(rules: Vec<Rule>) -> RuleIndex {
-        RuleIndex::new(rules, Vec::new(), Switches::default())
-    }
-
-    fn winner(set: &RuleIndex, workspace: &str, h: &str) -> Option<i64> {
-        set.decide(&sb(workspace), &host(h), 1_000, SuffixAllows::Count)
-            .and_then(Hit::rule_id)
-            .map(|id| id.0)
-    }
-
-    #[test]
-    fn r01_empty_rule_set_decides_nothing() {
-        let set = RuleIndex::default();
-        assert_eq!(set.rules().len(), 0);
-        assert_eq!(winner(&set, "a", "example.com"), None);
-    }
-
-    #[test]
-    fn r05_other_workspaces_rules_never_apply() {
-        let set = index(vec![
-            rule(1, Some("other"), "example.com", Effect::Allow),
-            rule(2, None, "global.example", Effect::Allow),
-        ]);
-        assert_eq!(winner(&set, "mine", "example.com"), None);
-        assert_eq!(winner(&set, "other", "example.com"), Some(1));
-        assert_eq!(winner(&set, "mine", "global.example"), Some(2));
-    }
-
-    #[test]
-    fn r06_exact_beats_suffix_and_longer_suffix_beats_shorter() {
-        let set = index(vec![
-            rule(1, Some("a"), ".example.com", Effect::Deny),
-            rule(2, None, ".api.example.com", Effect::Allow),
-            rule(3, None, "x.api.example.com", Effect::Deny),
-        ]);
-        assert_eq!(winner(&set, "a", "y.api.example.com"), Some(2));
-        assert_eq!(winner(&set, "a", "x.api.example.com"), Some(3));
-        assert_eq!(winner(&set, "a", "other.example.com"), Some(1));
-    }
-
-    #[test]
-    fn r06_workspace_beats_global_at_equal_specificity() {
-        let set = index(vec![
-            rule(1, None, ".example.com", Effect::Deny),
-            rule(2, Some("a"), ".example.com", Effect::Allow),
-        ]);
-        assert_eq!(winner(&set, "a", "x.example.com"), Some(2));
-        assert_eq!(winner(&set, "b", "x.example.com"), Some(1));
-    }
-
-    #[test]
-    fn r06_broader_workspace_allow_never_overrides_narrower_global_deny() {
-        let set = index(vec![
-            rule(1, None, ".api.example.com", Effect::Deny),
-            rule(2, Some("a"), ".example.com", Effect::Allow),
-        ]);
-        assert_eq!(winner(&set, "a", "x.api.example.com"), Some(1));
-    }
-
-    #[test]
-    fn r06_deny_beats_allow_at_equal_scope() {
-        let set = index(vec![
-            rule(1, Some("a"), "example.com", Effect::Allow),
-            rule(2, Some("a"), "example.com", Effect::Deny),
-            rule(3, Some("a"), "example.com", Effect::Allow),
-        ]);
-        assert_eq!(winner(&set, "a", "example.com"), Some(2));
-    }
-
-    #[test]
-    fn scope_rank_leaves_room_below_global() {
-        assert_eq!(Scope::Global.rank(), 1);
-        assert!(Scope::Workspace(sb("a")).rank() > Scope::Global.rank());
-        assert!(Scope::Set(1).rank() < Scope::Global.rank());
-    }
-
-    fn in_set(id: i64, set: i64, pattern: &str, effect: Effect) -> Rule {
-        let mut r = rule(id, None, pattern, effect);
-        r.scope = Scope::Set(set);
-        r
-    }
-
-    /// Two set denies of one pattern: the lower set, then the lower rule id, decides, whichever the
-    /// index met first; it matters when an own rule is less specific and a set deny overrides it.
-    #[test]
-    fn of_two_set_denies_that_override_an_own_rule_the_lower_set_wins_whatever_the_order() {
-        let own = rule(9, None, ".example.com", Effect::Allow);
-        for denies in [
-            vec![
-                in_set(1, 2, "x.example.com", Effect::Deny),
-                in_set(2, 1, "x.example.com", Effect::Deny),
-            ],
-            vec![
-                in_set(2, 1, "x.example.com", Effect::Deny),
-                in_set(1, 2, "x.example.com", Effect::Deny),
-            ],
-        ] {
-            let mut rules = vec![own.clone()];
-            rules.extend(denies);
-            let got = decision(&index(rules), "a", "x.example.com");
-            assert_eq!(
-                got,
-                Some(Decision::SetDeny {
-                    set: RuleSetId::User(1),
-                    rule_id: Some(RuleId(2)),
-                    pattern: PatternKind::Exact,
-                })
-            );
-        }
-    }
-
-    fn system(pattern: &str, workspace: Option<&str>) -> SetEntry {
-        SetEntry {
-            set: RuleSetId::System,
-            pattern: Pattern::parse(pattern).unwrap(),
-            workspace: workspace.map(sb),
-            effect: Effect::Allow,
-        }
-    }
-
-    fn built_in(slug: &'static str, pattern: &str) -> SetEntry {
-        SetEntry {
-            set: RuleSetId::BuiltIn(slug),
-            pattern: Pattern::parse(pattern).unwrap(),
-            workspace: None,
-            effect: Effect::Allow,
-        }
-    }
-
-    /// An entry of a built-in deny set.
-    fn built_in_deny(slug: &'static str, pattern: &str) -> SetEntry {
-        SetEntry {
-            effect: Effect::Deny,
-            ..built_in(slug, pattern)
-        }
-    }
-
-    fn decision(index: &RuleIndex, workspace: &str, h: &str) -> Option<Decision> {
-        index
-            .decide(&sb(workspace), &host(h), 1_000, SuffixAllows::Count)
-            .map(Hit::decision)
-    }
-
-    fn own_allow(id: i64, pattern: PatternKind) -> Decision {
-        Decision::Allow {
-            rule_id: RuleId(id),
-            pattern,
-        }
-    }
-
-    #[test]
-    fn r39_example_one_a_set_allow_never_opens_what_your_rule_closes() {
-        // You deny *.visualstudio.com everywhere; System managed allows the update host.
-        let index = RuleIndex::new(
-            vec![rule(1, None, ".visualstudio.com", Effect::Deny)],
-            vec![system("update.code.visualstudio.com", None)],
-            Switches::default(),
-        );
-        assert_eq!(
-            decision(&index, "a", "update.code.visualstudio.com"),
-            Some(Decision::Deny {
-                rule_id: RuleId(1),
-                pattern: PatternKind::Suffix
-            })
-        );
-        // Without your rule, the set's allow fills the gap.
-        let index = RuleIndex::new(
-            Vec::new(),
-            vec![system("update.code.visualstudio.com", None)],
-            Switches::default(),
-        );
-        assert_eq!(
-            decision(&index, "a", "update.code.visualstudio.com"),
-            Some(Decision::SetAllow {
-                set: RuleSetId::System,
-                rule_id: None,
-                pattern: PatternKind::Exact
-            })
-        );
-    }
-
-    #[test]
-    fn r39_example_two_a_set_block_competes_at_its_level_of_detail() {
-        // You allow *.example.com; your own set blocks ads.example.com.
-        let blocked = RuleIndex::new(
-            vec![
-                rule(1, None, ".example.com", Effect::Allow),
-                in_set(2, 7, "ads.example.com", Effect::Deny),
-            ],
-            Vec::new(),
-            Switches::default(),
-        );
-        assert_eq!(
-            decision(&blocked, "a", "ads.example.com"),
-            Some(Decision::SetDeny {
-                set: RuleSetId::User(7),
-                rule_id: Some(RuleId(2)),
-                pattern: PatternKind::Exact
-            })
-        );
-        assert_eq!(
-            decision(&blocked, "a", "www.example.com"),
-            Some(own_allow(1, PatternKind::Suffix))
-        );
-        // Your exact allow of the same host still wins.
-        let mut rules = blocked.rules().to_vec();
-        rules.push(rule(3, Some("a"), "ads.example.com", Effect::Allow));
-        let yours = RuleIndex::new(rules, Vec::new(), Switches::default());
-        assert_eq!(
-            decision(&yours, "a", "ads.example.com"),
-            Some(own_allow(3, PatternKind::Exact))
-        );
-        // At equal detail your rule ranks above the set's block.
-        let equal = RuleIndex::new(
-            vec![
-                rule(1, None, ".example.com", Effect::Allow),
-                in_set(2, 7, ".example.com", Effect::Deny),
-            ],
-            Vec::new(),
-            Switches::default(),
-        );
-        assert_eq!(
-            decision(&equal, "a", "x.example.com"),
-            Some(own_allow(1, PatternKind::Suffix))
-        );
-    }
-
-    #[test]
-    fn the_plain_precedence_lets_a_more_specific_set_block_beat_your_rule() {
-        // The property test reaches this arm of the reference only by chance, so pin it: the
-        // reference and the index must both pick the set's exact block over your suffix allow.
-        let index = RuleIndex::new(
-            vec![
-                rule(1, None, ".example.com", Effect::Allow),
-                in_set(2, 7, "ads.example.com", Effect::Deny),
-            ],
-            Vec::new(),
-            Switches::default(),
-        );
-        let (name, h) = (sb("a"), host("ads.example.com"));
-        let expected = Some(Decision::SetDeny {
-            set: RuleSetId::User(7),
-            rule_id: Some(RuleId(2)),
-            pattern: PatternKind::Exact,
-        });
-        assert_eq!(
-            reference_p3(&index, &name, &h, 5, SuffixAllows::Count),
-            expected
-        );
-        assert_eq!(
-            index
-                .decide(&name, &h, 5, SuffixAllows::Count)
-                .map(Hit::decision),
-            expected
-        );
-    }
-
-    #[test]
-    fn r39_between_sets_most_specific_then_deny_wins() {
-        let index = RuleIndex::new(
-            vec![
-                in_set(1, 1, ".example.com", Effect::Deny),
-                in_set(2, 2, "x.example.com", Effect::Allow),
-                in_set(3, 2, ".example.com", Effect::Allow),
-            ],
-            vec![built_in("github", "y.example.com")],
-            {
-                let mut s = Switches::default();
-                s.insert(RuleSetId::BuiltIn("github"), None, true);
-                s
-            },
-        );
-        let set_of = |h| decision(&index, "a", h).and_then(|d| d.rule_set());
-        assert_eq!(set_of("x.example.com"), Some(RuleSetId::User(2)));
-        assert_eq!(set_of("y.example.com"), Some(RuleSetId::BuiltIn("github")));
-        assert!(matches!(
-            decision(&index, "a", "z.example.com"),
-            Some(Decision::SetDeny { .. })
-        ));
-    }
-
-    #[test]
-    fn r37_switches_decide_where_a_set_applies() {
-        let rules = vec![in_set(1, 5, "example.com", Effect::Allow)];
-        let entries = vec![built_in("github", "github.com")];
-        let mut switches = Switches::default();
-        // A set you made is on by default; a built-in set ships off.
-        let index = RuleIndex::new(rules.clone(), entries.clone(), switches.clone());
-        assert!(decision(&index, "a", "example.com").is_some());
-        assert_eq!(decision(&index, "a", "github.com"), None);
-        // Global on, one workspace off; the workspace's value wins there.
-        switches.insert(RuleSetId::BuiltIn("github"), None, true);
-        switches.insert(RuleSetId::BuiltIn("github"), Some(sb("b")), false);
-        switches.insert(RuleSetId::User(5), None, false);
-        switches.insert(RuleSetId::User(5), Some(sb("b")), true);
-        let index = RuleIndex::new(rules, entries, switches);
-        assert!(decision(&index, "a", "github.com").is_some());
-        assert_eq!(decision(&index, "b", "github.com"), None);
-        assert_eq!(decision(&index, "a", "example.com"), None);
-        assert!(decision(&index, "b", "example.com").is_some());
-        assert_eq!(index.switches().global(RuleSetId::User(5)), Some(false));
-        assert_eq!(
-            index.switches().overrides(RuleSetId::BuiltIn("github")),
-            vec![(sb("b"), false)]
-        );
-        assert_eq!(index.entries().len(), 1);
-        assert!(default_on(RuleSetId::User(9)) && default_on(RuleSetId::System));
-        assert!(
-            !default_on(RuleSetId::BuiltIn("github")) && !default_on(RuleSetId::BuiltIn("gone"))
-        );
-    }
-
-    #[test]
-    fn r41_system_entries_for_one_workspace_stay_there() {
-        let index = RuleIndex::new(
-            Vec::new(),
-            vec![system("marketplace.visualstudio.com", Some("ssh"))],
-            Switches::default(),
-        );
-        assert!(decision(&index, "ssh", "marketplace.visualstudio.com").is_some());
-        assert_eq!(
-            decision(&index, "other", "marketplace.visualstudio.com"),
-            None
-        );
-    }
-
-    #[test]
-    fn r42_ignore_mode_drops_every_set_allow_and_keeps_set_denies() {
-        let index = RuleIndex::new(
-            vec![
-                in_set(1, 1, "db.corp.example", Effect::Allow),
-                in_set(2, 1, "bad.corp.example", Effect::Deny),
-            ],
-            vec![system("open-vsx.org", None)],
-            Switches::default(),
-        );
-        let ignore = |h: &str| {
-            index
-                .decide(&sb("a"), &host(h), 0, SuffixAllows::Ignore)
-                .map(Hit::decision)
-        };
-        assert_eq!(ignore("db.corp.example"), None);
-        assert_eq!(ignore("open-vsx.org"), None);
-        assert!(matches!(
-            ignore("bad.corp.example"),
-            Some(Decision::SetDeny { .. })
-        ));
-    }
-
-    fn on(set: RuleSetId) -> Switches {
-        let mut switches = Switches::default();
-        switches.insert(set, None, true);
-        switches
-    }
-
-    #[test]
-    fn r39_a_built_in_deny_set_blocks_only_while_it_is_on() {
-        let set = RuleSetId::BuiltIn("trackers");
-        let entries = || vec![built_in_deny("trackers", "*.tracker.example")];
-        let off = RuleIndex::new(Vec::new(), entries(), Switches::default());
-        assert_eq!(decision(&off, "a", "x.tracker.example"), None);
-        let live = RuleIndex::new(Vec::new(), entries(), on(set));
-        assert_eq!(
-            decision(&live, "a", "x.tracker.example"),
-            Some(Decision::SetDeny {
-                set,
-                rule_id: None,
-                pattern: PatternKind::Suffix,
-            })
-        );
-        // It applies in suffix-ignore mode too: a deny is never dropped there (R-42).
-        assert!(matches!(
-            live.decide(
-                &sb("a"),
-                &host("x.tracker.example"),
-                0,
-                SuffixAllows::Ignore
-            )
-            .map(Hit::decision),
-            Some(Decision::SetDeny { rule_id: None, .. })
-        ));
-        // The user's own allow of the exact name beats it; their allow of the same suffix does too.
-        for pattern in ["x.tracker.example", ".tracker.example"] {
-            let own = RuleIndex::new(
-                vec![rule(1, None, pattern, Effect::Allow)],
-                entries(),
-                on(set),
-            );
-            assert_eq!(winner(&own, "a", "x.tracker.example"), Some(1));
-        }
-    }
-
-    #[test]
-    fn r39_a_mixed_set_decides_by_specificity_then_deny() {
-        let mixed = || {
-            RuleIndex::new(
-                vec![
-                    in_set(1, 7, ".example.com", Effect::Allow),
-                    in_set(2, 7, "ads.example.com", Effect::Deny),
-                    in_set(3, 7, ".cdn.example.com", Effect::Deny),
-                    in_set(4, 7, ".cdn.example.com", Effect::Allow),
-                    in_set(5, 7, "ok.cdn.example.com", Effect::Allow),
-                ],
-                Vec::new(),
-                Switches::default(),
-            )
-        };
-        let id = |h: &str| winner(&mixed(), "a", h);
-        assert_eq!(id("www.example.com"), Some(1));
-        assert_eq!(id("ads.example.com"), Some(2));
-        assert_eq!(id("img.cdn.example.com"), Some(3));
-        assert_eq!(id("ok.cdn.example.com"), Some(5));
-    }
-
-    #[test]
-    fn r07_expired_set_entries_never_match() {
-        let mut expired = in_set(1, 1, "example.com", Effect::Deny);
-        expired.expires_at = Some(1_000);
-        let index = RuleIndex::new(vec![expired], Vec::new(), Switches::default());
-        assert_eq!(decision(&index, "a", "example.com"), None);
-    }
-
-    #[test]
-    fn identical_rules_tie_on_lower_id() {
-        let set = index(vec![
-            rule(5, None, "example.com", Effect::Allow),
-            rule(4, None, "example.com", Effect::Allow),
-        ]);
-        assert_eq!(winner(&set, "a", "example.com"), Some(4));
-    }
-
-    #[test]
-    fn r07_expired_rule_never_matches() {
-        let mut expired = rule(1, None, "example.com", Effect::Allow);
-        expired.expires_at = Some(1_000);
-        let mut live = rule(2, None, ".example.com", Effect::Deny);
-        live.expires_at = Some(1_001);
-        let set = index(vec![expired, live]);
-        // At now == expires_at the rule is already expired.
-        assert_eq!(winner(&set, "a", "example.com"), None);
-        assert_eq!(winner(&set, "a", "x.example.com"), Some(2));
-        assert_eq!(
-            set.decide(&sb("a"), &host("x.example.com"), 1_001, SuffixAllows::Count)
-                .map(Hit::rule_id),
-            None
-        );
-    }
-
-    #[test]
-    fn r14_ignore_mode_drops_suffix_allows_but_keeps_suffix_denies() {
-        let set = index(vec![
-            rule(1, Some("a"), ".example.com", Effect::Allow),
-            rule(2, None, ".example.com", Effect::Deny),
-            rule(3, None, ".corp.example", Effect::Allow),
-            rule(4, None, "db.corp.example", Effect::Allow),
-        ]);
-        let ignore = |h: &str| {
-            set.decide(&sb("a"), &host(h), 0, SuffixAllows::Ignore)
-                .map(|hit| (hit.rule_id().unwrap().0, hit.pattern().kind()))
-        };
-        assert_eq!(ignore("x.example.com"), Some((2, PatternKind::Suffix)));
-        assert_eq!(ignore("web.corp.example"), None);
-        assert_eq!(ignore("db.corp.example"), Some((4, PatternKind::Exact)));
-    }
-
-    #[test]
-    fn ip_literals_match_only_exact_rules() {
-        let set = index(vec![rule(1, None, "10.0.0.1", Effect::Allow)]);
-        assert_eq!(winner(&set, "a", "10.0.0.1"), Some(1));
-        assert_eq!(winner(&set, "a", "10.0.0.2"), None);
-    }
-
-    /// The precedence of R-6, written as plainly as possible, for the property test below.
-    fn reference(rules: &[Rule], workspace: &WorkspaceId, h: &Host, now: u64) -> Option<RuleId> {
-        let mut best: Option<&Rule> = None;
-        for r in rules {
-            let applies = r.pattern.matches(h)
-                && !r.is_expired(now)
-                && r.scope.workspace().is_none_or(|s| s == workspace);
-            if !applies {
-                continue;
-            }
-            let key = |r: &Rule| {
-                (
-                    r.pattern.specificity(),
-                    r.scope.rank(),
-                    r.effect == Effect::Deny,
-                    Reverse(r.id),
-                )
-            };
-            if best.is_none_or(|b| key(r) > key(b)) {
-                best = Some(r);
-            }
-        }
-        best.map(|r| r.id)
-    }
-
-    fn arb_rule() -> impl Strategy<Value = Rule> {
-        (
-            0..50i64,
-            prop_oneof![Just(None), Just(Some("a")), Just(Some("b"))],
-            prop_oneof![
-                Just("x.y.example.com"),
-                Just("y.example.com"),
-                Just(".y.example.com"),
-                Just(".example.com"),
-                Just("example.com"),
-                Just("10.0.0.1"),
-            ],
-            any::<bool>(),
-            proptest::option::of(0..20u64),
-        )
-            .prop_map(|(id, scope, pattern, deny, expires)| {
-                let effect = if deny { Effect::Deny } else { Effect::Allow };
-                let mut r = rule(id, scope, pattern, effect);
-                r.expires_at = expires;
-                r
-            })
-    }
-
-    /// R-39 written as plainly as possible, for the property test below: every candidate
-    /// checked one by one.
-    fn reference_p3(
-        index: &RuleIndex,
-        workspace: &WorkspaceId,
-        h: &Host,
-        now: u64,
-        suffix_allows: SuffixAllows,
-    ) -> Option<Decision> {
-        let ignore = suffix_allows == SuffixAllows::Ignore;
-        let own: Vec<&Rule> = index
-            .rules()
-            .iter()
-            .filter(|r| r.pattern.matches(h) && !r.is_expired(now))
-            .filter(|r| matches!(r.scope, Scope::Global) || r.scope.workspace() == Some(workspace))
-            .filter(|r| {
-                !(ignore && r.effect == Effect::Allow && r.pattern.kind() == PatternKind::Suffix)
-            })
-            .collect();
-        let mut sets: Vec<Hit<'_>> = Vec::new();
-        for r in index.rules() {
-            if let Scope::Set(set) = r.scope
-                && r.pattern.matches(h)
-                && !r.is_expired(now)
-                && index.switches().is_on(RuleSetId::User(set), workspace)
-                && !(ignore && r.effect == Effect::Allow)
-            {
-                sets.push(Hit::Rule(r));
-            }
-        }
-        for e in index.entries() {
-            let on = match e.set {
-                RuleSetId::System => e.workspace.as_ref().is_none_or(|s| s == workspace),
-                set => index.switches().is_on(set, workspace),
-            };
-            if on && !ignore && e.pattern.matches(h) {
-                sets.push(Hit::Entry(e));
-            }
-        }
-        let best_set = sets.iter().copied().max_by_key(|hit| set_key(*hit));
-        let best_deny = sets
-            .iter()
-            .copied()
-            .filter(|hit| hit.effect() == Effect::Deny)
-            .max_by_key(|hit| set_key(*hit));
-        match own.into_iter().max_by_key(|r| own_key(r)) {
-            Some(r) => match best_deny {
-                Some(d) if d.pattern().specificity() > r.pattern.specificity() => {
-                    Some(d.decision())
-                }
-                _ => Some(Hit::Rule(r).decision()),
-            },
-            None => best_set.map(Hit::decision),
-        }
-    }
-
-    #[test]
-    fn a_more_specific_set_deny_beats_a_less_specific_rule_of_the_user() {
-        let own = rule(1, None, "example.com", Effect::Allow);
-        let mut deny = rule(2, None, "x.y.example.com", Effect::Deny);
-        deny.scope = Scope::Set(1);
-        let index = RuleIndex::new(vec![own, deny], Vec::new(), Switches::default());
-        let expected = Decision::SetDeny {
-            set: RuleSetId::User(1),
-            rule_id: Some(RuleId(2)),
-            pattern: PatternKind::Exact,
-        };
-        let args = (&sb("a"), &host("x.y.example.com"), 0, SuffixAllows::Count);
-        let (workspace, h, now, mode) = args;
-        assert_eq!(
-            index.decide(workspace, h, now, mode).map(Hit::decision),
-            Some(expected)
-        );
-        assert_eq!(
-            reference_p3(&index, workspace, h, now, mode),
-            Some(expected)
-        );
-    }
-
-    fn arb_scope() -> impl Strategy<Value = Scope> {
-        prop_oneof![
-            Just(Scope::Global),
-            Just(Scope::Workspace(sb("a"))),
-            Just(Scope::Workspace(sb("b"))),
-            Just(Scope::Set(1)),
-            Just(Scope::Set(2)),
-        ]
-    }
-
-    fn arb_pattern() -> impl Strategy<Value = &'static str> {
-        prop_oneof![
-            Just("x.y.example.com"),
-            Just("y.example.com"),
-            Just(".y.example.com"),
-            Just(".example.com"),
-            Just("example.com"),
-            Just("10.0.0.1"),
-        ]
-    }
-
-    fn arb_index() -> impl Strategy<Value = RuleIndex> {
-        let rules = proptest::collection::vec(
-            (
-                0..50i64,
-                arb_scope(),
-                arb_pattern(),
-                any::<bool>(),
-                proptest::option::of(0..20u64),
-            ),
-            0..10,
-        );
-        let entries = proptest::collection::vec(
-            (
-                prop_oneof![Just(RuleSetId::System), Just(RuleSetId::BuiltIn("github"))],
-                arb_pattern(),
-                prop_oneof![Just(None), Just(Some("a")), Just(Some("b"))],
-            ),
-            0..4,
-        );
-        let switches = proptest::collection::vec(
-            (
-                prop_oneof![
-                    Just(RuleSetId::User(1)),
-                    Just(RuleSetId::User(2)),
-                    Just(RuleSetId::BuiltIn("github"))
-                ],
-                prop_oneof![Just(None), Just(Some("a")), Just(Some("b"))],
-                any::<bool>(),
-            ),
-            0..5,
-        );
-        (rules, entries, switches).prop_map(|(rules, entries, switches)| {
-            let rules = rules
-                .into_iter()
-                .map(|(id, scope, pattern, deny, expires)| {
-                    let effect = if deny { Effect::Deny } else { Effect::Allow };
-                    let mut r = rule(id, None, pattern, effect);
-                    r.scope = scope;
-                    r.expires_at = expires;
-                    r
-                })
-                .collect();
-            let entries = entries
-                .into_iter()
-                .map(|(set, pattern, workspace)| SetEntry {
-                    set,
-                    pattern: Pattern::parse(pattern).unwrap(),
-                    workspace: if set == RuleSetId::System {
-                        workspace.map(sb)
-                    } else {
-                        None
-                    },
-                    effect: Effect::Allow,
-                })
-                .collect();
-            let mut on = Switches::default();
-            for (set, workspace, enabled) in switches {
-                on.insert(set, workspace.map(sb), enabled);
-            }
-            RuleIndex::new(rules, entries, on)
-        })
-    }
-
-    proptest! {
-        #[test]
-        fn index_agrees_with_the_plain_precedence(
-            rules in proptest::collection::vec(arb_rule(), 0..12),
-            workspace in prop_oneof![Just("a"), Just("b")],
-            h in prop_oneof![
-                Just("x.y.example.com"), Just("y.example.com"), Just("example.com"),
-                Just("z.example.com"), Just("10.0.0.1"),
-            ],
-            now in 0..25u64,
-        ) {
-            let set = index(rules.clone());
-            let got = set.decide(&sb(workspace), &host(h), now, SuffixAllows::Count).and_then(Hit::rule_id);
-            prop_assert_eq!(got, reference(&rules, &sb(workspace), &host(h), now));
-        }
-
-        #[test]
-        fn r39_index_agrees_with_the_plain_precedence_with_sets(
-            index in arb_index(),
-            workspace in prop_oneof![Just("a"), Just("b")],
-            h in prop_oneof![
-                Just("x.y.example.com"), Just("y.example.com"), Just("example.com"),
-                Just("z.example.com"), Just("10.0.0.1"),
-            ],
-            now in 0..25u64,
-            ignore in any::<bool>(),
-        ) {
-            let mode = if ignore { SuffixAllows::Ignore } else { SuffixAllows::Count };
-            let got = index.decide(&sb(workspace), &host(h), now, mode).map(Hit::decision);
-            prop_assert_eq!(got, reference_p3(&index, &sb(workspace), &host(h), now, mode));
-        }
-
-        #[test]
-        fn r39_a_set_never_opens_what_an_own_rule_closes(
-            index in arb_index(),
-            workspace in prop_oneof![Just("a"), Just("b")],
-            h in prop_oneof![Just("x.y.example.com"), Just("y.example.com"), Just("example.com")],
-        ) {
-            let own_only = RuleIndex::new(
-                index.rules().iter().filter(|r| r.scope.set().is_none()).cloned().collect(),
-                Vec::new(),
-                Switches::default(),
-            );
-            let mine = own_only.decide(&sb(workspace), &host(h), 5, SuffixAllows::Count).map(Hit::effect);
-            let all = index.decide(&sb(workspace), &host(h), 5, SuffixAllows::Count).map(Hit::effect);
-            if mine == Some(Effect::Deny) {
-                prop_assert_eq!(all, Some(Effect::Deny));
-            }
-        }
-
-        #[test]
-        fn r07_expired_rules_never_decide(
-            rules in proptest::collection::vec(arb_rule(), 0..12),
-            now in 0..25u64,
-        ) {
-            let set = index(rules);
-            for h in ["x.y.example.com", "example.com", "10.0.0.1"] {
-                if let Some(Hit::Rule(r)) = set.decide(&sb("a"), &host(h), now, SuffixAllows::Count) {
-                    prop_assert!(!r.is_expired(now));
-                }
-            }
-        }
-    }
-}
+mod tests;

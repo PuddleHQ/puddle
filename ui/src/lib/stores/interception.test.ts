@@ -11,7 +11,8 @@ type View = components["schemas"]["InterceptionView"];
 /** The API's interception routes in the shape openapi-fetch returns. */
 class Stub {
   view: View = {
-    decrypt_all: false,
+    mode: "inherit",
+    effective_mode: "known_only",
     global_never_decrypt: ["bank.example"],
     never_decrypt: [],
     workspace: "demo" as View["workspace"],
@@ -45,7 +46,7 @@ class Stub {
 
   async PUT(
     path: string,
-    init: { body: { decrypt_all?: boolean; never_decrypt?: string[] } },
+    init: { body: { mode?: View["mode"]; never_decrypt?: string[] } },
   ) {
     if (this.refuse === null) {
       if (path === "/api/interception/never-decrypt") {
@@ -53,7 +54,11 @@ class Stub {
       } else {
         this.view = {
           ...this.view,
-          decrypt_all: init.body.decrypt_all ?? this.view.decrypt_all,
+          mode: init.body.mode ?? this.view.mode,
+          effective_mode:
+            (init.body.mode ?? this.view.mode) === "inherit"
+              ? this.view.effective_mode
+              : (init.body.mode as View["effective_mode"]),
           never_decrypt: init.body.never_decrypt ?? this.view.never_decrypt,
         };
       }
@@ -93,22 +98,24 @@ const answer = (data: unknown) => ({
 });
 
 describe("WorkspaceInterception", () => {
-  it("reads the switch and both lists", async () => {
+  it("reads the mode and both lists", async () => {
     const store = new WorkspaceInterception(api as never);
     expect(store.status).toBe("loading");
     await store.load("ws-1");
     expect(store.status).toBe("ready");
-    expect(store.decryptAll).toBe(false);
+    expect(store.mode).toBe("inherit");
+    expect(store.effectiveMode).toBe("known_only");
     expect(store.globalNames).toEqual(["bank.example"]);
     expect(api.calls).toEqual(["GET /api/workspaces/{id}/interception"]);
   });
 
-  it("sends only the switch when it is flipped, and shows what the API answers", async () => {
+  it("sends only the mode when it is chosen, and shows what the API answers", async () => {
     const store = new WorkspaceInterception(api as never);
     await store.load("ws-1");
-    expect(await store.setDecryptAll(true)).toEqual({ ok: true });
-    expect(api.bodies).toEqual([{ decrypt_all: true }]);
-    expect(store.decryptAll).toBe(true);
+    expect(await store.setMode("all")).toEqual({ ok: true });
+    expect(api.bodies).toEqual([{ mode: "all" }]);
+    expect(store.mode).toBe("all");
+    expect(store.effectiveMode).toBe("all");
   });
 
   it("sends only the names when they are saved", async () => {
@@ -141,17 +148,36 @@ describe("WorkspaceInterception", () => {
     api.refuse = { status: 404, message: "no such workspace" };
     await store.load("ws-1");
     expect(store.reason).toBe("No such workspace.");
-    expect(await store.setDecryptAll(true)).toEqual({
+    expect(await store.setMode("all")).toEqual({
       ok: false,
       message: "No such workspace.",
     });
+  });
+
+  it("reads again quietly: what is shown stays while it reads and when it fails", async () => {
+    const store = new WorkspaceInterception(api as never);
+    await store.load("ws-1");
+    api.view = { ...api.view, never_decrypt: ["pinned.example"] };
+    const reading = store.load("ws-1", true);
+    expect(store.status).toBe("ready");
+    await reading;
+    expect(store.names).toEqual(["pinned.example"]);
+    api.refuse = { status: 500, message: "store broken" };
+    await store.load("ws-1", true);
+    expect(store.status).toBe("ready");
+    expect(store.reason).toBeNull();
+    api.refuse = null;
+    api.down = true;
+    await store.load("ws-1", true);
+    expect(store.status).toBe("ready");
+    expect(store.names).toEqual(["pinned.example"]);
   });
 
   it("a save when the service is down reports it", async () => {
     const store = new WorkspaceInterception(api as never);
     await store.load("ws-1");
     api.down = true;
-    expect(await store.setDecryptAll(true)).toEqual({
+    expect(await store.setMode("all")).toEqual({
       ok: false,
       message: "Puddle's service isn't answering.",
     });

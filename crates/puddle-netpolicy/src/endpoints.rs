@@ -21,6 +21,10 @@ pub enum EndpointKind {
     BrowserFront,
     /// A pinned port forward.
     PinnedForward,
+    /// The API's listener for a reverse proxy on another machine.
+    RemoteApi,
+    /// The reverse proxy in front of Puddle (its port on every own address, or its public name).
+    ExternalFront,
     /// Any other listener.
     Other,
 }
@@ -34,6 +38,8 @@ impl EndpointKind {
             Self::PullProxy => "image-pull proxy",
             Self::BrowserFront => "browser front",
             Self::PinnedForward => "pinned port forward",
+            Self::RemoteApi => "remote API listener",
+            Self::ExternalFront => "reverse proxy in front of Puddle",
             Self::Other => "listener",
         }
     }
@@ -84,9 +90,18 @@ struct Entry {
     kind: EndpointKind,
 }
 
+#[derive(Debug)]
+struct NameEntry {
+    id: u64,
+    name: String,
+    subdomains: bool,
+    kind: EndpointKind,
+}
+
 #[derive(Debug, Default)]
 struct Inner {
     entries: RwLock<Vec<Entry>>,
+    names: RwLock<Vec<NameEntry>>,
     next_id: AtomicU64,
 }
 
@@ -127,6 +142,27 @@ impl Drop for Registration {
     }
 }
 
+/// A blocked name's registration; dropping it lifts the block. Keep it as long as the name must
+/// stay blocked.
+#[derive(Debug)]
+#[must_use = "dropping the registration lifts the block at once"]
+pub struct NameRegistration {
+    endpoints: PuddleEndpoints,
+    id: u64,
+}
+
+impl Drop for NameRegistration {
+    fn drop(&mut self) {
+        let mut names = self
+            .endpoints
+            .inner
+            .names
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        names.retain(|e| e.id != self.id);
+    }
+}
+
 impl PuddleEndpoints {
     /// An empty registry.
     #[must_use]
@@ -146,6 +182,46 @@ impl PuddleEndpoints {
             endpoints: self.clone(),
             id,
         }
+    }
+
+    /// Blocks a public name (and, with `subdomains`, every name below it) for guests whatever its
+    /// address is. A reverse proxy off this machine is reached by name, so no port or address of
+    /// this host stands for it.
+    pub fn block_name(&self, name: &str, subdomains: bool, kind: EndpointKind) -> NameRegistration {
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .names
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(NameEntry {
+                id,
+                name: name.trim_end_matches('.').to_ascii_lowercase(),
+                subdomains,
+                kind,
+            });
+        NameRegistration {
+            endpoints: self.clone(),
+            id,
+        }
+    }
+
+    /// What a guest asking for `name` would reach, when the name is blocked.
+    #[must_use]
+    pub fn find_name(&self, name: &str) -> Option<EndpointKind> {
+        let name = name.trim_end_matches('.').to_ascii_lowercase();
+        self.inner
+            .names
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|e| {
+                e.name == name
+                    || (e.subdomains
+                        && name
+                            .strip_suffix(e.name.as_str())
+                            .is_some_and(|rest| rest.ends_with('.')))
+            })
+            .map(|e| e.kind)
     }
 
     /// The listener a connection to `dest` would reach, if any: same port, and an address that
@@ -192,130 +268,4 @@ fn unmapped(ip: IpAddr) -> IpAddr {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Lan;
-    impl HostAddrs for Lan {
-        fn is_own(&self, ip: IpAddr) -> bool {
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || ip == "192.168.1.10".parse::<IpAddr>().unwrap()
-        }
-    }
-
-    fn sa(s: &str) -> SocketAddr {
-        s.parse().unwrap()
-    }
-
-    #[test]
-    fn any_host_local_address_on_a_registered_port_matches() {
-        let endpoints = PuddleEndpoints::new();
-        let _api = endpoints.register(sa("127.0.0.1:7070"), EndpointKind::Api);
-        for dest in [
-            "127.0.0.1:7070",
-            "127.0.0.2:7070",
-            "[::1]:7070",
-            "[::ffff:127.0.0.1]:7070",
-            "0.0.0.0:7070",
-            "[::]:7070",
-            "192.168.1.10:7070",
-        ] {
-            assert_eq!(
-                endpoints.find(sa(dest), &Lan),
-                Some(EndpointKind::Api),
-                "{dest}"
-            );
-        }
-        for dest in ["192.168.1.11:7070", "127.0.0.1:7071", "8.8.8.8:7070"] {
-            assert_eq!(endpoints.find(sa(dest), &Lan), None, "{dest}");
-        }
-    }
-
-    #[test]
-    fn the_listener_s_own_address_matches_even_if_not_host_local() {
-        struct Nothing;
-        impl HostAddrs for Nothing {
-            fn is_own(&self, _: IpAddr) -> bool {
-                false
-            }
-        }
-        let endpoints = PuddleEndpoints::new();
-        let _a = endpoints.register(sa("10.9.9.9:9000"), EndpointKind::PinnedForward);
-        let _b = endpoints.register(sa("10.9.9.8:9000"), EndpointKind::BrowserFront);
-        assert_eq!(
-            endpoints.find(sa("10.9.9.8:9000"), &Nothing),
-            Some(EndpointKind::BrowserFront)
-        );
-        assert_eq!(endpoints.find(sa("10.9.9.7:9000"), &Nothing), None);
-    }
-
-    #[test]
-    fn dropping_the_registration_unregisters_only_that_listener() {
-        let endpoints = PuddleEndpoints::new();
-        let api = endpoints.register(sa("127.0.0.1:7070"), EndpointKind::Api);
-        let pull = endpoints
-            .clone()
-            .register(sa("127.0.0.1:7071"), EndpointKind::PullProxy);
-        assert_eq!(endpoints.list().len(), 2);
-        drop(api);
-        assert_eq!(
-            endpoints.list(),
-            vec![(sa("127.0.0.1:7071"), EndpointKind::PullProxy)]
-        );
-        drop(pull);
-        assert_eq!(endpoints.list(), Vec::new());
-    }
-
-    #[test]
-    fn own_addresses_detects_loopback_and_unspecified() {
-        for ip in ["127.0.0.1", "0.0.0.0", "::1", "::"] {
-            assert!(OwnAddresses.is_own(ip.parse().unwrap()), "{ip}");
-        }
-        // TEST-NET-1 is never configured on a CI runner.
-        assert!(!OwnAddresses.is_own("192.0.2.1".parse().unwrap()));
-    }
-
-    #[test]
-    fn loopback_and_unspecified_are_own_without_asking_the_host_to_bind() {
-        let not_available = |_: IpAddr| Err(io::Error::from(io::ErrorKind::AddrNotAvailable));
-        for ip in ["127.0.0.1", "0.0.0.0", "::1", "::"] {
-            assert!(is_own_with(ip.parse().unwrap(), not_available), "{ip}");
-        }
-        assert!(!is_own_with("192.0.2.1".parse().unwrap(), not_available));
-        assert!(is_own_with("192.0.2.1".parse().unwrap(), |_| Ok(())));
-    }
-
-    #[test]
-    fn kinds_describe_themselves() {
-        for (kind, text) in [
-            (EndpointKind::Api, "API"),
-            (EndpointKind::PullProxy, "image-pull proxy"),
-            (EndpointKind::BrowserFront, "browser front"),
-            (EndpointKind::PinnedForward, "pinned port forward"),
-            (EndpointKind::Other, "listener"),
-        ] {
-            assert_eq!(kind.to_string(), text);
-        }
-    }
-
-    #[test]
-    fn a_successful_bind_or_a_failure_other_than_not_available_is_own() {
-        assert!(bind_means_own(Ok(())));
-        for kind in [
-            io::ErrorKind::PermissionDenied,
-            io::ErrorKind::Other,
-            io::ErrorKind::AddrInUse,
-            io::ErrorKind::OutOfMemory,
-        ] {
-            assert!(bind_means_own(Err(io::Error::from(kind))), "{kind:?}");
-        }
-    }
-
-    #[test]
-    fn only_address_not_available_means_not_own() {
-        assert!(!bind_means_own(Err(io::Error::from(
-            io::ErrorKind::AddrNotAvailable
-        ))));
-    }
-}
+mod tests;

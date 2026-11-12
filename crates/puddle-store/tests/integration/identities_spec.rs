@@ -47,7 +47,10 @@ fn draft(label: &str, host: &str, owners: &[&str], rest: bool) -> IdentityDraft 
 
 fn make(store: &Store, label: &str, owners: &[&str], rest: bool) -> IdentityId {
     store
-        .create_identity(draft(label, "github.com", owners, rest))
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            draft(label, "github.com", owners, rest),
+        )
         .unwrap()
         .id
 }
@@ -55,35 +58,71 @@ fn make(store: &Store, label: &str, owners: &[&str], rest: bool) -> IdentityId {
 #[test]
 fn identities_keep_order_default_and_only_references() {
     let (sink, store) = fixture();
-    assert!(store.default_identity().unwrap().is_none());
+    assert!(
+        store
+            .default_identity(puddle_store::UserId::OWNER)
+            .unwrap()
+            .is_none()
+    );
     let work = make(&store, "Work", &["acme"], false);
     let personal = make(&store, "Personal", &[], true);
     // The first one made is the default; labels are unique whatever the case.
-    assert_eq!(store.default_identity().unwrap().unwrap().id, work);
+    assert_eq!(
+        store
+            .default_identity(puddle_store::UserId::OWNER)
+            .unwrap()
+            .unwrap()
+            .id,
+        work
+    );
     assert!(matches!(
-        store.create_identity(draft("work", "github.com", &["x"], false)),
+        store.create_identity(
+            puddle_store::UserId::OWNER,
+            draft("work", "github.com", &["x"], false)
+        ),
         Err(StoreError::IdentityLabelTaken(_))
     ));
     assert!(sink.take().contains(&Event::IdentitiesChanged {}));
 
-    store.set_default_identity(personal).unwrap();
-    let list = store.identities().unwrap();
+    store
+        .set_default_identity(puddle_store::UserId::OWNER, personal)
+        .unwrap();
+    let list = store.identities(puddle_store::UserId::OWNER).unwrap();
     assert_eq!(
         list.iter()
             .map(|i| (i.label.as_str(), i.is_default))
             .collect::<Vec<_>>(),
         [("Work", false), ("Personal", true)]
     );
-    let order = store.reorder_identities(&[personal, work]).unwrap();
+    let order = store
+        .reorder_identities(puddle_store::UserId::OWNER, &[personal, work])
+        .unwrap();
     assert_eq!(order[0].id, personal);
-    assert!(store.reorder_identities(&[personal]).is_err());
-    assert!(store.reorder_identities(&[personal, personal]).is_err());
+    assert!(
+        store
+            .reorder_identities(puddle_store::UserId::OWNER, &[personal])
+            .is_err()
+    );
+    assert!(
+        store
+            .reorder_identities(puddle_store::UserId::OWNER, &[personal, personal])
+            .is_err()
+    );
 
     // Deleting the default hands it to the first in the order.
-    store.delete_identity(personal).unwrap();
-    assert_eq!(store.default_identity().unwrap().unwrap().id, work);
+    store
+        .delete_identity(puddle_store::UserId::OWNER, personal)
+        .unwrap();
+    assert_eq!(
+        store
+            .default_identity(puddle_store::UserId::OWNER)
+            .unwrap()
+            .unwrap()
+            .id,
+        work
+    );
     assert!(matches!(
-        store.identity(personal),
+        store.identity(puddle_store::UserId::OWNER, personal),
         Err(StoreError::UnknownIdentity(_))
     ));
 }
@@ -138,7 +177,9 @@ fn changing_coverage_is_refused_where_it_would_collide() {
     let w = ws("shop");
     store.set_workspace_identities(&w, &[work, other]).unwrap();
     let widened = draft("Other", "github.com", &["other", "acme"], false);
-    let Err(StoreError::IdentityCollision(c)) = store.update_identity(other, widened) else {
+    let Err(StoreError::IdentityCollision(c)) =
+        store.update_identity(puddle_store::UserId::OWNER, other, widened)
+    else {
         panic!("expected a collision");
     };
     assert_eq!(
@@ -146,7 +187,10 @@ fn changing_coverage_is_refused_where_it_would_collide() {
         "Work and Other both cover github.com/acme; narrow one"
     );
     assert_eq!(
-        store.identity(other).unwrap().credentials[0]
+        store
+            .identity(puddle_store::UserId::OWNER, other)
+            .unwrap()
+            .credentials[0]
             .covers
             .owners
             .len(),
@@ -156,7 +200,10 @@ fn changing_coverage_is_refused_where_it_would_collide() {
     store.detach_identity(&w, work).unwrap();
     let widened = draft("Renamed", "github.com", &["other", "acme"], false);
     assert_eq!(
-        store.update_identity(other, widened).unwrap().label,
+        store
+            .update_identity(puddle_store::UserId::OWNER, other, widened)
+            .unwrap()
+            .label,
         "Renamed"
     );
 }
@@ -190,7 +237,12 @@ fn a_request_gets_the_exact_owner_then_the_rest_and_events_follow() {
     ));
     // Deleting an identity takes it off the workspace and tells that workspace.
     let _ = sink.take();
-    assert_eq!(store.delete_identity(work).unwrap(), vec![w.clone()]);
+    assert_eq!(
+        store
+            .delete_identity(puddle_store::UserId::OWNER, work)
+            .unwrap(),
+        vec![w.clone()]
+    );
     assert_eq!(store.workspace_git(&w).unwrap().identities.len(), 1);
     assert!(
         sink.take()
@@ -267,7 +319,10 @@ fn deleting_a_workspace_clears_its_git_settings_but_keeps_the_identities() {
     let git = store.workspace_git(&w).unwrap();
     assert!(git.identities.is_empty() && git.repos.is_empty());
     assert!(git.only_push_listed && !git.only_pull_listed);
-    assert_eq!(store.identities().unwrap().len(), 1);
+    assert_eq!(
+        store.identities(puddle_store::UserId::OWNER).unwrap().len(),
+        1
+    );
 }
 
 #[test]
@@ -285,14 +340,23 @@ fn the_database_holds_references_never_a_value() {
         CredentialBinding::new(&host, source, Coverage::new(BTreeSet::new(), true).unwrap())
             .unwrap();
     let id = store
-        .create_identity(IdentityDraft {
-            label: "Pasted".into(),
-            author: Author::new("Me", "me@example.com").unwrap(),
-            credentials: vec![binding],
-        })
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            IdentityDraft {
+                label: "Pasted".into(),
+                author: Author::new("Me", "me@example.com").unwrap(),
+                credentials: vec![binding],
+            },
+        )
         .unwrap()
         .id;
-    let json = serde_json::to_string(&store.identity(id).unwrap().credentials).unwrap();
+    let json = serde_json::to_string(
+        &store
+            .identity(puddle_store::UserId::OWNER, id)
+            .unwrap()
+            .credentials,
+    )
+    .unwrap();
     assert!(
         json.contains(r#""kind":"stored""#) && json.contains("tok1"),
         "{json}"
@@ -403,25 +467,31 @@ fn the_check_refuses_an_unknown_or_colliding_identity_and_changes_nothing() {
     let _ = sink.take();
     let both = [with(a, "one"), with(b, "two")];
     let err = store
-        .check_repository_git(Some(&ws("w")), &both)
+        .check_repository_git(puddle_store::UserId::OWNER, Some(&ws("w")), &both)
         .unwrap_err();
     assert!(matches!(err, StoreError::IdentityCollision(_)), "{err}");
     assert!(err.to_string().contains("A and B"), "{err}");
     let ghost = [with(IdentityId(99), "one")];
     assert!(matches!(
-        store.check_repository_git(Some(&ws("w")), &ghost),
+        store.check_repository_git(puddle_store::UserId::OWNER, Some(&ws("w")), &ghost),
         Err(StoreError::UnknownIdentity(IdentityId(99)))
     ));
     // One identity named twice is no collision.
     store
-        .check_repository_git(Some(&ws("w")), &[with(a, "one"), with(a, "two")])
+        .check_repository_git(
+            puddle_store::UserId::OWNER,
+            Some(&ws("w")),
+            &[with(a, "one"), with(a, "two")],
+        )
         .unwrap();
     // A new workspace has no list yet: the same checks hold.
     assert!(matches!(
-        store.check_repository_git(None, &both),
+        store.check_repository_git(puddle_store::UserId::OWNER, None, &both),
         Err(StoreError::IdentityCollision(_))
     ));
-    store.check_repository_git(None, &[with(a, "one")]).unwrap();
+    store
+        .check_repository_git(puddle_store::UserId::OWNER, None, &[with(a, "one")])
+        .unwrap();
     assert_eq!(sink.take(), [], "a check changes nothing");
     assert_eq!(
         store.workspace_git(&ws("w")).unwrap(),
@@ -476,7 +546,10 @@ fn a_repository_nobody_covers_gets_the_default_and_none_when_there_is_none() {
 
     // Work covers only acme on github.com; the default (first made) covers another host.
     let default = store
-        .create_identity(draft("Default", "dev.azure.com", &["contoso"], false))
+        .create_identity(
+            puddle_store::UserId::OWNER,
+            draft("Default", "dev.azure.com", &["contoso"], false),
+        )
         .unwrap()
         .id;
     let _work = make(&store, "Work", &["acme"], false);
@@ -516,7 +589,10 @@ fn two_identities_that_cover_a_repository_equally_give_the_first_in_your_order()
 #[test]
 fn the_default_switches_are_inherited_until_a_workspace_sets_its_own() {
     let (sink, store) = fixture();
-    assert_eq!(store.git_defaults().unwrap(), GitDefaults::default());
+    assert_eq!(
+        store.git_defaults(puddle_store::UserId::OWNER).unwrap(),
+        GitDefaults::default()
+    );
     assert_eq!(
         (
             GitDefaults::default().only_push_listed,
@@ -529,7 +605,9 @@ fn the_default_switches_are_inherited_until_a_workspace_sets_its_own() {
     let (old, own) = (ws("old"), ws("own"));
     store.set_git_switches(&own, Some(true), None).unwrap();
     let _ = sink.take();
-    let defaults = store.set_git_defaults(Some(false), Some(true)).unwrap();
+    let defaults = store
+        .set_git_defaults(puddle_store::UserId::OWNER, Some(false), Some(true))
+        .unwrap();
     assert_eq!(
         (defaults.only_push_listed, defaults.only_pull_listed),
         (false, true)
@@ -557,16 +635,22 @@ fn the_default_switches_are_inherited_until_a_workspace_sets_its_own() {
     store
         .set_git_switches(&ws("fresh"), Some(true), None)
         .unwrap();
-    store.set_git_defaults(None, Some(false)).unwrap();
+    store
+        .set_git_defaults(puddle_store::UserId::OWNER, None, Some(false))
+        .unwrap();
     let fresh = store.workspace_git(&ws("fresh")).unwrap();
     assert!(fresh.only_push_listed && !fresh.only_pull_listed);
     // `None` for both changes nothing and says nothing.
     let _ = sink.take();
-    store.set_git_defaults(None, None).unwrap();
+    store
+        .set_git_defaults(puddle_store::UserId::OWNER, None, None)
+        .unwrap();
     assert!(sink.take().is_empty(), "an unchanged default says nothing");
     assert_eq!(
-        store.git_defaults().unwrap(),
-        store.set_git_defaults(Some(false), Some(false)).unwrap()
+        store.git_defaults(puddle_store::UserId::OWNER).unwrap(),
+        store
+            .set_git_defaults(puddle_store::UserId::OWNER, Some(false), Some(false))
+            .unwrap()
     );
 }
 
@@ -574,19 +658,23 @@ fn the_default_switches_are_inherited_until_a_workspace_sets_its_own() {
 fn two_changes_of_different_default_switches_made_at_once_both_stick() {
     let store = Arc::new(fixture().1);
     for round in 0..200 {
-        store.set_git_defaults(Some(false), Some(false)).unwrap();
+        store
+            .set_git_defaults(puddle_store::UserId::OWNER, Some(false), Some(false))
+            .unwrap();
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let changes = [(Some(true), None), (None, Some(true))].map(|(push, pull)| {
             let (store, barrier) = (store.clone(), barrier.clone());
             std::thread::spawn(move || {
                 barrier.wait();
-                store.set_git_defaults(push, pull).unwrap();
+                store
+                    .set_git_defaults(puddle_store::UserId::OWNER, push, pull)
+                    .unwrap();
             })
         });
         for change in changes {
             change.join().unwrap();
         }
-        let got = store.git_defaults().unwrap();
+        let got = store.git_defaults(puddle_store::UserId::OWNER).unwrap();
         assert!(
             got.only_push_listed && got.only_pull_listed,
             "a change was lost in round {round}"
@@ -607,7 +695,9 @@ fn a_switch_can_go_back_to_following_the_default() {
     store
         .change_git_switches(&w, SwitchChange::Set(false), SwitchChange::Set(true))
         .unwrap();
-    store.set_git_defaults(Some(true), Some(false)).unwrap();
+    store
+        .set_git_defaults(puddle_store::UserId::OWNER, Some(true), Some(false))
+        .unwrap();
     let own = store.workspace_git(&w).unwrap();
     assert!(!own.only_push_listed && own.only_pull_listed);
     assert_eq!(sources(&own), (Own, Own));
@@ -702,11 +792,15 @@ fn the_secret_ids_in_use_are_the_stored_tokens_of_identities_and_the_secrets_of_
         CredentialBinding::new(&host, pasted, Coverage::new(BTreeSet::new(), true).unwrap())
             .unwrap(),
     ];
-    let pasted = store.create_identity(with_token).unwrap().id;
+    let pasted = store
+        .create_identity(puddle_store::UserId::OWNER, with_token)
+        .unwrap()
+        .id;
     // A `gh` credential holds no stored value.
     make(&store, "Gh", &["acme"], false);
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Global,
             &EnvName::new("TOKEN").unwrap(),
             EnvDraft::secret(
@@ -718,6 +812,7 @@ fn the_secret_ids_in_use_are_the_stored_tokens_of_identities_and_the_secrets_of_
         .unwrap();
     store
         .set_env(
+            puddle_store::UserId::OWNER,
             &EnvScope::Global,
             &EnvName::new("PLAIN").unwrap(),
             EnvDraft::plain("x").unwrap(),
@@ -728,7 +823,9 @@ fn the_secret_ids_in_use_are_the_stored_tokens_of_identities_and_the_secrets_of_
         [id("tok-a"), id("env-1")].into_iter().collect()
     );
 
-    store.delete_identity(pasted).unwrap();
+    store
+        .delete_identity(puddle_store::UserId::OWNER, pasted)
+        .unwrap();
     assert_eq!(
         store.secret_ids_in_use().unwrap(),
         [id("env-1")].into_iter().collect()

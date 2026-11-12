@@ -211,6 +211,10 @@ readable as JSONL (one record per line).
   `foreign_credentials` (the kinds of credential a request carried that Puddle did not add or swap:
   `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`, `azure_devops_token`,
   `git_authorization`; each once, never a value; empty in older records and when the warning is off),
+  `answer_credentials` (the kinds of token an answer held that Puddle does not hold, read as the
+  workspace gets it: `github_token`, `github_fine_grained_token`, `gitlab_token`, `npm_token`,
+  `azure_devops_token`, `anthropic_key`, `openai_key`, `jwt_with_refresh_token`; each once, never a
+  value; the same setting turns it off; empty in older records),
   `method` and `path` on terminated hosts, plain-HTTP requests and `CONNECT` tunnels that carry
   plain HTTP/1.x only, `bytes_up`, `bytes_down`), `pending_created`, `pending_decided`, `pending_expired` (only when a workspace is deleted),
   `rule_created`, `rule_updated`, `rule_deleted`,
@@ -273,7 +277,7 @@ readable as JSONL (one record per line).
   identity, which belongs to none), how it ended (`outcome`: `succeeded` or `failed`) and a short
   plain sentence (`detail`, `null` when there is nothing to add). The `op` values are `create`,
   `delete`, `rename`, `start`, `stop`, `identity_created`, `identity_updated`, `identity_deleted`,
-  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed` and
+  `identity_default_set`, `identities_changed`, `identities_reordered`, `repo_added`, `repo_switched`, `repo_removed`, `root_disk_grown` (a workspace's root disk made bigger, or the try failed; `detail` gives both sizes and how it took effect) and
   `git_repaired` (one record, actor `system`, for each zero-filled or corrupt git file Puddle rebuilt
   at boot; `detail` names the file and what was done).
   A create or a delete is written whether it worked or not; a start or a stop only when it failed

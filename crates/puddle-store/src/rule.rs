@@ -4,6 +4,7 @@
 use puddle_types::{RuleId, WorkspaceId};
 
 use crate::pattern::Pattern;
+use crate::users::UserId;
 
 /// Which requests a rule applies to (R-5, R-38).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -91,10 +92,13 @@ pub enum Actor {
     Api,
     /// Puddle itself (the sweeper, workspace deletion). Never creates rules.
     System,
+    /// A workspace create, or adding a repository to a workspace: it allows the host of the
+    /// repository for that workspace. Creates rules only; never decides a pending request.
+    WorkspaceCreate,
 }
 
 impl Actor {
-    /// `cli`, `ui`, `api` or `system`.
+    /// `cli`, `ui`, `api`, `system` or `workspace_create`.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -102,6 +106,7 @@ impl Actor {
             Self::Ui => "ui",
             Self::Api => "api",
             Self::System => "system",
+            Self::WorkspaceCreate => "workspace_create",
         }
     }
 
@@ -111,6 +116,7 @@ impl Actor {
             "ui" => Self::Ui,
             "api" => Self::Api,
             "system" => Self::System,
+            "workspace_create" => Self::WorkspaceCreate,
             _ => return None,
         })
     }
@@ -121,6 +127,9 @@ impl Actor {
 pub struct Rule {
     /// Row id, never reused.
     pub id: RuleId,
+    /// Whose it is: the workspace's user for a workspace rule, the set's for a set's entry, and
+    /// the user who made it for a global rule. It decides only that user's workspaces.
+    pub user: UserId,
     /// Global or one workspace.
     pub scope: Scope,
     /// Exact host or suffix.

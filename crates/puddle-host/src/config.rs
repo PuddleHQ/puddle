@@ -28,6 +28,23 @@ pub struct ApiSettings {
     pub ui: Option<Arc<dyn UiAssets>>,
     /// Where to write the connection file (URL and token), if anywhere.
     pub connection_file: Option<PathBuf>,
+    /// Remote serving: the public names a reverse proxy may use. `None`: loopback only, exactly
+    /// as before.
+    pub remote: Option<puddle_api::RemoteServing>,
+    /// The listener for a reverse proxy on another machine. Needs [`Self::remote`].
+    pub network_listener: Option<NetworkListenerSettings>,
+}
+
+/// Where the API listens for a reverse proxy on another machine (opt-in). The host makes the
+/// listener's TLS certificate under the data folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkListenerSettings {
+    /// The one interface address to bind.
+    pub interface: std::net::IpAddr,
+    /// The port.
+    pub port: u16,
+    /// The proxy addresses that may connect.
+    pub allowed_proxies: Vec<std::net::IpAddr>,
 }
 
 impl std::fmt::Debug for ApiSettings {
@@ -37,6 +54,8 @@ impl std::fmt::Debug for ApiSettings {
             .field("extra_origins", &self.extra_origins)
             .field("ui", &self.ui.as_ref().map(|_| "custom"))
             .field("connection_file", &self.connection_file)
+            .field("remote", &self.remote)
+            .field("network_listener", &self.network_listener)
             .finish()
     }
 }
@@ -145,6 +164,8 @@ impl HostConfig {
                 extra_origins: Vec::new(),
                 ui: None,
                 connection_file,
+                remote: None,
+                network_listener: None,
             },
             upstream: UpstreamSettings::default(),
             workspaces: WorkspaceConfig::default(),
@@ -208,45 +229,4 @@ pub const CODE_SERVER_DIR_NAME: &str = "code-server";
 pub const AGENT_FILE_NAME: &str = "puddle-agent";
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_defaults_follow_the_data_folder() {
-        // Absolute on every platform ("/rt" has no drive on Windows).
-        let layout = RuntimeLayout::new(
-            std::path::absolute("/rt").unwrap(),
-            std::path::absolute("/data/msb").unwrap(),
-        )
-        .unwrap_or_else(|e| panic!("{e}"));
-        let config = HostConfig::new(
-            HostPaths::new("/data"),
-            layout,
-            GuestSettings::new("/rt/puddle-agent"),
-        );
-        assert_eq!(
-            config.api.connection_file.as_deref(),
-            Some(Path::new("/data/api.json"))
-        );
-        assert_eq!(config.api.port, 0);
-        assert_eq!(config.expected_runtime, RuntimeVersion::built_for());
-        assert!(config.guest.git_identity.is_none());
-        assert!(format!("{:?}", config.api).contains("connection_file"));
-    }
-
-    #[test]
-    fn the_installed_layout_keeps_state_in_the_given_folder_and_the_runtime_beside_the_exe() {
-        let dir = tempfile::tempdir().unwrap();
-        let app = dir.path().join("app");
-        let data = dir.path().join("data");
-        let config = HostConfig::installed(&app.join("puddle-app"), &data).unwrap();
-        assert_eq!(config.paths.data(), data);
-        assert_eq!(config.layout.runtime_dir(), app.join("runtime"));
-        assert_eq!(
-            config.guest.agent_binary,
-            app.join("runtime").join(AGENT_FILE_NAME)
-        );
-        assert_eq!(config.guest.code_server, None);
-        assert_eq!(config.api.connection_file, Some(data.join("api.json")));
-    }
-}
+mod tests;

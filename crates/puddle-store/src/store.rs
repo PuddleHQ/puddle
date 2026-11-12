@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
@@ -30,23 +31,29 @@ use crate::pending::{
 };
 use crate::rule::{Actor, Effect, NewRule, Rule, Scope};
 use crate::schema;
+use crate::users::UserId;
 
 mod environment;
 #[cfg(test)]
 mod failures;
 mod identities;
 mod interception;
+mod learned;
 mod ports;
 mod request_rules;
 mod sets;
 mod shell_init;
+mod users;
 
 pub use interception::{
-    DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, LearnedLimits, WorkspaceInterception,
+    DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings, LearnedLimits,
+    WorkspaceInterception,
 };
+pub use learned::LearnedRow;
 pub use ports::PinnedPort;
 pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
+pub use users::WorkspaceOwners;
 
 /// Tunable limits. The defaults are the spec's *(default)* values.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +92,9 @@ pub struct NewWorkspaceOp {
     pub op: WorkspaceOpKind,
     /// The workspace it was done to; `None` for an identity change that belongs to none.
     pub workspace: Option<WorkspaceId>,
+    /// Whose record it is when it names no workspace (`None`: the owner's). One that names a
+    /// workspace is that workspace's user's.
+    pub user: Option<UserId>,
     /// How it ended.
     pub outcome: WorkspaceOpOutcome,
     /// Who asked.
@@ -97,6 +107,8 @@ pub struct NewWorkspaceOp {
 /// ones all have to match.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AuditFilter {
+    /// Records of this user's workspaces and changes; every user's when `None`.
+    pub user: Option<UserId>,
     /// Records about this workspace.
     pub workspace: Option<WorkspaceId>,
     /// Records of this `type` (one of [`AuditRecord::KINDS`]).
@@ -202,7 +214,9 @@ struct Flushed(Option<WorkspaceId>, u64, u64);
 
 /// Puddle's rules, pending requests and audit log, in one SQLite database.
 pub struct Store {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
+    /// Whether [`Store::take_account_secrets`] has handed the sign-in secrets out.
+    secrets_taken: AtomicBool,
     rules: RwLock<Arc<RuleIndex>>,
     workspaces: Mutex<HashMap<WorkspaceId, WorkspaceState>>,
     /// The connection limit of Puddle's own connections, which have no workspace.
@@ -220,7 +234,7 @@ impl std::fmt::Debug for Store {
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // A panic while holding the lock can't leave SQLite half-written (the transaction rolls
     // back on drop), and the other guarded state is counters, so carry on.
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -235,7 +249,7 @@ pub(crate) fn write_tx(conn: &mut Connection) -> Result<Transaction<'_>, rusqlit
 }
 
 /// Epoch ms as SQLite stores it. Times past year 292 million saturate.
-fn sql_ts(ms: u64) -> i64 {
+pub(crate) fn sql_ts(ms: u64) -> i64 {
     i64::try_from(ms).unwrap_or(i64::MAX)
 }
 
@@ -274,7 +288,8 @@ impl Store {
         sets::note_built_in_changes(&mut conn, clock.now_ms())?;
         let rules = sets::load_index(&conn)?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
+            secrets_taken: AtomicBool::new(false),
             rules: RwLock::new(Arc::new(rules)),
             workspaces: Mutex::new(HashMap::new()),
             puddle_connections: Mutex::new(ConnectionWindow::default()),
@@ -298,11 +313,22 @@ impl Store {
         Arc::clone(&self.rules.read().unwrap_or_else(PoisonError::into_inner))
     }
 
-    /// Every rule, including expired ones the sweeper hasn't removed yet, and the entries of
-    /// the rule sets the user made (scope [`Scope::Set`]).
+    /// Every rule of every user, including expired ones the sweeper hasn't removed yet, and the
+    /// entries of the rule sets users made (scope [`Scope::Set`]).
     #[must_use]
     pub fn rules(&self) -> Vec<Rule> {
         self.snapshot().rules().to_vec()
+    }
+
+    /// [`Store::rules`] of one user.
+    #[must_use]
+    pub fn rules_of(&self, user: UserId) -> Vec<Rule> {
+        self.snapshot()
+            .rules()
+            .iter()
+            .filter(|rule| rule.user == user)
+            .cloned()
+            .collect()
     }
 
     /// The most open rows kept per workspace (R-45).
@@ -434,21 +460,24 @@ impl Store {
     }
 
     /// Commits `tx`, then emits `fx` and, if the transaction appended audit records (the audit's
-    /// newest id passed `head`), one [`Event::AuditAppended`]. Called with `conn` held, so
-    /// events leave in commit order.
+    /// newest id passed `head`), one [`Event::AuditAppended`] for each user the records belong
+    /// to. Called with `conn` held, so events leave in commit order.
     fn commit(&self, tx: Transaction<'_>, head: i64, fx: Vec<Event>) -> Result<(), StoreError> {
-        let newest = audit_head(&tx)?;
+        let appended = appended_since(&tx, head)?;
         tx.commit()?;
-        self.emit_all(fx, head, newest);
+        self.emit_all(fx, &appended);
         Ok(())
     }
 
-    fn emit_all(&self, fx: Vec<Event>, head: i64, newest: i64) {
+    fn emit_all(&self, fx: Vec<Event>, appended: &[(UserId, i64)]) {
         for event in fx {
             self.events.emit(event);
         }
-        if newest > head {
-            self.events.emit(Event::AuditAppended { id: newest });
+        for (user, id) in appended {
+            self.events.emit(Event::AuditAppended {
+                id: *id,
+                user: user.get(),
+            });
         }
     }
 
@@ -465,18 +494,34 @@ impl Store {
         let mut fx = Vec::new();
         let out = change(&tx, now, &mut fx)?;
         let set = sets::load_index(&tx)?;
-        let newest = audit_head(&tx)?;
+        let appended = appended_since(&tx, head)?;
         tx.commit()?;
         *self.rules.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(set);
-        self.emit_all(fx, head, newest);
+        self.emit_all(fx, &appended);
         Ok(out)
     }
 
-    /// Creates a rule and closes the open rows it now decides (R-16).
+    /// Creates a rule and closes the open rows it now decides (R-16). A workspace rule is the
+    /// workspace's user's, a set's entry the set's user's, and a global rule the owner's: see
+    /// [`Store::add_rule_as`] for a rule another user makes.
     ///
     /// # Errors
     /// [`StoreError::SystemActor`], [`StoreError::ExpiryNotInFuture`], or a database error.
     pub fn add_rule(&self, new: &NewRule) -> Result<Rule, StoreError> {
+        self.add_rule_by(None, new)
+    }
+
+    /// [`Store::add_rule`] by `user`: a global rule becomes theirs, and a workspace or set it
+    /// names must be theirs.
+    ///
+    /// # Errors
+    /// As [`Store::add_rule`], and [`StoreError::UnknownWorkspace`] or
+    /// [`StoreError::UnknownRuleSet`] for another user's workspace or set.
+    pub fn add_rule_as(&self, user: UserId, new: &NewRule) -> Result<Rule, StoreError> {
+        self.add_rule_by(Some(user), new)
+    }
+
+    fn add_rule_by(&self, user: Option<UserId>, new: &NewRule) -> Result<Rule, StoreError> {
         if new.created_by == Actor::System {
             return Err(StoreError::SystemActor);
         }
@@ -484,13 +529,75 @@ impl Store {
             if new.expires_at.is_some_and(|at| at <= now) {
                 return Err(StoreError::ExpiryNotInFuture);
             }
-            let rule = insert_rule(tx, new, now, None)?;
-            close_decided_rows(tx, &rule, None, new.created_by, now, fx)?;
+            let rule = insert_rule(tx, user, new, now, None)?;
+            // A pending row's `decided_by` takes the people's actors and `system`, so a rule
+            // made by a workspace create closes the rows it decides as Puddle itself.
+            let decider = match new.created_by {
+                Actor::WorkspaceCreate => Actor::System,
+                actor => actor,
+            };
+            close_decided_rows(tx, &rule, None, decider, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(rule)
         })?;
         tracing::info!(rule = %rule.id, pattern = %rule.pattern, effect = rule.effect.as_str(), "rule created");
         Ok(rule)
+    }
+
+    /// What the rules say about `host` for `workspace` right now, without recording anything:
+    /// the same answer [`Store::decide`] gives, but `None` where that would open a pending row.
+    /// A workspace that does not exist yet sees only the global rules and the sets' defaults.
+    #[must_use]
+    pub fn peek(&self, workspace: &WorkspaceId, host: &Host) -> Option<Decision> {
+        self.match_rules(
+            &EgressRequest::new(workspace.clone(), host.clone(), 443),
+            self.clock.now_ms(),
+            SuffixAllows::Count,
+        )
+    }
+
+    /// [`Store::peek`] for a workspace of `user` that is not made yet (`workspace` is a name no
+    /// workspace has): `user`'s global rules and sets.
+    #[must_use]
+    pub fn peek_as(&self, user: UserId, workspace: &WorkspaceId, host: &Host) -> Option<Decision> {
+        self.snapshot()
+            .decide_as(
+                user,
+                workspace,
+                host,
+                self.clock.now_ms(),
+                SuffixAllows::Count,
+            )
+            .map(Hit::decision)
+    }
+
+    /// Allows each of `hosts` for `workspace` that no rule decides yet, with an exact allow rule
+    /// made by [`Actor::WorkspaceCreate`] (a create names the hosts of its repositories, and the
+    /// clone that follows would otherwise wait in the inbox). A host that is allowed already, or
+    /// that a deny decides, gets no rule: a create never overrides a block. Returns the rules
+    /// made.
+    ///
+    /// # Errors
+    /// A database error; the rules made before it stay.
+    pub fn allow_hosts_for_create(
+        &self,
+        workspace: &WorkspaceId,
+        hosts: &[Host],
+    ) -> Result<Vec<Rule>, StoreError> {
+        let mut made = Vec::new();
+        for host in hosts {
+            if self.peek(workspace, host).is_some() {
+                continue;
+            }
+            made.push(self.add_rule(&NewRule {
+                scope: Scope::Workspace(workspace.clone()),
+                pattern: Pattern::Exact(host.clone()),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::WorkspaceCreate,
+            })?);
+        }
+        Ok(made)
     }
 
     /// Deletes a rule.
@@ -501,7 +608,7 @@ impl Store {
         let rule = self.change(|tx, now, fx| {
             let rule = load_rule(tx, id)?;
             tx.execute("DELETE FROM rules WHERE id = ?1", [id.0])?;
-            append(
+            append_for(
                 tx,
                 &AuditRecord::RuleDeleted {
                     ts: now,
@@ -509,6 +616,7 @@ impl Store {
                     reason: RuleDeleteReason::User,
                     actor: actor_str(actor),
                 },
+                rule.user,
             )?;
             fx.push(Event::RulesChanged {});
             Ok(rule)
@@ -541,7 +649,7 @@ impl Store {
                 params![expires_at.map(sql_ts), id.0],
             )?;
             let after = load_rule(tx, id)?;
-            append(
+            append_for(
                 tx,
                 &AuditRecord::RuleUpdated {
                     ts: now,
@@ -549,6 +657,7 @@ impl Store {
                     rule: RuleWire::from(&after),
                     actor: actor_str(actor),
                 },
+                after.user,
             )?;
             fx.push(Event::RulesChanged {});
             Ok(after)
@@ -601,7 +710,9 @@ impl Store {
                 expires_at: resolution.expires_in.map(|d| plus(now, d)),
                 created_by: actor,
             };
-            let rule = insert_rule(tx, &new, now, Some(id))?;
+            // The rule is the user's whose workspace asked, global or not.
+            let user = users::owner_in(tx, &row.workspace)?;
+            let rule = insert_rule(tx, Some(user), &new, now, Some(id))?;
             decide_row(tx, &row, &rule, actor, now, fx)?;
             let also_closed = close_decided_rows(tx, &rule, Some(id), actor, now, fx)?;
             fx.push(Event::RulesChanged {});
@@ -717,7 +828,7 @@ impl Store {
     /// A database or audit error.
     pub fn record_workspace_op(&self, op: &NewWorkspaceOp) -> Result<(), StoreError> {
         self.change(|tx, now, _fx| {
-            append(
+            append_by(
                 tx,
                 &AuditRecord::WorkspaceOp {
                     ts: now,
@@ -727,6 +838,7 @@ impl Store {
                     actor: actor_str(op.actor),
                     detail: op.detail.clone(),
                 },
+                op.user,
             )
         })
     }
@@ -813,6 +925,7 @@ impl Store {
             // Its pinned forwards go with it.
             ports::delete_workspace_rows(tx, workspace)?;
             interception::delete_workspace_rows(tx, workspace)?;
+            learned::delete_workspace_rows(tx, workspace)?;
             request_rules::delete_workspace_rows(tx, workspace, now, fx)?;
             Ok(WorkspaceDeletion {
                 rules_deleted: rules.len() as u64,
@@ -842,12 +955,13 @@ impl Store {
             drop(stmt);
             for rule in &rules {
                 tx.execute("DELETE FROM rules WHERE id = ?1", [rule.id.0])?;
-                append(
+                append_for(
                     tx,
                     &AuditRecord::RuleExpired {
                         ts: now,
                         rule: RuleWire::from(rule),
                     },
+                    rule.user,
                 )?;
             }
             if !rules.is_empty() {
@@ -1168,6 +1282,11 @@ fn audit_query_sql(
         AuditCursor::Before(Some(id)) => clause("id < ?", Some(Value::Integer(id))),
         AuditCursor::Before(None) => {}
     }
+    if let Some(user) = filter.user {
+        // `+` keeps the planner on the indexes the other filters pick: users are few, so this
+        // narrows little, and the owner's rows are nearly all of them.
+        clause("+user_id = ?", Some(Value::Integer(user.get())));
+    }
     if let Some(workspace) = &filter.workspace {
         clause("workspace_id = ?", Some(Value::Text(workspace.to_string())));
     }
@@ -1253,12 +1372,29 @@ fn audit_bytes(conn: &Connection) -> Result<u64, StoreError> {
     u64::try_from(bytes).map_err(|_| corrupt("audit_size", 1, "negative byte count"))
 }
 
+/// Appends a record of the workspace's user it names; one that names none is the owner's (the
+/// install's own: Puddle's connections, a trim, the built-in sets and System managed).
 fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
+    append_by(conn, record, None)
+}
+
+/// Appends a record of `user`: one whose workspace (if it names one) is `user`'s.
+fn append_for(conn: &Connection, record: &AuditRecord, user: UserId) -> Result<(), StoreError> {
+    append_by(conn, record, Some(user))
+}
+
+fn append_by(
+    conn: &Connection,
+    record: &AuditRecord,
+    user: Option<UserId>,
+) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
-        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, workspace_name)
+        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, workspace_name,
+                            user_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-                 (SELECT name FROM workspace_names WHERE workspace_id = ?3))",
+                 (SELECT name FROM workspace_names WHERE workspace_id = ?3),
+                 coalesce((SELECT user_id FROM workspace_owners WHERE workspace_id = ?3), ?8, 1))",
         params![
             sql_ts(record.ts()),
             record.kind(),
@@ -1266,10 +1402,22 @@ fn append(conn: &Connection, record: &AuditRecord) -> Result<(), StoreError> {
             record.host(),
             record.outcome().map(AuditOutcome::as_str),
             line,
-            record.search_text()
+            record.search_text(),
+            user.map(UserId::get)
         ],
     )?;
     Ok(())
+}
+
+/// For each user with records appended after `head`, their newest record's id.
+fn appended_since(conn: &Connection, head: i64) -> Result<Vec<(UserId, i64)>, StoreError> {
+    const NEWEST_PER_USER: &str =
+        "SELECT user_id, max(id) FROM audit WHERE id > ?1 GROUP BY user_id ORDER BY max(id)";
+    let mut stmt = conn.prepare_cached(NEWEST_PER_USER)?;
+    let rows = stmt.query_map([head], |row| {
+        Ok((UserId::from_stored(row.get(0)?), row.get(1)?))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// The newest audit record's id (0 for an empty audit). Ids only grow (`AUTOINCREMENT`), so a
@@ -1282,15 +1430,28 @@ fn audit_head(conn: &Connection) -> Result<i64, StoreError> {
     )
 }
 
+/// Writes a rule of `user` (see [`Store::add_rule_as`]; `None` takes the scope's user, and the
+/// owner for a global rule).
 fn insert_rule(
     tx: &Transaction<'_>,
+    user: Option<UserId>,
     new: &NewRule,
     now: u64,
     source: Option<PendingId>,
 ) -> Result<Rule, StoreError> {
-    if let Some(set) = new.scope.set() {
-        sets::require_user_set(tx, set)?;
-    }
+    let user = match (&new.scope, user) {
+        (Scope::Workspace(workspace), Some(user)) => {
+            users::require_owner(tx, workspace, user)?;
+            user
+        }
+        (Scope::Workspace(workspace), None) => users::owner_in(tx, workspace)?,
+        (Scope::Set(set), Some(user)) => {
+            sets::require_user_set(tx, user, *set)?;
+            user
+        }
+        (Scope::Set(set), None) => sets::set_user(tx, *set)?,
+        (Scope::Global, user) => user.unwrap_or(UserId::OWNER),
+    };
     let workspace = new.scope.workspace().map(WorkspaceId::as_str);
     let kind = match new.pattern {
         Pattern::Exact(_) => "exact",
@@ -1298,8 +1459,8 @@ fn insert_rule(
     };
     tx.execute(
         "INSERT INTO rules (scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
-                            created_at, created_by, source_pending_id)
-         VALUES (?1, ?2, ?10, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                            created_at, created_by, source_pending_id, user_id)
+         VALUES (?1, ?2, ?10, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11)",
         params![
             new.scope.as_str(),
             workspace,
@@ -1311,15 +1472,17 @@ fn insert_rule(
             new.created_by.as_str(),
             source.map(|id| id.0),
             new.scope.set(),
+            user.get(),
         ],
     )?;
     let rule = load_rule(tx, RuleId(tx.last_insert_rowid()))?;
-    append(
+    append_for(
         tx,
         &AuditRecord::RuleCreated {
             ts: now,
             rule: RuleWire::from(&rule),
         },
+        rule.user,
     )?;
     Ok(rule)
 }
@@ -1452,7 +1615,7 @@ fn expire_rows(
 }
 
 const RULE_COLUMNS: &str = "id, scope, workspace_id, pattern_kind, pattern, effect, expires_at, \
-                            created_at, created_by, source_pending_id, set_id";
+                            created_at, created_by, source_pending_id, set_id, user_id";
 
 /// A `rules` row as SQLite holds it, before validation.
 struct RawRule {
@@ -1467,6 +1630,7 @@ struct RawRule {
     created_by: String,
     source_pending_id: Option<i64>,
     set_id: Option<i64>,
+    user_id: i64,
 }
 
 fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
@@ -1482,6 +1646,7 @@ fn raw_rule(row: &Row<'_>) -> rusqlite::Result<RawRule> {
         created_by: row.get(8)?,
         source_pending_id: row.get(9)?,
         set_id: row.get(10)?,
+        user_id: row.get(11)?,
     })
 }
 
@@ -1525,6 +1690,7 @@ fn rule_from_raw(raw: &RawRule) -> Result<Rule, StoreError> {
     };
     Ok(Rule {
         id: RuleId(raw.id),
+        user: UserId::from_stored(raw.user_id),
         scope,
         pattern,
         effect,
@@ -1628,397 +1794,4 @@ fn load_pending(conn: &Connection, id: PendingId) -> Result<PendingRow, StoreErr
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::clock::ManualClock;
-    use puddle_types::{ConnectionDecision, ConnectionReason};
-
-    fn store() -> (Arc<ManualClock>, Store) {
-        let clock = Arc::new(ManualClock::new(1_000_000));
-        let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
-        (clock, store)
-    }
-
-    #[test]
-    fn an_audit_record_carries_the_name_its_workspace_had_when_it_was_written() {
-        let (_, store) = store();
-        let acme = WorkspaceId::new("acme").unwrap();
-        let op = |workspace: Option<&WorkspaceId>| NewWorkspaceOp {
-            op: WorkspaceOpKind::Rename,
-            workspace: workspace.cloned(),
-            outcome: WorkspaceOpOutcome::Succeeded,
-            actor: Actor::Ui,
-            detail: None,
-        };
-        store.record_workspace_op(&op(Some(&acme))).unwrap(); // before any name
-        store.set_workspace_name(&acme, "Acme shop").unwrap();
-        store.record_workspace_op(&op(Some(&acme))).unwrap();
-        store.set_workspace_name(&acme, "Acme").unwrap();
-        store.record_workspace_op(&op(Some(&acme))).unwrap();
-        store.record_workspace_op(&op(None)).unwrap(); // no workspace
-
-        let ids: Vec<i64> = store
-            .audit_lines(0, 100)
-            .unwrap()
-            .iter()
-            .map(|(id, _)| *id)
-            .collect();
-        assert_eq!(ids.len(), 4);
-        let names = store.audit_workspace_names(&ids).unwrap();
-        assert_eq!(names.len(), 2, "{names:?}");
-        assert_eq!(names[&ids[1]], "Acme shop");
-        assert_eq!(names[&ids[2]], "Acme");
-        assert!(store.audit_workspace_names(&[]).unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name() {
-        let (_, store) = store();
-        let ws = WorkspaceId::new("acme").unwrap();
-        assert!(store.note_workspace_name(&ws, "Acme shop"));
-        assert!(
-            store.note_workspace_name(&ws, "Acme"),
-            "a rename replaces it"
-        );
-        store.break_database("DROP TABLE workspace_names");
-        assert!(!store.note_workspace_name(&ws, "Lost"));
-        assert!(store.set_workspace_name(&ws, "Lost").is_err());
-    }
-
-    #[test]
-    fn a_write_waits_for_another_connection_holding_the_file_instead_of_failing() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("store.db");
-        let clock = Arc::new(ManualClock::new(1_000_000));
-        let store = Store::open(&path, clock, Limits::default()).unwrap();
-        // The other writer: the CLI, or the host a restart has not finished with.
-        let holder = Connection::open(&path).unwrap();
-        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
-        let release = std::thread::spawn(move || {
-            // The write below blocks inside the call under test, so no signal can mark the moment to
-            // release: the lock is held for a fixed window that the write has to wait out.
-            std::thread::sleep(Duration::from_millis(300));
-            holder.execute_batch("COMMIT").unwrap();
-        });
-        let made = store.create_rule_set("Waits", "", None, Actor::Ui);
-        release.join().unwrap();
-        assert!(made.is_ok(), "{:?}", made.err());
-    }
-
-    #[test]
-    fn an_unreadable_set_colour_is_no_choice_and_does_not_break_the_list() {
-        let (_, store) = store();
-        let made = store.create_rule_set("Odd", "", None, Actor::Ui).unwrap();
-        for bad in ["not json", r#"{"kind":"conic"}"#] {
-            lock(&store.conn)
-                .execute("UPDATE rule_sets SET fill = ?1", [bad])
-                .unwrap();
-            let listed = store.rule_sets().unwrap();
-            let shown = listed.iter().find(|s| s.id == made.id).unwrap();
-            assert_eq!(shown.fill, made.fill, "{bad}");
-        }
-    }
-
-    #[test]
-    fn corrupt_rows_are_reported_not_trusted() {
-        let (_, store) = store();
-        {
-            let conn = lock(&store.conn);
-            conn.execute(
-                "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('global', NULL, 'exact', 'NOT A HOST', 'allow', 0, 'cli')",
-                [],
-            )
-            .unwrap();
-        }
-        let err = store
-            .set_rule_expiry(RuleId(1), None, Actor::Cli)
-            .unwrap_err();
-        assert!(
-            matches!(
-                err,
-                StoreError::Corrupt {
-                    table: "rules",
-                    id: 1,
-                    ..
-                }
-            ),
-            "{err}"
-        );
-        // The bad row also blocks reloading the rule set, so no change commits on top of it.
-        assert_eq!(store.rules(), Vec::<Rule>::new());
-    }
-
-    fn is_corrupt(err: &StoreError, in_table: &str) -> bool {
-        matches!(err, StoreError::Corrupt { table, .. } if *table == in_table)
-    }
-
-    #[test]
-    fn damaged_built_in_snapshots_are_corrupt_not_empty() {
-        let (clock, store) = store();
-        let slug = crate::catalogue::BUILT_IN_SETS[0].slug;
-        let mut conn = lock(&store.conn);
-        conn_exec(
-            &conn,
-            "UPDATE builtin_sets_seen SET entries = 'not json' WHERE slug = ?1",
-            slug,
-        );
-        let err = sets::note_built_in_changes(&mut conn, clock.now_ms()).unwrap_err();
-        assert!(is_corrupt(&err, "builtin_sets_seen"), "{err}");
-        assert!(err.to_string().contains(slug), "{err}");
-        assert_eq!(
-            audit_count(&conn),
-            0,
-            "nothing was audited as added from the damage"
-        );
-    }
-
-    fn conn_exec(conn: &Connection, sql: &str, slug: &str) {
-        conn.execute(sql, [slug]).unwrap();
-    }
-
-    fn audit_count(conn: &Connection) -> i64 {
-        conn.query_row(
-            "SELECT count(*) FROM audit WHERE type = 'rule_set_changed'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn a_negative_changed_at_is_corrupt_not_never_changed() {
-        let (_, store) = store();
-        let slug = crate::catalogue::BUILT_IN_SETS[0].slug;
-        conn_exec(
-            &lock(&store.conn),
-            "UPDATE builtin_sets_seen SET changed_at = -5 WHERE slug = ?1",
-            slug,
-        );
-        let err = store.rule_sets().unwrap_err();
-        assert!(is_corrupt(&err, "builtin_sets_seen"), "{err}");
-    }
-
-    #[test]
-    fn a_negative_audit_size_is_corrupt_not_zero() {
-        let (_, store) = store();
-        lock(&store.conn)
-            .execute("UPDATE audit_size SET bytes = -1 WHERE id = 1", [])
-            .unwrap();
-        let err = store.audit_bytes().unwrap_err();
-        assert!(is_corrupt(&err, "audit_size"), "{err}");
-    }
-
-    #[test]
-    fn raw_rows_with_bad_fields_are_corrupt() {
-        let base = || RawRule {
-            id: 1,
-            scope: "global".into(),
-            workspace_id: None,
-            pattern_kind: "exact".into(),
-            pattern: "example.com".into(),
-            effect: "allow".into(),
-            expires_at: None,
-            created_at: 0,
-            created_by: "cli".into(),
-            source_pending_id: None,
-            set_id: None,
-        };
-        assert!(rule_from_raw(&base()).is_ok());
-        let cases: Vec<fn(&mut RawRule)> = vec![
-            |r| r.scope = "workspace".into(),
-            |r| r.workspace_id = Some("x".into()),
-            |r| r.pattern_kind = "suffix".into(),
-            |r| r.pattern_kind = "regex".into(),
-            |r| r.effect = "maybe".into(),
-            |r| r.created_by = "system".into(),
-            |r| r.created_by = "guest".into(),
-            |r| r.created_at = -1,
-            |r| r.expires_at = Some(-5),
-            |r| {
-                r.pattern_kind = "suffix".into();
-                r.pattern = ".10.0.0.1".into();
-            },
-        ];
-        for (index, case) in cases.into_iter().enumerate() {
-            let mut raw = base();
-            case(&mut raw);
-            let parsed = rule_from_raw(&raw);
-            // `created_by = system` parses as an actor; the schema's CHECK keeps it out of rules.
-            if index == 5 {
-                continue;
-            }
-            assert!(parsed.is_err(), "case {index}");
-        }
-    }
-
-    #[test]
-    fn raw_pending_rows_with_bad_fields_are_corrupt() {
-        let base = || RawPending {
-            id: 1,
-            workspace_id: "sb".into(),
-            host: "example.com".into(),
-            port: 443,
-            first_seen: 0,
-            last_seen: 0,
-            attempts: 1,
-            state: "requested".into(),
-            decided_at: None,
-            decided_by: None,
-            rule_id: None,
-            rule_set: None,
-        };
-        assert!(pending_from_raw(&base()).is_ok());
-        let cases: Vec<fn(&mut RawPending)> = vec![
-            |r| r.workspace_id = String::new(),
-            |r| r.host = "Example.com".into(),
-            |r| r.port = 70_000,
-            |r| r.attempts = -1,
-            |r| r.state = "open".into(),
-            |r| r.decided_by = Some("guest".into()),
-            |r| r.decided_at = Some(-1),
-        ];
-        for (index, case) in cases.into_iter().enumerate() {
-            let mut raw = base();
-            case(&mut raw);
-            assert!(pending_from_raw(&raw).is_err(), "case {index}");
-        }
-    }
-
-    /// The counts the audit holds, summed: what the user can read in the activity log.
-    fn recorded_count(store: &Store, kind: &str, field: &str) -> u64 {
-        store
-            .audit_lines(0, 100_000)
-            .unwrap()
-            .into_iter()
-            .map(|(_, line)| serde_json::from_str::<serde_json::Value>(&line).unwrap())
-            .filter(|v| v["type"] == kind)
-            .map(|v| v[field].as_u64().unwrap())
-            .sum()
-    }
-
-    /// The connections the `suppressed` summaries stand for.
-    fn summarised_connections(store: &Store) -> u64 {
-        store
-            .audit_lines(0, 100_000)
-            .unwrap()
-            .into_iter()
-            .map(|(_, line)| serde_json::from_str::<serde_json::Value>(&line).unwrap())
-            .filter(|v| v["type"] == "connection" && v["reason"] == "suppressed")
-            .map(|v| v["count"].as_u64().unwrap())
-            .sum()
-    }
-
-    fn request(workspace: &str, host: &str) -> EgressRequest {
-        EgressRequest::new(
-            WorkspaceId::new(workspace).unwrap(),
-            Host::parse_normalised(host).unwrap(),
-            443,
-        )
-    }
-
-    fn fresh_store() -> (Arc<ManualClock>, Store) {
-        let clock = Arc::new(ManualClock::new(1_000_000));
-        let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
-        (clock, store)
-    }
-
-    #[test]
-    fn a_failed_sweep_flush_keeps_connection_summaries() {
-        let (clock, store) = fresh_store();
-        let event = ConnectionEvent::new(
-            &request("a", "x.example"),
-            ConnectionDecision::Allow,
-            ConnectionReason::Rule,
-        );
-        // The default limit is 200 a second: overshoot it, then let the second pass.
-        for _ in 0..205 {
-            store.record_connection(&event).unwrap();
-        }
-        store.fail_audit_writes("connection");
-        clock.advance(61_000);
-        assert!(store.sweep().is_err());
-        store.audit_writes_work_again();
-        store.sweep().unwrap();
-        assert_eq!(
-            summarised_connections(&store),
-            5,
-            "the connections over the limit are in one summary"
-        );
-    }
-
-    #[test]
-    fn a_failed_connection_summary_write_is_written_with_the_next_connection() {
-        let (clock, store) = fresh_store();
-        let event = ConnectionEvent::new(
-            &request("a", "x.example"),
-            ConnectionDecision::Allow,
-            ConnectionReason::Rule,
-        );
-        for _ in 0..205 {
-            store.record_connection(&event).unwrap();
-        }
-        store.fail_audit_writes("connection");
-        clock.advance(1000);
-        assert!(store.record_connection(&event).is_err());
-        store.audit_writes_work_again();
-        store.record_connection(&event).unwrap();
-        assert_eq!(summarised_connections(&store), 5);
-    }
-
-    fn puddle_event() -> ConnectionEvent {
-        ConnectionEvent::puddle(
-            Host::parse_normalised("api.github.com").unwrap(),
-            443,
-            ConnectionDecision::Allow,
-            ConnectionReason::PuddleRequest,
-        )
-    }
-
-    #[test]
-    fn a_failed_sweep_flush_keeps_the_summary_of_puddles_own_connections_too() {
-        let clock = Arc::new(ManualClock::new(1_000_000));
-        let limits = Limits {
-            connection_records_per_second: 1,
-            ..Limits::default()
-        };
-        let store = Store::open_in_memory(clock.clone(), limits).unwrap();
-        for _ in 0..4 {
-            store.record_connection(&puddle_event()).unwrap();
-        }
-        store.fail_audit_writes("connection");
-        clock.advance(2_000);
-        assert!(store.sweep().is_err());
-        store.audit_writes_work_again();
-        store.sweep().unwrap();
-        assert_eq!(summarised_connections(&store), 3);
-    }
-
-    #[test]
-    fn a_summary_is_written_alone_when_the_new_second_admits_no_record() {
-        let clock = Arc::new(ManualClock::new(1_000_000));
-        let limits = Limits {
-            connection_records_per_second: 0,
-            ..Limits::default()
-        };
-        let store = Store::open_in_memory(clock.clone(), limits).unwrap();
-        store.record_connection(&puddle_event()).unwrap();
-        clock.advance(1_000);
-        store.record_connection(&puddle_event()).unwrap();
-        assert_eq!(summarised_connections(&store), 1);
-        assert_eq!(recorded_count(&store, "connection", "count"), 1);
-    }
-
-    #[test]
-    fn debug_does_not_dump_the_database() {
-        let (_, store) = store();
-        assert!(format!("{store:?}").starts_with("Store { limits"));
-    }
-
-    #[test]
-    fn timestamp_helpers_saturate() {
-        assert_eq!(sql_ts(u64::MAX), i64::MAX);
-        assert_eq!(plus(u64::MAX - 1, Duration::from_secs(1)), u64::MAX);
-        assert!(stored_ts("rules", 1, -1).is_err());
-    }
-}
+mod tests;

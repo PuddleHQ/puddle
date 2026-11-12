@@ -32,6 +32,7 @@ mod fill;
 pub mod fixture;
 mod guest;
 mod host;
+mod interception;
 mod local;
 mod memory;
 mod merge;
@@ -52,18 +53,19 @@ pub use error::ValidationError;
 pub use event::DiskSpaceLevel;
 pub use event::{
     CollectingSink, DiskKind, Event, EventSink, ForeignCredentialKind, GitAccess, LoginProblemKind,
-    NullSink, PendingEnd, PendingSummary, WorkspaceStatus, WorkspaceStep,
+    NullSink, PendingEnd, PendingSummary, UnknownTokenKind, WorkspaceStatus, WorkspaceStep,
 };
 pub use fill::{Fill, Rgb, SET_PALETTE};
 pub use guest::{ApplyKind, GuestEnv, GuestFile, GuestPath};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
+pub use interception::{CURATED_PASS_THROUGH, InterceptionMode};
 pub use local::{CompanySignal, LocalCategory};
 pub use memory::MemoryMib;
 pub use merge::{
     MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,
 };
 pub use name::{
-    CheckoutDir, ImageRef, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
+    CheckoutDir, EntryId, ImageRef, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
     WORKSPACE_VOLUME_PREFIX, WorkspaceId,
 };
 
@@ -93,16 +95,4 @@ pub fn version_line(program: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_matches_manifest() {
-        assert_eq!(VERSION, "0.0.0");
-    }
-
-    #[test]
-    fn version_line_names_program_then_version() {
-        assert_eq!(version_line("puddle-agent"), "puddle-agent 0.0.0");
-    }
-}
+mod tests;

@@ -1093,3 +1093,56 @@ describe("CreateWorkspaceDialog with several repositories", () => {
     ).toHaveLength(4);
   });
 });
+
+describe("CreateWorkspaceDialog host check", () => {
+  it("names the new host and greys out Create while a rule blocks one", async () => {
+    const hostCheck = vi.fn(async (urls: string[]) => [
+      urls[0]?.includes("blocked")
+        ? {
+            host: "blocked.example",
+            state: "blocked" as const,
+            blocked_by: "Blocked by rule 7.",
+          }
+        : { host: "github.com", state: "new" as const, blocked_by: null },
+    ]);
+    const create = vi.fn(async () => ({
+      ok: true as const,
+      value: workspace("made", { busy: "creating", status: "created" }),
+    }));
+    render(CreateWorkspaceDialog, {
+      props: { open: true, store: { create }, hostCheck },
+    } as never);
+    await screen.findByRole("dialog", { name: "New workspace" });
+    await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+    expect(await screen.findByTestId("hosts-new")).toHaveTextContent(
+      "github.com",
+    );
+    expect(submit()).toBeEnabled();
+    await type("Git repository (HTTPS)", "https://blocked.example/a/b.git");
+    expect(await screen.findByTestId("hosts-blocked")).toHaveTextContent(
+      "Blocked by rule 7.",
+    );
+    expect(submit()).toBeDisabled();
+  });
+
+  it("tells the user which hosts the create allowed", async () => {
+    const create = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        ...workspace("made", { busy: "creating", status: "created" }),
+        allowed_hosts: [{ host: "github.com", rule_id: 9 }],
+      },
+    }));
+    render(CreateWorkspaceDialog, {
+      props: { open: true, store: { create }, hostCheck: async () => [] },
+    } as never);
+    await screen.findByRole("dialog", { name: "New workspace" });
+    await type("Git repository (HTTPS)", "https://github.com/acme/web.git");
+    await fireEvent.click(submit());
+    await vi.waitFor(() =>
+      expect(
+        toasts.items.some((t) => /allowed github\.com/.test(t.message)),
+      ).toBe(true),
+    );
+  });
+});

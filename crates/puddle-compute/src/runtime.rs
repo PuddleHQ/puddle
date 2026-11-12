@@ -47,6 +47,15 @@ pub struct RootDiskUse {
     pub used: DiskSize,
 }
 
+/// When a root disk's new size takes effect, from [`Runtime::grow_root_disk`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootDiskGrowth {
+    /// The running guest has the room now.
+    Live,
+    /// The room arrives with the next start of the sandbox.
+    NextStart,
+}
+
 impl SandboxInfo {
     /// The name as a [`SandboxName`], or `None` if it isn't a valid Puddle name.
     #[must_use]
@@ -247,6 +256,22 @@ pub trait Runtime: Send + Sync + 'static {
         cpus: CpuCount,
     ) -> impl Future<Output = Result<(), ComputeError>> + Send;
 
+    /// Grows the root disk of a sandbox to `size`: now when it runs and the runtime can grow a
+    /// disk under a running guest ([`RootDiskGrowth::Live`], the guest sees the room at once and
+    /// nothing is lost), otherwise at its next start ([`RootDiskGrowth::NextStart`], a stopped
+    /// sandbox always; a running one when the runtime cannot grow live, which the caller
+    /// answers by restarting it). A root disk only grows: nothing here shrinks it.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::NotFound`]; [`ComputeError::InvalidSpec`] when `size` is not above the
+    /// current size.
+    fn grow_root_disk(
+        &self,
+        name: &SandboxName,
+        size: DiskSize,
+    ) -> impl Future<Output = Result<RootDiskGrowth, ComputeError>> + Send;
+
     /// Every sandbox the runtime knows, in name order, including ones Puddle didn't create.
     ///
     /// # Errors
@@ -383,64 +408,4 @@ pub trait Sandbox: Send + Sync + 'static {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_default_checkout_rule_names_the_folder_and_what_is_wrong() {
-        let dir = tempfile::tempdir().unwrap();
-        let err = crate::fake::FakeRuntime::default()
-            .check_checkout(dir.path())
-            .unwrap_err();
-        let reason = err.to_string();
-        assert!(matches!(err, ComputeError::InvalidSpec { .. }), "{reason}");
-        assert!(
-            reason.contains(&format!("the checkout {} ", dir.path().display())),
-            "{reason}"
-        );
-    }
-
-    #[test]
-    fn info_names_parse_only_when_valid() {
-        let ours = SandboxInfo {
-            name: "box".into(),
-            status: WorkspaceStatus::Running,
-            puddle_owned: true,
-            root_disk: None,
-        };
-        assert_eq!(ours.sandbox_name().unwrap().as_str(), "box");
-        let foreign = SandboxInfo {
-            name: "Foreign_Box".into(),
-            status: WorkspaceStatus::Stopped,
-            puddle_owned: false,
-            root_disk: None,
-        };
-        assert!(foreign.sandbox_name().is_none());
-        let vol = VolumeInfo {
-            name: "ws-a".into(),
-            size: DiskSize::mib(1),
-            used: None,
-            holder: None,
-        };
-        assert_eq!(vol.volume_name().unwrap().as_str(), "ws-a");
-        let vol = VolumeInfo {
-            name: "Bad".into(),
-            ..vol
-        };
-        assert!(vol.volume_name().is_none());
-    }
-
-    #[test]
-    fn image_env_last_value_wins() {
-        let c = ImageConfig {
-            env: vec![
-                ("PATH".into(), "/a".into()),
-                ("X".into(), "1".into()),
-                ("PATH".into(), "/b".into()),
-            ],
-            ..ImageConfig::default()
-        };
-        assert_eq!(c.env_var("PATH"), Some("/b"));
-        assert_eq!(c.env_var("NOPE"), None);
-    }
-}
+mod tests;

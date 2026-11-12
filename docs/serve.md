@@ -1,0 +1,224 @@
+# Running Puddle without a window: `puddle serve`
+
+`puddle serve` runs the Puddle host with no desktop window: the store, the proxies, the sandbox
+runtime, the workspaces and the local API. It runs until Ctrl-C, a termination signal or the end of
+the console session, then stops every workspace cleanly.
+
+```sh
+puddle serve --config /etc/puddle/serve.toml
+```
+
+Every start-up option can be a command-line flag, an environment variable or a key in one config
+file, so a service definition does not need a long command line.
+
+## The config file
+
+The file is TOML. Every key is optional.
+
+```toml
+# Where the API listens on 127.0.0.1. 0 picks a free port.
+port = 8080
+
+# Where Puddle writes the connection file (the address and token a client reads).
+# A relative path means the folder of this file, not the working directory.
+connection_file = "api.json"
+
+# Where Puddle keeps its state. Default: the per-user data folder.
+data_dir = "/srv/puddle"
+
+# The log level, with crate=level entries to turn a dependency up.
+log = "info,hyper=debug"
+
+# Remote serving (see below). Off unless this is true; the other keys in this block
+# are then not looked at.
+remote = true
+
+# The exact public names the reverse proxy uses; the first one is the UI's own.
+public_hosts = ["puddle.example.org"]
+
+# The domain workspace web apps live under. Default: subdomains of the first public host.
+workspace_base_domain = "ws.example.net"
+
+# A network listener for a reverse proxy on another machine: the one interface to bind,
+# the port, and the proxy addresses allowed to connect.
+listen_interface = "192.168.1.10"
+listen_port = 8443
+allowed_proxies = ["192.168.1.20"]
+```
+
+Puddle reads the file strictly. A syntax error, a key that appears twice, an unknown key, a value of
+the wrong type or an invalid value stops the start with a message that names the file, the line and
+what to write:
+
+```text
+puddle: /etc/puddle/serve.toml:3: unknown key `prot`; the keys are port, connection_file, data_dir, log, remote, public_hosts, workspace_base_domain, listen_interface, listen_port, allowed_proxies; fix the spelling or remove the line
+```
+
+A config file that is missing or cannot be read stops the start too. Puddle never falls back to the
+defaults when the file you named is wrong.
+
+### Keys
+
+| Key | Value | What it sets |
+|---|---|---|
+| `port` | integer, 0 to 65535 | The API's port on 127.0.0.1. |
+| `connection_file` | path | Where the connection file is written. |
+| `data_dir` | path | The folder that holds Puddle's state. |
+| `log` | string | The log filter, the same text as `PUDDLE_LOG`. |
+| `remote` | `true` or `false` | Remote serving on or off. |
+| `public_hosts` | array of strings | The exact public names of the reverse proxy, with a port when it is not 443. |
+| `workspace_base_domain` | string | The domain of workspace web apps. |
+| `listen_interface` | string | The one interface address of the network listener. |
+| `listen_port` | integer, 0 to 65535 | The port of the network listener. |
+| `allowed_proxies` | array of strings | The proxy addresses that may connect to the network listener. |
+
+A relative path in the file means the folder that holds the file.
+
+## Flags and environment variables
+
+| Option | Flag | Environment variable | File key | Default |
+|---|---|---|---|---|
+| Config file | `--config <path>` | `PUDDLE_CONFIG` | none | no config file |
+| Port | `--port <n>` | `PUDDLE_PORT` | `port` | a free port |
+| Connection file | `--connection-file <path>` | `PUDDLE_CONNECTION_FILE` | `connection_file` | api.json in the data folder |
+| Data folder | `--data-dir <path>` | `PUDDLE_DATA_DIR` | `data_dir` | the per-user data folder |
+| Log filter | `--log <filter>` | `PUDDLE_LOG` | `log` | info |
+| Remote serving | `--remote` or `--no-remote` | `PUDDLE_REMOTE` | `remote` | off |
+| Public hosts | `--public-hosts <host,...>` | `PUDDLE_PUBLIC_HOSTS` | `public_hosts` | none |
+| Workspace base domain | `--workspace-base-domain <domain>` | `PUDDLE_WORKSPACE_BASE_DOMAIN` | `workspace_base_domain` | subdomains of the first public host |
+| Network listener interface | `--listen-interface <ip>` | `PUDDLE_LISTEN_INTERFACE` | `listen_interface` | no network listener |
+| Network listener port | `--listen-port <n>` | `PUDDLE_LISTEN_PORT` | `listen_port` | 8443 |
+| Allowed proxies | `--allowed-proxies <ip,...>` | `PUDDLE_ALLOWED_PROXIES` | `allowed_proxies` | none |
+
+Every file key is also a flag, with the same name (`connection_file` is `--connection-file`), the
+same type and the same checks. A relative path in a flag or an environment variable means the
+working directory.
+
+A switch has no value on the command line: `--remote` turns it on and `--no-remote` turns it off, so
+a flag can override a file that says the opposite. In the file it is `remote = true` or
+`remote = false`, and in the environment `PUDDLE_REMOTE=true` or `false`. A list is comma-separated
+in a flag and in the environment (`--public-hosts a.example.org,b.example.org`) and an array of
+strings in the file.
+
+## Precedence
+
+When more than one place sets an option, the first of these wins:
+
+| Order | Source |
+|---|---|
+| 1 | The command-line flag |
+| 2 | The environment variable |
+| 3 | The config file |
+| 4 | The default |
+
+The config file itself is named by `--config`, else by `PUDDLE_CONFIG`.
+
+## See what Puddle will use
+
+`puddle serve --print-config` prints each option with its effective value and where the value came
+from (a flag, the environment, the config file or the default), then exits with code 0 without
+starting anything. It reads the config file, so it also checks it.
+
+```text
+config = /etc/puddle/serve.toml (flag --config)
+port = 8080 (config file /etc/puddle/serve.toml)
+connection_file = /etc/puddle/api.json (config file /etc/puddle/serve.toml)
+data_dir = the per-user data folder (default)
+log = debug (environment PUDDLE_LOG)
+remote = off (default)
+public_hosts = none (default)
+workspace_base_domain = subdomains of the first public host (default)
+listen_interface = no network listener (default)
+listen_port = 8443 (default)
+allowed_proxies = none (default)
+```
+
+## Remote serving
+
+By default Puddle's API answers only on `127.0.0.1` and only to requests that name `127.0.0.1:<port>`
+or `localhost:<port>`. Remote serving lets a reverse proxy in front of Puddle publish it under a
+public name. It is off by default, with exactly the behaviour above, and it can be changed only
+where you start Puddle: a flag, an environment variable or the config file, never through the API or
+a browser.
+
+With remote serving on, Puddle also accepts:
+
+- requests whose `Host` is one of `public_hosts`, exactly (a port only when you wrote one; 443 is
+  the same as none), and requests whose `Origin` is the matching `https://` address;
+- a request with an `Origin` only when the browser says it comes from the page's own origin
+  (`Sec-Fetch-Site: same-origin`), or sends no such header (a program, not a browser);
+- the install token (the secret in the connection file) only for a `127.0.0.1` or `localhost`
+  `Host`. A request that came in under a public name is never authorised by the install token, so
+  a stolen browser session cannot widen what is exposed. Signing in from a browser comes with
+  device sign-in; until then a public name serves the app's files and nothing behind `/api`.
+
+The app's files carry `Cross-Origin-Opener-Policy: same-origin` too, so a page a workspace opened
+cannot navigate the tab that holds Puddle.
+
+Guests never reach any of this. Remote serving registers the front's port (the port of each public
+host) on every address of this machine, and blocks each public name, the workspace base domain and
+the names below it, whatever the network toggles and rules say. A reverse proxy on another machine is
+reached by name, so the name block is what stops a workspace from dialing it.
+
+### The reverse proxy on the same machine
+
+Point the proxy at the API's port on `127.0.0.1` (`port`, so set it to a fixed number) and keep the
+`Host` header the browser sent:
+
+```text
+puddle.example.org {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+`tailscale serve --https=443 http://127.0.0.1:8080` works the same way: set `public_hosts` to the
+machine's tailnet name.
+
+### The reverse proxy on another machine
+
+Set `listen_interface` to the one interface address the proxy reaches, and list the proxy's
+addresses in `allowed_proxies`. Puddle then also listens there, on `listen_port`, with TLS:
+
+- a connection from an address not in the list is closed at accept, before the TLS handshake;
+- loopback `Host` names are refused on this listener, since nothing on the network can mean them;
+- the certificate is one Puddle generates for the interface address and the public host names. It
+  lives in `remote-cert/` in the data folder (`listener.crt` is the certificate, which holds no
+  secret; `listener.pem` holds the key and is private to your user). Puddle prints the certificate
+  file and its SHA-256 fingerprint when it starts. Make the proxy trust that file, or pin the
+  fingerprint. It is replaced under 30 days before it expires and when the interface address or the
+  public hosts change; the new fingerprint is printed at the next start.
+
+Public certificates (Let's Encrypt, a company CA) stay the proxy's job: this certificate never faces
+a browser.
+
+```text
+puddle.example.org {
+    reverse_proxy https://192.168.1.10:8443 {
+        transport http {
+            tls_trust_pool file /etc/caddy/puddle-listener.crt
+        }
+    }
+}
+```
+
+The listener needs `allowed_proxies` (otherwise nobody could connect), and `listen_port` or
+`allowed_proxies` without `listen_interface` is refused at start. Plain HTTP between the proxy and
+Puddle is not offered.
+
+### Workspace names
+
+Workspace web apps and editors need a name of their own, so one workspace's page cannot plant
+cookies for another or for Puddle. Puddle uses `<workspace>.<base domain>` to check `Host` and
+`Origin`, to route a request to its workspace and to build the links it shows. With nothing set the
+base domain is the first public host, so the names are `<workspace>.puddle.example.org`, which sits
+on the same site as the UI. Setting `workspace_base_domain` to a domain with a different registrable
+domain (`ws.example.net` next to `puddle.example.org`) is safer, and the advice. DNS records and
+certificates for these names are the proxy's job. A wildcard certificate is needed for them: without
+one the web apps and editors are not available in a browser, while the UI itself works.
+
+## What is not a start-up option
+
+The config file holds no secrets and no tokens. The settings Puddle keeps in its store, such as the
+network rules, the interception mode and the Git settings, stay there: change them in the app or
+through the API. The environment variables `PUDDLE_AGENT_BIN` and `PUDDLE_CODE_SERVER_DIR` are
+development overrides and are not config options.

@@ -8,12 +8,13 @@ use puddle_secrets::StoredId;
 use puddle_types::{Event, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use super::{Store, lock, sql_ts};
+use super::{Store, lock, sql_ts, users};
 use crate::error::StoreError;
 use crate::identity::{
     Author, CredentialBinding, CredentialChoice, Identity, IdentityDraft, IdentityId, Signing,
     check_attachable, collision, resolve,
 };
+use crate::users::UserId;
 use crate::workspace_git::{
     GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, StartBasis, SwitchChange,
     SwitchSource, WorkspaceGit,
@@ -21,6 +22,9 @@ use crate::workspace_git::{
 
 const COLUMNS: &str = "id, label, author_name, author_email, credentials, signing, is_default, \
                        created_at, changed_at";
+
+/// Whether a user has no identity yet.
+const NONE_YET: &str = "SELECT count(*) = 0 FROM identities WHERE user_id = ?1";
 
 struct Raw {
     id: i64,
@@ -73,19 +77,30 @@ fn identity_of(raw: Raw) -> Result<Identity, StoreError> {
     })
 }
 
-fn all(conn: &Connection) -> Result<Vec<Identity>, StoreError> {
+/// Every identity of `user`, in their order.
+fn all(conn: &Connection, user: UserId) -> Result<Vec<Identity>, StoreError> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT {COLUMNS} FROM identities ORDER BY position, id"
+        "SELECT {COLUMNS} FROM identities WHERE user_id = ?1 ORDER BY position, id"
     ))?;
+    let rows = stmt
+        .query_map([user.get()], raw)?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter().map(identity_of).collect()
+}
+
+/// Every identity of every user: only for what the install keeps for all of them.
+fn everyones(conn: &Connection) -> Result<Vec<Identity>, StoreError> {
+    let mut stmt = conn.prepare(&format!("SELECT {COLUMNS} FROM identities ORDER BY id"))?;
     let rows = stmt.query_map([], raw)?.collect::<Result<Vec<_>, _>>()?;
     rows.into_iter().map(identity_of).collect()
 }
 
-fn one(conn: &Connection, id: IdentityId) -> Result<Identity, StoreError> {
+/// One identity of `user`; another user's is unknown, as one that does not exist.
+fn one(conn: &Connection, user: UserId, id: IdentityId) -> Result<Identity, StoreError> {
     let raw = conn
         .query_row(
-            &format!("SELECT {COLUMNS} FROM identities WHERE id = ?1"),
-            [id.0],
+            &format!("SELECT {COLUMNS} FROM identities WHERE id = ?1 AND user_id = ?2"),
+            params![id.0, user.get()],
             raw,
         )
         .optional()?
@@ -104,9 +119,10 @@ fn attached_ids(conn: &Connection, ws: &WorkspaceId) -> Result<Vec<IdentityId>, 
 }
 
 fn attached(conn: &Connection, ws: &WorkspaceId) -> Result<Vec<Identity>, StoreError> {
+    let user = users::owner_in(conn, ws)?;
     attached_ids(conn, ws)?
         .into_iter()
-        .map(|id| one(conn, id))
+        .map(|id| one(conn, user, id))
         .collect()
 }
 
@@ -188,13 +204,14 @@ fn choose<'a>(
 
 fn label_free(
     tx: &Transaction<'_>,
+    user: UserId,
     label: &str,
     except: Option<IdentityId>,
 ) -> Result<(), StoreError> {
     let taken: Option<i64> = tx
         .query_row(
-            "SELECT id FROM identities WHERE label = ?1 AND id IS NOT ?2",
-            params![label, except.map(|i| i.0)],
+            "SELECT id FROM identities WHERE label = ?1 AND id IS NOT ?2 AND user_id = ?3",
+            params![label, except.map(|i| i.0), user.get()],
             |r| r.get(0),
         )
         .optional()?;
@@ -209,11 +226,11 @@ fn credentials_json(credentials: &[CredentialBinding]) -> Result<String, StoreEr
         .map_err(|e| StoreError::IdentityInvalid(format!("credentials can't be stored: {e}")))
 }
 
-fn defaults_of(conn: &Connection) -> Result<GitDefaults, StoreError> {
+fn defaults_of(conn: &Connection, user: UserId) -> Result<GitDefaults, StoreError> {
     Ok(conn
         .query_row(
-            "SELECT only_push_listed, only_pull_listed FROM git_defaults WHERE id = 1",
-            [],
+            "SELECT only_push_listed, only_pull_listed FROM git_defaults WHERE user_id = ?1",
+            [user.get()],
             |r| {
                 Ok(GitDefaults {
                     only_push_listed: r.get(0)?,
@@ -242,7 +259,7 @@ fn start_in(
     ws: &WorkspaceId,
     request: &RepoGitRequest,
 ) -> Result<GitStart, StoreError> {
-    let everyone = all(tx)?;
+    let everyone = all(tx, users::owner_in(tx, ws)?)?;
     let mut list = attached(tx, ws)?;
     let (chosen, basis) = choose(&everyone, &list, request)?;
     let identity = chosen.map(|i| (i.id, i.label.clone()));
@@ -281,15 +298,15 @@ fn start_in(
 
 impl Store {
     /// Every id a value in the credential store may still be kept under: the pasted tokens the
-    /// identities read and the values of environment secrets. A value under any other id has
-    /// nothing that names it.
+    /// identities of every user read and the values of environment secrets. A value under any
+    /// other id has nothing that names it.
     ///
     /// # Errors
     /// A database error, or a stored row that doesn't parse: a caller that removes what is not
     /// listed must not go on then.
     pub fn secret_ids_in_use(&self) -> Result<HashSet<StoredId>, StoreError> {
         let conn = lock(&self.conn);
-        let mut ids: HashSet<StoredId> = all(&conn)?
+        let mut ids: HashSet<StoredId> = everyones(&conn)?
             .iter()
             .flat_map(|identity| &identity.credentials)
             .filter_map(|binding| binding.stored_id().cloned())
@@ -310,28 +327,31 @@ impl Store {
         Ok(ids)
     }
 
-    /// Every identity, in the order the user keeps them.
+    /// Every identity of `user`, in the order they keep them.
     ///
     /// # Errors
     /// A database error, or a stored row that doesn't parse.
-    pub fn identities(&self) -> Result<Vec<Identity>, StoreError> {
-        all(&lock(&self.conn))
+    pub fn identities(&self, user: UserId) -> Result<Vec<Identity>, StoreError> {
+        all(&lock(&self.conn), user)
     }
 
-    /// One identity.
+    /// One identity of `user`.
     ///
     /// # Errors
-    /// [`StoreError::UnknownIdentity`], or a database error.
-    pub fn identity(&self, id: IdentityId) -> Result<Identity, StoreError> {
-        one(&lock(&self.conn), id)
+    /// [`StoreError::UnknownIdentity`] (also for another user's), or a database error.
+    pub fn identity(&self, user: UserId, id: IdentityId) -> Result<Identity, StoreError> {
+        one(&lock(&self.conn), user, id)
     }
 
-    /// The default identity: the one a new workspace gets when none covers its URL.
+    /// The default identity of `user`: the one a new workspace of theirs gets when none covers
+    /// its URL.
     ///
     /// # Errors
     /// A database error.
-    pub fn default_identity(&self) -> Result<Option<Identity>, StoreError> {
-        Ok(all(&lock(&self.conn))?.into_iter().find(|i| i.is_default))
+    pub fn default_identity(&self, user: UserId) -> Result<Option<Identity>, StoreError> {
+        Ok(all(&lock(&self.conn), user)?
+            .into_iter()
+            .find(|i| i.is_default))
     }
 
     /// The workspaces an identity is on.
@@ -342,20 +362,25 @@ impl Store {
         workspaces_using(&lock(&self.conn), id)
     }
 
-    /// Makes an identity, last in the order; the first one made is the default.
+    /// Makes an identity of `user`, last in their order; their first one is their default.
     ///
     /// # Errors
     /// [`StoreError::IdentityInvalid`], [`StoreError::IdentityLabelTaken`], or a database error.
-    pub fn create_identity(&self, draft: IdentityDraft) -> Result<Identity, StoreError> {
+    pub fn create_identity(
+        &self,
+        user: UserId,
+        draft: IdentityDraft,
+    ) -> Result<Identity, StoreError> {
         let draft = draft.checked()?;
         let id = self.change(|tx, now, fx| {
-            label_free(tx, &draft.label, None)?;
-            let first: bool =
-                tx.query_row("SELECT count(*) = 0 FROM identities", [], |r| r.get(0))?;
+            label_free(tx, user, &draft.label, None)?;
+            let first: bool = tx.query_row(NONE_YET, [user.get()], |r| r.get(0))?;
             tx.execute(
-                "INSERT INTO identities (label, author_name, author_email, credentials, position,
-                                         is_default, created_at, changed_at)
-                 VALUES (?1, ?2, ?3, ?4, (SELECT coalesce(max(position) + 1, 0) FROM identities),
+                "INSERT INTO identities (user_id, label, author_name, author_email, credentials,
+                                         position, is_default, created_at, changed_at)
+                 VALUES (?7, ?1, ?2, ?3, ?4,
+                         (SELECT coalesce(max(position) + 1, 0) FROM identities
+                          WHERE user_id = ?7),
                          ?5, ?6, ?6)",
                 params![
                     draft.label,
@@ -364,13 +389,14 @@ impl Store {
                     credentials_json(&draft.credentials)?,
                     first,
                     sql_ts(now),
+                    user.get(),
                 ],
             )?;
             changed_for(fx, Vec::new());
             Ok(IdentityId(tx.last_insert_rowid()))
         })?;
         tracing::info!(identity = %id, "identity created");
-        self.identity(id)
+        self.identity(user, id)
     }
 
     /// Replaces an identity's label, author and credentials. Refused with a collision when the new
@@ -381,13 +407,14 @@ impl Store {
     /// [`StoreError::IdentityLabelTaken`], [`StoreError::IdentityCollision`], or a database error.
     pub fn update_identity(
         &self,
+        user: UserId,
         id: IdentityId,
         draft: IdentityDraft,
     ) -> Result<Identity, StoreError> {
         let draft = draft.checked()?;
         self.change(|tx, now, fx| {
-            let before = one(tx, id)?;
-            label_free(tx, &draft.label, Some(id))?;
+            let before = one(tx, user, id)?;
+            label_free(tx, user, &draft.label, Some(id))?;
             let mut after = before.clone();
             after.label.clone_from(&draft.label);
             after.author = draft.author.clone();
@@ -412,17 +439,21 @@ impl Store {
             changed_for(fx, workspaces);
             Ok(())
         })?;
-        self.identity(id)
+        self.identity(user, id)
     }
 
-    /// Deletes an identity and takes it off every workspace; returns the workspaces it left. The
-    /// default passes to the first identity in the order.
+    /// Deletes an identity of `user` and takes it off every workspace; returns the workspaces it
+    /// left. The default passes to the first of their identities in their order.
     ///
     /// # Errors
     /// [`StoreError::UnknownIdentity`], or a database error.
-    pub fn delete_identity(&self, id: IdentityId) -> Result<Vec<WorkspaceId>, StoreError> {
+    pub fn delete_identity(
+        &self,
+        user: UserId,
+        id: IdentityId,
+    ) -> Result<Vec<WorkspaceId>, StoreError> {
         let left = self.change(|tx, _now, fx| {
-            let gone = one(tx, id)?;
+            let gone = one(tx, user, id)?;
             let workspaces = workspaces_using(tx, id)?;
             tx.execute(
                 "DELETE FROM workspace_identities WHERE identity_id = ?1",
@@ -432,8 +463,9 @@ impl Store {
             if gone.is_default {
                 tx.execute(
                     "UPDATE identities SET is_default = 1
-                     WHERE id = (SELECT id FROM identities ORDER BY position, id LIMIT 1)",
-                    [],
+                     WHERE id = (SELECT id FROM identities WHERE user_id = ?1
+                                 ORDER BY position, id LIMIT 1)",
+                    [user.get()],
                 )?;
             }
             for ws in &workspaces {
@@ -447,32 +479,40 @@ impl Store {
         Ok(left)
     }
 
-    /// Makes `id` the default identity.
+    /// Makes `id` the default identity of `user`.
     ///
     /// # Errors
     /// [`StoreError::UnknownIdentity`], or a database error.
-    pub fn set_default_identity(&self, id: IdentityId) -> Result<Identity, StoreError> {
+    pub fn set_default_identity(
+        &self,
+        user: UserId,
+        id: IdentityId,
+    ) -> Result<Identity, StoreError> {
         self.change(|tx, _now, fx| {
-            one(tx, id)?;
+            one(tx, user, id)?;
             tx.execute(
-                "UPDATE identities SET is_default = 0 WHERE is_default = 1",
-                [],
+                "UPDATE identities SET is_default = 0 WHERE is_default = 1 AND user_id = ?1",
+                [user.get()],
             )?;
             tx.execute("UPDATE identities SET is_default = 1 WHERE id = ?1", [id.0])?;
             changed_for(fx, Vec::new());
             Ok(())
         })?;
-        self.identity(id)
+        self.identity(user, id)
     }
 
-    /// Puts the identities in a new order; `ids` must name every identity once.
+    /// Puts the identities of `user` in a new order; `ids` must name every one of them once.
     ///
     /// # Errors
-    /// [`StoreError::IdentityInvalid`] when `ids` is not a permutation of the identities, or a
+    /// [`StoreError::IdentityInvalid`] when `ids` is not a permutation of their identities, or a
     /// database error.
-    pub fn reorder_identities(&self, ids: &[IdentityId]) -> Result<Vec<Identity>, StoreError> {
+    pub fn reorder_identities(
+        &self,
+        user: UserId,
+        ids: &[IdentityId],
+    ) -> Result<Vec<Identity>, StoreError> {
         self.change(|tx, _now, fx| {
-            let mut have: Vec<IdentityId> = all(tx)?.into_iter().map(|i| i.id).collect();
+            let mut have: Vec<IdentityId> = all(tx, user)?.into_iter().map(|i| i.id).collect();
             let mut want = ids.to_vec();
             have.sort();
             want.sort();
@@ -490,11 +530,11 @@ impl Store {
             changed_for(fx, Vec::new());
             Ok(())
         })?;
-        self.identities()
+        self.identities(user)
     }
 
     /// A workspace's Git settings: its identities in order, its repository table and the two
-    /// switches. A workspace nobody configured gets the defaults.
+    /// switches. A workspace nobody configured gets its user's defaults.
     ///
     /// # Errors
     /// A database error, or a stored row that doesn't parse.
@@ -508,7 +548,7 @@ impl Store {
             )
             .optional()?
             .unwrap_or((None, None));
-        let defaults = defaults_of(&conn)?;
+        let defaults = defaults_of(&conn, users::owner_in(&conn, ws)?)?;
         let only_push_listed = own_push.unwrap_or(defaults.only_push_listed);
         let only_pull_listed = own_pull.unwrap_or(defaults.only_pull_listed);
         let mut stmt = conn.prepare(
@@ -556,23 +596,26 @@ impl Store {
     }
 
     /// Checks that setting up `requests` in order (as [`Store::start_repository_git`] does) on
-    /// the workspace `ws`, or on a new workspace (`None`, whose list is empty), would work: every
-    /// named identity exists and no two identities on the workspace's list would cover the same
-    /// place. Changes nothing.
+    /// the workspace `ws`, or on a new workspace of `user` (`None`, whose list is empty), would
+    /// work: every named identity is the workspace's user's and no two identities on the
+    /// workspace's list would cover the same place. Changes nothing.
     ///
     /// # Errors
     /// [`StoreError::UnknownIdentity`], [`StoreError::IdentityCollision`] naming both, or a
     /// database error.
     pub fn check_repository_git(
         &self,
+        user: UserId,
         ws: Option<&WorkspaceId>,
         requests: &[RepoGitRequest],
     ) -> Result<(), StoreError> {
         let conn = lock(&self.conn);
-        let everyone = all(&conn)?;
-        let mut list = match ws {
-            Some(ws) => attached(&conn, ws)?,
-            None => Vec::new(),
+        let (everyone, mut list) = match ws {
+            Some(ws) => (
+                all(&conn, users::owner_in(&conn, ws)?)?,
+                attached(&conn, ws)?,
+            ),
+            None => (all(&conn, user)?, Vec::new()),
         };
         for request in requests {
             let (chosen, _) = choose(&everyone, &list, request)?;
@@ -625,36 +668,38 @@ impl Store {
         })
     }
 
-    /// The default of the two switches for workspaces that have not set their own.
+    /// The default of the two switches for the workspaces of `user` that have not set their own.
     ///
     /// # Errors
     /// A database error.
-    pub fn git_defaults(&self) -> Result<GitDefaults, StoreError> {
-        defaults_of(&lock(&self.conn))
+    pub fn git_defaults(&self, user: UserId) -> Result<GitDefaults, StoreError> {
+        defaults_of(&lock(&self.conn), user)
     }
 
-    /// Sets the default of either switch; `None` leaves it as it is. Every workspace that has
-    /// not set its own follows at once (an `identities_changed` event tells the screens).
+    /// Sets the default of either switch for `user`; `None` leaves it as it is. Every workspace
+    /// of theirs that has not set its own follows at once (an `identities_changed` event tells
+    /// the screens).
     ///
     /// # Errors
     /// A database error.
     pub fn set_git_defaults(
         &self,
+        user: UserId,
         only_push_listed: Option<bool>,
         only_pull_listed: Option<bool>,
     ) -> Result<GitDefaults, StoreError> {
         // Read and written in one transaction, so two changes of different switches both stick.
         self.change(|tx, _now, fx| {
-            let now = defaults_of(tx)?;
+            let now = defaults_of(tx, user)?;
             let next = GitDefaults {
                 only_push_listed: only_push_listed.unwrap_or(now.only_push_listed),
                 only_pull_listed: only_pull_listed.unwrap_or(now.only_pull_listed),
             };
             if next != now {
                 tx.execute(
-                    "INSERT INTO git_defaults (id, only_push_listed, only_pull_listed) VALUES (1, ?1, ?2)
-                     ON CONFLICT (id) DO UPDATE SET only_push_listed = ?1, only_pull_listed = ?2",
-                    params![next.only_push_listed, next.only_pull_listed],
+                    "INSERT INTO git_defaults (user_id, only_push_listed, only_pull_listed) VALUES (?3, ?1, ?2)
+                     ON CONFLICT (user_id) DO UPDATE SET only_push_listed = ?1, only_pull_listed = ?2",
+                    params![next.only_push_listed, next.only_pull_listed, user.get()],
                 )?;
                 changed_for(fx, Vec::new());
             }
@@ -662,10 +707,11 @@ impl Store {
         })
     }
 
-    /// Replaces the workspace's ordered identity list.
+    /// Replaces the workspace's ordered identity list, from its user's identities.
     ///
     /// # Errors
-    /// [`StoreError::UnknownIdentity`], [`StoreError::IdentityInvalid`] for a repeated id,
+    /// [`StoreError::UnknownIdentity`] (also another user's), [`StoreError::IdentityInvalid`] for a
+    /// repeated id,
     /// [`StoreError::IdentityCollision`] naming both when two cover the same place, or a
     /// database error. Nothing changes on an error.
     pub fn set_workspace_identities(
@@ -674,6 +720,7 @@ impl Store {
         ids: &[IdentityId],
     ) -> Result<WorkspaceGit, StoreError> {
         self.change(|tx, _now, fx| {
+            let user = users::owner_in(tx, ws)?;
             let mut list = Vec::with_capacity(ids.len());
             for id in ids {
                 if list.iter().any(|i: &Identity| i.id == *id) {
@@ -681,7 +728,7 @@ impl Store {
                         "an identity is listed twice".into(),
                     ));
                 }
-                list.push(one(tx, *id)?);
+                list.push(one(tx, user, *id)?);
             }
             check_list(&list)?;
             write_list(tx, ws, ids)?;
@@ -706,7 +753,7 @@ impl Store {
     ) -> Result<WorkspaceGit, StoreError> {
         let current = {
             let conn = lock(&self.conn);
-            let candidate = one(&conn, id)?;
+            let candidate = one(&conn, users::owner_in(&conn, ws)?, id)?;
             let ids = attached_ids(&conn, ws)?;
             if ids.contains(&id) {
                 return Err(StoreError::IdentityAttached {
@@ -896,189 +943,4 @@ pub(super) fn delete_workspace_rows(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use puddle_secrets::{AccountName, HostName, SourceSpec};
-
-    use super::*;
-    use crate::clock::ManualClock;
-    use crate::identity::{Coverage, Owner};
-    use crate::store::Limits;
-
-    fn store() -> Store {
-        Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap()
-    }
-
-    fn made(store: &Store) -> IdentityId {
-        made_as(store, "Work")
-    }
-
-    fn made_as(store: &Store, label: &str) -> IdentityId {
-        let host = HostName::new("github.com").unwrap();
-        let source = SourceSpec::Gh {
-            host: host.clone(),
-            account: AccountName::new("me").unwrap(),
-        };
-        let covers = Coverage::new([Owner::new("acme").unwrap()].into(), false).unwrap();
-        store
-            .create_identity(IdentityDraft {
-                label: label.into(),
-                author: Author::new("Me", "me@example.com").unwrap(),
-                credentials: vec![CredentialBinding::new(&host, source, covers).unwrap()],
-            })
-            .unwrap()
-            .id
-    }
-
-    /// A row edited by hand to something that does not parse is reported, never trusted.
-    #[test]
-    fn a_hand_edited_identity_row_is_reported_as_corrupt() {
-        let store = store();
-        let id = made(&store);
-        lock(&store.conn)
-            .execute("UPDATE identities SET credentials = 'not json'", [])
-            .unwrap();
-        assert!(matches!(
-            store.identity(id),
-            Err(StoreError::Corrupt {
-                table: "identities",
-                ..
-            })
-        ));
-        assert!(store.identities().is_err());
-    }
-
-    #[test]
-    fn a_hand_edited_repository_row_is_reported_as_corrupt() {
-        let store = store();
-        let ws = WorkspaceId::new("shop").unwrap();
-        lock(&store.conn)
-            .execute(
-                "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, created_at)
-                 VALUES ('shop', 'github.com', 'acme', 'a/../b', 1, 1, 1)",
-                [],
-            )
-            .unwrap();
-        assert!(matches!(
-            store.workspace_git(&ws),
-            Err(StoreError::Corrupt {
-                table: "workspace_repos",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn an_identity_listed_twice_is_refused() {
-        let store = store();
-        let id = made(&store);
-        let ws = WorkspaceId::new("shop").unwrap();
-        assert!(matches!(
-            store.set_workspace_identities(&ws, &[id, id]),
-            Err(StoreError::IdentityInvalid(_))
-        ));
-        assert_eq!(store.workspace_git(&ws).unwrap().identities.len(), 0);
-    }
-
-    const DISK_FULL: &str = "database error: disk full";
-
-    #[test]
-    fn a_hand_edited_signing_is_reported_as_corrupt() {
-        let store = store();
-        let id = made(&store);
-        // The table's own check refuses other values; a hand edit gets past it.
-        store.break_database(
-            "PRAGMA ignore_check_constraints = ON;
-             UPDATE identities SET signing = 'gpg';
-             PRAGMA ignore_check_constraints = OFF",
-        );
-        let err = store.identity(id).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            format!("stored identities row {id} is invalid: unknown signing gpg")
-        );
-    }
-
-    #[test]
-    fn the_workspaces_an_identity_is_on_are_listed() {
-        let store = store();
-        let id = made(&store);
-        assert_eq!(store.identity_workspaces(id).unwrap(), []);
-        let ws = WorkspaceId::new("shop").unwrap();
-        store.attach_identity(&ws, id, None).unwrap();
-        assert_eq!(store.identity_workspaces(id).unwrap(), [ws]);
-    }
-
-    #[test]
-    fn attachments_that_cannot_be_read_are_a_database_error() {
-        let store = store();
-        let id = made(&store);
-        let ws = WorkspaceId::new("shop").unwrap();
-        store.break_database("DROP TABLE workspace_identities");
-        let expected = "database error: no such table: workspace_identities";
-        assert_eq!(
-            store.identity_workspaces(id).unwrap_err().to_string(),
-            expected
-        );
-        assert_eq!(
-            store.detach_identity(&ws, id).unwrap_err().to_string(),
-            expected
-        );
-    }
-
-    #[test]
-    fn an_identity_that_cannot_be_inserted_is_not_made() {
-        let store = store();
-        store.break_database(
-            "CREATE TRIGGER identity_inserts_fail BEFORE INSERT ON identities
-             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
-        );
-        let draft = IdentityDraft {
-            label: "Work".into(),
-            author: Author::new("Me", "me@example.com").unwrap(),
-            credentials: vec![],
-        };
-        let err = store.create_identity(draft).unwrap_err();
-        assert_eq!(err.to_string(), DISK_FULL);
-        assert_eq!(store.identities().unwrap(), []);
-    }
-
-    #[test]
-    fn an_identity_that_cannot_be_updated_keeps_what_it_had() {
-        let store = store();
-        let id = made(&store);
-        let before = store.identity(id).unwrap();
-        store.break_database(
-            "CREATE TRIGGER identity_updates_fail BEFORE UPDATE ON identities
-             BEGIN SELECT RAISE(ABORT, 'disk full'); END",
-        );
-        let draft = IdentityDraft {
-            label: "Renamed".into(),
-            author: before.author.clone(),
-            credentials: before.credentials.clone(),
-        };
-        let err = store.update_identity(id, draft).unwrap_err();
-        assert_eq!(err.to_string(), DISK_FULL);
-        assert_eq!(store.identity(id).unwrap(), before);
-    }
-
-    #[test]
-    fn deleting_an_identity_that_is_not_the_default_leaves_the_default_alone() {
-        let store = store();
-        let default = made(&store);
-        let other = made_as(&store, "Personal");
-        assert_eq!(store.delete_identity(other).unwrap(), []);
-        assert_eq!(store.default_identity().unwrap().unwrap().id, default);
-        assert_eq!(store.identities().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn detaching_an_identity_that_is_not_attached_is_refused() {
-        let store = store();
-        let id = made(&store);
-        let ws = WorkspaceId::new("shop").unwrap();
-        let err = store.detach_identity(&ws, id).unwrap_err();
-        assert_eq!(err.to_string(), format!("no identity {id}"));
-    }
-}
+mod tests;

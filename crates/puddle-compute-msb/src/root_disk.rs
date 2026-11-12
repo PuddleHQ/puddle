@@ -5,9 +5,10 @@
 //! `runtime/` is only a guard the guest cannot use), so the files it names are the host's to read.
 
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use puddle_compute::{DiskSize, RootDiskUse};
+use puddle_compute::{ComputeError, DiskSize, RootDiskGrowth, RootDiskUse};
 use serde::Deserialize;
 
 /// The journal's file name in the sandbox's folder (msb's name for it).
@@ -42,6 +43,83 @@ pub(crate) fn usage(sandbox_dir: &Path) -> Option<RootDiskUse> {
         size: DiskSize::mib(size),
         used: DiskSize::mib(used),
     })
+}
+
+/// What msb's plan for a root-disk size change says.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum GrowPlan {
+    /// msb refuses the change; the text says why (a size that is not above the current one).
+    Refused(String),
+    /// The running guest gets the room now.
+    Live,
+    /// The room arrives at the next start (a stopped sandbox, or a runtime that cannot grow a
+    /// running disk).
+    Deferred,
+}
+
+/// Reads msb's dry-run `plan` of a root-disk size change, as this platform can carry it out.
+pub(crate) fn grow_plan(plan: &microsandbox::sandbox::SandboxModificationPlan) -> GrowPlan {
+    on_platform(read_plan(plan), LIVE_GROW_WORKS)
+}
+
+/// What msb's dry-run `plan` says, whatever the platform.
+fn read_plan(plan: &microsandbox::sandbox::SandboxModificationPlan) -> GrowPlan {
+    use microsandbox::{ModificationDisposition, PlannedChange};
+    if let Some(conflict) = plan.conflicts.first() {
+        return GrowPlan::Refused(conflict.message.clone());
+    }
+    let live = plan.changes.iter().any(|change| {
+        matches!(
+            change,
+            PlannedChange::Config(c)
+                if c.field == "root_disk_size" && c.disposition == ModificationDisposition::Live
+        )
+    });
+    if live {
+        GrowPlan::Live
+    } else {
+        GrowPlan::Deferred
+    }
+}
+
+/// Whether the runtime's hypervisor can take a live grow. msb plans one on Windows too, but the
+/// pinned libkrun fork keeps the raw disk handle at its old length there, so the guest's online
+/// ext4 expansion fails with an I/O error and leaves the block device grown and the filesystem
+/// not (seen in vm-windows CI). Live grow on Windows waits for the fork fix
+/// (`upstream-issues/libkrun-windows-live-grow/`); until then the disk grows at a restart.
+pub(crate) const LIVE_GROW_WORKS: bool = !cfg!(windows);
+
+/// `plan` as this platform can carry it out: a live plan becomes a deferred one where
+/// `live_works` is false, so the host restarts the workspace instead of growing it under the guest.
+pub(crate) fn on_platform(plan: GrowPlan, live_works: bool) -> GrowPlan {
+    match plan {
+        GrowPlan::Live if !live_works => GrowPlan::Deferred,
+        other => other,
+    }
+}
+
+/// The three msb calls of a root-disk grow, so the choice between them is tested without a real
+/// msb database.
+pub(crate) trait GrowSdk {
+    /// msb's dry run of the change.
+    fn plan(&self) -> impl Future<Output = Result<GrowPlan, ComputeError>> + Send;
+    /// The change on a running guest.
+    fn apply_live(&self) -> impl Future<Output = Result<(), ComputeError>> + Send;
+    /// The change at the next start.
+    fn apply_next_start(&self) -> impl Future<Output = Result<(), ComputeError>> + Send;
+}
+
+/// Grows through `sdk`: a refused plan is an invalid spec, a live plan applies now, any other at
+/// the next start.
+pub(crate) async fn grow(sdk: &impl GrowSdk) -> Result<RootDiskGrowth, ComputeError> {
+    match sdk.plan().await? {
+        GrowPlan::Refused(reason) => Err(ComputeError::InvalidSpec { reason }),
+        GrowPlan::Live => sdk.apply_live().await.map(|()| RootDiskGrowth::Live),
+        GrowPlan::Deferred => sdk
+            .apply_next_start()
+            .await
+            .map(|()| RootDiskGrowth::NextStart),
+    }
 }
 
 const MIB: u64 = 1024 * 1024;
@@ -82,106 +160,4 @@ fn disk_files(sandbox_dir: &Path) -> Option<Vec<PathBuf>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A sandboxes folder with two sandboxes, `mine` (its `runtime/` folder made) and `other`
-    /// (with a root disk).
-    struct Home {
-        _dir: tempfile::TempDir,
-        sandboxes: PathBuf,
-    }
-
-    impl Home {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let sandboxes = dir.path().join("sandboxes");
-            fs::create_dir_all(sandboxes.join("mine").join("runtime")).unwrap();
-            fs::create_dir_all(sandboxes.join("other")).unwrap();
-            fs::write(sandboxes.join("mine").join("upper.ext4"), b"mine").unwrap();
-            fs::write(sandboxes.join("other").join("upper.ext4"), b"other").unwrap();
-            Home {
-                _dir: dir,
-                sandboxes,
-            }
-        }
-
-        fn mine(&self) -> PathBuf {
-            self.sandboxes.join("mine")
-        }
-
-        /// Writes `mine`'s journal as msb does, with `layers`.
-        fn journal(&self, layers: &[&Path]) {
-            let layers: Vec<_> = layers
-                .iter()
-                .enumerate()
-                .map(|(i, path)| {
-                    serde_json::json!({
-                        "layer_id": format!("layer-{i:032x}"),
-                        "path": path,
-                        "format": if i == 0 { "raw" } else { "qcow2" },
-                        "integrity_root": null,
-                    })
-                })
-                .collect();
-            let journal = serde_json::json!({
-                "schema": "microsandbox.runtime-root-disk/1",
-                "volume_id": "vol-00000000000000000000000000000000",
-                "device_id": "vdb",
-                "layout": "managed-upper",
-                "published_generation": 0,
-                "layers": layers,
-            });
-            self.write_journal(&serde_json::to_vec(&journal).unwrap());
-        }
-
-        fn write_journal(&self, bytes: &[u8]) {
-            fs::write(self.mine().join(JOURNAL), bytes).unwrap();
-        }
-    }
-
-    /// A sparse file of `length` bytes with `data` bytes written at its start.
-    fn sparse(path: &Path, length: u64, data: usize) {
-        use std::io::Write as _;
-        let mut file = fs::File::create(path).unwrap();
-        file.write_all(&vec![7_u8; data]).unwrap();
-        file.set_len(length).unwrap();
-    }
-
-    #[test]
-    fn a_raw_root_disk_is_as_full_as_its_image_is_allocated() {
-        let home = Home::new();
-        let upper = home.mine().join("upper.ext4");
-        sparse(&upper, 64 * MIB, 3 * 1024 * 1024);
-        let got = usage(&home.mine()).unwrap();
-        assert_eq!(got.size, DiskSize::mib(64));
-        assert!(got.used >= DiskSize::mib(3), "{got:?}");
-        // NTFS allocates a file extended with `set_len` in full unless it is marked sparse, so
-        // only file systems that make holes can show the file under its length.
-        #[cfg(unix)]
-        assert!(got.used < DiskSize::mib(64), "{got:?}");
-    }
-
-    #[test]
-    fn a_qcow2_head_gives_the_virtual_size_and_every_layer_counts() {
-        let home = Home::new();
-        let base = home.mine().join("runtime").join("base.raw");
-        sparse(&base, 8 * MIB, 2 * 1024 * 1024);
-        let head = home.mine().join("head.qcow2");
-        let mut header = vec![0_u8; 32];
-        header[..4].copy_from_slice(&QCOW2_MAGIC);
-        header[24..32].copy_from_slice(&(16 * MIB).to_be_bytes());
-        fs::write(&head, &header).unwrap();
-        home.journal(&[&base, &head]);
-        let got = usage(&home.mine()).unwrap();
-        assert_eq!(got.size, DiskSize::mib(16));
-        assert!(got.used >= DiskSize::mib(2), "{got:?}");
-    }
-
-    #[test]
-    fn no_disk_gives_no_figure() {
-        let home = Home::new();
-        fs::remove_file(home.mine().join("upper.ext4")).unwrap();
-        assert_eq!(usage(&home.mine()), None);
-    }
-}
+mod tests;

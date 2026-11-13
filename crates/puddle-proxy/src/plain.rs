@@ -233,7 +233,17 @@ where
     let target = &incoming.target;
     let request = EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port)
         .with_protocol(ProtocolHint::Http);
-    let (admitted, mut event) = admit(proxy, &request).await;
+    let (admitted, mut event) = match proxy
+        .admit_distribution_point(
+            &request,
+            incoming.head.method.as_str(),
+            puddle_types::request_path(&incoming.parsed.target),
+        )
+        .await
+    {
+        Some((admitted, event)) => (Ok(admitted), event),
+        None => admit(proxy, &request).await,
+    };
     event.http = Some(HttpRequestLine::new(
         incoming.head.method.as_str(),
         &incoming.parsed.target,

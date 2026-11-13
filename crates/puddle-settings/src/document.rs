@@ -121,3 +121,6 @@ pub(crate) fn store<T: Document>(settings: &T) -> Result<Value, SettingsError> {
 pub(crate) fn push_unknown(prefix: &str, extra: &BTreeMap<String, Value>, out: &mut Vec<String>) {
     out.extend(extra.keys().map(|k| format!("{prefix}{k}")));
 }
+
+#[cfg(test)]
+mod tests;

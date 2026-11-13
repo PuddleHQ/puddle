@@ -107,3 +107,15 @@ fn settings_name_no_credential_helper() {
     .unwrap();
     assert!(!text.to_lowercase().contains("credential"));
 }
+
+#[test]
+fn the_machine_settings_path_follows_the_session_user() {
+    assert_eq!(
+        machine_settings_path(SessionUser::Root),
+        MACHINE_SETTINGS_GUEST
+    );
+    assert_eq!(
+        machine_settings_path(SessionUser::Agent),
+        "/home/agent/.vscode-server/data/Machine/settings.json"
+    );
+}

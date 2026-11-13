@@ -215,3 +215,24 @@ fn serde_validates_on_the_way_in() {
     assert!(serde_json::from_str::<VolumeName>(r#""""#).is_err());
     assert!(serde_json::from_str::<ImageRef>(r#""a b""#).is_err());
 }
+
+#[test]
+fn an_image_ref_literal_is_the_same_image_ref_as_a_parsed_one() {
+    let image = "mcr.microsoft.com/devcontainers/base:debian";
+    assert_eq!(
+        ImageRef::from(ImageRefLit::new(image)),
+        ImageRef::new(image).unwrap()
+    );
+}
+
+#[test]
+#[should_panic(expected = "an image reference is")]
+fn an_invalid_image_ref_literal_panics_which_stops_a_const_build() {
+    let _ = ImageRefLit::new("a b");
+}
+
+#[test]
+#[should_panic(expected = "an image reference is")]
+fn an_empty_image_ref_literal_panics_which_stops_a_const_build() {
+    let _ = ImageRefLit::new("");
+}

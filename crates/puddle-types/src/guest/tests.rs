@@ -180,3 +180,28 @@ fn guest_env_serde_validates() {
     assert_eq!(serde_json::to_string(&env).unwrap(), r#"{"A":"1"}"#);
     assert!(serde_json::from_str::<GuestEnv>(r#"{"A-B":"1"}"#).is_err());
 }
+
+#[test]
+fn a_guest_path_literal_is_the_same_path_as_a_parsed_one() {
+    let from_lit = GuestPath::from(GuestPathLit::new("/etc/puddle/key"));
+    assert_eq!(from_lit, p("/etc/puddle/key"));
+    assert_eq!(guest_path!("/"), p("/"));
+}
+
+#[test]
+#[should_panic(expected = "not a valid guest path")]
+fn an_invalid_guest_path_literal_panics_which_stops_a_const_build() {
+    let _ = GuestPathLit::new("relative");
+}
+
+#[test]
+fn a_file_mode_within_the_permission_bits_is_accepted() {
+    assert_eq!(FileMode::try_new(0o4755).unwrap().bits(), 0o4755);
+    assert_eq!(FileMode::try_new(0o7777).unwrap(), FileMode::new(0o7777));
+}
+
+#[test]
+#[should_panic(expected = "a file mode is within 0o7777")]
+fn a_file_mode_beyond_the_permission_bits_panics_which_stops_a_const_build() {
+    let _ = FileMode::new(0o10000);
+}

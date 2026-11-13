@@ -188,5 +188,5 @@ fn a_workspace_with_no_recorded_user_gets_no_rule_from_a_create() {
         .allow_hosts_for_create(&ws("nobodys1"), &[host("github.com")])
         .unwrap_err();
     assert!(matches!(err, puddle_store::StoreError::UnknownWorkspace(w) if w == ws("nobodys1")));
-    assert!(store.rules_every_user().is_empty());
+    assert_eq!(store.rules_every_user(), []);
 }

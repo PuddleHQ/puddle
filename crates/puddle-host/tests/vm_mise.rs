@@ -64,10 +64,13 @@ async fn connections(api: &Api, workspace: &str) -> BTreeMap<String, usize> {
         .await
         .json();
     let mut tally = BTreeMap::new();
-    for entry in page["entries"].as_array().unwrap() {
-        let record = &entry["record"];
-        let host = record["host"].as_str().unwrap_or("?");
-        let decision = record["decision"].as_str().unwrap_or("?");
+    for entry in page.get("entries").and_then(|e| e.as_array()).unwrap() {
+        let record = entry.get("record").unwrap();
+        let host = record.get("host").and_then(|h| h.as_str()).unwrap_or("?");
+        let decision = record
+            .get("decision")
+            .and_then(|d| d.as_str())
+            .unwrap_or("?");
         *tally.entry(format!("{host} [{decision}]")).or_insert(0) += 1;
     }
     tally
@@ -95,6 +98,10 @@ fn field<'a>(text: &'a str, key: &str) -> &'a str {
 }
 
 /// Runs `script` as the session user and returns its exit code and output (the log gets both).
+#[expect(
+    clippy::print_stderr,
+    reason = "the test log: what each guest step said, read when a step fails"
+)]
 async fn run(
     vm: &VmHost,
     ws: &puddle_types::WorkspaceId,

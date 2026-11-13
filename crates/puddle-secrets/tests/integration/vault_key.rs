@@ -167,7 +167,7 @@ async fn the_key_file_is_the_fallback_where_sealing_cannot_work() {
         (
             "encrypt fails but printed something",
             "[--version]\nstdout=systemd 257 (257.13)\\n\n\
-             [encrypt]\nexit=1\nstdout=c2VhbGVk\n\
+             [encrypt]\nexit=1\necho_stdin=1\n\
              [decrypt]\necho_stdin=1\n"
                 .to_owned(),
         ),

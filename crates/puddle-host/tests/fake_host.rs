@@ -2649,6 +2649,11 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(reply.json()["opened"], true);
+    let uri = reply.json()["open_uri"].as_str().unwrap().to_owned();
+    assert!(
+        uri.starts_with("vscode://vscode-remote/ssh-remote+puddle-acme/"),
+        "{uri}"
+    );
     assert_eq!(*rig.launcher.opened.lock().unwrap(), ["acme"]);
     let browser = api
         .post(
@@ -3036,7 +3041,8 @@ async fn a_browser_attach_without_a_window_says_the_editor_opens_from_the_deskto
         reply.json(),
         json!({
             "opened": false,
-            "message": "the browser editor opens from the desktop app"
+            "message": "the browser editor opens from the desktop app",
+            "open_uri": null
         })
     );
     host.shutdown().await;

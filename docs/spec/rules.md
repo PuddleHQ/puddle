@@ -138,8 +138,15 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   exact allow counts, and a suffix allow reaches the destination only when "wildcards reach local
   addresses" is on. The toggle allows nothing by itself. On a proxied route the check is made on the
   address the host resolves for the name, with a short timeout. An answer that is public, missing or
-  late does not deny, because the company proxy may be the only resolver.
-  *Added 2026-11-05.*
+  late does not deny, because the company proxy may be the only resolver. The reading of the
+  physical LAN has a third answer, "unread": while the host cannot read its interfaces it cannot
+  rule out that an address is on the LAN, so the address stays local/private (a plain "no" there
+  would move a home-LAN address into the category). Image pulls use the same verdict, with the
+  workspace's name block, and have no rules, so an address whose toggle is on is reachable.
+  **Status:** the shipped host reads none of these signals yet, so the category is empty today and
+  the toggle changes nothing; the Settings text says so. The trait, the audit fields and the toggle
+  are in place for the host reads that follow.
+  *Added 2026-11-05; status and the unread LAN answer 2026-11-13.*
 - **R-27 An exact IP deny wins for a resolved address** (the proxy applies this to every address an
   allowed name resolves to, before R-14). The proxy looks up each address's own rules
   (`Policy::lookup`, R-5 to R-7 as for a request to that literal): if they deny it, the address is

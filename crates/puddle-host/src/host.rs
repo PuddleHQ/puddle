@@ -584,6 +584,7 @@ impl<R: Runtime + Clone> Host<R> {
         let pull_url = pull.proxy_url();
         // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
         let pull = pull
+            .with_company_signals(company_signals(&options))
             .with_upstream(upstream)
             .with_connection_log(connections.clone());
         steps.push(Step::UpstreamBuilt);

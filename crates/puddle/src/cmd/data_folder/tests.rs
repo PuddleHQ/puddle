@@ -62,3 +62,28 @@ fn an_empty_path_is_a_usage_error_naming_the_option() {
         "{err:?}"
     );
 }
+
+#[test]
+fn a_bad_value_of_an_option_these_commands_never_read_does_not_stop_them() {
+    let env = |name: &str| match name {
+        "PUDDLE_PORT" => Some(OsString::from("not-a-port")),
+        "PUDDLE_DATA_DIR" => Some(OsString::from("/srv/puddle")),
+        _ => None,
+    };
+    let found = configured(&Flags::new(), &env, Path::new("/w")).unwrap();
+    assert_eq!(found, Some(PathBuf::from("/srv/puddle")));
+}
+
+#[test]
+fn the_config_file_is_still_read_for_the_folder_when_another_variable_is_bad() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("serve.toml");
+    std::fs::write(&config, "data_dir = \"from-file\"\n").unwrap();
+    let env = |name: &str| match name {
+        "PUDDLE_PORT" => Some(OsString::from("not-a-port")),
+        "PUDDLE_CONFIG" => Some(config.clone().into_os_string()),
+        _ => None,
+    };
+    let found = configured(&Flags::new(), &env, Path::new("/w")).unwrap();
+    assert_eq!(found, Some(dir.path().join("from-file")));
+}

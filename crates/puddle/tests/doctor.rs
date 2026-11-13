@@ -15,6 +15,8 @@ fn puddle_in(dir: &Path, args: &[&str]) -> Output {
     puddle_with_env(dir, args, &[])
 }
 
+static COPY_AND_SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// [`puddle_in`] with no `PUDDLE_` variable of the test run's environment, then `env`.
 fn puddle_with_env(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Output {
     let exe = dir.join(if cfg!(windows) {
@@ -22,13 +24,25 @@ fn puddle_with_env(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Output {
     } else {
         "puddle"
     });
+    // Copying an executable while another test thread forks makes that child inherit the open
+    // write handle, and the copy's exec then fails with "Text file busy"; one lock covers both.
+    let guard = COPY_AND_SPAWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     std::fs::copy(env!("CARGO_BIN_EXE_puddle"), &exe).unwrap();
     let mut command = Command::new(&exe);
     command.args(args).current_dir(dir);
     for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("PUDDLE_")) {
         command.env_remove(name);
     }
-    command.envs(env.iter().copied()).output().unwrap()
+    let child = command
+        .envs(env.iter().copied())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(guard);
+    child.wait_with_output().unwrap()
 }
 
 /// The folder the report says it measured the free space of.
@@ -157,4 +171,23 @@ fn unknown_doctor_flag_is_a_usage_error() {
             .unwrap()
             .contains("unknown argument: --fix")
     );
+}
+
+#[test]
+fn a_bad_port_variable_does_not_stop_the_doctor() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("bin");
+    std::fs::create_dir(&dir).unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    let out = puddle_with_env(
+        &dir,
+        &["doctor", "--json", "--no-boot"],
+        &[
+            ("PUDDLE_DATA_DIR", &data),
+            ("PUDDLE_PORT", Path::new("not-a-port")),
+        ],
+    );
+    let summary = measured_folder(&out);
+    assert!(summary.contains(data.to_str().unwrap()), "{summary}");
 }

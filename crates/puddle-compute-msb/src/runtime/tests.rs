@@ -352,3 +352,42 @@ fn every_sdk_status_maps_one_to_one() {
         assert_eq!(status(sdk), ours);
     }
 }
+
+fn wanted(pairs: &[(&str, &str)]) -> GuestEnv {
+    let mut env = GuestEnv::new();
+    for (k, v) in pairs {
+        env.set(k, v).unwrap();
+    }
+    env
+}
+
+fn stored(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect()
+}
+
+#[test]
+fn the_same_variables_make_no_patch() {
+    let patch = EnvPatch::between(&stored(&[("A", "1")]), &wanted(&[("A", "1")]));
+    assert!(patch.is_empty());
+}
+
+#[test]
+fn a_changed_added_and_dropped_variable_each_show_in_the_patch() {
+    let patch = EnvPatch::between(
+        &stored(&[("KEPT", "same"), ("CHANGED", "old"), ("GONE", "1")]),
+        &wanted(&[("KEPT", "same"), ("CHANGED", "new"), ("ADDED", "yes")]),
+    );
+    assert_eq!(patch.remove, ["GONE"]);
+    let mut set = patch.set;
+    set.sort();
+    assert_eq!(
+        set,
+        [
+            ("ADDED".to_owned(), "yes".to_owned()),
+            ("CHANGED".to_owned(), "new".to_owned())
+        ]
+    );
+}

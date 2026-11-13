@@ -233,3 +233,28 @@ fn a_sweep_that_cannot_run_raises_a_problem_naming_why_and_a_clean_one_raises_no
     report(sweep(&IndexedStore::new(Shared(disk)), &store), &list);
     assert_eq!(list.list(), Vec::new());
 }
+
+#[tokio::test]
+async fn shutdown_does_not_wait_for_ever_for_a_sweep_the_keyring_holds_up() {
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let sweep = tokio::task::spawn_blocking(move || {
+        let _ = held.recv();
+    });
+    let end = finish_sweep(sweep, std::time::Duration::from_millis(50)).await;
+    assert_eq!(end, SweepEnd::StillRunning);
+    drop(release);
+}
+
+#[tokio::test]
+async fn shutdown_reports_a_sweep_that_panicked_and_one_that_finished() {
+    let panicked = tokio::task::spawn_blocking(|| panic!("keyring exploded"));
+    assert_eq!(
+        finish_sweep(panicked, std::time::Duration::from_secs(20)).await,
+        SweepEnd::Panicked
+    );
+    let finished = tokio::task::spawn_blocking(|| {});
+    assert_eq!(
+        finish_sweep(finished, std::time::Duration::from_secs(20)).await,
+        SweepEnd::Finished
+    );
+}

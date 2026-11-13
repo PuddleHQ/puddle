@@ -48,9 +48,13 @@ fn emitting_without_subscribers_is_fine() {
 async fn stream_filters_reports_lag_and_ends_on_shutdown() {
     let hub = EventHub::new(2);
     let (stop, shutdown) = watch::channel(false);
+    let store = store();
+    store
+        .set_workspace_owner(&name("a"), UserId::OWNER)
+        .unwrap();
     let mut s = Box::pin(stream(
         hub.subscribe(),
-        owner(&store()),
+        owner(&store),
         Some(name("a")),
         shutdown,
         std::future::pending(),
@@ -97,6 +101,9 @@ async fn each_stream_carries_only_its_principals_events() {
     let store = store();
     let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
     store.set_workspace_owner(&name("anns"), ann).unwrap();
+    store
+        .set_workspace_owner(&name("owners"), UserId::OWNER)
+        .unwrap();
     let hub = EventHub::default();
     let (_stop, shutdown) = watch::channel(false);
     let as_ann = Audience::new(
@@ -132,6 +139,8 @@ async fn each_stream_carries_only_its_principals_events() {
     }
     assert!(text(owners.next().await).contains("audit_appended"));
     assert!(text(owners.next().await).contains("owners"));
+    // A workspace with no recorded user is nobody's: its events reach no one.
+    hub.emit(oom("nobodys"));
     hub.emit(oom("owners"));
     hub.emit(Event::AuditAppended { id: 8, user: 1 });
     hub.emit(Event::RulesChanged {});

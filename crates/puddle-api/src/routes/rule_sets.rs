@@ -8,7 +8,7 @@ use puddle_store::{Actor, parse_rule_set};
 use puddle_types::RuleSetId;
 
 use crate::ApiErrorBody;
-use crate::authz::{self, Principal};
+use crate::authz::Principal;
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
@@ -69,21 +69,11 @@ pub(crate) async fn list_rule_sets(
     State(state): State<AppState>,
     principal: Principal,
 ) -> Result<Json<RuleSetList>, ApiError> {
-    let owners = authz::owners(&state).await?;
     let list = blocking(move || {
         let sets = state.store.rule_sets(principal.user)?;
         // The hosts allowed for every workspace (the install's own choices, which decide the
         // principal's requests too, so they may see them), and for the principal's own.
-        let system = state
-            .store
-            .system_managed()?
-            .into_iter()
-            .filter(|host| {
-                host.workspace
-                    .as_ref()
-                    .is_none_or(|w| owners.of(w) == principal.user)
-            })
-            .collect();
+        let system = state.store.system_managed(principal.user)?;
         let (system_managed, _left_out) = wire_system_hosts(system, SystemManagedHost::from_store);
         Ok(RuleSetList {
             sets: sets.into_iter().map(RuleSetView::from_store).collect(),

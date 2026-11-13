@@ -29,7 +29,7 @@ pub(crate) async fn list_problems(
     let mut problems = state.problems.list();
     // A workspace's problems are its user's; Puddle's own are the owner's.
     problems.retain(|p| match &p.workspace {
-        Some(workspace) => owners.of(workspace) == principal.user,
+        Some(workspace) => owners.is(workspace, principal.user),
         None => principal.role == Role::Owner,
     });
     Ok(Json(ProblemList { problems }))

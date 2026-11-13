@@ -66,7 +66,9 @@ mod wire;
 
 pub use auth::{AuthError, AuthSession, AuthStep, NoAuth, ProxyAuth, system_auth};
 pub use basic::{AuthList, BasicAuth, CredentialSource, Credentials};
-pub use chain::{Chain, ChainConfig, ChainError, Connected, Form, Request, Secret, connect_first};
+pub use chain::{
+    Chain, ChainConfig, ChainError, Connected, Form, HostLookup, Request, Secret, connect_first,
+};
 pub use discovery::{Config, Decision, Discovery, ManualProxy, Mode, RouteSource, Watching};
 pub use env::{EnvFallback, EnvOs};
 #[cfg(any(test, feature = "testing"))]

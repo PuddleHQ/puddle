@@ -8,6 +8,7 @@ mod pull_support;
 mod fuzz_corpus;
 mod hostile_input;
 mod hostile_slowloris;
+mod pki;
 mod plain_keepalive;
 mod pull;
 mod route;

@@ -74,7 +74,7 @@ fn bash_script(script: &str) -> String {
 fn open_rows(vm: &VmHost, workspace: &WorkspaceId) -> Vec<String> {
     vm.host
         .store()
-        .open_pending(Some(workspace))
+        .open_pending_every_user(Some(workspace))
         .unwrap()
         .iter()
         .map(|r| format!("{}:{}", r.host, r.port))
@@ -91,7 +91,11 @@ async fn wait_for_row(
         &format!("an open row for {wanted}"),
         Duration::from_secs(10),
         || {
-            let rows = vm.host.store().open_pending(Some(workspace)).unwrap();
+            let rows = vm
+                .host
+                .store()
+                .open_pending_every_user(Some(workspace))
+                .unwrap();
             rows.iter()
                 .find(|r| r.host.to_string() == wanted)
                 .map(|row| row.id)

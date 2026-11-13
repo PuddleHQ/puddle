@@ -196,7 +196,10 @@ async fn node_fetch_of_plain_http_is_pending_then_allowed_and_audited_with_metho
     // Unknown name: Node's CONNECT is refused and the name is waiting in the inbox.
     let (ok, out) = node_fetch(agent, url.clone()).await;
     assert!(!ok, "fetch passed before any rule: {out}");
-    let pending = rig.store.open_pending(Some(&workspace())).unwrap();
+    let pending = rig
+        .store
+        .open_pending_every_user(Some(&workspace()))
+        .unwrap();
     assert_eq!(pending.len(), 1, "{pending:?}");
     let records = connection_records(&rig.store, 1).await;
     assert_eq!(

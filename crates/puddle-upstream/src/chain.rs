@@ -22,8 +22,10 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -54,6 +56,10 @@ pub struct ChainConfig {
     /// One request/response exchange with a proxy, so a proxy that accepts and never answers
     /// counts as down.
     pub head_timeout: Duration,
+    /// The host-side name lookup before a proxy is asked to resolve the name itself (see
+    /// [`crate::host::connect`]). A resolver that does not answer must not stall the connection:
+    /// the company's proxy may be the only one that knows the name.
+    pub lookup_timeout: Duration,
     /// `407` rounds before giving up (NTLM needs three legs; a proxy that keeps asking is
     /// broken or hostile).
     pub max_legs: usize,
@@ -64,12 +70,20 @@ impl Default for ChainConfig {
         Self {
             connect_timeout: Duration::from_secs(10),
             head_timeout: Duration::from_secs(15),
+            lookup_timeout: Duration::from_secs(5),
             max_legs: 6,
         }
     }
 }
 
 impl ChainConfig {
+    /// The defaults with another host-side lookup timeout.
+    #[must_use]
+    pub fn with_lookup_timeout(mut self, lookup: Duration) -> Self {
+        self.lookup_timeout = lookup;
+        self
+    }
+
     /// The defaults with other timeouts.
     #[must_use]
     pub fn with_timeouts(mut self, connect: Duration, head: Duration) -> Self {
@@ -255,6 +269,35 @@ struct Memo {
     basic: Option<String>,
 }
 
+/// A name lookup that stands in for the system resolver (see [`Chain::with_lookup`]).
+#[derive(Clone)]
+pub struct HostLookup(Arc<LookupFn>);
+
+type LookupAnswer = Pin<Box<dyn Future<Output = io::Result<Vec<SocketAddr>>> + Send>>;
+type LookupFn = dyn Fn(&str, u16) -> LookupAnswer + Send + Sync;
+
+impl HostLookup {
+    /// A lookup that calls `lookup` with the name and port.
+    #[must_use]
+    pub fn new<F, Fut>(lookup: F) -> Self
+    where
+        F: Fn(&str, u16) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = io::Result<Vec<SocketAddr>>> + Send + 'static,
+    {
+        Self(Arc::new(move |name, port| Box::pin(lookup(name, port))))
+    }
+
+    pub(crate) fn call(&self, name: &str, port: u16) -> LookupAnswer {
+        (self.0)(name, port)
+    }
+}
+
+impl fmt::Debug for HostLookup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("HostLookup(..)")
+    }
+}
+
 /// Connects along the route [`Discovery`] picks, authenticating to proxies with [`ProxyAuth`].
 /// Cheap to share: wrap in an [`Arc`].
 #[derive(Debug)]
@@ -262,6 +305,7 @@ pub struct Chain {
     discovery: Arc<Discovery>,
     auth: Arc<dyn ProxyAuth>,
     config: ChainConfig,
+    lookup: Option<HostLookup>,
     memo: Mutex<HashMap<ProxyAddr, Memo>>,
     sign_in_log: SignInLog,
     /// The epoch `auth` was last told about.
@@ -286,10 +330,38 @@ impl Chain {
             discovery,
             auth,
             config,
+            lookup: None,
             memo: Mutex::default(),
             sign_in_log: SignInLog::default(),
             auth_epoch: AtomicU64::new(0),
         })
+    }
+
+    /// Like [`Chain::with_config`] with `lookup` in place of the system resolver for the
+    /// host-side lookup of [`crate::host::connect`], so a test does not depend on the DNS of the
+    /// machine it runs on.
+    #[must_use]
+    pub fn with_lookup(
+        discovery: Arc<Discovery>,
+        auth: Arc<dyn ProxyAuth>,
+        config: ChainConfig,
+        lookup: HostLookup,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            discovery,
+            auth,
+            config,
+            lookup: Some(lookup),
+            memo: Mutex::default(),
+            sign_in_log: SignInLog::default(),
+            auth_epoch: AtomicU64::new(0),
+        })
+    }
+
+    /// The stand-in for the system resolver, if one was given.
+    #[must_use]
+    pub fn host_lookup(&self) -> Option<&HostLookup> {
+        self.lookup.as_ref()
     }
 
     /// What the last sign-in to each proxy came to, for the network-health report. Never holds a
@@ -322,6 +394,12 @@ impl Chain {
             connected.hop.clone(),
             connected.epoch,
         )
+    }
+
+    /// How long the host-side name lookup may take (see [`ChainConfig::lookup_timeout`]).
+    #[must_use]
+    pub fn lookup_timeout(&self) -> Duration {
+        self.config.lookup_timeout
     }
 
     /// The discovery in use.

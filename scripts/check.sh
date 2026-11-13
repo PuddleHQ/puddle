@@ -123,7 +123,7 @@ diff_coverage() {
         return 1
     fi
     node ui/scripts/diff-coverage.ts --base "$base" --lcov "$lcov" --exts "$exts" \
-        --exclusions scripts/diff-coverage-exclusions.txt --label "$label" "$@"
+        --exclusions scripts/diff-coverage-exclusions --label "$label" "$@"
 }
 
 # Installs the UI's npm packages from the lock file, once per run.

@@ -407,8 +407,11 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   working tree against a base commit: locally the merge base with `origin/develop`, in CI the PR's base or
   the push's previous head (`DIFF_BASE`). Tool: `ui/scripts/diff-coverage.ts` (own code, no dependency;
   tests beside it).
-  A line that legitimately can't run in CI goes in `scripts/diff-coverage-exclusions.txt`:
-  `path glob | whole line, or * | [xN |] reason`, one reason per entry, reviewed like code. The text is the
+  A line that legitimately can't run in CI goes in the file of its own crate under
+  `scripts/diff-coverage-exclusions/` (`<crate>.txt`, `ui.txt` for the SPA; the gate refuses an entry
+  whose path glob is outside its file's crate): `path glob | whole line, or * | [xN |] reason`, one
+  reason per entry, reviewed like code. One file per crate keeps two pull requests that touch
+  different crates from conflicting in the same file. The text is the
   whole line, compared trimmed, never a part of one; under 20 characters is refused (a bare `)?;` or `}` is
   pinned to its statement by writing the line above first, joined with `\n`); a backslash escapes the next character (`\|` for a bar of the code, `\\` for a backslash).
   The file may hold at most N matches of the text (`xN`, default 1), so a copy added later stops being excused.
@@ -432,7 +435,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   libraries stay built. Its report is `<target>/diff-coverage-fast.lcov`. A change to `Cargo.toml`, `Cargo.lock`
   or `.cargo/` names no crate; a `.rs` file outside `crates/` skips the gate (the full gate measures it). A line only another
   crate's tests run is reported as uncovered here and cleared by the full `coverage` gate: cover it from its own crate,
-  or list it in `scripts/diff-coverage-exclusions.txt`. It never touches the `coverage` gate's `lcov.info`, and
+  or list it in `scripts/diff-coverage-exclusions/`. It never touches the `coverage` gate's `lcov.info`, and
   `all` (CI) does not run it.
 - **Pure-logic crates stay at 100 % of their lines** (gate `coverage`, tool `ui/scripts/full-coverage.ts`). The
   crates listed in `scripts/full-coverage-crates.txt` (pure logic: no operating-system, network or VM code) fail the run on the first executable line

@@ -701,7 +701,7 @@ async fn check_variables_survive_sudo_and_new_shells(image: &str, tag: &str) {
             .unwrap()
     };
     let mut env = GuestEnv::new();
-    env.set("PUDDLE_T_VAR", "one two 'quoted' $HOME").unwrap();
+    env.set("KEPT_T_VAR", "one two 'quoted' $HOME").unwrap();
     let gate = Gate::new();
     let hook = BootHook::new();
     let sb = hook
@@ -710,13 +710,13 @@ async fn check_variables_survive_sudo_and_new_shells(image: &str, tag: &str) {
         .unwrap();
     check_variable(&sb, "one two 'quoted' $HOME").await;
     sb.stop().await.unwrap();
-    env.set("PUDDLE_T_VAR", "three").unwrap();
+    env.set("KEPT_T_VAR", "three").unwrap();
     let again = hook.start(rt, &name, &plan_for(&env), &gate).await.unwrap();
     // The sandbox's own environment is the old value until the host applies it (a different
     // piece); the files carry the new one, which is what a new terminal reads.
     let (code, said) = as_agent(
         &again,
-        "env -u PUDDLE_T_VAR bash -ic 'printf \"%s\" \"$PUDDLE_T_VAR\"'",
+        "env -u KEPT_T_VAR bash -ic 'printf \"%s\" \"$KEPT_T_VAR\"'",
     )
     .await;
     assert_eq!(
@@ -732,12 +732,12 @@ async fn check_variables_survive_sudo_and_new_shells(image: &str, tag: &str) {
 
 async fn check_variable<S: Sandbox>(sb: &GatedSandbox<S>, value: &str) {
     // `sudo` keeps it (the keep list), where the default drops everything.
-    let (code, said) = as_agent(sb, "sudo -n sh -c 'printf \"%s\" \"$PUDDLE_T_VAR\"'").await;
+    let (code, said) = as_agent(sb, "sudo -n sh -c 'printf \"%s\" \"$KEPT_T_VAR\"'").await;
     assert_eq!((code, said.as_str()), (0, value), "sudo keeps the variable");
     // `sudo -i` and a bash without a login read the files.
     let (code, said) = as_agent(
         sb,
-        "env -u PUDDLE_T_VAR sudo -n -i sh -c 'printf \"%s\" \"$PUDDLE_T_VAR\"'",
+        "env -u KEPT_T_VAR sudo -n -i sh -c 'printf \"%s\" \"$KEPT_T_VAR\"'",
     )
     .await;
     assert_eq!(
@@ -747,7 +747,7 @@ async fn check_variable<S: Sandbox>(sb: &GatedSandbox<S>, value: &str) {
     );
     let (code, said) = as_agent(
         sb,
-        "env -u PUDDLE_T_VAR bash -ic 'printf \"%s\" \"$PUDDLE_T_VAR\"'",
+        "env -u KEPT_T_VAR bash -ic 'printf \"%s\" \"$KEPT_T_VAR\"'",
     )
     .await;
     assert_eq!((code, said.as_str()), (0, value), "a bash without a login");
@@ -756,8 +756,8 @@ async fn check_variable<S: Sandbox>(sb: &GatedSandbox<S>, value: &str) {
     assert_eq!((code, said.as_str()), (0, "1"), "the image's lines stay");
     let (code, said) = as_agent(
         sb,
-        "if command -v zsh >/dev/null; then env -u PUDDLE_T_VAR zsh -c 'printf \"%s\" \"$PUDDLE_T_VAR\"'; \
-         else test -e /etc/zsh/zshenv && echo made-without-zsh || printf '%s' \"$PUDDLE_T_VAR\"; fi",
+        "if command -v zsh >/dev/null; then env -u KEPT_T_VAR zsh -c 'printf \"%s\" \"$KEPT_T_VAR\"'; \
+         else test -e /etc/zsh/zshenv && echo made-without-zsh || printf '%s' \"$KEPT_T_VAR\"; fi",
     )
     .await;
     assert_eq!(

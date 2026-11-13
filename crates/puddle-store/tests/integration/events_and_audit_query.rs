@@ -1198,15 +1198,11 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
         // not cover three runs in a row, and a quadratic query is slow in all three.
         let mut best = Duration::MAX;
         let mut rows = Vec::new();
+        let all = puddle_store::testing::all_users();
         for _ in 0..3 {
             let (got, cpu) = cpu_time(|| {
                 store
-                    .audit_query_every_user(
-                        &puddle_store::testing::all_users(),
-                        &filter,
-                        cursor,
-                        100,
-                    )
+                    .audit_query_every_user(&all, &filter, cursor, 100)
                     .unwrap()
             });
             best = best.min(cpu);

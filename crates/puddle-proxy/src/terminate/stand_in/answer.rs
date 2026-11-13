@@ -54,12 +54,17 @@ use crate::proxy::Refusal;
 /// would be short enough to turn up in unrelated base64 data and cut answers off for nothing.
 const MIN_CORE_VALUE: usize = 12;
 
-/// How many compressed bytes go to a decoder at once. It bounds how much one write inflates
-/// (about 4 MiB for gzip), not the output of a whole piece of the body: a host that sends a
-/// compression bomb can make one piece large. The host is one trusted with the secret.
+/// How many compressed bytes go to a decoder at once. A body that is scrubbed is decoded one
+/// step at a time and each step's output is limited by [`MAX_DECODED_STEP`], so a compression
+/// bomb cannot make one piece large.
 const DECODE_STEP: usize = 4096;
 
 /// The largest zstd window accepted (2^27 bytes, the format's usual decoder limit).
+/// The most decoded bytes one [`DECODE_STEP`] of an answer may give (it ends the answer past
+/// that). Deflate cannot inflate 4 KiB past about 4 MiB, so only a Brotli or zstd bomb reaches
+/// it.
+const MAX_DECODED_STEP: usize = 16 * 1024 * 1024;
+
 const ZSTD_WINDOW_LOG_MAX: u32 = 27;
 
 /// One form of a real value and what replaces it.
@@ -518,16 +523,58 @@ impl Scrubber {
     }
 }
 
+/// Where a decoder writes: a buffer that refuses more once it holds [`Sink::limit`] bytes, so a
+/// small compressed frame cannot decode into hundreds of MiB before the caller sees any of it.
+/// The decoders write in chunks of at most about 128 KiB, so the buffer ends a chunk past the
+/// limit at most.
+#[derive(Default)]
+pub(super) struct Sink {
+    buf: Vec<u8>,
+    limit: usize,
+    /// The limit stopped a write; the decoder has lost its place and is not used again.
+    full: bool,
+}
+
+impl io::Write for Sink {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        if self.buf.len() >= self.limit {
+            self.full = true;
+            return Err(io::Error::other("the decoded output reached its limit"));
+        }
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// How far a [`Decoder`] got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Pushed {
+    /// All the input is decoded and its output appended.
+    All,
+    /// The output reached the limit first: what was appended is all there will be, and the
+    /// decoder is spent.
+    Full,
+}
+
 /// A content decoder fed pieces of an encoded body.
 pub(super) enum Decoder {
-    Gzip(flate2::write::MultiGzDecoder<Vec<u8>>),
-    /// Waits for the first two bytes to tell zlib (what the standard says `deflate` is) from a
-    /// raw deflate stream (what some servers send).
+    /// A `deflate` body: waits for the first two bytes to tell zlib (what the standard says
+    /// `deflate` is) from a raw deflate stream (what some servers send).
     DeflateStart(Vec<u8>),
-    Zlib(flate2::write::ZlibDecoder<Vec<u8>>),
-    Deflate(flate2::write::DeflateDecoder<Vec<u8>>),
-    Brotli(Box<brotli_decompressor::DecompressorWriter<Vec<u8>>>),
-    Zstd(zstd::stream::write::Decoder<'static, Vec<u8>>),
+    Ready(Box<Format>),
+}
+
+/// A decoder that writes into a [`Sink`], by coding.
+pub(super) enum Format {
+    Gzip(flate2::write::MultiGzDecoder<Sink>),
+    Zlib(flate2::write::ZlibDecoder<Sink>),
+    Deflate(flate2::write::DeflateDecoder<Sink>),
+    Brotli(Box<brotli_decompressor::DecompressorWriter<Sink>>),
+    Zstd(zstd::stream::write::Decoder<'static, Sink>),
 }
 
 impl Decoder {
@@ -541,63 +588,102 @@ impl Decoder {
             .map(str::trim)
             .filter(|coding| !coding.is_empty() && *coding != "identity")
             .collect();
+        let ready = |format| Ok(Some(Self::Ready(Box::new(format))));
         match codings.as_slice() {
             [] => Ok(None),
-            ["gzip" | "x-gzip"] => Ok(Some(Self::Gzip(flate2::write::MultiGzDecoder::new(
-                Vec::new(),
-            )))),
+            ["gzip" | "x-gzip"] => ready(Format::Gzip(flate2::write::MultiGzDecoder::new(
+                Sink::default(),
+            ))),
             ["deflate"] => Ok(Some(Self::DeflateStart(Vec::new()))),
-            ["br"] => Ok(Some(Self::Brotli(Box::new(
-                brotli_decompressor::DecompressorWriter::new(Vec::new(), DECODE_STEP),
-            )))),
-            ["zstd"] => zstd::stream::write::Decoder::new(Vec::new())
+            ["br"] => ready(Format::Brotli(Box::new(
+                brotli_decompressor::DecompressorWriter::new(Sink::default(), DECODE_STEP),
+            ))),
+            ["zstd"] => zstd::stream::write::Decoder::new(Sink::default())
                 .and_then(|mut decoder| {
                     decoder.window_log_max(ZSTD_WINDOW_LOG_MAX)?;
                     Ok(decoder)
                 })
-                .map(|decoder| Some(Self::Zstd(decoder)))
-                .map_err(|_| ()),
+                .map_err(|_| ())
+                .and_then(|decoder| ready(Format::Zstd(decoder))),
             _ => Err(()),
         }
     }
 
-    /// Decodes `input`, appending the plain bytes to `out`.
-    pub(super) fn push(&mut self, input: &[u8], out: &mut Vec<u8>) -> io::Result<()> {
-        if let Self::DeflateStart(held) = self {
-            held.extend_from_slice(input);
-            let [cmf, flg, ..] = held[..] else {
-                return Ok(());
-            };
-            let zlib = cmf & 0x0f == 8 && (u16::from(cmf) * 256 + u16::from(flg)) % 31 == 0;
-            let held = std::mem::take(held);
-            *self = if zlib {
-                Self::Zlib(flate2::write::ZlibDecoder::new(Vec::new()))
-            } else {
-                Self::Deflate(flate2::write::DeflateDecoder::new(Vec::new()))
-            };
-            return self.push(&held, out);
+    /// Decodes `input`, appending the plain bytes to `out`: about `limit` of them at most (the
+    /// last chunk the decoder wrote may run past it by up to 128 KiB). `Full` when the output
+    /// reached the limit before the input was used up.
+    pub(super) fn push(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        limit: usize,
+    ) -> io::Result<Pushed> {
+        match self {
+            Self::DeflateStart(held) => {
+                held.extend_from_slice(input);
+                let [cmf, flg, ..] = held[..] else {
+                    return Ok(Pushed::All);
+                };
+                let zlib = cmf & 0x0f == 8 && (u16::from(cmf) * 256 + u16::from(flg)) % 31 == 0;
+                let held = std::mem::take(held);
+                let mut format = if zlib {
+                    Format::Zlib(flate2::write::ZlibDecoder::new(Sink::default()))
+                } else {
+                    Format::Deflate(flate2::write::DeflateDecoder::new(Sink::default()))
+                };
+                let pushed = format.push(&held, out, limit);
+                *self = Self::Ready(Box::new(format));
+                pushed
+            }
+            Self::Ready(format) => format.push(input, out, limit),
         }
-        for piece in input.chunks(DECODE_STEP) {
-            self.writer().write_all(piece)?;
-            self.writer().flush()?;
-            out.append(self.output());
-        }
-        Ok(())
     }
 
-    /// Ends the body: what the decoder still holds, or an error when the body stopped short.
+    /// Ends the body: what the decoder still holds (a write's worth at most), or an error when
+    /// the body stopped short. Not called after `push` said `Full`.
     pub(super) fn finish(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
         match self {
-            Self::DeflateStart(held) if held.is_empty() => return Ok(()),
-            Self::DeflateStart(_) => return Err(io::Error::other("a deflate body ended at once")),
-            Self::Gzip(decoder) => decoder.try_finish()?,
-            Self::Zlib(decoder) => decoder.try_finish()?,
-            Self::Deflate(decoder) => decoder.try_finish()?,
-            Self::Brotli(decoder) => decoder.close()?,
-            Self::Zstd(decoder) => decoder.flush()?,
+            Self::DeflateStart(held) if held.is_empty() => Ok(()),
+            Self::DeflateStart(_) => Err(io::Error::other("a deflate body ended at once")),
+            Self::Ready(format) => format.finish(out),
         }
-        out.append(self.output());
-        Ok(())
+    }
+}
+
+impl Format {
+    fn push(&mut self, input: &[u8], out: &mut Vec<u8>, limit: usize) -> io::Result<Pushed> {
+        let start = out.len();
+        for piece in input.chunks(DECODE_STEP) {
+            let room = limit.saturating_sub(out.len() - start);
+            if self.sink().full || room == 0 {
+                return Ok(Pushed::Full);
+            }
+            self.sink().limit = room;
+            let written = self
+                .writer()
+                .write_all(piece)
+                .and_then(|()| self.writer().flush());
+            let sink = self.sink();
+            out.append(&mut sink.buf);
+            if sink.full {
+                return Ok(Pushed::Full);
+            }
+            written?;
+        }
+        Ok(Pushed::All)
+    }
+
+    fn finish(&mut self, out: &mut Vec<u8>) -> io::Result<()> {
+        self.sink().limit = usize::MAX;
+        let ended = match self {
+            Self::Gzip(decoder) => decoder.try_finish(),
+            Self::Zlib(decoder) => decoder.try_finish(),
+            Self::Deflate(decoder) => decoder.try_finish(),
+            Self::Brotli(decoder) => decoder.close(),
+            Self::Zstd(decoder) => decoder.flush(),
+        };
+        out.append(&mut self.sink().buf);
+        ended
     }
 
     fn writer(&mut self) -> &mut dyn io::Write {
@@ -607,18 +693,17 @@ impl Decoder {
             Self::Deflate(decoder) => decoder,
             Self::Brotli(decoder) => &mut **decoder,
             Self::Zstd(decoder) => decoder,
-            Self::DeflateStart(held) => held,
         }
     }
 
-    fn output(&mut self) -> &mut Vec<u8> {
+    /// The buffer the decoder writes to.
+    fn sink(&mut self) -> &mut Sink {
         match self {
             Self::Gzip(decoder) => decoder.get_mut(),
             Self::Zlib(decoder) => decoder.get_mut(),
             Self::Deflate(decoder) => decoder.get_mut(),
             Self::Brotli(decoder) => decoder.get_mut(),
             Self::Zstd(decoder) => decoder.get_mut(),
-            Self::DeflateStart(held) => held,
         }
     }
 }
@@ -628,6 +713,9 @@ pub(crate) struct ScrubBody {
     inner: AnswerBody,
     scrubber: Arc<Scrubber>,
     decoder: Option<Decoder>,
+    /// Encoded bytes that came and are not decoded yet: [`DECODE_STEP`] of them are decoded at a
+    /// time, so one frame never inflates into more than [`MAX_DECODED_STEP`] bytes held at once.
+    queued: Bytes,
     /// What came but could still be the start of a form; it may hold part of a real value.
     held: Zeroizing<Vec<u8>>,
     notes: Arc<ScrubNotes>,
@@ -645,14 +733,21 @@ impl ScrubBody {
         Ok(Bytes::from(out))
     }
 
+    /// Decodes `data` (`end`: and finishes the body). A step that inflates past
+    /// [`MAX_DECODED_STEP`] is an error, as a body that cannot be decoded is.
     fn decode(&mut self, data: &[u8], end: bool) -> Result<Zeroizing<Vec<u8>>, BoxError> {
         let Some(decoder) = self.decoder.as_mut() else {
             return Ok(Zeroizing::new(data.to_vec()));
         };
         let mut plain = Zeroizing::new(Vec::new());
-        decoder
-            .push(data, &mut plain)
+        let pushed = decoder
+            .push(data, &mut plain, MAX_DECODED_STEP)
             .map_err(|err| undecodable(&err))?;
+        if pushed == Pushed::Full {
+            return Err(Box::new(io::Error::other(
+                "the answer inflates too far at once for Puddle to check it",
+            )));
+        }
         if end {
             decoder
                 .finish(&mut plain)
@@ -681,29 +776,40 @@ impl Body for ScrubBody {
             if this.ended {
                 return Poll::Ready(this.trailers.take().map(|t| Ok(Frame::trailers(t))));
             }
-            let polled = match Pin::new(&mut this.inner).poll_frame(cx) {
-                Poll::Ready(polled) => polled,
-                Poll::Pending => return Poll::Pending,
-            };
-            let out = match polled {
-                Some(Ok(frame)) => match frame.into_data() {
-                    Ok(data) => this
-                        .decode(&data, false)
-                        .and_then(|plain| this.step(&plain, false)),
-                    Err(frame) => {
-                        if let Ok(mut trailers) = frame.into_trailers() {
-                            this.scrubber.scrub_headers(&mut trailers, &this.notes);
-                            this.trailers = Some(trailers);
+            let out = if this.queued.is_empty() {
+                let polled = match Pin::new(&mut this.inner).poll_frame(cx) {
+                    Poll::Ready(polled) => polled,
+                    Poll::Pending => return Poll::Pending,
+                };
+                match polled {
+                    Some(Ok(frame)) => match frame.into_data() {
+                        Ok(data) if this.decoder.is_some() => {
+                            this.queued = data;
+                            continue;
                         }
-                        continue;
+                        Ok(data) => this
+                            .decode(&data, false)
+                            .and_then(|plain| this.step(&plain, false)),
+                        Err(frame) => {
+                            if let Ok(mut trailers) = frame.into_trailers() {
+                                this.scrubber.scrub_headers(&mut trailers, &this.notes);
+                                this.trailers = Some(trailers);
+                            }
+                            continue;
+                        }
+                    },
+                    Some(Err(err)) => return Poll::Ready(Some(Err(err))),
+                    None => {
+                        this.ended = true;
+                        this.decode(&[], true)
+                            .and_then(|plain| this.step(&plain, true))
                     }
-                },
-                Some(Err(err)) => return Poll::Ready(Some(Err(err))),
-                None => {
-                    this.ended = true;
-                    this.decode(&[], true)
-                        .and_then(|plain| this.step(&plain, true))
                 }
+            } else {
+                let take = this.queued.len().min(DECODE_STEP);
+                let piece = this.queued.split_to(take);
+                this.decode(&piece, false)
+                    .and_then(|plain| this.step(&plain, false))
             };
             match out {
                 Ok(bytes) if bytes.is_empty() => {}
@@ -828,6 +934,7 @@ pub(crate) async fn scrub_answer(
     let body = ScrubBody {
         inner,
         scrubber,
+        queued: Bytes::new(),
         decoder,
         held: Zeroizing::new(Vec::new()),
         notes: Arc::clone(notes),

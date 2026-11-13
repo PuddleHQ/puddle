@@ -15,7 +15,7 @@ use puddle_api::{
 };
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
-use puddle_store::{Limits, ManualClock, Store};
+use puddle_store::{Limits, ManualClock, Store, UserId};
 use puddle_types::{EgressRequest, Host, PendingId, SuffixAllows, WorkspaceId};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -273,6 +273,17 @@ async fn start_inner_with(
 }
 
 impl Api {
+    /// Records the owner as the user of workspace `name`, made without a create (seeded, or an id
+    /// only the store knows), as the first start does for the workspaces listed from before; one
+    /// already recorded keeps its user. A workspace with no recorded user is nobody's: every route
+    /// answers 404 for it.
+    pub(crate) fn own(&self, name: &str) {
+        let id = WorkspaceId::new(name).unwrap();
+        if self.store.workspace_owner(&id).unwrap().is_none() {
+            self.store.set_workspace_owner(&id, UserId::OWNER).unwrap();
+        }
+    }
+
     pub(crate) fn host(&self) -> String {
         format!("127.0.0.1:{}", self.addr.port())
     }
@@ -314,8 +325,10 @@ impl Api {
         self.send("GET", path, None).await
     }
 
-    /// Makes the workspace ask for `host:443` once, as the proxy would; returns the pending id.
+    /// Makes the workspace (the owner's unless recorded otherwise) ask for `host:443` once, as the
+    /// proxy would; returns the pending id.
     pub(crate) fn request(&self, workspace: &str, host: &str) -> i64 {
+        self.own(workspace);
         let decision = self
             .store
             .decide(

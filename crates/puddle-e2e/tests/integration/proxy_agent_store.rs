@@ -76,7 +76,7 @@ async fn parallel_connects_256_through_agent_proxy_and_store() {
         slowest < median * 10 + Duration::from_secs(5),
         "slowest connection took {slowest:?}, the median {median:?}"
     );
-    assert_eq!(rig.store.open_pending(None).unwrap().len(), 0);
+    assert_eq!(rig.store.open_pending_every_user(None).unwrap().len(), 0);
 
     // Every connection is in the audit: written, or counted in a `suppressed` summary once its
     // second is over (200 records per workspace per second, R-26).
@@ -210,7 +210,11 @@ async fn connections_land_in_the_store_audit() {
     let pending = format!("new.test:{}", echo.port());
     let (code, _) = connect_via(agent, &pending).await.unwrap();
     assert_eq!(code, 403);
-    let row = rig.store.open_pending(Some(&workspace())).unwrap()[0].id;
+    let row = rig
+        .store
+        .open_pending_every_user(Some(&workspace()))
+        .unwrap()[0]
+        .id;
     wait_for_records(&rig.store, 1).await;
 
     let mut conn = TcpStream::connect(agent).await.unwrap();
@@ -306,7 +310,10 @@ async fn an_unknown_host_is_pending_in_the_store_and_passes_after_approval() {
     conn.read_to_string(&mut body).await.unwrap();
     assert!(body.contains("waiting for approval in Puddle"), "{body}");
 
-    let open = rig.store.open_pending(Some(&workspace())).unwrap();
+    let open = rig
+        .store
+        .open_pending_every_user(Some(&workspace()))
+        .unwrap();
     assert_eq!(open.len(), 1);
     let row = &open[0];
     assert_eq!(
@@ -328,7 +335,7 @@ async fn an_unknown_host_is_pending_in_the_store_and_passes_after_approval() {
     let mut back = [0u8; 4];
     conn.read_exact(&mut back).await.unwrap();
     assert_eq!(&back, b"ping");
-    assert_eq!(rig.store.open_pending(None).unwrap().len(), 0);
+    assert_eq!(rig.store.open_pending_every_user(None).unwrap().len(), 0);
 }
 
 /// How a server-side connection ended.
@@ -509,7 +516,10 @@ async fn the_bridge_listener_gets_the_same_policy_and_audit_as_loopback() {
     assert_eq!(code, 403);
     let (code, _) = connect_via(bridge, &authority).await.unwrap();
     assert_eq!(code, 403);
-    let pending = rig.store.open_pending(Some(&workspace())).unwrap();
+    let pending = rig
+        .store
+        .open_pending_every_user(Some(&workspace()))
+        .unwrap();
     assert_eq!(pending.len(), 1, "one pending item for both listeners");
     assert_eq!(pending[0].attempts, 2);
     let records = wait_for_records(&rig.store, 2).await;
@@ -593,12 +603,12 @@ async fn ssh_is_refused_never_pending_and_audited_with_its_own_reason() {
         assert!(record["resolved_ip"].is_null(), "never connected: {record}");
     }
     assert_eq!(
-        rig.store.open_pending(None).unwrap().len(),
+        rig.store.open_pending_every_user(None).unwrap().len(),
         0,
         "nothing in the inbox"
     );
     // No rule was made, and the one that allows github.com still decides everything else.
-    assert_eq!(rig.store.rules().len(), 1);
+    assert_eq!(rig.store.rules_every_user().len(), 1);
 }
 
 /// SSH to a name that is not a Git host is decided by the stored rules like any connection: with
@@ -619,7 +629,7 @@ async fn ssh_to_another_host_waits_in_the_inbox_with_its_port() {
     assert_eq!(exit, puddle_agent::connect::Exit::Failed);
     let stderr = String::from_utf8(stderr).unwrap();
     assert!(!stderr.contains("SSH is not supported"), "{stderr}");
-    let pending = rig.store.open_pending(None).unwrap();
+    let pending = rig.store.open_pending_every_user(None).unwrap();
     assert_eq!(pending.len(), 1, "{pending:?}");
     assert_eq!(
         (pending[0].host.to_string(), pending[0].port),
@@ -684,11 +694,11 @@ async fn a_captured_raw_ssh_client_is_refused_before_the_rules_and_never_pending
         );
     }
     assert_eq!(
-        rig.store.open_pending(None).unwrap().len(),
+        rig.store.open_pending_every_user(None).unwrap().len(),
         0,
         "nothing in the inbox"
     );
-    assert_eq!(rig.store.rules().len(), 1);
+    assert_eq!(rig.store.rules_every_user().len(), 1);
 }
 
 /// UDP the guest's capture rules refused is reported by the agent on its control stream and
@@ -745,8 +755,8 @@ async fn refused_udp_is_audited_with_its_own_reason_and_never_pending() {
         );
         assert!(record["resolved_ip"].is_null(), "never connected: {record}");
     }
-    assert_eq!(rig.store.open_pending(None).unwrap().len(), 0);
-    assert_eq!(rig.store.rules().len(), 0);
+    assert_eq!(rig.store.open_pending_every_user(None).unwrap().len(), 0);
+    assert_eq!(rig.store.rules_every_user().len(), 0);
 }
 
 /// A guest that asks for 100 000 names nobody allowed is answered "waiting for approval" every
@@ -761,7 +771,11 @@ async fn a_hundred_thousand_unknown_names_are_all_told_to_wait_and_the_store_sta
     let agent = rig.agent.local_addr();
     let (code, _) = connect_via(agent, "first.test:443").await.unwrap();
     assert_eq!(code, 403);
-    let first = rig.store.open_pending(Some(&workspace())).unwrap()[0].id;
+    let first = rig
+        .store
+        .open_pending_every_user(Some(&workspace()))
+        .unwrap()[0]
+        .id;
 
     let mut workers = Vec::new();
     for worker in 0..WORKERS {
@@ -791,7 +805,11 @@ async fn a_hundred_thousand_unknown_names_are_all_told_to_wait_and_the_store_sta
     assert_eq!(refused, WORKERS * PER_WORKER);
 
     let cap = usize::try_from(Limits::default().max_open_rows).unwrap();
-    let (open, cpu) = cpu_time(|| rig.store.open_pending(Some(&workspace())).unwrap());
+    let (open, cpu) = cpu_time(|| {
+        rig.store
+            .open_pending_every_user(Some(&workspace()))
+            .unwrap()
+    });
     eprintln!("open rows over the cap: {cpu:?} of CPU");
     // The bar is on this thread's CPU time, so the load of the flood tasks does not move it; it
     // catches a per-row query that scans (225 ms planted, 2 ms unplanted on Linux). This read is the

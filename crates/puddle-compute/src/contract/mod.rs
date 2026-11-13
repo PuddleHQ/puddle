@@ -555,6 +555,7 @@ macro_rules! contract_tests {
             routes_and_no_network_are_accepted,
             memory_change_applies_at_next_start,
             cpus_change_applies_at_next_start,
+            env_change_applies_at_next_start_and_keeps_the_root_disk,
             hg01_guest_has_no_direct_network,
             hg01_raw_and_packet_sockets_reach_no_network,
             hg02_only_the_routed_vsock_port_accepts,

@@ -113,10 +113,10 @@ fn a_global_rule_decides_only_the_workspaces_of_the_user_who_made_it() {
         decide(&store, "mine", "anns.example"),
         Decision::Pending(_)
     ));
-    assert_eq!(store.rules_of(ann), vec![anns]);
+    assert_eq!(store.rules(ann), vec![anns]);
     assert!(
         store
-            .rules_of(UserId::OWNER)
+            .rules(UserId::OWNER)
             .iter()
             .all(|r| r.user == UserId::OWNER)
     );
@@ -283,7 +283,7 @@ fn rules_on_method_and_path_apply_to_their_users_workspaces_only() {
     let anns = store.add_request_rule_as(ann, &new(None)).unwrap();
     let ids = |workspace: &str| -> Vec<i64> {
         store
-            .request_rules(Some(&ws(workspace)))
+            .request_rules_for(&ws(workspace))
             .unwrap()
             .iter()
             .map(|r| r.id)
@@ -291,7 +291,7 @@ fn rules_on_method_and_path_apply_to_their_users_workspaces_only() {
     };
     assert_eq!(ids("mine"), vec![owners.id]);
     assert_eq!(ids("anns"), vec![anns.id]);
-    assert_eq!(store.request_rules_of(ann).unwrap(), vec![anns]);
+    assert_eq!(store.request_rules(ann, None).unwrap(), vec![anns]);
     assert!(matches!(
         store.add_request_rule_as(ann, &new(Some("mine"))),
         Err(StoreError::UnknownWorkspace(_))
@@ -395,7 +395,7 @@ fn audit_records_and_their_events_reach_the_user_they_belong_to() {
         .collect();
     let page = |user| {
         store
-            .audit_query(
+            .audit_query_every_user(
                 &AuditFilter {
                     user: Some(user),
                     ..AuditFilter::default()
@@ -459,4 +459,183 @@ fn one_change_with_records_of_two_users_tells_each_of_them() {
         .collect();
     users.sort_unstable();
     assert_eq!(users, vec![UserId::OWNER.get(), ann.get()]);
+}
+
+/// Every list read takes the user it lists for and holds that user's things alone; a workspace
+/// with no recorded user is in nobody's list (only the reads for the install's own jobs, named
+/// `*_every_user`, see it).
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one list read after another, one story"
+)]
+fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
+    let (store, ann, _) = fixture();
+    store
+        .set_workspace_owner(&ws("mine"), UserId::OWNER)
+        .unwrap();
+    for workspace in ["mine", "anns", "stray"] {
+        assert!(matches!(
+            decide(&store, workspace, &format!("{workspace}.example")),
+            Decision::Pending(_)
+        ));
+    }
+    let workspaces = |rows: Vec<puddle_store::PendingRow>| -> BTreeSet<String> {
+        rows.into_iter().map(|r| r.workspace.to_string()).collect()
+    };
+    let set =
+        |names: &[&str]| -> BTreeSet<String> { names.iter().map(|n| (*n).to_owned()).collect() };
+    assert_eq!(
+        workspaces(store.open_pending(UserId::OWNER, None).unwrap()),
+        set(&["mine"])
+    );
+    assert_eq!(
+        workspaces(store.open_pending(ann, None).unwrap()),
+        set(&["anns"])
+    );
+    assert_eq!(
+        workspaces(store.open_pending(ann, Some(&ws("mine"))).unwrap()),
+        set(&[])
+    );
+    assert_eq!(
+        workspaces(store.open_pending(ann, Some(&ws("anns"))).unwrap()),
+        set(&["anns"])
+    );
+    assert_eq!(
+        workspaces(store.open_pending_every_user(None).unwrap()),
+        set(&["mine", "anns", "stray"])
+    );
+    let inbox = |groups: Vec<puddle_store::InboxGroup>| -> BTreeSet<String> {
+        groups
+            .into_iter()
+            .flat_map(|g| g.rows)
+            .map(|r| r.workspace.to_string())
+            .collect()
+    };
+    assert_eq!(inbox(store.inbox(ann).unwrap()), set(&["anns"]));
+    assert_eq!(inbox(store.inbox(UserId::OWNER).unwrap()), set(&["mine"]));
+    assert_eq!(
+        inbox(store.inbox_every_user().unwrap()),
+        set(&["mine", "anns", "stray"])
+    );
+
+    // Rules on method and path: Ann's, for her workspace only.
+    let new = |workspace: Option<&str>| NewRequestRule {
+        workspace: workspace.map(ws),
+        host: "api.example".to_owned(),
+        methods: Methods::parse(["DELETE"]).unwrap(),
+        path: PathPattern::parse("/x").unwrap(),
+        created_by: Actor::Api,
+    };
+    let owners_rule = store.add_request_rule(&new(Some("mine"))).unwrap();
+    let anns_global = store.add_request_rule_as(ann, &new(None)).unwrap();
+    let anns_own = store.add_request_rule_as(ann, &new(Some("anns"))).unwrap();
+    let ids = |rules: Vec<puddle_store::RequestRule>| -> Vec<i64> {
+        rules.iter().map(|r| r.id).collect()
+    };
+    assert_eq!(
+        ids(store.request_rules(ann, None).unwrap()),
+        [anns_global.id, anns_own.id]
+    );
+    assert_eq!(
+        ids(store.request_rules(ann, Some(&ws("anns"))).unwrap()),
+        [anns_global.id, anns_own.id]
+    );
+    assert_eq!(
+        ids(store.request_rules(ann, Some(&ws("mine"))).unwrap()),
+        Vec::<i64>::new()
+    );
+    assert_eq!(
+        ids(store.request_rules(ann, Some(&ws("stray"))).unwrap()),
+        Vec::<i64>::new()
+    );
+    assert_eq!(
+        ids(store.request_rules(UserId::OWNER, None).unwrap()),
+        [owners_rule.id]
+    );
+    assert_eq!(
+        ids(store.request_rules_every_user().unwrap()),
+        [owners_rule.id, anns_global.id, anns_own.id]
+    );
+    assert_eq!(store.request_rule_owner(anns_own.id).unwrap(), Some(ann));
+    assert_eq!(
+        store.request_rule_owner(owners_rule.id).unwrap(),
+        Some(UserId::OWNER)
+    );
+    assert_eq!(store.request_rule_owner(999_999).unwrap(), None);
+
+    // Host rules: Ann's alone, and whose a rule is by its id.
+    let rule = |workspace: &str, pattern: &str| NewRule {
+        scope: Scope::Workspace(ws(workspace)),
+        pattern: Pattern::parse(pattern).unwrap(),
+        effect: puddle_store::Effect::Allow,
+        expires_at: None,
+        created_by: Actor::Api,
+    };
+    let owners_host = store.add_rule(&rule("mine", "o.example")).unwrap();
+    let anns_host = store.add_rule_as(ann, &rule("anns", "a.example")).unwrap();
+    let rule_ids = |rules: Vec<puddle_store::Rule>| -> Vec<puddle_types::RuleId> {
+        rules.iter().map(|r| r.id).collect()
+    };
+    assert_eq!(rule_ids(store.rules(ann)), [anns_host.id]);
+    assert_eq!(rule_ids(store.rules(UserId::OWNER)), [owners_host.id]);
+    assert_eq!(
+        rule_ids(store.rules_every_user()),
+        [owners_host.id, anns_host.id]
+    );
+    assert_eq!(store.rule_owner(anns_host.id), Some(ann));
+    assert_eq!(store.rule_owner(owners_host.id), Some(UserId::OWNER));
+    assert_eq!(store.rule_owner(puddle_types::RuleId(999_999)), None);
+
+    // System managed hosts: the ones for every workspace, and the user's own workspaces'.
+    let plan = SystemPlan {
+        everywhere: [SystemReason::MicrosoftServer].into(),
+        workspaces: [
+            (ws("mine"), [SystemReason::CodeServer].into()),
+            (ws("anns"), [SystemReason::CodeServer].into()),
+            (ws("stray"), [SystemReason::CodeServer].into()),
+        ]
+        .into(),
+    };
+    store.set_system_managed(&plan).unwrap();
+    let scopes = |hosts: Vec<puddle_store::SystemHost>| -> BTreeSet<String> {
+        hosts
+            .into_iter()
+            .map(|h| {
+                h.workspace
+                    .map_or_else(|| "*".to_owned(), |w| w.to_string())
+            })
+            .collect()
+    };
+    assert_eq!(
+        scopes(store.system_managed(ann).unwrap()),
+        set(&["*", "anns"])
+    );
+    assert_eq!(
+        scopes(store.system_managed(UserId::OWNER).unwrap()),
+        set(&["*", "mine"])
+    );
+    assert_eq!(
+        scopes(store.system_managed_every_user().unwrap()),
+        set(&["*", "mine", "anns", "stray"])
+    );
+
+    // Audit: the user the read is for, whatever the filter says.
+    let asking_for_the_owners = AuditFilter {
+        user: Some(UserId::OWNER),
+        ..AuditFilter::default()
+    };
+    let lines = store
+        .audit_query(ann, &asking_for_the_owners, AuditCursor::After(0), 1000)
+        .unwrap();
+    assert!(
+        lines
+            .iter()
+            .all(|(_, line)| !line.contains("o.example") && !line.contains("\"mine\"")),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|(_, line)| line.contains("a.example")),
+        "{lines:?}"
+    );
 }

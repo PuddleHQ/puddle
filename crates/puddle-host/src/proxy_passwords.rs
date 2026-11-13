@@ -53,7 +53,11 @@ pub struct ProxyPasswords {
     /// What every entry's id starts with; [`ID_PREFIX`] except in a test that must not touch the
     /// entries of a real Puddle on the same computer.
     prefix: String,
-    /// Held across store calls too, so two changes never interleave their list writes.
+    /// Held across store calls, so two changes never interleave their list writes. Only changes
+    /// and [`ProxyPasswords::load`] take it: a reader never waits for the credential store.
+    changing: Mutex<()>,
+    /// What is known now; held only to read or swap it, never across a store call, so the
+    /// network-health page and the proxy's lookups stay quick while the store is slow.
     entries: Mutex<BTreeMap<ProxyAddr, Credentials>>,
 }
 
@@ -78,6 +82,7 @@ impl ProxyPasswords {
         Arc::new(Self {
             vault,
             prefix: prefix.to_owned(),
+            changing: Mutex::default(),
             entries: Mutex::default(),
         })
     }
@@ -89,7 +94,7 @@ impl ProxyPasswords {
     /// # Errors
     /// [`ProxyPasswordError::Store`] when the store cannot be read at all; nothing changes then.
     pub fn load(&self) -> Result<usize, ProxyPasswordError> {
-        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let _changing = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
         let mut loaded = BTreeMap::new();
         for proxy in self.listed()? {
             if let Some(secret) = self.vault.get(&self.entry_id(&proxy)?)?
@@ -99,7 +104,7 @@ impl ProxyPasswords {
             }
         }
         let count = loaded.len();
-        *entries = loaded;
+        *self.entries() = loaded;
         Ok(count)
     }
 
@@ -121,15 +126,16 @@ impl ProxyPasswords {
         if password.is_empty() || password.contains(['\n', '\r']) {
             return Err(ProxyPasswordError::BadPassword);
         }
-        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut names: Vec<ProxyAddr> = entries.keys().cloned().collect();
+        let _changing = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut names: Vec<ProxyAddr> = self.entries().keys().cloned().collect();
         if !names.contains(proxy) {
             names.push(proxy.clone());
         }
         self.write_list(&names)?;
         let value = Secret::new(format!("{user}\n{password}"));
         self.vault.set(&self.entry_id(proxy)?, &value)?;
-        entries.insert(proxy.clone(), Credentials::new(user, password));
+        self.entries()
+            .insert(proxy.clone(), Credentials::new(user, password));
         Ok(())
     }
 
@@ -138,23 +144,30 @@ impl ProxyPasswords {
     /// # Errors
     /// [`ProxyPasswordError::Store`] when the store failed.
     pub fn remove(&self, proxy: &ProxyAddr) -> Result<(), ProxyPasswordError> {
-        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let _changing = self.changing.lock().unwrap_or_else(PoisonError::into_inner);
         self.vault.delete(&self.entry_id(proxy)?)?;
-        let names: Vec<ProxyAddr> = entries.keys().filter(|p| *p != proxy).cloned().collect();
+        let names: Vec<ProxyAddr> = self
+            .entries()
+            .keys()
+            .filter(|p| *p != proxy)
+            .cloned()
+            .collect();
         self.write_list(&names)?;
-        entries.remove(proxy);
+        self.entries().remove(proxy);
         Ok(())
     }
 
     /// The proxies that have a sign-in and the user name of each, never a password.
     #[must_use]
     pub fn proxies(&self) -> Vec<(ProxyAddr, String)> {
-        self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.entries()
             .iter()
             .map(|(proxy, credentials)| (proxy.clone(), credentials.user().to_owned()))
             .collect()
+    }
+
+    fn entries(&self) -> std::sync::MutexGuard<'_, BTreeMap<ProxyAddr, Credentials>> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn listed(&self) -> Result<Vec<ProxyAddr>, StoreError> {
@@ -183,11 +196,7 @@ impl ProxyPasswords {
 
 impl CredentialSource for ProxyPasswords {
     fn credentials(&self, proxy: &ProxyAddr) -> Option<Credentials> {
-        self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(proxy)
-            .cloned()
+        self.entries().get(proxy).cloned()
     }
 }
 

@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use puddle_api::SettingsRepo;
 use puddle_settings::{GlobalSettings, UiPrefs};
-use puddle_store::Store;
+use puddle_store::{Store, UserId};
 use puddle_types::Event;
 use serde_json::Value;
 use tauri::menu::{Menu, MenuItem, Submenu};
@@ -127,7 +127,7 @@ fn in_front<R: Runtime>(app: &AppHandle<R>) -> bool {
 
 /// The ids of the requests that wait now.
 fn open_requests(store: &Store) -> OpenRequests {
-    match store.open_pending(None) {
+    match store.open_pending(UserId::OWNER, None) {
         Ok(rows) => OpenRequests::of(rows.into_iter().map(|r| r.id.0)),
         Err(err) => {
             tracing::warn!(%err, "could not count the waiting requests");

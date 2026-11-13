@@ -42,7 +42,11 @@ async fn a_sweep_that_cannot_write_is_a_problem_until_one_works() {
     })
     .await;
     sweeper.shutdown().await;
-    assert_eq!(store.rules().len(), 0, "the rule was removed in the end");
+    assert_eq!(
+        store.rules_every_user().len(),
+        0,
+        "the rule was removed in the end"
+    );
 }
 
 #[tokio::test]

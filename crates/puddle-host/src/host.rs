@@ -955,8 +955,11 @@ impl<R: Runtime + Clone> Host<R> {
                     background.sweeper.shutdown().await;
                     background.pull.shutdown().await;
                     background.front.close().await;
-                    // A panic in the sweep was reported by the sweep; nothing more to do here.
-                    let _ = background.vault_sweep.await;
+                    crate::vault::finish_sweep(
+                        background.vault_sweep,
+                        crate::vault::SWEEP_SHUTDOWN_WAIT,
+                    )
+                    .await;
                     let _ = background.retired_sweep.await;
                     for task in [
                         &mut background.network_events,

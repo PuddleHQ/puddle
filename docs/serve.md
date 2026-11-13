@@ -118,6 +118,9 @@ When more than one place sets an option, the first of these wins:
 
 The config file itself is named by `--config`, else by `PUDDLE_CONFIG`.
 
+`puddle backup` and `puddle doctor` pick the data folder through this same table, so they look at the folder
+the host uses; they take `--data-dir` and `--config` and read `PUDDLE_DATA_DIR` and `PUDDLE_CONFIG`.
+
 ## See what Puddle will use
 
 `puddle serve --print-config` prints each option with its effective value and where the value came

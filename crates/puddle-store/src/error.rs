@@ -24,6 +24,19 @@ pub enum StoreError {
         /// The newest version this build knows.
         supported: u32,
     },
+    /// A migration step left a row pointing at a parent that is gone, so it was rolled back.
+    #[error("migration to schema version {version} left {table} rows without their {parent} row")]
+    MigrationBrokeForeignKeys {
+        /// The version the step was taking the database to.
+        version: u32,
+        /// The child table with the orphan.
+        table: String,
+        /// The parent table the orphan points at.
+        parent: String,
+    },
+    /// The copy made before migrating could not be written or pruned.
+    #[error("could not back up the database before migrating: {0}")]
+    Backup(String),
     /// A stored row doesn't parse (edited by hand, or a bug).
     #[error("stored {table} row {id} is invalid: {reason}")]
     Corrupt {

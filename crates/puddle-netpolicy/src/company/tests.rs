@@ -274,3 +274,18 @@ fn a_private_address_with_no_signal_on_a_read_lan_stays_private() {
     );
     assert_eq!(company_signal(true, ip("172.16.0.9"), None, &s), None);
 }
+
+#[test]
+fn a_native_ipv6_private_address_has_no_address_signal_but_a_name_still_counts() {
+    // The CGNAT and VPN-route signals are IPv4 notions; a unique-local IPv6 address only
+    // qualifies through its name.
+    let s = StaticSignals::new()
+        .with_dns_suffix("corp.example")
+        .with_private_access_client()
+        .with_vpn_route(ip("10.0.0.0"), 8);
+    assert_eq!(company_signal(true, ip("fd00::1"), None, &s), None);
+    assert_eq!(
+        company_signal(true, ip("fd00::1"), Some("host.corp.example"), &s),
+        Some(CompanySignal::DnsSuffix)
+    );
+}

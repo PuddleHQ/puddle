@@ -52,7 +52,7 @@ fn nothing_expected_checks_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let layout = layout(dir.path());
     assert_eq!(
-        verify(&layout, &RuntimeDigests::unpinned(), DevOverride::none()),
+        verify(&layout, &RuntimeDigests::default(), DevOverride::none()),
         Ok(DigestStatus::Unpinned)
     );
 }

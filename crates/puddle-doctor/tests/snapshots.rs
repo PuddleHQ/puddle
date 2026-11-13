@@ -480,6 +480,24 @@ fn windows_runtime_permissions() {
 }
 
 #[test]
+fn windows_runtime_dev_override_of_the_files_alone_says_the_files_differ() {
+    let fake = Fake {
+        runtime: RuntimeState::Ready {
+            version: EXPECTED.into(),
+            overridden: true,
+        },
+        ..windows()
+    };
+    let r = check(
+        "windows_runtime_files_overridden",
+        &fake,
+        CheckId::Runtime,
+        Some(Finding::RuntimeOverridden),
+    );
+    assert!(r.ok);
+}
+
+#[test]
 fn windows_runtime_dev_override_warns() {
     let fake = Fake {
         runtime: RuntimeState::Ready {

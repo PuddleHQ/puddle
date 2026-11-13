@@ -38,12 +38,6 @@ impl RuntimeDigests {
         }
     }
 
-    /// No expected hashes: nothing is checked, and the status says so ([`DigestStatus::Unpinned`]).
-    #[must_use]
-    pub fn unpinned() -> Self {
-        Self::default()
-    }
-
     /// Expected hashes for msb and the firmware library under their names in the runtime folder
     /// ([`RuntimeLayout::libkrunfw_path`]), for tests and callers with their own list.
     #[must_use]

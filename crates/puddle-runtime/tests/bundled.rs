@@ -236,7 +236,7 @@ fn a_runtime_with_no_expected_hashes_opens_unchecked() {
     let rt = BundledRuntime::open_with(
         layout,
         &RuntimeVersion::built_for(),
-        &RuntimeDigests::unpinned(),
+        &RuntimeDigests::default(),
         DevOverride::none(),
     )
     .unwrap();

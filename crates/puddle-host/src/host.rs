@@ -313,7 +313,8 @@ pub struct HostOptions {
     pub resolver: Option<Arc<dyn Resolver>>,
     /// What the host reads of the company network (proxy script, DNS suffixes, private-access
     /// clients, routes), shared by the sandbox proxy's guard and the API. Without one the host
-    /// reads none, so no destination is ever in the company-network category.
+    /// reads none, so no destination is ever in the company-network category. The shipped host
+    /// uses [`HostOptions::system`], which reads the machine's own.
     pub company_signals: Option<Arc<dyn CompanySignals>>,
     /// Probes whether this machine can open `ssh.dev.azure.com:22`, for the refusal that says the
     /// company network blocks it. Without one, a real TCP probe; tests give a double so no test
@@ -351,6 +352,19 @@ impl Default for HostOptions {
             git_ssh: true,
             workspace_ids: None,
             free_space: None,
+        }
+    }
+}
+
+impl HostOptions {
+    /// The options of the shipped host: the defaults, plus the company-network signals the
+    /// machine itself gives ([`crate::HostSignals::system`]; none on a platform without readers).
+    /// Tests start from [`HostOptions::default`], so a test never depends on the machine's network.
+    #[must_use]
+    pub fn system() -> Self {
+        Self {
+            company_signals: Some(crate::HostSignals::system()),
+            ..Self::default()
         }
     }
 }

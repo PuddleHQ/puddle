@@ -49,6 +49,7 @@ struct Rig {
 async fn rig() -> Rig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let resolver = StaticResolver::new()
         .with("named.test", &[DENIED])
         .with("a.wild.test", &[DENIED])

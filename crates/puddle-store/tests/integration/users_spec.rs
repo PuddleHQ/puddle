@@ -701,11 +701,9 @@ fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
     );
     nobodys(store.workspace_git(&stray).map(drop));
     nobodys(store.set_workspace_identities(&stray, &[]).map(drop));
-    assert!(
-        store
-            .open_pending_every_user(&all_users(), None)
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        store.open_pending_every_user(&all_users(), None).unwrap(),
+        []
     );
 }
 
@@ -761,7 +759,7 @@ fn a_workspace_that_lost_its_user_is_refused_and_its_delete_clears_it() {
     );
     // Its variables went with it: recorded again for the owner, it starts empty.
     own(&store, &lost);
-    assert!(store.workspace_env(&lost).unwrap().is_empty());
+    assert_eq!(store.workspace_env(&lost).unwrap(), []);
 }
 
 #[test]

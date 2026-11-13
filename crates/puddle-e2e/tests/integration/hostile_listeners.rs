@@ -82,6 +82,7 @@ async fn hostile_hg26_every_listener_the_host_side_opens_is_loopback_and_registe
     let store = Arc::new(
         Store::open_in_memory(Arc::new(ManualClock::new(NOW)), Limits::default()).unwrap(),
     );
+    puddle_store::testing::own(&store, &WorkspaceId::new("hg26").unwrap());
     let proxy = Arc::new(
         Proxy::new(store, Arc::new(NullSink))
             .with_resolver(Arc::new(StaticResolver::new()))

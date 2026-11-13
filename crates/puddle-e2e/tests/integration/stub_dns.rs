@@ -80,6 +80,7 @@ struct Options {
 
 async fn rig_with(options: Options) -> Rig {
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let resolver = Arc::new(
         StaticResolver::new()
             .with(
@@ -694,6 +695,7 @@ async fn a_burst_of_five_hundred_distinct_names_all_resolve_for_a_client_with_gl
         }
     }
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     allow(&store, ".example.com");
     let proxy = Proxy::new(store.clone(), Arc::new(NullSink))
         .with_resolver(Arc::new(Slow))
@@ -764,6 +766,7 @@ async fn a_guest_that_floods_lookups_of_an_allowed_name_over_a_stuck_resolver_hi
         }
     }
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     allow(&store, ".example.com");
     let proxy = Proxy::new(store.clone(), Arc::new(NullSink))
         .with_resolver(Arc::new(Stuck))

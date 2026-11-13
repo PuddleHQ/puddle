@@ -38,6 +38,7 @@ async fn rig() -> Rig {
     let store = Arc::new(
         Store::open_in_memory(Arc::new(ManualClock::new(NOW)), Limits::default()).unwrap(),
     );
+    puddle_store::testing::own(&store, &WorkspaceId::new("e2e-names").unwrap());
     let proxy = Arc::new(
         Proxy::new(store.clone(), Arc::new(NullSink))
             .with_connection_log(store.clone())

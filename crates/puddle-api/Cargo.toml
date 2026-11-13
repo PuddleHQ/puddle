@@ -51,6 +51,8 @@ utoipa-axum = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+# The tests record their workspaces' users through `puddle_store::testing`.
+puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }

@@ -1101,7 +1101,11 @@ impl State {
         let created = now.saturating_sub(seed.ago_ms);
         let new = NewRule {
             scope: match &seed.workspace {
-                Some(name) => Scope::Workspace(workspace(name)?),
+                Some(name) => {
+                    let id = workspace(name)?;
+                    self.own(&id)?;
+                    Scope::Workspace(id)
+                }
                 None => Scope::Global,
             },
             pattern: Pattern::parse(&seed.pattern).map_err(|err| err.to_string())?,
@@ -1118,8 +1122,12 @@ impl State {
     }
 
     fn add_request_rule(&self, seed: &RequestRuleSeed, now: u64) -> Result<(), String> {
+        let scoped = seed.workspace.as_deref().map(workspace).transpose()?;
+        if let Some(id) = &scoped {
+            self.own(id)?;
+        }
         let new = NewRequestRule {
-            workspace: seed.workspace.as_deref().map(workspace).transpose()?,
+            workspace: scoped,
             host: seed.host.clone(),
             methods: Methods::parse(seed.methods.iter().map(String::as_str))
                 .map_err(|err| err.to_string())?,

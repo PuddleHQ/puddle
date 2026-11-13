@@ -15,7 +15,7 @@ use puddle_api::{
 };
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
-use puddle_store::{Limits, ManualClock, Store, UserId};
+use puddle_store::{Limits, ManualClock, Store};
 use puddle_types::{EgressRequest, Host, PendingId, SuffixAllows, WorkspaceId};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -280,7 +280,7 @@ impl Api {
     pub(crate) fn own(&self, name: &str) {
         let id = WorkspaceId::new(name).unwrap();
         if self.store.workspace_owner(&id).unwrap().is_none() {
-            self.store.set_workspace_owner(&id, UserId::OWNER).unwrap();
+            puddle_store::testing::own(&self.store, &id);
         }
     }
 

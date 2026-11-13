@@ -17,7 +17,19 @@ use super::*;
 
 fn store() -> Arc<Store> {
     let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(1_000));
-    Arc::new(Store::open_in_memory(clock, Limits::default()).unwrap())
+    owned(Arc::new(
+        Store::open_in_memory(clock, Limits::default()).unwrap(),
+    ))
+}
+
+/// `store` with the workspaces these tests use, each the owner's.
+fn owned(store: Arc<Store>) -> Arc<Store> {
+    for name in [
+        "alpha", "beta", "free", "gone", "other", "running", "stopped", "stuck",
+    ] {
+        puddle_store::testing::own(&store, &workspace(name));
+    }
+    store
 }
 
 fn workspace(name: &str) -> WorkspaceId {
@@ -549,8 +561,9 @@ async fn a_store_that_cannot_keep_the_history_still_passes_the_host_through_and_
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puddle.db");
-    let store =
-        Arc::new(Store::open(&path, Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap());
+    let store = owned(Arc::new(
+        Store::open(&path, Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap(),
+    ));
     let (injection, terminations, _, events) = injection_with_events(&store);
     let service = crate::learned::HostLearned::new(Arc::clone(&terminations), Arc::clone(&store));
     let ws = workspace("alpha");
@@ -726,6 +739,7 @@ async fn the_longest_workspace_id_still_gives_a_valid_ca_name() {
     let store = store();
     let (injection, _) = injection(&store);
     let ws = workspace(&"a".repeat(WorkspaceId::MAX_LEN));
+    puddle_store::testing::own(&store, &ws);
     assert!(injection.begin(&ws, false).await.is_ok());
 }
 

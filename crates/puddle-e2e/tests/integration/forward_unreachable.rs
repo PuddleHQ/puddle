@@ -51,6 +51,7 @@ struct Rig {
 async fn rig() -> Rig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock, Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &WorkspaceId::new("e2e-fwd").unwrap());
     let endpoints = PuddleEndpoints::new();
     let ports = Ports::new(
         endpoints.clone(),

@@ -170,6 +170,7 @@ struct HostRig {
 fn host_rig(endpoints: PuddleEndpoints) -> HostRig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock, Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &WorkspaceId::new("hostile-agent").unwrap());
     let access = LocalCategory::ALL
         .into_iter()
         .fold(LocalAccess::NONE, |a, c| a.with_toggle(c, true))

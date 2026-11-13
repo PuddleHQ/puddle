@@ -47,6 +47,7 @@ struct Rig {
 
 async fn rig() -> Rig {
     let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &workspace());
     let resolver = StaticResolver::new()
         .with("node.test", &[LOCAL])
         .with("new.test", &[LOCAL]);

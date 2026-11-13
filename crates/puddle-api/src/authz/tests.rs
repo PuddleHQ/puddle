@@ -148,7 +148,7 @@ fn no_request_handler_can_reach_the_reads_across_every_user() {
                 if name != "tests" {
                     sources(&path, out);
                 }
-            } else if name.ends_with(".rs") && name != "tests.rs" {
+            } else if path.extension().is_some_and(|e| e == "rs") && name != "tests.rs" {
                 out.push(path);
             }
         }
@@ -291,7 +291,6 @@ fn a_users_resources_are_theirs_alone_and_the_owner_has_no_way_in() {
     };
     let anns_request = pending("anns");
     let owners_request = pending("owners");
-    let nobodys_request = pending("nobodys");
     let isolation = Isolation::new(store);
     let ann = ann_principal(ann);
     let owner = Principal::INSTALL;
@@ -321,12 +320,11 @@ fn a_users_resources_are_theirs_alone_and_the_owner_has_no_way_in() {
         check(&ann, ResourceRef::Pending(PendingId(9_999))),
         Err(Denial::NotFound(_))
     ));
-    // An id nobody has, and a workspace with no recorded user (with its requests), are nobody's:
-    // the owner gets no more of them than anyone else.
+    // An id nobody has, and a workspace with no recorded user, are nobody's: the owner gets no
+    // more of them than anyone else. (Such a workspace has no requests: the store decides none.)
     for principal in [&owner, &ann] {
         for resource in [
             ResourceRef::Workspace(ws("nobodys")),
-            ResourceRef::Pending(nobodys_request),
             ResourceRef::Pending(PendingId(9_999)),
             ResourceRef::Rule(RuleId(9_999)),
             ResourceRef::RequestRule(9_999),
@@ -386,6 +384,8 @@ async fn pair() -> Pair {
             .with_events(events.clone()),
     );
     let ann_id = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    // The owner's workspace that the tests send requests from without creating it.
+    puddle_store::testing::own(&store, &ws("ownerbox"));
     let services = Services::new(
         store.clone(),
         Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Helpers for other crates' tests (the `testing` feature; never in a shipped program).
+#![expect(clippy::panic, reason = "a test helper fails the test by panicking")]
 
 use puddle_types::WorkspaceId;
 

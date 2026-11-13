@@ -41,6 +41,7 @@ fn credential(host: &str, owners: &[&str], rest: bool) -> CredentialBinding {
 fn git(identities: Vec<(&str, Vec<CredentialBinding>)>) -> WorkspaceGit {
     let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
     let ws = WorkspaceId::new("alpha").unwrap();
+    puddle_store::testing::own(&store, &ws);
     for (name, credentials) in identities {
         let identity = store
             .create_identity(

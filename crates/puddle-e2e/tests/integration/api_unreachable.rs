@@ -44,6 +44,7 @@ struct Rig {
 async fn rig() -> Rig {
     let clock = Arc::new(ManualClock::new(NOW));
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
+    puddle_store::testing::own(&store, &WorkspaceId::new("e2e-api").unwrap());
     let endpoints = PuddleEndpoints::new();
     let services = Services::new(
         store.clone(),

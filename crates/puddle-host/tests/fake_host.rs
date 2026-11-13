@@ -4369,6 +4369,9 @@ async fn the_first_start_records_the_owner_of_the_listed_workspaces_and_no_later
             .unwrap(),
         Some(puddle_store::UserId::OWNER)
     );
+    // The host took the reach across every user before it served anything, so nothing the API
+    // is handed can take it after.
+    assert!(host.store().take_all_users().is_none());
     let listed = api(&host).get("/api/workspaces").await.json();
     assert_eq!(listed["workspaces"][0]["id"], "old", "{listed}");
     host.shutdown().await;

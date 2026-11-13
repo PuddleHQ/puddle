@@ -9,7 +9,9 @@ use std::sync::atomic::Ordering;
 use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use hyper::client::conn::http1::SendRequest;
-use puddle_types::{ConnectionOutcome, ForeignCredentialKind, Host, HttpRequestLine, WorkspaceId};
+use puddle_types::{
+    ConnectionOutcome, EgressRequest, ForeignCredentialKind, Host, HttpRequestLine, WorkspaceId,
+};
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use zeroize::Zeroizing;
@@ -35,7 +37,8 @@ use super::stand_in::{
 use super::streams::Activity;
 use super::{Mode, Termination, h2, response, ws};
 use crate::http::{self, HeadError};
-use crate::proxy::{ClientReader, Proxy, ProxyConfig, Refusal, refuse};
+use crate::opened::Opened;
+use crate::proxy::{Proxy, ProxyConfig, Refusal, refuse};
 use crate::target::Target;
 use crate::upstream::{Admitted, connect_out};
 
@@ -73,7 +76,7 @@ where
 pub(crate) const MAX_UNSWAPPED_STAND_INS: usize = 16;
 
 /// What a connection did, for the audit record.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each flag is one independent fact the connection record carries"
@@ -123,6 +126,9 @@ pub(crate) struct Outcome {
     /// The code of the limit that ended the connection or cut one of its streams or pipes
     /// (`limit:<code>`), when one did.
     pub(crate) ended: Option<&'static str>,
+    /// The connection was passed through, and its first bytes began SSH to a Git host's name: they
+    /// were not passed on, and the guest got the SSH refusal.
+    pub(crate) ssh: bool,
 }
 
 impl Outcome {
@@ -240,23 +246,19 @@ fn note_handshake_failure(
     }
 }
 
-/// Terminates `reader`'s connection (a `CONNECT` whose head was just read). The guest's
+/// Terminates `guest`'s connection (a `CONNECT` whose head was read). The guest's
 /// `ClientHello` is read first and its name checked; then the real server is connected to, offering
 /// the protocols the guest offered, and the guest is offered what the server chose.
-pub(crate) async fn run<S>(cx: Arc<Context>, reader: ClientReader<S>) -> Outcome
+pub(crate) async fn run<S>(cx: Arc<Context>, mut guest: Opened<S>) -> Outcome
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let mut outcome = Outcome::default();
-    let early = reader.buffer().to_vec();
-    let mut stream = reader.into_inner();
-    if let Err(err) = stream
-        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-        .await
-    {
+    if let Err(err) = guest.answer().await {
         tracing::debug!(error = %err, "guest went away before the TLS handshake");
         return outcome;
     }
+    let Opened { stream, early, .. } = guest;
     let config = cx.proxy.config;
     let (start, hello, first, deferred) = match cx.mode {
         Mode::Bound => {
@@ -476,7 +478,7 @@ where
 /// then both directions copied. `code` is why, for the audit.
 async fn pass_through<S>(
     cx: &Context,
-    mut guest: S,
+    guest: S,
     replay: Vec<u8>,
     code: &'static str,
     outcome: &mut Outcome,
@@ -505,21 +507,17 @@ async fn pass_through<S>(
     outcome.connect = Some(ConnectionOutcome::Connected);
     outcome.resolved_ip = out.addr.map(|addr| addr.ip());
     outcome.hop = out.hop;
-    let (mut server, mut watch) = (out.stream, out.watch);
-    if let Err(err) = server.write_all(&replay).await {
-        tracing::debug!(error = %err, "pass-through failed before the splice");
-        crate::proxy::abort(&server);
-        return;
-    }
-    match crate::proxy::splice_watched(&mut server, &mut guest, watch.as_mut()).await {
-        Some(Ok((up, down))) => tracing::debug!(
-            bytes_up = up + replay.len() as u64,
-            bytes_down = down,
-            "pass-through closed"
-        ),
-        Some(Err(err)) => tracing::debug!(error = %err, "pass-through aborted"),
-        None => crate::proxy::abort(&server),
-    }
+    // SSH to a Git host's name is refused here as in any tunnel: what is not TLS on port 443 of
+    // such a name (`ssh.github.com`) is passed through only when it is not SSH.
+    let request = EgressRequest::new(cx.workspace.clone(), cx.target.host.clone(), cx.target.port);
+    let ssh_for = Some(&request).filter(|request| cx.proxy.is_git_ssh_name(request));
+    let guest = Opened {
+        stream: guest,
+        early: replay,
+        answered: true,
+    };
+    let end = crate::proxy::tunnel(guest, out.stream, ssh_for, out.watch, None, None).await;
+    outcome.ssh = end.ssh;
 }
 
 /// Whether a connection goes on after a request.

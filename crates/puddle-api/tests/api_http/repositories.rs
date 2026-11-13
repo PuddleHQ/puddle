@@ -603,6 +603,29 @@ async fn a_checkout_on_the_disk_is_managed_with_its_git_settings_and_changes_not
 }
 
 #[tokio::test]
+async fn managing_a_checkout_the_guest_wrote_makes_no_allow_rule_for_its_host() {
+    let api = start().await;
+    seed(
+        &api,
+        "web",
+        WorkspaceStatus::Running,
+        &[],
+        vec![found("raw", Some("https://evil.example/acme/raw"), None)],
+    );
+    let reply = add(
+        &api,
+        "web",
+        json!({"kind": "existing", "url": "https://evil.example/acme/raw", "directory": "raw"}),
+    )
+    .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["allowed_hosts"], json!([]));
+    let rules = api.get("/api/rules").await.json();
+    assert_eq!(rules["rules"].as_array().unwrap().len(), 0, "{rules}");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn cloning_an_entry_again_needs_the_directory_to_be_gone() {
     let api = start().await;
     seed(

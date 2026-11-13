@@ -640,6 +640,65 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
     host.shutdown().await;
 }
 
+/// A real VM process dies while Puddle runs: the workspace shows crashed (the agent session ending
+/// is the fast signal, the host's pass every minute the backstop) and a start brings it back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_notices_a_vm_that_was_killed_and_a_start_recovers_it() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("killed").await;
+    let name = format!("{}-killed", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    kill_vm(&runtime, &settings, &sandbox).await;
+    puddle_test_kit::eventually_async(
+        "the workspace shows crashed",
+        Duration::from_secs(90),
+        || async {
+            let shown = api.get(&format!("/api/workspaces/{name}")).await.json()["status"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            if shown == "crashed" {
+                Ok(())
+            } else {
+                Err(format!("still {shown}"))
+            }
+        },
+    )
+    .await;
+
+    api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    let end = events
+        .until(ended(name_static), Duration::from_secs(300))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(
+        guest(&runtime, &sandbox, "echo alive").await.trim(),
+        "alive"
+    );
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
 /// Runs `git` on this computer to build a fixture, before anything hostile is put in it.
 fn host_git(dir: &std::path::Path, args: &[&str]) {
     // Under a git hook git exports `GIT_DIR` and friends; none of it is for this fixture.

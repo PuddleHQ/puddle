@@ -101,7 +101,7 @@ pub use inject::{
 };
 pub use intercept::{Interception, LEARNED_CAP, LEARNED_TTL, PassThrough};
 pub use request_rules::{RequestRule, RequestRules};
-pub(crate) use session::{Context, Outcome, run};
+pub(crate) use session::{Context, MAX_UNSWAPPED_STAND_INS, Outcome, run};
 /// The HTTP/1.1 pieces the plain-HTTP path shares with a decrypted connection: the upstream
 /// client, the guest's body streamed into it, and the response rebuilt for the guest.
 pub(crate) mod h1 {

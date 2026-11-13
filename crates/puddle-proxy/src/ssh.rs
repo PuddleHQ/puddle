@@ -16,8 +16,13 @@
 //!   [`Gate`] looks at the first bytes of its upload and, on a banner, ends the tunnel with a
 //!   message instead of forwarding them: the server never gets the client's identification.
 //!
-//! The gate never holds anything back otherwise: it looks at the first chunk the guest sends, once,
-//! and passes every byte on unchanged.
+//! The gate holds back only the first bytes of the upload, those sent with the request included,
+//! and only while they could still begin a banner (`S`, `SS`, `SSH`, `SSH-`): a client that splits
+//! its identification line over several writes is caught like one that sends it whole. Every byte
+//! that turns out not to start a banner is passed on unchanged and in order.
+//!
+//! The header is the guest's word, so it only ever makes the proxy stricter. Where it would make a
+//! connection to a decrypted name a plain splice instead, the bytes decide ([`undecided`]).
 
 use std::io;
 use std::pin::Pin;
@@ -48,6 +53,12 @@ pub(crate) fn started(early: &[u8]) -> bool {
     is_banner(early)
 }
 
+/// Whether the first bytes of an upload do not tell yet if it is SSH: all of them are the start
+/// of `SSH-` (so fewer than `BANNER_MIN`). Nothing at all is undecided too.
+pub(crate) fn undecided(first: &[u8]) -> bool {
+    b"SSH-".starts_with(first)
+}
+
 /// What the guest is told when an established tunnel turns out to carry SSH: the refusal as
 /// lines an SSH client skips before the server's own identification (RFC 4253 section 4.2: lines
 /// that don't start with `SSH-`), so a client that shows them (`ssh -v`) shows the reason.
@@ -62,17 +73,24 @@ const BANNER_SEEN: &str = "SSH identification line";
 #[derive(Debug)]
 pub(crate) struct Gate<S> {
     inner: S,
+    /// Upload bytes taken but not handed on yet: those sent with the request, then (while
+    /// watching) what follows them until the start tells.
+    held: Vec<u8>,
+    /// How many of `held` were handed on.
+    handed: usize,
     watching: bool,
     ssh: bool,
     kex: Option<crate::ssh_agent::KexWatch>,
 }
 
 impl<S> Gate<S> {
-    /// Wraps `inner`; with `watching` its first upload bytes are checked, otherwise it only
-    /// passes bytes on (the client already sent some with its request, so they are not the start).
-    pub(crate) fn new(inner: S, watching: bool) -> Self {
+    /// Wraps `inner`, whose upload starts with `early` (what the client sent with its request; the
+    /// gate hands it on first). With `watching`, the start of the upload is checked for a banner.
+    pub(crate) fn new(inner: S, early: Vec<u8>, watching: bool) -> Self {
         Self {
             inner,
+            held: early,
+            handed: 0,
             watching,
             ssh: false,
             kex: None,
@@ -86,7 +104,7 @@ impl<S> Gate<S> {
         self
     }
 
-    /// Whether the first upload bytes were an SSH identification line (they were dropped).
+    /// Whether the upload started with an SSH identification line (it was dropped).
     pub(crate) fn ssh_seen(&self) -> bool {
         self.ssh
     }
@@ -97,29 +115,57 @@ impl<S> Gate<S> {
     }
 }
 
+impl<S: AsyncRead + Unpin> Gate<S> {
+    /// Reads until the start of the upload tells whether it is a banner, or the stream ends.
+    /// `false`: the stream ended before any byte, and the gate goes on watching.
+    fn poll_decide(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
+        while undecided(&self.held) {
+            let mut chunk = [0u8; 1024];
+            let mut more = ReadBuf::new(&mut chunk);
+            std::task::ready!(Pin::new(&mut self.inner).poll_read(cx, &mut more))?;
+            if more.filled().is_empty() {
+                if self.held.is_empty() {
+                    return Poll::Ready(Ok(false));
+                }
+                break; // the end after a prefix of `SSH-`: what came is handed on
+            }
+            self.held.extend_from_slice(more.filled());
+        }
+        self.watching = false;
+        if is_banner(&self.held) {
+            self.held = Vec::new();
+            self.ssh = true;
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                BANNER_SEEN,
+            )));
+        }
+        Poll::Ready(Ok(true))
+    }
+}
+
 impl<S: AsyncRead + Unpin> AsyncRead for Gate<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let before = buf.filled().len();
-        let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
-        if self.watching
-            && let Poll::Ready(Ok(())) = polled
-            && buf.filled().len() > before
-        {
-            self.watching = false;
-            if is_banner(buf.filled().get(before..).unwrap_or_default()) {
-                buf.set_filled(before);
-                self.ssh = true;
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    BANNER_SEEN,
-                )));
-            }
+        let this = &mut *self;
+        if this.watching && !std::task::ready!(this.poll_decide(cx))? {
+            return Poll::Ready(Ok(())); // the end, passed up
         }
-        polled
+        let rest = this.held.get(this.handed..).unwrap_or_default();
+        if rest.is_empty() {
+            return Pin::new(&mut this.inner).poll_read(cx, buf);
+        }
+        let n = rest.len().min(buf.remaining());
+        buf.put_slice(rest.get(..n).unwrap_or_default());
+        this.handed += n;
+        if this.handed == this.held.len() {
+            this.held = Vec::new();
+            this.handed = 0;
+        }
+        Poll::Ready(Ok(()))
     }
 }
 

@@ -91,6 +91,10 @@ pub(crate) fn parse(head: &Head, target: &Target) -> Result<Parsed, Refusal> {
 /// target: unambiguous body framing, no chunked body from HTTP/1.0, `Expect` only for
 /// `100-continue`, and what the head says about the connection.
 pub(crate) fn framed(head: &Head, path: String) -> Result<Parsed, Refusal> {
+    // Before any rule is asked or any upstream connection made: a target the upstream request
+    // cannot carry must not reach either.
+    path.parse::<::http::uri::PathAndQuery>()
+        .map_err(|_| bad("malformed request target"))?;
     let http11 = head.version == "HTTP/1.1";
     let body = http::body_framing(&head.headers).map_err(bad)?;
     if !http11 && body == Body::Chunked {

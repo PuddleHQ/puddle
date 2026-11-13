@@ -118,6 +118,9 @@ When more than one place sets an option, the first of these wins:
 
 The config file itself is named by `--config`, else by `PUDDLE_CONFIG`.
 
+`puddle backup` and `puddle doctor` pick the data folder through this same table, so they look at the folder
+the host uses; they take `--data-dir` and `--config` and read `PUDDLE_DATA_DIR` and `PUDDLE_CONFIG`.
+
 ## See what Puddle will use
 
 `puddle serve --print-config` prints each option with its effective value and where the value came
@@ -157,6 +160,9 @@ With remote serving on, Puddle also accepts:
   `Host`. A request that came in under a public name is never authorised by the install token, so
   a stolen browser session cannot widen what is exposed. A browser signs in with a password
   instead (see "Signing in" below), and its session works under a public name only.
+  A terminal ticket made with the install token (on loopback) is never accepted under a public
+  name; only a ticket a signed-in browser asked for opens a shell there, and the ticket is checked
+  before the workspace is looked up.
 
 The app's files carry `Cross-Origin-Opener-Policy: same-origin` too, so a page a workspace opened
 cannot navigate the tab that holds Puddle.
@@ -224,8 +230,9 @@ machine's tailnet name.
 
 ### The reverse proxy on another machine
 
-Set `listen_interface` to the one interface address the proxy reaches, and list the proxy's
-addresses in `allowed_proxies`. Puddle then also listens there, on `listen_port`, with TLS:
+Set `listen_interface` to the one interface address the proxy reaches (not `0.0.0.0` or `::`, which
+bind every interface and are refused), and list the proxy's addresses in `allowed_proxies` (an
+unspecified address there is refused too). Puddle then also listens there, on `listen_port`, with TLS:
 
 - a connection from an address not in the list is closed at accept, before the TLS handshake;
 - loopback `Host` names are refused on this listener, since nothing on the network can mean them;
@@ -255,14 +262,65 @@ Puddle is not offered.
 
 ### Workspace names
 
-Workspace web apps and editors need a name of their own, so one workspace's page cannot plant
-cookies for another or for Puddle. Puddle uses `<workspace>.<base domain>` to check `Host` and
-`Origin`, to route a request to its workspace and to build the links it shows. With nothing set the
+Workspace web apps and editors will need a name of their own, so one workspace's page cannot plant
+cookies for another or for Puddle. The names are `<workspace>.<base domain>`. With nothing set the
 base domain is the first public host, so the names are `<workspace>.puddle.example.org`, which sits
 on the same site as the UI. Setting `workspace_base_domain` to a domain with a different registrable
-domain (`ws.example.net` next to `puddle.example.org`) is safer, and the advice. DNS records and
-certificates for these names are the proxy's job. A wildcard certificate is needed for them: without
-one the web apps and editors are not available in a browser, while the UI itself works.
+domain (`ws.example.net` next to `puddle.example.org`) is safer, and the advice.
+
+Today Puddle only reserves these names: it blocks the base domain and everything below it for
+guests, and it refuses a public host that is one label below the base domain (a workspace of that
+name would share it). It does not yet accept a request whose `Host` is a workspace name, route one
+to its workspace or build links from them, so a request with such a `Host` gets 421. When it does,
+DNS records and certificates for the names stay the proxy's job, and a wildcard certificate is
+needed: without one the web apps and editors are not available in a browser, while the UI itself
+works.
+
+## Run as a Linux user service
+
+On Linux, run `puddle serve` as a systemd user unit. The unit runs under your own account, not as root.
+Create the unit file `~/.config/systemd/user/puddle-serve.service`:
+
+```ini
+[Unit]
+Description=Puddle server
+
+[Service]
+ExecStart=/path/to/puddle serve --config /path/to/serve.toml
+
+[Install]
+WantedBy=default.target
+```
+
+Then start it and enable it at boot:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now puddle-serve
+```
+
+A user's services stop when the user logs out, unless the account lingers. Enable lingering once for
+the account that runs Puddle:
+
+```sh
+loginctl enable-linger <user>
+```
+
+### Secrets need the OS keyring to be unlocked
+
+Secret values are kept in the operating system's credential store. On Linux, that store is a Secret
+Service provider, such as gnome-keyring. The provider must be running and unlocked. It starts locked
+after every boot, so unlock it again after each restart of the machine.
+
+- While the provider is missing or locked, a write of a secret fails with HTTP 503. The response says
+  the credential store is not available, and nothing is changed. The server still starts and serves
+  other requests.
+- A running `puddle serve` does not recover by itself. Installing or unlocking the provider after the
+  service started does not fix the 503 responses. Restart the service after you unlock the provider:
+
+  ```sh
+  systemctl --user restart puddle-serve
+  ```
 
 ## What is not a start-up option
 

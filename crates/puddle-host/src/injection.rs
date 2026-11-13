@@ -125,11 +125,12 @@ impl Running {
             .with_interception(interception)
             .with_request_rules(request_rules)
             .with_foreign_credential_warning(Arc::clone(&self.foreign_warning));
-        // The keys and the names they serve change together: the guest's list names the same.
+        // The names register whether or not Puddle serves SSH: with it off, SSH to a credential's
+        // host is refused as the spec says, not decided by the rules and spliced raw. Only the
+        // keys depend on the option.
+        let termination = termination.with_git_ssh_hosts(ssh_credential_hosts(git));
         match &self.ssh_keys {
-            Some(keys) => termination
-                .with_git_ssh_keys(Arc::clone(keys))
-                .with_git_ssh_hosts(ssh_credential_hosts(git)),
+            Some(keys) => termination.with_git_ssh_keys(Arc::clone(keys)),
             None => termination,
         }
     }

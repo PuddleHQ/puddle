@@ -166,6 +166,26 @@ impl SshRig {
         allow: &[&'static str],
         upstream: Arc<Recording>,
     ) -> Self {
+        Self::serving_ruled(
+            git_ssh,
+            keys,
+            host,
+            allow,
+            upstream,
+            puddle_proxy::RequestRules::default(),
+        )
+        .await
+    }
+
+    /// As [`Self::serving`], with rules on method and path for the workspace.
+    async fn serving_ruled(
+        git_ssh: GitSsh,
+        keys: &[GitSshHostKey],
+        host: Handler,
+        allow: &[&'static str],
+        upstream: Arc<Recording>,
+        request_rules: puddle_proxy::RequestRules,
+    ) -> Self {
         let key = keys.first().expect("at least one host key").clone();
         let world = GitRig::world();
         let pki = Pki::new();
@@ -182,6 +202,7 @@ impl SshRig {
             .name("ssh.dev.azure.com", server.addr)
             .name("elsewhere.test", server.addr)
             .injector(world.injector.clone())
+            .request_rules(request_rules)
             .git_ssh(git_ssh);
         builder.allow.extend_from_slice(allow);
         let rig = builder.build();
@@ -1316,6 +1337,52 @@ async fn the_https_leg_sends_a_v2_command_as_gits_requests_with_the_identitys_cr
     assert!(event.injected);
     assert_eq!(event.resolved_ip, Some(t.git.server.addr.ip()), "{event:?}");
     assert_eq!(event.http.as_ref().unwrap().method(), "git-upload-pack");
+}
+
+#[tokio::test]
+async fn a_push_a_rule_on_method_and_path_refuses_inside_the_https_leg_is_recorded_as_refused() {
+    let rules = puddle_proxy::RequestRules::new(vec![
+        puddle_proxy::RequestRule::new(
+            puddle_types::RuleId(7),
+            "bound.test",
+            puddle_types::Methods::parse(["POST"]).unwrap(),
+            puddle_types::PathPattern::parse("/acme/web.git/git-receive-pack").unwrap(),
+        )
+        .unwrap(),
+    ]);
+    let keys = vec![host_key()];
+    let upstream = GitSshHttps::new(Arc::new(Accounts {
+        account: GitSshAccount::Unnamed,
+        asked: Mutex::new(Vec::new()),
+    }) as Arc<dyn GitSshAccounts>);
+    let t = SshRig::serving_ruled(
+        GitSsh::new(Arc::new(upstream), keys.clone()),
+        &keys,
+        smart_host(),
+        &[],
+        Arc::default(),
+        rules,
+    )
+    .await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let update =
+        format!("{SHA} 2222222222222222222222222222222222222222 refs/heads/main\0report-status\n");
+    let input = format!("{:04x}{update}0000", update.len() + 4).into_bytes();
+    let ran = exec(&ssh, &[], "git-receive-pack 'acme/web.git'", &input).await;
+    assert_ne!(ran.exit, Some(0), "the rule refused the push: {ran:?}");
+    assert!(
+        t.git.server.recorded().iter().all(|r| r.method != "POST"),
+        "the push never reached the host"
+    );
+    drop(ssh);
+    let events = t.events(1).await;
+    let event = &events[0];
+    assert_eq!(event.decision, ConnectionDecision::Deny, "{event:?}");
+    assert_eq!(event.reason, ConnectionReason::RequestRule, "{event:?}");
+    assert_eq!(event.request_rule, Some(puddle_types::RuleId(7)));
+    assert_eq!(event.http.as_ref().unwrap().method(), "git-receive-pack");
 }
 
 #[tokio::test]

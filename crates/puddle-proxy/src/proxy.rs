@@ -39,6 +39,7 @@ use crate::coalesce::Coalescing;
 use crate::counted::Counted;
 use crate::destination::{AddressCheck, AddressVerdict, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
+use crate::opened::{ESTABLISHED, Opened};
 use crate::plain;
 use crate::records::{RecordResolver, SystemRecords};
 use crate::ssh;
@@ -534,7 +535,7 @@ impl Proxy {
 
     /// Whether `request`'s name is one whose SSH Puddle serves itself or refuses, never splices:
     /// a built-in Git host or a host of one of the workspace's Git credentials.
-    fn is_git_ssh_name(&self, request: &EgressRequest) -> bool {
+    pub(crate) fn is_git_ssh_name(&self, request: &EgressRequest) -> bool {
         crate::ssh_git::built_in(&request.host).is_some()
             || self
                 .termination_of(request)
@@ -686,6 +687,15 @@ impl StreamHandler for WorkspaceHandler {
             crate::ssh_agent::IDLE_LIMIT,
         )
         .await;
+    }
+}
+
+impl Proxy {
+    /// Tells the guest watcher that an agent session of `workspace` ended.
+    pub(crate) fn session_ended(&self, workspace: &WorkspaceId) {
+        if let Some(watcher) = &self.guest {
+            watcher.session_ended(workspace);
+        }
     }
 }
 
@@ -871,7 +881,7 @@ async fn refuse_over_limit(handler: &WorkspaceHandler, mut reader: GuestReader) 
 }
 
 /// The decision and reason a decrypted connection's end puts on its audit record.
-fn apply_reason(event: &mut ConnectionEvent, done: &terminate::Outcome) {
+pub(crate) fn apply_reason(event: &mut ConnectionEvent, done: &terminate::Outcome) {
     if let Some(refused) = &done.refused_by_rule {
         // A rule on method and path refused a request: the first one is the one recorded.
         event.decision = ConnectionDecision::Deny;
@@ -986,13 +996,17 @@ async fn relay(
         refuse(reader.get_mut(), &refusal).await;
         return event;
     }
+    let mut guest = Opened::from(reader);
+    let terminating = proxy.terminating(request, from_container);
+    // SSH to a name that is not a Git host is spliced, even on port 443 of a decrypted name. The
+    // header that says SSH is the guest's word, so there the first bytes decide: an identification
+    // line is spliced, anything else is decrypted like every connection to the name.
+    if terminating.is_some() && request.protocol == Some(ProtocolHint::Ssh) {
+        guest.read_first(proxy.config.head_timeout).await;
+    }
     // A bound host is terminated: the guest's TLS handshake comes first, so a client that asks
     // for the wrong name never causes a connection to the real server.
-    // SSH to a name that is not a Git host is spliced, even on port 443 of a terminated name.
-    let spliced_ssh = request.protocol == Some(ProtocolHint::Ssh);
-    if !spliced_ssh
-        && let Some((termination, mode, tls)) = proxy.terminating(request, from_container)
-    {
+    if let Some((termination, mode, tls)) = terminating.filter(|_| !ssh::started(&guest.early)) {
         let cx = Arc::new(terminate::Context {
             proxy: Arc::clone(proxy),
             termination,
@@ -1004,7 +1018,7 @@ async fn relay(
             connections: Arc::clone(&handler.streams),
             streams: Arc::clone(&handler.h2_streams),
         });
-        let done = terminate::run(cx, reader).await;
+        let done = terminate::run(cx, guest).await;
         apply_reason(&mut event, &done);
         event.http = done.http;
         if let Some(refused) = &done.refused_by_rule {
@@ -1019,6 +1033,9 @@ async fn relay(
         event.scrubbed_stand_ins = done.scrubbed_stand_ins;
         event.foreign_credentials = done.foreign_credentials;
         event.answer_credentials = done.answer_credentials;
+        if done.ssh {
+            note_block(&mut event, BlockReason::SshUnsupported);
+        }
         return event;
     }
     let out = match connect_out(
@@ -1033,7 +1050,10 @@ async fn relay(
         Ok(out) => out,
         Err(refusal) => {
             event.outcome = refusal.outcome;
-            refuse(reader.get_mut(), &refusal).await;
+            // A guest that has its `200` already gets no second answer: the connection ends.
+            if !guest.answered {
+                refuse(&mut guest.stream, &refusal).await;
+            }
             return event;
         }
     };
@@ -1043,14 +1063,14 @@ async fn relay(
     if let Some(code) = proxy.skipped(request, from_container) {
         event.reason = ConnectionReason::PassedThrough(code);
     }
-    note_tunnel(proxy, reader, (out.stream, out.watch), request, &mut event).await;
+    note_tunnel(proxy, guest, (out.stream, out.watch), request, &mut event).await;
     event
 }
 
 /// Splices a `CONNECT` tunnel that is not decrypted, and puts on `event` what it saw.
 async fn note_tunnel(
     proxy: &Proxy,
-    reader: GuestReader,
+    guest: Opened<Counted<GuestStream>>,
     (stream, watch): (TcpStream, Option<RouteWatch>),
     request: &EgressRequest,
     event: &mut ConnectionEvent,
@@ -1058,7 +1078,7 @@ async fn note_tunnel(
     let termination = proxy.termination_of(request);
     let kex = proxy.kex_watch(request, termination.as_deref());
     let end = tunnel(
-        reader,
+        guest,
         stream,
         Some(request).filter(|request| proxy.is_git_ssh_name(request)),
         watch,
@@ -1642,9 +1662,9 @@ pub(crate) struct TunnelEnd {
     pub(crate) token_endpoint: bool,
 }
 
-/// `CONNECT`: answer `200`, pass on bytes the guest sent early, splice. On an error both ends
-/// reset: [`splice`] sets zero linger on the server socket, and the guest stream is dropped
-/// without a shutdown.
+/// `CONNECT`: answer `200` (unless `guest` was answered already), pass on bytes the guest sent
+/// early, splice. On an error both ends reset: [`splice`] sets zero linger on the server socket,
+/// and the guest stream is dropped without a shutdown.
 ///
 /// Reports the tunnel's first request line if it carried plain HTTP/1.x (Node `fetch` and Yarn
 /// Berry tunnel `http://` this way), for the audit. The bytes are relayed unchanged.
@@ -1654,34 +1674,27 @@ pub(crate) struct TunnelEnd {
 /// refusal and a clean close, and the server a reset ([`ssh::Gate`]). That is how SSH to a host a
 /// rule allows is still refused, on any port.
 pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
-    reader: ClientReader<S>,
+    guest: Opened<S>,
     mut server: TcpStream,
     ssh_for: Option<&EgressRequest>,
     mut watch: Option<RouteWatch>,
     token_endpoints: Option<Arc<terminate::Termination>>,
     kex: Option<crate::ssh_agent::KexWatch>,
 ) -> TunnelEnd {
-    let early = reader.buffer().to_vec();
-    let mut guest = ssh::Gate::new(
-        TokenGate::new(
-            RequestTap::new(reader.into_inner(), &early),
-            token_endpoints,
-            &early,
-        ),
-        ssh_for.is_some() && early.is_empty(),
-    )
-    .with_kex(kex);
+    let Opened {
+        stream,
+        early,
+        answered,
+    } = guest;
+    let tapped = TokenGate::new(RequestTap::new(stream, &early), token_endpoints, &early);
+    // The gate hands `early` on first, so it reaches the server through the splice, after the
+    // gate has looked at it.
+    let mut guest = ssh::Gate::new(tapped, early, ssh_for.is_some()).with_kex(kex);
     if guest.inner().refused() {
         abort(&server);
         return refuse_token_endpoint(&mut guest).await;
     }
-    let opened = async {
-        guest
-            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-            .await?;
-        server.write_all(&early).await
-    };
-    if let Err(err) = opened.await {
+    if !answered && let Err(err) = guest.write_all(ESTABLISHED).await {
         tracing::debug!(error = %err, "tunnel failed before the splice");
         abort(&server);
         return seen_only(&guest);
@@ -1695,11 +1708,7 @@ pub(crate) async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(
         return seen_only(&guest);
     };
     match spliced {
-        Ok((up, down)) => tracing::debug!(
-            bytes_up = up + early.len() as u64,
-            bytes_down = down,
-            "tunnel closed"
-        ),
+        Ok((up, down)) => tracing::debug!(bytes_up = up, bytes_down = down, "tunnel closed"),
         Err(err) => {
             if let Some(request) = ssh_for.filter(|_| guest.ssh_seen()) {
                 tracing::info!(host = %request.host, port = request.port, "ssh in a tunnel refused");

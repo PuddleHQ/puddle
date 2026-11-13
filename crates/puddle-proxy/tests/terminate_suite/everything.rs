@@ -12,7 +12,9 @@ use puddle_agent_proto::ssh::{PROTOCOL_HEADER, SSH};
 use puddle_proxy::{InjectDecision, PassThrough};
 use puddle_types::ConnectionDecision;
 use rustls::pki_types::ServerName;
-use terminate_support::{FakeServer, Flaw, Guest, Pki, Reply, RigBuilder, TestInjector, host};
+use terminate_support::{
+    FakeServer, Flaw, Guest, Pki, RawServer, Reply, RigBuilder, TestInjector, host,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// An injector for a workspace with no credential for the host: it adds nothing.
@@ -574,10 +576,25 @@ async fn a_decrypted_host_that_cannot_be_reached_gets_an_error_the_tool_can_read
     client.close().await;
 }
 
+const BANNER: &[u8] = b"SSH-2.0-OpenSSH_10.0p2 Debian-7\r\n";
+
+/// Waits until `server` received `want` bytes.
+async fn received(server: &RawServer, want: usize) {
+    puddle_test_kit::eventually(
+        "the server received the bytes",
+        Duration::from_secs(5),
+        || match server.received().len() {
+            got if got >= want => Ok(()),
+            got => Err(format!("{got} of {want} bytes")),
+        },
+    )
+    .await;
+}
+
 #[tokio::test]
-async fn ssh_to_a_decrypted_name_is_spliced_at_once_and_never_waits_for_a_tls_hello() {
+async fn ssh_to_a_decrypted_name_is_spliced_at_once_when_its_banner_comes_with_the_connect() {
     let pki = Pki::new();
-    let server = FakeServer::plain(Arc::new(|_| Reply::ok("never asked"))).await;
+    let server = RawServer::start().await;
     let injector = adds_nothing();
     let rig = RigBuilder::new(&pki)
         .name("free.test", server.addr)
@@ -587,22 +604,178 @@ async fn ssh_to_a_decrypted_name_is_spliced_at_once_and_never_waits_for_a_tls_he
         .build();
     let guest = rig.guest();
     let mut stream = guest.open_stream().await;
-    let head = format!(
+    // As the agent's `connect` command sends it: the header and the client's banner behind the head.
+    let mut head = format!(
         "CONNECT free.test:443 HTTP/1.1\r\nHost: free.test:443\r\n{PROTOCOL_HEADER}: {SSH}\r\n\r\n"
-    );
-    stream.write_all(head.as_bytes()).await.unwrap();
+    )
+    .into_bytes();
+    head.extend_from_slice(BANNER);
+    stream.write_all(&head).await.unwrap();
     let mut answer = [0u8; 12];
     stream.read_exact(&mut answer).await.unwrap();
     assert_eq!(&answer, b"HTTP/1.1 200");
-    // A terminated connection would wait for the guest's TLS hello before it connected upstream.
-    puddle_test_kit::eventually(
-        "the real server was connected to",
-        Duration::from_secs(5),
-        || match server.accepted() {
-            1 => Ok(()),
-            n => Err(format!("{n} connections")),
-        },
-    )
-    .await;
+    received(&server, BANNER.len()).await;
+    assert_eq!(server.received(), BANNER);
     assert_eq!(injector.calls(), 0, "nothing was decrypted");
+}
+
+#[tokio::test]
+async fn an_ssh_header_with_no_bytes_behind_it_is_answered_and_the_banner_that_follows_is_spliced()
+{
+    let pki = Pki::new();
+    let server = RawServer::start().await;
+    let injector = adds_nothing();
+    let rig = RigBuilder::new(&pki)
+        .name("free.test", server.addr)
+        .allow(vec!["bound.test", "free.test"])
+        .injector(injector.clone())
+        .decrypting_all(true, &[])
+        .build();
+    let mut guest = rig.guest();
+    let (code, mut stream) = guest
+        .connect_with("free.test:443", &[&format!("{PROTOCOL_HEADER}: {SSH}")])
+        .await;
+    assert_eq!(code, 200);
+    stream.write_all(BANNER).await.unwrap();
+    stream.flush().await.unwrap();
+    received(&server, BANNER.len()).await;
+    assert_eq!(server.received(), BANNER);
+    assert_eq!(injector.calls(), 0, "nothing was decrypted");
+}
+
+#[tokio::test]
+async fn an_answered_ssh_tunnel_whose_server_cannot_be_reached_just_ends_with_no_second_answer() {
+    let pki = Pki::new();
+    let (_held, dead) = closed_port();
+    let rig = RigBuilder::new(&pki)
+        .name("dead.test", dead)
+        .allow(vec!["bound.test", "dead.test"])
+        .injector(adds_nothing())
+        .decrypting_all(true, &[])
+        .build();
+    let mut guest = rig.guest();
+    let (code, mut stream) = guest
+        .connect_with("dead.test:443", &[&format!("{PROTOCOL_HEADER}: {SSH}")])
+        .await;
+    assert_eq!(code, 200);
+    stream.write_all(BANNER).await.unwrap();
+    stream.flush().await.unwrap();
+    let mut rest = Vec::new();
+    // The tunnel is closed or reset, depending on the platform: both end it.
+    let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut rest))
+        .await
+        .expect("the proxy ends the connection");
+    assert!(
+        rest.is_empty(),
+        "no second answer: {:?}",
+        String::from_utf8_lossy(&rest)
+    );
+    let events = rig.events(1).await;
+    assert_ne!(
+        events[0].outcome,
+        Some(puddle_types::ConnectionOutcome::Connected)
+    );
+}
+
+#[tokio::test]
+async fn hostile_hg58_the_ssh_header_alone_does_not_keep_a_decrypted_name_from_being_decrypted() {
+    // The header is the guest's word. A guest that sets it and then speaks TLS must be decrypted
+    // like any other connection to the name, or it would reach the server past the rules on method
+    // and path, the injector and the scans.
+    let pki = Pki::new();
+    let server = free_server(&pki, "free.test").await;
+    let injector = adds_nothing();
+    let rig = RigBuilder::new(&pki)
+        .name("free.test", server.addr)
+        .allow(vec!["bound.test", "free.test"])
+        .injector(injector.clone())
+        .decrypting_all(true, &[])
+        .build();
+    let mut guest = rig.guest();
+    let (code, reader) = guest
+        .connect_with("free.test:443", &[&format!("{PROTOCOL_HEADER}: {SSH}")])
+        .await;
+    assert_eq!(code, 200);
+    let mut client = guest
+        .tls_over(reader, "free.test:443", None, &[b"http/1.1"], true)
+        .await
+        .expect("the handshake is with Puddle's certificate");
+    let response = client.get("free.test", "/through").await;
+    assert_eq!((response.status, response.text().as_str()), (200, "hello"));
+    client.close().await;
+    assert_eq!(injector.paths(), ["/through"], "the request was decrypted");
+}
+
+#[tokio::test]
+async fn hostile_hg58_the_ssh_header_alone_does_not_keep_a_bound_name_from_being_decrypted() {
+    let pki = Pki::new();
+    let server = free_server(&pki, "bound.test").await;
+    let injector = adds_nothing();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(injector.clone())
+        // A credential that is not a Git one: SSH to the name is not refused for being a Git host.
+        .git_ssh_hosts(vec![])
+        .build();
+    let mut guest = rig.guest();
+    let (code, reader) = guest
+        .connect_with("bound.test:443", &[&format!("{PROTOCOL_HEADER}: {SSH}")])
+        .await;
+    assert_eq!(code, 200);
+    let mut client = guest
+        .tls_over(reader, "bound.test:443", None, &[b"http/1.1"], true)
+        .await
+        .expect("the handshake is with Puddle's certificate");
+    let response = client.get("bound.test", "/bound").await;
+    assert_eq!(response.status, 200);
+    client.close().await;
+    assert_eq!(
+        injector.paths(),
+        ["/bound"],
+        "the request went through the injector"
+    );
+}
+
+#[tokio::test]
+async fn hostile_hg58_ssh_to_a_git_host_passed_through_as_not_tls_is_refused() {
+    // A workspace that decrypts every host decrypts a Git host's other names too (`ssh.github.com`
+    // on 443); what is not TLS there is passed through. SSH to a Git host stays refused on that
+    // path as on a plain tunnel: the server never gets the client's identification.
+    let pki = Pki::new();
+    let server = RawServer::start().await;
+    let rig = RigBuilder::new(&pki)
+        .name("altssh.gitlab.com", server.addr)
+        .allow(vec!["bound.test", "altssh.gitlab.com"])
+        .injector(adds_nothing())
+        .decrypting_all(true, &[])
+        .build();
+    let mut guest = rig.guest();
+    let (code, mut stream) = guest.connect_to("altssh.gitlab.com:443").await;
+    assert_eq!(code, 200);
+    let (head, rest) = BANNER.split_at(2);
+    stream.write_all(head).await.unwrap();
+    stream.flush().await.unwrap();
+    // flake-ok: paces the writes so the banner tends to arrive in two reads; the refusal must not depend on it.
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    stream.write_all(rest).await.unwrap();
+    stream.flush().await.unwrap();
+    let mut answer = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut answer))
+        .await
+        .expect("the proxy ends the connection")
+        .unwrap();
+    let answer = String::from_utf8_lossy(&answer);
+    assert!(answer.contains("SSH is not supported"), "{answer:?}");
+    assert_eq!(
+        server.received(),
+        b"",
+        "nothing of the banner reached the server"
+    );
+    let events = rig.events(1).await;
+    assert_eq!(
+        events[0].decision,
+        ConnectionDecision::Blocked,
+        "{:?}",
+        events[0]
+    );
 }

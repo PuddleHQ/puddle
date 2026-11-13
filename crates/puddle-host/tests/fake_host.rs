@@ -904,6 +904,51 @@ async fn a_missing_agent_stops_the_start_before_anything_is_reconciled() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn remote_serving_gives_the_host_a_network_listener_with_its_own_certificate_only_when_asked()
+{
+    use std::net::{IpAddr, Ipv4Addr};
+    let serving = || {
+        puddle_api::RemoteServing::new(
+            vec![puddle_api::PublicHost::parse("puddle.example.org").unwrap()],
+            None,
+        )
+        .unwrap()
+    };
+    let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+    let rig = Rig::new();
+    let mut config = rig.config();
+    config.api.remote = Some(puddle_host::RemoteSettings {
+        serving: serving(),
+        network: None,
+    });
+    let host = rig.start_with(config).await;
+    assert_eq!(
+        host.remote_listener(),
+        None,
+        "a front on this machine needs none"
+    );
+    host.shutdown().await;
+
+    let rig = Rig::new();
+    let mut config = rig.config();
+    config.api.remote = Some(puddle_host::RemoteSettings {
+        serving: serving(),
+        network: Some(puddle_api::NetworkEndpoint::new(loopback, 0, vec![loopback]).unwrap()),
+    });
+    let host = rig.start_with(config).await;
+    let listener = host.remote_listener().expect("a network listener").clone();
+    assert_eq!(listener.addr.ip(), loopback);
+    assert_eq!(listener.fingerprint.len(), 64);
+    assert!(
+        listener.certificate_file.is_file(),
+        "{:?}",
+        listener.certificate_file
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_taken_api_port_is_reported_and_nothing_was_stopped_or_removed() {
     let rig = Rig::new();
     let first = rig.start().await;
@@ -4103,6 +4148,65 @@ async fn a_crashed_sandbox_is_reported_crashed_and_start_recovers_it() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_vm_that_dies_while_puddle_runs_shows_crashed_and_start_recovers_it() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+
+    // The VM process dies (out of memory, a monitor crash) with no request to Puddle.
+    assert!(rig.runtime.crash(&SandboxName::new("acme").unwrap()));
+    // The list reads the sandboxes, as the host's pass every minute does.
+    let listed = api.get("/api/workspaces").await.json()["workspaces"][0].clone();
+    assert_eq!(listed["status"], "crashed", "{listed}");
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "crashed");
+    events
+        .until(
+            |e| e["type"] == "status_changed" && e["status"] == "crashed",
+            Duration::from_secs(5),
+        )
+        .await;
+
+    // What the VM held is released, so a start works and the workspace runs again.
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_end_of_an_agent_session_finds_a_dead_vm_without_a_list() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let id = WorkspaceId::new("acme").unwrap();
+
+    // The agent restarting ends a session too: the VM is up, so nothing changes.
+    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+
+    // The VM dies and its session ends: the host reads the sandboxes by itself, no list asked.
+    assert!(rig.runtime.crash(&SandboxName::new("acme").unwrap()));
+    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    events
+        .until(
+            |e| e["type"] == "status_changed" && e["status"] == "crashed",
+            Duration::from_secs(15),
+        )
+        .await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "crashed");
+    // The re-reads stop at the next gap, now that the workspace no longer shows Running.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_vm_left_running_by_a_dead_puddle_is_stopped_at_the_next_start() {
     let rig = Rig::named_ids();
     let host = rig.start().await;
@@ -4447,6 +4551,182 @@ async fn volume_names(rig: &Rig) -> Vec<String> {
 
 fn list_path(rig: &Rig) -> PathBuf {
     rig.dir.path().join("data").join("workspaces.json")
+}
+
+/// Creates `acme` with a secret of its own and a settings file, then stops Puddle: what a
+/// delete has to clear besides the runtime. Returns the secrets that exist for it.
+async fn acme_with_leftovers(rig: &Rig) -> usize {
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    put_env(
+        &api,
+        "/api/workspaces/acme/env/API_KEY",
+        secret_body(Some(REAL), &["api.example.org"]),
+    )
+    .await;
+    allow_direct_ssh(&api, "acme", true).await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let secrets = rig.secrets.ids().len();
+    assert_eq!(secrets, 1);
+    host.shutdown().await;
+    drop(host);
+    secrets
+}
+
+fn acme_settings_file(rig: &Rig) -> PathBuf {
+    rig.dir
+        .path()
+        .join("data")
+        .join("settings")
+        .join("workspaces")
+        .join("acme.json")
+}
+
+fn read_list(rig: &Rig) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(list_path(rig)).unwrap()).unwrap()
+}
+
+fn mark_acme_as_being_deleted(rig: &Rig) {
+    let mut book = read_list(rig);
+    book["workspaces"][0]["deleting"] = json!(true);
+    std::fs::write(list_path(rig), book.to_string()).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_finished_delete_leaves_the_list_without_the_entry_and_with_the_id_retired() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    stop_and_wait(&api, &mut events, "acme").await;
+    delete_and_wait(&api, &mut events, "acme").await;
+    let book = read_list(&rig);
+    assert_eq!(book["workspaces"], json!([]), "{book}");
+    assert_eq!(book["retired_ids"], json!(["acme"]), "{book}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_went_as_far_as_the_volume_is_finished_at_the_next_start() {
+    let rig = Rig::named_ids();
+    acme_with_leftovers(&rig).await;
+    // Puddle died after the volume went, before the cleanup: the entry is still marked.
+    mark_acme_as_being_deleted(&rig);
+    rig.runtime
+        .remove_volume(&name("acme").volume_name())
+        .await
+        .unwrap();
+    assert!(acme_settings_file(&rig).is_file());
+    assert!(
+        !rig.runtime.list().await.unwrap().is_empty(),
+        "the sandbox is still there"
+    );
+
+    let host = rig.start().await;
+    let api = api(&host);
+    assert_eq!(api.get("/api/workspaces/acme").await.status, 404);
+    // The sweep runs in the background: wait for its last step, then check all of them.
+    eventually("the browser data of acme forgotten", APPLY, || {
+        rig.launcher
+            .forgotten
+            .lock()
+            .unwrap()
+            .contains(&"acme".to_owned())
+            .then_some(())
+    })
+    .await;
+    assert!(rig.secrets.ids().is_empty(), "the secret of acme is left");
+    assert!(!acme_settings_file(&rig).exists());
+    assert!(
+        rig.runtime.list().await.unwrap().is_empty(),
+        "the sandbox of acme is left"
+    );
+    let book = read_list(&rig);
+    assert_eq!(book["workspaces"], json!([]), "{book}");
+    assert_eq!(book["retired_ids"], json!(["acme"]), "{book}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_never_reached_the_volume_leaves_the_workspace_as_it_was() {
+    let rig = Rig::named_ids();
+    acme_with_leftovers(&rig).await;
+    mark_acme_as_being_deleted(&rig);
+
+    let host = rig.start().await;
+    let api = api(&host);
+    let got = api.get("/api/workspaces/acme").await.json();
+    assert_eq!(got["status"], "stopped", "{got}");
+    let book = read_list(&rig);
+    assert!(book["workspaces"][0].get("deleting").is_none(), "{book}");
+    assert_eq!(book.get("retired_ids"), None, "{book}");
+    // Nothing of it was cleared, and it starts.
+    assert_eq!(rig.secrets.ids().len(), 1);
+    assert!(acme_settings_file(&rig).is_file());
+    let mut events = api.events().await;
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retired_id_whose_cleanup_failed_is_cleaned_at_the_next_start() {
+    let rig = Rig::named_ids();
+    acme_with_leftovers(&rig).await;
+    // An earlier Puddle deleted acme completely except for its own secret and settings file
+    // (the cleanup only left notices): the list has it retired, the volume is gone.
+    let mut book = read_list(&rig);
+    book["workspaces"] = json!([]);
+    book["retired_ids"] = json!(["acme"]);
+    std::fs::write(list_path(&rig), book.to_string()).unwrap();
+    rig.runtime
+        .remove_volume(&name("acme").volume_name())
+        .await
+        .unwrap();
+
+    let host = rig.start().await;
+    eventually("the leftovers of acme gone", APPLY, || {
+        (rig.secrets.ids().is_empty() && !acme_settings_file(&rig).exists()).then_some(())
+    })
+    .await;
+    assert_eq!(read_list(&rig)["retired_ids"], json!(["acme"]));
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sandbox_of_a_deleted_workspace_that_cannot_be_removed_is_a_problem_and_the_rest_is_still_cleaned()
+ {
+    let rig = Rig::named_ids();
+    acme_with_leftovers(&rig).await;
+    let mut book = read_list(&rig);
+    book["workspaces"] = json!([]);
+    book["retired_ids"] = json!(["acme"]);
+    std::fs::write(list_path(&rig), book.to_string()).unwrap();
+    rig.runtime
+        .remove_volume(&name("acme").volume_name())
+        .await
+        .unwrap();
+    rig.runtime.inject(
+        Op::Remove,
+        Fault::always(disk_error("remove")).only_for("acme"),
+    );
+
+    let host = rig.start().await;
+    let problem = wait_for_problem(&host, "left-sandbox:acme").await;
+    assert!(problem.title.contains("acme"), "{problem:?}");
+    assert!(problem.detail.contains("no space left"), "{problem:?}");
+    // The sandbox stays, and the other leftovers are cleared all the same.
+    eventually("the leftovers of acme gone", APPLY, || {
+        (rig.secrets.ids().is_empty() && !acme_settings_file(&rig).exists()).then_some(())
+    })
+    .await;
+    assert_eq!(rig.runtime.list().await.unwrap().len(), 1);
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

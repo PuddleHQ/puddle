@@ -189,8 +189,9 @@ pub(crate) struct Parts<R: Runtime + Clone> {
 struct Slot {
     record: WorkspaceRecord,
     creating: bool,
-    /// Being deleted: left out of the saved list, so a delete that went through can't come
-    /// back as a workspace without a volume.
+    /// Being deleted. The saved list keeps the entry marked until the delete has finished, so
+    /// a restart in the middle of it can tell what happened from the volume: gone, the delete
+    /// went through and the next start finishes the cleanup; still there, the workspace stays.
     deleting: bool,
     /// The start that is running was refused because the volume is gone; `conclude` turns it
     /// into the `volume_missing` state instead of `crashed`.
@@ -567,6 +568,10 @@ fn delete_check(report: &puddle_workspace::DeleteReport) -> DeleteCheck {
     }
 }
 
+/// After an agent session ends, how many times the sandboxes are read and how far apart.
+const SESSION_END_READS: u32 = 5;
+const SESSION_END_GAP: Duration = Duration::from_secs(2);
+
 /// Holds the count of running operations up for as long as it lives.
 struct Running(watch::Sender<usize>);
 
@@ -651,6 +656,21 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let mut slots = BTreeMap::new();
         let mut interrupted = false;
         for stored in restored {
+            if stored.deleting {
+                if status.get(&stored.id) == Some(&WorkspaceStatus::VolumeMissing) {
+                    // The delete got as far as the volume before Puddle died. The workspace is
+                    // gone: its id is retired, and the sweep that follows the start clears
+                    // everything else that is keyed by it.
+                    tracing::warn!(workspace = %stored.id, "finishing a delete that Puddle did not");
+                    retired.insert(stored.id);
+                    interrupted = true;
+                    continue;
+                }
+                // The volume is still there, so the delete never reached what holds the user's
+                // files: the workspace is listed again and the user can delete it again.
+                tracing::warn!(workspace = %stored.id, "a delete did not reach the volume; the workspace stays");
+                interrupted = true;
+            }
             if stored.creating {
                 // A create that never finished (Puddle died in it): there is no workspace, and
                 // reconcile removes the half-made volume. Its id is retired like a failed create's.
@@ -724,8 +744,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         service.note_names(&service.state());
         if interrupted && let Err(e) = service.persist(&service.state()) {
-            // Harmless: the entries still say "being created", so the next start drops them
-            // again, and every later save writes the list without them.
+            // Harmless: the entries still say "being created" or "being deleted", so the next
+            // start settles them the same way, and every later save writes the list without them.
             tracing::warn!(error = %e, "the workspace list was not saved after dropping unfinished creates");
         }
         Ok(service)
@@ -754,7 +774,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let stored = state
             .slots
             .values()
-            .filter(|slot| !slot.deleting)
             .map(|slot| Stored {
                 id: slot.record.id.clone(),
                 name: slot.record.name.clone(),
@@ -767,18 +786,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 disk_size_mib: slot.record.disk_size_mib,
                 root_disk_grown_mib: slot.record.root_disk_grown_mib,
                 creating: slot.creating,
+                deleting: slot.deleting,
             })
             .collect();
-        // A workspace being deleted leaves the list now, and its id is retired with it.
-        let mut retired = state.retired.clone();
-        retired.extend(
-            state
-                .slots
-                .values()
-                .filter(|slot| slot.deleting)
-                .map(|slot| slot.record.id.clone()),
-        );
-        self.inner.book.save(stored, &retired)?;
+        self.inner.book.save(stored, &state.retired)?;
         self.note_names(state);
         Ok(())
     }
@@ -1075,6 +1086,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         ticket.armed = false;
     }
 
+    /// Says which workspace's agent session ended, each time one does.
+    pub(crate) fn agent_sessions_ended(&self) -> puddle_ports::EndedSessions {
+        self.inner.ports.agent_sessions_ended()
+    }
+
+    /// The ports the sandboxes' agents report to (tests drive an agent session's end through it).
+    #[must_use]
+    pub fn ports(&self) -> &Ports {
+        &self.inner.ports
+    }
+
     /// Reads what every workspace's volume and root disk take on the host into the records, so
     /// the list and the single-workspace answer both carry it, then warns about disks that
     /// reached the threshold. A runtime that cannot say leaves the earlier value; the card shows
@@ -1090,6 +1112,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         match self.inner.runtime.list().await {
             Ok(sandboxes) => {
+                self.notice_dead_vms(&sandboxes).await;
                 for slot in self.state().slots.values_mut() {
                     let root = sandboxes
                         .iter()
@@ -1102,6 +1125,55 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(e) => tracing::debug!(error = %e, "the root disks' use of the disk is unknown"),
         }
         self.warn_about_full_disks();
+    }
+
+    /// Reads the sandboxes again for a while after `workspace`'s agent session ended, until the
+    /// workspace stops showing Running. A VM that died takes a moment to be reported down; one
+    /// that did not (the agent restarted) is simply still up after the last read.
+    pub(crate) async fn check_after_session_end(&self, workspace: &WorkspaceId) {
+        for _ in 0..SESSION_END_READS {
+            tokio::time::sleep(SESSION_END_GAP).await;
+            if self.status_of(workspace) != Some(WorkspaceStatus::Running) {
+                return;
+            }
+            self.refresh_disk_use().await;
+        }
+    }
+
+    fn status_of(&self, workspace: &WorkspaceId) -> Option<WorkspaceStatus> {
+        self.state().slots.get(workspace).map(|s| s.record.status)
+    }
+
+    /// Moves every workspace that shows Running while its sandbox is down to Crashed, and lets go
+    /// of what the dead VM held (terminals, forwards, the CA, the SSH endpoint) so a start works.
+    /// A workspace with an operation in progress is left to it; the operation's end decides.
+    pub(crate) async fn notice_dead_vms(&self, sandboxes: &[puddle_compute::SandboxInfo]) {
+        let dead: Vec<WorkspaceRecord> = {
+            let mut state = self.state();
+            state
+                .slots
+                .values_mut()
+                .filter(|slot| {
+                    slot.record.status == WorkspaceStatus::Running && slot.record.busy.is_none()
+                })
+                .filter(|slot| {
+                    let name = slot.record.id.sandbox_name();
+                    sandboxes
+                        .iter()
+                        .any(|s| s.name == name.as_str() && s.status.is_down())
+                })
+                .map(|slot| {
+                    slot.record.status = WorkspaceStatus::Crashed;
+                    slot.record.clone()
+                })
+                .collect()
+        };
+        for record in dead {
+            tracing::warn!(workspace = %record.id, "the VM ended while Puddle ran; the workspace is crashed");
+            self.status_event(&record);
+            self.quiesce(&record.id, false).await;
+            self.inner.reports.end(&record.id);
+        }
     }
 
     /// Says once, per disk, that it reached the warning threshold, and again only after it was
@@ -1152,11 +1224,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let delete_note = slot.delete_note.take();
         let name = slot.record.id.clone();
         let mut status_changed = false;
-        // Only a failed create or delete leaves the list different from what is saved: the
-        // failed create's entry goes, the failed delete's entry comes back.
+        // A failed create, and a delete either way, leave the list different from what is saved:
+        // the failed create's entry goes, the failed delete's entry comes back unmarked, and the
+        // finished delete's entry goes with its id retired.
         let save = matches!(
             (&result, op),
-            (Err(_), Operation::Creating | Operation::Deleting)
+            (Err(_), Operation::Creating | Operation::Deleting) | (Ok(()), Operation::Deleting)
         );
         let mut result = result;
         let old_entry = slot.creating;
@@ -1169,7 +1242,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             (Ok(()), Operation::Deleting) => {
                 state.slots.remove(id);
-                // Saved as retired when the delete began; kept so every later save has it.
                 state.retired.insert(id.clone());
             }
             (Err(_), Operation::Starting) => {
@@ -3504,7 +3576,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// workspace has a new id, so it never inherits a stuck file.
     /// Under the settings routes' lock, so a settings change that read the file before this
     /// removal cannot write it back after.
-    async fn forget_settings_file(&self, id: &WorkspaceId, name: &DisplayName) {
+    async fn forget_settings_file(&self, id: &WorkspaceId, name: &str) {
         let inner = &self.inner;
         let key = problem_key("settings", id);
         let _lock = inner.settings_lock.lock().await;
@@ -3608,7 +3680,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Deletes what the browser editor kept for a deleted workspace. A failure is a notice: the
     /// data stays under an id no later workspace gets.
-    async fn forget_browser_state(&self, id: &WorkspaceId, name: &DisplayName) {
+    async fn forget_browser_state(&self, id: &WorkspaceId, name: &str) {
         let inner = &self.inner;
         let key = problem_key("browser-data", id);
         let failed = self.clear_browser_state(id).await;
@@ -3644,16 +3716,49 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .map_err(|e| e.to_string())?;
         self.quiesce(&record.id, true).await;
         self.inner.reports.forget(&record.id);
-        // What the workspace held in Puddle's settings goes with it: its rules, its identities,
-        // its environment and the values of its own secrets.
-        inner.injection.forget(&record.id).await;
         inner.kit.shell_init().forget(&record.id);
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
-        self.forget_settings_file(&record.id, &record.name).await;
-        self.forget_browser_state(&record.id, &record.name).await;
+        self.forget_leftovers(&record.id, record.name.as_str())
+            .await;
         Ok(())
+    }
+
+    /// Removes what a deleted workspace left under its id outside the runtime: its rules, its
+    /// identities, its environment and the values of its own secrets, its settings file and the
+    /// browser editor's data. Every step finds nothing the second time, so the sweep at start
+    /// can run it again for any retired id; a step that fails is a notice and the next start
+    /// tries again.
+    async fn forget_leftovers(&self, id: &WorkspaceId, label: &str) {
+        self.inner.injection.forget(id).await;
+        self.forget_settings_file(id, label).await;
+        self.forget_browser_state(id, label).await;
+    }
+
+    /// Finishes what a delete that did not end left behind, for every retired id: a sandbox
+    /// still named after it, and the leftovers [`Self::forget_leftovers`] removes. Run once in
+    /// the background at start. A retired id belongs to nobody, so nothing here can touch a
+    /// workspace the user has.
+    pub(crate) async fn sweep_retired(&self) {
+        let retired: Vec<WorkspaceId> = self.state().retired.iter().cloned().collect();
+        for id in retired {
+            self.remove_left_sandbox(&id).await;
+            self.forget_leftovers(&id, id.as_str()).await;
+        }
+    }
+
+    /// Removes the sandbox a deleted workspace left, if there is one. A failure is a notice.
+    async fn remove_left_sandbox(&self, id: &WorkspaceId) {
+        let key = problem_key("left-sandbox", id);
+        match self.inner.runtime.remove(&id.sandbox_name()).await {
+            Ok(()) | Err(ComputeError::NotFound { .. }) => self.inner.problems.clear(&key),
+            Err(e) => self.inner.problems.raise(Problem::new(
+                key,
+                format!("The sandbox of the deleted workspace {id} was not removed"),
+                format!("{e}. Puddle tries again the next time it starts."),
+            )),
+        }
     }
 }
 

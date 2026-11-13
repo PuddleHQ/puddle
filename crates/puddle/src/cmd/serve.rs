@@ -135,10 +135,7 @@ pub fn config(
             reason: e.to_string(),
         })?;
     config.api.multi_user = options.switch("multi_user") == Some(true);
-    if let Some(options::RemoteSettings { serving, listener }) = remote {
-        config.api.remote = Some(serving);
-        config.api.network_listener = listener;
-    }
+    config.api.remote = remote;
     Ok(config)
 }
 

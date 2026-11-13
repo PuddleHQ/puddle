@@ -209,37 +209,20 @@ fn unix_now() -> u64 {
 /// Sorts a failed `az account get-access-token` by what it said on standard error, so the user is
 /// told which piece is missing. The text is read here and dropped: it is never logged or sent.
 pub(crate) fn classify_az_failure(stderr: &str) -> SourceError {
-    let text = stderr.to_ascii_lowercase();
-    let has = |needles: &[&str]| needles.iter().any(|n| text.contains(n));
+    // An `AADSTS` code says exactly what failed, so it decides before any wording does: the
+    // message of a code often uses the words of another case ("was not found in the tenant").
     // The account is in no such tenant, or the tenant does not exist.
-    if has(&["aadsts90002", "aadsts50020", "aadsts90072", "aadsts700016"])
-        || (text.contains("tenant")
-            && has(&[
-                "not found",
-                "not a member",
-                "doesn't exist",
-                "does not exist",
-            ]))
-    {
-        return SourceError::WrongTenant;
-    }
+    const WRONG_TENANT: &[&str] = &["aadsts90002", "aadsts50020", "aadsts90072", "aadsts700016"];
     // Signed in, but Azure DevOps is not open to this account in this tenant.
-    if has(&[
+    const NO_ACCESS: &[&str] = &[
         "aadsts65001",
         "aadsts50105",
         "aadsts500011",
         "aadsts650057",
         "aadsts53003",
-    ]) || has(&["does not have access", "not authorized to access"])
-    {
-        return SourceError::NoAccess;
-    }
+    ];
     // No login, or one that must be redone (expired refresh token, MFA, conditional access).
-    if has(&[
-        "az login",
-        "no accounts",
-        "interactive authentication is needed",
-        "refresh token has expired",
+    const NOT_SIGNED_IN: &[&str] = &[
         "aadsts50173",
         "aadsts50076",
         "aadsts50079",
@@ -249,6 +232,36 @@ pub(crate) fn classify_az_failure(stderr: &str) -> SourceError {
         "aadsts50078",
         "aadsts50132",
         "aadsts50133",
+    ];
+    let text = stderr.to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| text.contains(n));
+    for (codes, error) in [
+        (WRONG_TENANT, SourceError::WrongTenant),
+        (NO_ACCESS, SourceError::NoAccess),
+        (NOT_SIGNED_IN, SourceError::NotSignedIn),
+    ] {
+        if has(codes) {
+            return error;
+        }
+    }
+    if text.contains("tenant")
+        && has(&[
+            "not found",
+            "not a member",
+            "doesn't exist",
+            "does not exist",
+        ])
+    {
+        return SourceError::WrongTenant;
+    }
+    if has(&["does not have access", "not authorized to access"]) {
+        return SourceError::NoAccess;
+    }
+    if has(&[
+        "az login",
+        "no accounts",
+        "interactive authentication is needed",
+        "refresh token has expired",
     ]) {
         return SourceError::NotSignedIn;
     }

@@ -367,6 +367,8 @@ struct Background {
     sweeper: Sweeper,
     // Holds the store; awaited at shutdown so the database is closed when the host is.
     vault_sweep: tokio::task::JoinHandle<()>,
+    // Also holds the store (the injection removes rows); awaited at shutdown for the same reason.
+    retired_sweep: tokio::task::JoinHandle<()>,
     pull: PullRoute,
     front: Front,
     // Dropped (stopped) with the rest; `None` where the OS cannot watch.
@@ -702,6 +704,11 @@ impl<R: Runtime + Clone> Host<R> {
         )?;
         // Downloads the image the delete check boots now, while nobody is waiting on it.
         service.warm_maintenance_image_for_listed();
+        // Finishes what a delete that did not end left under its id.
+        let retired_sweep = tokio::spawn({
+            let service = service.clone();
+            async move { service.sweep_retired().await }
+        });
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
         let editor_windows = front.windows().clone();
         let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
@@ -781,6 +788,7 @@ impl<R: Runtime + Clone> Host<R> {
             background: AsyncMutex::new(Some(Background {
                 sweeper,
                 vault_sweep,
+                retired_sweep,
                 pull,
                 front,
                 _watching: watching,
@@ -948,6 +956,7 @@ impl<R: Runtime + Clone> Host<R> {
                     background.front.close().await;
                     // A panic in the sweep was reported by the sweep; nothing more to do here.
                     let _ = background.vault_sweep.await;
+                    let _ = background.retired_sweep.await;
                     for task in [
                         &mut background.network_events,
                         &mut background.sign_in_failures,
@@ -1313,13 +1322,16 @@ async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi,
     if let Some(ui) = &config.api.ui {
         api_config.ui = Some(ui.clone());
     }
-    api_config.remote.clone_from(&config.api.remote);
     api_config.multi_user = config.api.multi_user;
     let mut certificate = None;
-    if let Some(listener) = &config.api.network_listener {
-        let (network, cert_file) = network_listener(config, listener)?;
-        certificate = Some((network.tls.fingerprint(), cert_file));
-        api_config.network_listener = Some(network);
+    if let Some(remote) = &config.api.remote {
+        let mut api_remote = puddle_api::Remote::new(remote.serving.clone());
+        if let Some(endpoint) = &remote.network {
+            let (network, cert_file) = network_listener(config, &remote.serving, endpoint)?;
+            certificate = Some((network.tls().fingerprint(), cert_file));
+            api_remote = api_remote.with_network_listener(network);
+        }
+        api_config.remote = Some(api_remote);
     }
     let server = ApiServer::bind(api_config, ApiToken::generate()?, services).await?;
     let info = server.connection_info();
@@ -1353,16 +1365,12 @@ async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi,
 /// operator copies.
 fn network_listener(
     config: &HostConfig,
-    settings: &crate::NetworkListenerSettings,
+    serving: &puddle_api::RemoteServing,
+    endpoint: &puddle_api::NetworkEndpoint,
 ) -> Result<(puddle_api::NetworkListener, PathBuf), HostError> {
-    let mut ips = vec![settings.interface];
+    let mut ips = vec![endpoint.interface()];
     let mut names = Vec::new();
-    for host in config
-        .api
-        .remote
-        .iter()
-        .flat_map(puddle_api::RemoteServing::public_hosts)
-    {
+    for host in serving.public_hosts() {
         match host
             .host()
             .trim_matches(['[', ']'])
@@ -1387,13 +1395,10 @@ fn network_listener(
     let file = data
         .join(puddle_certs::devcert::listener::FOLDER)
         .join(puddle_certs::devcert::listener::CERT_FILE);
-    let listener = puddle_api::NetworkListener {
-        interface: settings.interface,
-        port: settings.port,
-        allowed_proxies: settings.allowed_proxies.clone(),
-        tls: identity,
-    };
-    Ok((listener, file))
+    Ok((
+        puddle_api::NetworkListener::new(endpoint.clone(), identity),
+        file,
+    ))
 }
 
 /// What reconcile works from: the workspaces Puddle knows, the sandboxes they own and which of

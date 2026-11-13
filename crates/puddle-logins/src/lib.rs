@@ -40,7 +40,7 @@ pub use logins::{
 };
 pub use marker::Marker;
 pub use profile::{
-    Audience, CLAUDE, DOCKER, ENTRA, Endpoint, Field, GITHUB, Method, OPENAI, Profile, Role, Scope,
-    Slot, StandInKind, builtin, path_matches,
+    Audience, CLAUDE, DOCKER, ENTRA, Endpoint, Field, GITHUB, Keep, Method, OPENAI, Profile, Role,
+    Scope, Slot, StandInKind, builtin, path_matches,
 };
 pub use shape::{ShapeError, stand_in_for};

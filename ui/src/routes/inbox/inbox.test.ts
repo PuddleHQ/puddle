@@ -589,6 +589,7 @@ describe("every workspace needs a confirm", () => {
       ui: fake.ui,
       unknown_fields: [],
       vscode_server: fake.vscode,
+      tools: fake.tools,
       workspace_defaults: fake.layer,
     };
     seed();
@@ -630,6 +631,7 @@ function shortcuts(on: boolean | null) {
     ui: fake.ui,
     unknown_fields: [],
     vscode_server: fake.vscode,
+    tools: fake.tools,
     workspace_defaults: fake.layer,
   };
 }

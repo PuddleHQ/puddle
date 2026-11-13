@@ -131,3 +131,39 @@ describe("saving", () => {
     });
   });
 });
+
+describe("the tool switches", () => {
+  it("reads the workspace's switches and the global one", async () => {
+    api.tools["demo"] = { mise: false, repo_code: null };
+    api.globalMise = false;
+    await settings.load("demo");
+    expect(settings.tools).toEqual({ mise: false, repo_code: null });
+    expect(settings.globalMise).toBe(false);
+  });
+
+  it("treats an unset global switch as on", async () => {
+    await settings.load("demo");
+    expect(settings.globalMise).toBe(true);
+  });
+
+  it("saves a switch with the stored overrides and tools, and an override save keeps the switches", async () => {
+    await settings.load("demo");
+    expect(await settings.changeTools({ repo_code: false })).toEqual({
+      ok: true,
+    });
+    expect(api.tools["demo"]).toEqual({ mise: null, repo_code: false });
+    // A later override change must not reset the switches (the API replaces the document).
+    await settings.change({ zoom_hotkeys: false });
+    expect(api.tools["demo"]).toEqual({ mise: null, repo_code: false });
+    expect(settings.tools.repo_code).toBe(false);
+  });
+
+  it("reports a refused save", async () => {
+    await settings.load("demo");
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
+      status: 500,
+      message: "no",
+    });
+    expect((await settings.changeTools({ mise: false })).ok).toBe(false);
+  });
+});

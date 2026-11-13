@@ -29,6 +29,7 @@
     setLayer,
     setServer,
     setToggle,
+    setTools,
     setUi,
     type Draft,
     type LayerKey,
@@ -45,6 +46,7 @@
     LOCAL_EXPLAIN,
     memorySizes,
     microsoftChosenToast,
+    miseManaged,
     needsMicrosoftConsent,
     parseDiskWarning,
     parseGrace,
@@ -243,6 +245,9 @@
     value: NonNullable<Layer[K]>,
     stored: NonNullable<Layer[K]>,
   ) => edit(setLayer(draft, key, value, stored));
+  const miseShown = $derived(
+    draft.tools.mise ?? (store.view ? miseManaged(store.view) : true),
+  );
   /** The preferences that are plain on/off switches. */
   type BoolPref =
     | "notifications"
@@ -715,6 +720,32 @@
               <option value={String(count)}>{cpuLabel(count)}</option>
             {/each}
           </select>
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="set-mise">Manage tools with mise in workspaces</label>
+            <p class="desc" id="set-mise-desc">
+              Turning this off leaves every workspace's tools and mise.toml as
+              they are; running workspaces drop mise from PATH at their next
+              start. It applies to every workspace and no workspace can turn it
+              back on. On by default.
+            </p>
+          </div>
+          <input
+            id="set-mise"
+            type="checkbox"
+            aria-describedby="set-mise-desc"
+            checked={miseShown}
+            onchange={(e) =>
+              edit(
+                setTools(
+                  draft,
+                  "mise",
+                  e.currentTarget.checked,
+                  store.view ? miseManaged(store.view) : true,
+                ),
+              )}
+          />
         </div>
         <div class="setting">
           <div class="grow">

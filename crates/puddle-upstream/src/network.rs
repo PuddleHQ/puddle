@@ -196,6 +196,12 @@ impl NetworkOs for FakeNetwork {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
+    #[test]
+    fn the_system_network_is_unread_where_there_is_no_reader() {
+        assert!(system_network().read().is_err());
+    }
+
     #[test]
     fn interface_types_map_to_their_kinds() {
         let cases = [

@@ -571,8 +571,6 @@ fn verdict(
     match guard.check_address_with(access, name, addr) {
         AddressVerdict::Allow | AddressVerdict::ExactOnly(_) => Ok(()),
         AddressVerdict::Block(reason) => Err(reason),
-        // A verdict this version doesn't know: refuse.
-        _ => Err(BlockReason::PuddleEndpoint),
     }
 }
 
@@ -669,7 +667,11 @@ fn blocked(
     let toggle = match reason {
         BlockReason::LocalToggle(category) => Some(category),
         BlockReason::CompanyNetwork(_) => Some(LocalCategory::CompanyNetwork),
-        _ => None,
+        BlockReason::SshUnsupported
+        | BlockReason::UdpUnsupported
+        | BlockReason::PuddleEndpoint
+        | BlockReason::LocalAddress
+        | BlockReason::SettingsUnreadable => None,
     };
     let what = match (reason, toggle) {
         (BlockReason::PuddleEndpoint, _) => "one of Puddle's own endpoints".to_owned(),

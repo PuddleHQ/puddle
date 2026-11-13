@@ -276,7 +276,7 @@ impl<A: Ask> Stub<A> {
     async fn respond(&self, query: &wire::Query) -> Option<Reply> {
         let name = match &query.name {
             QueryName::Plain(name) if names::is_plain(name) || name.is_empty() => name,
-            _ => return Some((Rcode::NxDomain, vec![], vec![])),
+            QueryName::Plain(_) | QueryName::Odd => return Some((Rcode::NxDomain, vec![], vec![])),
         };
         if query.qclass != CLASS_IN {
             return Some((Rcode::Refused, vec![], vec![]));
@@ -318,7 +318,9 @@ impl<A: Ask> Stub<A> {
             },
             ResolveAnswer::NoSuchName { .. } => (Rcode::NxDomain, vec![], vec![]),
             ResolveAnswer::NoData { .. } => (Rcode::NoError, vec![], vec![]),
-            _ => (Rcode::ServFail, vec![], vec![]),
+            ResolveAnswer::Records { .. } | ResolveAnswer::Unavailable | ResolveAnswer::Unknown => {
+                (Rcode::ServFail, vec![], vec![])
+            }
         };
         Some(reply)
     }
@@ -364,7 +366,9 @@ impl<A: Ask> Stub<A> {
             }
             ResolveAnswer::NoSuchName { .. } => (Rcode::NxDomain, vec![], vec![]),
             ResolveAnswer::NoData { .. } => (Rcode::NoError, vec![], vec![]),
-            _ => (Rcode::ServFail, vec![], vec![]),
+            ResolveAnswer::StandIn { .. } | ResolveAnswer::Unavailable | ResolveAnswer::Unknown => {
+                (Rcode::ServFail, vec![], vec![])
+            }
         };
         Some(reply)
     }
@@ -455,7 +459,7 @@ impl<A: Ask> State<A> {
             | ResolveAnswer::NoSuchName { ttl }
             | ResolveAnswer::NoData { ttl }
             | ResolveAnswer::Records { ttl, .. } => *ttl,
-            _ => return Some(answer),
+            ResolveAnswer::Unavailable | ResolveAnswer::Unknown => return Some(answer),
         };
         self.cache
             .lock()

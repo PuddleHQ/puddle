@@ -893,7 +893,7 @@ async fn deleting_the_workspace_deletes_every_token_kept_for_it() {
             + GITHUB.roles().len()
             + crate::profile::ENTRA.slots().len()
             + OPENAI.roles().len()
-            + DOCKER.roles().len()
+            + DOCKER.slots().len()
     );
 }
 

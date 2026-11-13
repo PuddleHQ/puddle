@@ -17,9 +17,10 @@ fn every_built_in_host_is_a_name_the_proxy_accepts() {
                 .iter()
                 .filter(|e| scope == Scope::Api || !e.request_fields.is_empty())
                 .map(|e| e.host)
-                .chain(match scope {
-                    Scope::Api => profile.api_hosts.iter().copied(),
-                    Scope::TokenEndpoint => [].iter().copied(),
+                .chain(if scope == Scope::Api {
+                    profile.api_hosts.iter().copied()
+                } else {
+                    [].iter().copied()
                 })
                 .collect();
             for name in wanted {
@@ -79,6 +80,27 @@ fn profile_ids_and_paths_are_unique_and_well_formed() {
         for e in a.endpoints {
             assert!(e.path.starts_with('/'));
             assert!(!e.fields.is_empty() || !e.request_fields.is_empty());
+        }
+    }
+}
+
+#[test]
+fn every_host_a_field_names_is_one_the_profile_decrypts() {
+    for profile in builtin() {
+        let decrypted = profile.hosts();
+        for (_, field) in profile.fields() {
+            let Scope::Hosts(hosts) = field.scope else {
+                continue;
+            };
+            assert!(!hosts.is_empty(), "{}: {}", profile.id, field.path);
+            let set = profile.hosts_for(field.scope);
+            for name in hosts {
+                let probe = name
+                    .strip_prefix("*.")
+                    .map_or_else(|| (*name).to_owned(), |base| format!("anything.{base}"));
+                assert!(set.contains(&host(&probe)), "{}: {name}", profile.id);
+                assert!(decrypted.contains(&host(&probe)), "{}: {name}", profile.id);
+            }
         }
     }
 }

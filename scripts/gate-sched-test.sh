@@ -82,6 +82,11 @@ PUDDLE_CHECK_SERIAL=1 scenario s4 "" clippy ui notices
 mkdir -p "$tmp/s5/spec"
 spec s5 fmt "0 2"; spec s5 typos "0 0"; spec s5 clippy "0 0"; spec s5 ui "0 0"
 scenario s5 "fmt typos" fmt typos fmt clippy ui
+# S6: a gate of the run that is not in the prefix list (hooks) goes to the streams even when it stands between two prefix gates:
+# the prefix gates after it still run first, one at a time, and hooks overlaps the other streams.
+mkdir -p "$tmp/s6/spec"
+spec s6 fmt "0 0"; spec s6 hooks "0 0 2"; spec s6 typos "0 0"; spec s6 clippy "0 0 2"
+scenario s6 "fmt typos" fmt hooks typos clippy
 wait
 
 rc_of() { cat "$tmp/$1/rc"; }
@@ -124,6 +129,12 @@ grep -q '^-- coverage: skipped (needs ui' "$tmp/s3b/out" || fail "s3b: coverage 
 # S5
 [ "$(rc_of s5)" = 2 ] || fail "s5: exit $(rc_of s5), expected fmt's 2"
 [ ! -e "$tmp/s5/start.typos" ] && [ ! -e "$tmp/s5/start.clippy" ] || fail "s5: a gate ran after the prefix failed"
+
+# S6
+[ "$(rc_of s6)" = 0 ] || fail "s6: exit $(rc_of s6)"
+[ "$(cat "$tmp/s6/end.typos")" -le "$(cat "$tmp/s6/start.hooks")" ] || fail "s6: hooks started before the prefix gate typos ended"
+[ -e "$tmp/s6/start.hooks" ] && [ -e "$tmp/s6/start.clippy" ] || fail "s6: hooks and clippy did not overlap (rendezvous)"
+grep -q '^-- hooks: ok' "$tmp/s6/out" || fail "s6: hooks was not reported"
 
 # The notices skip: a scratch repository with this check.sh and a stub cargo and cargo-about.
 n=$tmp/notices

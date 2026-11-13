@@ -282,7 +282,7 @@ fn local_access(settings: &dyn SettingsRepo, workspace: &WorkspaceId) -> LocalAc
 fn local_access_checked(
     settings: &dyn SettingsRepo,
     workspace: &WorkspaceId,
-) -> Result<LocalAccess, String> {
+) -> Result<LocalAccess, crate::settings_read::SettingsReadError> {
     let global = crate::settings_read::global(settings)?;
     let own = crate::settings_read::workspace(settings, workspace)?;
     Ok(LocalAccess::from_effective(&resolve(&global, Some(&own))))

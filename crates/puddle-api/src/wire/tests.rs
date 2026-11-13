@@ -185,6 +185,30 @@ fn a_custom_colour_that_is_not_hex_is_refused() {
 }
 
 #[test]
+fn the_ssh_agent_pipe_is_trimmed_blank_is_unset_and_junk_is_refused() {
+    let apply = |pipe: Option<&str>| {
+        let mut prefs = settings::UiPrefs::default();
+        UiPrefs {
+            ssh_agent_pipe: pipe.map(str::to_owned),
+            ..UiPrefs::default()
+        }
+        .apply_to(&mut prefs)
+        .map(|()| prefs.ssh_agent_pipe)
+    };
+    assert_eq!(
+        apply(Some(" /run/agent.sock ")).unwrap().as_deref(),
+        Some("/run/agent.sock")
+    );
+    assert_eq!(apply(Some("   ")).unwrap(), None, "blank is unset");
+    assert_eq!(apply(None).unwrap(), None);
+    for bad in ["/run/a\nb", "a\u{0}b", &"x".repeat(1025)] {
+        let err = apply(Some(bad)).unwrap_err();
+        assert_eq!(err.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    assert!(apply(Some(&"x".repeat(1024))).is_ok());
+}
+
+#[test]
 fn the_free_space_lines_are_validated_alone_and_together() {
     let apply = |warn, fail| {
         let mut prefs = settings::UiPrefs::default();
@@ -266,6 +290,7 @@ fn global_request_sets_vscode_options() {
             notify_low_disk_space: Some(false),
             disk_warn_free_gb: Some(50),
             disk_fail_free_gb: Some(10),
+            ssh_agent_pipe: Some(r"  \\.\pipe\pageant.alice  ".to_owned()),
         },
         tools: GlobalTools { mise: Some(false) },
     }
@@ -297,6 +322,7 @@ fn global_request_sets_vscode_options() {
     assert!(!g.ui.notify_low_disk_space());
     let lines = g.ui.disk_limits();
     assert_eq!((lines.warn().gb(), lines.fail().gb()), (50, 10));
+    assert_eq!(g.ui.ssh_agent_pipe(), Some(r"\\.\pipe\pageant.alice"));
     assert!(g.vscode_server.telemetry());
     assert!(!g.vscode_server.auto_update());
     assert!(!g.tools.mise());

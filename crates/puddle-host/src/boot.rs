@@ -15,7 +15,7 @@ use puddle_certs::devcert::GuestDevCert;
 use puddle_certs::{CorporateRoots, GuestTrust};
 use puddle_compute::{DiskSize, FileMount, ImageConfig, OwnedDisk, SandboxSpec, VsockRoute};
 use puddle_guest_env::{ProxySettings, guest_proxy_config, ssh_known_hosts_file};
-use puddle_ipc::IpcRoot;
+use puddle_ipc::{IpcError, IpcRoot};
 use puddle_proxy::{Proxy, Route};
 use puddle_store::Store;
 use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId};
@@ -25,6 +25,26 @@ use crate::dev_cert::GuestCertSource;
 use crate::git_hosts::{Authors, SshListing};
 use crate::shell_init::{self, Copies};
 use crate::{GuestSettings, HostError};
+
+/// Why a sandbox's boot inputs could not be made. The messages are for the user.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum BootInputError {
+    /// The egress route's endpoint could not be opened.
+    #[error(transparent)]
+    Route(#[from] IpcError),
+    /// The session user's home is not a guest path.
+    #[error(transparent)]
+    Home(#[from] puddle_types::ValidationError),
+    /// A guest file could not be rendered.
+    #[error(transparent)]
+    GuestFiles(#[from] puddle_guest_env::ConfigError),
+    /// The boot plan is refused.
+    #[error(transparent)]
+    Plan(#[from] puddle_boot::PlanError),
+    /// The workspace's folders could not be worked out.
+    #[error(transparent)]
+    Layout(#[from] puddle_workspace::WorkspaceError),
+}
 
 /// The guest vsock port the agent connects to; the route of every sandbox listens behind it.
 pub(crate) const AGENT_ROUTE_PORT: u32 = 5000;
@@ -202,8 +222,8 @@ impl BootKit {
 
     /// Starts the egress route of `sandbox`: a fresh owner-only endpoint served by the shared
     /// proxy. It lives as long as the returned [`Route`].
-    pub(crate) fn route(&self, workspace: &WorkspaceId) -> Result<Route, String> {
-        let listener = self.ipc.listen().map_err(|e| e.to_string())?;
+    pub(crate) fn route(&self, workspace: &WorkspaceId) -> Result<Route, BootInputError> {
+        let listener = self.ipc.listen()?;
         Ok(self.proxy.serve_route(listener, workspace.clone()))
     }
 
@@ -213,7 +233,7 @@ impl BootKit {
         &self,
         image: &ImageConfig,
         guest: &GuestInputs<'_>,
-    ) -> Result<(BootPlan, GuestEnv), String> {
+    ) -> Result<(BootPlan, GuestEnv), BootInputError> {
         // The user's variables count as the image's here, so the few that Puddle adds to (not
         // replaces) keep the user's value and the files that follow `GRADLE_USER_HOME` and
         // `DOCKER_CONFIG` land where the user pointed them.
@@ -223,14 +243,13 @@ impl BootKit {
         let ssh_agent = guest
             .ssh_agent
             .then(|| GuestPath::new(GUEST_SSH_AGENT_SOCKET))
-            .transpose()
-            .map_err(|e| e.to_string())?;
+            .transpose()?;
         let settings = ProxySettings {
-            home: GuestPath::new(user.home()).map_err(|e| e.to_string())?,
+            home: GuestPath::new(user.home())?,
             ssh_agent: ssh_agent.clone(),
             ..ProxySettings::default()
         };
-        let proxy = guest_proxy_config(&settings, &image_env).map_err(|e| e.to_string())?;
+        let proxy = guest_proxy_config(&settings, &image_env)?;
         let mut trust =
             GuestTrust::new(&self.roots, &TrustBundle::new().with(guest.ca.clone())).for_user(user);
         if let Some(dev) = guest.dev_cert {
@@ -253,7 +272,7 @@ impl BootKit {
             builder = builder.file(file.clone());
         }
         if let Some(lines) = guest.ssh.and_then(SshListing::lines) {
-            builder = builder.file(ssh_known_hosts_file(&lines).map_err(|e| e.to_string())?);
+            builder = builder.file(ssh_known_hosts_file(&lines)?);
         }
         for step in trust.boot_steps() {
             builder = builder.step(step);
@@ -275,7 +294,7 @@ impl BootKit {
                 .agent_env("PUDDLE_AGENT_SSH_AGENT", socket.as_str())
                 .agent_env("PUDDLE_AGENT_SSH_AGENT_USER", user.name());
         }
-        let plan = builder.build().map_err(|e| e.to_string())?;
+        let plan = builder.build()?;
         Ok((plan, env))
     }
 
@@ -311,12 +330,12 @@ impl BootKit {
         id: &WorkspaceId,
         grace_secs: u32,
         kind: ServerKind,
-    ) -> Result<Option<EditorServer>, String> {
+    ) -> Result<Option<EditorServer>, BootInputError> {
         if self.code_server.is_none() && kind == ServerKind::CodeServer {
             return Ok(None);
         }
-        let layout = Layout::new(id).map_err(|e| e.to_string())?;
-        let data = layout.puddle_dir().map_err(|e| e.to_string())?;
+        let layout = Layout::new(id)?;
+        let data = layout.puddle_dir()?;
         let mount = layout.mount().to_string();
         let mut server = match kind {
             ServerKind::CodeServer => {

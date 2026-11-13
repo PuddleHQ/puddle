@@ -1,0 +1,96 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed, under crates/puddle-app/.
+# Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
+# path glob here starts with crates/puddle-app/; the gate refuses another crate's entry, so two pull requests that
+# touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-app/src/backend.rs | None => HostConfig::installed_for_user(&exe)?, | the per-user data folder, which a test must never lock or write; tests pass their own folder, and `HostConfig::installed_for_user` runs in `puddle serve`'s tests
+crates/puddle-app/src/backend.rs | Some(record.label().to_owned()) | the label of a workspace the host has needs a created workspace, whose creation clones a repository (the host's tests, `fake_host`, do that); here the closure is run for a workspace the host lacks and after it stopped, and the display name itself is tested on the record
+crates/puddle-app/src/desktop.rs | .map(\|bundled\| bundled.clone().to_owned()) | bundled| bundled.clone().to_owned()) | see above
+crates/puddle-app/src/desktop.rs | .map(\|bundled\| bundled.clone().to_owned())\n}); | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | Err(err) => tracing::debug!(%err, "the app icon read did not finish"), | the blocking task being cancelled or panicking
+crates/puddle-app/src/desktop.rs | Err(err) => tracing::debug!(%err, "the settings read did not finish"), | a blocking read that panics or is cancelled; the runtime does not do that in a test
+crates/puddle-app/src/desktop.rs | Ok(rows) => OpenRequests::of(rows.into_iter().map(\|r\| r.id.0)),\nErr(err) => { | the failed store read of `open_requests` (see its warning above)
+crates/puddle-app/src/desktop.rs | OpenRequests::default() | the same failed read (the empty count after the warning)
+crates/puddle-app/src/desktop.rs | WindowEvent::CloseRequested { api, .. } => { | the same real-window event routing (see `on_window_event`)
+crates/puddle-app/src/desktop.rs | WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) => { | the same real-window event routing
+crates/puddle-app/src/desktop.rs | api.prevent_close(); | the same real-window event routing: only a real close request has an API to call
+crates/puddle-app/src/desktop.rs | api.prevent_close();\n} | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | app.default_window_icon() | the fallback when the chosen icon cannot be drawn at all, which no input produces
+crates/puddle-app/src/desktop.rs | app.on_menu_event(\|app, event\| { | app, event| { | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | app.set_menu(menu)?; | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | buttons.on_minimize(window); | the same real-window event routing
+crates/puddle-app/src/desktop.rs | buttons.on_minimize(window);\n} | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | buttons.on_minimize(window);\n}\n_ => {} | the real-window event routing of `on_window_event` (see above)
+crates/puddle-app/src/desktop.rs | buttons.on_minimize(window);\n}\n_ => {}\n}\n} | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | fn on_window_event<R: Runtime>(window: &WebviewWindow<R>, event: &WindowEvent, buttons: &Buttons) { | the window system hands events to this only in a real window; the mock runtime never raises them. The decisions are `Buttons::on_close` and `on_minimize`, tested directly, and the Windows smoke test closes a real window
+crates/puddle-app/src/desktop.rs | fn on_window_event<R: Runtime>(window: &WebviewWindow<R>, event: &WindowEvent, buttons: &Buttons) {\nmatch event { | the real-window event routing of `on_window_event` (see above)
+crates/puddle-app/src/desktop.rs | if buttons.on_close(window) { | the same real-window event routing
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT { | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\nquit_shortcut::pressed(app); | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\nquit_shortcut::pressed(app);\n} | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | if event.id().as_ref() == MENU_QUIT {\nquit_shortcut::pressed(app);\n}\n}); | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | if let Some(window) = app.get_webview_window(MAIN_LABEL) { | x2 | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | let menu = Menu::with_items(app, &[&Submenu::with_items(app, "Puddle", true, &[&quit])?])?; | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | let quit = MenuItem::with_id(app, MENU_QUIT, "Quit Puddle", true, Some("CmdOrCtrl+Q"))?; | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | let tray_state = if tray.is_some() {\nTrayState::Shown | the tray exists only in a real desktop session (see `Tray::build`)
+crates/puddle-app/src/desktop.rs | pub fn install_quit_shortcut<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> { | the application menu needs the real window system (GTK on Linux needs a display, the mock runtime has no menus); Windows smoke test and a hands-on check cover it
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "a click on a notification will not open the inbox"); | the notification plugin refusing a handler, which it never does on desktop
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "could not count the waiting requests"); | a store that fails to read open requests; the in-memory store of a test does not
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "could not open the inbox from a notification"); | the failure of a window's own navigation call, which the mock runtime never reports
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "the window did not step aside for a start at sign-in"); | the window system refusing to hide or minimize the window: the mock window never refuses (a destroyed one still answers Ok)
+crates/puddle-app/src/desktop.rs | tracing::warn!(%err, "the window did not take the app icon"); | the window system refusing an icon; the test runtime accepts every one
+crates/puddle-app/src/desktop.rs | tray.set_app_icon(picture); | needs a real tray, which needs a display and a tray host; `tray.rs` tests `set_app_icon` on a virtual display
+crates/puddle-app/src/desktop.rs | tray.show(count, badge_on); | the tray icon needs a display and a tray host (GTK on Linux); it is built and updated only in a real session
+crates/puddle-app/src/desktop.rs | window.hide_menu()?; | the application menu (see `install_quit_shortcut`)
+crates/puddle-app/src/desktop.rs | window.hide_menu()?;\n} | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/desktop.rs | window.hide_menu()?;\n}\nOk(()) | the end of `install_quit_shortcut`, which needs the real window system
+crates/puddle-app/src/desktop.rs | window.hide_menu()?;\n}\nOk(())\n} | closing lines of the excluded real-window routing and application menu above
+crates/puddle-app/src/notify.rs | .body(&notice.body); | the same notification service call
+crates/puddle-app/src/notify.rs | .notification()\n.builder() | the same notification service call
+crates/puddle-app/src/notify.rs | .title(&notice.title) | the same notification service call
+crates/puddle-app/src/notify.rs | builder = builder.extra(REQUEST_EXTRA, id); | the same notification service call
+crates/puddle-app/src/notify.rs | builder = builder.extra(REQUEST_EXTRA, id);\n} | closing lines of `show`'s refused-notice branch above
+crates/puddle-app/src/notify.rs | builder = builder.extra(REQUEST_EXTRA, id);\n}\nif sound { | the same notification service call
+crates/puddle-app/src/notify.rs | builder = builder.sound(SOUND); | the same notification service call
+crates/puddle-app/src/notify.rs | builder = builder.sound(SOUND);\n} | closing lines of `show`'s refused-notice branch above
+crates/puddle-app/src/notify.rs | if let Err(err) = builder.show() { | the same notification service call
+crates/puddle-app/src/notify.rs | if let Some(id) = notice.request { | the same notification service call
+crates/puddle-app/src/notify.rs | let mut builder = app | the same notification service call (see `show`)
+crates/puddle-app/src/notify.rs | let mut builder = app\n.notification() | the same notification service call
+crates/puddle-app/src/notify.rs | pub fn show<R: Runtime>(app: &AppHandle<R>, notice: &Notice, sound: bool) { | hands a notice to the operating system's notification service (D-Bus on Linux, toasts on Windows): a test would pop a real notification on a developer's desktop
+crates/puddle-app/src/notify.rs | tracing::warn!(%err, "could not show a notification"); | the operating system's notification service refusing a notice: a test would pop a real notification on a developer's desktop, and cannot make it refuse
+crates/puddle-app/src/notify.rs | tracing::warn!(%err, "could not show a notification");\n} | closing lines of `show`'s refused-notice branch above
+crates/puddle-app/src/notify.rs | tracing::warn!(%err, "could not show a notification");\n}\n} | closing lines of `show`'s refused-notice branch above
+crates/puddle-app/src/quit_shortcut.rs | * | the quit question in the operating system's own dialog needs the real window system, which the test runtime lacks; the question text and the answers are tested in `desktop::tests`, and the Windows job (`e2e/terminal-keys.mjs`, sessions 2 and 3) shows the dialog on a real WebView2
+crates/puddle-app/src/sandbox_window.rs | Some(features) => builder.window_features(features), | needs the opener's webview, which only a real webview gives (NewWindowFeatures cannot be built without one); the WebView2 attack test opens such a window
+crates/puddle-app/src/sandbox_window.rs | this.new_window(&app_for_popups, &popup_target, &url, Some(features)) | the callback a real webview calls for window.open, which the mock window system never does; the function it calls is tested directly and the WebView2 attack test runs the callback
+crates/puddle-app/src/sandbox_window.rs | this.new_window(&app_for_popups, &popup_target, &url, Some(features))\n}); | the closing line of the callback listed just above it; the reason there applies
+crates/puddle-app/src/sandbox_window.rs | tracing::warn!(%err, "the editor's session could not be set; its login page shows"); | the webview refusing a cookie: the mock window system always accepts it and a real webview is not driven by a unit test; the line only logs
+crates/puddle-app/src/sandbox_window/signin/tests.rs | .serve_connection(TokioIo::new(stream), service)\n.await;\n}); | the end of the test editor's task: the test finishes and drops its runtime while the connection is still open, so the task never reaches its closing line
+crates/puddle-app/src/shell.rs | app.opener().open_url(address, None::<&str>) | the real opener plugin call: a test would launch the machine's default browser; the failure and success handling around it is tested in links.rs
+crates/puddle-app/src/shell.rs | app.opener().open_url(address, None::<&str>)\n}); | the end of the click-time opener closure listed above; it runs only in a real webview
+crates/puddle-app/src/shell.rs | app.opener().open_url(address, None::<&str>)\n});\n}) | closing lines of the `run` statements listed above
+crates/puddle-app/src/shell.rs | crash::install(folder.join(crash::FOLDER)); | `run` drives the real window system's event loop, which a test process cannot start; `crash::install` has its own test program (tests/crash_hook.rs)
+crates/puddle-app/src/shell.rs | crash::install(folder.join(crash::FOLDER));\n} | closing lines of the `run` statements listed above
+crates/puddle-app/src/shell.rs | if let Err(err) = desktop::install_quit_shortcut(app.handle()) { | `run` drives the real window system's event loop, which a test process cannot start; the Ctrl+Q menu is covered by the Windows smoke test and a hands-on check
+crates/puddle-app/src/shell.rs | if let Some(folder) = data_folder(options) { | `run` drives the real window system's event loop, which a test process cannot start; `crash::install` has its own test program
+crates/puddle-app/src/shell.rs | init_logging_from_env(); | the call in `run`, which drives the real window system's event loop that a test process cannot start (`init_logging_from_env` has its own test); `init_logging` and `log_targets` are tested in shell.rs
+crates/puddle-app/src/shell.rs | let _ = stop(handle); | `run` drives the real window system's event loop, which a test process cannot start; the steps it chains are tested on the mock runtime (shell.rs, tests/host_backend.rs) and the program by the Windows smoke test on both backends
+crates/puddle-app/src/shell.rs | let _ = stop(handle);\n} | closing lines of the `run` statements listed above
+crates/puddle-app/src/shell.rs | let _ = stop(handle);\n}\n}); | the end of the click-time opener closure listed above; it runs only in a real webview
+crates/puddle-app/src/shell.rs | let _ = stop(handle);\n}\n});\nOk(())\n} | closing lines of the `run` statements listed above
+crates/puddle-app/src/shell.rs | let source = Source::prepare(options, &SystemPlatform::new().with_dev_override_from_env()); | `run` drives the real window system's event loop, which a test process cannot start; the steps it chains are tested on the mock runtime (shell.rs, tests/host_backend.rs) and the program by the Windows smoke test on both backends; a test on the real machine would pin its own environment
+crates/puddle-app/src/shell.rs | links::open_and_report(&problems, url, \|address\| { | the closure runs only on a click in a real webview, and its body would start the machine's default browser; `open_and_report` is tested with a fake opener (links.rs)
+crates/puddle-app/src/shell.rs | on_second_start(app, &args); | the single-instance callback: the plugin calls it when a second copy of the program starts, which needs the real runtime and a second process; `on_second_start` is tested directly and its show-or-not decision (`bring_forward_unless_sign_in`) by counting calls, in shell.rs
+crates/puddle-app/src/shell.rs | on_second_start(app, &args);\n})); | closing lines of the `run` statements listed above
+crates/puddle-app/src/shell.rs | puddle_lifecycle::job::contain_this_process()?; | `run` drives the real window system's event loop, which a test process cannot start; the steps it chains are tested on the mock runtime (shell.rs, tests/host_backend.rs) and the program by the Windows smoke test on both backends
+crates/puddle-app/src/shell.rs | puddle_no_dump::harden_from_env().log(); | the call in `run`, which drives the real window system's event loop that a test process cannot start; `harden_from_env` and `Outcome::log` are tested in puddle-no-dump
+crates/puddle-app/src/shell.rs | start(app.handle(), &options, source)?; | `run` drives the real window system's event loop, which a test process cannot start; the steps it chains are tested on the mock runtime (shell.rs, tests/host_backend.rs) and the program by the Windows smoke test on both backends
+crates/puddle-app/src/shell.rs | tauri::Builder::default().plugin(tauri_plugin_single_instance::init(\|app, args, _cwd\| { | `run` drives the real window system's event loop, which a test process cannot start; the single-instance plugin it registers is the real one (see the callback entry above)
+crates/puddle-app/src/shell.rs | tracing::warn!("{warning}"); | a quit that leaves a warning needs a machine that will not trim or stop; the warnings are `quit_warnings`'s, tested directly in shell.rs
+crates/puddle-app/src/shell.rs | tracing::warn!(%err, "Ctrl+Q will not quit"); | the same `run` path: the menu failing to install
+crates/puddle-app/src/shell.rs | tracing::warn!(%err, "Ctrl+Q will not quit");\n} | closing lines of the `run` statements listed above
+crates/puddle-app/src/shell.rs | tracing::warn!(%err, "Ctrl+Q will not quit");\n}\nOk(())\n}) | closing lines of the `run` statements listed above
+crates/puddle-app/src/tray.rs | * | the closures only a real tray raises (menu entries, a click on the icon) and the builder's error paths; the tray is built and updated for real on a virtual display in `tray` tests, and the pure parts (button matrix, icons, panic guard) are tested directly
+crates/puddle-app/src/tray.rs | made.map_err(\|err\| tracing::debug!(%err, "the tray icon was refused")) | err| tracing::debug! | the tray is only made where the probe finds a host, which the test environment has none of; `make` and `show` run on a virtual display in the tray tests
+crates/puddle-app/src/tray.rs | made.map_err(\|err\| tracing::debug!(%err, "the tray icon was refused"))\n.ok() | the Linux tray-host probe and the tray build past a tray host, which the test environment has none of
+crates/puddle-app/src/window.rs | new_window_handler(&policy, &target, &on_new_window_open, &refused); | the window system calls this on a `target="_blank"` click, which the mock runtime never raises; `new_window_handler` is tested directly

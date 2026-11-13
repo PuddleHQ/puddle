@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The diff-coverage gate (docs/STANDARDS.md, "Coverage"): every line a change adds or changes in
 // code that a coverage run measured must be executed by a test, or sit in the reviewed exclusion
-// file (scripts/diff-coverage-exclusions.txt: `path glob | whole line, or * | [xN |] reason`).
+// file (scripts/diff-coverage-exclusions/<crate>.txt: `path glob | whole line, or * | [xN |] reason`).
 //
 // How an exclusion matches (a pass must not hide a later untested line of the same shape):
 // - The text is a whole line, compared trimmed, never a part of one. Several lines are joined with
@@ -28,8 +28,8 @@
 // - Untracked files: `git diff` only sees tracked ones, so `git add -N <file>` before running by hand.
 // - A covered line is not an asserted line: it says a test ran it, not that a test checked it.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { runCli } from "./cli.ts";
 
 /** Execution counts per line, per repository-relative path. */
@@ -312,8 +312,42 @@ export function judge(
   return report;
 }
 
-/** The exclusion file as a gate reads it: sorted, and every entry valid. */
-export function readExclusions(file: string): Exclusion[] {
+/**
+ * The exclusion entries as a gate reads them, from a file or from a folder. A file is sorted and every
+ * entry valid. A folder holds one `<name>.txt` per crate (`ui.txt` for the SPA): each file is checked
+ * like a file, and every path glob in it must start with its own prefix (`crates/<name>/`, `ui/`), so
+ * two pull requests that touch different crates edit different files and never conflict.
+ */
+export function readExclusions(path: string): Exclusion[] {
+  if (!statSync(path).isDirectory()) return readExclusionFile(path);
+  const out: Exclusion[] = [];
+  for (const name of readdirSync(path)
+    .filter((n) => n.endsWith(".txt"))
+    .sort()) {
+    const file = join(path, name);
+    try {
+      const entries = readExclusionFile(file);
+      const prefix = exclusionPrefix(name.slice(0, -".txt".length));
+      const stray = entries.find((e) => !e.glob.startsWith(prefix));
+      if (stray) {
+        throw new Error(
+          `"${stray.glob}" is not under ${prefix}: put the entry in the file of its own crate`,
+        );
+      }
+      out.push(...entries);
+    } catch (e) {
+      throw new Error(`${file}: ${(e as Error).message}`, { cause: e });
+    }
+  }
+  return out;
+}
+
+/** The path prefix every glob of the folder's `<stem>.txt` starts with. */
+export function exclusionPrefix(stem: string): string {
+  return stem === "ui" ? "ui/" : `crates/${stem}/`;
+}
+
+function readExclusionFile(file: string): Exclusion[] {
   const text = readFileSync(file, "utf8");
   const bad = exclusionOrderError(text);
   if (bad) throw new Error(bad);

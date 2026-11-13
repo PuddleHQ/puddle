@@ -44,3 +44,73 @@ fn only_would_block_and_timed_out_become_a_timeout() {
         );
     }
 }
+
+/// On Windows a pipe read cannot be cancelled, so a request whose caller gave up stays parked; a
+/// second request to that endpoint must not park another thread and handle behind it.
+#[test]
+fn no_second_request_goes_to_an_endpoint_that_has_a_parked_one() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("locked.sock");
+    let _listener = UnixListener::bind(&path).unwrap();
+    let endpoint = AgentEndpoint::at(&path);
+    let limit = Duration::from_millis(100);
+    let sent = Arc::new(AtomicUsize::new(0));
+    let (open, gate) = mpsc::channel::<()>();
+    let gate = Arc::new(Mutex::new(gate));
+    let request =
+        |sent: &Arc<AtomicUsize>, gate: &Arc<Mutex<mpsc::Receiver<()>>>| -> Exchange<()> {
+            let (sent, gate) = (sent.clone(), gate.clone());
+            Box::new(move |_stream| {
+                sent.fetch_add(1, Ordering::SeqCst);
+                // Parked like a pipe read: only the agent answering (the gate) ends it.
+                let _ = gate.lock().unwrap().recv();
+                Ok(())
+            })
+        };
+
+    let first = within_gated(&endpoint, limit, request(&sent, &gate), true);
+    assert!(
+        matches!(first, Err(AgentError::TimedOut(l)) if l == limit),
+        "{first:?}"
+    );
+    assert!(parked::is_parked(endpoint.path()));
+
+    let second = within_gated(&endpoint, limit, request(&sent, &gate), true);
+    assert!(
+        matches!(second, Err(AgentError::TimedOut(l)) if l == limit),
+        "{second:?}"
+    );
+    assert_eq!(
+        sent.load(Ordering::SeqCst),
+        1,
+        "the second request was sent"
+    );
+
+    // Without the gate (a Unix socket) every request goes out.
+    let ungated = within_gated(&endpoint, limit, request(&sent, &gate), false);
+    assert!(
+        matches!(ungated, Err(AgentError::TimedOut(_))),
+        "{ungated:?}"
+    );
+    assert_eq!(sent.load(Ordering::SeqCst), 2);
+
+    // The agent answers: both parked threads end and the endpoint takes requests again.
+    open.send(()).unwrap();
+    open.send(()).unwrap();
+    puddle_test_kit::eventually_blocking(
+        "the endpoint stops being parked",
+        Duration::from_secs(10),
+        || !parked::is_parked(endpoint.path()),
+    );
+    open.send(()).unwrap();
+    let third = within_gated(
+        &endpoint,
+        Duration::from_secs(10),
+        request(&sent, &gate),
+        true,
+    );
+    assert!(third.is_ok(), "{third:?}");
+    assert_eq!(sent.load(Ordering::SeqCst), 3);
+}

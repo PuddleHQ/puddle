@@ -373,10 +373,11 @@ impl FileVault {
         tmp_name.push(".tmp");
         let tmp = PathBuf::from(tmp_name);
         // A leftover from a crash is ours and holds only ciphertext.
-        match fs::remove_file(&tmp) {
-            Ok(()) => {}
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(_) => return Err(VaultError::Io),
+        if fs::remove_file(&tmp)
+            .err()
+            .is_some_and(|err| err.kind() != io::ErrorKind::NotFound)
+        {
+            return Err(VaultError::Io);
         }
         let written = (|| {
             let mut file = puddle_fs::private::create_file(&tmp)?;
@@ -395,8 +396,9 @@ impl FileVault {
             fs::rename(tmp, &self.path)
         };
         renamed.map_err(|_| discard(tmp))?;
-        sync_folder(&self.path);
-        Ok(())
+        // The new content is in place; a folder that cannot be synced leaves it not known to survive
+        // a power cut, which the caller must hear.
+        sync_folder(&self.path).map_err(|_| VaultError::Io)
     }
 
     fn aad(&self, id: &str) -> Vec<u8> {
@@ -489,17 +491,17 @@ fn fresh_nonce() -> Result<[u8; NONCE_LEN], VaultError> {
 }
 
 /// Makes the rename itself durable. Windows has no folder to sync.
-fn sync_folder(path: &Path) {
-    #[cfg(unix)]
-    if let Some(dir) = path
+#[cfg(unix)]
+fn sync_folder(path: &Path) -> io::Result<()> {
+    let dir = path
         .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .and_then(|dir| fs::File::open(dir).ok())
-    {
-        let _ = dir.sync_all();
-    }
-    #[cfg(not(unix))]
-    let _ = path;
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+    fs::File::open(dir)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_folder(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// A cursor over the file's bytes that refuses to run past the end.

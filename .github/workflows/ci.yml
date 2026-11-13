@@ -343,28 +343,19 @@ jobs:
         id: git-env
         if: ${{ !cancelled() && needs.scope.outputs.light != 'true' }}
         run: scripts/check.sh git-env
-      # The secret-store contract suite on a real Secret Service. The coverage run below has no
-      # keyring, so there the operating-system case skips; this step makes it fail instead of skip.
-      # A throwaway session bus, gnome-keyring started with its login keyring unlocked from stdin
-      # (how a headless Linux install unlocks it), then the one test binary.
+      # A real Secret Service for the secret-store tests (ci/with-keyring.sh). With the packages installed
+      # but no unlocked keyring, those tests would find a Secret Service and fail on its first write.
+      - name: install the keyring packages
+        if: ${{ !cancelled() }}
+        run: ci/apt-retry.sh sudo apt-get install -y --no-install-recommends gnome-keyring dbus
+      # The contract suite alone, first, so a keyring problem fails fast and by name; the coverage run
+      # below runs it again together with every other test that uses the operating-system store.
       - name: secret-store contract on the real keyring (gnome-keyring under dbus-run-session)
         if: ${{ !cancelled() }}
         timeout-minutes: 15
         env:
           PUDDLE_REQUIRE_OS_CREDENTIAL_STORE: "1"
-        run: |
-          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends gnome-keyring dbus
-          # Order matters (measured): `--login` first makes and unlocks login.keyring and prints the
-          # control socket; `--start` then claims org.freedesktop.secrets on the bus in front of that
-          # same daemon. Started the other way round, or with `--login --daemonize` alone, the bus
-          # activates a second, locked daemon and every write fails.
-          dbus-run-session -- sh -c '
-            set -eu
-            eval "$(printf %s "ci-keyring-password" | gnome-keyring-daemon --login --components=secrets)"
-            export GNOME_KEYRING_CONTROL
-            eval "$(gnome-keyring-daemon --start --components=secrets)"
-            cargo test --locked -p puddle-secrets --test store_contract -- --nocapture
-          '
+        run: ci/with-keyring.sh cargo test --locked -p puddle-secrets --test store_contract -- --nocapture
       - name: tests with coverage gate
         if: ${{ !cancelled() }}
         env:
@@ -382,13 +373,14 @@ jobs:
           PUDDLE_REQUIRE_VSOCK: "1"
           PUDDLE_REQUIRE_BUSYBOX: "1"
           PUDDLE_REQUIRE_NON_ROOT: "1"
+          PUDDLE_REQUIRE_OS_CREDENTIAL_STORE: "1"
         run: |
           # The guard logs free space during the build and tests and, under 5 GB, stops cargo and the tests with the
           # sizes in the job summary, so a filling runner ends the job readable.
           ci/disk-watch.sh guard coverage &
           guard=$!
           trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
-          scripts/check.sh coverage
+          ci/with-keyring.sh scripts/check.sh coverage
           {
             echo '### Coverage'
             echo '```'

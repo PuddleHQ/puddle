@@ -330,8 +330,10 @@ fn a_generated_key_is_random_and_each_source_tag_has_a_name() {
         KeySourceTag::KeyFile,
     ] {
         assert_eq!(KeySourceTag::from_byte(tag.byte()), Some(tag));
-        assert_ne!(tag.as_str(), "");
     }
+    assert_eq!(KeySourceTag::SystemdHost.as_str(), "systemd-host");
+    assert_eq!(KeySourceTag::SystemdHostTpm2.as_str(), "systemd-host-tpm2");
+    assert_eq!(KeySourceTag::KeyFile.as_str(), "key-file");
     assert_eq!(KeySourceTag::from_byte(0), None);
 }
 
@@ -415,4 +417,41 @@ fn an_empty_path_is_an_io_error() {
         FileVault::open(Path::new(""), key(1)).err(),
         Some(VaultError::Io)
     );
+}
+
+#[test]
+fn a_key_check_that_opens_under_the_key_but_says_something_else_is_a_wrong_key() {
+    let (_dir, path, vault) = three();
+    let mut bytes = fs::read(&path).unwrap();
+    let tag = bytes[5];
+    let vault_id: [u8; ID_LEN] = bytes[6..6 + ID_LEN].try_into().unwrap();
+    let nonce_at = 6 + ID_LEN;
+    let nonce: [u8; NONCE_LEN] = bytes[nonce_at..nonce_at + NONCE_LEN].try_into().unwrap();
+    // A genuine seal under the right key and header, of a different fixed text: what another
+    // program version would write.
+    let mut other = b"Puddle vault key check, version2".to_vec();
+    assert_eq!(other.len(), CHECK_TEXT.len());
+    vault
+        .key
+        .cipher()
+        .encrypt_in_place(&Nonce::from(nonce), &check_aad(tag, &vault_id), &mut other)
+        .unwrap();
+    let check_at = nonce_at + NONCE_LEN;
+    bytes[check_at..check_at + other.len()].copy_from_slice(&other);
+    fs::write(&path, &bytes).unwrap();
+    assert_eq!(
+        FileVault::open(&path, key(1)).err(),
+        Some(VaultError::WrongKey)
+    );
+}
+
+#[test]
+fn syncing_the_folder_of_a_vault_works_and_a_missing_folder_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(sync_folder(&dir.path().join("vault")).is_ok());
+    #[cfg(unix)]
+    {
+        assert!(sync_folder(&dir.path().join("gone").join("vault")).is_err());
+        assert!(sync_folder(Path::new("/")).is_err());
+    }
 }

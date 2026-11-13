@@ -42,6 +42,7 @@ mod repository_hosts;
 mod request_rules;
 mod rule_sets;
 mod shell_init;
+mod ssh_agent;
 mod start_folder;
 mod workspaces;
 
@@ -99,6 +100,7 @@ pub use rule_sets::{
     SystemReason,
 };
 pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};
+pub use ssh_agent::{SshAgentHostRequest, SshAgentHostView, SshAgentView};
 pub use start_folder::{StartFolderRequest, StartFolderSet};
 
 pub use workspaces::{

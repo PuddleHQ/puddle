@@ -3,3 +3,4 @@
 # path glob here starts with crates/puddle-boot/; the gate refuses another crate's entry, so two pull requests that
 # touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
 crates/puddle-boot/src/plan.rs | reason: e.to_string(), | the machine settings spec cannot fail to build: its keys are fixed and disjoint, so the error is passed on but no input reaches it
+crates/puddle-boot/src/plan.rs | reason: e.to_string(),\n})?; | the machine settings spec cannot fail to build: its keys are fixed and disjoint, so the error is passed on but no input reaches it

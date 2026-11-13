@@ -3,3 +3,4 @@
 # path glob here starts with crates/puddle-doctor/; the gate refuses another crate's entry, so two pull requests that
 # touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
 crates/puddle-doctor/src/system.rs | reason: e.to_string(), | the default data folder is the real one of the machine running the test and always exists there; the tests pass a data folder
+crates/puddle-doctor/src/system.rs | reason: e.to_string(),\n})?, | the default data folder is the real one of the machine running the test and always exists there; the tests pass a data folder

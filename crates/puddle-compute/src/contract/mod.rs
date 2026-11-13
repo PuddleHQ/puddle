@@ -416,20 +416,14 @@ pub const SMOKE_CHECKS: [SmokeCheck; 57] = [
         "puddle-e2e/tests/integration/proxy_agent_store.rs",
         "denied host gets 403 through the route",
     ),
-    elsewhere(
+    case(
         "net.direct_egress_blocked",
-        VM_MSB,
-        "direct DNS fails in the guest",
+        "hg01_guest_has_no_direct_network",
     ),
-    elsewhere(
-        "net.direct_ip_blocked",
-        VM_MSB,
-        "direct IP fails in the guest",
-    ),
-    elsewhere(
+    case("net.direct_ip_blocked", "hg01_guest_has_no_direct_network"),
+    case(
         "net.unrouted_vsock_port_unreachable",
-        VM_MSB,
-        "only routed vsock ports accept",
+        "hg02_only_the_routed_vsock_port_accepts",
     ),
     case("mount_file.readonly", "file_mount_is_read_only"),
     elsewhere("volume.ext4", VM_MSB, "named volume is ext4 in the guest"),
@@ -555,12 +549,16 @@ macro_rules! contract_tests {
             named_volume_survives_restart_and_remove,
             volume_capacity_reads_back,
             second_attach_is_refused_naming_the_holder,
-            failed_create_leaves_a_stale_dir_unless_fixed,
+            failed_create_leaves_no_stale_dir,
             missing_volume_fails_create,
             ssh_server_speaks_first,
             routes_and_no_network_are_accepted,
             memory_change_applies_at_next_start,
             cpus_change_applies_at_next_start,
+            hg01_guest_has_no_direct_network,
+            hg01_raw_and_packet_sockets_reach_no_network,
+            hg02_only_the_routed_vsock_port_accepts,
+            hg02_no_other_vsock_address_accepts,
         );
     };
     (@cases $env:path; $($case:ident),* $(,)?) => {

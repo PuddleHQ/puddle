@@ -55,12 +55,35 @@ pub enum RemoteError {
         /// The domain.
         domain: String,
     },
-    /// A network listener without remote serving.
-    #[error("a network listener needs remote serving to be on")]
-    ListenerWithoutRemote,
+    /// A public host that is also a workspace's web-app name: one label below the base domain.
+    #[error(
+        "the public host {host} is one label below the workspace base domain {domain}, so a workspace of that name would share it; use a host outside the base domain or deeper than one label"
+    )]
+    PublicHostIsWorkspaceName {
+        /// The public host.
+        host: String,
+        /// The base domain.
+        domain: String,
+    },
     /// A network listener that would accept nobody.
     #[error("a network listener needs at least one allowed proxy address (`allowed_proxies`)")]
     NoAllowedProxy,
+    /// A network listener bound to the unspecified address, which is every interface.
+    #[error(
+        "the network listener's interface {interface} is the unspecified address, which binds every interface; name the one interface the proxy reaches"
+    )]
+    UnspecifiedInterface {
+        /// The address.
+        interface: IpAddr,
+    },
+    /// An allowed proxy that is the unspecified address, which no peer has.
+    #[error(
+        "the allowed proxy {proxy} is the unspecified address, which no peer has; name the proxy's own address"
+    )]
+    UnspecifiedProxy {
+        /// The address.
+        proxy: IpAddr,
+    },
 }
 
 /// One exact public authority: a host name or IP address and a port, as the browser shows it.
@@ -172,7 +195,8 @@ impl RemoteServing {
     /// # Errors
     ///
     /// [`RemoteError`] when there is no public host, the base domain is not a host name or is a
-    /// public host, or there is no base domain and the UI's host is an IP address.
+    /// public host, a public host is one label below the base domain (a workspace of that name
+    /// would share it), or there is no base domain and the UI's host is an IP address.
     pub fn new(
         public_hosts: Vec<PublicHost>,
         base_domain: Option<&str>,
@@ -200,12 +224,22 @@ impl RemoteServing {
         if base_domain.is_some() && public_hosts.iter().any(|h| h.host() == base) {
             return Err(RemoteError::BaseIsPublicHost { domain: base });
         }
+        let workspace_names = WorkspaceNames {
+            base,
+            port: ui.port,
+        };
+        if let Some(host) = public_hosts
+            .iter()
+            .find(|h| workspace_names.is_workspace_label_of(h.host()))
+        {
+            return Err(RemoteError::PublicHostIsWorkspaceName {
+                host: host.host().to_owned(),
+                domain: workspace_names.base.clone(),
+            });
+        }
         Ok(Self {
-            workspace_names: WorkspaceNames {
-                base,
-                port: ui.port,
-            },
             public_hosts,
+            workspace_names,
         })
     }
 
@@ -267,6 +301,13 @@ impl WorkspaceNames {
         (!label.is_empty() && !label.contains('.')).then(|| label.to_owned())
     }
 
+    /// Whether `name` (a DNS name without a port) is one label below the base domain.
+    fn is_workspace_label_of(&self, name: &str) -> bool {
+        name.strip_suffix(self.base.as_str())
+            .and_then(|label| label.strip_suffix('.'))
+            .is_some_and(|label| !label.is_empty() && !label.contains('.'))
+    }
+
     /// Whether `name` (a DNS name without a port) is the base domain or below it.
     #[must_use]
     pub fn covers(&self, name: &str) -> bool {
@@ -275,6 +316,45 @@ impl WorkspaceNames {
             || name
                 .strip_suffix(self.base.as_str())
                 .is_some_and(|rest| rest.ends_with('.'))
+    }
+}
+
+/// Everything remote serving turns on: the public names and, optionally, the listener for a
+/// reverse proxy on another machine. The listener is a part of it, so a listener without remote
+/// serving cannot be written down.
+#[derive(Debug, Clone)]
+pub struct Remote {
+    serving: RemoteServing,
+    network: Option<NetworkListener>,
+}
+
+impl Remote {
+    /// Remote serving for a reverse proxy on this machine.
+    #[must_use]
+    pub fn new(serving: RemoteServing) -> Self {
+        Self {
+            serving,
+            network: None,
+        }
+    }
+
+    /// Adds the listener for a reverse proxy on another machine.
+    #[must_use]
+    pub fn with_network_listener(mut self, network: NetworkListener) -> Self {
+        self.network = Some(network);
+        self
+    }
+
+    /// The public names and the workspace base domain.
+    #[must_use]
+    pub fn serving(&self) -> &RemoteServing {
+        &self.serving
+    }
+
+    /// The listener for a reverse proxy on another machine, when there is one.
+    #[must_use]
+    pub fn network_listener(&self) -> Option<&NetworkListener> {
+        self.network.as_ref()
     }
 }
 
@@ -324,31 +404,94 @@ impl fmt::Debug for TlsIdentity {
     }
 }
 
-/// The opt-in listener for a reverse proxy on another machine: one chosen interface, TLS, and
-/// only the listed peer addresses (checked at accept, before the handshake).
-#[derive(Debug, Clone)]
-pub struct NetworkListener {
-    /// The interface address to bind.
-    pub interface: IpAddr,
-    /// The port; 0 lets the system pick one.
-    pub port: u16,
-    /// The proxy addresses that may connect.
-    pub allowed_proxies: Vec<IpAddr>,
-    /// The certificate the listener presents.
-    pub tls: TlsIdentity,
+/// Where the listener for a reverse proxy on another machine binds and whom it admits: one
+/// chosen interface and the listed peer addresses (checked at accept, before the handshake).
+/// Only [`NetworkEndpoint::new`] makes one, so the unspecified address (every interface, or a
+/// peer nobody has) and an empty peer list cannot exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkEndpoint {
+    interface: IpAddr,
+    port: u16,
+    allowed_proxies: Vec<IpAddr>,
 }
 
-impl NetworkListener {
-    /// Checks the listener's own settings.
+impl NetworkEndpoint {
+    /// The listener's interface, port and the proxy addresses that may connect. A `port` of 0
+    /// lets the system pick one.
     ///
     /// # Errors
     ///
-    /// [`RemoteError::NoAllowedProxy`] when no proxy may connect.
-    pub fn check(&self) -> Result<(), RemoteError> {
-        if self.allowed_proxies.is_empty() {
+    /// [`RemoteError::UnspecifiedInterface`] for `0.0.0.0` or `::` (also as a mapped IPv4
+    /// address), [`RemoteError::NoAllowedProxy`] for an empty list and
+    /// [`RemoteError::UnspecifiedProxy`] for an unspecified address in it.
+    pub fn new(
+        interface: IpAddr,
+        port: u16,
+        allowed_proxies: Vec<IpAddr>,
+    ) -> Result<Self, RemoteError> {
+        if interface.to_canonical().is_unspecified() {
+            return Err(RemoteError::UnspecifiedInterface { interface });
+        }
+        if allowed_proxies.is_empty() {
             return Err(RemoteError::NoAllowedProxy);
         }
-        Ok(())
+        if let Some(proxy) = allowed_proxies
+            .iter()
+            .find(|p| p.to_canonical().is_unspecified())
+        {
+            return Err(RemoteError::UnspecifiedProxy { proxy: *proxy });
+        }
+        Ok(Self {
+            interface,
+            port,
+            allowed_proxies,
+        })
+    }
+
+    /// The interface address to bind.
+    #[must_use]
+    pub fn interface(&self) -> IpAddr {
+        self.interface
+    }
+
+    /// The port; 0 lets the system pick one.
+    #[must_use]
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// The proxy addresses that may connect.
+    #[must_use]
+    pub fn allowed_proxies(&self) -> &[IpAddr] {
+        &self.allowed_proxies
+    }
+}
+
+/// The opt-in listener for a reverse proxy on another machine: a valid [`NetworkEndpoint`] and
+/// the certificate it presents over TLS.
+#[derive(Debug, Clone)]
+pub struct NetworkListener {
+    endpoint: NetworkEndpoint,
+    tls: TlsIdentity,
+}
+
+impl NetworkListener {
+    /// The listener for `endpoint`, presenting `tls`.
+    #[must_use]
+    pub fn new(endpoint: NetworkEndpoint, tls: TlsIdentity) -> Self {
+        Self { endpoint, tls }
+    }
+
+    /// Where it binds and whom it admits.
+    #[must_use]
+    pub fn endpoint(&self) -> &NetworkEndpoint {
+        &self.endpoint
+    }
+
+    /// The certificate it presents.
+    #[must_use]
+    pub fn tls(&self) -> &TlsIdentity {
+        &self.tls
     }
 }
 

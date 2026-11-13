@@ -1192,11 +1192,6 @@ async fn without_accounts_the_routes_answer_unavailable() {
 /// A terminal's WebSocket made for a signed-in browser closes when that browser is signed out.
 #[tokio::test]
 async fn signing_a_device_out_closes_its_open_terminal() {
-    use futures_util::StreamExt as _;
-    use tokio_tungstenite::tungstenite::Message;
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
-    use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
-
     let mut config = ApiConfig::default();
     config.remote = Some(Remote::new(
         RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap(),
@@ -1246,20 +1241,13 @@ async fn signing_a_device_out_closes_its_open_terminal() {
         made.json()["terminal"].as_u64().unwrap(),
         made.json()["ticket"].as_str().unwrap().to_owned(),
     );
-    let mut request = format!("ws://{}/api/workspaces/box/terminals/{terminal}", api.addr)
-        .into_client_request()
-        .unwrap();
-    request.headers_mut().insert("Host", HOST.parse().unwrap());
-    request.headers_mut().insert(
-        "Sec-WebSocket-Protocol",
-        format!("{}, ticket.{ticket}", puddle_api::SUBPROTOCOL)
-            .parse()
-            .unwrap(),
-    );
-    let (mut socket, _) = tokio::time::timeout(STEP, tokio_tungstenite::connect_async(request))
-        .await
-        .unwrap()
-        .unwrap();
+    let mut socket = crate::common::RawSocket::open(
+        api.addr,
+        &format!("/api/workspaces/box/terminals/{terminal}"),
+        Some(HOST),
+        &format!("{}, ticket.{ticket}", puddle_api::SUBPROTOCOL),
+    )
+    .await;
     let id = one.json()["device"]["id"].as_i64().unwrap();
     let revoked = send(
         "DELETE",
@@ -1269,17 +1257,8 @@ async fn signing_a_device_out_closes_its_open_terminal() {
     )
     .await;
     assert_eq!(revoked.status, 204, "{revoked:?}");
-    let closed = tokio::time::timeout(STEP, async {
-        loop {
-            match socket.next().await {
-                Some(Ok(Message::Close(frame))) => break frame.map(|f| f.code),
-                Some(Ok(_)) => {}
-                other => panic!("the socket ended without a close frame: {other:?}"),
-            }
-        }
-    })
-    .await
-    .expect("the terminal closed after the sign-out");
-    assert_eq!(closed, Some(CloseCode::Policy));
+    assert_eq!(socket.read_close().await, 1008);
+    // The host waits for the page's close before it drops the connection.
+    socket.answer_close_after_a_pause().await;
     api.running.shutdown().await;
 }

@@ -33,7 +33,7 @@ pub trait AddressCheck: Send + Sync {
         match target.host() {
             Host::Ip(ip) => match self.check(workspace, SocketAddr::new(*ip, port)) {
                 AddressVerdict::Block(reason) => Some(reason),
-                _ => None,
+                AddressVerdict::Allow | AddressVerdict::ExactOnly(_) => None,
             },
             Host::Name(_) => None,
         }

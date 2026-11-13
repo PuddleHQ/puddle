@@ -180,7 +180,6 @@ pub struct Connected {
 
 /// Why no connection was made.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
 pub enum ChainError {
     /// Every hop failed to connect. Each entry names the hop and why.
     #[error("no hop could be reached: {}", join(.tried))]

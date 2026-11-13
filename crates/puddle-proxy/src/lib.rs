@@ -60,6 +60,7 @@
 //! - `fuzzing`: the parsers a guest's first bytes reach, behind entry points that check their own
 //!   invariants (`fuzzing`), for the cargo-fuzz targets. Never use it in product code.
 #![forbid(unsafe_code)]
+#![warn(clippy::wildcard_enum_match_arm)]
 
 mod coalesce;
 mod counted;

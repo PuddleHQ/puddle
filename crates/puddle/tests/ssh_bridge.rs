@@ -63,7 +63,7 @@ mod openssh {
     use puddle_ipc::IpcRoot;
     use puddle_ssh::{SshEndpoint, SshTarget};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::{TcpListener, UnixStream};
     use tokio::process::Command;
     use tokio::time::timeout;
 
@@ -282,11 +282,11 @@ mod openssh {
                 });
             }
         });
-        let local_port = {
-            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            probe.local_addr().unwrap().port()
-        };
-        let forward = format!("{local_port}:127.0.0.1:{service_port}");
+        // The forward's near end is a socket in the rig's own directory, not a TCP port: a port
+        // picked and released beforehand can be taken by another test's listener before `ssh`
+        // binds it, and the test would then talk to that stranger instead of to the forward.
+        let local = rig.dir.path().join("forward.sock");
+        let forward = format!("{}:127.0.0.1:{service_port}", local.display());
         let ssh = Command::new("ssh")
             .args([
                 "-F",
@@ -303,9 +303,11 @@ mod openssh {
             .spawn()
             .unwrap();
         let ssh = std::cell::RefCell::new(ssh);
-        let mut conn =
-            puddle_test_kit::eventually_async("the forward's local port opens", WAIT, || async {
-                let connected = TcpStream::connect(("127.0.0.1", local_port)).await;
+        let mut conn = puddle_test_kit::eventually_async(
+            "the forward's local socket opens",
+            Duration::from_secs(20),
+            || async {
+                let connected = UnixStream::connect(&local).await;
                 if connected.is_err() {
                     assert!(
                         ssh.borrow_mut().try_wait().unwrap().is_none(),
@@ -313,8 +315,9 @@ mod openssh {
                     );
                 }
                 connected
-            })
-            .await;
+            },
+        )
+        .await;
         let mut ssh = ssh.into_inner();
         let data = payload(1024 * 1024);
         let (mut r, mut w) = conn.split();

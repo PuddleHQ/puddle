@@ -357,20 +357,7 @@ impl GitSetup for StoreGitSetup {
                 let hosts = repository_hosts::hosts_of(
                     repositories.iter().map(|r| r.repository.url.as_str()),
                 );
-                let allowed = self
-                    .store
-                    .workspace_owner(workspace)
-                    .and_then(|owner| {
-                        owner.ok_or_else(|| {
-                            puddle_store::StoreError::UnknownWorkspace(workspace.clone())
-                        })
-                    })
-                    .and_then(|owner| {
-                        self.store
-                            .as_user(owner)
-                            .allow_hosts_for_create(workspace, &hosts)
-                    });
-                match allowed {
+                match self.store.allow_hosts_for_create(workspace, &hosts) {
                     Ok(made) => {
                         *self.allowed.lock().unwrap_or_else(PoisonError::into_inner) = made
                             .into_iter()

@@ -12,11 +12,17 @@ use puddle_store::{Actor, Effect, Limits, ManualClock, NewRule, Pattern, Scope, 
 use puddle_types::{Decision, EgressRequest, Host, PendingOutcome, SuffixAllows, WorkspaceId};
 
 fn store() -> Store {
-    Store::open_in_memory(
+    let store = Store::open_in_memory(
         Arc::new(ManualClock::new(1_800_000_000_000)),
         Limits::default(),
     )
-    .unwrap()
+    .unwrap();
+    for id in ["aaaaaaaa", "bbbbbbbb"] {
+        store
+            .set_workspace_owner(&ws(id), puddle_store::UserId::OWNER)
+            .unwrap();
+    }
+    store
 }
 
 fn ws(id: &str) -> WorkspaceId {
@@ -79,7 +85,6 @@ fn peek_records_nothing() {
 fn the_create_allows_a_new_host_for_that_workspace_only_as_a_rule_it_made() {
     let store = store();
     let made = store
-        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("github.com")])
         .unwrap();
     assert_eq!(made.len(), 1);
@@ -126,7 +131,6 @@ fn a_host_that_is_allowed_already_gets_no_rule_and_a_second_create_adds_none() {
         })
         .unwrap();
     let made = store
-        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(
             &ws("aaaaaaaa"),
             &[host("api.github.com"), host("gitea.example")],
@@ -135,7 +139,6 @@ fn a_host_that_is_allowed_already_gets_no_rule_and_a_second_create_adds_none() {
     assert_eq!(made.len(), 1, "only the host nothing allowed yet");
     assert_eq!(made.first().unwrap().pattern.to_string(), "gitea.example");
     let again = store
-        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("gitea.example")])
         .unwrap();
     assert_eq!(again.len(), 0);
@@ -147,7 +150,6 @@ fn a_block_rule_is_never_overridden_by_the_create() {
     deny(&store, Scope::Global, ".github.com");
     deny(&store, Scope::Workspace(ws("aaaaaaaa")), "gitlab.com");
     let made = store
-        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(
             &ws("aaaaaaaa"),
             &[host("api.github.com"), host("gitlab.com")],
@@ -174,8 +176,17 @@ fn the_grant_closes_a_pending_request_it_decides() {
     assert!(matches!(decision, Decision::Pending(_)));
     assert_eq!(store.inbox_every_user().unwrap().len(), 1);
     store
-        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("github.com")])
         .unwrap();
     assert_eq!(store.inbox_every_user().unwrap().len(), 0);
+}
+
+#[test]
+fn a_workspace_with_no_recorded_user_gets_no_rule_from_a_create() {
+    let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+    let err = store
+        .allow_hosts_for_create(&ws("nobodys1"), &[host("github.com")])
+        .unwrap_err();
+    assert!(matches!(err, puddle_store::StoreError::UnknownWorkspace(w) if w == ws("nobodys1")));
+    assert!(store.rules_every_user().is_empty());
 }

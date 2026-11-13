@@ -18,6 +18,28 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Allows each of `hosts` for `workspace` that no rule of the workspace's user decides yet,
+    /// with an exact allow rule made by [`Actor::WorkspaceCreate`] (a create names the hosts of
+    /// its repositories, and the clone that follows would otherwise wait in the inbox). A host
+    /// that is allowed already, or that a deny decides, gets no rule: a create never overrides a
+    /// block. Returns the rules made.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownWorkspace`] for a workspace with no recorded user, or a database
+    /// error; the rules made before it stay.
+    pub fn allow_hosts_for_create(
+        &self,
+        workspace: &WorkspaceId,
+        hosts: &[Host],
+    ) -> Result<Vec<Rule>, StoreError> {
+        let owner = self
+            .workspace_owner(workspace)?
+            .ok_or_else(|| StoreError::UnknownWorkspace(workspace.clone()))?;
+        self.as_user(owner).allow_hosts_for_create(workspace, hosts)
+    }
+}
+
 /// A [`Store`] seen as one user (see [`Store::as_user`]).
 #[derive(Clone, Copy)]
 pub struct UserStore<'a> {
@@ -66,7 +88,7 @@ impl UserStore<'_> {
     /// # Errors
     /// [`StoreError::UnknownWorkspace`] for a workspace that is not theirs, or a database error;
     /// the rules made before it stay.
-    pub fn allow_hosts_for_create(
+    fn allow_hosts_for_create(
         &self,
         workspace: &WorkspaceId,
         hosts: &[Host],

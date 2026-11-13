@@ -1443,6 +1443,44 @@ async fn the_system_check_looks_at_the_runtime_folder_the_host_was_started_with(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_ssh_agent_named_in_the_settings_is_the_one_the_system_check_asks() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let agent_line = |report: serde_json::Value| {
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "ssh_agent")
+            .unwrap_or_else(|| panic!("no ssh_agent check in {report}"))
+            .to_string()
+    };
+    let named = rig.dir.path().join("my-agent").display().to_string();
+    let before = agent_line(api.get("/api/doctor?boot=false").await.json());
+    assert!(!before.contains("my-agent"), "{before}");
+
+    let body = json!({"ui": {"ssh_agent_pipe": format!("  {named}  ")}});
+    let put = api.put("/api/settings", &body.to_string()).await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    assert_eq!(put.json()["ui"]["ssh_agent_pipe"], named);
+    let after = agent_line(api.get("/api/doctor?boot=false").await.json());
+    // The line is JSON text, so a Windows path's backslashes show doubled.
+    let escaped = json!(named).to_string();
+    let escaped = escaped.trim_matches('"');
+    assert!(after.contains(escaped), "the doctor asks {named}: {after}");
+
+    let cleared = json!({"ui": {"ssh_agent_pipe": "  "}});
+    assert_eq!(
+        api.put("/api/settings", &cleared.to_string()).await.status,
+        200
+    );
+    let again = agent_line(api.get("/api/doctor?boot=false").await.json());
+    assert!(!again.contains("my-agent"), "{again}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
     let rig = Rig::named_ids();
     rig.guest.fail_sync.store(true, Ordering::SeqCst);

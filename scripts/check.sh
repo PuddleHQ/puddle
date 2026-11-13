@@ -565,7 +565,9 @@ before_concurrent() {
 
 # shellcheck source=scripts/gate-sched.sh
 . scripts/gate-sched.sh
-# The serial prefix. diff-coverage-fast is in it, so in the pre-push set it fails the run before the streams start.
-serial_gates="$fast_gates diff-coverage-fast"
+# The serial prefix: the fast gates but `hooks` (about 2 min of script self-tests, so it runs beside the streams in the misc
+# stream and still fails the run), then diff-coverage-fast, so in the pre-push set a change no test runs fails before the streams start.
+serial_gates=
+for g in $fast_gates diff-coverage-fast; do [ "$g" = hooks ] || serial_gates="$serial_gates $g"; done
 # shellcheck disable=SC2086 # the gate names are words by design
 run_gates $requested

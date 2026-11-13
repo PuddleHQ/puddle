@@ -51,6 +51,7 @@ const noUi = (): S["UiPrefs"] => ({
   notify_low_disk_space: null,
   disk_warn_free_gb: null,
   disk_fail_free_gb: null,
+  ssh_agent_pipe: null,
   confirm_global_rules: null,
   inbox_shortcuts: null,
   start_at_login: null,

@@ -20,7 +20,7 @@ use puddle_repos::{Api, ApiRequest, Authorization, HostApi, MAX_BODY, TransportE
 use puddle_secrets::Secret;
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Discovery, FakeOs, FakeProxy,
-    Hop, NoAuth, ProxyConfig, TlsClient,
+    Hop, HostLookup, NoAuth, ProxyConfig, TlsClient,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -259,11 +259,14 @@ fn through_proxy(proxy: &FakeProxy) -> Arc<Chain> {
     });
     let hops = vec![Hop::Proxy(proxy.proxy_addr())];
     os.set_pac(move |_| Ok(hops.clone()));
-    Chain::with_config(
+    Chain::with_lookup(
         Discovery::new(os, Config::default()),
         Arc::new(BasicAuth::new().with_default(Credentials::new("corp", proxy_password()))),
         ChainConfig::default()
             .with_timeouts(Duration::from_millis(500), Duration::from_millis(400)),
+        // The name is one only the proxy knows (split DNS). The machine's own resolver would
+        // answer after seconds when its DNS is slow, as on the host lane, so it is not asked.
+        HostLookup::new(|_, _| async { Err(std::io::ErrorKind::NotFound.into()) }),
     )
 }
 

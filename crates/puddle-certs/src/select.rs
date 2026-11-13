@@ -273,6 +273,23 @@ impl CorporateRoots {
         &self.synced
     }
 
+    /// The plain-HTTP URLs the synced certificates name as CRL distribution points or in their
+    /// authority information access (the issuer's certificate, the OCSP responder), sorted and
+    /// without repeats: what a client of the corporate CA fetches to check a chain, and the
+    /// destinations the proxy lets through by themselves. Read at sync, so it follows the
+    /// stores the guest's roots came from.
+    #[must_use]
+    pub fn distribution_urls(&self) -> Vec<String> {
+        let mut urls: Vec<String> = self
+            .synced
+            .iter()
+            .flat_map(|cert| crate::pki::http_urls(&cert.der))
+            .collect();
+        urls.sort_unstable();
+        urls.dedup();
+        urls
+    }
+
     /// What was left out and why, sorted by fingerprint.
     #[must_use]
     pub fn skipped(&self) -> &[SkippedCert] {

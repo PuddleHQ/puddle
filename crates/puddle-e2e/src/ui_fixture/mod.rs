@@ -40,7 +40,7 @@ use puddle_secrets::{
 use puddle_settings::GLOBAL_SCHEMA_VERSION;
 use puddle_store::{
     Actor, Clock, IdentityId, Limits, ManualClock, NewRequestRule, NewRule, Pattern, RepoRef,
-    Scope, Store,
+    Scope, Store, UserId,
 };
 use puddle_types::{
     BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionReason,
@@ -53,6 +53,7 @@ pub mod cli;
 pub mod control;
 mod repos;
 pub mod scenario;
+pub mod stack;
 
 pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{
@@ -361,6 +362,18 @@ impl Fixture {
         self.state.lock().await.events.clone()
     }
 
+    /// Puts `event` on the stream, the workspace it names recorded as the owner's first (see
+    /// `State::own`), so the owner's stream carries it.
+    ///
+    /// # Errors
+    /// The workspace's user could not be recorded.
+    pub async fn emit(&self, event: Event) -> Result<(), String> {
+        let state = self.state.lock().await;
+        event.workspace().map_or(Ok(()), |w| state.own(w))?;
+        state.events.emit(event);
+        Ok(())
+    }
+
     /// The bearer token (the control server takes the same one).
     #[must_use]
     pub fn token(&self) -> &ApiToken {
@@ -392,7 +405,7 @@ impl Fixture {
         let state = self.state.lock().await;
         state
             .store
-            .inbox()
+            .inbox_every_user()
             .map(|groups| groups.iter().map(|g| g.rows.len()).sum())
             .unwrap_or_default()
     }
@@ -545,6 +558,23 @@ pub fn step_from_drop(mut item: serde_json::Value) -> Result<Step, String> {
 }
 
 impl State {
+    /// Records the owner as the user of `workspace` unless one is recorded. The fixture serves
+    /// the owner, as the desktop window does, and every workspace it names (seeded, asking for a
+    /// host, given settings, named by an event) is theirs, as the first start records it for a
+    /// workspace listed from before; one with no recorded user would be nobody's.
+    fn own(&self, workspace: &WorkspaceId) -> Result<(), String> {
+        let recorded = self
+            .store
+            .workspace_owner(workspace)
+            .map_err(|err| err.to_string())?;
+        if recorded.is_none() {
+            self.store
+                .set_workspace_owner(workspace, UserId::OWNER)
+                .map_err(|err| format!("workspace {workspace}: {err}"))?;
+        }
+        Ok(())
+    }
+
     fn seed(&self, scenario: &Scenario) -> Result<(), String> {
         let start = scenario.start_ms();
         for rule in &scenario.rules {
@@ -578,6 +608,7 @@ impl State {
                 .map_err(|err| err.to_string())?;
         }
         for (name, document) in &scenario.settings.workspaces {
+            self.own(&workspace(name)?)?;
             self.settings
                 .save_workspace(&workspace(name)?, document.clone())
                 .map_err(|err| err.to_string())?;
@@ -899,6 +930,7 @@ impl State {
             items: items.to_vec(),
             more: 0,
         };
+        self.own(&id)?;
         self.workspaces.seed(
             record,
             Unsaved {
@@ -925,7 +957,7 @@ impl State {
     fn identity_ids(&self) -> Result<Vec<(String, IdentityId)>, String> {
         Ok(self
             .store
-            .identities(puddle_store::UserId::OWNER)
+            .identities(UserId::OWNER)
             .map_err(|err| err.to_string())?
             .into_iter()
             .map(|identity| (identity.label.clone(), identity.id))
@@ -942,7 +974,7 @@ impl State {
                 let draft = request.clone().into_store_draft()?;
                 let made = self
                     .store
-                    .create_identity(puddle_store::UserId::OWNER, draft)
+                    .create_identity(UserId::OWNER, draft)
                     .map_err(|err| format!("identity {label:?}: {err}"))?;
                 Ok((label, made.id))
             })
@@ -974,7 +1006,7 @@ impl State {
             }
         };
         self.store
-            .set_env(puddle_store::UserId::OWNER, scope, &name, draft)
+            .set_env(UserId::OWNER, scope, &name, draft)
             .map(|_| ())
             .map_err(|err| at(&err))
     }
@@ -1102,6 +1134,7 @@ impl State {
 
     fn request(&self, seed: &RequestSeed, now: u64) -> Result<(), String> {
         let request = EgressRequest::new(workspace(&seed.workspace)?, host(&seed.host)?, seed.port);
+        self.own(&request.workspace)?;
         self.at(now, seed.ago_ms, || {
             for _ in 0..seed.repeat {
                 let decision = self
@@ -1118,6 +1151,7 @@ impl State {
 
     fn connection(&self, seed: &ConnectionSeed, now: u64) -> Result<(), String> {
         let request = EgressRequest::new(workspace(&seed.workspace)?, host(&seed.host)?, seed.port);
+        self.own(&request.workspace)?;
         let (decision, default_reason) = match seed.decision {
             DecisionSeed::Allow => (ConnectionDecision::Allow, "rule"),
             DecisionSeed::Deny => (ConnectionDecision::Deny, "rule"),

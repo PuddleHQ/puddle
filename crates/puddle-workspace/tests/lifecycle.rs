@@ -292,8 +292,7 @@ async fn a_failed_create_leaves_no_record_dir_or_volume() {
 
 #[tokio::test]
 async fn an_abort_removes_the_stale_dir_a_refused_create_leaves() {
-    // msb 0.7.6 has an upstream bug: a create that fails its volume check leaves a
-    // directory.
+    // A crash between a create's volume check and its cleanup can leave a directory.
     let rt = FakeRuntime::new();
     let w = Workspaces::default();
     let id = ws("acme");
@@ -302,6 +301,7 @@ async fn an_abort_removes_the_stale_dir_a_refused_create_leaves() {
     s.volumes[0].ensure_size = Some(DiskSize::mib(1)); // disagrees with the catalog
     let err = rt.create(s).await.unwrap_err();
     assert!(matches!(err, ComputeError::VolumeSizeMismatch { .. }));
+    rt.add_stale_dir("box");
     assert_eq!(rt.stale_dirs().await.unwrap(), ["box"]);
     att.abort(&rt).await.unwrap();
     assert_eq!(rt.stale_dirs().await.unwrap(), NONE);
@@ -593,12 +593,8 @@ async fn a_leftover_stale_dir_of_the_maintenance_name_is_cleared() {
     })
     .await
     .unwrap();
-    // A create under the maintenance name that failed its volume check left a directory.
-    let missing = puddle_types::VolumeName::new("ws-gone").unwrap();
-    let _ = rt
-        .create(spec("m--acme").with_volume(VolumeMount::named(missing, path("/x"))))
-        .await
-        .unwrap_err();
+    // A crashed create under the maintenance name left a directory.
+    rt.add_stale_dir("m--acme");
     assert_eq!(rt.stale_dirs().await.unwrap(), ["m--acme"]);
     w.reclaim_space(&rt, &id).await.unwrap();
     assert_eq!(rt.stale_dirs().await.unwrap(), NONE);

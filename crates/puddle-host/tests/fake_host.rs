@@ -3843,6 +3843,14 @@ impl Runtime for SlowPull {
         self.0.set_cpus(name, cpus)
     }
 
+    fn set_env(
+        &self,
+        name: &SandboxName,
+        env: &GuestEnv,
+    ) -> impl Future<Output = Result<(), puddle_compute::ComputeError>> + Send {
+        self.0.set_env(name, env)
+    }
+
     fn grow_root_disk(
         &self,
         name: &SandboxName,
@@ -4326,6 +4334,114 @@ async fn a_workspace_saved_before_session_users_keeps_root() {
     let host = rig.start().await;
     let got = api(&host).get("/api/workspaces/old").await.json();
     assert_eq!(got["session_user"], "root", "{got}");
+    host.shutdown().await;
+}
+
+/// The workspaces listed when this build first starts were made before every create recorded its
+/// user: they become the owner's. Only then: one added to the list by hand later has no user, so
+/// no one reaches it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_start_records_the_owner_of_the_listed_workspaces_and_no_later_one() {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let entry = |id: &str| {
+        json!({
+            "id": id, "name": id, "repositories": [], "start_folder": null,
+            "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+        })
+    };
+    for id in ["old", "later"] {
+        rig.runtime
+            .create_volume(puddle_compute::VolumeSpec {
+                name: WorkspaceId::new(id).unwrap().volume_name(),
+                size: puddle_compute::DiskSize::mib(1024),
+            })
+            .await
+            .unwrap();
+    }
+    let book = json!({"version": 3, "workspaces": [entry("old")]});
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    let host = rig.start().await;
+    assert_eq!(
+        host.store()
+            .workspace_owner(&WorkspaceId::new("old").unwrap())
+            .unwrap(),
+        Some(puddle_store::UserId::OWNER)
+    );
+    let listed = api(&host).get("/api/workspaces").await.json();
+    assert_eq!(listed["workspaces"][0]["id"], "old", "{listed}");
+    host.shutdown().await;
+    drop(host);
+
+    let mut book: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(data.join("workspaces.json")).unwrap()).unwrap();
+    book["workspaces"]
+        .as_array_mut()
+        .unwrap()
+        .push(entry("later"));
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+    assert_eq!(api.get("/api/workspaces/old").await.status, 200);
+    assert_eq!(api.get("/api/workspaces/later").await.status, 404);
+    let listed = api.get("/api/workspaces").await.json();
+    let ids: Vec<&str> = listed["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["old"], "{listed}");
+    host.shutdown().await;
+}
+
+/// A first start that cannot record whose the listed workspaces are stops, saying so, rather than
+/// serve workspaces no user reaches; the next start tries again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_start_that_cannot_record_the_owners_stops_and_the_next_one_tries_again() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    host.shutdown().await;
+    drop(host);
+    damage_database(
+        &rig,
+        "INSERT INTO workspace_owners_adoption (id) VALUES (1);
+         CREATE TRIGGER no_owner BEFORE INSERT ON workspace_owners
+         BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+    );
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("old").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    let book = json!({"version": 3, "workspaces": [{
+        "id": "old", "name": "old", "repositories": [], "start_folder": null,
+        "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+    }]});
+    std::fs::write(
+        rig.dir.path().join("data").join("workspaces.json"),
+        book.to_string(),
+    )
+    .unwrap();
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let err = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        hermetic_options(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("whose the listed workspaces are could not be recorded"),
+        "{err}"
+    );
+    damage_database(&rig, "DROP TRIGGER no_owner;");
+    let host = rig.start().await;
+    assert_eq!(api(&host).get("/api/workspaces/old").await.status, 200);
     host.shutdown().await;
 }
 
@@ -4840,6 +4956,45 @@ async fn a_create_whose_last_save_fails_is_undone_and_says_why() {
 
 fn name_body(shown: &str) -> String {
     json!({"name": shown}).to_string()
+}
+
+/// A save of the workspace list writes each name into the store's database. The store has one
+/// connection that proxy decisions and audit searches share, so a busy database must not hold up
+/// every reader of the workspace list: no write to it happens under the list's lock.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_busy_database_does_not_hold_up_the_workspace_list_while_a_rename_saves() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    after_boot_listing(&rig).await;
+    // Another connection holds the write lock: the name write waits for it (up to 5 s).
+    let db = rusqlite::Connection::open(rig.dir.path().join("data").join("puddle.db")).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let body = name_body("Acme shop");
+    let rename = api.patch("/api/workspaces/acme", &body);
+    let id = WorkspaceId::new("acme").unwrap();
+    let probe = async {
+        // flake-ok: nothing signals that the rename has reached its write to the database; a late probe only makes the test pass where the old code would fail
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        // The list's lock is a plain mutex, so a reader that has to wait blocks its thread:
+        // measure how long the read took rather than time it out.
+        let started = std::time::Instant::now();
+        let read = host.workspaces().get(&id).await;
+        let took = started.elapsed();
+        db.execute_batch("COMMIT").unwrap();
+        (read, took)
+    };
+    let (renamed, (read, took)) = tokio::join!(rename, probe);
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    assert!(read.is_ok());
+    // flake-ok: the bar is 4 s against the 5 s the database makes a writer wait; a read of the list takes microseconds
+    assert!(
+        took < Duration::from_secs(4),
+        "the workspace list waited {took:?} for a write to the database"
+    );
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -8685,8 +8840,9 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     host.shutdown().await;
 }
 
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread")]
-async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_volume_and_an_unchanged_one_restarts_it()
+async fn a_changed_environment_is_applied_to_the_stopped_sandbox_at_the_next_start_and_keeps_the_root_disk()
  {
     let rig = Rig::named_ids();
     let host = rig.start().await;
@@ -8714,8 +8870,7 @@ async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_vo
     assert_eq!(calls_of(&rig, "Create"), creates);
     assert_eq!(calls_of(&rig, "Remove"), 0);
 
-    // A changed variable: a sandbox keeps the environment it was made with, so the start makes
-    // a new one; the volume with the work is the same.
+    // A changed variable is written to the stopped sandbox: no new sandbox, the root disk stays.
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
     put_env(
@@ -8724,19 +8879,20 @@ async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_vo
         json!({"kind": "plain", "value": "nano"}),
     )
     .await;
+    let set_envs = calls_of(&rig, "SetEnv");
     api.post("/api/workspaces/acme/start", "").await;
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "done", "{end}");
-    assert_eq!(calls_of(&rig, "Create"), creates + 1);
-    assert_eq!(calls_of(&rig, "Remove"), 1);
-    // Puddle says what it did: the sandbox was made again, the volume kept.
-    let said = events.seen.iter().any(|e| {
+    assert_eq!(calls_of(&rig, "Create"), creates);
+    assert_eq!(calls_of(&rig, "Remove"), 0);
+    assert_eq!(calls_of(&rig, "SetEnv"), set_envs + 1);
+    let warned = events.seen.iter().any(|e| {
         e["type"] == "workspace_progress"
             && e["detail"]
                 .as_str()
-                .is_some_and(|d| d.contains("variables changed") && d.contains("volume"))
+                .is_some_and(|d| d.contains("made again"))
     });
-    assert!(said, "no notice that the sandbox was made again");
+    assert!(!warned, "a kept root disk needs no warning");
     assert_eq!(
         rig.guest
             .boot_envs
@@ -8747,15 +8903,63 @@ async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_vo
             .get("EDITOR"),
         Some("nano")
     );
+    // Puddle's own variables are written with them, not dropped.
+    assert_eq!(
+        rig.guest
+            .boot_envs
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("HTTPS_PROXY"),
+        Some("http://127.0.0.1:3128")
+    );
     assert_eq!(volume_names(&rig).await, volumes);
-    assert!(host.workspaces().termination(&name("acme")).is_some());
 
-    // And from then on that is the environment the sandbox was made with.
+    // The same variables at the next start write nothing more.
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
     api.post("/api/workspaces/acme/start", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(calls_of(&rig, "Create"), creates);
+    assert_eq!(calls_of(&rig, "SetEnv"), set_envs + 1);
+
+    // A write that fails falls back to a new sandbox on the same volume, and says so.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    put_env(
+        &api,
+        "/api/env/EDITOR",
+        json!({"kind": "plain", "value": "emacs"}),
+    )
+    .await;
+    rig.runtime.inject(
+        Op::SetEnv,
+        Fault::once(disk_error("set the environment of")),
+    );
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
     assert_eq!(calls_of(&rig, "Create"), creates + 1);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again") && d.contains("volume"))
+    });
+    assert!(said, "no notice that the sandbox was made again");
+    assert_eq!(
+        rig.guest
+            .boot_envs
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("EDITOR"),
+        Some("emacs")
+    );
+    assert_eq!(volume_names(&rig).await, volumes);
     host.shutdown().await;
 }
 
@@ -8977,7 +9181,10 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
             .len(),
         1
     );
-    assert!(host.store().rules().is_empty(), "its rules went with it");
+    assert!(
+        host.store().rules_every_user().is_empty(),
+        "its rules went with it"
+    );
 
     // A new workspace of the same name (another id) starts clean, with the global secret only.
     create_as(&api, &mut events, "acme", "acme-2").await;
@@ -10659,6 +10866,41 @@ async fn a_failed_grow_changes_nothing_and_is_audited() {
     host.shutdown().await;
 }
 
+/// The disk size the runtime reports can lag a grow that applies at the next start; the size
+/// Puddle saved does not. A request is measured against the larger, so one between the two is
+/// refused up front and not accepted with a 202 and refused by the runtime afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_grow_is_measured_against_the_saved_size_when_the_reported_one_lags() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let end = grow_root_disk(&api, &mut events, 24_576).await;
+    assert_eq!(end["step"], "done", "{end}");
+    // The runtime still reports the old disk until the next start.
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let between = api
+        .post(
+            "/api/workspaces/acme/grow-root-disk",
+            r#"{"size_mib": 18432}"#,
+        )
+        .await;
+    assert_eq!(between.status, 422, "{}", between.body);
+    assert!(between.body.contains("only grows"), "{}", between.body);
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_for_a_grow_that_fails_leaves_the_workspace_as_a_stop_or_a_start_would() {
     let rig = Rig::named_ids();
@@ -10680,7 +10922,16 @@ async fn a_restart_for_a_grow_that_fails_leaves_the_workspace_as_a_stop_or_a_sta
     assert_eq!(end["step"], "failed", "{end}");
     let w = api.get("/api/workspaces/acme").await.json();
     assert_eq!(w["status"], "running", "{w}");
-
+    // The grow was saved and the runtime applies it at the next start, so the log calls it done
+    // and names the failed restart on its own.
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "succeeded", "{detail}");
+    assert!(
+        detail.starts_with(
+            "root disk grown from 16384 MiB to 20480 MiB, with a restart; the restart failed: "
+        ) && detail.contains("stuck"),
+        "{detail}"
+    );
     // The start fails: the workspace is crashed, and a start brings it back.
     rig.runtime.inject(
         Op::Start,
@@ -12527,6 +12778,33 @@ async fn a_restore_makes_a_working_list_entry_with_the_disk_untouched_and_ends_i
     assert_eq!(other.status, 201, "{}", other.body);
     assert_eq!(other.json()["name"], "api (2)", "{}", other.body);
     again.shutdown().await;
+}
+
+/// A restore boots the same maintenance image a delete check does, so it waits for that image's
+/// download like the check: nothing boots before the pull of the image has been asked for.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_asks_for_the_maintenance_image_before_it_boots_it() {
+    const CHECK_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian";
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    let host = rig.start().await;
+    let api = api(&host);
+    let restored = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(restored.status, 201, "{}", restored.body);
+    let calls = rig.runtime.calls();
+    let pulled = calls
+        .iter()
+        .position(|c| c.op == Op::PullImage && c.target.as_deref() == Some(CHECK_IMAGE));
+    let booted = calls.iter().position(|c| {
+        c.op == Op::Create && c.target.as_deref().is_some_and(|t| t.starts_with("m--"))
+    });
+    assert!(
+        pulled.is_some() && booted.is_some() && pulled < booted,
+        "pull at {pulled:?}, maintenance boot at {booted:?}: {calls:?}"
+    );
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

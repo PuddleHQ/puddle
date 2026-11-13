@@ -29,12 +29,14 @@ use puddle_compute::{Runtime, SandboxInfo};
 use puddle_front::Front;
 use puddle_fs::DataLock;
 use puddle_lifecycle::{Inventory, Lifecycle, ShutdownReport, adopt_workspaces, reconcile};
-use puddle_netpolicy::{CompanySignals, LocalAccess, NetPolicy, NoSignals, PuddleEndpoints};
+use puddle_netpolicy::{
+    CompanySignals, LocalAccess, NetPolicy, NoSignals, PkiDistributionPoints, PuddleEndpoints,
+};
 use puddle_ports::Ports;
 use puddle_proxy::ssh_agent::SshAgents;
 use puddle_proxy::{
-    GitSsh, GitSshAccounts, GitSshHttps, Proxy, ProxyUrl, PullProxy, PullRoute, Resolver,
-    Terminations, Upstream,
+    GitSsh, GitSshAccounts, GitSshHttps, PortProbe, Proxy, ProxyUrl, PullProxy, PullRoute,
+    Resolver, TcpPortProbe, Terminations, Upstream,
 };
 use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
@@ -312,6 +314,10 @@ pub struct HostOptions {
     /// clients, routes), shared by the sandbox proxy's guard and the API. Without one the host
     /// reads none, so no destination is ever in the company-network category.
     pub company_signals: Option<Arc<dyn CompanySignals>>,
+    /// Probes whether this machine can open `ssh.dev.azure.com:22`, for the refusal that says the
+    /// company network blocks it. Without one, a real TCP probe; tests give a double so no test
+    /// depends on the machine's network.
+    pub port_probe: Option<Arc<dyn PortProbe>>,
     /// Holds an author rewrite back when it starts (tests, to make the rewrites of one workspace
     /// run out of order). Without one, no rewrite waits.
     pub rewrite_gate: Option<RewriteGate>,
@@ -339,6 +345,7 @@ impl Default for HostOptions {
             dev_cert: None,
             resolver: None,
             company_signals: None,
+            port_probe: None,
             rewrite_gate: None,
             git_ssh: true,
             workspace_ids: None,
@@ -553,8 +560,13 @@ impl<R: Runtime + Clone> Host<R> {
         );
         // Who `ssh -T` greets: read from the store, named once the repository reader exists.
         let ssh_accounts = Arc::new(crate::ssh_accounts::SshAccounts::new(store.clone()));
-        let mut egress_parts =
-            EgressParts::new(injecting.termination(), &proxy_passwords, &reports, &ports);
+        let mut egress_parts = EgressParts::new(
+            injecting.termination(),
+            &proxy_passwords,
+            &reports,
+            &ports,
+            &roots,
+        );
         if options.git_ssh {
             egress_parts.git_ssh = Some(ssh_accounts.clone());
         }
@@ -956,8 +968,11 @@ impl<R: Runtime + Clone> Host<R> {
                     background.sweeper.shutdown().await;
                     background.pull.shutdown().await;
                     background.front.close().await;
-                    // A panic in the sweep was reported by the sweep; nothing more to do here.
-                    let _ = background.vault_sweep.await;
+                    crate::vault::finish_sweep(
+                        background.vault_sweep,
+                        crate::vault::SWEEP_SHUTDOWN_WAIT,
+                    )
+                    .await;
                     let _ = background.retired_sweep.await;
                     for task in [
                         &mut background.network_events,
@@ -1026,6 +1041,13 @@ fn open_state(
 /// A company root as the TLS client takes it.
 fn der_of(root: &puddle_certs::SyncedCert) -> rustls::pki_types::CertificateDer<'static> {
     rustls::pki_types::CertificateDer::from(root.der().to_vec())
+}
+
+/// The plain-HTTP certificate distribution points the synced roots name (CRL distribution points,
+/// issuer and OCSP addresses): the one destination class that is let through without a rule on a
+/// company or private address.
+fn distribution_points(roots: &CorporateRoots) -> PkiDistributionPoints {
+    PkiDistributionPoints::from_urls(roots.distribution_urls())
 }
 
 /// The company roots as PEM, for the runtime's registry client.
@@ -1194,6 +1216,8 @@ struct EgressParts {
     ports: Ports,
     /// Git over SSH, with the accounts `ssh -T` greets; `None` leaves SSH to Git hosts refused.
     git_ssh: Option<Arc<crate::ssh_accounts::SshAccounts>>,
+    /// The certificate distribution points the synced roots name.
+    pki: PkiDistributionPoints,
 }
 
 impl EgressParts {
@@ -1202,6 +1226,7 @@ impl EgressParts {
         proxy_passwords: &Arc<ProxyPasswords>,
         reports: &Arc<ReportDesk>,
         ports: &Ports,
+        roots: &CorporateRoots,
     ) -> Self {
         Self {
             terminations,
@@ -1210,6 +1235,7 @@ impl EgressParts {
             reports: reports.clone(),
             ports: ports.clone(),
             git_ssh: None,
+            pki: distribution_points(roots),
         }
     }
 }
@@ -1247,6 +1273,7 @@ impl Egress {
             reports,
             ports,
             git_ssh,
+            pki,
         } = parts;
         let discovery = options.discovery.clone().unwrap_or_else(|| {
             Discovery::new(
@@ -1278,6 +1305,13 @@ impl Egress {
         .with_termination(terminations, tls)
         .with_agent_reports(reports)
         .with_guest_watcher(Arc::new(ports))
+        .with_pki_distribution_points(pki)
+        .with_port_probe(
+            options
+                .port_probe
+                .clone()
+                .unwrap_or_else(|| Arc::new(TcpPortProbe::default())),
+        )
         // On for no host until the user turns it on for one; the hosts are each workspace's.
         .with_ssh_agent(Arc::new(SshAgents::new(Arc::new(
             crate::ssh_agent::SettingsAgent::new(Some(Arc::clone(settings))),

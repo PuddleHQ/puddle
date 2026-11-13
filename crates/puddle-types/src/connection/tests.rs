@@ -254,6 +254,14 @@ fn request_path_strips_everything_but_the_path() {
 }
 
 #[test]
+fn the_certificate_distribution_exception_has_its_own_code() {
+    assert_eq!(
+        ConnectionReason::PkiDistributionPoint.to_string(),
+        "pki_distribution_point"
+    );
+}
+
+#[test]
 fn puddle_events_have_an_origin_and_no_workspace() {
     let event = ConnectionEvent::puddle(
         Host::parse_normalised("registry.example").unwrap(),

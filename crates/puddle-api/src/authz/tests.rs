@@ -10,10 +10,11 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use super::*;
 use crate::events::EventHub;
+use crate::learned::LearnedService as _;
 use crate::server::{ApiConfig, ApiServer, RunningApi, Services};
 use crate::settings::{MemorySettings, SettingsRepo};
 use crate::token::ApiToken;
-use crate::{FakeCredentials, FakeWorkspaces, openapi};
+use crate::{FakeCredentials, FakeLearned, FakeWorkspaces, openapi};
 use puddle_secrets::MemoryStore;
 
 const TOKEN_STEP: Duration = Duration::from_secs(10);
@@ -66,6 +67,70 @@ fn every_route_declares_an_action_and_a_resource() {
         }
     }
     assert_eq!(declaration(&Method::GET, "/api/nothing-here"), None);
+}
+
+/// The resource a path names by its first parameter, from the path alone.
+fn named_by(path: &str) -> Option<Target> {
+    Some(match path {
+        "/api/workspaces/{id}/terminals/{terminal}" => Target::Ticket,
+        p if p.starts_with("/api/workspaces/{id}") => Target::Workspace("id"),
+        p if p.starts_with("/api/settings/workspaces/{workspace}") => {
+            Target::Workspace("workspace")
+        }
+        p if p.starts_with("/api/pending/{id}") => Target::Pending,
+        p if p.starts_with("/api/rules/{id}") => Target::Rule,
+        p if p.starts_with("/api/request-rules/{id}") => Target::RequestRule,
+        _ => return None,
+    })
+}
+
+/// The converse of [`every_route_declares_an_action_and_a_resource`]: a route whose path names a
+/// workspace, a request or a rule declares exactly that resource, so the check looks it up for the
+/// principal (a route under a workspace's path declared as the principal's own collection would
+/// run with no owner check), and only such a route declares one. Every other route with a
+/// parameter is listed here by hand: its id is looked up in the principal's own collection by
+/// the handler, or the route is the owner's alone, so a new one has to be placed on purpose.
+#[test]
+fn every_route_that_names_a_resource_declares_it_and_no_other_does() {
+    let mut by_hand: Vec<String> = Vec::new();
+    for (method, path) in operations() {
+        let declared = declaration(&method, &path).unwrap();
+        if let Some(target) = named_by(&path) {
+            assert_eq!(declared.target, target, "{method} {path}");
+            continue;
+        }
+        assert!(
+            matches!(
+                declared.target,
+                Target::Own | Target::Install | Target::Service
+            ),
+            "{method} {path} declares {:?}, which its path does not name",
+            declared.target
+        );
+        if path.contains('{') {
+            by_hand.push(format!("{method} {path} {:?}", declared.target));
+        }
+    }
+    by_hand.sort();
+    assert_eq!(
+        by_hand,
+        [
+            "DELETE /api/credentials/stored/{id} Own",
+            "DELETE /api/devices/{id} Own",
+            "DELETE /api/env/{name} Own",
+            "DELETE /api/identities/{id} Own",
+            "DELETE /api/proxy-sign-ins/{proxy} Install",
+            "DELETE /api/rule-sets/{id} Own",
+            "GET /api/identities/{id} Own",
+            "POST /api/orphan-volumes/{id}/restore Install",
+            "PUT /api/consents/{kind} Install",
+            "PUT /api/env/{name} Own",
+            "PUT /api/identities/{id} Own",
+            "PUT /api/identities/{id}/default Own",
+            "PUT /api/rule-sets/{id} Own",
+            "PUT /api/rule-sets/{id}/switch Own",
+        ]
+    );
 }
 
 #[test]
@@ -162,6 +227,9 @@ fn a_users_resources_are_theirs_alone_and_the_owner_has_no_way_in() {
     let store = store();
     let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
     store.set_workspace_owner(&ws("anns"), ann).unwrap();
+    store
+        .set_workspace_owner(&ws("owners"), UserId::OWNER)
+        .unwrap();
     let pending = |workspace: &str| {
         let decision = store
             .decide(
@@ -180,6 +248,7 @@ fn a_users_resources_are_theirs_alone_and_the_owner_has_no_way_in() {
     };
     let anns_request = pending("anns");
     let owners_request = pending("owners");
+    let nobodys_request = pending("nobodys");
     let isolation = Isolation::new(store);
     let ann = ann_principal(ann);
     let owner = Principal::INSTALL;
@@ -209,16 +278,22 @@ fn a_users_resources_are_theirs_alone_and_the_owner_has_no_way_in() {
         check(&ann, ResourceRef::Pending(PendingId(9_999))),
         Err(Denial::NotFound(_))
     ));
-    // An unknown rule reads as the owner's, so for anyone else it is another user's.
-    assert!(matches!(
-        check(&ann, ResourceRef::Rule(RuleId(9_999))),
-        Err(Denial::NotFound(_))
-    ));
-    assert!(check(&owner, ResourceRef::RequestRule(9_999)).is_ok());
-    assert!(matches!(
-        check(&ann, ResourceRef::RequestRule(9_999)),
-        Err(Denial::NotFound(_))
-    ));
+    // An id nobody has, and a workspace with no recorded user (with its requests), are nobody's:
+    // the owner gets no more of them than anyone else.
+    for principal in [&owner, &ann] {
+        for resource in [
+            ResourceRef::Workspace(ws("nobodys")),
+            ResourceRef::Pending(nobodys_request),
+            ResourceRef::Pending(PendingId(9_999)),
+            ResourceRef::Rule(RuleId(9_999)),
+            ResourceRef::RequestRule(9_999),
+        ] {
+            assert!(
+                matches!(check(principal, resource.clone()), Err(Denial::NotFound(_))),
+                "{principal:?} {resource:?}"
+            );
+        }
+    }
 }
 
 /// A request the guard put no principal on is refused like a missing token.
@@ -255,6 +330,7 @@ struct Pair {
     token: String,
     store: Arc<Store>,
     problems: Arc<puddle_types::Problems>,
+    learned: Arc<FakeLearned>,
     ann_id: UserId,
 }
 
@@ -276,6 +352,8 @@ async fn pair() -> Pair {
     .with_workspaces(Arc::new(FakeWorkspaces::new(events, clock)))
     .with_credentials(Arc::new(FakeCredentials::new()))
     .with_secret_store(Arc::new(MemoryStore::new()));
+    let learned = Arc::new(FakeLearned::new());
+    let services = services.with_learned(learned.clone());
     let problems = services.problems.clone();
     let token = ApiToken::generate().unwrap();
     let start = |principal| {
@@ -294,6 +372,7 @@ async fn pair() -> Pair {
         token: token.expose().to_owned(),
         store,
         problems,
+        learned,
         ann_id,
     }
 }
@@ -733,22 +812,24 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         .raise(puddle_types::Problem::new("ws", "t", "d").about(ws(&box_id)));
     pair.problems
         .raise(puddle_types::Problem::new("puddle", "own", "d"));
-    // Ann's lists hold nothing of the owner's.
+    // Ann's lists hold nothing of the owner's: every list there is, read from the route table so
+    // a new one is checked too (the event stream has its own test; the lookup is below).
     let get = |path: &'static str| async move { send(ann, token, "GET", path, None).await };
-    for path in [
-        "/api/workspaces",
-        "/api/pending",
-        "/api/inbox",
-        "/api/rules",
-        "/api/request-rules",
-        "/api/audit",
-        "/api/problems",
-        "/api/identities",
-        "/api/rule-sets",
-        "/api/env",
-    ] {
-        let (status, body) = get(path).await;
-        assert_eq!(status, 200, "{path}: {body}");
+    let lists: Vec<String> = operations()
+        .into_iter()
+        .filter(|(method, path)| {
+            *method == Method::GET
+                && !path.contains('{')
+                && !matches!(path.as_str(), "/api/events" | "/api/workspaces/lookup")
+                && declaration(method, path).unwrap().target == Target::Own
+        })
+        .map(|(_, path)| path)
+        .collect();
+    assert_eq!(lists.len(), 13, "{lists:?}");
+    for path in &lists {
+        let (status, body) = send(ann, token, "GET", path, None).await;
+        // The devices list answers 503 here: this server has no sign-in.
+        assert!(matches!(status, 200 | 503), "{path}: {status} {body}");
         for owners in [
             box_id.as_str(),
             "Owners",
@@ -873,14 +954,28 @@ async fn a_user_decides_for_their_own_workspace_only() {
     pair.ann.1.shutdown().await;
 }
 
-/// The other way round: a workspace of Ann's is out of the owner's reach on every route.
+/// The other way round: a workspace Ann made is out of the owner's reach on every route, answered
+/// exactly as one nobody has, while Ann reaches it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hostile_the_owner_has_no_way_into_a_users_workspace() {
     let pair = pair().await;
-    let (owner, token) = (pair.owner.0, pair.token.as_str());
-    pair.store
-        .set_workspace_owner(&ws("annsbox1"), pair.ann_id)
-        .unwrap();
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let (status, created) = send(
+        ann,
+        token,
+        "POST",
+        "/api/workspaces",
+        Some(&json!({"name": "anns"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{created}");
+    let anns = serde_json::from_str::<Value>(&created).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, body) = send(ann, token, "GET", &format!("/api/workspaces/{anns}"), None).await;
+    assert_eq!(status, 200, "Ann reaches her own: {body}");
+    let mut checked = 0;
     for (method, path) in operations() {
         if !matches!(
             declaration(&method, &path).unwrap().target,
@@ -889,16 +984,94 @@ async fn hostile_the_owner_has_no_way_into_a_users_workspace() {
             continue;
         }
         let body = matches!(method, Method::POST | Method::PUT | Method::PATCH).then(|| json!({}));
-        let (status, answer) = send(
-            owner,
-            token,
-            method.as_str(),
-            &fill(&path, "annsbox1"),
-            body.as_ref(),
-        )
-        .await;
-        assert_eq!(status, 404, "{method} {path}: {answer}");
+        let m = method.as_str();
+        let theirs = send(owner, token, m, &fill(&path, &anns), body.as_ref()).await;
+        let nobodys = send(owner, token, m, &fill(&path, "nobody00"), body.as_ref()).await;
+        assert_eq!(theirs.0, 404, "{m} {path}: {}", theirs.1);
+        assert_eq!(
+            theirs.1.replace(&anns, "ID"),
+            nobodys.1.replace("nobody00", "ID"),
+            "{m} {path}"
+        );
+        checked += 1;
     }
+    assert!(checked > 40, "{checked} routes name a workspace");
+    let (_, listed) = send(owner, token, "GET", "/api/workspaces", None).await;
+    assert!(!listed.contains(&anns), "{listed}");
+    pair.owner.1.shutdown().await;
+    pair.ann.1.shutdown().await;
+}
+
+/// Every workspace's never-decrypt list is the install's: a user may put a learned host of her
+/// workspace on its own list, not on the one for every workspace.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_user_makes_a_learned_host_permanent_for_her_workspace_only() {
+    let pair = pair().await;
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let (status, created) = send(
+        ann,
+        token,
+        "POST",
+        "/api/workspaces",
+        Some(&json!({"name": "anns"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{created}");
+    let anns = ws(serde_json::from_str::<Value>(&created).unwrap()["id"]
+        .as_str()
+        .unwrap());
+    for host in ["one.example", "two.example"] {
+        pair.learned.learn(&anns, host, 600);
+    }
+    let permanent = |host: &str, scope: &str| {
+        let path = format!("/api/workspaces/{anns}/interception/learned/{host}/permanent");
+        let body = json!({"scope": scope});
+        async move { send(ann, token, "POST", &path, Some(&body)).await }
+    };
+    let (status, body) = permanent("one.example", "global").await;
+    assert_eq!(status, 403, "{body}");
+    assert!(
+        pair.store.global_never_decrypt().unwrap().is_empty(),
+        "nothing changed"
+    );
+    let still = pair.learned.list(&anns);
+    assert_eq!(still.len(), 2, "still learned: {still:?}");
+    let (status, body) = permanent("one.example", "workspace").await;
+    assert_eq!(status, 204, "{body}");
+    assert_eq!(
+        pair.store
+            .workspace_interception(&anns)
+            .unwrap()
+            .never_decrypt,
+        ["one.example"]
+    );
+    // The owner may, for a workspace of their own.
+    let (status, created) = send(
+        owner,
+        token,
+        "POST",
+        "/api/workspaces",
+        Some(&json!({"name": "box"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{created}");
+    let boxed = ws(serde_json::from_str::<Value>(&created).unwrap()["id"]
+        .as_str()
+        .unwrap());
+    pair.learned.learn(&boxed, "three.example", 600);
+    let (status, body) = send(
+        owner,
+        token,
+        "POST",
+        &format!("/api/workspaces/{boxed}/interception/learned/three.example/permanent"),
+        Some(&json!({"scope": "global"})),
+    )
+    .await;
+    assert_eq!(status, 204, "{body}");
+    assert_eq!(
+        pair.store.global_never_decrypt().unwrap(),
+        ["three.example"]
+    );
     pair.owner.1.shutdown().await;
     pair.ann.1.shutdown().await;
 }
@@ -947,7 +1120,10 @@ async fn a_user_manages_their_own_collections() {
     assert_eq!(status, 202, "{created}");
     let anns: Value = serde_json::from_str(&created).unwrap();
     let anns = ws(anns["id"].as_str().unwrap());
-    assert_eq!(pair.store.workspace_owner(&anns).unwrap(), pair.ann_id);
+    assert_eq!(
+        pair.store.workspace_owner(&anns).unwrap(),
+        Some(pair.ann_id)
+    );
     let (_, listed) = send(owner, token, "GET", "/api/workspaces", None).await;
     assert!(!listed.contains(anns.as_str()), "{listed}");
 

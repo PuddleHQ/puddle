@@ -59,6 +59,13 @@ pub trait AddressCheck: Send + Sync {
     fn company_signal(&self, _host: &Host, _addr: SocketAddr) -> Option<CompanySignal> {
         None
     }
+
+    /// Whether `addr`, an address of `host`, is one a certificate distribution point may be
+    /// fetched from without a rule: on the company or a private network. By default none
+    /// is, so the exception only applies where the check says so.
+    fn pki_address(&self, _host: &Host, _addr: SocketAddr) -> bool {
+        false
+    }
 }
 
 impl AddressCheck for NetPolicy {
@@ -86,6 +93,10 @@ impl AddressCheck for NetPolicy {
 
     fn company_signal(&self, host: &Host, addr: SocketAddr) -> Option<CompanySignal> {
         NetPolicy::company_signal(self, Some(host), addr)
+    }
+
+    fn pki_address(&self, host: &Host, addr: SocketAddr) -> bool {
+        NetPolicy::pki_address(self, Some(host), addr)
     }
 }
 

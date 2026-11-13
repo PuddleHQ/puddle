@@ -16,6 +16,7 @@
 //! | memory for the next start | [`Runtime::set_memory`] |
 //! | a bigger root disk, live or at the next start | [`Runtime::grow_root_disk`] |
 //! | vCPUs for the next start | [`Runtime::set_cpus`] |
+//! | environment for the next start | [`Runtime::set_env`] |
 //! | re-adopt a running sandbox | [`Runtime::get`] → non-owning handle |
 //! | list / delete | [`Runtime::list`], [`Runtime::remove`] |
 //! | clean up after failed creates | [`Runtime::stale_dirs`], [`Runtime::remove_stale_dir`] |
@@ -50,6 +51,8 @@ mod error;
 mod exec;
 #[cfg(feature = "fake")]
 pub mod fake;
+#[cfg(any(feature = "fake", feature = "contract"))]
+pub mod probes;
 mod runtime;
 mod spec;
 

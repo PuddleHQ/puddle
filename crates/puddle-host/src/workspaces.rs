@@ -22,6 +22,7 @@
 use crate::agent_reports::{ReportDesk, clear_no_sudo, entrypoint_problem, no_sudo_problem};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -219,6 +220,45 @@ struct RuntimeNames {
     sandboxes: BTreeSet<String>,
 }
 
+/// The lock on the workspace list. Dropping it releases the lock first and then writes the
+/// names its holder queued, so no database write ever happens under the lock (the fields drop
+/// in the order they are declared).
+struct StateGuard<'a, R: Runtime + Clone> {
+    guard: MutexGuard<'a, State>,
+    _then: WriteNames<'a, R>,
+}
+
+impl<R: Runtime + Clone> Deref for StateGuard<'_, R> {
+    type Target = State;
+    fn deref(&self) -> &State {
+        &self.guard
+    }
+}
+
+impl<R: Runtime + Clone> DerefMut for StateGuard<'_, R> {
+    fn deref_mut(&mut self) -> &mut State {
+        &mut self.guard
+    }
+}
+
+/// Writes the queued names to the store when dropped.
+struct WriteNames<'a, R: Runtime + Clone>(&'a HostWorkspaces<R>);
+
+impl<R: Runtime + Clone> Drop for WriteNames<'_, R> {
+    fn drop(&mut self) {
+        let queued = !self
+            .0
+            .inner
+            .names_pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty();
+        if queued {
+            self.0.write_noted_names();
+        }
+    }
+}
+
 struct State {
     slots: BTreeMap<WorkspaceId, Slot>,
     /// The ids of deleted workspaces: no new workspace gets one.
@@ -276,9 +316,9 @@ struct Live<R: Runtime> {
     ssh: Option<SshEndpoint>,
     /// What the running guest was given at boot; `None` while it does not run.
     guest: Option<GuestState>,
-    /// The user's variables baked into the sandbox's own spec when it was made. A sandbox keeps
-    /// the environment it was made with (a restart cannot change it), so a start with other
-    /// variables makes a new sandbox on the same volume instead of restarting this one.
+    /// The user's variables in the sandbox's own spec: those it was made with, or the last set
+    /// written to it. A sandbox reads them at its start, so a start with other variables writes
+    /// them first (`Runtime::set_env`) and keeps the sandbox and its root disk.
     spec_env: GuestEnv,
     /// Held while the running guest's author files or login-shell environment file are rewritten,
     /// so two changes never run the boot hook at once.
@@ -315,6 +355,10 @@ struct Inner<R: Runtime + Clone> {
     login_markers: std::path::PathBuf,
     space: Arc<dyn crate::Space>,
     state: Mutex<State>,
+    /// Names waiting to be written to the store; see [`HostWorkspaces::note_names`].
+    names_pending: Mutex<BTreeMap<WorkspaceId, String>>,
+    /// Held while the queue is written, so writes never reorder; never held with `state`.
+    names_writing: Mutex<()>,
     live: tokio::sync::Mutex<BTreeMap<WorkspaceId, Live<R>>>,
     /// The tasks the service owns: operations, maintenance checks and downloads. A plain mutex,
     /// so a request never awaits between marking a workspace busy and spawning the task that
@@ -504,9 +548,25 @@ async fn wait_until_downloaded(
     match settled {
         Ok(Ok(Warmth::Ready | Warmth::Failed)) => Ok(()),
         _ => Err(WorkspaceError::Unavailable(
-            "Puddle is still downloading the image it checks a workspace with before deleting it; try again in a minute"
+            "Puddle is still downloading the image it reads a workspace's disk with; try again in a minute"
                 .to_owned(),
         )),
+    }
+}
+
+/// How a saved root-disk grow took effect.
+struct Grown {
+    how: &'static str,
+    /// Why the restart that applies the grow failed; the grow itself is done.
+    restart_failure: Option<String>,
+}
+
+impl Grown {
+    fn done(how: &'static str) -> Self {
+        Self {
+            how,
+            restart_failure: None,
+        }
     }
 }
 
@@ -729,6 +789,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 login_markers: parts.login_markers,
                 space: parts.space,
                 rewrite_gate: parts.rewrite_gate,
+                names_pending: Mutex::new(BTreeMap::new()),
+                names_writing: Mutex::new(()),
                 state: Mutex::new(State {
                     slots,
                     retired,
@@ -745,12 +807,34 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }),
         };
         service.note_names(&service.state());
+        service.adopt_listed()?;
         if interrupted && let Err(e) = service.persist(&service.state()) {
             // Harmless: the entries still say "being created" or "being deleted", so the next
             // start settles them the same way, and every later save writes the list without them.
             tracing::warn!(error = %e, "the workspace list was not saved after dropping unfinished creates");
         }
         Ok(service)
+    }
+
+    /// On the first start of this build, records the owner as the user of every listed workspace
+    /// that has none: they were made before every create recorded its user. Before anything serves
+    /// them, or no user would reach them; later starts change nothing.
+    fn adopt_listed(&self) -> Result<(), HostError> {
+        let adopted = self
+            .inner
+            .store
+            .adopt_unowned_workspaces(self.state().slots.keys())
+            .map_err(|e| HostError::State {
+                what: "the database",
+                reason: format!("whose the listed workspaces are could not be recorded: {e}"),
+            })?;
+        if adopted > 0 {
+            tracing::info!(
+                adopted,
+                "recorded the owner as the user of the workspaces made before"
+            );
+        }
+        Ok(())
     }
 
     /// What the user calls workspace `id`, for text they read. Never the id: a real host draws
@@ -764,11 +848,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         name_or_id(name.as_ref(), id)
     }
 
-    fn state(&self) -> MutexGuard<'_, State> {
-        self.inner
-            .state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn state(&self) -> StateGuard<'_, R> {
+        StateGuard {
+            guard: self
+                .inner
+                .state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+            _then: WriteNames(self),
+        }
     }
 
     /// Writes the book. Called with the state lock held, so saves cannot reorder.
@@ -799,11 +887,38 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Tells the store each workspace's name, so the audit records written from now on carry it
     /// (a record of a renamed or deleted workspace then still reads as the user knew it). Best
     /// effort: a name that cannot be written leaves the id to be shown for new records.
+    ///
+    /// Only queues the names: the write goes through the store's one connection, which others
+    /// wait for, so it must not happen while the state lock is held. [`StateGuard`] writes the
+    /// queue once it has released the lock.
     fn note_names(&self, state: &State) {
+        let mut pending = self
+            .inner
+            .names_pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         for slot in state.slots.values().filter(|slot| !slot.deleting) {
-            self.inner
-                .store
-                .note_workspace_name(&slot.record.id, slot.record.name.as_str());
+            pending.insert(slot.record.id.clone(), slot.record.name.to_string());
+        }
+    }
+
+    /// Writes the queued names to the store. Writers go one at a time and each takes what is
+    /// queued when its turn comes, so an older name never lands after a newer one.
+    fn write_noted_names(&self) {
+        let _writing = self
+            .inner
+            .names_writing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let batch = std::mem::take(
+            &mut *self
+                .inner
+                .names_pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        for (id, name) in batch {
+            self.inner.store.note_workspace_name(&id, &name);
         }
     }
 
@@ -1448,6 +1563,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             MAINTENANCE_WAIT,
         )
         .await
+    }
+
+    /// Runs a job that boots the maintenance image: waits for the image first (see
+    /// [`HostWorkspaces::maintenance_ready`]), then runs the job on a task the service owns (see
+    /// [`HostWorkspaces::on_own_task`]). Every maintenance job a request waits for passes here.
+    async fn maintenance_job<T: Send + 'static>(
+        &self,
+        job: impl Future<Output = T> + Send + 'static,
+    ) -> Result<T, WorkspaceError> {
+        self.maintenance_ready().await?;
+        self.on_own_task(job).await
     }
 
     /// Creates a sandbox on workspace `record`'s volume and boots it through the hook.
@@ -3245,13 +3371,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         room: Room,
     ) -> Result<(), String> {
         let result = self.grow_root_disk_steps(&record, size).await;
+        // The grown size is saved and the runtime has accepted it, so the grow is done even when
+        // the restart that applies it failed; that failure is reported on its own.
         let (outcome, detail) = match &result {
-            Ok(how) => (
+            Ok(grown) => (
                 WorkspaceOpOutcome::Succeeded,
-                format!(
-                    "root disk grown from {from_mib} MiB to {} MiB, {how}",
-                    size.as_mib()
-                ),
+                match &grown.restart_failure {
+                    None => format!(
+                        "root disk grown from {from_mib} MiB to {} MiB, {}",
+                        size.as_mib(),
+                        grown.how
+                    ),
+                    Some(reason) => format!(
+                        "root disk grown from {from_mib} MiB to {} MiB, {}; the restart failed: \
+                         {reason}",
+                        size.as_mib(),
+                        grown.how
+                    ),
+                },
             ),
             Err(reason) => (
                 WorkspaceOpOutcome::Failed,
@@ -3288,7 +3425,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         } else {
             self.inner.problems.clear(&key);
         }
-        result.map(|_| ())
+        result.and_then(|grown| grown.restart_failure.map_or(Ok(()), Err))
     }
 
     /// The grow itself; on success says how it took effect, for the audit entry.
@@ -3296,7 +3433,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         record: &WorkspaceRecord,
         size: DiskSize,
-    ) -> Result<&'static str, String> {
+    ) -> Result<Grown, String> {
         let inner = &self.inner;
         let name = &record.id;
         self.progress(name, WorkspaceStep::GrowingRootDisk, None);
@@ -3330,8 +3467,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .map_err(|e| format!("{e}; {SAVE_HINT}"))?;
         }
         match growth {
-            None => Ok("for the first start"),
-            Some(RootDiskGrowth::Live) => Ok("while it ran"),
+            None => Ok(Grown::done("for the first start")),
+            Some(RootDiskGrowth::Live) => Ok(Grown::done("while it ran")),
             Some(RootDiskGrowth::NextStart) if record.status == WorkspaceStatus::Running => {
                 self.progress(
                     name,
@@ -3344,10 +3481,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 );
                 self.set_status(name, WorkspaceStatus::Draining);
                 inner.reports.pause(name);
-                self.stop_work(record.clone()).await?;
-                self.set_status(name, WorkspaceStatus::Starting);
-                self.start_work(record.clone()).await?;
-                Ok("with a restart")
+                let restarted = async {
+                    self.stop_work(record.clone()).await?;
+                    self.set_status(name, WorkspaceStatus::Starting);
+                    self.start_work(record.clone()).await
+                }
+                .await;
+                Ok(Grown {
+                    how: "with a restart",
+                    restart_failure: restarted.err(),
+                })
             }
             Some(RootDiskGrowth::NextStart) => {
                 inner.problems.raise(
@@ -3365,7 +3508,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     )
                     .about(name.clone()),
                 );
-                Ok("at its next start")
+                Ok(Grown::done("at its next start"))
             }
         }
     }
@@ -3393,8 +3536,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 name,
                 WorkspaceStep::Starting,
                 Some(
-                    "the workspace's variables changed, so its sandbox is made again; \
-                     the volume with your work is kept, what was installed outside it is not"
+                    "the workspace's variables could not be applied to its sandbox, so it is made \
+                     again; the volume with your work is kept, what was installed outside it is not"
                         .to_owned(),
                 ),
             );
@@ -3421,16 +3564,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
-    /// Starts the stopped sandbox again. `Ok(false)` when it did not: the workspace's variables
-    /// changed since the sandbox was made and a sandbox keeps the environment it was made with, so
-    /// the caller makes a new one on the same volume (the volume holds the work, not the sandbox).
+    /// Starts the stopped sandbox again, with the workspace's variables as they are now: a changed
+    /// set is written to the stopped sandbox first (`Runtime::set_env`), so the root disk (home
+    /// directory, installed packages) is kept. `Ok(false)` only when that write failed: the caller
+    /// then makes a new sandbox on the same volume, the volume holding the work, not the sandbox.
     async fn restart_in_place(&self, record: &WorkspaceRecord) -> Result<bool, String> {
         let inner = &self.inner;
         let name = &record.id;
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
         self.publish_shell_init(&record.id)?;
-        let (plan, _, guest) = self.plan_guest_for(record, config).await?;
+        let (plan, spec_env, guest) = self.plan_guest_for(record, config).await?;
         let made_with = inner
             .live
             .lock()
@@ -3438,8 +3582,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .get(name)
             .map(|live| live.spec_env.clone());
         if made_with.is_some_and(|env| env != guest.env) {
-            inner.injection.end(name);
-            return Ok(false);
+            if let Err(e) = inner.runtime.set_env(&name.sandbox_name(), &spec_env).await {
+                tracing::warn!(workspace = %name, error = %e, "the changed variables could not be applied to the stopped sandbox");
+                inner.injection.end(name);
+                return Ok(false);
+            }
+            if let Some(live) = inner.live.lock().await.get_mut(name) {
+                live.spec_env = guest.env.clone();
+            }
         }
         let started = self.start_planned(record, &plan).await;
         match started {
@@ -3906,7 +4056,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     })
                     .map_err(|e| WorkspaceError::Unavailable(e.to_string()))?;
                 // Whose it is, before it is listed or announced.
-                git.claim(&id)?;
+                git.claim(&id, new.owner)?;
                 let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
                 record.start_folder.clone_from(&new.start_folder);
                 record.image = new
@@ -4105,9 +4255,12 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             let current = {
                 let state = self.state();
                 let slot = state.slots.get(id).ok_or_else(|| not_found(id))?;
-                slot.record.root_disk_size_mib.unwrap_or_else(|| {
-                    u64::from(root_disk_size(slot.record.root_disk_grown_mib).as_mib())
-                })
+                // The reported size lags a grow that applies at the next start; the saved one
+                // does not, so the larger of the two is what a request has to beat.
+                let saved = u64::from(root_disk_size(slot.record.root_disk_grown_mib).as_mib());
+                slot.record
+                    .root_disk_size_mib
+                    .map_or(saved, |r| r.max(saved))
             };
             if u64::from(size_mib) <= current {
                 return Err(WorkspaceError::Invalid(format!(
@@ -4168,10 +4321,9 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             if !self.state().slots.contains_key(id) {
                 return Err(not_found(id));
             }
-            self.maintenance_ready().await?;
             let (this, target) = (self.clone(), id.clone());
             let report = self
-                .on_own_task(async move {
+                .maintenance_job(async move {
                     this.inner
                         .workspaces
                         .check_delete(&this.inner.runtime, &target)
@@ -4206,12 +4358,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             )?;
             let record = ticket.record().clone();
             // The check runs before the call returns, so a refusal reaches the caller.
-            self.maintenance_ready().await?;
             // The ticket goes with the check: a request dropped while it runs leaves the
             // workspace busy until the check's sandbox is gone.
             let (this, target) = (self.clone(), id.clone());
             let (ticket, checked) = self
-                .on_own_task(async move {
+                .maintenance_job(async move {
                     let checked = this
                         .inner
                         .workspaces

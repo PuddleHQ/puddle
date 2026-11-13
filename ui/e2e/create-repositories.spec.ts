@@ -430,6 +430,11 @@ for (const scheme of ["light", "dark"] as const) {
       await rowOf(page, 2)
         .getByRole("button", { name: /^Remove/ })
         .click();
+      // The host note under the buttons drops gitlab.com 300 ms later and loses a line; the dialog
+      // is scrolled to its end, so row 1 moves down with it and a press under way ends on nothing.
+      await expect(dialog.getByTestId("hosts-new")).toContainText(
+        "allows github.com for this workspace",
+      );
       await rowOf(page, 1)
         .getByRole("button", { name: /^Remove/ })
         .click();

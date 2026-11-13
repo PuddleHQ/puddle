@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Weekly refresh of the pinned default image (ci/image-pins.sh). The default workspace image, the maintenance image and the image
+# the VM tests boot are pinned by digest (`mcr.microsoft.com/devcontainers/base:debian@sha256:...`), so a registry change reaches
+# users only through a reviewed pull request. This job asks the registry what the tag points at now; when the digest moved it opens
+# ONE pull request, `build: refresh the pinned default image digest`, that goes through the merge queue like any other, so the VM
+# tests boot the new image before it merges. It never pushes to develop.
+#
+# A pull request opened or updated with the default GITHUB_TOKEN does not start the required checks (a GitHub rule against workflow
+# loops), so the job mints a short-lived installation token for the GitHub App that coverage-baseline.yml already uses
+# (repository variable COVERAGE_BASELINE_CLIENT_ID, repository secret COVERAGE_BASELINE_APP_PRIVATE_KEY; Contents and Pull requests
+# write, nothing else asked) and opens the pull request as that app. GitHub revokes the token when the job ends.
+# By hand: `gh workflow run refresh-image-pins.yml` reports only (dry run); pass dry_run=false to push and open.
+name: refresh-image-pins
+
+on:
+  schedule:
+    - cron: "43 5 * * 2"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only report what would be pinned; push nothing, open nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-image-pins
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: refresh the pinned image digest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Token for the pull request app
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.COVERAGE_BASELINE_CLIENT_ID }}
+          private-key: ${{ secrets.COVERAGE_BASELINE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          token: ${{ steps.app-token.outputs.token }}
+      - name: self-test
+        run: ci/image-pins-test.sh
+      - name: refresh the pins
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '' }}
+        run: ci/image-pins.sh refresh

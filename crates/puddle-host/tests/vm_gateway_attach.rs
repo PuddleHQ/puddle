@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! JetBrains Gateway's own SSH client against a workspace's direct SSH entry, on a real microVM.
+//! `JetBrains` Gateway's own SSH client against a workspace's direct SSH entry, on a real microVM.
 //!
 //! Gateway runs headless with a small probe plugin (`tests/gateway_probe/`) that calls Gateway's
 //! own code: its platform SSH client (sshj as Gateway bundles it, the ssh config read through
@@ -13,7 +13,8 @@
 #![expect(
     clippy::unwrap_used,
     clippy::print_stdout,
-    reason = "a plain test program for a VM: a failed step fails the run; measurements go to stderr"
+    clippy::print_stderr,
+    reason = "a plain test program for a VM: a failed step fails the run; the probe's report goes to stderr"
 )]
 
 mod support;
@@ -58,6 +59,7 @@ fn main() -> ExitCode {
 #[cfg(unix)]
 #[expect(
     clippy::expect_used,
+    clippy::indexing_slicing,
     reason = "a plain test program for a VM: a failed step fails the run"
 )]
 mod gateway {
@@ -79,10 +81,9 @@ mod gateway {
     const PROBE_LIMIT: Duration = Duration::from_secs(360);
 
     fn env_dir(name: &str) -> PathBuf {
-        let dir = PathBuf::from(
-            std::env::var_os(name)
-                .unwrap_or_else(|| panic!("{name} is not set (see the module docs)")),
-        );
+        let value = std::env::var_os(name);
+        assert!(value.is_some(), "{name} is not set (see the module docs)");
+        let dir = PathBuf::from(value.unwrap());
         assert!(dir.is_dir(), "{name}={} is not a folder", dir.display());
         dir
     }
@@ -223,6 +224,10 @@ mod gateway {
         )
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one VM, one story, read top to bottom"
+    )]
     async fn run() {
         let gateway_dir = env_dir("PUDDLE_GATEWAY_DIR");
         let scratch = tempfile::tempdir().unwrap();

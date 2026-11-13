@@ -754,10 +754,16 @@ fn runtime(os: Os, rt: &RuntimeFacts) -> Check {
         } => Check::new(
             id,
             Status::Warn,
-            format!(
-                "msb {version} accepted by the developer override; this build needs {}",
-                rt.expected
-            ),
+            if *version == rt.expected {
+                format!(
+                    "msb {version} accepted by the developer override; its files differ from the ones this build ships with"
+                )
+            } else {
+                format!(
+                    "msb {version} accepted by the developer override; this build needs {}",
+                    rt.expected
+                )
+            },
         )
         .finding(Finding::RuntimeOverridden)
         .fix("Development builds only. Unset PUDDLE_DEV_ANY_RUNTIME to test the shipped combination."),
@@ -787,6 +793,14 @@ and must sit next to Puddle's program file."
                         "Reinstall Puddle so the runtime in {dir} matches this Puddle again. Don't copy an msb \
 from elsewhere into it: Puddle only runs the exact msb {} it was built for.",
                         rt.expected
+                    ),
+                ),
+                RuntimeError::Digest { .. } => (
+                    Finding::RuntimeDigestMismatch,
+                    format!(
+                        "Repair or reinstall Puddle so the runtime in {dir} is the one it shipped with. \
+A file there was changed after install (an update that stopped half way, antivirus, disk trouble, or another \
+program replacing it); Puddle only runs the exact files it was built for."
                     ),
                 ),
                 _ => (

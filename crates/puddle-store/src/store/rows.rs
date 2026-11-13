@@ -15,28 +15,21 @@ use crate::users::UserId;
 use super::audit::{append, append_for};
 use super::sql_ts;
 
-/// Writes a rule of `user` (see [`Store::add_rule_as`]; `None` takes the scope's user, and the
-/// owner for a global rule).
+/// Writes a rule of `user`; a workspace or set scope must be theirs.
 pub(super) fn insert_rule(
     tx: &Transaction<'_>,
-    user: Option<UserId>,
+    user: UserId,
     new: &NewRule,
     now: u64,
     source: Option<PendingId>,
 ) -> Result<Rule, StoreError> {
-    let user = match (&new.scope, user) {
-        (Scope::Workspace(workspace), Some(user)) => {
-            super::users::require_owner(tx, workspace, user)?;
-            user
-        }
-        (Scope::Workspace(workspace), None) => super::users::owner_in(tx, workspace)?,
-        (Scope::Set(set), Some(user)) => {
+    match &new.scope {
+        Scope::Workspace(workspace) => super::users::require_owner(tx, workspace, user)?,
+        Scope::Set(set) => {
             super::sets::require_user_set(tx, user, *set)?;
-            user
         }
-        (Scope::Set(set), None) => super::sets::set_user(tx, *set)?,
-        (Scope::Global, user) => user.unwrap_or(UserId::OWNER),
-    };
+        Scope::Global => {}
+    }
     let workspace = new.scope.workspace().map(WorkspaceId::as_str);
     let kind = match new.pattern {
         Pattern::Exact(_) => "exact",

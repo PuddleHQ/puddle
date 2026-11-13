@@ -45,8 +45,8 @@ fn v3_keeps_every_rule_and_never_reuses_a_deleted_id() {
         ]
     );
     conn.execute(
-        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-             VALUES ('global', 'exact', 'new.example', 'allow', 4, 'cli')",
+        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('global', 'exact', 'new.example', 'allow', 4, 'cli', 1)",
         [],
     )
     .unwrap();
@@ -58,16 +58,16 @@ fn v3_keeps_every_rule_and_never_reuses_a_deleted_id() {
     // A set entry needs its set, and a set scope needs a set id.
     assert!(
             conn.execute(
-                "INSERT INTO rules (scope, set_id, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('set', 9, 'exact', 'a.example', 'allow', 4, 'cli')",
+                "INSERT INTO rules (scope, set_id, pattern_kind, pattern, effect, created_at, created_by, user_id)
+                 VALUES ('set', 9, 'exact', 'a.example', 'allow', 4, 'cli', 1)",
                 [],
             )
             .is_err()
         );
     assert!(
         conn.execute(
-            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('set', 'exact', 'a.example', 'allow', 4, 'cli')",
+            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+                 VALUES ('set', 'exact', 'a.example', 'allow', 4, 'cli', 1)",
             [],
         )
         .is_err()
@@ -186,23 +186,23 @@ fn v4_keeps_the_guards_of_the_rules_and_pending_tables() {
     // owner never changes, and the one-open-row key still applies.
     assert!(
         conn.execute(
-            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('workspace', 'exact', 'a.example', 'allow', 4, 'cli')",
+            "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+                 VALUES ('workspace', 'exact', 'a.example', 'allow', 4, 'cli', 1)",
             [],
         )
         .is_err()
     );
     assert!(
             conn.execute(
-                "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('sandbox', 'box', 'exact', 'a.example', 'allow', 4, 'cli')",
+                "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by, user_id)
+                 VALUES ('sandbox', 'box', 'exact', 'a.example', 'allow', 4, 'cli', 1)",
                 [],
             )
             .is_err()
         );
     conn.execute(
-        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-             VALUES ('global', 'exact', 'new.example', 'allow', 5, 'cli')",
+        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('global', 'exact', 'new.example', 'allow', 5, 'cli', 1)",
         [],
     )
     .unwrap();
@@ -266,8 +266,8 @@ fn v5_adds_the_identity_tables_and_keeps_every_older_row() {
         .unwrap();
     assert_eq!(switches, (None, None), "a new row follows the defaults");
     // One default at most, and a workspace's order has no gaps in its key.
-    let add = "INSERT INTO identities (label, author_name, author_email, credentials, position, is_default, created_at, changed_at)
-                   VALUES (?1, 'n', 'e@x', '[]', ?2, 1, 1, 1)";
+    let add = "INSERT INTO identities (label, author_name, author_email, credentials, position, is_default, created_at, changed_at, user_id)
+                   VALUES (?1, 'n', 'e@x', '[]', ?2, 1, 1, 1, 1)";
     conn.execute(add, ("a", 0)).unwrap();
     assert!(conn.execute(add, ("b", 1)).is_err());
 }
@@ -292,8 +292,8 @@ fn v6_adds_the_environment_tables_and_refuses_a_row_of_the_wrong_shape() {
     assert_eq!(count("SELECT count(*) FROM env_stand_ins"), 0);
     let insert = |kind: &str, value: Option<&str>, secret: Option<&str>, hosts: Option<&str>| {
         conn.execute(
-            "INSERT INTO env_vars (workspace_id, name, kind, value, secret_id, hosts, changed_at)
-                 VALUES (NULL, 'A', ?1, ?2, ?3, ?4, 1)",
+            "INSERT INTO env_vars (workspace_id, name, kind, value, secret_id, hosts, changed_at, user_id)
+                 VALUES (NULL, 'A', ?1, ?2, ?3, ?4, 1, 1)",
             (kind, value, secret, hosts),
         )
     };
@@ -308,13 +308,13 @@ fn v6_adds_the_environment_tables_and_refuses_a_row_of_the_wrong_shape() {
     // One name per scope, in both the global and a workspace's scope.
     assert!(insert("plain", Some("v"), None, None).is_err());
     conn.execute(
-            "INSERT INTO env_vars (workspace_id, name, kind, value, changed_at) VALUES ('box', 'A', 'plain', 'v', 1)",
+            "INSERT INTO env_vars (workspace_id, name, kind, value, changed_at, user_id) VALUES ('box', 'A', 'plain', 'v', 1, 1)",
             [],
         )
         .unwrap();
     assert!(
             conn.execute(
-                "INSERT INTO env_vars (workspace_id, name, kind, value, changed_at) VALUES ('box', 'A', 'plain', 'w', 1)",
+                "INSERT INTO env_vars (workspace_id, name, kind, value, changed_at, user_id) VALUES ('box', 'A', 'plain', 'w', 1, 1)",
                 [],
             )
             .is_err()
@@ -496,17 +496,17 @@ fn v17_lets_a_workspace_create_make_a_rule_and_keeps_the_older_rules() {
         .unwrap();
     assert_eq!(survivors, [(1, "a.example".to_owned())]);
     conn.execute(
-            "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by)
-             VALUES ('workspace', 'box', 'exact', 'github.com', 'allow', 3, 'workspace_create')",
+            "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('workspace', 'box', 'exact', 'github.com', 'allow', 3, 'workspace_create', 1)",
             [],
         )
         .unwrap();
     assert_eq!(conn.last_insert_rowid(), 3, "the deleted id 2 stays used");
     for bad in [
-        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-             VALUES ('global', 'exact', 'x.example', 'allow', 4, 'system')",
-        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
-             VALUES ('workspace', 'exact', 'x.example', 'allow', 4, 'cli')",
+        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('global', 'exact', 'x.example', 'allow', 4, 'system', 1)",
+        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('workspace', 'exact', 'x.example', 'allow', 4, 'cli', 1)",
     ] {
         assert!(conn.execute(bad, []).is_err(), "{bad}");
     }
@@ -642,8 +642,8 @@ fn v20_gives_everything_to_the_owner_and_keeps_every_row() {
     );
     // A deleted identity's id is still never reused.
     conn.execute(
-        "INSERT INTO identities (label, author_name, author_email, credentials, position, created_at, changed_at)
-             VALUES ('new', 'n', 'e@x', '[]', 2, 1, 1)",
+        "INSERT INTO identities (label, author_name, author_email, credentials, position, created_at, changed_at, user_id)
+             VALUES ('new', 'n', 'e@x', '[]', 2, 1, 1, 1)",
         [],
     )
     .unwrap();
@@ -687,6 +687,132 @@ fn v20_gives_everything_to_the_owner_and_keeps_every_row() {
         conn.execute("INSERT INTO workspace_owners VALUES ('other', 9)", [])
             .is_err()
     );
+}
+
+/// V24 rebuilds the seven tables that carried `DEFAULT 1` on `user_id`: every row, every id, the
+/// `AUTOINCREMENT` high-water mark, the indexes, the audit size triggers and the identity lists
+/// survive, and an insert that forgets the user now fails instead of writing the owner's row.
+#[test]
+fn v24_drops_the_owner_default_and_keeps_every_row() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", true).unwrap();
+    migrate_up_to(&mut conn, 23).unwrap();
+    conn.execute_batch(
+        "INSERT INTO users (role, name, created_at) VALUES ('user', 'ann', 1);
+         INSERT INTO rule_sets (name, created_at, created_by, user_id) VALUES ('Mine', 1, 'ui', 2);
+         INSERT INTO rules (scope, set_id, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('set', 1, 'exact', 'set.example', 'allow', 1, 'ui', 2);
+         INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('global', 'exact', 'a.example', 'allow', 1, 'ui', 1),
+                    ('global', 'exact', 'gone.example', 'allow', 1, 'ui', 1);
+         DELETE FROM rules WHERE pattern = 'gone.example';
+         INSERT INTO request_rules (scope, host, methods, path, created_at, created_by, user_id)
+             VALUES ('global', 'h.example', '*', '/*', 1, 'api', 2);
+         INSERT INTO audit (ts, type, workspace_id, line, user_id) VALUES (1, 'x', 'box', 'abcd', 2);
+         INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id)
+             VALUES ('1', 'box', 1, 1, 2);
+         INSERT INTO env_vars (workspace_id, name, kind, value, changed_at, user_id)
+             VALUES (NULL, 'A', 'plain', 'v', 1, 2);
+         INSERT INTO identities (user_id, label, author_name, author_email, credentials, position,
+                                 is_default, created_at, changed_at)
+             VALUES (2, 'work', 'n', 'e@x', '[]', 0, 1, 1, 1);
+         INSERT INTO workspace_identities VALUES ('box', 1, 0);",
+    )
+    .unwrap();
+    let size_before: i64 = conn
+        .query_row("SELECT bytes FROM audit_size WHERE id = 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(migrate(&mut conn).unwrap(), 23);
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let one = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    for (table, rows) in [
+        ("rules", 2),
+        ("request_rules", 1),
+        ("audit", 1),
+        ("rule_sets", 1),
+        ("rule_set_switches", 1),
+        ("env_vars", 1),
+        ("identities", 1),
+    ] {
+        assert_eq!(
+            one(&format!("SELECT count(*) FROM {table}")),
+            rows,
+            "{table}"
+        );
+        let default: Option<String> = conn
+            .query_row(
+                "SELECT dflt_value FROM pragma_table_info(?1) WHERE name = 'user_id'",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(default, None, "{table} still defaults its user");
+    }
+    assert_eq!(
+        one("SELECT user_id FROM rules WHERE pattern = 'set.example'"),
+        2
+    );
+    assert_eq!(one("SELECT user_id FROM audit"), 2);
+    assert_eq!(
+        one("SELECT bytes FROM audit_size WHERE id = 1"),
+        size_before,
+        "the audit size stays"
+    );
+    // The deleted rule's id is not reused, and the rebuilt audit table still counts its bytes.
+    conn.execute(
+        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+         VALUES ('global', 'exact', 'b.example', 'allow', 1, 'ui', 1)",
+        [],
+    )
+    .unwrap();
+    assert_eq!(conn.last_insert_rowid(), 4);
+    conn.execute(
+        "INSERT INTO audit (ts, type, line, user_id) VALUES (2, 'x', 'abcd', 1)",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        one("SELECT bytes FROM audit_size WHERE id = 1"),
+        size_before + 4
+    );
+    assert_eq!(
+        one("SELECT count(*) FROM workspace_identities WHERE identity_id = 1"),
+        1
+    );
+    // A write that names no user fails, in every one of the seven tables.
+    for sql in [
+        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by)
+         VALUES ('global', 'exact', 'c.example', 'allow', 1, 'ui')",
+        "INSERT INTO request_rules (scope, host, methods, path, created_at, created_by)
+         VALUES ('global', 'h.example', '*', '/*', 1, 'api')",
+        "INSERT INTO audit (ts, type, line) VALUES (1, 'x', 'y')",
+        "INSERT INTO rule_sets (name, created_at, created_by) VALUES ('Other', 1, 'ui')",
+        "INSERT INTO rule_set_switches (rule_set, enabled, changed_at) VALUES ('1', 1, 1)",
+        "INSERT INTO env_vars (name, kind, value, changed_at) VALUES ('B', 'plain', 'v', 1)",
+        "INSERT INTO identities (label, author_name, author_email, credentials, position, created_at, changed_at)
+         VALUES ('home', 'n', 'e@x', '[]', 1, 1, 1)",
+    ] {
+        assert!(conn.execute(sql, []).is_err(), "{sql}");
+    }
+    // The rule-to-set reference and the per-user names still hold.
+    assert!(
+        conn.execute(
+            "INSERT INTO rules (scope, set_id, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('set', 99, 'exact', 'x.example', 'allow', 1, 'ui', 2)",
+            [],
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO rule_sets (name, created_at, created_by, user_id) VALUES ('MINE', 1, 'ui', 2)",
+            [],
+        )
+        .is_err()
+    );
+    assert_eq!(violations(&conn).unwrap(), []);
 }
 
 const PARENT_AND_CHILD: &str = "

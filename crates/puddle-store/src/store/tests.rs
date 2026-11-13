@@ -4,6 +4,7 @@ use puddle_types::ConnectionEvent;
 use super::rows::{RawPending, RawRule, pending_from_raw, rule_from_raw};
 use super::*;
 use crate::clock::ManualClock;
+use crate::rule::Effect;
 use puddle_types::{ConnectionDecision, ConnectionReason};
 
 fn store() -> (Arc<ManualClock>, Store) {
@@ -101,8 +102,8 @@ fn corrupt_rows_are_reported_not_trusted() {
     {
         let conn = lock(&store.conn);
         conn.execute(
-                "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by)
-                 VALUES ('global', NULL, 'exact', 'NOT A HOST', 'allow', 0, 'cli')",
+                "INSERT INTO rules (scope, workspace_id, pattern_kind, pattern, effect, created_at, created_by, user_id)
+                 VALUES ('global', NULL, 'exact', 'NOT A HOST', 'allow', 0, 'cli', 1)",
                 [],
             )
             .unwrap();
@@ -409,22 +410,20 @@ fn peeking_as_a_user_answers_from_that_users_rules_only() {
     let elsewhere = Host::parse_normalised("other.example.com").unwrap();
     let workspace = WorkspaceId::new("not-made-yet").unwrap();
     let rule = store
-        .add_rule_as(
-            ana.id,
-            &NewRule {
-                scope: Scope::Global,
-                pattern: Pattern::Exact(host.clone()),
-                effect: Effect::Allow,
-                expires_at: None,
-                created_by: Actor::Ui,
-            },
-        )
+        .as_user(ana.id)
+        .add_rule(&NewRule {
+            scope: Scope::Global,
+            pattern: Pattern::Exact(host.clone()),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Ui,
+        })
         .unwrap();
 
-    match store.peek_as(ana.id, &workspace, &host) {
+    match store.as_user(ana.id).peek(&workspace, &host) {
         Some(Decision::Allow { rule_id, .. }) => assert_eq!(rule_id, rule.id),
         other => panic!("expected the user's allow rule, got {other:?}"),
     }
-    assert_eq!(store.peek_as(ana.id, &workspace, &elsewhere), None);
-    assert_eq!(store.peek_as(UserId::OWNER, &workspace, &host), None);
+    assert_eq!(store.as_user(ana.id).peek(&workspace, &elsewhere), None);
+    assert_eq!(store.as_user(UserId::OWNER).peek(&workspace, &host), None);
 }

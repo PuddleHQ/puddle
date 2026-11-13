@@ -86,6 +86,7 @@ fn rule(
     expires_at: Option<u64>,
 ) -> Rule {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope,
             pattern: Pattern::parse(pattern).unwrap(),

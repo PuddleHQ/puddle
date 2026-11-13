@@ -96,7 +96,7 @@ pub(crate) async fn create_request_rule(
         created_by: Actor::Api,
     };
     let rule = blocking(move || {
-        let rule = state.store.add_request_rule_as(principal.user, &new)?;
+        let rule = state.store.as_user(principal.user).add_request_rule(&new)?;
         Ok(RequestRule::new(rule, &state.store.never_decrypt_names()?))
     })
     .await?;

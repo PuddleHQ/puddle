@@ -80,6 +80,7 @@ async fn workspace(fake: &GitHost, tag: &str) -> (NameProxy, VmHost, WorkspaceId
     let sandbox = WorkspaceId::new(&name).unwrap();
     vm.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(NAME).unwrap(),

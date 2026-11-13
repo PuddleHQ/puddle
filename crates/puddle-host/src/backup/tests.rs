@@ -14,6 +14,7 @@ fn open(path: &Path) -> Store {
 
 fn add(store: &Store, n: usize) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse(&format!("host{n}.example.org")).unwrap(),

@@ -29,6 +29,7 @@ fn host(name: &str) -> Host {
 
 fn deny(store: &Store, scope: Scope, pattern: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope,
             pattern: Pattern::parse(pattern).unwrap(),
@@ -44,7 +45,12 @@ fn a_fresh_store_does_not_allow_github_so_a_clone_waits_for_the_user() {
     // The check behind the create's grant: a repository host is pending until some rule says
     // otherwise, with or without a Git identity (a credential never allows a host).
     let store = store();
-    assert_eq!(store.peek(&ws("aaaaaaaa"), &host("github.com")), None);
+    assert_eq!(
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("aaaaaaaa"), &host("github.com")),
+        None
+    );
     let decision = store
         .decide(
             &EgressRequest::new(ws("aaaaaaaa"), host("github.com"), 443),
@@ -60,7 +66,12 @@ fn a_fresh_store_does_not_allow_github_so_a_clone_waits_for_the_user() {
 #[test]
 fn peek_records_nothing() {
     let store = store();
-    assert_eq!(store.peek(&ws("aaaaaaaa"), &host("github.com")), None);
+    assert_eq!(
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("aaaaaaaa"), &host("github.com")),
+        None
+    );
     assert_eq!(store.inbox_every_user().unwrap().len(), 0);
 }
 
@@ -68,6 +79,7 @@ fn peek_records_nothing() {
 fn the_create_allows_a_new_host_for_that_workspace_only_as_a_rule_it_made() {
     let store = store();
     let made = store
+        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("github.com")])
         .unwrap();
     assert_eq!(made.len(), 1);
@@ -78,11 +90,18 @@ fn the_create_allows_a_new_host_for_that_workspace_only_as_a_rule_it_made() {
     assert_eq!(rule.expires_at, None);
     assert!(store.rules_every_user().iter().any(|r| r.id == rule.id));
     assert!(matches!(
-        store.peek(&ws("aaaaaaaa"), &host("github.com")),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("aaaaaaaa"), &host("github.com")),
         Some(Decision::Allow { .. })
     ));
     // Another workspace is unaffected.
-    assert_eq!(store.peek(&ws("bbbbbbbb"), &host("github.com")), None);
+    assert_eq!(
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("bbbbbbbb"), &host("github.com")),
+        None
+    );
     // The audit says who made it.
     let lines = store.audit_lines(0, 100).unwrap();
     assert!(
@@ -97,6 +116,7 @@ fn the_create_allows_a_new_host_for_that_workspace_only_as_a_rule_it_made() {
 fn a_host_that_is_allowed_already_gets_no_rule_and_a_second_create_adds_none() {
     let store = store();
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse(".github.com").unwrap(),
@@ -106,6 +126,7 @@ fn a_host_that_is_allowed_already_gets_no_rule_and_a_second_create_adds_none() {
         })
         .unwrap();
     let made = store
+        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(
             &ws("aaaaaaaa"),
             &[host("api.github.com"), host("gitea.example")],
@@ -114,6 +135,7 @@ fn a_host_that_is_allowed_already_gets_no_rule_and_a_second_create_adds_none() {
     assert_eq!(made.len(), 1, "only the host nothing allowed yet");
     assert_eq!(made.first().unwrap().pattern.to_string(), "gitea.example");
     let again = store
+        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("gitea.example")])
         .unwrap();
     assert_eq!(again.len(), 0);
@@ -125,6 +147,7 @@ fn a_block_rule_is_never_overridden_by_the_create() {
     deny(&store, Scope::Global, ".github.com");
     deny(&store, Scope::Workspace(ws("aaaaaaaa")), "gitlab.com");
     let made = store
+        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(
             &ws("aaaaaaaa"),
             &[host("api.github.com"), host("gitlab.com")],
@@ -132,7 +155,9 @@ fn a_block_rule_is_never_overridden_by_the_create() {
         .unwrap();
     assert_eq!(made.len(), 0);
     assert!(matches!(
-        store.peek(&ws("aaaaaaaa"), &host("api.github.com")),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .peek(&ws("aaaaaaaa"), &host("api.github.com")),
         Some(Decision::Deny { .. })
     ));
 }
@@ -149,6 +174,7 @@ fn the_grant_closes_a_pending_request_it_decides() {
     assert!(matches!(decision, Decision::Pending(_)));
     assert_eq!(store.inbox_every_user().unwrap().len(), 1);
     store
+        .as_user(puddle_store::UserId::OWNER)
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("github.com")])
         .unwrap();
     assert_eq!(store.inbox_every_user().unwrap().len(), 0);

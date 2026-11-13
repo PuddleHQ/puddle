@@ -65,6 +65,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
     let name = format!("{}-host", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(REPO_HOST).unwrap(),
@@ -554,6 +555,7 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
     let sandbox = WorkspaceId::new(&name).unwrap();
     for allowed in [REPO_HOST, UNREACHABLE_HOST] {
         host.store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
                 pattern: Pattern::parse(allowed).unwrap(),
@@ -976,6 +978,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
     let name = format!("{}-manage", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(REPO_HOST).unwrap(),
@@ -1173,6 +1176,7 @@ async fn vm_host_clones_a_public_repository_when_the_identity_is_not_signed_in_a
     let name = format!("{}-anon", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse("github.com").unwrap(),
@@ -1261,6 +1265,7 @@ async fn vm_host_decrypts_only_what_an_identity_names_and_the_guest_trusts_the_c
     let sandbox = WorkspaceId::new(&name).unwrap();
     for site in ["github.com", SECOND, SITE] {
         host.store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
                 pattern: Pattern::parse(site).unwrap(),
@@ -1442,6 +1447,7 @@ async fn vm_host_decrypts_an_unlisted_host_in_the_curated_mode_and_follows_the_g
     let name = format!("{}-curated", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(SITE).unwrap(),
@@ -1615,6 +1621,7 @@ async fn vm_host_refuses_udp_443_at_once_and_curl_http3_falls_back_to_tcp() {
     let name = format!("{}-quic", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse(H3_HOST).unwrap(),
@@ -1878,6 +1885,7 @@ async fn vm_host_gives_the_guest_stand_ins_only_and_swaps_them_for_a_secrets_own
     let sandbox = WorkspaceId::new(&name).unwrap();
     for site in [ALPHA, BETA, GAMMA] {
         host.store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
                 pattern: Pattern::parse(site).unwrap(),
@@ -2206,6 +2214,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
     let sandbox = WorkspaceId::new(&name).unwrap();
     for site in names {
         host.store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
                 pattern: Pattern::parse(site).unwrap(),
@@ -2424,6 +2433,7 @@ async fn vm_host_carries_2000_concurrent_guest_connections_through_agent_and_pro
     let sandbox = WorkspaceId::new(&name).unwrap();
     // The repository host for the clone, and the host's own address for the connections.
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse("127.0.0.1").unwrap(),
@@ -2720,6 +2730,7 @@ async fn vm_host_transparency_bar_curl_at_its_widest_through_agent_and_proxy() {
     let name = format!("{}-transp", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),
             pattern: Pattern::parse("127.0.0.1").unwrap(),
@@ -2863,6 +2874,7 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceId, Ap
     for site in RADAR_HOSTS {
         vm.host
             .store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
                 pattern: Pattern::parse(site).unwrap(),
@@ -4178,6 +4190,7 @@ async fn vm_host_the_browser_editors_front_and_this_computers_loopback_are_out_o
         .chain([format!("{name}.localhost")])
     {
         host.store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
                 pattern: Pattern::parse(&site).unwrap(),

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
 use crate::clock::ManualClock;
-use crate::{Actor, Effect, Limits, NewRule, Pattern, Scope};
+use crate::{Actor, Effect, Limits, NewRule, Pattern, Scope, UserId};
 use puddle_test_kit::eventually;
 
 /// A rule that has expired, so the next pass has to write a `rule_expired` record.
@@ -9,6 +9,7 @@ fn store_with_an_expired_rule() -> Arc<Store> {
     let clock = Arc::new(ManualClock::new(1_000_000));
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     store
+        .as_user(UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Global,
             pattern: Pattern::parse("old.example").unwrap(),

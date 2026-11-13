@@ -91,6 +91,7 @@ async fn vm_radar_session_user_agent_runs_the_real_tools_at_their_widest_and_a_s
     for site in LIVE {
         vm.host
             .store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(sandbox.clone()),
                 pattern: Pattern::parse(site).unwrap(),

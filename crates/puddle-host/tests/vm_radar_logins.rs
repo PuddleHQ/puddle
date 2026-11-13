@@ -255,6 +255,7 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
     for site in INSTALL_HOSTS.iter().chain(PROFILE_HOSTS) {
         vm.host
             .store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(workspace.clone()),
                 pattern: Pattern::parse(site).unwrap(),

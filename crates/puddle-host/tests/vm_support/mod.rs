@@ -571,6 +571,7 @@ pub(crate) async fn create_workspace_from(
     for site in allowed {
         vm.host
             .store()
+            .as_user(puddle_store::UserId::OWNER)
             .add_rule(&NewRule {
                 scope: Scope::Workspace(workspace.clone()),
                 pattern: Pattern::parse(site).unwrap(),

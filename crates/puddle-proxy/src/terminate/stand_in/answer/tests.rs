@@ -974,7 +974,7 @@ fn no_room_left_stops_before_a_piece_that_would_add_nothing() {
         decoder.push(&packed[..10], &mut out, 0).unwrap(),
         Pushed::Full
     );
-    assert!(out.is_empty());
+    assert_eq!(out, Vec::<u8>::new());
 }
 
 #[test]

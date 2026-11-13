@@ -1902,3 +1902,28 @@ async fn a_scenario_whose_variable_is_refused_fails_to_start_and_names_it() {
     .unwrap();
     assert!(err.contains("web"), "{err}");
 }
+
+/// The program itself, started as a user starts it: `--help` prints the usage and exits 0, and a
+/// bad option exits 2 with the reason on stderr (the same path the stack-size guard reports on).
+#[test]
+fn the_program_prints_its_help_and_exits_2_on_a_bad_option() {
+    let program = env!("CARGO_BIN_EXE_puddle-ui-fixture");
+    let help = std::process::Command::new(program)
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success(), "{help:?}");
+    assert!(
+        String::from_utf8_lossy(&help.stdout).contains("usage: puddle-ui-fixture"),
+        "{help:?}"
+    );
+    let bad = std::process::Command::new(program)
+        .arg("--no-such-option")
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(2), "{bad:?}");
+    assert!(
+        String::from_utf8_lossy(&bad.stderr).starts_with("puddle-ui-fixture: "),
+        "{bad:?}"
+    );
+}

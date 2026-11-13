@@ -88,7 +88,8 @@ fn backup_copies_a_live_database_and_names_what_it_leaves_out() {
     assert!(result.status.success(), "{result:?}");
     let stdout = String::from_utf8(result.stdout).unwrap();
     assert!(
-        stdout.contains("not included: stored logins and secrets"),
+        stdout.contains("not included: stored logins and secrets")
+            && stdout.contains("account passwords and open invites"),
         "{stdout}"
     );
     let restored = puddle_store::Store::open(
@@ -98,6 +99,59 @@ fn backup_copies_a_live_database_and_names_what_it_leaves_out() {
     )
     .unwrap();
     assert_eq!(restored.rules(), live.rules());
+}
+
+#[test]
+fn backup_reads_the_folder_the_environment_names_not_the_per_user_one() {
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    let live = puddle_store::Store::open(
+        &data.join("puddle.db"),
+        Arc::new(puddle_store::SystemClock),
+        puddle_store::Limits::default(),
+    )
+    .unwrap();
+    let out = root.path().join("out");
+    let result = Command::new(env!("CARGO_BIN_EXE_puddle"))
+        .args(["backup", out.to_str().unwrap()])
+        .env("PUDDLE_DATA_DIR", &data)
+        .output()
+        .expect("the Puddle binary runs");
+    assert!(result.status.success(), "{result:?}");
+    let copy = puddle_store::Store::open(
+        &out.join("puddle.db"),
+        Arc::new(puddle_store::SystemClock),
+        puddle_store::Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(copy.rules(), live.rules());
+}
+
+#[test]
+fn backup_ignores_a_bad_port_variable_it_never_reads() {
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    std::fs::create_dir(&data).unwrap();
+    drop(
+        puddle_store::Store::open(
+            &data.join("puddle.db"),
+            Arc::new(puddle_store::SystemClock),
+            puddle_store::Limits::default(),
+        )
+        .unwrap(),
+    );
+    let out = root.path().join("out");
+    let result = Command::new(env!("CARGO_BIN_EXE_puddle"))
+        .args(["backup", out.to_str().unwrap()])
+        .env("PUDDLE_DATA_DIR", &data)
+        .env("PUDDLE_PORT", "not-a-port")
+        .output()
+        .expect("the Puddle binary runs");
+    assert!(result.status.success(), "{result:?}");
+    assert!(out.join("puddle.db").is_file());
 }
 
 #[test]
@@ -175,6 +229,37 @@ fn backup_to_a_relative_destination_lands_in_the_working_folder() {
 fn user_reset_without_a_name_exits_2() {
     assert_eq!(puddle(&["user", "reset"]).status.code(), Some(2));
     assert_eq!(puddle(&["user"]).status.code(), Some(2));
+}
+
+#[test]
+fn user_reset_takes_the_same_data_folder_options_as_backup() {
+    let twice = puddle(&[
+        "user",
+        "reset",
+        "--data-dir",
+        "a",
+        "--data-dir",
+        "b",
+        "owner",
+    ]);
+    assert_eq!(twice.status.code(), Some(2));
+    let missing = puddle(&["user", "reset", "owner", "--config"]);
+    assert_eq!(missing.status.code(), Some(2));
+}
+
+#[test]
+fn user_reset_still_reads_the_whole_option_table() {
+    let out = Command::new(env!("CARGO_BIN_EXE_puddle"))
+        .args(["user", "reset", "owner"])
+        .env("PUDDLE_PORT", "not-a-port")
+        .output()
+        .expect("the Puddle binary runs");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("PUDDLE_PORT")
+    );
 }
 
 #[test]

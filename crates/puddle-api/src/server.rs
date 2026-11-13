@@ -33,6 +33,7 @@ use crate::dev_cert::{DevCertService, NoDevCert};
 use crate::doctor::{DoctorService, NoDoctor};
 use crate::error::ApiError;
 use crate::events::EventHub;
+use crate::front::{FrontAddresses, NameResolver, REFRESH_EVERY, SystemResolver};
 use crate::learned::{LearnedService, NoLearned};
 use crate::network_health::{NetworkHealthService, NoNetworkHealth};
 use crate::ports::{NoPorts, PortsService};
@@ -189,6 +190,10 @@ pub struct Services {
     /// The sign-in secrets browsers sign in against (`Store::take_account_secrets`). Without
     /// them, remote serving has no sign-in: the routes answer 503 and no browser is let in.
     pub account_secrets: Option<Arc<AccountSecrets>>,
+    /// How the front's names are resolved, to block the addresses they point at.
+    /// [`Services::new`] starts with the system's resolver; set another with
+    /// [`Services::with_front_resolver`].
+    pub front_resolver: Arc<dyn NameResolver>,
 }
 
 impl Services {
@@ -220,7 +225,15 @@ impl Services {
             company_signals: Arc::new(NoSignals),
             endpoints: PuddleEndpoints::new(),
             account_secrets: None,
+            front_resolver: Arc::new(SystemResolver),
         }
+    }
+
+    /// These services resolving the front's names with `resolver`.
+    #[must_use]
+    pub fn with_front_resolver(mut self, resolver: Arc<dyn NameResolver>) -> Self {
+        self.front_resolver = resolver;
+        self
     }
 
     /// These services with browser sign-in over `secrets`.
@@ -382,6 +395,8 @@ struct RemoteBound {
     fronts: Vec<Registration>,
     /// The public names, blocked for guests.
     names: Vec<NameRegistration>,
+    /// The addresses of a front on another machine, blocked for guests.
+    addresses: Arc<FrontAddresses>,
 }
 
 /// The bound network listener and how it admits peers.
@@ -501,6 +516,43 @@ fn name_blocks(remote: &RemoteServing, endpoints: &PuddleEndpoints) -> Vec<NameR
     blocks
 }
 
+/// Everything remote serving blocks for guests: the front's ports, its names and its addresses.
+async fn front_blocks(
+    remote: &Remote,
+    services: &Services,
+) -> (
+    Vec<Registration>,
+    Vec<NameRegistration>,
+    Arc<FrontAddresses>,
+) {
+    let addresses = Arc::new(FrontAddresses::new(
+        remote,
+        &services.endpoints,
+        services.front_resolver.clone(),
+    ));
+    // The first lookup is awaited, so the addresses are blocked before anything serves; a name
+    // that does not answer in time is retried by the refresh task.
+    addresses.refresh().await;
+    (
+        front_registrations(remote.serving(), &services.endpoints),
+        name_blocks(remote.serving(), &services.endpoints),
+        addresses,
+    )
+}
+
+/// Resolves the front's names again every [`REFRESH_EVERY`] until the API stops.
+async fn refresh_front_addresses(addresses: Arc<FrontAddresses>, mut stop: watch::Receiver<bool>) {
+    let mut tick = tokio::time::interval(REFRESH_EVERY);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick.tick().await; // the first tick is now, and bind already looked
+    loop {
+        tokio::select! {
+            _ = tick.tick() => addresses.refresh().await,
+            () = async { let _ = stop.wait_for(|stopped| *stopped).await; } => return,
+        }
+    }
+}
+
 /// Binds the network listener when remote serving has one.
 async fn bind_network_for(
     config: &ApiConfig,
@@ -575,12 +627,10 @@ impl ApiServer {
         // Registered before anything can serve, so there is no moment a guest could reach it.
         let registration = services.endpoints.register(addr, EndpointKind::Api);
         let network = bind_network_for(&config, &services.endpoints).await?;
-        let fronts_names = config.remote.as_ref().map(|remote| {
-            (
-                front_registrations(remote.serving(), &services.endpoints),
-                name_blocks(remote.serving(), &services.endpoints),
-            )
-        });
+        let fronts_names = match config.remote.as_ref() {
+            Some(remote) => Some(front_blocks(remote, &services).await),
+            None => None,
+        };
         let (stop, shutdown) = watch::channel(false);
         let settings_lock = services
             .workspaces
@@ -609,6 +659,7 @@ impl ApiServer {
             proxy_sign_ins: services.proxy_sign_ins,
             company_signals: services.company_signals,
             sign_in: sign_in.clone(),
+            ui_build_id: config.ui.as_deref().and_then(crate::ui::build_id),
             shutdown,
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).
@@ -634,7 +685,7 @@ impl ApiServer {
             config.request_timeout,
             ui.clone(),
         );
-        let remote = fronts_names.map(|(fronts, names)| RemoteBound {
+        let remote = fronts_names.map(|(fronts, names, addresses)| RemoteBound {
             network: network.map(|bound| NetworkBound {
                 router: build_router(
                     state.clone(),
@@ -646,6 +697,7 @@ impl ApiServer {
             }),
             fronts,
             names,
+            addresses,
         });
         tracing::info!(%addr, "api listening");
         Ok(Self {
@@ -712,10 +764,16 @@ impl ApiServer {
             network,
             fronts,
             names,
+            addresses,
         }) = remote
         {
             held.push(Box::new(fronts));
             held.push(Box::new(names));
+            tasks.push(tokio::spawn(refresh_front_addresses(
+                addresses.clone(),
+                shutdown.clone(),
+            )));
+            held.push(Box::new(addresses));
             if let Some(NetworkBound { bound, router }) = network {
                 let BoundNetwork {
                     listener,

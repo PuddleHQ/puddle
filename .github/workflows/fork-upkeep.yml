@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Weekly upkeep of the forks Puddle ships (microsandbox, libkrun, russh, imago, libkrunfw): ci/fork-upkeep.py
+# checks that every commit a fork carries over its upstream has a label in ci/fork-labels.tsv (permanent, or an
+# upstream candidate), and replays those commits on upstream's newest code in a scratch checkout. Nothing is pushed.
+# ci/fork-upkeep-issue.sh opens or rewrites one issue here when a commit conflicts, is already upstream, has no
+# label or has a label for a commit that is gone, and closes it on the first clean run. Findings are not a red run:
+# the issue is the signal; only a crash fails the run.
+name: fork-upkeep
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-upkeep
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    name: replay the forks on upstream
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+      - name: self-test
+        run: ci/fork-upkeep.py self-test && ci/fork-upkeep.py lint
+      - name: replay
+        id: replay
+        run: |
+          # No -e (Actions' default is -e): exit code 2 (findings) is a result, handled by the issue step.
+          set +e
+          ci/fork-upkeep.py report --out "$RUNNER_TEMP/report.md" --work "$RUNNER_TEMP/forks"
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY" || true
+      - name: open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODE: ${{ steps.replay.outputs.code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ci/fork-upkeep-issue.sh "$RUNNER_TEMP/report.md" "$CODE" "$RUN_URL"

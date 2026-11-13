@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Every commit the forks carry over their upstream, and why (ci/fork-upkeep.py reads this file).
+# Columns, tab separated:
+#   fork     microsandbox, libkrun, russh, imago or libkrunfw
+#   label    permanent = a Puddle feature or policy that upstream may never take; carried for good
+#            candidate = a fix or feature upstream could take; carried until upstream has it
+#   replay   pick  the weekly dry run cherry-picks it on upstream's tip
+#            regen the fork's release job rewrites it (dependency pins, version); not replayed
+#   subject  the commit subject; a trailing * matches a prefix
+#   why      one line: what it is and why it has this label
+# A commit with no line here, or a line that matches no commit, makes the weekly job report it.
+# Filing a candidate upstream is a person's decision (upstream-issues is where drafts are prepared).
+microsandbox	permanent	regen	build: use the puddle forks of libkrun, russh and imago	Cargo.toml patch section for the forks; the fork's release job regenerates it on every base
+microsandbox	permanent	pick	ci(puddle):*	the fork's own release, gate and repro workflows; upstream has no use for them
+microsandbox	candidate	pick	fix(ssh): report refused forwards as connect failed	generic SSH server bug
+microsandbox	candidate	pick	fix(ssh): report SFTP exit status so scp exits 0	generic SSH server bug
+microsandbox	candidate	pick	fix(ssh): preserve failed command outcomes	merged upstream as superradcompany/microsandbox#2011 on 2026-11-07; drops out with the first release that has it
+microsandbox	candidate	pick	fix(vsock): write queued guest bytes before closing a named-pipe route	generic Windows route bug
+microsandbox	candidate	pick	fix(agentd): send the bulk finish before a TCP read failure	generic guest agent bug
+microsandbox	candidate	pick	feat(image): add a proxy option to the registry client	a per-client proxy is useful to any embedder; Puddle needs it so the pull proxy's token stays out of the environment
+microsandbox	candidate	pick	fix(runtime): give a bind rootfs a /dev before the guest boots	generic bind-root bug
+microsandbox	candidate	pick	fix(runtime): create the sandboxes folder for a bind root in a new home	generic bind-root bug
+microsandbox	permanent	pick	fix(runtime): raise the per-client forward limit from 64 to 256	a limit tuned to Puddle's SSH and port-forward use; upstream parked on purpose
+microsandbox	candidate	pick	fix(runtime): rotate runtime.log on Windows like on Unix	generic Windows parity bug
+microsandbox	candidate	pick	fix(image): retry transient registry failures and report a failed token request	generic registry client bug
+microsandbox	candidate	pick	fix(sdk): start the sandbox process in a session and console of its own	generic embedder bug: a Ctrl+C reaches the runtime
+microsandbox	candidate	pick	fix(db): retry connecting to the catalog on a transient SQLite I/O error	generic catalog bug
+microsandbox	candidate	pick	fix(image): write the ext4 journal when an upper or volume image is created	generic latency fix, measured
+microsandbox	candidate	pick	fix(image): resume a layer download whose body broke off	generic registry client bug
+microsandbox	candidate	pick	fix(image): give each layer download a connection of its own	generic registry client bug
+microsandbox	candidate	pick	fix(local): keep a killed runtime live until its thread group exits	generic reconcile bug
+microsandbox	permanent	pick	feat(runtime): MSB_BLOCK_GROW_AHEAD turns block grow-ahead on or off	a toggle for Puddle's volume layout; goes with the libkrun grow-ahead commit
+microsandbox	permanent	pick	feat(sdk): LocalBackendBuilder takes the runtime paths explicitly and can ignore MSB_*	an embedder API shaped by Puddle's no-environment rule; upstream may prefer its own
+microsandbox	candidate	pick	fix(agentd): keep a block-backed overlay upper reachable so the root disk can be trimmed	generic fstrim fix
+microsandbox	candidate	pick	fix(sdk): create the SSH host key atomically so concurrent servers agree	generic race fix
+microsandbox	candidate	pick	fix(filesystem): cap the handles a guest can hold open on one passthrough mount	hardening against a hostile guest; upstream may want another cap
+microsandbox	permanent	pick	fix(runtime): quota and clean up the bootstrap root, cap an unrotatable exec.log	the Windows bootstrap root is Puddle's design
+microsandbox	candidate	pick	fix(filesystem): refuse Windows device, trailing-dot and short-name aliases in share names	generic Windows hardening
+microsandbox	candidate	pick	test(fuzz): FUSE request fuzz targets for the passthrough and memory filesystem backends	fuzz targets any maintainer can use
+microsandbox	permanent	pick	fix(vsock): 128 connections per route instead of 256, flood tests	a cap chosen for Puddle's threat model
+microsandbox	candidate	pick	test(vsock): guest writes of 4 to 128 KiB per call arrive intact on a route	regression test for the libkrun multi-descriptor fix
+microsandbox	candidate	pick	fix(agentd): give every guest process a SIGTERM and a grace period at shutdown	generic shutdown bug
+microsandbox	candidate	pick	fix(db): open the catalog's first connection outside the pool's connect timeout	generic catalog bug
+microsandbox	permanent	regen	build: version the puddle fork as*	the fork's version commit, regenerated per release
+libkrun	candidate	pick	fix(vsock): return custom stream credit within the guest's window	generic vsock bug; upstream main has since changed the same function
+libkrun	candidate	pick	fix(vsock): forward a guest shutdown only after its buffered bytes	generic vsock bug
+libkrun	candidate	pick	fix(mem): release unplugged memory on Windows instead of writing zeros	generic Windows memory fix
+libkrun	candidate	pick	fix(windows): skip the guest's IO-APIC timer check on WHP	generic Windows boot fix
+libkrun	candidate	pick	fix(vsock): keep writing a closed guest's buffered bytes after its reset	generic vsock bug
+libkrun	candidate	pick	fix(block): keep DISCARD under bounded writeback, charging each discard to the budget	generic block bug
+libkrun	candidate	pick	test(devices): name Windows test temp files with a counter, not the clock	generic test fix
+libkrun	candidate	pick	fix(block): flush a raw image once per guest flush on Windows	generic Windows latency fix
+libkrun	permanent	pick	feat(block): fill a chunk's holes on its first write on Linux (grow-ahead)	Puddle's volume layout; the msb toggle controls it
+libkrun	candidate	pick	init: give the workload stdio when init starts without a console	generic init bug
+libkrun	candidate	pick	fix(virtio): check every ready queue before activating a device	hostile-guest hardening
+libkrun	candidate	pick	fix(balloon): ignore free page reports outside guest memory	hostile-guest hardening
+libkrun	candidate	pick	fix(console): ignore control messages for unknown port ids	hostile-guest hardening
+libkrun	candidate	pick	fix(fs): a read of the init file at or past its end is end of file	generic underflow fix
+libkrun	candidate	pick	test(fuzz): cargo-fuzz targets for virtqueue chains, vsock packets, FUSE requests and the balloon	fuzz targets any maintainer can use
+libkrun	candidate	pick	fix(fs): refuse a reply buffer smaller than the header and an extension longer than its request	hostile-guest hardening
+libkrun	candidate	pick	fix(fs): the FUSE worker drops a request whose chain it cannot build, and an extension longer than its request is refused	hostile-guest hardening
+libkrun	candidate	pick	fix(vsock): check TSI request sizes against the buffer; add the vsock_tsi fuzz target	hostile-guest hardening
+libkrun	candidate	pick	fix(fs): the FUSE worker leaves a queue whose next head the ring refuses instead of spinning on it	hostile-guest hardening
+libkrun	candidate	pick	fix(rng): cap one request at 64 KiB and fill through a fixed buffer	hostile-guest hardening
+libkrun	permanent	pick	fix(console): cap the console log file and the control message queue	a cap chosen for Puddle's threat model
+libkrun	permanent	pick	fix(vsock): 2 MiB of buffer per connection instead of 8	a cap chosen for Puddle's threat model
+libkrun	candidate	pick	fix(vsock): gather a TX packet whose data spans several descriptors	generic vsock bug
+libkrun	candidate	pick	fix(vsock): forward the declared payload length in the TSI send paths	generic vsock bug
+libkrun	candidate	pick	fix(vsock): keep the tail of a short TSI stream send and resume when writable	generic vsock bug
+russh	candidate	pick	fix: drop queued data when the peer closes a channel	generic server bug (a peer that closes a channel wedges the session)
+imago	candidate	pick	fix(file): sync file-backed storage with fdatasync	generic latency fix, measured; target is the imago maintainer
+imago	permanent	pick	chore(deps): release imago with shared memory crate update	version and dependency bookkeeping for the fork's release
+libkrunfw	permanent	pick	feat(kernel): enable nested KVM on Windows x86 guests	Windows guest kernel option Puddle's Windows build needs
+libkrunfw	candidate	pick	build(kernel): update Linux to 6.12.112	a kernel bump; upstream tracks kernel releases itself
+libkrunfw	candidate	pick	fix(config): drop /dev/mem from the guest kernels	hardening upstream could take
+libkrunfw	permanent	pick	ci(puddle):*	the fork's own build and release workflow

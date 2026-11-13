@@ -20,3 +20,6 @@ crates/puddle-host/tests/vm_capture.rs	table inet puddle
 crates/puddle-types/src/merge/knownhosts.rs	# puddle:
 crates/puddle-agent/src/merge_file.rs	# puddle:
 crates/puddle-guest-env/src/render/tests.rs	# puddle:
+ci/fork-labels.tsv	ci(puddle):*
+ci/fork-labels.tsv	build: use the puddle forks
+ci/fork-labels.tsv	build: version the puddle fork as

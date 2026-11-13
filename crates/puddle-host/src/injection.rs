@@ -90,6 +90,9 @@ pub(crate) struct Began {
     /// The variables the guest starts with: the workspace's own and the global ones, each secret
     /// as its stand-in.
     pub(crate) env: GuestEnv,
+    /// Whether the workspace had the user's SSH agent on for at least one host at this start: the
+    /// guest then gets its agent socket until the next start.
+    pub(crate) ssh_agent: bool,
 }
 
 /// What a running sandbox holds in memory: its CA, the injector made for this start, the
@@ -352,6 +355,8 @@ impl Injection {
         // `resync` or an `end` never sees one without the other.
         let mut running = self.running();
         let now_keys = ssh_keys.clone();
+        let ssh_agent_hosts = self.ssh_agent_hosts(workspace)?;
+        let ssh_agent = !ssh_agent_hosts.is_empty();
         let now = Running {
             ca,
             ssh_keys,
@@ -368,7 +373,7 @@ impl Injection {
                 decrypted(&git, &now.stand_ins, &now.logins),
                 self.interception(workspace, &now.learned)?,
                 self.request_rules(workspace)?,
-                self.ssh_agent_hosts(workspace)?,
+                ssh_agent_hosts,
             ),
         );
         running.insert(workspace.clone(), now);
@@ -379,6 +384,7 @@ impl Injection {
             git,
             ssh,
             env: guest,
+            ssh_agent,
         })
     }
 

@@ -257,6 +257,8 @@ struct GuestState {
     /// The user sessions, clones and checks run as until the next start: the setting as of this
     /// start (a later change waits for the next one).
     session_user: SessionUser,
+    /// Whether the guest has its SSH agent socket: the switch as of this start.
+    ssh_agent: bool,
 }
 
 /// How long a terminal opened while its workspace starts waits for the boot hook.
@@ -1621,6 +1623,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             root,
             editor_file,
             session_user,
+            ssh_agent: began.ssh_agent,
         };
         match inner.kit.plan(
             &state.image,
@@ -1635,6 +1638,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 start_folder: state.start_folder.as_ref(),
                 editor_file: state.editor_file.as_ref(),
                 session_user: state.session_user,
+                ssh_agent: state.ssh_agent,
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),
@@ -2108,6 +2112,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             start_folder: guest.start_folder.as_ref(),
             editor_file: guest.editor_file.as_ref(),
             session_user: guest.session_user,
+            ssh_agent: guest.ssh_agent,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
         let report = kit

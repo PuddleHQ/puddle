@@ -4388,6 +4388,55 @@ async fn the_first_start_records_the_owner_of_the_listed_workspaces_and_no_later
     host.shutdown().await;
 }
 
+/// A first start that cannot record whose the listed workspaces are stops, saying so, rather than
+/// serve workspaces no user reaches; the next start tries again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_start_that_cannot_record_the_owners_stops_and_the_next_one_tries_again() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    host.shutdown().await;
+    drop(host);
+    damage_database(
+        &rig,
+        "INSERT INTO workspace_owners_adoption (id) VALUES (1);
+         CREATE TRIGGER no_owner BEFORE INSERT ON workspace_owners
+         BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+    );
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("old").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    let book = json!({"version": 3, "workspaces": [{
+        "id": "old", "name": "old", "repositories": [], "start_folder": null,
+        "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+    }]});
+    std::fs::write(
+        rig.dir.path().join("data").join("workspaces.json"),
+        book.to_string(),
+    )
+    .unwrap();
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let err = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        hermetic_options(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("whose the listed workspaces are could not be recorded"),
+        "{err}"
+    );
+    damage_database(&rig, "DROP TRIGGER no_owner;");
+    let host = rig.start().await;
+    assert_eq!(api(&host).get("/api/workspaces/old").await.status, 200);
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_whose_id_differs_from_its_name_is_found_everywhere_by_the_id() {
     const ID: &str = "k7m2x9qa";

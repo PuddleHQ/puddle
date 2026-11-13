@@ -368,9 +368,7 @@ impl Fixture {
     /// The workspace's user could not be recorded.
     pub async fn emit(&self, event: Event) -> Result<(), String> {
         let state = self.state.lock().await;
-        if let Some(workspace) = event.workspace() {
-            state.own(workspace)?;
-        }
+        event.workspace().map_or(Ok(()), |w| state.own(w))?;
         state.events.emit(event);
         Ok(())
     }

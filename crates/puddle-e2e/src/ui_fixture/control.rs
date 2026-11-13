@@ -120,10 +120,8 @@ async fn state(State(fixture): State<Arc<Fixture>>) -> Json<ControlState> {
 }
 
 async fn emit(State(fixture): State<Arc<Fixture>>, Json(event): Json<Event>) -> Response {
-    match fixture.emit(event).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(err) => failed(err),
-    }
+    let emitted = fixture.emit(event).await;
+    emitted.map_or_else(failed, |()| StatusCode::NO_CONTENT.into_response())
 }
 
 async fn advance(State(fixture): State<Arc<Fixture>>, Json(body): Json<Advance>) -> Response {

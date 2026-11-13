@@ -213,7 +213,7 @@ run_gate() {
         fi
         ;;
     standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh && scripts/check-product-name.sh --self-test && scripts/check-product-name.sh ;;
-    git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh ;;
+    git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh && ci/image-pins-test.sh && ci/image-pins.sh check ;;
     # An `exclude_re` entry of .cargo/mutants.toml that matches no mutant of `cargo mutants --list` is stale
     # (the code it covered moved): fails, so a position-keyed exclusion cannot rot unseen. A failed
     # listing is an empty list, which the script refuses. `--colors never`: CI sets CARGO_TERM_COLOR=always,

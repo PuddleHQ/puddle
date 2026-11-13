@@ -4,7 +4,9 @@
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use crate::destination::BoxFuture;
 

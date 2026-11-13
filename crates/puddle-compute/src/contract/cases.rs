@@ -991,13 +991,24 @@ async fn cpus_change_applies_at_next_start<R: Runtime>(c: &Case<'_, R>) -> Outco
     Ok(())
 }
 
+/// The four variables the case watches as one guest sees them ("unset" for an absent one), then
+/// the root disk marker.
 async fn env_and_marker<S: Sandbox>(sb: &S) -> Result<String, String> {
-    let out = sh(
-        sb,
-        "echo \"${KEPT-unset} ${CHANGED-unset} ${ADDED-unset} ${GONE-unset}\"; cat /root-disk-marker",
-    )
-    .await?;
-    Ok(out.stdout_text().into_owned())
+    let mut seen = Vec::new();
+    for var in ["KEPT", "CHANGED", "ADDED", "GONE"] {
+        let out = step("printenv", sb.exec(ExecRequest::new("printenv", [var]))).await?;
+        seen.push(if out.status.success() {
+            out.stdout_text().trim_end().to_owned()
+        } else {
+            "unset".to_owned()
+        });
+    }
+    let marker = read_file(sb, "/root-disk-marker").await?;
+    Ok(format!(
+        "{} {}",
+        seen.join(" "),
+        marker.unwrap_or_else(|| "no marker".to_owned()).trim_end()
+    ))
 }
 
 fn guest_env(pairs: &[(&str, &str)]) -> Result<GuestEnv, String> {
@@ -1015,19 +1026,19 @@ async fn env_change_applies_at_next_start_and_keeps_the_root_disk<R: Runtime>(
     let name = c.sandbox("a")?;
     let made_with = guest_env(&[("KEPT", "same"), ("CHANGED", "old"), ("GONE", "1")])?;
     let sb = step("create", rt.create(spec(c, &name).with_env(&made_with))).await?;
-    sh(&sb, "echo on-the-root-disk > /root-disk-marker && sync").await?;
+    write_file(&sb, "/root-disk-marker", "on-the-root-disk\n").await?;
     let now = guest_env(&[("KEPT", "same"), ("CHANGED", "new"), ("ADDED", "yes")])?;
     step("set env", rt.set_env(&name, &now)).await?;
     let running = env_and_marker(&sb).await?;
     check!(
-        running == "same old unset 1\non-the-root-disk\n",
+        running == "same old unset 1 on-the-root-disk",
         "the running sandbox changed its variables: {running:?}"
     );
     step("stop", sb.stop()).await?;
     let sb = step("start", rt.start(&name)).await?;
     let after = env_and_marker(&sb).await?;
     check!(
-        after == "same new yes unset\non-the-root-disk\n",
+        after == "same new yes unset on-the-root-disk",
         "after the restart: {after:?}, want the new variables and the root disk file"
     );
     let err = fails(

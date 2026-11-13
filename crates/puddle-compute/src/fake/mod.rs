@@ -221,6 +221,9 @@ struct SandboxRecord {
     /// A size [`Runtime::grow_root_disk`] left for the next boot (the runtime could not grow
     /// live), applied by [`SandboxRecord::boot`].
     pending_root: Option<DiskSize>,
+    /// The variables the guest booted with: a [`Runtime::set_env`] on a running sandbox only
+    /// shows at the next boot, as on a real guest.
+    booted_env: GuestEnv,
 }
 
 impl SandboxRecord {
@@ -235,6 +238,7 @@ impl SandboxRecord {
     fn boot(&mut self, boot: u64) {
         self.status = WorkspaceStatus::Running;
         self.boot = boot;
+        self.booted_env = self.spec.env.clone();
         if let Some(size) = self.pending_root.take() {
             self.grow_reported(size);
         }
@@ -710,6 +714,7 @@ impl Runtime for FakeRuntime {
                     files: Files::new(),
                     root_disk: None,
                     pending_root: None,
+                    booted_env: GuestEnv::new(),
                 },
             );
             return Err(e);
@@ -734,6 +739,7 @@ impl Runtime for FakeRuntime {
             files: Files::new(),
             root_disk: None,
             pending_root: None,
+            booted_env: GuestEnv::new(),
         };
         record.boot(boot);
         state.sandboxes.insert(name.to_string(), record);
@@ -1056,7 +1062,7 @@ impl FakeSandbox {
                 .ok_or_else(|| ComputeError::NotFound {
                     sandbox: self.name.to_string(),
                 })?;
-        let mut env = record.spec.env.clone();
+        let mut env = record.booted_env.clone();
         env.extend(&request.env);
         let mut ctx = ExecContext {
             sandbox: &self.name,

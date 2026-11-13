@@ -81,12 +81,11 @@ async fn a_client_is_closed_when_the_host_cannot_be_reached() {
         owner_wait: Duration::from_millis(10),
     };
     let task = tokio::spawn(serve(config, unreachable_host()));
-    let mut client = loop {
-        if let Ok(client) = UnixStream::connect(&socket).await {
-            break client;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+    puddle_test_kit::eventually("the agent socket", Duration::from_secs(5), || {
+        socket.exists().then_some(())
+    })
+    .await;
+    let mut client = UnixStream::connect(&socket).await.unwrap();
     let mut rest = Vec::new();
     let read = tokio::time::timeout(
         Duration::from_secs(5),

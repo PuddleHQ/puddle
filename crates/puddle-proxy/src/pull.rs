@@ -42,7 +42,8 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use puddle_netpolicy::{
-    AddressClass, EndpointKind, LocalAccess, NetPolicy, PuddleEndpoints, Registration,
+    AddressVerdict, CompanySignals, EndpointKind, LocalAccess, NetPolicy, PuddleEndpoints,
+    Registration,
 };
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOutcome,
@@ -240,9 +241,16 @@ impl PullProxy {
     /// whatever this says.
     #[must_use]
     pub fn with_local_access(mut self, access: LocalAccess) -> Self {
-        let endpoints = self.guard.endpoints().clone();
-        self.guard = NetPolicy::new(Arc::new(access)).with_endpoints(endpoints);
         self.access = access;
+        self
+    }
+
+    /// Reads the company-network signals from `signals`, as the workspace proxy's guard does, so
+    /// a pull to a company-network address answers to the company-network toggle. Without it the
+    /// category is empty.
+    #[must_use]
+    pub fn with_company_signals(mut self, signals: Arc<dyn CompanySignals>) -> Self {
+        self.guard = self.guard.with_company_signals(signals);
         self
     }
 
@@ -551,21 +559,26 @@ fn note_failure(event: &mut ConnectionEvent, refusal: &Refusal) {
     event.outcome = refusal.outcome;
 }
 
-/// The verdict on one address a pull would connect to.
-fn verdict(guard: &NetPolicy, access: LocalAccess, addr: SocketAddr) -> Result<(), BlockReason> {
-    match guard.classify(addr) {
-        AddressClass::Public => Ok(()),
-        AddressClass::Local { category, .. } if access.is_on(category) => Ok(()),
-        AddressClass::Local { category, .. } => Err(BlockReason::LocalToggle(category)),
-        AddressClass::Company(_) if access.is_on(LocalCategory::CompanyNetwork) => Ok(()),
-        AddressClass::Company(signal) => Err(BlockReason::CompanyNetwork(signal)),
-        // Puddle's own endpoints, and any class this version doesn't know.
+/// The verdict on one address a pull would connect to, reached by `name`: the workspace
+/// proxy's own verdict (`NetPolicy`), with the one difference a pull has. It has no rules, so an
+/// address whose toggle is on and that a workspace would need an exact allow for is let through.
+fn verdict(
+    guard: &NetPolicy,
+    access: LocalAccess,
+    name: Option<&Host>,
+    addr: SocketAddr,
+) -> Result<(), BlockReason> {
+    match guard.check_address_with(access, name, addr) {
+        AddressVerdict::Allow | AddressVerdict::ExactOnly(_) => Ok(()),
+        AddressVerdict::Block(reason) => Err(reason),
+        // A verdict this version doesn't know: refuse.
         _ => Err(BlockReason::PuddleEndpoint),
     }
 }
 
 /// The addresses a pull to `target` may connect to: the name stage (`localhost`, metadata
-/// names), then every resolved address through [`verdict`].
+/// names, Puddle's own names, `localhost:<puddle port>`), then every resolved address through
+/// [`verdict`].
 async fn admit(
     shared: &Shared,
     target: &Target,
@@ -573,26 +586,9 @@ async fn admit(
 ) -> Result<Admitted, Refusal> {
     let host = &target.host;
     let port = target.port;
-    let named = puddle_netpolicy::Target::from_host(host.clone()).named_category();
-    if let Some(category) = named {
-        if !shared.access.is_on(category) {
-            return Err(blocked(
-                host,
-                port,
-                &[BlockReason::LocalToggle(category)],
-                event,
-            ));
-        }
-        // `localhost:<puddle port>`: refused before any lookup.
-        let loopback = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-        if category == LocalCategory::Loopback
-            && matches!(
-                shared.guard.classify(loopback),
-                AddressClass::PuddleEndpoint(_)
-            )
-        {
-            return Err(blocked(host, port, &[BlockReason::PuddleEndpoint], event));
-        }
+    let named = puddle_netpolicy::Target::from_host(host.clone());
+    if let Some(reason) = shared.guard.check_target_with(shared.access, &named, port) {
+        return Err(blocked(host, port, &[reason], event));
     }
     let addrs = match host {
         Host::Ip(ip) => vec![SocketAddr::new(*ip, port)],
@@ -620,7 +616,7 @@ async fn admit(
     let mut usable = Vec::new();
     let mut reasons = Vec::new();
     for addr in addrs {
-        match verdict(&shared.guard, shared.access, addr) {
+        match verdict(&shared.guard, shared.access, Some(host), addr) {
             Ok(()) => usable.push(addr),
             Err(reason) => reasons.push(reason),
         }

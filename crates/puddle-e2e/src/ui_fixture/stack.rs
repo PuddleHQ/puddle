@@ -5,6 +5,9 @@
 //! 0xC00000FD), so a program that lost its `/STACK` link argument (`build.rs`) would fail like a
 //! crash. [`check_main_thread`] runs first in `main` and fails with the cause instead.
 
+use std::io::Write;
+use std::process::ExitCode;
+
 /// The stack the program links on Windows (`build.rs`), in bytes.
 #[must_use]
 pub fn linked_stack_bytes() -> usize {
@@ -32,6 +35,31 @@ pub fn check_main_thread() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Runs `serve` unless `check` fails; a failure is written to `stderr` and is exit code 2, so a
+/// stack that is too small is named before the runtime starts instead of aborting inside it.
+pub fn launch(
+    check: impl FnOnce() -> Result<(), String>,
+    serve: impl FnOnce() -> ExitCode,
+    stderr: &mut impl Write,
+) -> ExitCode {
+    match check() {
+        Ok(()) => serve(),
+        Err(message) => finish(Err(message), stderr),
+    }
+}
+
+/// The exit code of a finished run: success, or 2 with the message on `stderr`.
+pub fn finish(result: Result<(), String>, stderr: &mut impl Write) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            // A closed stderr leaves nowhere to report to; the exit code still says it failed.
+            let _ = writeln!(stderr, "puddle-ui-fixture: {message}");
+            ExitCode::from(2)
+        }
+    }
 }
 
 #[cfg(windows)]

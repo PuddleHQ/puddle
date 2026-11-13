@@ -21,6 +21,7 @@ on:
       - full-test
       - coverage-baseline
       - refresh-image-pins
+      - macos
       - stress
       - lab-override
       - live-contracts

@@ -179,6 +179,24 @@
     );
   }
 
+  /** The tool switches are plain checkboxes; a refusal puts the box back to what is stored. */
+  async function saveTool(
+    key: "mise" | "repo_code",
+    box: HTMLInputElement,
+    what: string,
+  ) {
+    const stored = settings.tools[key] ?? true;
+    saved = null;
+    problem = null;
+    const result = await settings.changeTools({ [key]: box.checked });
+    if (result.ok) {
+      saved = `${what} saved.`;
+    } else {
+      problem = result.message;
+      box.checked = stored;
+    }
+  }
+
   async function saveClipboard(select: HTMLSelectElement) {
     await save(
       {
@@ -412,6 +430,52 @@
     </section>
 
     <InterceptionSetting id={workspace.id} />
+
+    {#if settings.globalMise}
+      <section class="card" aria-labelledby="tools-h" id="tools">
+        <h2 id="tools-h">Tools</h2>
+        <div class="setting">
+          <div class="grow">
+            <label for="ws-mise">Manage this workspace's tools with mise</label>
+            <p class="desc" id="ws-mise-desc">
+              On by default. Turning it off leaves the tools and mise.toml as
+              they are.
+            </p>
+          </div>
+          <input
+            id="ws-mise"
+            type="checkbox"
+            aria-describedby="ws-mise-desc"
+            checked={settings.tools.mise ?? true}
+            onchange={(e) =>
+              void saveTool("mise", e.currentTarget, "Tools with mise")}
+          />
+        </div>
+        <div class="setting">
+          <div class="grow">
+            <label for="ws-repo-code"
+              >Let mise run the repository's own code</label
+            >
+            <p class="desc" id="ws-repo-code-desc">
+              A repository's mise.toml can run hooks and templates. With this
+              off, mise does not trust that file. On by default.
+            </p>
+          </div>
+          <input
+            id="ws-repo-code"
+            type="checkbox"
+            aria-describedby="ws-repo-code-desc"
+            checked={settings.tools.repo_code ?? true}
+            onchange={(e) =>
+              void saveTool(
+                "repo_code",
+                e.currentTarget,
+                "Running repository code",
+              )}
+          />
+        </div>
+      </section>
+    {/if}
 
     <section class="card" aria-labelledby="clip-h">
       <h2 id="clip-h">Clipboard</h2>

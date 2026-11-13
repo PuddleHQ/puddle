@@ -10,6 +10,7 @@ export type GlobalBody = Required<S["GlobalSettingsRequest"]>;
 export type Layer = S["SettingsLayer"];
 export type Ui = S["UiPrefs"];
 export type VsCodeServer = S["VsCodeServer"];
+export type GlobalTools = S["GlobalTools"];
 export type Consent = S["Consent"];
 export type ServerChoice = NonNullable<VsCodeServer["server"]>;
 export type CloseBehaviour = NonNullable<Ui["close_behaviour"]>;
@@ -140,14 +141,20 @@ export function bodyFrom(
     layer?: Partial<Layer>;
     server?: Partial<VsCodeServer>;
     ui?: Partial<Ui>;
+    tools?: Partial<GlobalTools>;
   } = {},
 ): GlobalBody {
   return {
     workspace_defaults: { ...view.workspace_defaults, ...patch.layer },
     vscode_server: { ...view.vscode_server, ...patch.server },
     ui: { ...view.ui, ...patch.ui },
+    tools: { ...view.tools, ...patch.tools },
   };
 }
+
+/** Whether Puddle manages tools with mise in workspaces: an unset global switch is on. */
+export const miseManaged = (view: GlobalView): boolean =>
+  view.tools.mise ?? true;
 
 /** What a toggle shows: the stored value, else Puddle's default (off). */
 export const toggleOn = (value: boolean | null | undefined): boolean =>

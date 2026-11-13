@@ -3690,6 +3690,8 @@ export interface components {
         };
         /** @description New global settings. Replaces every value listed here; unknown stored fields are kept. */
         GlobalSettingsRequest: {
+            /** @description The tool switches. */
+            tools?: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
             ui?: components["schemas"]["UiPrefs"];
             /** @description VS Code server options. */
@@ -3701,6 +3703,8 @@ export interface components {
         GlobalSettingsView: {
             /** @description The effective values for a workspace with no overrides. */
             effective: components["schemas"]["EffectiveSettings"];
+            /** @description The tool switches (global only). */
+            tools: components["schemas"]["GlobalTools"];
             /** @description Preferences for Puddle's window. */
             ui: components["schemas"]["UiPrefs"];
             /**
@@ -3712,6 +3716,14 @@ export interface components {
             vscode_server: components["schemas"]["VsCodeServer"];
             /** @description Defaults for every workspace. */
             workspace_defaults: components["schemas"]["SettingsLayer"];
+        };
+        /** @description The global tool switches. Global only: no workspace value can override them. */
+        GlobalTools: {
+            /**
+             * @description Whether Puddle manages tools with mise in workspaces (default on). Off removes the whole
+             *     managed layer for every workspace and keeps every stored value.
+             */
+            mise: boolean | null;
         };
         /** @description `POST /api/workspaces/{id}/grow-root-disk`. */
         GrowRootDiskRequest: {
@@ -5763,6 +5775,8 @@ export interface components {
         WorkspaceSettingsRequest: {
             /** @description The overrides. */
             overrides?: components["schemas"]["SettingsLayer"];
+            /** @description Its tool switches. */
+            tools?: components["schemas"]["WorkspaceTools"];
         };
         /** @description One workspace's overrides and effective values. */
         WorkspaceSettingsView: {
@@ -5770,6 +5784,8 @@ export interface components {
             effective: components["schemas"]["EffectiveSettings"];
             /** @description Its overrides; `null` inherits. */
             overrides: components["schemas"]["SettingsLayer"];
+            /** @description Its own tool switches; `null` is the default. */
+            tools: components["schemas"]["WorkspaceTools"];
             /** @description Unknown fields in its stored document (kept). */
             unknown_fields: string[];
             /** @description The workspace. */
@@ -5801,6 +5817,19 @@ export interface components {
              *     `only_push_listed`.
              */
             use_default_push?: boolean;
+        };
+        /**
+         * @description One workspace's tool switches. `null` means Puddle's default (on). While the global switch
+         *     (`GlobalTools::mise`) is off, they are kept but have no effect.
+         */
+        WorkspaceTools: {
+            /** @description Manage this workspace's tools with mise (default on). */
+            mise: boolean | null;
+            /**
+             * @description Let mise run the repository's own code in this workspace, that is trust its `mise.toml`
+             *     (default on).
+             */
+            repo_code: boolean | null;
         };
     };
     responses: never;

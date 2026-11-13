@@ -9,6 +9,7 @@ import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 import type { Layer } from "#lib/workspaces/settings.ts";
 
 type Effective = components["schemas"]["EffectiveSettings"];
+export type Tools = components["schemas"]["WorkspaceTools"];
 type StoreApi = Pick<ApiClient, "GET" | "PUT">;
 
 export type Status = "loading" | "ready" | "failed";
@@ -18,6 +19,10 @@ export class WorkspaceSettings {
   status = $state<Status>("loading");
   overrides = $state.raw<Layer | null>(null);
   effective = $state.raw<Effective | null>(null);
+  /** This workspace's own tool switches; `null` is Puddle's default (on). */
+  tools = $state.raw<Tools>({ mise: null, repo_code: null });
+  /** The global mise switch: while it is off the workspace's switches are hidden and do nothing. */
+  globalMise = $state(true);
   /** Fields in the stored document that this Puddle doesn't know. */
   unknownFields = $state.raw<string[]>([]);
   /** What a workspace with no overrides gets: the global values. */
@@ -51,6 +56,8 @@ export class WorkspaceSettings {
       if (ticket !== this.#ticket) return;
       if (mine.data && global.data) {
         this.overrides = mine.data.overrides;
+        this.tools = mine.data.tools;
+        this.globalMise = global.data.tools.mise ?? true;
         this.effective = mine.data.effective;
         this.unknownFields = mine.data.unknown_fields;
         this.global = global.data.effective;
@@ -72,17 +79,32 @@ export class WorkspaceSettings {
   }
 
   /** Saves one override (or several); `null` makes a setting inherit again. */
-  async change(patch: Partial<Layer>): Promise<SaveResult> {
+  change(patch: Partial<Layer>): Promise<SaveResult> {
+    return this.#put((overrides) => ({ ...overrides, ...patch }), {});
+  }
+
+  /** Saves the tool switches; `null` is Puddle's default again. */
+  changeTools(patch: Partial<Tools>): Promise<SaveResult> {
+    return this.#put((overrides) => overrides, patch);
+  }
+
+  /** The API replaces the whole document, so each save sends both parts as stored with the change laid over. */
+  async #put(
+    layer: (overrides: Layer) => Layer,
+    tools: Partial<Tools>,
+  ): Promise<SaveResult> {
     if (!this.overrides)
       return { ok: false, message: "Settings aren't loaded." };
-    const body: Layer = { ...this.overrides, ...patch };
     const ticket = ++this.#ticket;
     try {
       const { data, error } = await this.#api.PUT(
         "/api/settings/workspaces/{workspace}",
         {
           params: { path: { workspace: this.#id } },
-          body: { overrides: body },
+          body: {
+            overrides: layer(this.overrides),
+            tools: { ...this.tools, ...tools },
+          },
         },
       );
       if (!data) {
@@ -93,6 +115,7 @@ export class WorkspaceSettings {
       }
       if (ticket === this.#ticket) {
         this.overrides = data.overrides;
+        this.tools = data.tools;
         this.effective = data.effective;
       }
       return { ok: true };

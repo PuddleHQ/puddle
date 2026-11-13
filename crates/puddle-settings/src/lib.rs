@@ -11,6 +11,7 @@
 //! | [`WorkspaceLayer`], [`LocalToggles`] | the settings a workspace has, each optional; used for both levels |
 //! | [`Effective`], [`Resolved`], [`Source`] | the value a workspace gets and which level it came from |
 //! | [`Consent`], [`Consents`], [`ConsentKind`], [`TermsVersion`], [`UnixMillis`] | what the user agreed to or declined, when, and to which version of the terms |
+//! | [`Tools`], [`WorkspaceTools`], [`mise_mode`], [`MiseMode`] | the managed mise layer: the global-only switch and the per-workspace ones |
 //! | [`UiPrefs`] | the window's theme, notification and close preferences |
 //! | [`FirstRun`] | whether the first-run flow has been through |
 //! | [`ReconnectionGrace`], [`ClipboardRead`], [`ServerChoice`], [`ThemeChoice`], [`DensityChoice`], [`PaletteChoice`], [`HexColour`], [`CloseBehaviour`], [`AppIconChoice`] | value types for single settings |
@@ -74,7 +75,7 @@ pub use disk_space::{DiskSpaceLimits, FreeGb};
 pub use document::{Loaded, SettingsError};
 pub use first_run::FirstRun;
 pub use global::{
-    GLOBAL_SCHEMA_VERSION, GlobalSettings, MICROSOFT_TERMS_VERSION, UiPrefs, VsCodeServer,
+    GLOBAL_SCHEMA_VERSION, GlobalSettings, MICROSOFT_TERMS_VERSION, Tools, UiPrefs, VsCodeServer,
 };
 pub use layer::{LocalToggles, WorkspaceLayer};
 pub use resolve::{Effective, EffectiveToggles, Resolved, Source, resolve};
@@ -82,4 +83,6 @@ pub use values::{
     AppIconChoice, ClipboardRead, CloseBehaviour, DensityChoice, DiskWarningPercent, HexColour,
     PaletteChoice, ReconnectionGrace, ServerChoice, ThemeChoice,
 };
-pub use workspace::{WORKSPACE_SCHEMA_VERSION, WorkspaceSettings};
+pub use workspace::{
+    MiseMode, WORKSPACE_SCHEMA_VERSION, WorkspaceSettings, WorkspaceTools, mise_mode,
+};

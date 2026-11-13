@@ -145,6 +145,10 @@ const resolved = <T>(value: T, source: "workspace" | "global" | "default") => ({
 export class FakeWorkspaces {
   list: Workspace[] = [];
   overrides: Record<string, Layer> = {};
+  /** Each workspace's tool switches (absent: both unset). */
+  tools: Record<string, components["schemas"]["WorkspaceTools"]> = {};
+  /** The global mise switch, answered on `/api/settings`. */
+  globalMise: boolean | null = null;
   /** Unknown fields per workspace document. */
   unknown: Record<string, string[]> = {};
   globalMemory = 8192;
@@ -328,12 +332,14 @@ export class FakeWorkspaces {
           workspace_defaults: noLayer(),
           unknown_fields: [],
           vscode_server: {},
+          tools: { mise: this.globalMise },
         });
       case "/api/settings/workspaces/{workspace}": {
         const key = String(id);
         return this.reply(200, {
           workspace: key,
           overrides: this.overrides[key] ?? noLayer(),
+          tools: this.tools[key] ?? { mise: null, repo_code: null },
           effective: this.effective(key),
           unknown_fields: this.unknown[key] ?? [],
         });
@@ -576,7 +582,10 @@ export class FakeWorkspaces {
     path: string,
     init: {
       params: { path: { workspace: string } };
-      body: { overrides: Layer };
+      body: {
+        overrides: Layer;
+        tools?: components["schemas"]["WorkspaceTools"];
+      };
     },
   ) => {
     this.calls.push(`PUT ${path}`);
@@ -637,6 +646,7 @@ export class FakeWorkspaces {
     }
     const key = init.params.path.workspace;
     this.overrides[key] = init.body.overrides;
+    this.tools[key] = init.body.tools ?? { mise: null, repo_code: null };
     this.list = this.list.map((w) =>
       w.id === key
         ? { ...w, direct_ssh: init.body.overrides.direct_ssh === true }
@@ -645,6 +655,7 @@ export class FakeWorkspaces {
     return this.reply(200, {
       workspace: key,
       overrides: this.overrides[key],
+      tools: this.tools[key],
       effective: this.effective(key),
       unknown_fields: [],
     });

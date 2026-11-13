@@ -121,9 +121,8 @@ pub(crate) async fn list_pending(
     Query(query): Query<PendingQuery>,
 ) -> Result<Json<PendingList>, ApiError> {
     let store = state.store.clone();
-    let mut rows = blocking(move || Ok(store.open_pending(query.workspace.as_ref())?)).await?;
-    let owners = authz::owners(&state).await?;
-    rows.retain(|row| owners.of(&row.workspace) == principal.user);
+    let rows =
+        blocking(move || Ok(store.open_pending(principal.user, query.workspace.as_ref())?)).await?;
     Ok(Json(PendingList {
         requests: present(&state, rows).await?,
     }))
@@ -141,16 +140,9 @@ pub(crate) async fn inbox(
     principal: Principal,
 ) -> Result<Json<Inbox>, ApiError> {
     let store = state.store.clone();
-    let groups = blocking(move || Ok(store.inbox()?)).await?;
-    let owners = authz::owners(&state).await?;
+    let groups = blocking(move || Ok(store.inbox(principal.user)?)).await?;
     let mut out = Vec::with_capacity(groups.len());
-    for mut group in groups {
-        group
-            .rows
-            .retain(|row| owners.of(&row.workspace) == principal.user);
-        if group.rows.is_empty() {
-            continue;
-        }
+    for group in groups {
         out.push(InboxGroup {
             registrable_domain: group.registrable_domain,
             requests: present(&state, group.rows).await?,

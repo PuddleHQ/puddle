@@ -144,10 +144,11 @@ pub(crate) async fn audit(
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<AuditPage>, ApiError> {
     let after = query.after;
-    let (mut filter, cursor, limit) = query.parse()?;
-    filter.user = Some(principal.user);
+    let (filter, cursor, limit) = query.parse()?;
     let (lines, mut names) = blocking(move || {
-        let lines = state.store.audit_query(&filter, cursor, limit)?;
+        let lines = state
+            .store
+            .audit_query(principal.user, &filter, cursor, limit)?;
         let ids: Vec<i64> = lines.iter().map(|(id, _)| *id).collect();
         let names = state.store.audit_workspace_names(&ids)?;
         Ok((lines, names))

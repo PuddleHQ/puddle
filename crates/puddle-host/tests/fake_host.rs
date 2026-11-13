@@ -4329,6 +4329,114 @@ async fn a_workspace_saved_before_session_users_keeps_root() {
     host.shutdown().await;
 }
 
+/// The workspaces listed when this build first starts were made before every create recorded its
+/// user: they become the owner's. Only then: one added to the list by hand later has no user, so
+/// no one reaches it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_start_records_the_owner_of_the_listed_workspaces_and_no_later_one() {
+    let rig = Rig::new();
+    let data = rig.dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let entry = |id: &str| {
+        json!({
+            "id": id, "name": id, "repositories": [], "start_folder": null,
+            "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+        })
+    };
+    for id in ["old", "later"] {
+        rig.runtime
+            .create_volume(puddle_compute::VolumeSpec {
+                name: WorkspaceId::new(id).unwrap().volume_name(),
+                size: puddle_compute::DiskSize::mib(1024),
+            })
+            .await
+            .unwrap();
+    }
+    let book = json!({"version": 3, "workspaces": [entry("old")]});
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    let host = rig.start().await;
+    assert_eq!(
+        host.store()
+            .workspace_owner(&WorkspaceId::new("old").unwrap())
+            .unwrap(),
+        Some(puddle_store::UserId::OWNER)
+    );
+    let listed = api(&host).get("/api/workspaces").await.json();
+    assert_eq!(listed["workspaces"][0]["id"], "old", "{listed}");
+    host.shutdown().await;
+    drop(host);
+
+    let mut book: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(data.join("workspaces.json")).unwrap()).unwrap();
+    book["workspaces"]
+        .as_array_mut()
+        .unwrap()
+        .push(entry("later"));
+    std::fs::write(data.join("workspaces.json"), book.to_string()).unwrap();
+    let host = rig.start().await;
+    let api = api(&host);
+    assert_eq!(api.get("/api/workspaces/old").await.status, 200);
+    assert_eq!(api.get("/api/workspaces/later").await.status, 404);
+    let listed = api.get("/api/workspaces").await.json();
+    let ids: Vec<&str> = listed["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["old"], "{listed}");
+    host.shutdown().await;
+}
+
+/// A first start that cannot record whose the listed workspaces are stops, saying so, rather than
+/// serve workspaces no user reaches; the next start tries again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_start_that_cannot_record_the_owners_stops_and_the_next_one_tries_again() {
+    let rig = Rig::new();
+    let host = rig.start().await;
+    host.shutdown().await;
+    drop(host);
+    damage_database(
+        &rig,
+        "INSERT INTO workspace_owners_adoption (id) VALUES (1);
+         CREATE TRIGGER no_owner BEFORE INSERT ON workspace_owners
+         BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+    );
+    rig.runtime
+        .create_volume(puddle_compute::VolumeSpec {
+            name: WorkspaceId::new("old").unwrap().volume_name(),
+            size: puddle_compute::DiskSize::mib(1024),
+        })
+        .await
+        .unwrap();
+    let book = json!({"version": 3, "workspaces": [{
+        "id": "old", "name": "old", "repositories": [], "start_folder": null,
+        "image": FakeRuntime::DEBIAN, "memory_mib": 1024, "created_at": 1, "disk_size_mib": 1024
+    }]});
+    std::fs::write(
+        rig.dir.path().join("data").join("workspaces.json"),
+        book.to_string(),
+    )
+    .unwrap();
+    let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
+    let err = Host::start(
+        prepared,
+        &FakeFactory::new(&rig.runtime, &rig.log),
+        hermetic_options(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("whose the listed workspaces are could not be recorded"),
+        "{err}"
+    );
+    damage_database(&rig, "DROP TRIGGER no_owner;");
+    let host = rig.start().await;
+    assert_eq!(api(&host).get("/api/workspaces/old").await.status, 200);
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_workspace_whose_id_differs_from_its_name_is_found_everywhere_by_the_id() {
     const ID: &str = "k7m2x9qa";
@@ -8918,7 +9026,10 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
             .len(),
         1
     );
-    assert!(host.store().rules().is_empty(), "its rules went with it");
+    assert!(
+        host.store().rules_every_user().is_empty(),
+        "its rules went with it"
+    );
 
     // A new workspace of the same name (another id) starts clean, with the global secret only.
     create_as(&api, &mut events, "acme", "acme-2").await;

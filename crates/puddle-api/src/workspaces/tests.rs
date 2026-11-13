@@ -247,7 +247,7 @@ async fn the_empty_service_says_it_is_unavailable() {
     let all = [
         svc.list().await.map(|_| ()),
         svc.get(&id).await.map(|_| ()),
-        svc.create(NewWorkspace::new(name, repos), &NoGitSetup)
+        svc.create(NewWorkspace::new(UserId::OWNER, name, repos), &NoGitSetup)
             .await
             .map(|_| ()),
         svc.start(&id).await.map(|_| ()),
@@ -385,7 +385,9 @@ fn an_id_for_a_name_is_a_label_the_same_every_time() {
 
 #[test]
 fn the_name_source_numbers_its_later_draws_and_cuts_the_label_for_the_number() {
-    let new = |name: &str| NewWorkspace::new(DisplayName::parse(name).unwrap(), Vec::new());
+    let new = |name: &str| {
+        NewWorkspace::new(UserId::OWNER, DisplayName::parse(name).unwrap(), Vec::new())
+    };
     let taken = |ids: &'static [&'static str]| move |id: &WorkspaceId| ids.contains(&id.as_str());
     assert_eq!(
         new("Shop").id(&NameIds, taken(&[])).unwrap().as_str(),
@@ -459,7 +461,11 @@ fn an_entry_id_is_drawn_again_while_taken_and_given_up_on_after_sixteen_draws() 
 
 #[test]
 fn a_stuck_source_is_given_up_on_after_sixteen_draws() {
-    let new = NewWorkspace::new(DisplayName::parse("acme").unwrap(), Vec::new());
+    let new = NewWorkspace::new(
+        UserId::OWNER,
+        DisplayName::parse("acme").unwrap(),
+        Vec::new(),
+    );
     let stuck = WorkspaceId::new("a0000000").unwrap();
     for id in [Some(stuck.clone()), None] {
         let source = Stuck {
@@ -490,7 +496,11 @@ fn a_stuck_source_is_given_up_on_after_sixteen_draws() {
 
 #[test]
 fn the_random_source_draws_generated_ids_whatever_the_name() {
-    let new = NewWorkspace::new(DisplayName::parse("acme").unwrap(), Vec::new());
+    let new = NewWorkspace::new(
+        UserId::OWNER,
+        DisplayName::parse("acme").unwrap(),
+        Vec::new(),
+    );
     let first = new.id(&RandomIds, |_| false).unwrap();
     assert_eq!(first.as_str().len(), WorkspaceId::GENERATED_LEN);
     assert_ne!(first.as_str(), "acme");

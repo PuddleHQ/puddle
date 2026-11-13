@@ -9,7 +9,7 @@ use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services, SettingsRepo,
 };
 use puddle_host::{HostShutdown, Step};
-use puddle_store::{Limits, Store, SystemClock};
+use puddle_store::{Limits, Store, SystemClock, UserId};
 use puddle_types::{EgressRequest, Host, Problems, SuffixAllows, WorkspaceId};
 
 use crate::backend::{Backend, BackendError};
@@ -34,6 +34,11 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
     );
     let workspace = WorkspaceId::new("demo").map_err(|e| fixture("workspace name", &e))?;
     let host = Host::parse_normalised("registry.example.org").map_err(|e| fixture("host", &e))?;
+    // The window is the owner's, and so is the seeded workspace: one with no recorded user would
+    // be nobody's, its request in no inbox.
+    store
+        .set_workspace_owner(&workspace, UserId::OWNER)
+        .map_err(|e| fixture("owner", &e))?;
     store
         .decide(
             &EgressRequest::new(workspace, host, 443),

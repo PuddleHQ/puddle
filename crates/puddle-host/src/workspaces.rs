@@ -743,12 +743,34 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }),
         };
         service.note_names(&service.state());
+        service.adopt_listed()?;
         if interrupted && let Err(e) = service.persist(&service.state()) {
             // Harmless: the entries still say "being created" or "being deleted", so the next
             // start settles them the same way, and every later save writes the list without them.
             tracing::warn!(error = %e, "the workspace list was not saved after dropping unfinished creates");
         }
         Ok(service)
+    }
+
+    /// On the first start of this build, records the owner as the user of every listed workspace
+    /// that has none: they were made before every create recorded its user. Before anything serves
+    /// them, or no user would reach them; later starts change nothing.
+    fn adopt_listed(&self) -> Result<(), HostError> {
+        let adopted = self
+            .inner
+            .store
+            .adopt_unowned_workspaces(self.state().slots.keys())
+            .map_err(|e| HostError::State {
+                what: "the database",
+                reason: format!("whose the listed workspaces are could not be recorded: {e}"),
+            })?;
+        if adopted > 0 {
+            tracing::info!(
+                adopted,
+                "recorded the owner as the user of the workspaces made before"
+            );
+        }
+        Ok(())
     }
 
     /// What the user calls workspace `id`, for text they read. Never the id: a real host draws
@@ -3901,7 +3923,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     })
                     .map_err(|e| WorkspaceError::Unavailable(e.to_string()))?;
                 // Whose it is, before it is listed or announced.
-                git.claim(&id)?;
+                git.claim(&id, new.owner)?;
                 let mut record = WorkspaceRecord::new(id.clone(), new.name.clone(), new.entries());
                 record.start_folder.clone_from(&new.start_folder);
                 record.image = new

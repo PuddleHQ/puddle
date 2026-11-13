@@ -50,6 +50,7 @@ fn fake() -> (FakeWorkspaces, Arc<CollectingSink>) {
 
 fn new_ws(name: &str) -> NewWorkspace {
     NewWorkspace::new(
+        puddle_store::UserId::OWNER,
         DisplayName::parse(name).unwrap(),
         vec![NewRepository {
             repository: Repository::at_default_directory(

@@ -25,13 +25,19 @@ pub struct ToolPaths {
     gh: Option<PathBuf>,
     git: Option<PathBuf>,
     az: Option<PathBuf>,
+    systemd_creds: Option<PathBuf>,
 }
 
 impl ToolPaths {
     /// Paths given directly (tests, or a setting).
     #[must_use]
     pub fn new(gh: Option<PathBuf>, git: Option<PathBuf>) -> Self {
-        Self { gh, git, az: None }
+        Self {
+            gh,
+            git,
+            az: None,
+            systemd_creds: None,
+        }
     }
 
     /// The same paths with `az` at `az` (tests, or a setting).
@@ -41,7 +47,14 @@ impl ToolPaths {
         self
     }
 
-    /// Looks `gh`, `git` and `az` up in the process's `PATH`.
+    /// The same paths with `systemd-creds` at `systemd_creds` (tests, or a setting).
+    #[must_use]
+    pub fn with_systemd_creds(mut self, systemd_creds: Option<PathBuf>) -> Self {
+        self.systemd_creds = systemd_creds;
+        self
+    }
+
+    /// Looks `gh`, `git`, `az` and `systemd-creds` up in the process's `PATH`.
     #[must_use]
     pub fn resolve() -> Self {
         Self::from_search_path(std::env::var_os("PATH").as_deref().unwrap_or_default())
@@ -57,6 +70,7 @@ impl ToolPaths {
             gh: find("gh", search_path),
             git: find("git", search_path),
             az: find_file(if cfg!(windows) { "az.cmd" } else { "az" }, search_path),
+            systemd_creds: find("systemd-creds", search_path),
         }
     }
 
@@ -65,6 +79,7 @@ impl ToolPaths {
             Tool::Gh => &self.gh,
             Tool::Git => &self.git,
             Tool::Az => &self.az,
+            Tool::SystemdCreds => &self.systemd_creds,
         };
         path.as_deref().ok_or(SourceError::ToolMissing(tool))
     }
@@ -212,6 +227,18 @@ pub(crate) async fn run_capturing(
     timeout: Duration,
 ) -> Result<Output, SourceError> {
     run_inner(Prompts::Never, true, tool, program, args, None, timeout).await
+}
+
+/// [`run`] with `stdin`, keeping standard error for the caller to classify a failure by (as
+/// [`run_capturing`]); for a tool that is handed a secret.
+pub(crate) async fn run_with_input(
+    tool: Tool,
+    program: &Path,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<Output, SourceError> {
+    run_inner(Prompts::Never, true, tool, program, args, stdin, timeout).await
 }
 
 async fn run_inner(

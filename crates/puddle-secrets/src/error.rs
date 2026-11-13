@@ -11,6 +11,8 @@ pub enum Tool {
     Git,
     /// The Azure CLI.
     Az,
+    /// `systemd-creds`, which seals the file vault's key (Linux).
+    SystemdCreds,
 }
 
 impl Tool {
@@ -21,6 +23,7 @@ impl Tool {
             Self::Gh => "gh",
             Self::Git => "git",
             Self::Az => "az",
+            Self::SystemdCreds => "systemd-creds",
         }
     }
 }

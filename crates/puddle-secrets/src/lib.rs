@@ -39,6 +39,7 @@ mod signin;
 mod sources;
 mod spec;
 mod store;
+mod vault_key;
 
 pub use cache::{SecretCache, SignInNeeded, Ttl, Ttls};
 pub use chunked::{CHUNK_UNITS, ChunkedStore};
@@ -56,3 +57,4 @@ pub use signin::{SignInError, SignInStart, SignIns};
 pub use sources::{Credential, Fetch, Fetched, Sources, pasted_token};
 pub use spec::{AZURE_DEVOPS_HOST, SourceSpec, TokenScope};
 pub use store::{MemoryStore, SecretStore, StoreError, Sweep};
+pub use vault_key::{FoundKey, KeyError, KeySource, Unseal, VaultKeys, config_home};

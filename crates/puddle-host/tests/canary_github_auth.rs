@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The test extension that stands in for VS Code's `github` sign-in in the desktop VS Code VM test
 //! (`fixtures/canary-github-auth`), run on node against a stand-in `vscode` module: it registers the
 //! `github` provider only when a canary token is given, answers every request with that token and

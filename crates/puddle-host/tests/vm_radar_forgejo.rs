@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git over HTTPS against a real Forgejo started for the run (`puddle_e2e::lab::Forgejo`), on a
 //! real microVM: the guest's own `git` clones, pushes a branch and deletes it through the host's
 //! wiring (the workspace's CA, the injector over the host's secret store, the repository table),

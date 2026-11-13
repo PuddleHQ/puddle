@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fake internet's company proxy: a tunnel to a name it holds goes to that name's server, and
 //! any other name is connected to as it stands.
 #![expect(

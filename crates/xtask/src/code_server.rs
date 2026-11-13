@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `cargo xtask code-server`: the bundled browser editor server, a pinned code-server release
 //! unpacked into a folder the host mounts read-only into every guest.
 //!

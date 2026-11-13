@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `fstrim` on a workspace volume (ADR 0006 point 7): msb mounts volumes without `discard`, so
 //! space freed in the guest only returns to the host image when Puddle trims.
 

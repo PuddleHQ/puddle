@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Test fixtures for passwords, canary strings and unique names, made at run time.
 //!
 //! A test that needs a password or a canary asks for one here instead of writing a literal. Each

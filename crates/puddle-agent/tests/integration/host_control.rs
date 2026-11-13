@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's `host-control` messages through a real agent and the host's session code over a
 //! Unix socket: the host sends "end the extension hosts", the agent ends them, and the reply says
 //! so. Shell scripts below a fake release folder stand in for the editor server, its extension

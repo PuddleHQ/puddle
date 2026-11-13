@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The certificate of the API's network listener (remote serving, opt-in).
 //!
 //! A reverse proxy on another machine speaks TLS to Puddle. The certificate is made here the way

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Corporate root sync on a real microVM (tier K on Linux KVM, W on Windows WHP).
 //!
 //! A test "corporate" root, selected from a store snapshot as the Windows export would, signs a

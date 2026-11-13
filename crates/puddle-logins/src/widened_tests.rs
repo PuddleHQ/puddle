@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tests of the widened profile model: a method other than `POST`, a wildcard path segment, a
 //! nested answer field and a slot per resource, on a profile made for the test.
 

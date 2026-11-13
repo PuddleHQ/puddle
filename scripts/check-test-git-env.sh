@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # A test that runs git must not inherit the repository variables of a calling git hook: a `git init`
 # or `git clone --bare` under an exported GIT_DIR acts on the hook's repository (from a linked
 # worktree it turned the shared checkout bare, and a push once reached the real remote).

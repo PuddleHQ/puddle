@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The shell over the Puddle host: the host prepared the way the program does it, started on a
 //! fake sandbox runtime, the main window opened on it (Tauri's mock runtime), and the quit sequence.
 #![expect(

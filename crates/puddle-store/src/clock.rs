@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host clock, in epoch milliseconds. The guest's clock plays no part (R-7).
 
 use std::sync::atomic::{AtomicU64, Ordering};

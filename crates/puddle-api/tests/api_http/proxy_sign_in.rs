@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The proxy sign-ins over real HTTP: store, list, replace, remove, every refusal, and that no
 //! response or log line carries the password.
 

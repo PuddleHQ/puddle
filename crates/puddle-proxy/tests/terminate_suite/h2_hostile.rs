@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A hostile guest on an HTTP/2 terminated connection: floods, resets, smuggling by translation,
 //! malformed headers. Each test says what must not happen at the real server, and that the
 //! connection (or stream) ends instead of the proxy giving way.

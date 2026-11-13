@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's own listeners: every Puddle listener registers here when it binds, and
 //! the guard blocks a workspace from reaching any of them, whatever the loopback toggle or
 //! the rules say.

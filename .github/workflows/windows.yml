@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Native Windows MSVC build and tests. It runs on every pull request to develop and main (a
 # required check on develop), on every merge queue run, nightly (skipped when this workflow already has a green run on
 # develop's head), and by hand. Linux CI already cross-checks clippy for the msvc target.

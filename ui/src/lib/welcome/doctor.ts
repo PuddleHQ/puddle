@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The system check as the first-run flow shows it: what blocks, how to word the result, and the
 // report as text for "Copy report".
 import type { components } from "#lib/api/schema.d.ts";

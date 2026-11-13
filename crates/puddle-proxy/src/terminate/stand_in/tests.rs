@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 const GH: &str = "puddle-secret-GH_TOKEN-00112233445566778899aabbccddeeff";

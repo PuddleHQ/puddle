@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! An image pull behind a company proxy: the adapter's real `pull_image` goes through Puddle's
 //! [`PullProxy`], which leaves along the company proxy route to a real Squid with Basic proxy
 //! authentication, which tunnels to a TLS registry that only Squid can resolve. Squid's own

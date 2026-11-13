@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the last sign-in to each upstream proxy came to, for the network-health report. Holds
 //! scheme words and short messages only: never a token, a header value or a password.
 

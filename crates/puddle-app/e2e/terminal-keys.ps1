@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Real input for terminal-keys.mjs, through Win32 SendInput, so it takes the path a user's keys take
 # (the window's accelerators, the webview's own handling), which DevTools' Input.dispatchKeyEvent
 # skips. One action per call:

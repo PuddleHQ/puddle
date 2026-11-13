@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #[test]
 fn every_reason_a_rule_was_deleted_reaches_the_wire() {
     for (from, to) in [

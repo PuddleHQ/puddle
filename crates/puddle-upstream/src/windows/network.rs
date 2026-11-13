@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Windows [`NetworkOs`]: `GetAdaptersAddresses`, the IPv4 forwarding table and the registry
 //! values that name DNS namespaces. Read-only; every raw resource is owned by a guard that
 //! releases it.

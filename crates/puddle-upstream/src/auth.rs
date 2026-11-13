@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The seam for authenticating to an upstream proxy (Windows SSPI Negotiate today,
 //! GSSAPI Kerberos on Linux later). Discovery names the proxy ([`ProxyAddr`]); this
 //! trait turns a proxy's `407` challenge into the next `Proxy-Authorization` value, so the code

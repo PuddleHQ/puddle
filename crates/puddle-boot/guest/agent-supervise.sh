@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Keeps puddle-agent running: restarts it whenever it exits or is killed. boot.sh starts it in
 # its own session, once per boot.

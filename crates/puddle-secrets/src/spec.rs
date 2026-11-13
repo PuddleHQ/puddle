@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The closed list of places a secret can come from.
 
 use serde::{Deserialize, Serialize};

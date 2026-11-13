@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Opening a workspace in an editor: what the launcher returns and how sign-in is passed on.
 
 use std::fmt;

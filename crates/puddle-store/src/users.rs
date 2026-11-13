@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The people who use one Puddle: an owner (the operator) and, with several users switched on,
 //! plain users who each see only their own workspaces and what belongs to them. No type here
 //! carries a credential; those live behind [`crate::AccountSecrets`].

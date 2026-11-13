@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Environment variables and secrets in the store (`docs/arch/spec/credentials.md` §9). A
 //! secret's value never passes through here: only the id it is filed under in the operating
 //! system's credential store, the hosts it is for, and each workspace's stand-in for it.

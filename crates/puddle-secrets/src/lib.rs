@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where Puddle gets a secret on the host.
 //!
 //! Three sources behind one interface, [`Fetch`]:

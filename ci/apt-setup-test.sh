@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Tests ci/apt-setup.sh against a scratch /etc/apt and a probe file instead of the network.
 set -euo pipefail
 

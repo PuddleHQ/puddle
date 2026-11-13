@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's ssh config: a file of its own with one host entry per workspace that has direct SSH
 //! on and a live endpoint, and the single `Include` line that pulls it into the user's own
 //! `~/.ssh/config`.

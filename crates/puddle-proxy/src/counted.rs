@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Byte counts of a guest stream, for the audit's `bytes_up` / `bytes_down` (R-24).
 //!
 //! Counting on the guest side covers every path (refusal, `CONNECT` splice, plain-HTTP forward)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Arms auto-merge (squash, bound to the head commit) on a Dependabot pull request whose every update is a
 # patch or a minor one, so it lands through the normal required checks and the merge queue like any
 # other pull request. Reads only data about the PR, never its code, so it is safe under

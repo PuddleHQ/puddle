@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where a workspace's real tokens are kept: one entry in the operating system's credential store
 //! for each of the workspace's token slots.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the maps and sets here are bookkeeping that no template reads, so they need no reactivity */
 // Short messages with an optional action ("Undo"), shown by Toast.svelte. A toast leaves after
 // `ms`; hovering or focusing it holds it, so the action can be reached without a race (WCAG 2.2.1).

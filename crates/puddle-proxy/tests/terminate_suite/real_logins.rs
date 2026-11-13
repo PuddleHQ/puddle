@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real Claude Code, `gh` and GitHub Copilot command-line tools logging in through the proxy
 //! and the real login capture, against fake servers that speak the three logins' wire formats.
 //! No account is involved and nothing leaves the machine.

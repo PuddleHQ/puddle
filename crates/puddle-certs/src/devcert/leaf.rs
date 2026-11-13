@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's localhost leaf certificate: making it, reading what a certificate says, and the
 //! shape check that gates what is ever added to the Windows trust store.
 

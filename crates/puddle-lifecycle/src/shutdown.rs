@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The sandboxes Puddle runs, and stopping all of them when Puddle exits.
 
 use std::collections::BTreeMap;

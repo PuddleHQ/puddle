@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! An in-memory cache with expiry, single flight and a stale grace. Nothing is written to disk.
 
 use std::collections::HashMap;

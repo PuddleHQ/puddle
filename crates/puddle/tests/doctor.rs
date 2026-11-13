@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle doctor` run as a user would, from a folder without the bundled runtime: the report
 //! names the missing runtime, the exit code says something must be fixed, and the test boot is
 //! never attempted. A real runtime is checked by `vm_doctor` (puddle-vm-tests).

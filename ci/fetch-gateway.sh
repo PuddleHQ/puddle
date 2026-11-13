@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Unpacks the pinned JetBrains Gateway (Linux x86_64) into <dest-dir>, for the Gateway attach test
 # (PUDDLE_GATEWAY_DIR): Gateway's own SSH client and bootstrap, driven headless. The download must
 # match the SHA-256 pinned in ci/gateway.sha256.

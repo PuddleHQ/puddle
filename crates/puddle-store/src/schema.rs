@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Versioned schema migrations, tracked in SQLite's `user_version`.
 //!
 //! Migrations only ever get appended. Each runs in its own transaction together with the

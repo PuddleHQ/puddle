@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { emulatorDom } from "#lib/testing/fake-terminal.ts";
 import type { PortEntry } from "#lib/workspaces/ports.ts";

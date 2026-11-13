@@ -46,6 +46,6 @@ problems: [SECURITY.md](SECURITY.md).
 
 Copyright (C) 2026 Tijs van Kampen and contributors.
 
-Puddle is free software under the GNU General Public License, version 3 or (at your option) any later
-version: see [LICENSE](LICENSE). SPDX: `GPL-3.0-or-later`. Bundled third-party components keep
-their own licences.
+Puddle is licensed under the GNU Affero General Public License, version 3 or (at your option) any later
+version: see [LICENSE](LICENSE). SPDX: `AGPL-3.0-or-later`. Bundled third-party components keep
+their own licences. If you run a modified Puddle as a service for other people, the AGPL requires you to offer them its source.

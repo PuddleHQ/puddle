@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The approval inbox against the real API on the fixture backend, in the browsers the
 // app ships in. Every test starts from the `default` scenario (one pending request, demo ->
 // registry.example.org) on its worker's own backend, so a test may decide anything it likes.

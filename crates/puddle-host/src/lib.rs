@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Puddle host process as a library: the one place that wires the store, the proxies, the
 //! sandbox runtime, workspaces, shutdown and the API together.
 //!

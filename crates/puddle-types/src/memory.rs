@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Guest memory size. The setting itself (a global default with per-workspace overrides) lives in
 //! `puddle-settings`.
 //!

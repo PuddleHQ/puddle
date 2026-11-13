@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Credentials in a request that Puddle did not add or swap.
 //!
 //! A tool in the workspace may hold a token of its own (one the user pasted, a login Puddle does

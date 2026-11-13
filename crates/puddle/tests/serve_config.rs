@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle serve --config`: the built binary refuses a bad file and prints what it would use, and
 //! the options of a good file reach a running host.
 #![expect(

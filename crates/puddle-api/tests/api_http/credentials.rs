@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the identities screens ask the host about credentials, over real HTTP: the accounts found,
 //! checking a credential, a pasted token (write-only) and signing in.
 

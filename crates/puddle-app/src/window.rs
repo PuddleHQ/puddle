@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The main window: its label, its start-up script and how it is built.
 
 use std::sync::Arc;

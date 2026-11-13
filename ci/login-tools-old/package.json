@@ -2,7 +2,7 @@
   "name": "puddle-login-tools-old",
   "private": true,
   "description": "Pins Claude Code 2.1.5, the last release whose login ends on console.anthropic.com, for the old-login test. Deliberately not bumped: Dependabot does not watch this directory.",
-  "license": "GPL-3.0-or-later",
+  "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.5"
   }

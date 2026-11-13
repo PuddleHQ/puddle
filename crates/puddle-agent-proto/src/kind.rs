@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Stream kinds: what a yamux stream that isn't a proxied connection carries.
 //!
 //! One vsock route carries everything (a smaller surface than a route per feature).

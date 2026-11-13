@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! [`FakeOs`]: scripted OS proxy answers for tests (feature `testing`).
 
 use std::sync::atomic::{AtomicUsize, Ordering};

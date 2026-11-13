@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A consistent copy of the database while the host process keeps writing to it.
 
 use std::path::Path;

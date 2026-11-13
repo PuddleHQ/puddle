@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Every tracked source file must carry an SPDX licence identifier in its first two lines (the
 # second allows for a shebang). Generated files, lock files and documents are exempt
 # (CONTRIBUTING.md, "Licence headers").

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for the API's request-rules endpoints, for unit and component tests, in the shape
 // openapi-fetch returns them. Not shipped (tests import it).
 import type { RequestRule } from "#lib/rules/request-rules.ts";

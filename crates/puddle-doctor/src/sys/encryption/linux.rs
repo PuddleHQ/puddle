@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Linux: finds the block device under the data folder (from `/proc/self/mountinfo`) and under
 //! each swap area (from `/proc/swaps`), then looks in `/sys` for a `dm-crypt` device at or below
 //! it. `/sys` is readable by every user; nothing here needs root.

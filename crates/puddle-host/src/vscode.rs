@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! "Open in VS Code": starts the desktop VS Code on a workspace's ssh host entry with its own
 //! `code` command, so Remote-SSH does the rest (connecting through Puddle's bridge, installing
 //! its server in the guest).

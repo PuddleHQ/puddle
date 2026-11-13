@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One request read from a terminated connection: checked, then rebuilt for the upstream.
 //!
 //! The checks are the plain-HTTP path's (`http.rs`: size limits, no obsolete line folding, no

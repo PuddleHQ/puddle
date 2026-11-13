@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Whether a client of the agent's listeners is in a container.
 //!
 //! A container has its own network namespace: its connections reach the agent forwarded (the

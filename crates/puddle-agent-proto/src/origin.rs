@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where a captured connection came from, as the agent tells the proxy.
 //!
 //! A client in a container (Docker, Podman, a Kubernetes node) runs in its own network namespace

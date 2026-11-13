@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `ssh_config`: Puddle owns one `Include <pattern>` line, so `ssh` reads the drop-in folder
 //! Puddle writes into.
 //!

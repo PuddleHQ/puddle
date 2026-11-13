@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for the identities, workspace Git and credentials endpoints, for unit and component
 // tests, in the shape openapi-fetch returns them. It keeps real state (so a change shows up in the
 // next read) and refuses a collision the way the host does. Not shipped (tests import it).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The JSON engine: edits the text in place, so every byte outside the owned keys stays.
 //!
 //! Each edit validates the whole text with `serde_json` first, then scans it (iteratively, so

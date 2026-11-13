@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The notice for a credential Puddle did not add: a tool in a workspace sent a token of its own to
 // a website. The request went through as it always did; the notice says to which website and what
 // kind of token it looked like, never any part of the token. One notice for each workspace,

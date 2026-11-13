@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The browser editor end to end on a real microVM (K on Linux KVM): an attach in the browser
 //! opens the workspace's editor in a real browser (headless Chromium beside the VM, as the desktop
 //! shell's webview is beside it), signed in the way the shell signs a window in, through the

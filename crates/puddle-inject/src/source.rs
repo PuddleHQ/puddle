@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the injector asks of the rest of Puddle: the workspace's Git settings, and the secret a
 //! source holds. Two small traits, so the injector is tested without a store or a `gh`.
 

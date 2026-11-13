@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One request through the front: route by `Host`, refuse what does not belong, then carry it to
 //! the workspace's editor server and the answer back, WebSocket upgrades included.
 

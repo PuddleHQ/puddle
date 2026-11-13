@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A client that sends its request, shuts down its write side and then reads a response bigger
 //! than one yamux stream window, through the proxy's spliced tunnel (a name no termination binds).
 #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]

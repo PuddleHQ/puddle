@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspace service: the trait the API calls and the stand-in for a host without workspaces.
 
 use std::sync::Arc;

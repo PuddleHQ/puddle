@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The crate's error type.
 
 /// What went wrong creating a CA or issuing a leaf. Messages name hosts, never key material.

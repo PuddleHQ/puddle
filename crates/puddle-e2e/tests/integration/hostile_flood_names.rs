@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Through the proxy, no VM: a guest asks to CONNECT to 100 000 names nothing allows. None is
 //! refused for volume (each is answered as waiting, never as denied), the store keeps its cap of
 //! open rows, the inbox still answers in under 200 ms, a request that was waiting first is still

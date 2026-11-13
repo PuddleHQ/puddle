@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The Tauri command line Puddle's MSI is built with: `<version> <release asset> <sha256>`. The
 # version matches the `tauri` crate's minor version in Cargo.lock; `ci/fetch-tauri-cli.sh` refuses a
 # download that does not match. Values are the SHA-256 GitHub shows for the asset

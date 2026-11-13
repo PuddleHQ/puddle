@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The leaf certificate against programs other than rustls: Python's strict X.509 verification
 //! (authority key identifier, critical basic constraints on the CA, a subject alternative name,
 //! `serverAuth`), which is what `pip` and `requests` run under.

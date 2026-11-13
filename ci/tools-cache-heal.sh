@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Refills the guest tools cache (vm-linux.yml, `vm-guest-env-tools-*`) after GitHub evicted it. The entry is saved only
 # by a develop vm-linux run (the nightly or a dispatch), and while it exists every pull request and merge queue run
 # restores it in 5 s (321 MB). But the repo's cache set is over the 10 GB cap whenever a Rust entry is replaced, and

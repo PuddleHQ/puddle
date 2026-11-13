@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the last read of each source came to, kept in memory so a screen can show it without
 //! reading again. Only the outcome and the time are kept: never a value. Nothing is written to
 //! disk, so after a restart a source has no entry until it is read.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Entry points for the cargo-fuzz targets: what a guest's first bytes reach before any rule is
 //! asked (the request head and its target, host names, the agent's stream preamble). Each function takes arbitrary bytes, never panics, and panics only when an invariant
 //! the proxy's refusals rest on does not hold, which is what a fuzz target is looking for.

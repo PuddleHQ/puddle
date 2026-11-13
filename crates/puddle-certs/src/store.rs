@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host certificate stores Puddle reads, and a snapshot of their contents.
 //!
 //! Which stores: every root an admin or the user deliberately added,

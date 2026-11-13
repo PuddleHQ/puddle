@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A proxy with two routes (one attacked, one bystander) and the guest side that sends them bytes.
 #![expect(
     clippy::unwrap_used,

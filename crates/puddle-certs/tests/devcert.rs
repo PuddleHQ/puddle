@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The development certificate over a fake host store: which existing certificate is reused and
 //! why the others are skipped, the generated leaf's life (kept, renewed, replaced when exposed),
 //! and the states trust can end in. The real Windows store is `windows_store.rs`.

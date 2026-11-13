@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a workspace's SSH endpoint serves clients with: the booted sandbox, plus a way to tell
 //! the user when direct SSH stops working in a way the `ssh` client can't show.
 

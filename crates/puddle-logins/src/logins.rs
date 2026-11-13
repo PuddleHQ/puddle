@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One workspace's captured logins: what the token endpoints answer, what is kept, what the
 //! workspace holds instead.
 //!

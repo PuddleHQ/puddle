@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! How Puddle decrypts port 443: the three modes of the global setting and of a workspace's
 //! override.
 

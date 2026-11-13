@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guard in front of every route: `Host`, then `Origin`, then the bearer token.
 //! See the crate docs for why each check exists.
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guest's SSH agent socket: each client becomes one `ssh-agent` stream to the host, whose
 //! filter answers it. Nothing here reads the protocol, so a client that talks to the stream
 //! another way gets the same answers.

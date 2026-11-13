@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! How much disk a file really takes. A VM's disk image is sparse: its length is the size of the
 //! disk, and the host only stores what the guest wrote. The length says nothing about use.
 

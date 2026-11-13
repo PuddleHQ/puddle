@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The msb runtime Puddle ships with: where it lives, the environment that makes the SDK use
 //! it and nothing else, and the check that it is exactly the version this build was made for.
 //!

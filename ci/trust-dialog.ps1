@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 <#
 .SYNOPSIS
 Reads and answers the Windows certificate-trust "Security Warning" dialog that a process opens when it

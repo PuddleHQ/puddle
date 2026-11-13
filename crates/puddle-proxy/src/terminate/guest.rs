@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guest's side of a terminated connection: a TLS server whose one certificate is the
 //! workspace CA's leaf for the host the guest `CONNECT`ed to.
 

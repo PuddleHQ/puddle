@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guest's IPv4 interface addresses through `getifaddrs(3)` (Linux only). The bridge watcher
 //! ([`crate::bridge`]) must know which interface owns an address, and std has no interface listing.
 

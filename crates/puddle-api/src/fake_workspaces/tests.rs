@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #[test]
 fn the_fake_finds_a_checkout_by_its_head_and_its_origin_by_a_url_line() {
     let tmp = tempfile::tempdir().unwrap();

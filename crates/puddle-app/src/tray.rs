@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The tray icon and what the window's close and minimize buttons do.
 //!
 //! [`close_action`] and [`minimize_action`] are the matrix of the two Settings choices, as pure

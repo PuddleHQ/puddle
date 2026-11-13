@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The nightly stress job (docs/STANDARDS.md, "Flaky tests"): the fast suites run many times on a starved
 # machine, so a test that fails only under load fails here, a day after it merged, instead of in a merge
 # queue group. Not a required check; it runs only on the schedule and by hand.

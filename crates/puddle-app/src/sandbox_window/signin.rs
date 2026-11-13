@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Signing in to a workspace's editor on the window's behalf.
 //!
 //! The bundled editor server asks for a password and answers a login with a session cookie. The

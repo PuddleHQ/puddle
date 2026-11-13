@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The notice for a token in an answer that Puddle does not hold: a website sent the workspace a
 // credential of a kind Puddle knows (a sign-in a tool did on its own, a key in a page) and Puddle
 // never saw it come. The answer went through unchanged; the notice says which website and what

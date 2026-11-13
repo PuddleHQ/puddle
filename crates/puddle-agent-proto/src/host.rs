@@ -23,6 +23,7 @@
 
 use std::future::Future;
 use std::io;
+use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -61,7 +62,7 @@ pub const MAX_TAIL_CHARS: usize = 300;
 /// is then 0).
 pub const UNKNOWN_PROCESS: &str = "unknown";
 
-/// Longest agent version string kept for the log.
+/// Longest agent version string kept for the log and a protocol mismatch report.
 const MAX_VERSION_CHARS: usize = 64;
 
 /// Limits for one session. The defaults suit a real guest; tests shorten them.
@@ -214,6 +215,16 @@ pub enum AgentReport {
         /// characters replaced by `?`; `None` when the rules are installed.
         reason: Option<String>,
     },
+    /// The agent's hello named another control protocol than this host speaks. The session
+    /// ignores everything else that agent sends and opens nothing to it, so the report is the
+    /// only sign the host gets that the workspace runs without its agent.
+    ProtocolMismatch {
+        /// The agent's version as it said it, at most 64 characters, control characters replaced
+        /// by `?`.
+        agent_version: String,
+        /// The protocol the agent speaks.
+        protocol: u32,
+    },
 }
 
 /// Who wants to know what a workspace's agent says about the guest. Synchronous and quick: it
@@ -226,6 +237,11 @@ pub trait GuestWatcher: Send + Sync + 'static {
     /// The ports `workspace`'s guest listens on now: the whole set, ascending, no duplicates, at
     /// most [`MAX_PORTS`]. The guest's claim; nothing else is known.
     fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>);
+
+    /// An agent session of `workspace` ended, however it ended. The guest's agent restarting
+    /// ends one too, so this proves nothing alone; the VM dying is the case it is a fast hint
+    /// for.
+    fn session_ended(&self, workspace: &WorkspaceId);
 }
 
 /// A report from the guest that UDP was refused: the guest's own claim, cleaned by the host
@@ -545,6 +561,9 @@ async fn serve_control<H: StreamHandler>(
         Instant::now(),
     );
     let mut line = Vec::with_capacity(256);
+    // Set by a hello on another protocol: what such an agent sends may mean something else here,
+    // so nothing after it counts. The stream stays open, so the agent does not reopen it in a loop.
+    let mut refused = false;
     loop {
         match control::read_line(&mut reader, &mut line, MAX_LINE).await {
             Ok(true) => {}
@@ -562,7 +581,10 @@ async fn serve_control<H: StreamHandler>(
             limit.suppressed = 0;
         }
         match AgentMessage::from_line(&line) {
-            Ok(msg) => on_message(msg, shared).await,
+            Ok(_) if refused => {
+                tracing::debug!(%workspace, "control message from an agent on another protocol ignored");
+            }
+            Ok(msg) => refused = on_message(msg, shared).await.is_break(),
             Err(err) => tracing::warn!(%workspace, error = %err, "invalid control message ignored"),
         }
     }
@@ -572,7 +594,9 @@ async fn serve_control<H: StreamHandler>(
     }
 }
 
-async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
+/// Acts on one control message. `Break` when the agent speaks another protocol: the caller ignores
+/// the rest of the stream.
+async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) -> ControlFlow<()> {
     let workspace = &shared.workspace;
     match msg {
         AgentMessage::Hello {
@@ -581,7 +605,15 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
         } => {
             let version = clean(&agent_version, MAX_VERSION_CHARS);
             if protocol != PROTOCOL_VERSION {
-                tracing::warn!(%workspace, agent_protocol = protocol, host_protocol = PROTOCOL_VERSION, "guest agent speaks another control protocol; connection kept");
+                tracing::warn!(%workspace, agent_version = %version, agent_protocol = protocol, host_protocol = PROTOCOL_VERSION, "guest agent speaks another control protocol; its reports are ignored and nothing is sent to it");
+                shared
+                    .handler
+                    .agent_report(AgentReport::ProtocolMismatch {
+                        agent_version: version,
+                        protocol,
+                    })
+                    .await;
+                return ControlFlow::Break(());
             }
             tracing::info!(%workspace, agent_version = %version, protocol, "guest agent connected");
             shared.handler.guest_link(shared.link.clone()).await;
@@ -651,6 +683,7 @@ async fn on_message<H: StreamHandler>(msg: AgentMessage, shared: &Shared<H>) {
             tracing::debug!(%workspace, "unknown control message ignored");
         }
     }
+    ControlFlow::Continue(())
 }
 
 /// The three messages about the capture rules, each becoming a report.

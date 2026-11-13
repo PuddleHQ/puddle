@@ -67,6 +67,7 @@ mod destination;
 #[cfg(feature = "fuzzing")]
 pub mod fuzzing;
 mod http;
+mod opened;
 mod plain;
 mod proxy;
 mod pull;

@@ -233,6 +233,10 @@ pub(crate) struct Stored {
     /// Set from the moment a create starts until it finishes. A record still marked after a
     /// restart is an interrupted create: its volume is an orphan for reconcile to remove.
     pub(crate) creating: bool,
+    /// Set from the moment a delete is confirmed until it has finished. A record still marked
+    /// after a restart is an interrupted delete: the workspace is gone when its volume is, and
+    /// otherwise it comes back as it was.
+    pub(crate) deleting: bool,
 }
 
 /// The version the book is written in. Version 1 held one `repo_url` per workspace; version 2
@@ -260,6 +264,9 @@ struct EntryV3 {
     root_disk_grown_mib: Option<u32>,
     #[serde(default)]
     creating: bool,
+    /// Missing in an entry written before a delete was saved as it began.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    deleting: bool,
 }
 
 const fn root() -> SessionUser {
@@ -328,6 +335,7 @@ impl From<EntryV2> for EntryV3 {
             disk_size_mib: v2.disk_size_mib,
             root_disk_grown_mib: None,
             creating: v2.creating,
+            deleting: false,
         }
     }
 }
@@ -408,6 +416,7 @@ impl EntryV3 {
             disk_size_mib: self.disk_size_mib,
             root_disk_grown_mib: self.root_disk_grown_mib,
             creating: self.creating,
+            deleting: self.deleting,
         })
     }
 }
@@ -434,6 +443,7 @@ impl From<Stored> for EntryV3 {
             disk_size_mib: s.disk_size_mib,
             root_disk_grown_mib: s.root_disk_grown_mib,
             creating: s.creating,
+            deleting: s.deleting,
         }
     }
 }

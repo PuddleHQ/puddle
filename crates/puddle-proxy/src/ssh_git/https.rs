@@ -183,7 +183,7 @@ impl Leg<'_> {
         });
         let (mut client, server) = tokio::io::duplex(PIPE);
         let (server, _) = Counted::new(server);
-        let done = tokio::spawn(terminate::run(context, BufReader::new(server)));
+        let done = tokio::spawn(terminate::run(context, BufReader::new(server).into()));
         connected(&mut client).await?;
         let tls = tls_connector(root, &self.host)?
             .connect(server_name(&self.host)?, client)

@@ -10,7 +10,7 @@
 
 use zeroize::Zeroizing;
 
-use crate::profile::{Field, StandInKind};
+use crate::profile::{Field, Keep, StandInKind};
 
 /// The shortest and longest token a stand-in can copy the length of: the registry's own limits.
 const MIN_LEN: usize = 16;
@@ -165,8 +165,12 @@ pub(crate) fn audience_of(real: &str) -> Option<String> {
 
 /// Whether a refresh of `field`'s token needs a new stand-in: a session token's fields and a JWT's
 /// payload change with each token (the expiry), and the client reads them, so the stand-in changes
-/// with them. Any other token keeps its stand-in.
+/// with them; a token held in memory is one of many alive at once, so each has its own. Any other
+/// token keeps its stand-in.
 pub(crate) fn renews(real: &str, field: &Field) -> bool {
+    if field.keep == Keep::Memory {
+        return true;
+    }
     match field.stand_in {
         StandInKind::Shaped | StandInKind::ShapedLong => false,
         StandInKind::Fields => true,
@@ -198,7 +202,7 @@ pub(crate) fn jwt_stand_in_with(
 /// fifteen hundred. The registry's own limit.
 const MAX_FIELDS_LEN: usize = 8192;
 
-/// A stand-in for a token of `key=value;` fields and a MAC after the first colon: the fields as
+/// A stand-in for a token of `key=value;` fields and a MAC after the last colon: the fields as
 /// they are, the MAC replaced by random characters of its alphabet and length. The client reads
 /// the fields and checks no signature; the MAC is what the service checks, so it is the one part
 /// that must never reach the workspace.
@@ -206,7 +210,7 @@ pub(crate) fn fields_stand_in_with(
     real: &str,
     fill: &mut dyn FnMut(&mut [u8]) -> bool,
 ) -> Result<String, ShapeError> {
-    let (fields, mac) = real.split_once(':').ok_or(ShapeError::Unusable)?;
+    let (fields, mac) = real.rsplit_once(':').ok_or(ShapeError::Unusable)?;
     if !long_copyable(real) || !fields.contains('=') || mac.len() < MIN_RANDOM {
         return Err(ShapeError::Unusable);
     }

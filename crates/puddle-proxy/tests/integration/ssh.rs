@@ -420,6 +420,112 @@ async fn an_allowed_name_gets_its_ssh_spliced_end_to_end_on_any_port() {
     }
 }
 
+/// The refusal a guest gets for SSH to `gitlab.com` inside an allowed tunnel.
+const GITLAB_REFUSAL: &str = "puddle: SSH is not supported yet, use HTTPS: the remote becomes https://gitlab.com/GROUP/PROJECT.git\r\n";
+
+/// Reads `tunnel` to its end; a tunnel the proxy keeps open fails the test instead of hanging it.
+async fn read_to_end(tunnel: &mut StreamHandle) -> String {
+    let mut answer = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), tunnel.read_to_end(&mut answer))
+        .await
+        .expect("the proxy ends the tunnel")
+        .unwrap();
+    String::from_utf8(answer).unwrap()
+}
+
+#[tokio::test]
+async fn hostile_hg58_ssh_to_a_git_host_split_into_small_writes_inside_an_allowed_tunnel_is_still_refused()
+ {
+    let server = Silent::start().await;
+    let rig = Rig::new(&["gitlab.com"]);
+    rig.policy.allow(&host("gitlab.com"));
+    let mut guest = rig.guest().await;
+    let mut tunnel = guest
+        .tunnel(&format!("gitlab.com:{}", server.addr.port()))
+        .await;
+    let (head, rest) = BANNER.split_at(1);
+    let (middle, rest) = rest.split_at(3);
+    // flake-ok: a send loop, not a wait for a condition: it writes each chunk of a split banner.
+    for chunk in [head, middle, rest] {
+        tunnel.write_all(chunk).await.unwrap();
+        tunnel.flush().await.unwrap();
+        // flake-ok: paces the writes so each tends to be its own read at the proxy; the refusal must not depend on it.
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert_eq!(read_to_end(&mut tunnel).await, GITLAB_REFUSAL);
+    assert_eq!(
+        server.received(),
+        b"",
+        "nothing of the banner reached the server"
+    );
+}
+
+#[tokio::test]
+async fn hostile_hg58_ssh_to_a_git_host_with_one_byte_behind_the_connect_head_is_still_refused() {
+    let server = Silent::start().await;
+    let rig = Rig::new(&["gitlab.com"]);
+    rig.policy.allow(&host("gitlab.com"));
+    let mut guest = rig.guest().await;
+    let mut tunnel = guest.control.open_stream().await.unwrap();
+    let mut first = connect(&format!("gitlab.com:{}", server.addr.port()), &[]).into_bytes();
+    let (early, rest) = BANNER.split_at(1);
+    first.extend_from_slice(early);
+    tunnel.write_all(&first).await.unwrap();
+    tunnel.flush().await.unwrap();
+    let mut answer = [0u8; 12];
+    tunnel.read_exact(&mut answer).await.unwrap();
+    assert_eq!(&answer, b"HTTP/1.1 200");
+    tunnel.write_all(rest).await.unwrap();
+    tunnel.flush().await.unwrap();
+    let answer = read_to_end(&mut tunnel).await;
+    assert!(answer.ends_with(GITLAB_REFUSAL), "{answer:?}");
+    assert_eq!(
+        server.received(),
+        b"",
+        "nothing of the banner reached the server"
+    );
+}
+
+#[tokio::test]
+async fn first_bytes_to_a_git_host_that_only_start_like_a_banner_pass_unchanged() {
+    // The gate holds a prefix of `SSH-` until the next byte tells; what turns out not to be a
+    // banner, or ends early, reaches the server whole and in order.
+    let server = Silent::start().await;
+    let rig = Rig::new(&["gitlab.com"]);
+    rig.policy.allow(&host("gitlab.com"));
+    let mut guest = rig.guest().await;
+    let authority = format!("gitlab.com:{}", server.addr.port());
+    let sent: [&[&[u8]]; 3] = [&[b"SS", b"H-x rest"], &[b"S", b"QL"], &[b"SSH-"]];
+    let mut expected = Vec::new();
+    for chunks in sent {
+        let mut tunnel = guest.tunnel(&authority).await;
+        // flake-ok: a send loop, not a wait for a condition: it writes each chunk of a split upload.
+        for chunk in chunks {
+            tunnel.write_all(chunk).await.unwrap();
+            tunnel.flush().await.unwrap();
+            // flake-ok: paces the writes so each tends to be its own read at the proxy; the bytes must pass either way.
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            expected.extend_from_slice(chunk);
+        }
+        tunnel.shutdown().await.unwrap();
+        let want = expected.len();
+        puddle_test_kit::eventually(
+            "the server received the bytes",
+            Duration::from_secs(5),
+            || {
+                let got = server.received().len();
+                if got >= want {
+                    Ok(())
+                } else {
+                    Err(format!("{got} of {want} bytes"))
+                }
+            },
+        )
+        .await;
+    }
+    assert_eq!(server.received(), expected);
+}
+
 #[tokio::test]
 async fn ssh_inside_an_allowed_tunnel_to_a_git_host_gets_the_https_form_too() {
     let server = Silent::start().await;

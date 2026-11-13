@@ -315,8 +315,8 @@
       suffixes mark as internal. They are off by default; you can turn them on
       under <a href="/settings#local-destinations"
         >Settings, Network, Local destinations</a
-      >. Puddle does not read those signals yet, so "None found" below means
-      "not looked at", and the switch changes nothing for now.
+      >. Puddle reads those signals on Windows only; on other systems "None
+      found" below means "not looked at" and the switch changes nothing.
     </p>
     <dl>
       <dt>Private-access client</dt>

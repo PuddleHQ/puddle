@@ -81,7 +81,7 @@ impl Source {
     ///
     /// [`BackendError`] when it can't start.
     pub async fn start(self, options: &Options) -> Result<Backend, BackendError> {
-        self.start_with(options, &MsbFactory, HostOptions::default())
+        self.start_with(options, &MsbFactory, HostOptions::system())
             .await
     }
 

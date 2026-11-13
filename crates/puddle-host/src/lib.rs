@@ -29,6 +29,7 @@ mod agent_reports;
 mod backup;
 mod boot;
 mod changes;
+mod company_signals;
 mod config;
 mod data_folder;
 mod dev_cert;
@@ -70,6 +71,7 @@ pub use accounts::{AccountError, reset_user};
 pub use backup::{
     BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, BackupError, BackupReport, backup,
 };
+pub use company_signals::{HostSignals, PacReader, PacTiming};
 pub use config::{
     AGENT_FILE_NAME, ApiSettings, CODE_SERVER_DIR_NAME, FreeSpaceTiming, GuestSettings, HostConfig,
     RemoteSettings, UpstreamSettings,

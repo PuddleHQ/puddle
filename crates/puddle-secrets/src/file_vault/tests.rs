@@ -488,4 +488,9 @@ fn the_header_source_of_a_missing_unknown_or_damaged_file() {
     let folder = dir.path().join("folder");
     fs::create_dir(&folder).unwrap();
     assert_eq!(FileVault::header_source(&folder), Err(VaultError::Io));
+    // A file where the vault's folder should be cannot be opened through.
+    assert_eq!(
+        FileVault::header_source(&dir.path().join("vault").join("below")),
+        Err(VaultError::Io)
+    );
 }

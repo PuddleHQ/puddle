@@ -137,9 +137,9 @@ pub enum KeyError {
     /// The unit's credential is not 32 bytes.
     #[error("the credential the unit passes is not a 32-byte key")]
     UnitCredentialInvalid,
-    /// The key file can be read by others.
-    #[error("the vault key file is readable by other users ({0}); fix its permissions")]
-    KeyFileExposed(String),
+    /// The key file is not owner-only, or its permissions cannot be read.
+    #[error("the vault key file is not safe to use: {0}; fix its permissions")]
+    KeyFileUnsafe(String),
     /// The key file is not 32 bytes.
     #[error("the vault key file is not a 32-byte key")]
     KeyFileInvalid,
@@ -202,9 +202,9 @@ impl VaultKeys {
     /// [`KeyError`]: a different source than the vault's, a missing or unreadable key, or a key
     /// file others can read.
     pub async fn find_or_make(&self) -> Result<FoundKey, KeyError> {
-        if !cfg!(target_os = "linux") {
-            return Err(KeyError::NoKeySource);
-        }
+        cfg!(target_os = "linux")
+            .then_some(())
+            .ok_or(KeyError::NoKeySource)?;
         let header = FileVault::header_source(&self.vault).map_err(KeyError::Vault)?;
         if let Some(present) = self.first_present() {
             if let Some(tag) = header
@@ -266,10 +266,14 @@ impl VaultKeys {
             }
             KeySource::SystemdSealed => {
                 let sealed = fs::read(self.sealed_path()).map_err(|_| KeyError::Io)?;
-                let key = self.unseal(&sealed).await.map_err(KeyError::Sealed)?;
+                let program = self.program().map_err(KeyError::Sealed)?;
+                let key = self
+                    .unseal(program, &sealed)
+                    .await
+                    .map_err(KeyError::Sealed)?;
                 let tag = match header {
                     Some(tag) => tag,
-                    None => self.seal_tag().await,
+                    None => self.seal_tag(program).await,
                 };
                 (key, tag)
             }
@@ -334,20 +338,17 @@ impl VaultKeys {
         if !output.success || output.stdout.is_empty() {
             return None;
         }
-        let opened = self.unseal(&output.stdout).await.ok()?;
+        let opened = self.unseal(program, &output.stdout).await.ok()?;
         if opened.expose() != key.expose() {
             return None;
         }
         puddle_fs::private::write_atomic(&self.sealed_path(), &output.stdout).ok()?;
-        Some(self.seal_tag().await)
+        Some(self.seal_tag(program).await)
     }
 
     /// Whether the service seals with the TPM2 too: it does when a TPM2 is fully usable and the
     /// machine is not a container, which `has-tpm2` answers with exit 0.
-    async fn seal_tag(&self) -> KeySourceTag {
-        let Ok(program) = self.tools.get(Tool::SystemdCreds) else {
-            return KeySourceTag::SystemdHost;
-        };
+    async fn seal_tag(&self, program: &Path) -> KeySourceTag {
         match run_with_input(
             Tool::SystemdCreds,
             program,
@@ -362,11 +363,13 @@ impl VaultKeys {
         }
     }
 
-    async fn unseal(&self, sealed: &[u8]) -> Result<VaultKey, Unseal> {
-        let program = self
-            .tools
+    fn program(&self) -> Result<&Path, Unseal> {
+        self.tools
             .get(Tool::SystemdCreds)
-            .map_err(|_| Unseal::ToolMissing)?;
+            .map_err(|_| Unseal::ToolMissing)
+    }
+
+    async fn unseal(&self, program: &Path, sealed: &[u8]) -> Result<VaultKey, Unseal> {
         let output = run_with_input(
             Tool::SystemdCreds,
             program,
@@ -437,12 +440,7 @@ fn key_from(bytes: &[u8]) -> Option<VaultKey> {
 /// Reads the key file, refusing one that others can read (as `ssh` does with a private key).
 fn read_key_file(path: &Path) -> Result<VaultKey, KeyError> {
     let file = fs::File::open(path).map_err(|_| KeyError::Io)?;
-    puddle_fs::private::check(&file).map_err(|err| match err {
-        puddle_fs::private::CheckError::Exposed(exposed) => {
-            KeyError::KeyFileExposed(exposed.to_string())
-        }
-        puddle_fs::private::CheckError::Io(_) => KeyError::Io,
-    })?;
+    puddle_fs::private::check(&file).map_err(|err| KeyError::KeyFileUnsafe(err.to_string()))?;
     let mut bytes = Zeroizing::new(Vec::with_capacity(KEY_LEN + 1));
     // One byte past a key: a longer file is refused without reading all of it.
     file.take(KEY_LEN as u64 + 1)

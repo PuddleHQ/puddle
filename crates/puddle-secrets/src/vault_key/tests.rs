@@ -117,7 +117,7 @@ mod linux {
         for mode in [0o644, 0o640, 0o604] {
             set_mode(&setup.key_file(), mode);
             let err = setup.keys().find_or_make().await.unwrap_err();
-            let KeyError::KeyFileExposed(why) = err else {
+            let KeyError::KeyFileUnsafe(why) = err else {
                 panic!("mode {mode:o}: {err:?}");
             };
             assert!(why.contains("0600"), "{why}");
@@ -255,6 +255,37 @@ mod linux {
     }
 
     #[tokio::test]
+    async fn a_systemd_creds_that_cannot_start_is_told_apart_from_a_missing_one() {
+        let setup = Setup::new();
+        puddle_fs::private::write_atomic(&setup.config().join("puddle").join(SEALED_FILE), b"x")
+            .unwrap();
+        let keys_with = |tool: PathBuf| {
+            VaultKeys::new(
+                &setup.config(),
+                &setup.vault(),
+                ToolPaths::default().with_systemd_creds(Some(tool)),
+            )
+            .with_credentials_dir(None)
+        };
+        // A path with nothing at it: the tool is gone since it was looked up.
+        assert_eq!(
+            keys_with(setup.dir.path().join("gone"))
+                .find_or_make()
+                .await
+                .unwrap_err(),
+            KeyError::Sealed(Unseal::ToolMissing)
+        );
+        // A file nobody may run.
+        let plain = setup.dir.path().join("plain");
+        fs::write(&plain, b"").unwrap();
+        set_mode(&plain, 0o644);
+        assert_eq!(
+            keys_with(plain).find_or_make().await.unwrap_err(),
+            KeyError::Sealed(Unseal::Failed)
+        );
+    }
+
+    #[tokio::test]
     async fn a_file_that_is_not_a_vault_is_not_overwritten_with_a_new_key() {
         let setup = Setup::new();
         fs::create_dir_all(setup.vault().parent().unwrap()).unwrap();
@@ -338,4 +369,15 @@ fn the_config_home_is_an_absolute_xdg_folder_or_dot_config_under_home() {
     );
     assert_eq!(config_home_from(None, os("home")), None);
     assert_eq!(config_home_from(None, None), None);
+}
+
+#[test]
+fn the_config_home_reads_the_environment() {
+    assert_eq!(
+        config_home(),
+        config_home_from(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("HOME")
+        )
+    );
 }

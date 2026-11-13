@@ -31,6 +31,7 @@ fn run_reports_failures_and_missing_programs() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("cannot start"), "{err}");
+    assert!(err.contains("install it and run the task again"), "{err}");
     let cargo = Cargo::from_env(true);
     let err = run(cargo
         .command()

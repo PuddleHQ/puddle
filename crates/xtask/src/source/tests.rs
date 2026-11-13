@@ -92,6 +92,7 @@ fn github_source(firmware_tag: Option<&str>) -> GitHubSource {
         work: PathBuf::from("/w"),
         about_config: PathBuf::from("/c"),
         cargo: Cargo::from_env(true),
+        github: GitHub::public(),
     }
 }
 
@@ -122,4 +123,13 @@ fn the_compare_base_names_upstreams_owner() {
         ),
         "repos/PuddleHQ/microsandbox/compare/superradcompany:v0.7.7...v0.7.7-puddle.3"
     );
+}
+
+#[test]
+fn a_commit_response_gives_its_sha() {
+    assert_eq!(
+        parse_commit_sha(r#"{"sha":"abc123","x":1}"#).unwrap(),
+        "abc123"
+    );
+    assert!(parse_commit_sha("{}").is_err());
 }

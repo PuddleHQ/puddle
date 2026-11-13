@@ -89,12 +89,12 @@ impl Store {
                 )
                 .optional()?;
             if before.is_none() {
-                let count: i64 = tx.query_row(
+                let count = tx.query_row::<i64, _, _>(
                     "SELECT count(*) FROM ssh_agent_hosts WHERE workspace_id = ?1",
                     [workspace.as_str()],
                     |r| r.get(0),
-                )?;
-                if usize::try_from(count).unwrap_or(usize::MAX) >= MAX_SSH_AGENT_HOSTS {
+                );
+                if usize::try_from(count?).unwrap_or(usize::MAX) >= MAX_SSH_AGENT_HOSTS {
                     return Err(StoreError::TooManySshAgentHosts(MAX_SSH_AGENT_HOSTS));
                 }
             }

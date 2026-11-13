@@ -27,4 +27,3 @@ crates/puddle-store/src/store/identities.rs | first,\nsql_ts(now),\n],\n)?; | th
 crates/puddle-store/src/store/identities.rs | other => return Err(corrupt(format!("unknown signing {other}"))), | the column has a CHECK that allows only none, so a database cannot hold another value
 crates/puddle-store/src/store/ports.rs | "SELECT guest_port, host_port FROM pinned_ports WHERE workspace_id = ?1 ORDER BY guest_port",\n)?; | preparing a fixed statement fails only on a broken database file
 crates/puddle-store/src/store/sets.rs | _ => return Err(StoreError::UnknownRuleSet(set.to_string())), | `RuleSetId` is non-exhaustive in puddle-types; every variant this version has is handled above, so no test can reach the fallback
-crates/puddle-store/src/store/ssh_agent.rs | [workspace.as_str()],\n\|r\| r.get(0),\n)?; | SQLite failing a count inside the write transaction that just read the same table cannot be provoked from a test

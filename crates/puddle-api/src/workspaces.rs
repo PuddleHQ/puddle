@@ -297,7 +297,7 @@ pub const DEFAULT_ROOT_DISK_MIB: u64 = 4 * 1024;
 #[non_exhaustive]
 pub enum RepoUrlError {
     /// An `ssh://` or scp-like remote.
-    #[error("SSH remotes are not supported yet; use the repository's HTTPS URL instead")]
+    #[error("ssh remotes are not supported yet; use the repository's HTTPS URL instead")]
     Ssh,
     /// Longer than [`MAX_REPO_URL_LEN`].
     #[error("the repository URL is longer than {MAX_REPO_URL_LEN} characters")]

@@ -161,7 +161,7 @@ fn ssh_remotes_get_the_not_supported_message() {
     ] {
         let err = RepoUrl::parse(ssh).unwrap_err().to_string();
         assert!(
-            err.contains("SSH remotes are not supported yet"),
+            err.contains("ssh remotes are not supported yet"),
             "{ssh}: {err}"
         );
         assert!(err.contains("HTTPS"), "{err}");
@@ -654,6 +654,7 @@ fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
     locals.insert(
         "/home/u/plain".to_owned(),
         Err(LocalCheckoutError::NotCheckout {
+            // flake-ok: a map key and a message, never read from disk
             folder: PathBuf::from("/home/u/plain"),
         }),
     );
@@ -808,7 +809,7 @@ fn a_repository_list_is_refused_naming_the_entry() {
     );
     let ssh = refused(&[draft("git@github.com:acme/api.git")]);
     assert!(
-        ssh.starts_with("repository 1 (git@github.com:acme/api.git): SSH remotes"),
+        ssh.starts_with("repository 1 (git@github.com:acme/api.git): ssh remotes"),
         "{ssh}"
     );
     let bad_dir = refused(&[RepositoryDraft {

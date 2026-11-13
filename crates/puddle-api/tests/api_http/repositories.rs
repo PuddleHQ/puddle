@@ -409,7 +409,7 @@ async fn adding_a_repository_that_makes_no_sense_is_a_422_that_never_echoes_a_cr
             "web",
             json!({"kind": "clone", "url": "git@github.com:a/b.git"}),
             422,
-            "SSH",
+            "ssh remotes",
         ),
         (
             "web",

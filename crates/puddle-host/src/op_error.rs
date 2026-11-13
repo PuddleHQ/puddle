@@ -44,7 +44,7 @@ pub(crate) enum OpError {
     #[error("{0} is not running")]
     NotRunning(WorkspaceId),
     /// The host is closing.
-    #[error("Puddle is shutting down")]
+    #[error("this Puddle is shutting down")]
     ShuttingDown,
     /// The workspace list could not be saved.
     #[error(transparent)]

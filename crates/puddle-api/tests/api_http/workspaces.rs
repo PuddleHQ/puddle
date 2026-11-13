@@ -392,11 +392,11 @@ fn refused_bodies() -> [(Value, &'static str); 20] {
     [
         (
             json!({"name": "a", "repositories": [{"url": "git@github.com:acme/api.git"}]}),
-            "SSH remotes are not supported yet",
+            "ssh remotes are not supported yet",
         ),
         (
             json!({"name": "a", "repositories": [{"url": "ssh://git@github.com/acme/api.git"}]}),
-            "SSH remotes are not supported yet",
+            "ssh remotes are not supported yet",
         ),
         (
             json!({"name": "a", "repositories": [{"url": "http://github.com/a/b"}]}),

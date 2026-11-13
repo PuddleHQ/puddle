@@ -1886,7 +1886,8 @@ export interface paths {
         /**
          * Lets the workspace use the user's SSH agent for SSH to `host`, with every key or only the
          *     listed ones, or changes the keys of a host it is on for. The workspace's `ssh` then logs in to
-         *     that host with those keys, and only to a session Puddle saw it open there.
+         *     that host with those keys, and only to a session Puddle saw it open there. A workspace that
+         *     started with no host on gets its agent socket at its next start.
          */
         put: operations["put_ssh_agent_host"];
         post?: never;

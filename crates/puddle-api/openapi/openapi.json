@@ -10537,7 +10537,7 @@
         "tags": [
           "ssh-agent"
         ],
-        "summary": "Lets the workspace use the user's SSH agent for SSH to `host`, with every key or only the\nlisted ones, or changes the keys of a host it is on for. The workspace's `ssh` then logs in to\nthat host with those keys, and only to a session Puddle saw it open there.",
+        "summary": "Lets the workspace use the user's SSH agent for SSH to `host`, with every key or only the\nlisted ones, or changes the keys of a host it is on for. The workspace's `ssh` then logs in to\nthat host with those keys, and only to a session Puddle saw it open there. A workspace that\nstarted with no host on gets its agent socket at its next start.",
         "operationId": "put_ssh_agent_host",
         "parameters": [
           {

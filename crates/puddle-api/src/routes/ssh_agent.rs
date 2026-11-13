@@ -2,9 +2,10 @@
 //! The filtered SSH agent: the hosts a workspace may use the user's SSH agent for.
 //!
 //! Off for every host until the user turns it on for one here; no rule, default or other route
-//! does. A change reaches a running workspace at once: the store announces it and the host gives
-//! the workspace's proxy the new hosts, so the next request on the agent follows it, including
-//! one on a connection that was already bound to a host.
+//! does. A change reaches a running workspace's proxy at once: the store announces it and the host
+//! gives the proxy the new hosts, so the next request on the agent follows it, including one on a
+//! connection that was already bound to a host. The guest's agent socket is the exception: a
+//! workspace that started with no host on gets it at its next start.
 //!
 //! Puddle ends SSH to a Git host itself (Git over SSH), and the agent never signs a login to a Git
 //! host's published key, so turning it on for such a name has no effect there.
@@ -107,7 +108,8 @@ pub(crate) async fn get_ssh_agent(
 
 /// Lets the workspace use the user's SSH agent for SSH to `host`, with every key or only the
 /// listed ones, or changes the keys of a host it is on for. The workspace's `ssh` then logs in to
-/// that host with those keys, and only to a session Puddle saw it open there.
+/// that host with those keys, and only to a session Puddle saw it open there. A workspace that
+/// started with no host on gets its agent socket at its next start.
 #[utoipa::path(
     put,
     path = "/api/workspaces/{id}/ssh-agent/{host}",

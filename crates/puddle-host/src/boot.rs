@@ -92,13 +92,13 @@ pub(crate) struct BootKit {
     dev_cert: Option<Arc<dyn GuestCertSource>>,
 }
 
-/// How long a start waits for the development certificate: the system's one-time confirmation
-/// may be open on the user's desktop. After that the workspace starts without it (and gets it at
-/// its next start).
 /// Where the agent listens for the guest's SSH clients when the workspace uses the user's SSH
 /// agent for a host.
 const GUEST_SSH_AGENT_SOCKET: &str = "/run/puddle/ssh-agent.sock";
 
+/// How long a start waits for the development certificate: the system's one-time confirmation
+/// may be open on the user's desktop. After that the workspace starts without it (and gets it at
+/// its next start).
 const DEV_CERT_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// What differs from one sandbox to the next, besides the image: the CA the sandbox's guest

@@ -208,8 +208,7 @@
 
   async function saveAll() {
     const view = store.view;
-    if (!view || !dirty || graceError || diskIssue || sshError || saving)
-      return;
+    if (!view || !dirty || graceError || diskIssue || saving) return;
     saving = true;
     saved = null;
     problem = null;

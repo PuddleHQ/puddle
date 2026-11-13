@@ -1414,7 +1414,10 @@ async fn an_ssh_agent_named_in_the_settings_is_the_one_the_system_check_asks() {
     assert_eq!(put.status, 200, "{}", put.body);
     assert_eq!(put.json()["ui"]["ssh_agent_pipe"], named);
     let after = agent_line(api.get("/api/doctor?boot=false").await.json());
-    assert!(after.contains(&named), "the doctor asks {named}: {after}");
+    // The line is JSON text, so a Windows path's backslashes show doubled.
+    let escaped = json!(named).to_string();
+    let escaped = escaped.trim_matches('"');
+    assert!(after.contains(escaped), "the doctor asks {named}: {after}");
 
     let cleared = json!({"ui": {"ssh_agent_pipe": "  "}});
     assert_eq!(

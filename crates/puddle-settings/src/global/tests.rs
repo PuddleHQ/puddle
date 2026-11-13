@@ -349,3 +349,14 @@ fn the_settings_screen_shows_the_terms_version_the_gate_checks() {
         "ui/src/lib/settings/model.ts shows other terms than MICROSOFT_TERMS_VERSION"
     );
 }
+
+#[test]
+fn the_global_mise_switch_defaults_on_and_round_trips() {
+    assert!(GlobalSettings::default().tools.mise());
+    assert_eq!(GlobalSettings::default().to_document().get("tools"), None);
+    let loaded =
+        GlobalSettings::from_document(json!({"tools": {"mise": false, "later": 2}})).unwrap();
+    assert!(!loaded.settings.tools.mise());
+    assert_eq!(loaded.unknown_fields, ["tools.later"]);
+    assert_eq!(loaded.settings.to_document()["tools"]["mise"], false);
+}

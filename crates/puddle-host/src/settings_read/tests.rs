@@ -77,3 +77,27 @@ fn a_document_that_is_not_settings_is_an_error_not_the_defaults() {
     assert!(global(&repo).unwrap_err().contains("not valid"));
     assert!(workspace(&repo, &a()).unwrap_err().contains("not valid"));
 }
+
+#[test]
+fn mise_is_on_by_default_and_follows_the_workspace_switches() {
+    let repo = MemorySettings::default();
+    assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::On { trust: true });
+    repo.save_workspace(&a(), json!({"tools": {"repo_code": false}}))
+        .unwrap();
+    assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::On { trust: false });
+    repo.save_workspace(&a(), json!({"tools": {"mise": false}}))
+        .unwrap();
+    assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::Off);
+}
+
+#[test]
+fn the_global_switch_wins_over_every_workspace_value() {
+    let repo = MemorySettings::default();
+    repo.save_global(json!({"tools": {"mise": false}})).unwrap();
+    repo.save_workspace(&a(), json!({"tools": {"mise": true, "repo_code": true}}))
+        .unwrap();
+    assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::Off);
+    // Off needs no workspace document: a damaged one does not matter.
+    repo.save_workspace(&a(), json!([1])).unwrap();
+    assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::Off);
+}

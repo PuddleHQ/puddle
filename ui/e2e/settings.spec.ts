@@ -20,6 +20,7 @@ interface Stored {
     auto_update: boolean | null;
   };
   ui: Record<string, unknown>;
+  tools: { mise: boolean | null };
 }
 
 const auth = (backend: Backend) => ({
@@ -202,6 +203,61 @@ test("changes wait for Save, are sent together and survive a reload", async ({
   await expect(page.getByLabel("Private networks")).toBeChecked();
   await expect(page.getByLabel("Sound")).toBeChecked();
   await expect(page.getByLabel("Closing the window")).toHaveValue("quit");
+});
+
+test("the global mise switch is on, is kept after Save, and takes the tool switches off every workspace's Settings tab", async ({
+  page,
+  backend,
+  request,
+}) => {
+  // The default scenario has no workspace; this one has web-shop.
+  await backend.control.reset("lived-in");
+  await openSettings(page, backend);
+  const global = page.getByLabel("Manage tools with mise in workspaces");
+  await expect(global).toBeChecked();
+  expect((await stored(request, backend)).tools.mise).toBeNull();
+
+  // On: the workspace tab has the two switches.
+  await page.goto("/workspaces/web-shop/settings");
+  const mise = page.getByLabel("Manage this workspace's tools with mise");
+  const code = page.getByLabel("Let mise run the repository's own code");
+  await expect(mise).toBeChecked();
+  await expect(code).toBeChecked();
+  // A workspace value is kept while the global switch is off, and never turns it back on.
+  await code.uncheck();
+  await expect(page.getByText("Running repository code saved.")).toBeVisible();
+
+  await page.goto("/settings");
+  await expect(global).toBeChecked();
+  await global.uncheck();
+  await pressSave(page);
+  expect((await stored(request, backend)).tools.mise).toBe(false);
+  await page.reload();
+  await expect(global).not.toBeChecked();
+
+  // Off: the workspace tab loses both switches (and its section).
+  await page.goto("/workspaces/web-shop/settings");
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Clipboard" }),
+  ).toBeVisible();
+  await expect(mise).toHaveCount(0);
+  await expect(code).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Tools" })).toHaveCount(0);
+  const view = await request.get("/api/settings/workspaces/web-shop", {
+    headers: auth(backend),
+  });
+  expect(
+    ((await view.json()) as { tools: unknown }).tools,
+    "the stored workspace switches stay",
+  ).toEqual({ mise: null, repo_code: false });
+
+  // Back on: the switches return as they were.
+  await page.goto("/settings");
+  await global.check();
+  await pressSave(page);
+  await page.goto("/workspaces/web-shop/settings");
+  await expect(mise).toBeChecked();
+  await expect(code).not.toBeChecked();
 });
 
 test.describe("default CPUs", () => {

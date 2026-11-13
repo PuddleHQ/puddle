@@ -149,6 +149,8 @@ function reset() {
   api.down = false;
   api.check = null;
   api.overrides = {};
+  api.tools = {};
+  api.globalMise = null;
   api.unknown = {};
   api.kept = {};
   api.interception = {};
@@ -1202,6 +1204,50 @@ describe("the settings tab", () => {
     api.list = [workspace("demo", { direct_ssh: true })];
     await workspaces.refresh();
     await vi.waitFor(() => expect(select.value).toBe("on"));
+  });
+
+  it("shows the two tool switches on, saves each one on its own and keeps the other settings", async () => {
+    await open();
+    const mise = screen.getByLabelText(
+      "Manage this workspace's tools with mise",
+    ) as HTMLInputElement;
+    const code = screen.getByLabelText(
+      "Let mise run the repository's own code",
+    ) as HTMLInputElement;
+    expect(mise.checked).toBe(true);
+    expect(code.checked).toBe(true);
+    await fireEvent.click(code);
+    await screen.findByText("Running repository code saved.");
+    expect(api.tools["w-demo"]).toEqual({ mise: null, repo_code: false });
+    await fireEvent.click(mise);
+    await screen.findByText("Tools with mise saved.");
+    expect(api.tools["w-demo"]).toEqual({ mise: false, repo_code: false });
+    expect(code.checked).toBe(false);
+  });
+
+  it("puts a tool switch back when the save is refused", async () => {
+    await open();
+    const mise = screen.getByLabelText(
+      "Manage this workspace's tools with mise",
+    ) as HTMLInputElement;
+    api.refuse.set("PUT /api/settings/workspaces/{workspace}", {
+      status: 500,
+      message: "no",
+    });
+    await fireEvent.click(mise);
+    await screen.findByText("no");
+    expect(mise.checked).toBe(true);
+  });
+
+  it("hides the tool switches while the global mise switch is off, and keeps their values", async () => {
+    api.globalMise = false;
+    api.tools["w-demo"] = { mise: false, repo_code: false };
+    await open();
+    expect(
+      screen.queryByLabelText("Manage this workspace's tools with mise"),
+    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Tools" })).toBeNull();
+    expect(api.tools["w-demo"]).toEqual({ mise: false, repo_code: false });
   });
 
   it("keeps logins by default, turns capture off or back to the global default, and says the next start applies it", async () => {

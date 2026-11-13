@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The JetBrains Gateway release the Gateway attach test runs (crates/puddle-host/tests/vm_gateway_attach.rs):
+# `<version> <release asset> <sha256>`. ci/fetch-gateway.sh refuses a download that is not listed here or does
+# not match. The value is the SHA-256 JetBrains publishes beside the asset
+# (https://download.jetbrains.com/idea/gateway/<asset>.sha256), checked against a download.
+2026.3 JetBrainsGateway-2026.3.tar.gz 440b3961ddff85b3655895e310a691200961a46bb6bc2d711d9031773bdfa2b6

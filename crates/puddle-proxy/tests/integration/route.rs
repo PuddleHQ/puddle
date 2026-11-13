@@ -65,15 +65,25 @@ impl Rig {
         resolver: StaticResolver,
         check: Arc<dyn AddressCheck>,
     ) -> Self {
+        Self::with_proxy(config, resolver, check, |proxy| proxy)
+    }
+
+    /// As [`Self::with_checks`], with `tune` applied to the proxy before it serves.
+    pub(crate) fn with_proxy(
+        config: &ProxyConfig,
+        resolver: StaticResolver,
+        check: Arc<dyn AddressCheck>,
+        tune: impl FnOnce(Proxy) -> Proxy,
+    ) -> Self {
         let policy = Arc::new(StaticPolicy::new());
         let log = Arc::new(CollectingConnectionLog::new());
-        let proxy = Arc::new(
+        let proxy = Arc::new(tune(
             Proxy::new(policy.clone(), Arc::new(NullSink))
                 .with_connection_log(log.clone())
                 .with_resolver(Arc::new(resolver))
                 .with_address_check(check)
                 .with_config(*config),
-        );
+        ));
         let root = IpcRoot::new().unwrap();
         let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
         Self {

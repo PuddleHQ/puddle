@@ -11,6 +11,7 @@ changes an earlier one says so at the top of both ("amended by" / "Amends").
 | [0004](0004-api-contract.md) | API contract: OpenAPI-first, not type-only | accepted |
 | [0005](0005-no-base-image.md) | No base image of our own: run the team's own devcontainer image | accepted |
 | [0006](0006-workspace-storage.md) | Workspace storage: a named msb disk volume per workspace | accepted |
+| [0007](0007-one-rule-list.md) | One rule list: groups, and an explicit precedence on every rule | accepted; amends principle 2 |
 | [0007](0007-login-capture-fails-open.md) | Login capture fails open: when it cannot work, the login goes through and the user is told | superseded by 0009 |
 | [0008](0008-non-root-session-user.md) | Sessions run as a non-root user, `agent`, with passwordless sudo | accepted |
 | [0009](0009-login-capture-fails-closed.md) | Login capture fails closed: when it cannot keep a token, the login fails and the real token never reaches the workspace | accepted |

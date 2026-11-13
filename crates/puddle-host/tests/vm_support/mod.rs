@@ -13,6 +13,8 @@
     reason = "VM test: JSON read from the API, a missing key fails the test"
 )]
 
+pub(crate) mod kit;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -299,6 +301,35 @@ pub(crate) fn harness_config(
     config
 }
 
+/// The folder the guest tools of the VM tests are kept in between runs: `PUDDLE_VM_TOOLS_CACHE` (CI
+/// restores it) or `~/.cache/puddle-vm-tools`; `None` when neither can be named (every run is cold).
+pub(crate) fn cache_root() -> Option<std::path::PathBuf> {
+    std::env::var_os("PUDDLE_VM_TOOLS_CACHE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| std::path::Path::new(&h).join(".cache/puddle-vm-tools"))
+        })
+}
+
+/// Points the run's msb image cache at `PUDDLE_VM_IMAGE_CACHE` when that is set, so the images the
+/// tests pull (`docker:dind`, the devcontainers base) come from disk after the first run and no
+/// registry is asked. msb looks an image up in its cache first. Left alone when the run's cache
+/// already exists (an earlier test of the run made it) or the variable is unset (a cold run).
+fn share_image_cache(settings: &Settings) {
+    #[cfg(unix)]
+    if let Some(shared) = std::env::var_os("PUDDLE_VM_IMAGE_CACHE").map(std::path::PathBuf::from) {
+        let link = settings.home().join("cache");
+        if std::fs::symlink_metadata(&link).is_err() {
+            std::fs::create_dir_all(&shared).unwrap();
+            // Another test of the run may have made the link meanwhile; either way it points here.
+            let _ = std::os::unix::fs::symlink(&shared, &link);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = settings;
+}
+
 /// Starts a host over its own store and workspace folder, named by `tag` (a few characters), so
 /// what one test creates (an identity, a rule, a workspace) is never in another's host. Tests of
 /// one binary share the run's prefix, and a host over a shared folder reads the identities an
@@ -333,6 +364,7 @@ pub(crate) async fn start_vm_host_platform(
         .try_init();
     let settings = Settings::from_lookup(|var| std::env::var(var).ok()).expect("VM test settings");
     let pair = settings.prepare().expect("msb runtime pair");
+    share_image_cache(&settings);
     let root = settings
         .claim_scratch_home(tag, &test_owner())
         .expect("one scratch home tag per test");

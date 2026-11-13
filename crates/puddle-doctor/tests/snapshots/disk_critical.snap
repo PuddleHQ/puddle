@@ -18,6 +18,7 @@ FAIL  Disk space          only 3 GB free on the drive that holds Puddle's data (
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 ok    Azure CLI (az)      version 2.64.0
+ok    Credential store    a test write and delete worked
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -75,6 +76,11 @@ ok    Azure CLI (az)      version 2.64.0
       "id": "az_cli",
       "status": "ok",
       "summary": "version 2.64.0"
+    },
+    {
+      "id": "credential_store",
+      "status": "ok",
+      "summary": "a test write and delete worked"
     }
   ],
   "elapsed_ms": 1234

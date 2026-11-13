@@ -109,6 +109,9 @@ impl Probe for Fake {
             families: vec!["ed25519".into()],
         }
     }
+    fn credential_store(&self) -> puddle_doctor::StoreHealth {
+        puddle_doctor::StoreHealth::Working
+    }
     fn az_cli(&self, _limit: Duration) -> puddle_doctor::AzCliFacts {
         puddle_doctor::AzCliFacts::Found {
             version: "2.64.0".into(),

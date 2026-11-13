@@ -14,6 +14,7 @@ info  SSH agent           no agent is named: SSH_AUTH_SOCK is not set in Puddle'
             Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is
             not affected.
 ok    Azure CLI (az)      version 2.64.0
+ok    Credential store    a test write and delete worked
 
 No problems found. (1.2 s)
 
@@ -71,6 +72,11 @@ No problems found. (1.2 s)
       "id": "az_cli",
       "status": "ok",
       "summary": "version 2.64.0"
+    },
+    {
+      "id": "credential_store",
+      "status": "ok",
+      "summary": "a test write and delete worked"
     }
   ],
   "elapsed_ms": 1234

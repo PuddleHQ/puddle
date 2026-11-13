@@ -102,6 +102,9 @@ impl Probe for EncryptedHost {
     fn az_cli(&self, limit: Duration) -> AzCliFacts {
         self.0.az_cli(limit)
     }
+    fn credential_store(&self) -> puddle_doctor::StoreHealth {
+        self.0.credential_store()
+    }
 }
 
 /// A puddle-style runtime folder in `root` with a copy (never a link: the permission test

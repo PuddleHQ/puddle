@@ -16,6 +16,7 @@ ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys
 warn  Azure CLI (az)        not found; needed only for Azure DevOps through `az`
       note: Install the Azure CLI (`az`) only if you use Azure DevOps sources, then run `az
             login --tenant <tenant>` in a terminal.
+ok    Credential store      a test write and delete worked
 ok    Global Secure Access  client not installed
 
 No problems found; 1 warning to know about. (1.2 s)
@@ -86,6 +87,11 @@ No problems found; 1 warning to know about. (1.2 s)
       "summary": "not found; needed only for Azure DevOps through `az`",
       "finding": "az_cli_missing",
       "fix": "Install the Azure CLI (`az`) only if you use Azure DevOps sources, then run `az login --tenant <tenant>` in a terminal."
+    },
+    {
+      "id": "credential_store",
+      "status": "ok",
+      "summary": "a test write and delete worked"
     },
     {
       "id": "global_secure_access",

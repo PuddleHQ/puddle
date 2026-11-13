@@ -115,7 +115,9 @@ fn is_kept_local(attributes: &std::collections::HashMap<String, String>) -> bool
     attributes.get("persistence").is_some_and(|p| p == "Local")
 }
 
-/// Whether the platform store can be used at all (a Linux host with no Secret Service cannot).
+/// Whether the platform store's service answers (a Linux host with no Secret Service does not).
+/// A locked Secret Service answers and still refuses every write: use [`crate::probe_os_store`]
+/// to know whether a value can be stored.
 #[must_use]
 pub fn keyring_available() -> bool {
     keyring::Entry::store_status().is_ok()

@@ -141,7 +141,11 @@ fn boot_applies_every_step() {
             format!("[include]\n\tpath = {GIT_CONFIG_GUEST}\n")
         );
         let git = fr.read(GIT_CONFIG_GUEST);
-        assert!(git.contains("fsync = committed") && git.contains("name = \"Ada Lovelace\""));
+        assert!(
+            git.contains("fsync = added")
+                && git.contains("fsyncMethod = batch")
+                && git.contains("name = \"Ada Lovelace\"")
+        );
 
         // CA changed (first boot): update-ca-certificates ran once.
         assert_eq!(count(&calls, "update-ca-certificates"), 1);
@@ -217,6 +221,27 @@ fn files_dropped_from_the_plan_are_removed_and_trigger_the_ca_step() {
     assert!(!fr.path("/etc/npmrc").exists());
     assert_eq!(count(&fr.calls(), "update-ca-certificates"), 2);
     assert!(fr.path(ENV_FILE_GUEST).exists());
+}
+
+/// A workspace made by an older Puddle holds the old git settings; its next boot rewrites them.
+#[test]
+fn an_existing_workspace_gets_the_current_git_fsync_settings_at_its_next_boot() {
+    let fr = FakeRoot::new(&shells()[0]);
+    let first = fr.run(&full_plan("CA\n"));
+    assert!(first.status.success(), "{}", show(&first));
+    std::fs::write(
+        fr.path(GIT_CONFIG_GUEST),
+        "[core]\n\tfsync = committed\n[user]\n\tname = \"Ada Lovelace\"\n",
+    )
+    .unwrap();
+    let second = fr.run(&full_plan("CA\n"));
+    assert!(second.status.success(), "{}", show(&second));
+    let git = fr.read(GIT_CONFIG_GUEST);
+    assert!(
+        git.contains("fsync = added\n") && git.contains("fsyncMethod = batch\n"),
+        "{git}"
+    );
+    assert!(!git.contains("committed"), "{git}");
 }
 
 #[test]

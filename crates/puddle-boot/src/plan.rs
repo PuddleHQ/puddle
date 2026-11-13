@@ -17,6 +17,9 @@ use crate::assets::{AGENT_GUEST, BOOT_SH_GUEST, MOUNT_DIR_GUEST, guest_path};
 use crate::machine::machine_settings;
 use crate::quote::{printf_format, sh_word};
 
+mod shell_env;
+pub use shell_env::{BASH_RC_GUEST, SUDOERS_ENV_GUEST, ZSH_ENV_GUEST};
+
 /// The plan's first line; `boot.sh` refuses any other.
 pub const PLAN_HEADER: &str = "# puddle-boot-plan 1";
 
@@ -119,6 +122,12 @@ pub enum PlanError {
         name: String,
         /// What is wrong.
         reason: &'static str,
+    },
+    /// The environment can't be written to the `sudo` and shell files.
+    #[error("the environment can't be written to the sudo and shell files: {reason}")]
+    ShellEnv {
+        /// What is wrong.
+        reason: String,
     },
     /// A provider step names a script the plan doesn't write.
     #[error("boot step {path} is not a file of this plan")]
@@ -602,6 +611,7 @@ impl BootPlanBuilder {
         files.extend(git_author_files(&self.git_rules));
         let port = self.agent.as_ref().map_or(DEFAULT_AGENT_PORT, |a| a.port);
         files.extend(session_files(port, self.session_user));
+        files.extend(shell_env::files(&self.env)?);
         files.extend(self.files);
 
         let mounts = guest_path(MOUNT_DIR_GUEST);

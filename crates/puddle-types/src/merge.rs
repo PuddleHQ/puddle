@@ -37,6 +37,7 @@ use crate::ValidationError;
 mod json;
 mod jsonc;
 mod knownhosts;
+mod shellblock;
 mod sshconfig;
 
 /// Largest file the engine reads (4 MiB). A larger one is left alone.
@@ -61,6 +62,10 @@ pub enum MergeFormat {
     /// `# puddle: end` (key path `["Puddle"]`, the value is the lines, one host-key entry each).
     /// A file without the markers gets them at its end, and every other byte of the file stays.
     KnownHosts,
+    /// A shell startup file such as `/etc/bash.bashrc`: Puddle owns the lines between
+    /// `# >>> Puddle shell >>>` and `# <<< Puddle shell <<<` (key path `["Puddle"]`, the value is
+    /// shell text). A file without the markers gets them at its end; every other byte stays.
+    ShellBlock,
 }
 
 /// One key Puddle owns, as a path from the top level (`["proxies", "default"]`), and its value
@@ -98,6 +103,16 @@ impl MergeEntry {
         Self {
             key: vec![knownhosts::KEY.to_owned()],
             value: lines.to_owned(),
+        }
+    }
+
+    /// The block of shell text of a shell startup file ([`MergeFormat::ShellBlock`]), without a
+    /// final line break.
+    #[must_use]
+    pub fn shell_block(text: &str) -> Self {
+        Self {
+            key: vec![shellblock::KEY.to_owned()],
+            value: text.to_owned(),
         }
     }
 
@@ -260,6 +275,14 @@ impl MergeSpec {
                         return Err(ValidationError::new(WHAT, &shown, reason));
                     }
                 }
+                MergeFormat::ShellBlock => {
+                    if e.key != [shellblock::KEY] {
+                        return Err(ValidationError::new(WHAT, &shown, "only Puddle is owned"));
+                    }
+                    if let Some(reason) = shellblock::invalid(&e.value) {
+                        return Err(ValidationError::new(WHAT, &shown, reason));
+                    }
+                }
             }
         }
         Ok(Self { format, entries })
@@ -307,10 +330,10 @@ impl MergeSpec {
         previous: &[Vec<String>],
     ) -> Result<Merged, MergeRefusal> {
         let Some(dialect) = dialect(self.format) else {
-            let applied = if self.format == MergeFormat::KnownHosts {
-                knownhosts::apply(existing, &self.entries)
-            } else {
-                sshconfig::apply(existing, &self.entries)
+            let applied = match self.format {
+                MergeFormat::KnownHosts => knownhosts::apply(existing, &self.entries),
+                MergeFormat::ShellBlock => shellblock::apply(existing, &self.entries),
+                _ => sshconfig::apply(existing, &self.entries),
             };
             return applied.map(|out| {
                 if existing == Some(out.as_bytes()) {
@@ -345,10 +368,10 @@ pub fn unmerge(
     keys: &[Vec<String>],
 ) -> Result<Unmerged, MergeRefusal> {
     let Some(dialect) = dialect(format) else {
-        return if format == MergeFormat::KnownHosts {
-            knownhosts::unmerge(existing)
-        } else {
-            sshconfig::unmerge(existing)
+        return match format {
+            MergeFormat::KnownHosts => knownhosts::unmerge(existing),
+            MergeFormat::ShellBlock => shellblock::unmerge(existing),
+            _ => sshconfig::unmerge(existing),
         };
     };
     let Some(original) = text(Some(existing))? else {
@@ -372,7 +395,7 @@ fn dialect(format: MergeFormat) -> Option<json::Dialect> {
     match format {
         MergeFormat::Json => Some(json::Dialect::Strict),
         MergeFormat::Jsonc => Some(json::Dialect::Comments),
-        MergeFormat::SshConfig | MergeFormat::KnownHosts => None,
+        MergeFormat::SshConfig | MergeFormat::KnownHosts | MergeFormat::ShellBlock => None,
     }
 }
 

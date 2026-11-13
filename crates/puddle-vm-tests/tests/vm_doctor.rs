@@ -16,7 +16,7 @@ use std::time::Duration;
 use puddle_doctor::{
     AzCliFacts, BootFacts, CodeIntegrityFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
     DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os, Probe, ProcessOutcome, Protection,
-    RuntimeFacts, SshAgentFacts, SwapArea, SwapFacts,
+    RuntimeFacts, SshAgentFacts, StoreHealth, SwapArea, SwapFacts,
 };
 use puddle_doctor::{CheckId, Finding, Options, Report, Status, SystemProbe, diagnose};
 use puddle_runtime::{
@@ -41,7 +41,12 @@ fn ci_runtime() -> RuntimePair {
 /// test boot or the paths this test checks, and the hosted runners are not encrypted, so the
 /// "every check ok or info" bar below would depend on the runner image. The probe's own
 /// answer on the real machine is tested in `puddle-doctor`'s `system_probe` tests.
-struct EncryptedHost(SystemProbe);
+///
+/// The credential store is fixed the same way: a hosted runner is headless and has no Secret
+/// Service, so the real answer there is "not available" (a warning, by design) and says
+/// nothing about the runtime. [`credential_store_warns_and_nothing_else_does`] covers that
+/// answer; the real probe's own is tested in `puddle-secrets`.
+struct EncryptedHost(SystemProbe, StoreHealth);
 
 impl Probe for EncryptedHost {
     fn os(&self) -> Os {
@@ -102,8 +107,8 @@ impl Probe for EncryptedHost {
     fn az_cli(&self, limit: Duration) -> AzCliFacts {
         self.0.az_cli(limit)
     }
-    fn credential_store(&self) -> puddle_doctor::StoreHealth {
-        self.0.credential_store()
+    fn credential_store(&self) -> StoreHealth {
+        self.1
     }
 }
 
@@ -163,6 +168,15 @@ fn assert_firmware_names(dir: &Path) {
 }
 
 fn run(dir: PathBuf, expected: RuntimeVersion, options: &Options) -> Report {
+    run_with_store(dir, expected, options, StoreHealth::Working)
+}
+
+fn run_with_store(
+    dir: PathBuf,
+    expected: RuntimeVersion,
+    options: &Options,
+    store: StoreHealth,
+) -> Report {
     // A failed test boot's msb logs land beside the other kept sandbox logs (the CI artifact).
     // The data folder sits beside the runtime folder, under the test's tempdir, so the Linux
     // data-folder check runs on a real folder instead of reporting that none was given.
@@ -178,6 +192,7 @@ fn run(dir: PathBuf, expected: RuntimeVersion, options: &Options) -> Report {
         SystemProbe::new(dir, expected, DevOverride::none())
             .with_data_dir(data)
             .with_keep_boot_logs(settings().kept_logs()),
+        store,
     );
     let report = diagnose(&probe, options, "vm-test");
     eprintln!("{}", report.to_text());
@@ -190,6 +205,34 @@ fn status(report: &Report, id: CheckId) -> Status {
 
 fn finding(report: &Report, id: CheckId) -> Option<Finding> {
     report.check(id).and_then(|c| c.finding)
+}
+
+/// A headless host with no Secret Service (every hosted runner) gets one warning on the
+/// credential store, the report stays ok, and the runtime checks are unaffected.
+#[test]
+fn credential_store_warns_and_nothing_else_does() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = runtime_copy(root.path());
+    let report = run_with_store(
+        dir,
+        RuntimeVersion::built_for(),
+        &Options::default(),
+        StoreHealth::NoProvider,
+    );
+    assert_eq!(
+        finding(&report, CheckId::CredentialStore),
+        Some(Finding::CredentialStoreMissing)
+    );
+    assert_eq!(status(&report, CheckId::CredentialStore), Status::Warn);
+    let others: Vec<_> = report
+        .checks
+        .iter()
+        .filter(|c| c.id != CheckId::CredentialStore)
+        .filter(|c| !matches!(c.status, Status::Ok | Status::Info))
+        .collect();
+    assert!(others.is_empty(), "{others:?}");
+    assert_eq!(status(&report, CheckId::TestBoot), Status::Ok);
+    assert!(report.ok);
 }
 
 #[test]

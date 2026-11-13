@@ -589,6 +589,20 @@ describe("a record as a row", () => {
     );
     expect(unknown.detail).toContain("failed: new_code");
   });
+  it("names the certificate-check exception by what it is", () => {
+    const view = row(
+      connection(1, {
+        host: "pki.corp.example",
+        port: 80,
+        decision: "allow",
+        reason: "pki_distribution_point",
+        rule_id: null,
+      }).record,
+    );
+    expect(view.detail).toContain(
+      "because a certificate check address named in your company's root certificates",
+    );
+  });
   it("leaves the outcome and the address out when the record has none", () => {
     const view = row(
       connection(1, { decision: null, host: null, port: null }).record,

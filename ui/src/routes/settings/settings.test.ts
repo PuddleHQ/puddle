@@ -92,6 +92,36 @@ const putBodies = () =>
     .map((c, i) => [c, api.bodies[i]] as const)
     .filter(([c]) => c === "PUT /api/settings");
 
+describe("the mise switch", () => {
+  it("is on by default and a save sends it as the global tools switch", async () => {
+    await open();
+    const box = screen.getByLabelText(
+      "Manage tools with mise in workspaces",
+    ) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    await fireEvent.click(box);
+    expect(box.checked).toBe(false);
+    await save();
+    expect(api.bodies.at(-1)).toMatchObject({ tools: { mise: false } });
+    expect(api.tools.mise).toBe(false);
+    expect(
+      (
+        screen.getByLabelText(
+          "Manage tools with mise in workspaces",
+        ) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+  });
+
+  it("sends nothing for a switch put back to what is stored", async () => {
+    await open();
+    const box = screen.getByLabelText("Manage tools with mise in workspaces");
+    await fireEvent.click(box);
+    await fireEvent.click(box);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+});
+
 describe("the screen", () => {
   it("offers to run the system check again, on its own page with a way back here", async () => {
     await open();

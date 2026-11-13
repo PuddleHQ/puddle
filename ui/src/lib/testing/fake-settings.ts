@@ -67,6 +67,7 @@ export class FakeSettings {
     auto_update: null,
   };
   ui: S["UiPrefs"] = noUi();
+  tools: S["GlobalTools"] = { mise: null };
   /** The user's own app icon, as the PNG text the API would send; `null` until one is stored. */
   customIcon: string | null = null;
   consent: S["Consent"] = { state: "not_asked" };
@@ -101,6 +102,7 @@ export class FakeSettings {
     this.unknown = [];
     this.vscode = fresh.vscode;
     this.ui = fresh.ui;
+    this.tools = fresh.tools;
     this.customIcon = null;
     this.consent = fresh.consent;
     this.neverDecrypt = [];
@@ -147,6 +149,7 @@ export class FakeSettings {
       workspace_defaults: l,
       vscode_server: this.vscode,
       ui: this.ui,
+      tools: this.tools,
       unknown_fields: this.unknown,
       effective: {
         memory: {
@@ -320,6 +323,7 @@ export class FakeSettings {
       ...b.vscode_server,
     };
     this.ui = { ...noUi(), ...b.ui };
+    this.tools = { mise: null, ...b.tools };
     return this.reply(200, this.view());
   };
 

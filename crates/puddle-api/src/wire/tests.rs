@@ -286,6 +286,7 @@ fn global_request_sets_vscode_options() {
             disk_fail_free_gb: Some(10),
             ssh_agent_pipe: Some(r"  \\.\pipe\pageant.alice  ".to_owned()),
         },
+        tools: GlobalTools { mise: Some(false) },
     }
     .apply_to(&mut g)
     .unwrap();
@@ -318,6 +319,7 @@ fn global_request_sets_vscode_options() {
     assert_eq!(g.ui.ssh_agent_pipe(), Some(r"\\.\pipe\pageant.alice"));
     assert!(g.vscode_server.telemetry());
     assert!(!g.vscode_server.auto_update());
+    assert!(!g.tools.mise());
     let view = GlobalSettingsView::new(&settings::Loaded {
         settings: g,
         migrated_from: None,

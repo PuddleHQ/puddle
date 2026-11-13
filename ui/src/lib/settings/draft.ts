@@ -3,6 +3,7 @@
 // the draft laid over it, and Save sends the draft as one change to the settings document.
 import type { LocalCategory } from "#lib/decision/local.ts";
 import {
+  type GlobalTools,
   type GlobalView,
   type Layer,
   type Ui,
@@ -16,6 +17,7 @@ export interface Draft {
   toggles: Partial<Record<LocalCategory, boolean>>;
   server: Partial<VsCodeServer>;
   ui: Partial<Ui>;
+  tools: Partial<GlobalTools>;
 }
 
 export const EMPTY_DRAFT: Draft = {
@@ -23,6 +25,7 @@ export const EMPTY_DRAFT: Draft = {
   toggles: {},
   server: {},
   ui: {},
+  tools: {},
 };
 
 /** Settings that act only when a workspace next starts, with the name the notes use. */
@@ -78,12 +81,20 @@ export const setUi = <K extends keyof Ui>(
   stored: Ui[K],
 ): Draft => ({ ...draft, ui: put(draft.ui, key, value, stored) });
 
+export const setTools = <K extends keyof GlobalTools>(
+  draft: Draft,
+  key: K,
+  value: GlobalTools[K],
+  stored: GlobalTools[K],
+): Draft => ({ ...draft, tools: put(draft.tools, key, value, stored) });
+
 export function isDirty(draft: Draft): boolean {
   return (
     Object.keys(draft.layer).length > 0 ||
     Object.keys(draft.toggles).length > 0 ||
     Object.keys(draft.server).length > 0 ||
-    Object.keys(draft.ui).length > 0
+    Object.keys(draft.ui).length > 0 ||
+    Object.keys(draft.tools).length > 0
   );
 }
 
@@ -104,6 +115,7 @@ export function savePatch(view: GlobalView, draft: Draft) {
     },
     server: draft.server,
     ui: draft.ui,
+    tools: draft.tools,
   };
 }
 

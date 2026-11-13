@@ -8,8 +8,8 @@
 use proptest::prelude::*;
 use puddle_settings::{
     ClipboardRead, Consent, ConsentKind, Effective, GLOBAL_SCHEMA_VERSION, GlobalSettings,
-    ReconnectionGrace, Resolved, SettingsError, Source, TermsVersion, UnixMillis,
-    WORKSPACE_SCHEMA_VERSION, WorkspaceLayer, WorkspaceSettings, resolve,
+    MiseMode, ReconnectionGrace, Resolved, SettingsError, Source, TermsVersion, UnixMillis,
+    WORKSPACE_SCHEMA_VERSION, WorkspaceLayer, WorkspaceSettings, mise_mode, resolve,
 };
 use puddle_types::{CpuCount, MemoryMib};
 use serde_json::{Value, json};
@@ -88,9 +88,11 @@ fn global() -> impl Strategy<Value = GlobalSettings> {
         proptest::option::of(any::<bool>()),
         proptest::option::of(any::<bool>()),
         proptest::array::uniform3(consent()),
+        proptest::option::of(any::<bool>()),
     )
-        .prop_map(|(defaults, telemetry, auto_update, consents)| {
+        .prop_map(|(defaults, telemetry, auto_update, consents, mise)| {
             let mut g = GlobalSettings::default();
+            g.tools.mise = mise;
             g.workspace_defaults = defaults;
             g.vscode_server.telemetry = telemetry;
             g.vscode_server.auto_update = auto_update;
@@ -102,11 +104,18 @@ fn global() -> impl Strategy<Value = GlobalSettings> {
 }
 
 fn workspace() -> impl Strategy<Value = WorkspaceSettings> {
-    layer().prop_map(|overrides| {
-        let mut s = WorkspaceSettings::default();
-        s.overrides = overrides;
-        s
-    })
+    (
+        layer(),
+        proptest::option::of(any::<bool>()),
+        proptest::option::of(any::<bool>()),
+    )
+        .prop_map(|(overrides, mise, repo_code)| {
+            let mut s = WorkspaceSettings::default();
+            s.overrides = overrides;
+            s.tools.mise = mise;
+            s.tools.repo_code = repo_code;
+            s
+        })
 }
 
 /// The rule, written out once more independently of `resolve`.
@@ -197,6 +206,41 @@ proptest! {
     }
 
     #[test]
+    fn the_global_mise_switch_cannot_be_overridden(mut g in global(), s in workspace()) {
+        g.tools.mise = Some(false);
+        prop_assert_eq!(mise_mode(&g, Some(&s)), MiseMode::Off);
+        prop_assert_eq!(mise_mode(&g, None), MiseMode::Off);
+    }
+
+    #[test]
+    fn mise_mode_follows_the_workspace_switches_while_the_global_one_is_on(
+        mut g in global(),
+        s in workspace(),
+        explicit in any::<bool>(),
+    ) {
+        g.tools.mise = if explicit { Some(true) } else { None };
+        let want = if s.tools.mise.unwrap_or(true) {
+            MiseMode::On { trust: s.tools.repo_code.unwrap_or(true) }
+        } else {
+            MiseMode::Off
+        };
+        prop_assert_eq!(mise_mode(&g, Some(&s)), want);
+        prop_assert_eq!(mise_mode(&g, None), MiseMode::On { trust: true });
+    }
+
+    #[test]
+    fn a_layer_cannot_carry_the_global_switch(mut g in global(), s in workspace(), v in any::<bool>()) {
+        // The same key inside a workspace's override layer or as a stray workspace field is an
+        // unknown field: kept, listed, and without effect.
+        g.tools.mise = Some(false);
+        let mut doc = s.to_document().unwrap();
+        doc["overrides"] = json!({"mise": v});
+        doc["tools"] = json!({"mise": v, "global": v});
+        let loaded = WorkspaceSettings::from_document(doc).unwrap();
+        prop_assert_eq!(mise_mode(&g, Some(&loaded.settings)), MiseMode::Off);
+    }
+
+    #[test]
     fn an_empty_override_layer_inherits_everything(g in global()) {
         let empty = WorkspaceSettings::default();
         prop_assert_eq!(resolve(&g, Some(&empty)), resolve(&g, None));
@@ -268,6 +312,18 @@ proptest! {
         paths.sort();
         prop_assert_eq!(listed, paths);
         prop_assert_eq!(loaded.settings.to_document().unwrap(), doc);
+    }
+
+    #[test]
+    fn an_old_document_without_the_tool_fields_loads_as_on(g in global(), s in workspace()) {
+        let mut gdoc = g.to_document().unwrap();
+        gdoc.as_object_mut().unwrap().remove("tools");
+        let mut sdoc = s.to_document().unwrap();
+        sdoc.as_object_mut().unwrap().remove("tools");
+        let g = GlobalSettings::from_document(gdoc).unwrap();
+        let s = WorkspaceSettings::from_document(sdoc).unwrap();
+        prop_assert!(g.unknown_fields.is_empty() && s.unknown_fields.is_empty());
+        prop_assert_eq!(mise_mode(&g.settings, Some(&s.settings)), MiseMode::On { trust: true });
     }
 
     #[test]

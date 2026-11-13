@@ -53,6 +53,10 @@ pub struct GlobalSettings {
     /// How Puddle's own window looks and behaves (global only).
     #[serde(default, skip_serializing_if = "UiPrefs::is_empty")]
     pub ui: UiPrefs,
+    /// The managed tools layer (mise); global only. Its switch removes the layer for every
+    /// workspace, so no workspace value can override it.
+    #[serde(default, skip_serializing_if = "Tools::is_empty")]
+    pub tools: Tools,
     /// What the user agreed to or declined (per user, never per workspace).
     #[serde(default, skip_serializing_if = "Consents::is_empty")]
     pub consents: Consents,
@@ -118,6 +122,7 @@ impl Document for GlobalSettings {
             .collect_unknown("workspace_defaults.", out);
         document::push_unknown("vscode_server.", &self.vscode_server.extra, out);
         document::push_unknown("ui.", &self.ui.extra, out);
+        document::push_unknown("tools.", &self.tools.extra, out);
         self.consents.collect_unknown("consents.", out);
         document::push_unknown("first_run.", &self.first_run.extra, out);
     }
@@ -164,6 +169,33 @@ impl VsCodeServer {
     #[must_use]
     pub fn auto_update(&self) -> bool {
         self.auto_update.unwrap_or(Self::DEFAULT_AUTO_UPDATE)
+    }
+
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The managed tools layer. Global only: it is deliberately not part of
+/// [`crate::WorkspaceLayer`], whose values a workspace may override.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Tools {
+    /// The global switch of the managed mise layer: off removes every piece of it for every
+    /// workspace (see [`crate::mise_mode`]); default on. Switching it off keeps what is stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mise: Option<bool>,
+    #[serde(flatten)]
+    pub(crate) extra: BTreeMap<String, Value>,
+}
+
+impl Tools {
+    /// Puddle's default for [`Tools::mise`].
+    pub const DEFAULT_MISE: bool = true;
+
+    /// Whether the managed mise layer is on at all.
+    #[must_use]
+    pub fn mise(&self) -> bool {
+        self.mise.unwrap_or(Self::DEFAULT_MISE)
     }
 
     fn is_empty(&self) -> bool {

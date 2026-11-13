@@ -166,6 +166,7 @@ describe("bodyFrom", () => {
       workspace_defaults: v.workspace_defaults,
       vscode_server: v.vscode_server,
       ui: v.ui,
+      tools: v.tools,
     });
   });
 });

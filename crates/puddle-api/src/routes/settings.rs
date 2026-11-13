@@ -80,6 +80,7 @@ fn workspace_view(
     WorkspaceSettingsView {
         workspace,
         overrides: SettingsLayer::from(&loaded.settings.overrides),
+        tools: (&loaded.settings.tools).into(),
         effective: resolve(global, Some(&loaded.settings)).into(),
         unknown_fields: loaded.unknown_fields.clone(),
     }
@@ -210,6 +211,8 @@ pub(crate) async fn put_workspace_settings(
         let global = load_global(repo)?;
         let mut loaded = load_workspace(repo, &workspace)?;
         body.overrides.apply_to(&mut loaded.settings.overrides)?;
+        loaded.settings.tools.mise = body.tools.mise;
+        loaded.settings.tools.repo_code = body.tools.repo_code;
         repo.save_workspace(&workspace, loaded.settings.to_document()?)?;
         tracing::info!(%workspace, "workspace settings changed");
         Ok(workspace_view(workspace, &global.settings, &loaded))

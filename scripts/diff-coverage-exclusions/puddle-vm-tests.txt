@@ -1,0 +1,8 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed, under crates/puddle-vm-tests/.
+# Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
+# path glob here starts with crates/puddle-vm-tests/; the gate refuses another crate's entry, so two pull requests that
+# touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-vm-tests/src/driver.rs | detail: "node gave no pipes".to_owned(), | Node::command pipes stdin, stdout and stderr of every child it starts, so the driver always has its pipes; the branch is there for the type
+crates/puddle-vm-tests/src/driver.rs | let (Some(stdin), Some(stdout)) = (stdin, stdout) else {\nreturn Err(HarnessError::Browser { | Node::command pipes stdin, stdout and stderr of every child it starts, so the driver always has its pipes; the branch is there for the type
+crates/puddle-vm-tests/src/driver.rs | return Err(HarnessError::Browser {\ndetail: "node gave no pipes".to_owned(),\n}); | Node::command pipes stdin, stdout and stderr of every child it starts, so the driver always has its pipes; the branch is there for the type
+crates/puddle-vm-tests/src/env.rs | pid_of_record(handle.local().and_then(\|local\| local.pid), name) | reads the process id off a real sandbox handle, which exists only while a VM runs; the vm-linux and vm-windows tiers run it (vm_soak_host_pause_5_min, kill_vm), and the mapping it feeds is unit tested

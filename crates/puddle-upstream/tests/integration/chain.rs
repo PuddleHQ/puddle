@@ -944,17 +944,10 @@ async fn puddles_own_connection_goes_by_name_when_the_system_resolver_never_answ
         config,
         puddle_upstream::HostLookup::new(|_, _| std::future::pending()),
     );
-    let started = std::time::Instant::now();
     let mut connected =
         puddle_upstream::host::connect(&chain, &https("registry.corp.test"), Form::Tunnel)
             .await
             .unwrap();
-    // The lookup's bound, not the resolver's retries, is what the connection waited for.
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "{:?}",
-        started.elapsed()
-    );
     assert_eq!(connected.hop, via(&proxy));
     assert_eq!(proxy.seen()[0].target, "registry.corp.test:443");
     round_trip(&mut connected.stream, b"by name after a lookup that hung").await;

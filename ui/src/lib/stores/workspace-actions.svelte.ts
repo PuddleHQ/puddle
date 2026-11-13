@@ -97,15 +97,19 @@ export class WorkspaceActions {
   readonly #toasts: Toasts;
 
   readonly #removed: (name: string) => Promise<Removed | null>;
+  /** Where a link the host could not open itself is followed: this page's own location. */
+  readonly #location: Pick<Location, "assign">;
 
   constructor(
     store: Store = defaultStore,
     toasts: Toasts = defaultToasts,
     removed: (name: string) => Promise<Removed | null> = readRemoved,
+    location: Pick<Location, "assign"> = window.location,
   ) {
     this.#store = store;
     this.#toasts = toasts;
     this.#removed = removed;
+    this.#location = location;
   }
 
   #fail(message: string): void {
@@ -239,9 +243,14 @@ export class WorkspaceActions {
       this.#fail(result.message);
       return;
     }
-    const { opened, message } = result.value;
+    const { opened, message, open_uri } = result.value;
     if (opened) {
       this.#toasts.push(`Opening ${w.name} in ${words.where}.`);
+    } else if (mode === "desktop" && open_uri) {
+      // The host opened nothing (a server with no desktop, reached from another computer): this
+      // computer's VS Code takes the link, if it has the remote extension and an entry for the host.
+      this.#toasts.push(`Opening ${w.name} in VS Code on this computer.`);
+      this.#location.assign(open_uri);
     } else {
       this.#fail(
         message ?? `Puddle couldn't open ${words.what} for ${w.name}.`,

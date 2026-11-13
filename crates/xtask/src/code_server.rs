@@ -135,28 +135,14 @@ pub trait CodeServerSource {
     fn fetch(&self, version: &str, asset: &str, dir: &Path) -> Result<PathBuf>;
 }
 
-/// `gh release download` from [`REPOSITORY`].
-#[derive(Debug, Clone, Copy)]
-pub struct GitHubReleases;
+/// A plain HTTPS download from [`REPOSITORY`].
+#[derive(Debug, Clone)]
+pub struct GitHubReleases(pub crate::github::GitHub);
 
 impl CodeServerSource for GitHubReleases {
     fn fetch(&self, version: &str, asset: &str, dir: &Path) -> Result<PathBuf> {
-        crate::tools::run(
-            std::process::Command::new("gh")
-                .args([
-                    "release",
-                    "download",
-                    &format!("v{version}"),
-                    "--repo",
-                    REPOSITORY,
-                    "--pattern",
-                    asset,
-                    "--clobber",
-                    "--dir",
-                ])
-                .arg(dir),
-        )?;
-        Ok(dir.join(asset))
+        self.0
+            .release_asset(REPOSITORY, &format!("v{version}"), asset, dir)
     }
 }
 

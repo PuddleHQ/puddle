@@ -73,8 +73,8 @@ fn a_repository_the_table_cannot_hold_is_skipped_and_the_rest_are_set_up() {
     assert_eq!(store.workspace_git(&ws).unwrap().repos.len(), 1);
 }
 
-/// A create records whose the new workspace is: nothing for the owner, the user otherwise, and a
-/// record that cannot be written stops the create.
+/// A create records whose the new workspace is, the owner's included, and a record that cannot be
+/// written stops the create.
 #[test]
 fn a_create_claims_the_workspace_for_its_user() {
     let store =
@@ -85,37 +85,32 @@ fn a_create_claims_the_workspace_for_its_user() {
         .id;
     let id = |text: &str| WorkspaceId::new(text).unwrap();
     StoreGitSetup::new(store.clone())
-        .claim(&id("plain"))
+        .claim(&id("owners"), UserId::OWNER)
         .unwrap();
     StoreGitSetup::new(store.clone())
-        .for_user(UserId::OWNER)
-        .claim(&id("owners"))
+        .claim(&id("anns"), ann)
         .unwrap();
-    StoreGitSetup::new(store.clone())
-        .for_user(ann)
-        .claim(&id("anns"))
-        .unwrap();
-    let owners = store.workspace_owners().unwrap();
     assert_eq!(
         (
-            owners.of(&id("plain")),
-            owners.of(&id("owners")),
-            owners.of(&id("anns"))
+            store.workspace_owner(&id("owners")).unwrap(),
+            store.workspace_owner(&id("anns")).unwrap(),
         ),
-        (UserId::OWNER, UserId::OWNER, ann)
+        (Some(UserId::OWNER), Some(ann))
     );
     // Another user's id (a workspace's user never changes) and an unknown user.
     let taken = StoreGitSetup::new(store.clone())
-        .for_user(UserId::from_stored(ann.get() + 1))
-        .claim(&id("anns"))
+        .claim(&id("anns"), UserId::from_stored(ann.get() + 1))
         .unwrap_err();
     assert!(matches!(taken, WorkspaceError::Unavailable(_)), "{taken:?}");
     store
         .add_user(&puddle_store::UserName::new("bo").unwrap())
         .unwrap();
     let taken = StoreGitSetup::new(store.clone())
-        .for_user(UserId::from_stored(ann.get() + 1))
-        .claim(&id("anns"))
+        .claim(&id("anns"), UserId::from_stored(ann.get() + 1))
+        .unwrap_err();
+    assert!(matches!(taken, WorkspaceError::Conflict(_)), "{taken:?}");
+    let taken = StoreGitSetup::new(store.clone())
+        .claim(&id("owners"), ann)
         .unwrap_err();
     assert!(matches!(taken, WorkspaceError::Conflict(_)), "{taken:?}");
 }

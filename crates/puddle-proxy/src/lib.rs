@@ -69,6 +69,7 @@ pub mod fuzzing;
 mod http;
 mod opened;
 mod plain;
+mod probe;
 mod proxy;
 mod pull;
 mod records;
@@ -87,6 +88,7 @@ mod upstream;
 
 pub use coalesce::Coalescing;
 pub use destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver, SystemResolver};
+pub use probe::{PortProbe, TcpPortProbe};
 pub use proxy::{Proxy, ProxyConfig, WorkspaceHandler};
 pub use pull::{ProxyUrl, PullProxy, PullRoute, PullToken, default_pull_access};
 pub use records::{RecordError, RecordResolver, Records, SystemRecords};

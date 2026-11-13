@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use puddle_store::{IdentityId, RepoRef};
+use puddle_store::{IdentityId, RepoRef, UserId};
 use puddle_types::{
     CheckoutDir, DiskKind, EntryId, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
     WorkspaceStatus,
@@ -842,6 +842,9 @@ fn id_for_name(name: &DisplayName) -> Result<WorkspaceId, puddle_types::Validati
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NewWorkspace {
+    /// Whose it is: recorded before the workspace is listed, saved or announced anywhere, and
+    /// never changed after.
+    pub owner: UserId,
     /// The workspace's name: display text. The id is drawn apart from it (see [`NewWorkspace::id`]).
     pub name: DisplayName,
     /// What to clone, in order, with the Git settings each starts with.
@@ -855,10 +858,11 @@ pub struct NewWorkspace {
 }
 
 impl NewWorkspace {
-    /// A request for a workspace with the defaults.
+    /// A request for a workspace of `owner` with the defaults.
     #[must_use]
-    pub fn new(name: DisplayName, repositories: Vec<NewRepository>) -> Self {
+    pub fn new(owner: UserId, name: DisplayName, repositories: Vec<NewRepository>) -> Self {
         Self {
+            owner,
             name,
             repositories,
             start_folder: None,
@@ -910,17 +914,15 @@ pub trait GitSetup: Send + Sync {
         repositories: &'a [NewRepository],
     ) -> BoxFuture<'a, ()>;
 
-    /// Records whose the new workspace `workspace` is. A create calls it once its id is drawn and
-    /// before the workspace is listed, saved or announced anywhere, so nothing about it is ever
-    /// seen as another user's. The default records nothing: the workspace is the owner's.
+    /// Records that the new workspace `workspace` is `owner`'s ([`NewWorkspace::owner`]). A
+    /// create calls it once its id is drawn and before the workspace is listed, saved or announced
+    /// anywhere, so nothing about it is ever seen as another user's. A workspace with no recorded
+    /// user is nobody's: no user reaches it.
     ///
     /// # Errors
     ///
     /// The record could not be written; the create stops and nothing of it exists.
-    fn claim(&self, workspace: &WorkspaceId) -> Result<(), WorkspaceError> {
-        let _ = workspace;
-        Ok(())
-    }
+    fn claim(&self, workspace: &WorkspaceId, owner: UserId) -> Result<(), WorkspaceError>;
 }
 
 /// A [`GitSetup`] that sets nothing up, for services and tests with no store.
@@ -930,6 +932,11 @@ pub struct NoGitSetup;
 impl GitSetup for NoGitSetup {
     fn set_up<'a>(&'a self, _: &'a WorkspaceId, _: &'a [NewRepository]) -> BoxFuture<'a, ()> {
         Box::pin(async {})
+    }
+
+    /// No store, so nothing to record: only for a service whose workspaces no user reaches.
+    fn claim(&self, _: &WorkspaceId, _: UserId) -> Result<(), WorkspaceError> {
+        Ok(())
     }
 }
 

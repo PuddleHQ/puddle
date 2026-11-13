@@ -85,8 +85,8 @@ impl Default for ReservedPort {
 /// the same number from this range at the same moment (the pick starts at a different point in each
 /// process and call).
 ///
-/// The port is free when it is returned and not held: a program that is not a test could still bind
-/// it.
+/// The port is free when it is returned and not held, but no other test process is given it while
+/// this one lives: a program that is not a test could still bind it.
 ///
 /// Windows keeps ranges out of use for Hyper-V and WSL (`netsh int ipv4 show excludedportrange
 /// protocol=tcp`), and a bind to a port in one fails. Most sit in the dynamic range (from 49152),
@@ -99,8 +99,15 @@ pub fn quiet_port() -> u16 {
     free_port_in(20_000, 12_000).expect("a free loopback port between 20000 and 32000")
 }
 
-/// The first free loopback port `first + k` for a `k` below `span`, tried from a start that differs
-/// per process and call.
+/// The first free loopback port `first + k` for a `k` below `span` that no other test process has
+/// claimed, tried from a start that differs per process and call.
+///
+/// A probe that binds and drops says the port is free now, not that it stays free until the caller
+/// binds it, and the caller binds it a test setup later. Two test processes that pick the same
+/// number in that gap both succeed and one of them loses the bind. So a pick is also claimed: an
+/// exclusive lock on a file named after the port, in one folder every test process shares, held
+/// until the process exits (the system drops it when a process dies, so a crash leaves nothing
+/// stale).
 fn free_port_in(first: u16, span: u16) -> Option<u16> {
     use std::sync::atomic::{AtomicU16, Ordering};
     static CALLS: AtomicU16 = AtomicU16::new(0);
@@ -109,14 +116,53 @@ fn free_port_in(first: u16, span: u16) -> Option<u16> {
         .map_or(0, |d| d.subsec_nanos());
     let start = (nanos ^ std::process::id().wrapping_mul(2_654_435_761)) % u32::from(span);
     let call = u32::from(CALLS.fetch_add(1, Ordering::Relaxed));
+    free_port_from(first, span, start, call)
+}
+
+/// [`free_port_in`] with its starting point given: the same `start` and `call` in two processes
+/// is the collision the claim is there for.
+fn free_port_from(first: u16, span: u16, start: u32, call: u32) -> Option<u16> {
     (0..u32::from(span)).find_map(|step| {
         // 7919 is prime; for a span it does not divide, the steps visit every port once.
         let offset = (start + (call + step) * 7_919) % u32::from(span);
         let port = first + u16::try_from(offset).expect("the offset is below the span");
-        TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)))
-            .is_ok()
-            .then_some(port)
+        let claim = claim(port)?;
+        if TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).is_err() {
+            return None; // `claim` drops here and releases the number again
+        }
+        CLAIMS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(claim);
+        Some(port)
     })
+}
+
+/// The claims this process holds, for as long as it lives.
+static CLAIMS: std::sync::Mutex<Vec<std::fs::File>> = std::sync::Mutex::new(Vec::new());
+
+/// The exclusive lock that makes `port` this process's, or `None` when it cannot be taken (another
+/// process holds it; a lock that fails for another reason skips the port too, and a pick with no
+/// port left fails loudly in the caller).
+///
+/// # Panics
+/// When the claim folder or file cannot be made.
+fn claim(port: u16) -> Option<std::fs::File> {
+    use std::fs::File;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the folder must be the same one for every test process, so it cannot be a unique tempfile path"
+    )]
+    let temp = std::env::temp_dir();
+    let dir = temp.join("puddle-test-ports");
+    std::fs::create_dir_all(&dir).expect("make the folder test processes claim ports in");
+    let file = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(port.to_string()))
+        .expect("open a port's claim file");
+    file.try_lock().is_ok().then_some(file)
 }
 
 /// Whether a listener accepts a connection on `addr` (loopback only: the connect blocks, up to a

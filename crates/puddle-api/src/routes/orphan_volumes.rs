@@ -7,15 +7,16 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use puddle_store::UserId;
 use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
-use crate::error::ApiError;
+use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::{StoreGitSetup, view};
 use crate::wire::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest, Workspace};
-use crate::workspaces::RepoUrl;
+use crate::workspaces::{GitSetup as _, RepoUrl};
 
 /// The workspace disks Puddle keeps that no workspace in its list claims, read fresh from the
 /// runtime on every call. Puddle cannot tell from outside whether such a disk holds any files.
@@ -75,6 +76,15 @@ pub(crate) async fn restore_orphan_volume(
         .as_deref()
         .map(|url| RepoUrl::parse(url).map_err(ApiError::invalid))
         .transpose()?;
+    let store = state.store.clone();
+    let restored = id.clone();
+    blocking(move || {
+        // The disk of a workspace a user had stays theirs; any other is the owner's, who alone
+        // restores disks. Recorded first, so the workspace is never listed as nobody's.
+        let owner = store.workspace_owner(&restored)?.unwrap_or(UserId::OWNER);
+        Ok(StoreGitSetup::new(store).claim(&restored, owner)?)
+    })
+    .await?;
     let git = StoreGitSetup::new(state.store.clone());
     let record = state
         .workspaces

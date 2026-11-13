@@ -61,6 +61,7 @@ fn seed(api: &Api, name: &str, status: WorkspaceStatus, dirs: &[(&str, &str)], g
         .collect();
     let mut record = WorkspaceRecord::new(id(name), DisplayName::parse(name).unwrap(), entries);
     record.status = status;
+    api.own(name);
     api.workspaces.seed(record, Unsaved::default());
     api.workspaces.set_checkouts(
         &id(name),

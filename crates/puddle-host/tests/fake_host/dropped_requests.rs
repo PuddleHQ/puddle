@@ -26,6 +26,14 @@ impl GitSetup for GitThatWaits {
     ) -> BoxFuture<'a, ()> {
         Box::pin(tokio::task::yield_now())
     }
+
+    fn claim(
+        &self,
+        _: &WorkspaceId,
+        _: puddle_store::UserId,
+    ) -> Result<(), puddle_api::WorkspaceError> {
+        Ok(())
+    }
 }
 
 /// Polls `request` until it has been pending `waits` times, then drops it. True when it ended
@@ -114,7 +122,10 @@ async fn ready_for(
         *made += 1;
         let name = DisplayName::parse(&format!("dropped-{made}")).unwrap();
         let record = service
-            .create(NewWorkspace::new(name, Vec::new()), &GitThatWaits)
+            .create(
+                NewWorkspace::new(puddle_store::UserId::OWNER, name, Vec::new()),
+                &GitThatWaits,
+            )
             .await
             .unwrap();
         settled(host, rig, "the create ends").await;
@@ -139,7 +150,10 @@ async fn send(host: &Host<FakeRuntime>, request: Request, id: &WorkspaceId, wait
         Request::Create => {
             let name = DisplayName::parse(&format!("made-{waits}")).unwrap();
             drop_after(
-                service.create(NewWorkspace::new(name, Vec::new()), &GitThatWaits),
+                service.create(
+                    NewWorkspace::new(puddle_store::UserId::OWNER, name, Vec::new()),
+                    &GitThatWaits,
+                ),
                 waits,
             )
             .await
@@ -223,6 +237,14 @@ impl GitSetup for GitThatBreaksTheList {
         make_unwritable(&self.0);
         Box::pin(tokio::task::yield_now())
     }
+
+    fn claim(
+        &self,
+        _: &WorkspaceId,
+        _: puddle_store::UserId,
+    ) -> Result<(), puddle_api::WorkspaceError> {
+        Ok(())
+    }
 }
 
 /// A create dropped after its entry was saved takes the entry out of the list Puddle shows even
@@ -236,10 +258,10 @@ async fn a_dropped_create_whose_list_cannot_be_saved_is_still_gone() {
     let list = list_path(&rig);
     let git = GitThatBreaksTheList(list.clone());
     let ended = {
-        let mut create = pin!(
-            host.workspaces()
-                .create(NewWorkspace::new(name, Vec::new()), &git)
-        );
+        let mut create = pin!(host.workspaces().create(
+            NewWorkspace::new(puddle_store::UserId::OWNER, name, Vec::new()),
+            &git
+        ));
         // Dropped at the first wait after the git setup broke the list.
         std::future::poll_fn(|cx| match create.as_mut().poll(cx) {
             Poll::Ready(_) => Poll::Ready(true),

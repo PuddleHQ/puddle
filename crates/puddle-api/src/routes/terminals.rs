@@ -265,16 +265,12 @@ async fn finish(socket: &mut WebSocket, end: &TerminalEnd) {
 /// How long a closed socket waits for the page's own close.
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
 
-/// Reads what the page still sends until its close arrives. Dropping a socket with unread data from
-/// the page resets the connection, and the reset throws away what the page has not read yet: the
-/// end message, which would then show as a broken connection instead of how the shell ended.
+/// Reads what the page still sends until the closing handshake ends. Dropping a socket with unread
+/// data from the page resets the connection, and the reset throws away what the page has not read
+/// yet: the end message, which would then show as a broken connection instead of how the shell ended.
 async fn await_close(socket: &mut WebSocket) {
     let _ = tokio::time::timeout(CLOSE_WAIT, async {
-        while let Some(Ok(message)) = socket.recv().await {
-            if matches!(message, Message::Close(_)) {
-                break;
-            }
-        }
+        while let Some(Ok(_)) = socket.recv().await {}
     })
     .await;
 }

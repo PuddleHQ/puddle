@@ -4842,6 +4842,43 @@ fn name_body(shown: &str) -> String {
     json!({"name": shown}).to_string()
 }
 
+/// A save of the workspace list writes each name into the store's database. The store has one
+/// connection that proxy decisions and audit searches share, so a busy database must not hold up
+/// every reader of the workspace list: no write to it happens under the list's lock.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_busy_database_does_not_hold_up_the_workspace_list_while_a_rename_saves() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    after_boot_listing(&rig).await;
+    // Another connection holds the write lock: the name write waits for it (up to 5 s).
+    let db = rusqlite::Connection::open(rig.dir.path().join("data").join("puddle.db")).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let body = name_body("Acme shop");
+    let rename = api.patch("/api/workspaces/acme", &body);
+    let id = WorkspaceId::new("acme").unwrap();
+    let probe = async {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        // The list's lock is a plain mutex, so a reader that has to wait blocks its thread:
+        // measure how long the read took rather than time it out.
+        let started = std::time::Instant::now();
+        let read = host.workspaces().get(&id).await;
+        let took = started.elapsed();
+        db.execute_batch("COMMIT").unwrap();
+        (read, took)
+    };
+    let (renamed, (read, took)) = tokio::join!(rename, probe);
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    assert!(read.is_ok());
+    assert!(
+        took < Duration::from_secs(2),
+        "the workspace list waited {took:?} for a write to the database"
+    );
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
     let rig = Rig::named_ids();
@@ -10600,6 +10637,41 @@ async fn a_failed_grow_changes_nothing_and_is_audited() {
     host.shutdown().await;
 }
 
+/// The disk size the runtime reports can lag a grow that applies at the next start; the size
+/// Puddle saved does not. A request is measured against the larger, so one between the two is
+/// refused up front and not accepted with a 202 and refused by the runtime afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_grow_is_measured_against_the_saved_size_when_the_reported_one_lags() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let sandbox = SandboxName::new("acme").unwrap();
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let end = grow_root_disk(&api, &mut events, 24_576).await;
+    assert_eq!(end["step"], "done", "{end}");
+    // The runtime still reports the old disk until the next start.
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    rig.runtime
+        .set_root_disk_use(&sandbox, gib(16), puddle_compute::DiskSize::mib(100));
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let between = api
+        .post(
+            "/api/workspaces/acme/grow-root-disk",
+            r#"{"size_mib": 18432}"#,
+        )
+        .await;
+    assert_eq!(between.status, 422, "{}", between.body);
+    assert!(between.body.contains("only grows"), "{}", between.body);
+    host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_for_a_grow_that_fails_leaves_the_workspace_as_a_stop_or_a_start_would() {
     let rig = Rig::named_ids();
@@ -10621,7 +10693,16 @@ async fn a_restart_for_a_grow_that_fails_leaves_the_workspace_as_a_stop_or_a_sta
     assert_eq!(end["step"], "failed", "{end}");
     let w = api.get("/api/workspaces/acme").await.json();
     assert_eq!(w["status"], "running", "{w}");
-
+    // The grow was saved and the runtime applies it at the next start, so the log calls it done
+    // and names the failed restart on its own.
+    let (outcome, detail) = grown_record(&api).await;
+    assert_eq!(outcome, "succeeded", "{detail}");
+    assert!(
+        detail.starts_with(
+            "root disk grown from 16384 MiB to 20480 MiB, with a restart; the restart failed: "
+        ) && detail.contains("stuck"),
+        "{detail}"
+    );
     // The start fails: the workspace is crashed, and a start brings it back.
     rig.runtime.inject(
         Op::Start,
@@ -12468,6 +12549,33 @@ async fn a_restore_makes_a_working_list_entry_with_the_disk_untouched_and_ends_i
     assert_eq!(other.status, 201, "{}", other.body);
     assert_eq!(other.json()["name"], "api (2)", "{}", other.body);
     again.shutdown().await;
+}
+
+/// A restore boots the same maintenance image a delete check does, so it waits for that image's
+/// download like the check: nothing boots before the pull of the image has been asked for.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_asks_for_the_maintenance_image_before_it_boots_it() {
+    const CHECK_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian";
+    let rig = Rig::new();
+    add_unclaimed_volume(&rig, "lost").await;
+    rig.guest
+        .put_checkout("api", "https://example.org/acme/api.git");
+    let host = rig.start().await;
+    let api = api(&host);
+    let restored = api.post("/api/orphan-volumes/lost/restore", "{}").await;
+    assert_eq!(restored.status, 201, "{}", restored.body);
+    let calls = rig.runtime.calls();
+    let pulled = calls
+        .iter()
+        .position(|c| c.op == Op::PullImage && c.target.as_deref() == Some(CHECK_IMAGE));
+    let booted = calls.iter().position(|c| {
+        c.op == Op::Create && c.target.as_deref().is_some_and(|t| t.starts_with("m--"))
+    });
+    assert!(
+        pulled.is_some() && booted.is_some() && pulled < booted,
+        "pull at {pulled:?}, maintenance boot at {booted:?}: {calls:?}"
+    );
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

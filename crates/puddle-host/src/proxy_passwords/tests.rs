@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use puddle_secrets::MemoryStore;
+use puddle_secrets::{MemoryStore, Secret, SecretStore, StoreError, StoredId};
 use puddle_types::fixture;
 
 use super::*;
@@ -185,4 +185,67 @@ fn a_list_line_that_is_not_a_proxy_is_ignored() {
         )
         .unwrap();
     assert_eq!(passwords.load().unwrap(), 0);
+}
+
+/// A store whose first `set` waits until the test lets it go, like a locked keyring.
+struct SlowStore {
+    inner: MemoryStore,
+    entered: std::sync::mpsc::Sender<()>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl SecretStore for SlowStore {
+    fn get(&self, id: &StoredId) -> Result<Option<Secret>, StoreError> {
+        self.inner.get(id)
+    }
+    fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), StoreError> {
+        let _ = self.entered.send(());
+        let _ = self.release.lock().unwrap().recv();
+        self.inner.set(id, secret)
+    }
+    fn delete(&self, id: &StoredId) -> Result<(), StoreError> {
+        self.inner.delete(id)
+    }
+}
+
+#[test]
+fn reading_the_sign_ins_never_waits_for_a_slow_credential_store() {
+    let (entered_tx, entered) = std::sync::mpsc::channel();
+    let (release_tx, release) = std::sync::mpsc::channel();
+    let slow = Arc::new(SlowStore {
+        inner: MemoryStore::new(),
+        entered: entered_tx,
+        release: Mutex::new(release),
+    });
+    let passwords = ProxyPasswords::new(slow);
+    let writer = {
+        let passwords = passwords.clone();
+        std::thread::spawn(move || passwords.set(&proxy(), "alice", &secret()))
+    };
+    entered
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("the set reached the store");
+
+    // The network-health page and the proxy's lookups run now; they get an answer at once.
+    let (done_tx, done) = std::sync::mpsc::channel();
+    let reader = {
+        let passwords = passwords.clone();
+        std::thread::spawn(move || {
+            let listed = passwords.proxies();
+            let found = passwords.credentials(&proxy());
+            let _ = done_tx.send((listed, found.is_some()));
+        })
+    };
+    let answered = done.recv_timeout(std::time::Duration::from_secs(5));
+    // Let the store go before asserting, so a failure does not leave the threads hanging.
+    for _ in 0..4 {
+        let _ = release_tx.send(());
+    }
+    writer.join().unwrap().unwrap();
+    reader.join().unwrap();
+    assert_eq!(
+        answered.expect("a read waited for the credential store"),
+        (Vec::new(), false)
+    );
+    assert_eq!(passwords.proxies(), [(proxy(), "alice".to_owned())]);
 }

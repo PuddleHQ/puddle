@@ -219,6 +219,33 @@ fn az_failures_name_the_missing_piece() {
             "AADSTS500011: resource principal not found",
             SourceError::NoAccess,
         ),
+        // The message Entra gives for this code, whole: its words also fit a wrong tenant.
+        (
+            "ERROR: AADSTS500011: The resource principal named 499b84ac-1321-427f-aa17-267ca6975798 was not found in the tenant named Contoso. This can happen if the application has not been installed by the administrator of the tenant or consented to by any user in the tenant. You might have sent your authentication request to the wrong tenant. Trace ID: 0 Correlation ID: 0 Timestamp: 2026-11-12 19:00:00Z",
+            SourceError::NoAccess,
+        ),
+        // A code names its case even when the text around it suggests a fresh login.
+        (
+            "AADSTS50020: User account from another identity provider does not exist in tenant. Run 'az login'.",
+            SourceError::WrongTenant,
+        ),
+        (
+            "ERROR: Tenant 'abc' is not found in the account. Please run 'az login'.",
+            SourceError::WrongTenant,
+        ),
+        (
+            "ERROR: The user does not have access to this organization",
+            SourceError::NoAccess,
+        ),
+        // Each half of the tenant wording alone says nothing about the tenant.
+        (
+            "ERROR: Please run 'az login --tenant contoso.example' to setup account.",
+            SourceError::NotSignedIn,
+        ),
+        (
+            "ERROR: The subscription 'x' was not found.",
+            SourceError::CouldNotRun(Tool::Az),
+        ),
         (
             "Traceback (most recent call last): boom",
             SourceError::CouldNotRun(Tool::Az),

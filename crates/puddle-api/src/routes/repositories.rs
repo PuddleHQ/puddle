@@ -107,7 +107,12 @@ pub(crate) async fn add_repository(
         }
         AddRepository::Existing { .. } => StatusCode::OK,
     };
-    let git = StoreGitSetup::allowing_hosts(state.store.clone());
+    // A managed checkout's host comes from its `.git/config`, which the guest writes: it
+    // never becomes an allow rule.
+    let git = match &add {
+        AddRepository::Clone(_) => StoreGitSetup::allowing_hosts(state.store.clone()),
+        AddRepository::Existing { .. } => StoreGitSetup::new(state.store.clone()),
+    };
     let directory = match &add {
         AddRepository::Clone(new) => new.repository.directory.to_string(),
         AddRepository::Existing { directory, .. } => directory.to_string(),

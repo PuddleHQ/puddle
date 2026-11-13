@@ -1755,7 +1755,7 @@ mod tunnel_end {
         let mut reader = ClientReader::new(Counted::new(near).0);
         reader.fill_buf().await.unwrap();
         drop(peer);
-        let end = tunnel(reader, server, None, None, None, None).await;
+        let end = tunnel(reader.into(), server, None, None, None, None).await;
         let line = end.http.expect("the early request line is kept");
         assert_eq!((line.method(), line.path()), ("GET", "/early"));
         assert!(!end.ssh && !end.token_endpoint);
@@ -1774,7 +1774,7 @@ mod tunnel_end {
         peer.write_all(b"SSH-2.0-OpenSSH_9.6\r\n").await.unwrap();
         let reader = ClientReader::new(Counted::new(near).0);
         let git = request("github.com");
-        let end = tunnel(reader, server, Some(&git), None, None, None).await;
+        let end = tunnel(reader.into(), server, Some(&git), None, None, None).await;
         assert!(end.ssh);
         assert!(end.http.is_none() && !end.token_endpoint);
         let mut said = String::new();
@@ -1841,7 +1841,7 @@ mod tunnel_end {
             .unwrap();
         let mut reader = ClientReader::new(Counted::new(near).0);
         reader.fill_buf().await.unwrap();
-        let end = tunnel(reader, server, None, None, Some(termination), None).await;
+        let end = tunnel(reader.into(), server, None, None, Some(termination), None).await;
         assert!(end.token_endpoint);
         let mut alert = [0_u8; 7];
         tokio::io::AsyncReadExt::read_exact(&mut peer, &mut alert)

@@ -298,7 +298,10 @@ jobs:
       # the NTLM proxy. The packages are pinned with hashes in ci/lab/requirements.txt (compiled from
       # requirements.in; Dependabot's uv entry for /ci/lab bumps them weekly), so a new release reaches
       # the tests through a pull request, not a runner.
+      # The three tool steps below run even after an earlier step failed, like the test step that needs them:
+      # skipped, they left the tests failing on every missing tool and hid the one real failure.
       - name: mitmproxy for the corporate-lab fixtures
+        if: ${{ !cancelled() }}
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
           python3 -m venv "$RUNNER_TEMP/lab-venv"
@@ -308,6 +311,7 @@ jobs:
       # The lab's Git host (crates/puddle-e2e/src/lab/forgejo.rs): the pinned Forgejo release, so the fixture and its
       # test (`forgejo_lab`) run in the coverage lane instead of skipping.
       - name: Forgejo for the lab Git host (pinned release; download, verify)
+        if: ${{ !cancelled() }}
         run: |
           ci/fetch-forgejo.sh "$RUNNER_TEMP/forgejo"
           "$RUNNER_TEMP/forgejo/forgejo" --version
@@ -318,6 +322,7 @@ jobs:
       # runs these tests against the new release, so a changed login flow fails there. Scripts stay on:
       # Claude Code's postinstall fetches its native binary, and without it `claude` does not start.
       - name: Real login tools (Claude Code and Copilot CLI) for the login tests
+        if: ${{ !cancelled() }}
         run: |
           npm ci --prefix ci/login-tools --no-audit --no-fund
           tools="$GITHUB_WORKSPACE/ci/login-tools/node_modules/.bin"

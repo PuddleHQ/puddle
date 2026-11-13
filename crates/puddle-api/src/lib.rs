@@ -22,7 +22,9 @@
 //! before it can present one, but they keep the `Host` and `Origin` checks and carry a strict
 //! `Content-Security-Policy` and no framing.
 //!
-//! The listener binds `127.0.0.1` only; there is no setting for another address. State changes
+//! The listener binds `127.0.0.1`. The one other address is the opt-in network listener of remote
+//! serving ([`Remote::with_network_listener`]): a single named interface (never `0.0.0.0`
+//! or `::`), TLS, and only the listed proxy addresses, checked at accept. State changes
 //! are `POST`/`PUT`/`DELETE` and the ones with a body accept only `application/json`, so no
 //! "simple" cross-site request can reach them.
 //!
@@ -95,7 +97,8 @@ pub use openapi::{API_VERSION, openapi, openapi_json};
 pub use ports::{FakePorts, NoPorts, PortsService, PortsServiceError};
 pub use proxy_sign_in::{FakeProxySignIns, NoProxySignIns, ProxySignInError, ProxySignInService};
 pub use remote::{
-    NetworkListener, PublicHost, RemoteError, RemoteServing, TlsIdentity, WorkspaceNames,
+    NetworkEndpoint, NetworkListener, PublicHost, Remote, RemoteError, RemoteServing, TlsIdentity,
+    WorkspaceNames,
 };
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};

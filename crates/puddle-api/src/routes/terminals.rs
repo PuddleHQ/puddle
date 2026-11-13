@@ -16,6 +16,7 @@ use tokio::sync::watch;
 use utoipa::ToSchema;
 
 use crate::ApiErrorBody;
+use crate::auth::ReachedPublicly;
 use crate::authz::{Principal, Via};
 use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json as BodyJson, Path};
@@ -149,7 +150,8 @@ fn ticket_of(headers: &HeaderMap) -> Option<&str> {
 
 /// Opens the terminal's socket. A browser cannot send `Authorization` on a WebSocket, so on this
 /// one path the single-use ticket stands in for the token; the `Host` and `Origin` checks run
-/// before it is read.
+/// before it is read, and the ticket is checked before the workspace is looked up, so a caller
+/// without one learns nothing about which workspaces exist.
 #[utoipa::path(
     get,
     path = "/api/workspaces/{id}/terminals/{terminal}",
@@ -160,34 +162,43 @@ fn ticket_of(headers: &HeaderMap) -> Option<&str> {
     ),
     responses(
         (status = SWITCHING_PROTOCOLS, description = "the socket: binary messages carry the terminal's bytes (at most 64 KiB), text messages are JSON (`resize`, `ack` from the page; `ended` from the host)"),
-        (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
-        (status = UNAUTHORIZED, description = "a wrong, used or late ticket", body = ApiErrorBody)
+        (status = UNAUTHORIZED, description = "a wrong, used or late ticket, or a loopback ticket used under a public name", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn terminal_socket(
     State(state): State<AppState>,
     Path((id, terminal)): Path<(String, u64)>,
     headers: HeaderMap,
+    public: Option<axum::Extension<ReachedPublicly>>,
     upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
-    let workspace = workspace(&state, &id).await?;
     let upgrade = match upgrade {
         Ok(upgrade) => upgrade,
         Err(rejection) => return Ok(rejection.into_response()),
     };
-    let size = ticket_of(&headers)
-        .and_then(|ticket| {
-            state
-                .terminals
-                .claim(&workspace, terminal, ticket.as_bytes())
-        })
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::UNAUTHORIZED,
-                ErrorCode::Unauthorized,
-                "missing, wrong, used or late ticket",
-            )
-        })?;
+    // The registry holds the workspace a ticket was issued for, so a claim also proves it exists;
+    // a malformed id and an unknown one both fail the claim, with the same answer.
+    // Under a public name only a ticket a signed-in browser asked for counts: one made with the
+    // install token on loopback is not bound to a device and never opens a shell there.
+    let admitted = public.is_none() || state.terminals.device_of(terminal).is_some();
+    let claimed = WorkspaceId::new(&id)
+        .ok()
+        .filter(|_| admitted)
+        .and_then(|workspace| {
+            let size = ticket_of(&headers).and_then(|ticket| {
+                state
+                    .terminals
+                    .claim(&workspace, terminal, ticket.as_bytes())
+            })?;
+            Some((workspace, size))
+        });
+    let (workspace, size) = claimed.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            ErrorCode::Unauthorized,
+            "missing, wrong, used or late ticket",
+        )
+    })?;
     let shutdown = state.shutdown.clone();
     // A terminal made for a signed-in browser ends when that browser is signed out.
     let ended: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> =

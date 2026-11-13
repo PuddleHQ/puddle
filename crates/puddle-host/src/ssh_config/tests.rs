@@ -114,7 +114,7 @@ fn a_value_that_could_end_a_word_or_start_a_line_is_refused() {
     ] {
         let mut entries = BTreeMap::new();
         entries.insert(name("web"), entry(hostile));
-        let err = render(&entries, &ok).unwrap_err();
+        let err = render(&entries, &ok).unwrap_err().to_string();
         assert!(err.contains("cannot hold safely"), "{hostile:?}: {err}");
         let identity = context(Path::new("/p"), Path::new(hostile), Path::new("/h"));
         let mut entries = BTreeMap::new();
@@ -174,7 +174,7 @@ mod files {
         let file = ssh.config_path();
         std::fs::remove_file(&file).unwrap();
         std::fs::create_dir_all(file.join("in")).unwrap();
-        let err = ssh.withdraw(&name("web")).unwrap_err();
+        let err = ssh.withdraw(&name("web")).unwrap_err().to_string();
         assert!(
             err.contains("puddle-web") && err.contains("cannot take"),
             "{err}"
@@ -236,7 +236,8 @@ mod files {
             .unwrap();
         let err = ssh
             .publish(&name("web"), Path::new("/run/\"x"), SessionUser::Root)
-            .unwrap_err();
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("cannot hold"));
         assert_eq!(ssh.endpoint(&name("web")), Some(PathBuf::from("/run/ep-1")));
         assert!(
@@ -254,7 +255,8 @@ mod files {
         std::fs::create_dir_all(ssh.known_hosts(&name("web"))).unwrap();
         let err = ssh
             .publish(&name("web"), Path::new("/run/ep"), SessionUser::Root)
-            .unwrap_err();
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("cannot forget the old host key"), "{err}");
         assert_eq!(ssh.endpoint(&name("web")), None);
     }
@@ -276,11 +278,39 @@ mod files {
     }
 
     #[test]
+    fn a_config_file_that_cannot_be_written_says_which_one_and_leaves_no_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ssh, _) = setup(dir.path(), false);
+        // A folder where the file belongs cannot be replaced by a file.
+        std::fs::create_dir_all(ssh.config_path()).unwrap();
+        let err = ssh
+            .publish(&name("web"), Path::new("/run/ep"), SessionUser::Root)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.starts_with(&format!("cannot write {}: ", ssh.config_path().display())),
+            "{err}"
+        );
+        assert_eq!(ssh.endpoint(&name("web")), None);
+    }
+
+    #[test]
+    fn emptying_the_file_of_a_setup_without_key_or_program_reports_a_failed_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssh = SshSetup::open(&dir.path().join("data"), &SshSettings::default());
+        std::fs::create_dir_all(ssh.config_path()).unwrap();
+        let err = ssh.write_config(&BTreeMap::new()).unwrap_err();
+        assert!(matches!(err, SshConfigError::Io(_)), "{err}");
+    }
+
+    #[test]
     fn a_config_path_below_a_file_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("file");
         std::fs::write(&file, "x").unwrap();
-        let err = ensure_include(&file.join("config"), &dir.path().join("p")).unwrap_err();
+        let err = ensure_include(&file.join("config"), &dir.path().join("p"))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("os error"), "{err}");
     }
 
@@ -290,7 +320,8 @@ mod files {
         let ssh = SshSetup::open(&dir.path().join("data"), &SshSettings::default());
         let err = ssh
             .publish(&name("web"), Path::new("/run/ep"), SessionUser::Root)
-            .unwrap_err();
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("no `puddle` program"), "{err}");
     }
 
@@ -307,7 +338,8 @@ mod files {
         assert!(ssh.authorized_key().is_none());
         let err = ssh
             .publish(&name("web"), Path::new("/e"), SessionUser::Root)
-            .unwrap_err();
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("login key"), "{err}");
     }
 
@@ -451,7 +483,9 @@ mod files {
         let link = dir.path().join("config");
         let missing = dir.path().join("dotfiles/config");
         std::os::unix::fs::symlink(&missing, &link).unwrap();
-        let err = ensure_include(&link, &dir.path().join("p")).unwrap_err();
+        let err = ensure_include(&link, &dir.path().join("p"))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("symbolic link"), "{err}");
         assert_eq!(std::fs::read_link(&link).unwrap(), missing);
         assert!(!missing.exists());
@@ -464,7 +498,7 @@ mod files {
         let puddle = dir.path().join("p");
         std::fs::write(&user, "Host a\n").unwrap();
         std::fs::set_permissions(&user, std::fs::Permissions::from_mode(0o444)).unwrap();
-        let err = ensure_include(&user, &puddle).unwrap_err();
+        let err = ensure_include(&user, &puddle).unwrap_err().to_string();
         assert!(err.contains("read-only"), "{err}");
         assert_eq!(std::fs::read_to_string(&user).unwrap(), "Host a\n");
         assert_eq!(
@@ -486,11 +520,10 @@ mod files {
         let seen = std::fs::metadata(&user).unwrap();
         // The other program's save: a different length.
         std::fs::write(&user, "Host a\nHost b\n").unwrap();
-        let err = replace_keeping_permissions(&user, b"Include x\n", &seen).unwrap_err();
-        assert!(
-            err.to_string().contains("changed by another program"),
-            "{err}"
-        );
+        let err = replace_keeping_permissions(&user, b"Include x\n", &seen)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("changed by another program"), "{err}");
         assert_eq!(std::fs::read_to_string(&user).unwrap(), "Host a\nHost b\n");
         // Same length, later time.
         let seen = std::fs::metadata(&user).unwrap();

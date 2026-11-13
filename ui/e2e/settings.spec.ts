@@ -696,3 +696,34 @@ test("the disk space lines start at 20 and 5 GB, are checked before saving and s
   await expect(fail).toHaveValue("12");
   await expect(notice).not.toBeChecked();
 });
+
+test("the SSH agent pipe is checked before saving, stored trimmed and survives a reload", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await openSettings(page, backend);
+  const field = page.getByLabel("SSH agent pipe or socket");
+  await expect(field).toHaveValue("");
+
+  await field.fill("/run/a\tb");
+  await field.blur();
+  await expect(
+    page.getByText("A pipe or socket path cannot hold a control character."),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+
+  await field.fill(String.raw`  \\.\pipe\pageant.alice  `);
+  await field.blur();
+  await pressSave(page);
+  expect((await stored(request, backend)).ui.ssh_agent_pipe).toBe(
+    String.raw`\\.\pipe\pageant.alice`,
+  );
+  await page.reload();
+  await expect(field).toHaveValue(String.raw`\\.\pipe\pageant.alice`);
+
+  await field.fill("");
+  await field.blur();
+  await pressSave(page);
+  expect((await stored(request, backend)).ui.ssh_agent_pipe).toBeNull();
+});

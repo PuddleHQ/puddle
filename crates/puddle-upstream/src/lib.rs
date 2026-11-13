@@ -53,6 +53,7 @@ mod health;
 mod hop;
 pub mod host;
 mod negotiate;
+pub mod network;
 mod os;
 mod parse;
 mod redact;
@@ -78,6 +79,12 @@ pub use health::{
 };
 pub use hop::{Destination, Hop, ParseError, ProxyAddr, Route, Scheme};
 pub use negotiate::{Leg, NegotiateAuth, Package, SecurityContext, TokenSource};
+#[cfg(any(test, feature = "testing"))]
+pub use network::FakeNetwork;
+pub use network::{
+    Adapter, AdapterKind, NetworkError, NetworkOs, NetworkSnapshot, Route as NetworkRoute,
+    system_network,
+};
 pub use os::{
     ChangeCallback, Origin, OsProxy, PacError, PacQuery, ProblemCallback, ProxyConfig,
     SettingsError, WatchGuard, system_os,

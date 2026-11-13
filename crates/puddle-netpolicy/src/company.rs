@@ -9,8 +9,8 @@
 //! the guard that keeps a home-LAN address out of the category), so it has a third answer,
 //! [`LanReading::Unread`], and that answer also keeps the address out.
 //!
-//! The shipped host gives no [`CompanySignals`] yet (`HostOptions::company_signals` is `None`),
-//! so in the app today the category is empty and its toggle changes nothing.
+//! The shipped host gives [`CompanySignals`] on Windows (`puddle_host::HostSignals`); elsewhere it
+//! gives none, so there the category is empty and its toggle changes nothing.
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr};

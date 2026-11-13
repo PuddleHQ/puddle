@@ -30,7 +30,7 @@
 //! A reader that meets a version byte it does not know refuses ([`VaultError::UnknownVersion`]); a
 //! later format gets a new number and the old one stays readable.
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -492,7 +492,7 @@ fn sync_folder(path: &Path) {
     if let Some(dir) = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
-        .and_then(|dir| File::open(dir).ok())
+        .and_then(|dir| fs::File::open(dir).ok())
     {
         let _ = dir.sync_all();
     }

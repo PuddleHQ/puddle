@@ -33,11 +33,12 @@ use puddle_agent_proto::editor::{EditorServer, NEEDS_GLIBC};
 use puddle_agent_proto::forward::OpenError;
 use puddle_api::{
     DeleteCheck, DisplayName, EditorLogin, GitSetup, KeptLogin, LaunchError, Launcher, Listing,
-    Operation, RepoFindings, Repository, StartFolder, WorkspaceError, WorkspaceRecord,
+    LocalCheckoutError, Operation, RepoFindings, Repository, StartFolder, WorkspaceError,
+    WorkspaceRecord,
 };
-use puddle_boot::{BootError, Gate, GatedSandbox};
+use puddle_boot::{Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
-use puddle_compute::{ImageConfig, Runtime};
+use puddle_compute::{ComputeError, ImageConfig, Runtime};
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
@@ -58,6 +59,7 @@ use crate::files::{Stored, WorkspaceBook};
 use crate::front::Flavours;
 use crate::git_hosts::{Authors, SshListing};
 use crate::injection::Injection;
+use crate::op_error::{OpError, SAVE_HINT};
 
 mod repositories;
 
@@ -419,21 +421,16 @@ impl<R: Runtime + Clone> std::fmt::Debug for HostWorkspaces<R> {
     }
 }
 
-/// The way out after the workspace list could not be saved; the error already names the file.
-const SAVE_HINT: &str =
-    "check the free disk space and that Puddle may write that file, then try again";
-
 /// What a failed create or start tells the user about what it could not clean up: the reason it
 /// failed first, then what is still there and how it goes away.
-fn with_leftovers(reason: String, leftovers: &[String]) -> String {
+fn with_leftovers(reason: OpError, leftovers: &[String]) -> OpError {
     if leftovers.is_empty() {
         return reason;
     }
-    format!(
-        "{reason}; Puddle could not clean up after it: {}. Puddle removes a sandbox no workspace \
-         claims at its next start, and keeps a volume it does not know, listing it then",
-        leftovers.join("; ")
-    )
+    OpError::Cleanup {
+        cause: Box::new(reason),
+        leftovers: leftovers.join("; "),
+    }
 }
 
 /// The key of a problem about one workspace.
@@ -552,7 +549,7 @@ async fn wait_until_downloaded(
 struct Grown {
     how: &'static str,
     /// Why the restart that applies the grow failed; the grow itself is done.
-    restart_failure: Option<String>,
+    restart_failure: Option<OpError>,
 }
 
 impl Grown {
@@ -700,11 +697,6 @@ impl Drop for Running {
     }
 }
 
-/// Why a boot failed, for the user.
-fn boot_message(e: &BootError) -> String {
-    e.to_string()
-}
-
 /// The workspace ids a book entry set names, for the inventory reconcile works from. An entry
 /// whose create never finished is left out: reconcile removes its volume.
 pub(crate) fn known_ids(stored: &[Stored]) -> BTreeSet<WorkspaceId> {
@@ -733,8 +725,20 @@ mod kept_login_rows;
 #[cfg(test)]
 mod no_link_words;
 
+/// Why the runtime refuses a checkout, as the user is told: the reason of a refused spec as it is
+/// (the runtime's own wording names the folder), any other failure by its message.
+fn checkout_refusal(error: ComputeError) -> LocalCheckoutError {
+    match error {
+        ComputeError::InvalidSpec { reason } => LocalCheckoutError::Refused(reason),
+        other => LocalCheckoutError::Refused(other.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod download_wait_tests;
 
 #[cfg(test)]
 mod name_or_id_tests;
+
+#[cfg(test)]
+mod checkout_refusal_tests;

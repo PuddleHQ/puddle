@@ -149,10 +149,10 @@ pub fn checkouts_view(
     }
 }
 
-fn not_offered(reason: impl Into<String>) -> Manage {
+fn not_offered(reason: impl std::fmt::Display) -> Manage {
     Manage {
         offered: false,
-        reason: Some(reason.into()),
+        reason: Some(reason.to_string()),
     }
 }
 

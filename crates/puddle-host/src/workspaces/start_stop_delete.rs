@@ -9,11 +9,12 @@ use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_compute::{ComputeError, Runtime, Sandbox as _, StartRefusal, VsockRoute};
 use puddle_types::{GuestEnv, ImageRef, Problem, WorkspaceId, WorkspaceStep};
 
-use super::{HostWorkspaces, Live, RuntimeNames, State, boot_message, problem_key};
+use super::{HostWorkspaces, Live, RuntimeNames, State, problem_key};
 use crate::boot::BootKit;
+use crate::op_error::OpError;
 
 impl<R: Runtime + Clone> HostWorkspaces<R> {
-    pub(super) async fn start_work(&self, record: WorkspaceRecord) -> Result<(), String> {
+    pub(super) async fn start_work(&self, record: WorkspaceRecord) -> Result<(), OpError> {
         let inner = &self.inner;
         let name = &record.id;
         self.progress(name, WorkspaceStep::Starting, None);
@@ -23,8 +24,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let sandbox = inner
             .runtime
             .list()
-            .await
-            .map_err(|e| e.to_string())?
+            .await?
             .into_iter()
             .find(|s| s.name == name.as_str());
         let exists = sandbox.is_some();
@@ -49,11 +49,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         if !restarted {
             if exists {
-                inner
-                    .runtime
-                    .remove(&name.sandbox_name())
-                    .await
-                    .map_err(|e| e.to_string())?;
+                inner.runtime.remove(&name.sandbox_name()).await?;
                 inner.workspaces.sandbox_removed(&name.sandbox_name());
             }
             // A route left from an earlier boot belongs to a sandbox that no longer exists.
@@ -132,10 +128,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// set is written to the stopped sandbox first (`Runtime::set_env`), so the root disk (home
     /// directory, installed packages) is kept. `Ok(false)` only when that write failed: the caller
     /// then makes a new sandbox on the same volume, the volume holding the work, not the sandbox.
-    pub(super) async fn restart_in_place(&self, record: &WorkspaceRecord) -> Result<bool, String> {
+    pub(super) async fn restart_in_place(&self, record: &WorkspaceRecord) -> Result<bool, OpError> {
         let inner = &self.inner;
         let name = &record.id;
-        let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
+        let image = ImageRef::new(&record.image)?;
         let config = self.image_config(&image).await?;
         self.publish_shell_init(&record.id)?;
         let (plan, spec_env, guest) = self.plan_guest_for(record, config).await?;
@@ -177,7 +173,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         record: &WorkspaceRecord,
         plan: &puddle_boot::BootPlan,
-    ) -> Result<GatedSandbox<R::Sandbox>, String> {
+    ) -> Result<GatedSandbox<R::Sandbox>, OpError> {
         let inner = &self.inner;
         let name = &record.id;
         let gate = inner
@@ -186,19 +182,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .get(name)
             .map(|l| l.gate.clone())
-            .ok_or_else(|| format!("{name} has no route"))?;
+            .ok_or_else(|| OpError::NoRoute(name.clone()))?;
         // The memory setting applies at the next start (ADR 0006 and the memory setting).
         inner
             .runtime
             .set_memory(&name.sandbox_name(), record.memory)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         // The cpus setting applies at the next start, like the memory.
         inner
             .runtime
             .set_cpus(&name.sandbox_name(), self.cpus(name))
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         inner
             .kit
             .hook()
@@ -208,7 +202,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 if let BootError::Compute(ComputeError::StartRefused { cause, .. }) = &e {
                     self.raise_start_refused(name, *cause);
                 }
-                boot_message(&e)
+                OpError::from(e)
             })
     }
 
@@ -227,7 +221,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         );
     }
 
-    pub(super) async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), String> {
+    pub(super) async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), OpError> {
         let name = &record.id;
         // The terminals end first, with the stop as their reason, while the guest can still answer.
         self.inner.terminals.end(name, EndReason::Stopped);
@@ -264,7 +258,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         }
         self.progress(name, WorkspaceStep::Stopping, None);
-        gated.stop().await.map_err(|e| e.to_string())?;
+        gated.stop().await?;
         if gated.ungated().stopped_by_force() {
             self.inner.problems.raise(
                 Problem::new(
@@ -416,7 +410,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         record: WorkspaceRecord,
         report: puddle_workspace::DeleteReport,
-    ) -> Result<(), String> {
+    ) -> Result<(), OpError> {
         let inner = &self.inner;
         self.progress(&record.id, WorkspaceStep::Checking, None);
         inner.launcher.close_browser(&record.id).await;
@@ -424,8 +418,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .workspaces
             .delete(&inner.runtime, &record.id, &report.confirm())
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         self.quiesce(&record.id, true).await;
         self.inner.reports.forget(&record.id);
         inner.kit.shell_init().forget(&record.id);

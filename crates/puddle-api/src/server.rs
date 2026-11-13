@@ -37,7 +37,7 @@ use crate::learned::{LearnedService, NoLearned};
 use crate::network_health::{NetworkHealthService, NoNetworkHealth};
 use crate::ports::{NoPorts, PortsService};
 use crate::proxy_sign_in::{NoProxySignIns, ProxySignInService};
-use crate::remote::{NetworkListener, PublicHost, RemoteError, RemoteServing};
+use crate::remote::{NetworkListener, PublicHost, Remote, RemoteError, RemoteServing};
 use crate::repos::{NoRepos, RepoService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
@@ -84,9 +84,10 @@ pub struct ApiConfig {
     pub ui: Option<Arc<dyn UiAssets>>,
     /// Remote serving: the public names a reverse proxy may use. `None` (the default) keeps
     /// exactly the loopback behaviour.
-    pub remote: Option<RemoteServing>,
-    /// A second listener for a reverse proxy on another machine. Needs [`Self::remote`].
-    pub network_listener: Option<NetworkListener>,
+    ///
+    /// Its optional [`NetworkListener`] is the second listener, for a reverse proxy on another
+    /// machine.
+    pub remote: Option<Remote>,
     /// Whether users other than the owner may sign in. Off by default: everything belongs to the
     /// one owner.
     pub multi_user: bool,
@@ -105,7 +106,6 @@ impl Default for ApiConfig {
             max_connections: 256,
             ui,
             remote: None,
-            network_listener: None,
             multi_user: false,
         }
     }
@@ -448,8 +448,9 @@ async fn bind_network(
     network: &NetworkListener,
     endpoints: &PuddleEndpoints,
 ) -> Result<BoundNetwork, ServeError> {
-    let requested = SocketAddr::new(network.interface, network.port);
-    let tls = tls_acceptor(&network.tls)?;
+    let endpoint = network.endpoint();
+    let requested = SocketAddr::new(endpoint.interface(), endpoint.port());
+    let tls = tls_acceptor(network.tls())?;
     let bound = async {
         let listener = TcpListener::bind(requested).await?;
         let addr = listener.local_addr()?;
@@ -465,7 +466,7 @@ async fn bind_network(
         listener,
         addr,
         admission: Admission::Proxies {
-            allowed: network.allowed_proxies.clone(),
+            allowed: endpoint.allowed_proxies().to_vec(),
             tls,
         },
         registration,
@@ -500,18 +501,14 @@ fn name_blocks(remote: &RemoteServing, endpoints: &PuddleEndpoints) -> Vec<NameR
     blocks
 }
 
-/// Binds the network listener when one is configured, which needs remote serving.
+/// Binds the network listener when remote serving has one.
 async fn bind_network_for(
     config: &ApiConfig,
     endpoints: &PuddleEndpoints,
 ) -> Result<Option<BoundNetwork>, ServeError> {
-    match (&config.remote, &config.network_listener) {
-        (None, Some(_)) => Err(RemoteError::ListenerWithoutRemote.into()),
-        (_, Some(network)) => {
-            network.check()?;
-            Ok(Some(bind_network(network, endpoints).await?))
-        }
-        (_, None) => Ok(None),
+    match config.remote.as_ref().and_then(Remote::network_listener) {
+        Some(network) => Ok(Some(bind_network(network, endpoints).await?)),
+        None => Ok(None),
     }
 }
 
@@ -580,8 +577,8 @@ impl ApiServer {
         let network = bind_network_for(&config, &services.endpoints).await?;
         let fronts_names = config.remote.as_ref().map(|remote| {
             (
-                front_registrations(remote, &services.endpoints),
-                name_blocks(remote, &services.endpoints),
+                front_registrations(remote.serving(), &services.endpoints),
+                name_blocks(remote.serving(), &services.endpoints),
             )
         });
         let (stop, shutdown) = watch::channel(false);
@@ -628,10 +625,9 @@ impl ApiServer {
             let guard = sign_in
                 .iter()
                 .fold(guard, |guard, sign_in| guard.signing_in(sign_in.clone()));
-            config
-                .remote
-                .iter()
-                .fold(guard, |guard, remote| guard.remote(remote, listener))
+            config.remote.iter().fold(guard, |guard, remote| {
+                guard.remote(remote.serving(), listener)
+            })
         };
         let router = build_router(
             state.clone(),

@@ -10873,7 +10873,7 @@
         "tags": [
           "terminals"
         ],
-        "summary": "Opens the terminal's socket. A browser cannot send `Authorization` on a WebSocket, so on this\none path the single-use ticket stands in for the token; the `Host` and `Origin` checks run\nbefore it is read.",
+        "summary": "Opens the terminal's socket. A browser cannot send `Authorization` on a WebSocket, so on this\none path the single-use ticket stands in for the token; the `Host` and `Origin` checks run\nbefore it is read, and the ticket is checked before the workspace is looked up, so a caller\nwithout one learns nothing about which workspaces exist.",
         "operationId": "terminal_socket",
         "parameters": [
           {
@@ -10902,7 +10902,7 @@
             "description": "the socket: binary messages carry the terminal's bytes (at most 64 KiB), text messages are JSON (`resize`, `ack` from the page; `ended` from the host)"
           },
           "401": {
-            "description": "a wrong, used or late ticket",
+            "description": "a wrong, used or late ticket, or a loopback ticket used under a public name",
             "content": {
               "application/json": {
                 "schema": {
@@ -10913,16 +10913,6 @@
           },
           "403": {
             "description": "forbidden origin",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "no such workspace",
             "content": {
               "application/json": {
                 "schema": {

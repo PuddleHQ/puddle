@@ -796,10 +796,8 @@ impl Store {
                     (SELECT workspace_id FROM workspace_owners WHERE user_id = ?2))
              ORDER BY last_seen DESC, id DESC"
         ))?;
-        let rows = stmt.query_map(
-            params![workspace.map(WorkspaceId::as_str), user.map(UserId::get)],
-            raw_pending,
-        )?;
+        let args = params![workspace.map(WorkspaceId::as_str), user.map(UserId::get)];
+        let rows = stmt.query_map(args, raw_pending)?;
         rows.map(|raw| pending_from_raw(&raw?)).collect()
     }
 

@@ -82,15 +82,17 @@ pub async fn serve(config: SshAgentConfig, upstream: Arc<Upstream>) {
 
 /// Carries each client of `listener` to the host until the listener fails.
 pub async fn accept(listener: UnixListener, upstream: Arc<Upstream>) {
-    let error = loop {
+    loop {
         match listener.accept().await {
             Ok((client, _)) => {
                 tokio::spawn(relay(client, Arc::clone(&upstream)));
             }
-            Err(e) => break e,
+            Err(e) => {
+                tracing::warn!(error = %e, "the ssh agent socket stopped accepting");
+                return;
+            }
         }
-    };
-    tracing::warn!(error = %error, "the ssh agent socket stopped accepting");
+    }
 }
 
 /// One client: an `ssh-agent` stream to the host, its bytes both ways until either side ends.

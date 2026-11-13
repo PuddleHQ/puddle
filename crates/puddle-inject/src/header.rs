@@ -21,7 +21,7 @@ pub(crate) fn authorization(credential_host: &str, token: &str) -> SecretValue {
     if credential_host == "dev.azure.com" {
         return match azure_devops_scheme(token) {
             TokenScheme::Bearer => SecretValue::new(prefixed("Bearer ", token)),
-            _ => basic("", token),
+            TokenScheme::BasicPassword => basic("", token),
         };
     }
     basic(TOKEN_USER, token)

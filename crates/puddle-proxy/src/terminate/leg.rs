@@ -195,7 +195,7 @@ pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made,
             let pass_through = match err {
                 puddle_upstream::TlsConnectError::Certificate(_) => Some("server_certificate"),
                 puddle_upstream::TlsConnectError::Handshake(_) => Some("server_tls"),
-                _ => None,
+                puddle_upstream::TlsConnectError::InvalidName(_) => None,
             };
             return Err(ConnectError {
                 refusal: upstream_tls_refusal(&name, &err),

@@ -190,6 +190,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             root,
             editor_file,
             session_user,
+            ssh_agent: began.ssh_agent,
         };
         match inner.kit.plan(
             &state.image,
@@ -204,6 +205,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 start_folder: state.start_folder.as_ref(),
                 editor_file: state.editor_file.as_ref(),
                 session_user: state.session_user,
+                ssh_agent: state.ssh_agent,
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),

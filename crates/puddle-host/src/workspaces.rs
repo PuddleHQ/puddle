@@ -289,6 +289,8 @@ struct GuestState {
     /// The user sessions, clones and checks run as until the next start: the setting as of this
     /// start (a later change waits for the next one).
     session_user: SessionUser,
+    /// Whether the guest has its SSH agent socket: the switch as of this start.
+    ssh_agent: bool,
 }
 
 /// How long a terminal opened while its workspace starts waits for the boot hook.

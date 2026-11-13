@@ -46,6 +46,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             start_folder: guest.start_folder.as_ref(),
             editor_file: guest.editor_file.as_ref(),
             session_user: guest.session_user,
+            ssh_agent: guest.ssh_agent,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
         let report = kit

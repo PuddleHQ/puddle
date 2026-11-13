@@ -44,7 +44,9 @@ public final class ProbeStarter implements ApplicationStarter {
                     args.size() > 4 ? args.get(4) : "ssh"));
             worker.start();
             worker.join();
-            code = failures == 0 ? 0 : 1;
+            // The report's DONE line carries the verdict; the exit code only says the probe ran to the end,
+            // so the test can tell a step failing (listed in the report) from the probe not finishing.
+            code = 0;
         } catch (Throwable t) {
             t.printStackTrace();
             code = 2;

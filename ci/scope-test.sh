@@ -891,8 +891,10 @@ if 'hash:${PARTITION}/${PARTITIONS}' not in wtext2 or "PARTITIONS: ${{ strategy.
     bad.append("windows: the partitions must split by nextest `--partition hash:` over strategy.job-total")
 up = [s for s in wj["test-build"]["steps"] if s.get("uses", "").startswith("actions/upload-artifact")]
 dn = [s for s in wj["tests"]["steps"] if s.get("uses", "").startswith("actions/download-artifact")]
-if len(up) != 1 or len(dn) != 1 or up[0]["with"]["name"] != dn[0]["with"]["name"]:
-    bad.append("windows: the build job's upload and the partition job's download must name the same artifact")
+if len(up) != 1 or len(dn) != 2 or {s["with"]["name"] for s in dn} != {up[0]["with"]["name"]}:
+    bad.append("windows: the build job's upload and the partition job's download (first try and second try) must name the same artifact")
+if [s.get("timeout-minutes") for s in dn] != [8, 8] or dn[0].get("continue-on-error") is not True or not dn[1]["name"].endswith("(second try)"):
+    bad.append("windows: the archive download needs a step limit, continue-on-error and a second try (a hung download must not hold the job to its limit)")
 if "cargo nextest archive --workspace --all-features --locked --profile ci" not in wtext2:
     bad.append("windows: the build job must archive the workspace with --all-features --locked --profile ci")
 if 'export RUSTUP_TOOLCHAIN' not in wtext2 or "rust-toolchain.toml" not in str(wj["tests"]["steps"]):

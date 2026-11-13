@@ -251,14 +251,36 @@ jobs:
           ci/fetch-msb.sh "$(cygpath -u "$RUNNER_TEMP")/msb"
           echo "PUDDLE_VM_RUNTIME_DIR=$dir\\msb" >> "$GITHUB_ENV"
           echo "PUDDLE_VM_ROOT=$dir\\pvm" >> "$GITHUB_ENV"
+      # A hung download would hold the job until its job limit (the same stall cost vm-linux 39 minutes once). Each download gets a step
+      # limit (the archive 8 minutes, the agent 3; the slowest seen on this runner is under 2), then one more try that fails the job when it also fails.
       - name: the test archive from the build job
+        id: archive
         if: steps.whp.outputs.ok == 'true'
+        timeout-minutes: 8
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-build
+          path: ${{ runner.temp }}/bundle
+      - name: the test archive from the build job (second try)
+        if: steps.whp.outputs.ok == 'true' && steps.archive.outcome != 'success'
+        timeout-minutes: 8
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-windows-build
           path: ${{ runner.temp }}/bundle
       - name: the guest agent from the agent job
+        id: agent
         if: steps.whp.outputs.ok == 'true'
+        timeout-minutes: 3
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-agent
+          path: ${{ runner.temp }}/bundle
+      - name: the guest agent from the agent job (second try)
+        if: steps.whp.outputs.ok == 'true' && steps.agent.outcome != 'success'
+        timeout-minutes: 3
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-windows-agent
@@ -397,13 +419,33 @@ jobs:
           echo "PUDDLE_VM_BROWSER_MODULES=$(cygpath -w "$PWD")\\ui\\node_modules" >> "$GITHUB_ENV"
           echo "PUDDLE_VSCODE_OUT=$(cygpath -w "$RUNNER_TEMP")\\vscode-out" >> "$GITHUB_ENV"
       - name: the test archive from the build job
+        id: archive
         if: steps.whp.outputs.ok == 'true'
+        timeout-minutes: 8
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-build
+          path: ${{ runner.temp }}/bundle
+      - name: the test archive from the build job (second try)
+        if: steps.whp.outputs.ok == 'true' && steps.archive.outcome != 'success'
+        timeout-minutes: 8
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-windows-build
           path: ${{ runner.temp }}/bundle
       - name: the guest agent from the agent job
+        id: agent
         if: steps.whp.outputs.ok == 'true'
+        timeout-minutes: 3
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vm-windows-agent
+          path: ${{ runner.temp }}/bundle
+      - name: the guest agent from the agent job (second try)
+        if: steps.whp.outputs.ok == 'true' && steps.agent.outcome != 'success'
+        timeout-minutes: 3
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vm-windows-agent

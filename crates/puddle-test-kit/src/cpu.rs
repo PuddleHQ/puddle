@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! CPU time of the calling thread, for bars on how much work a call does rather than how long it took.
 //!
 //! A wall-clock bar on a synchronous call measures the scheduler as well: on a starved machine the

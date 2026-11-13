@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Guest virtual CPU count. The setting itself (a global default with per-sandbox overrides)
 //! lives in `puddle-settings`.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git over HTTPS end to end on real microVMs (K on Linux KVM, W on Windows WHP), through the
 //! host's own wiring: the real Git injector over the host's store and secrets, the per-workspace
 //! CA, the live decrypt set and the egress proxy, to a fake Git host (the real `git http-backend`
@@ -108,6 +108,7 @@ fn identity(label: &str, credentials: Vec<CredentialBinding>) -> IdentityDraft {
 
 fn allow(vm: &VmHost, sandbox: &WorkspaceId, hosts: &[&str]) {
     for host in hosts {
+        puddle_store::testing::own(vm.host.store(), &sandbox);
         vm.host
             .store()
             .add_rule(&NewRule {

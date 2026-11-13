@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A sandbox whose stored configuration cannot be read is refused, never read as "no volumes".
 //!
 //! The configuration lives in msb's database. Both tests damage it there, with the VM up or

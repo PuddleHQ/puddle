@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Win32 security helpers: the current user's SID, security descriptors built from SDDL, and
 //! owner-only files and folders. The crate's only unsafe code; every raw resource is owned by a
 //! guard that frees it.

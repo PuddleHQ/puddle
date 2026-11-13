@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The first request line inside a `CONNECT` tunnel, for the audit.
 //!
 //! Node `fetch` (`NODE_USE_ENV_PROXY`) and Yarn Berry send a plain `http://` request as

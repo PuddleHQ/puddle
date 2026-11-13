@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The company-network readers over fixtures: literal snapshots of a home network, a corporate VPN
 //! and a private-access client, so no test depends on the machine it runs on.
 

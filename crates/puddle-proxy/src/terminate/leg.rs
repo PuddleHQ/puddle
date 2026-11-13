@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The upstream leg of a terminated connection: connecting to the real server with the protocols
 //! the guest offered, and the connections it yields.
 //!

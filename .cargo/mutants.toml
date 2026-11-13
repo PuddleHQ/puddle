@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # cargo-mutants settings (docs/STANDARDS.md, "Mutation testing"; run through scripts/mutants.sh).
 #
 # A surviving mutant is fixed with a better test, never by excluding the code. The one allowed

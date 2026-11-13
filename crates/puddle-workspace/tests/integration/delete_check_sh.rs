@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real `guest/delete-check.sh` under dash, bash and `busybox sh` (the Alpine guest's shell), against real git repositories in a
 //! temp dir that plays the volume root, driven through [`Workspaces::check_delete`] on the fake
 //! (its exec handler runs the script on the host). Needs `git` on the host.

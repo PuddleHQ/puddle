@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! An in-memory [`WorkspaceService`] for tests and the UI fixture, with scripted progress.
 //!
 //! It follows the trait's contract the way the real service does: a call checks the request,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The vsock egress path under load, on a real microVM (K on Linux KVM, W on Windows WHP): 256 parallel
 //! downloads from a host-side server go through the guest agent, the vsock, and the host's proxy, and
 //! every one must complete with every byte and none may go 5 s without progress (the bar of the
@@ -70,6 +70,7 @@ async fn rig(tag: &str, gate: usize) -> Rig {
         start_vm_host_platform(tag, internet.options.clone(), &internet.platform, |_| {}).await;
     let name = format!("{}-{tag}", host.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(host.host.store(), &sandbox);
     host.host
         .store()
         .add_rule(&NewRule {

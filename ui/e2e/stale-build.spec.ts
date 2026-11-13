@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A tab that runs another build than the server serves reloads once into the server's build. The
 // server's answer is rewritten in the browser to name a newer build, as it would after an upgrade;
 // everything else is the real app against the fixture backend. Waits are on conditions.

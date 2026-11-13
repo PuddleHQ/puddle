@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The network-health report, kept current: read at start, read again on `network_changed` and
 // after a resync (`lagged`, reconnect). Reads that overlap share one run and one more follows,
 // so the last answer always reflects the last event.

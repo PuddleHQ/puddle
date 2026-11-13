@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # VM tests on Linux KVM (tier K): crate puddle-vm-tests under `nextest --profile vm`, real
 # msb microVMs on the hosted runner. It runs on every pull request to develop (a required check there) and to main,
 # on every merge queue run, by hand on any branch (`gh workflow run vm-linux.yml --ref <branch>`) and

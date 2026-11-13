@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A real API on loopback and a raw HTTP/1.1 client, so tests control every header byte (a
 //! normal client would fix up `Host` and refuse odd requests).
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle doctor` on a real host with the real runtime (tiers K and W): all green with
 //! the runtime CI installed, including a test boot, in under 30 s; and a missing runtime, another
 //! version and a runtime file this user may not run (a deny ACE on Windows, no execute bit on

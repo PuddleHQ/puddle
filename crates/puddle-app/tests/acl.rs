@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The main window has one Tauri permission: the folder dialog.
 //!
 //! Two layers: the capability files say it (static), and Tauri's own authority enforces it

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The settings screen against the real API on the fixture backend (in-memory settings). Each
 // test has a backend of its own, reset before it. Waits are on conditions (a response, a
 // focus), never on key order or time.

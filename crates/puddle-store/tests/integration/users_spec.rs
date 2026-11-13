@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Several users in one store: each user's rules, rule sets, switches, rules on method and path,
 //! identities, Git defaults, environment and audit records belong to them alone, and the rules of
 //! one user never decide a request of another user's workspace.

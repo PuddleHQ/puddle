@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Users and who owns which workspace. Credentials are not here: see [`crate::AccountSecrets`].
 
 use std::collections::HashMap;

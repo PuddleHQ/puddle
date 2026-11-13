@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which hashes of the runtime files this build expects, shared by the build script and
 //! `tests/digests.rs`: read from the pin list for the tag `v<BUILT_FOR>` and the target.
 

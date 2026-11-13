@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real route to a Git host: Puddle's own connection through the company proxy chain, TLS
 //! checked the way the host's own programs check it, then one HTTP/1.1 request.
 //!

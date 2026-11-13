@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workloads of a developer's Docker, run by the session user against a real `dockerd` in a real
 //! microVM, with the proxy as the only way out: a `BuildKit` build whose `RUN` step fetches from a
 //! site, a container's published port reached from this computer through a forward, two containers

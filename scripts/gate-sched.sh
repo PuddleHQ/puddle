@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Runs a list of quality gates, the independent ones at the same time. Sourced by scripts/check.sh
 # and scripts/check-sets-test.sh (which stubs the gates); the caller defines
 #   run_gate <gate>     runs one gate; its exit status is the verdict

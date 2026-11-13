@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The non-root session user on a real microVM (K on Linux KVM, W on Windows WHP), with the real
 //! tools at their widest: a new workspace's user is `agent`, becomes root with `sudo`, installs
 //! system packages through `sudo`, runs Claude Code with `--dangerously-skip-permissions` (which
@@ -89,6 +89,7 @@ async fn vm_radar_session_user_agent_runs_the_real_tools_at_their_widest_and_a_s
     let name = format!("{}-sesu", vm.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     for site in LIVE {
+        puddle_store::testing::own(vm.host.store(), &sandbox);
         vm.host
             .store()
             .add_rule(&NewRule {

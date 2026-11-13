@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One connection as the proxy reports it for the audit (`docs/spec/rules.md` R-24).
 //!
 //! The proxy builds a [`ConnectionEvent`] and hands it to a [`ConnectionLog`]; the store

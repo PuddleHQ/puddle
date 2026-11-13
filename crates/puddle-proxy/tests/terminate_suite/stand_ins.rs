@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of secret stand-ins on terminated connections: the real value reaches the real server
 //! and nothing else, a stand-in toward any other host goes out unchanged and is flagged, and
 //! another workspace's stand-in means nothing.

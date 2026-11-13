@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The in-memory rule index and the matching rules R-5 to R-7 and R-39. Pure: no I/O, no clock.
 
 use std::cmp::Reverse;

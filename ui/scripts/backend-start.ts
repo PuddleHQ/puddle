@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Waiting for a spawned fixture backend to be ready, and saying why when it is not. Kept apart
 // from e2e/fixture.ts so a vitest test can drive it with fake children.
 import { type ChildProcess } from "node:child_process";

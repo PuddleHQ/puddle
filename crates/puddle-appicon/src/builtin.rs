@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The built-in duck icons, drawn from paths so they are sharp at any size.
 //!
 //! The duck is the one in the app's sidebar (`DuckMark.svelte`), in the same 64 by 64 space and

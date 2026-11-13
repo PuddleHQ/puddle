@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Every finding, worded exactly: the report for each faked machine is compared with a file in
 //! `tests/snapshots/` (text, then JSON). After a deliberate wording change, regenerate with
 //! `PUDDLE_UPDATE_SNAPSHOTS=1 cargo nextest run -p puddle-doctor --test snapshots` and review

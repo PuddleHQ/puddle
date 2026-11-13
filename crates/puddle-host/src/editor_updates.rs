@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Asks each running workspace on Microsoft's editor server to switch to a newer build, at a
 //! moment when no window is connected to it.
 //!

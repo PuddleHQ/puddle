@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/fork-upkeep-issue.sh with a stub `gh` (records its write calls, answers `issue list` from a
 # variable). Cases: findings with no open issue open one whose body is the report plus the run link; findings
 # with an open issue rewrite its body and open no second one; a clean report closes the open issue and leaves

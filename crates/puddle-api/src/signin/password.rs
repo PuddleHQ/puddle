@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Password hashing: Argon2id, version 0x13, in the OWASP minimum configuration (19 MiB of
 //! memory, 2 passes, 1 lane), a fresh 16-byte random salt per password, and the parameters kept
 //! inside each stored hash (PHC string), so raising them later still verifies the old hashes.

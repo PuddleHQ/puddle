@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The shell init of a workspace: a script the workspace's login shells source, edited in the UI.
 //! The host's copy is the only source of truth; the workspace sees a read-only copy.
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Remote serving over real HTTP: the public names, the credential rule per `Host`, fetch
 //! metadata, the opener policy, the registry entries that keep guests out, and the TLS listener
 //! for a reverse proxy on another machine.

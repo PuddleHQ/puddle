@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Keeps the tracking issue of the weekly fork upkeep run (.github/workflows/fork-upkeep.yml). Usage:
 #   ci/fork-upkeep-issue.sh <report.md> <exit code of ci/fork-upkeep.py report> <run url>
 # Exit code 2 (findings: a conflict, an unlabelled commit, a stale label) opens the issue, or rewrites its body

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The agent's settings, from environment variables (the boot hook sets them).
 //!
 //! | Variable | Default | |

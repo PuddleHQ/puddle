@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Ending the editor servers' extension hosts when the host asks (the sandbox's editor window
 //! closed), and sweeping debuggees nobody can reach any more.
 //!

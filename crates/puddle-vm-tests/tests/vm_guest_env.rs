@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The VM bar for the guest proxy config (tier K): with Puddle's boot-time proxy config (`puddle-guest-env`) in a tools
 //! image, each tool by name reaches a local fixture through the proxy route.
 //!

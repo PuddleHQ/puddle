@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Who may do what: the principal behind a request, the action and resource every route
 //! declares, and the one check between the guard and the handler.
 //!

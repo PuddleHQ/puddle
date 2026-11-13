@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the environment screens know about variables and secrets: what a name and a host list look
 // like before they are sent (the service has the last word and its reason is shown as it is), and
 // the sentences the rows and the forms use.

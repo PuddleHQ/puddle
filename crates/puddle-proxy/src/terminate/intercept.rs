@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Decrypting every host: the switch, the hosts that are never decrypted, and the hosts a
 //! workspace's tools turned out not to accept Puddle's certificate for.
 //!

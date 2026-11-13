@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Test support: keys made from a fixed seed, and the bytes an SSH server, an SSH client and an
 //! agent client send, so the filter and the observer are tested without a real `ssh`.
 

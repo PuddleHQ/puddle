@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeRules, rule } from "#lib/testing/fake-rules.ts";
 import { FakeSource } from "#lib/testing/fake-inbox.ts";

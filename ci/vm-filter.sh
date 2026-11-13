@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The nextest filterset of the VM tests a run executes, for the `vm` profile (vm-linux.yml, vm-windows.yml).
 # Real-machine tests (vm_machine_*) run in ci/windows-e2e.ps1, and the real-tool radar (vm_radar_*) in full-test.yml (the login-tool ones, vm_radar_login_tools_*, also nightly in live-contracts.yml; the lab Forgejo one, vm_radar_forgejo_*, in lab-forgejo.yml),
 # not in the VM workflows. The soak (vm_soak_*, a 15-minute idle SSH session) and the performance bars (vm_perf_*, wall-clock

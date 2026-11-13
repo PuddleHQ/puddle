@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Linux gates on every push to develop/main, every pull request and every merge queue run
 # (docs/STANDARDS.md, "CI").
 # Four jobs run side by side so a run takes about as long as the longest: the Rust tests with coverage,
@@ -348,6 +348,19 @@ jobs:
         id: git-env
         if: ${{ !cancelled() && needs.scope.outputs.light != 'true' }}
         run: scripts/check.sh git-env
+      # A real Secret Service for the secret-store tests (ci/with-keyring.sh). With the packages installed
+      # but no unlocked keyring, those tests would find a Secret Service and fail on its first write.
+      - name: install the keyring packages
+        if: ${{ !cancelled() }}
+        run: ci/apt-retry.sh sudo apt-get install -y --no-install-recommends gnome-keyring dbus
+      # The contract suite alone, first, so a keyring problem fails fast and by name; the coverage run
+      # below runs it again together with every other test that uses the operating-system store.
+      - name: secret-store contract on the real keyring (gnome-keyring under dbus-run-session)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        env:
+          PUDDLE_REQUIRE_OS_CREDENTIAL_STORE: "1"
+        run: ci/with-keyring.sh cargo test --locked -p puddle-secrets --test store_contract -- --nocapture
       - name: tests with coverage gate
         if: ${{ !cancelled() }}
         env:
@@ -365,13 +378,14 @@ jobs:
           PUDDLE_REQUIRE_VSOCK: "1"
           PUDDLE_REQUIRE_BUSYBOX: "1"
           PUDDLE_REQUIRE_NON_ROOT: "1"
+          PUDDLE_REQUIRE_OS_CREDENTIAL_STORE: "1"
         run: |
           # The guard logs free space during the build and tests and, under 5 GB, stops cargo and the tests with the
           # sizes in the job summary, so a filling runner ends the job readable.
           ci/disk-watch.sh guard coverage &
           guard=$!
           trap 'kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null || true' EXIT
-          scripts/check.sh coverage
+          ci/with-keyring.sh scripts/check.sh coverage
           {
             echo '### Coverage'
             echo '```'

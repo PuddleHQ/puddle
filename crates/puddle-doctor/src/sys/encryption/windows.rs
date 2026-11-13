@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Windows: the shell's `System.Volume.BitLockerProtection` property (the one Explorer shows),
 //! which answers 0 ("unknown") unless the process is elevated, so a normal doctor run reports the
 //! drive as unknown; the `BitLocker` WMI classes and `manage-bde` need elevation too, and no other

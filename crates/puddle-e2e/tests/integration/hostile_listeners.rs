@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest tier W, a sweep of the process's own listening sockets: everything Puddle's host
 //! side listens on is loopback only, and every such listener is in the endpoint registry, which is
 //! what makes the proxy refuse a guest that dials it (so a listener nobody registered would be

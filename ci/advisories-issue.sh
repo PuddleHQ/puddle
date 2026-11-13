@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The nightly advisory check (ci.yml, jobs `advisories` and `advisories-npm`, on their schedule). Usage:
 #   ci/advisories-issue.sh rust    runs `cargo deny check advisories` (RustSec)
 #   ci/advisories-issue.sh npm     runs `node scripts/audit.ts --json` in ui/ (npm audit, minus ui/audit-exceptions.json)

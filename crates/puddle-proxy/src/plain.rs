@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Plain HTTP: absolute-form `http://` requests, any number of them on one guest connection.
 //!
 //! Each request is handled as if it had come on a connection of its own: decided by the rules for

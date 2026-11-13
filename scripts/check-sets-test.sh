@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of the gate sets in scripts/check.sh, through `--list` (which runs no gate): `all` is
 # every gate, `pre-push` is `all` minus ui-e2e, advisories and ui-audit in the same order plus diff-coverage-fast after the fast gates, `fast` is a prefix of both, a
 # single gate is its own set, and the pre-push hook asks for the `pre-push` set. Not seen: that a

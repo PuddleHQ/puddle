@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest cases on the whole host (K on Linux KVM, W on Windows WHP): a root process in
 //! the guest that does not go through Puddle's agent but speaks to the route's vsock port with a
 //! yamux client of its own, the way a guest that killed the agent could.
@@ -135,6 +135,7 @@ async fn workspace_that_reaches_127_0_0_1(
     name: &str,
 ) -> WorkspaceId {
     let sandbox = WorkspaceId::new(name).unwrap();
+    puddle_store::testing::own(host.store(), &sandbox);
     host.store()
         .add_rule(&NewRule {
             scope: Scope::Workspace(sandbox.clone()),

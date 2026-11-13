@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The kept logins of a workspace on its settings tab (fixture scenario `lived-in`): the list, its
 // empty and unreadable-store states, and forgetting one by keyboard. A name from a hostile source
 // is drawn as text and wraps inside its row. Layout is checked by computed styles and box sizes,

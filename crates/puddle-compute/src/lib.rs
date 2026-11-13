@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Compute plane: the traits every microVM runtime implements, and the types they take.
 //!
 //! Other crates code against [`Runtime`] and [`Sandbox`], never against the msb SDK; the SDK

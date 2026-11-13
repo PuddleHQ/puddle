@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What every sandbox is built from: Puddle's boot files, the egress route and the guest's proxy
 //! and trust configuration.
 

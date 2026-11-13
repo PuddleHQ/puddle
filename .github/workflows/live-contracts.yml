@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Contract tests against live third-party services, with credentials made up for the test (no account, no
 # secret). They check what the services really answer, which the scripted tests cannot:
 #   azure-devops  the real Azure DevOps refusing a made-up token (crates/puddle-repos/tests/live_azure.rs,

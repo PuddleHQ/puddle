@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A phone-width window (390 px) must show every screen without a horizontal scroll bar. The
 // check reads box sizes, not pixels: the page's scroll width against its client width, and on a
 // failure the elements that stick out, so the message names the culprit.

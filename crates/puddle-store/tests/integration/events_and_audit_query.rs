@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The events the store emits for every change, and the filtered audit queries behind
 //! `GET /api/audit`.
 #![expect(

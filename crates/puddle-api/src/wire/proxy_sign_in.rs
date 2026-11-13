@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Signing in to a company proxy that asks for a user name and password (Basic). The password is
 //! written once and never comes back: no response carries it.
 

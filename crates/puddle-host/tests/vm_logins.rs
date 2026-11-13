@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The hostile cases of login capture on a real microVM (K on Linux KVM, W on Windows WHP): what a
 //! guest that is root can do to the login machinery from inside, with the real proxy, the real
 //! agent and a fake token endpoint behind the company proxy.
@@ -176,6 +176,7 @@ async fn rig(tag: &str, workspaces: &[&str]) -> Rig {
         let name = format!("{}-{tag}-{suffix}", vm.settings.prefix.as_str());
         let workspace = WorkspaceId::new(&name).unwrap();
         for site in SITES {
+            puddle_store::testing::own(vm.host.store(), &workspace);
             vm.host
                 .store()
                 .add_rule(&NewRule {

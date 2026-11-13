@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Terminals over a real WebSocket: the ticket, the limits, the messages and the ends.
 
 use futures_util::{SinkExt as _, StreamExt as _};

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The live events the inbox applies, read defensively: a field that is missing or has the wrong
 // type drops the event instead of corrupting the list. `pending_opened` carries the API's short
 // form of a request (`PendingSummary`, with its registrable domain); it is widened here to the

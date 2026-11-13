@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Real `git` against the proxy and the real injector: the messages a refusal carries are what
 //! the person at the terminal reads, and a request git sends with its own header behaves as it
 //! would without Puddle.

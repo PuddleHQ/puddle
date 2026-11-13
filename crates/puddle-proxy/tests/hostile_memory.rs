@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The proxy's memory does not follow what a hostile guest sends: twelve guests at once push a
 //! 10 MB request line or 100 000 header lines at one route, and the proxy's heap (counted by this
 //! test binary's allocator) stays far below what buffering one of the heads would take. The guests

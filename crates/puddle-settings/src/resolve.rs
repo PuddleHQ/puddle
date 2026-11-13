@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Effective values: a workspace's override over the global value over Puddle's built-in default.
 
 use puddle_types::{CpuCount, LocalCategory, MemoryMib};

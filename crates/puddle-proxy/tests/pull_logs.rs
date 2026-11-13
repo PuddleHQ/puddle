@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The image-pull proxy never logs its token (STANDARDS §7). Alone in its test binary, so
 //! the global subscriber sees every thread.
 #[path = "integration/pull_support/mod.rs"]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The Identities screens against the real API on the fixture backend, scenario `git-identities`:
 // two identities (Work: gh account tijs-work for acme and acme-labs plus a Git credential for
 // dev.azure.com/contoso that is signed out; Personal: gh account tijs-demo for the rest of

@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   // What a screen says when a read failed. Before the first successful read it replaces the
   // content; after one (`stale`) it sits above what was read earlier, which may be out of date.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The create form with a list of repositories, on the fixture backend (scenario `lived-in`): rows
 // added and removed by keyboard, a directory clash flagged before the submit, the progress line
 // naming each clone, and the notice for a clone that failed while the create still finished.

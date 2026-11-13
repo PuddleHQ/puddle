@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A one-image TLS registry over HTTP/1.1 (one request per connection) that records what it saw,
 //! for the tests that pull through the pull proxy.
 #![expect(

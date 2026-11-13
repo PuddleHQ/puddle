@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The sandbox side of the corporate-lab tests: the real guest agent, the real proxy (SQLite
 //! rules and audit) and upstream chaining over a chosen OS proxy layer, plus the small clients
 //! and servers around them. The fixtures themselves are `puddle_e2e::lab`.

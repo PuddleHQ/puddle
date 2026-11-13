@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The checks of the `dns_udp_datagram` and `dns_tcp_stream` cargo-fuzz targets: how the stub reads
 //! its two transports. UDP goes through a real socket on the loopback address (the receive buffer is the
 //! length check); TCP goes through an in-memory stream, because a server that closes with unread bytes

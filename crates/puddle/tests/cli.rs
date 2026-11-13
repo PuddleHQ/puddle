@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests: run the built `puddle` binary as a user would.
 #![expect(
     clippy::expect_used,

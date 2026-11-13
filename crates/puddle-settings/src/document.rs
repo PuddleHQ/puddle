@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reading and writing settings documents: version check, migrations, unknown fields.
 
 use std::collections::BTreeMap;

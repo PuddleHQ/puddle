@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The hostile-guest cases: a root process in the guest tries to reach the network and every
 //! vsock address and port. They hold for any runtime, because the proxy is the only way out of a
 //! sandbox only if the runtime leaves no other.

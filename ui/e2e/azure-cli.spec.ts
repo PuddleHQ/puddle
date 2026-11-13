@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The Azure CLI credential against the real API on the fixture backend, scenario `azure-cli`: one
 // identity (Contoso) that reads the Azure CLI's token for contoso.onmicrosoft.com and whose `az`
 // is not signed in. Puddle starts no sign-in for it: the screens say what is missing and the exact

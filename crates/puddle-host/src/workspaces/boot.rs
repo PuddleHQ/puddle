@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Booting a workspace's sandbox and syncing git and editor state into it.
 
 use std::sync::Arc;

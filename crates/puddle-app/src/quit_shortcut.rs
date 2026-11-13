@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The quit shortcut's question in the operating system's own dialog. What it says and when it asks
 //! is [`crate::desktop::on_quit_pressed`], tested there; this is the part that needs the real
 //! window system (the dialog plugin shows an OS dialog, the test runtime has none).

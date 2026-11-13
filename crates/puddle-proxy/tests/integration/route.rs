@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests: a fake guest (yamux client with the agent's settings) on a real per-workspace endpoint
 //! (`puddle-ipc`), the real proxy behind it, an in-memory policy and local servers.
 #![expect(

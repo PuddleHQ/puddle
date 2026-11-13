@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the certificates step says: the development certificate (what Puddle knows about it) and
 // the company roots workspaces get. Words only; the page decides the layout.
 import type { components } from "#lib/api/schema.d.ts";

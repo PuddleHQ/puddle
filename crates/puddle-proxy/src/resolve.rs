@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Name lookups from the guest's stub DNS (the `resolve` stream).
 //!
 //! Clients that ignore proxy settings resolve a name and connect to the answer, which the guest's

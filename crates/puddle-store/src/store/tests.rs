@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use puddle_types::ConnectionEvent;
 
 use super::rows::{RawPending, RawRule, pending_from_raw, rule_from_raw};

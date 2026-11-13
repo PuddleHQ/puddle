@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The named steps of preparing, starting and shutting down, and the prepared host.
 
 use puddle_certs::CorporateRoots;

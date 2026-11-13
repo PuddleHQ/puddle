@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Stand-ins for the emulator and the socket of a terminal, and the two jsdom gaps the real emulator
 // meets (no `matchMedia`, no canvas).
 import type { SocketLike } from "#lib/terminal/session.svelte.ts";

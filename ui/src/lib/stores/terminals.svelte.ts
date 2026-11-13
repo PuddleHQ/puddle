@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the forwards map is read when a link is hovered or clicked, never by a template */
 // The page's terminals, by workspace: the sub-tabs of the Terminal tab, which one is in view and
 // the limits on how many are open. A terminal lives as long as the page: leaving the tab keeps it, a

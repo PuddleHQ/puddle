@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Replaces VS Code's `github` authentication provider (the built-in extension is switched off by the test) with one that
 // hands out the canary token in PUDDLE_CANARY_TOKEN, to anything that asks: the git extension's askpass in a Remote-SSH
 // guest asks through the window, and this is what the window answers. It runs on the Windows side (a "ui" extension).

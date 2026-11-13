@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The kill-on-close job object Puddle and every process it starts run in (Windows).
 //!
 //! [`contain_this_process`] creates one job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, puts the

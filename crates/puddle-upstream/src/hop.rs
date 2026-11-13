@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a route is made of: proxy addresses, hops, and the destination being routed.
 
 use std::fmt;

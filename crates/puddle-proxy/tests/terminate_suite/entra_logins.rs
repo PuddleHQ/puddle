@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A Microsoft Entra login through the real proxy: an `az`-style sign-in gets access tokens for four
 //! resources, a refresh token and an `id_token`, each over a thousand characters where Entra's
 //! are. The workspace holds stand-ins only; each is swapped for its own real token toward its

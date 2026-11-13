@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The development certificate's Windows side: the current user's `My` store (certificates with
 //! keys), the `Root` store (what is trusted, and the one place a trust request goes), and key
 //! export through CNG. Part of the crate's `unsafe`, like `windows.rs`.

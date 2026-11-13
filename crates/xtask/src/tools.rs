@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Running the external tools xtask drives: cargo (tree, cargo-about) and git.
 
 use std::collections::BTreeSet;

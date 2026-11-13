@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The browser editor's server: the agent starts code-server on the guest's loopback and keeps it
 //! running for as long as the agent runs.
 //!

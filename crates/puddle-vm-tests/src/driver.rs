@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The node half of a client, as a process: JSON lines in, one JSON line back per command.
 //!
 //! Shared by the browser client (`browser.rs`) and the desktop VS Code client (`vscode.rs`); each

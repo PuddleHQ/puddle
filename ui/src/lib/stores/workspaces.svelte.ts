@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the counter map here is bookkeeping that no template reads, so it needs no reactivity */
 // The workspace screens' state: the list, what each one is doing (progress steps), the last
 // out-of-memory kill, and the actions (create, start, stop, reclaim, attach, delete).

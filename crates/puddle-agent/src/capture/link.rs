@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The interface the stand-in range lives on, and which interface counts as "outbound".
 //!
 //! A connect to a stand-in address needs a route before the redirect can act, so the agent keeps a

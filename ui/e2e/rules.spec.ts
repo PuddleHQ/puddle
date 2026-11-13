@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The rules screen against the real API on the fixture backend. Every test starts from the
 // `lived-in` scenario (7 rules: global and per workspace, permanent and expiring) on its worker's
 // own backend. The page clock is the fixture's, so relative times and expiries agree with the API.

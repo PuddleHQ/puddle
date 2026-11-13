@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! gRPC through a terminated HTTP/2 connection, with a tonic server behind it: unary calls,
 //! error statuses (trailers), bidirectional streaming that must not be buffered, and credentials.
 #![expect(

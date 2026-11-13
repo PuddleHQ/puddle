@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The system check the API serves: the [`DoctorService`] trait the route calls, [`HostDoctor`]
 //! that runs the real checks off the async threads one at a time, and [`FakeDoctor`] for tests
 //! and the UI fixture.

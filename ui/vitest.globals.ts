@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Setup for every test file: what the jsdom context lacks.
 import * as perfHooks from "node:perf_hooks";
 import * as webStreams from "node:stream/web";

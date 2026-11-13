@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git over HTTPS against a real Forgejo started for the run (`puddle_e2e::lab::Forgejo`), on a
 //! real microVM: the guest's own `git` clones, pushes a branch and deletes it through the host's
 //! wiring (the workspace's CA, the injector over the host's secret store, the repository table),
@@ -98,6 +98,7 @@ async fn vm_radar_forgejo_clones_pushes_and_deletes_a_branch_and_the_guest_never
     let vm = start_vm_host_platform("fgj", options, &platform, |_| {}).await;
     let name = format!("{}-fgj", vm.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
+    puddle_store::testing::own(vm.host.store(), &sandbox);
     vm.host
         .store()
         .add_rule(&NewRule {

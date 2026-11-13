@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guest CA trust for tools with their own bundles, on a real microVM (tier K on Linux KVM,
 //! W on Windows WHP).
 //!

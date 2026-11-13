@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of the nightly stress tooling with synthetic reports and stub tools: the three failure parsers of
 # flaky-report.py --stress, the row and the report of stress-yield.py (a known fixed flake is counted as known,
 # a new one as new, a run with no report as no-report), and ci/stress.sh itself (busy loops run during the tool

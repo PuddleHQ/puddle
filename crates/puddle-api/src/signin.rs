@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Browser sign-in: the first visitor makes the owner account, passwords, sessions and devices.
 //!
 //! # The session

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The filtered agent: what the guest's agent socket answers, one client connection at a time.
 //!
 //! A client must first bind its connection to a session (`session-bind@openssh.com`, which

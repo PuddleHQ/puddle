@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the injector decides for a request on a decrypted Git host: the workspace's own header
 //! passes unchanged, a request with none gets the credential of the identity that covers its
 //! owner, the repository table gates every push and (when asked) pull, and every refusal says

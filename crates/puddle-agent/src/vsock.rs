@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `AF_VSOCK` connect with a raised socket buffer (Linux guest only). One of the agent's two
 //! `unsafe` places (the other is [`crate::account::Account::run_as`]): std, tokio and tokio-vsock
 //! have no vsock sockets, and the buffer must be set before `connect`.

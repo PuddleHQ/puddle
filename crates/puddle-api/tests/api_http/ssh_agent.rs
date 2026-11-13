@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The filtered SSH agent's switch over real HTTP, against a real store.
 
 use serde_json::{Value, json};

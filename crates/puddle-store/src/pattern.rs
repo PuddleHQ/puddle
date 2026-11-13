@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rule patterns: an exact host, or a `.example.com` suffix (R-2 to R-4).
 
 use std::fmt;

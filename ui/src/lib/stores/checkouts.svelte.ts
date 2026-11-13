@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // One workspace's checkouts for its Repositories section: the listing of what is on the disk next
 // to the list's entries, and the four calls that change the list (add a clone, manage a checkout
 // that is already there, clone an entry again, remove an entry). The listing is read again when

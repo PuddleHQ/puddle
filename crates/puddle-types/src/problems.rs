@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Background problems the user should hear about: something Puddle does on its own (a sweep, a
 //! clean-up, a start-up step) failed, and nobody asked for it, so no request can carry the error.
 

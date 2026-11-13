@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real Claude Code, GitHub CLI and Copilot CLI signing in and refreshing from inside a real
 //! microVM, against the real services, with credentials made up for the test. No account is
 //! involved: a made-up code, refresh token or access token is refused, and the refusal is what
@@ -253,6 +253,7 @@ async fn vm_radar_login_tools_call_only_the_hosts_of_their_login_profile() {
     let name = format!("{}-tools", vm.settings.prefix.as_str());
     let workspace = WorkspaceId::new(&name).unwrap();
     for site in INSTALL_HOSTS.iter().chain(PROFILE_HOSTS) {
+        puddle_store::testing::own(vm.host.store(), &workspace);
         vm.host
             .store()
             .add_rule(&NewRule {

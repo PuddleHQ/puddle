@@ -4,7 +4,9 @@
 # and scripts/check-sets-test.sh (which stubs the gates); the caller defines
 #   run_gate <gate>     runs one gate; its exit status is the verdict
 #   before_concurrent <gate>...   one-time setup before the streams start (npm ci)
-# and may set `serial_gates`, the gates that run first, one at a time, stopping at the first failure.
+# and may set `serial_gates`, the gates that run first, one at a time, stopping at the first failure. A
+# gate of the run that is not named there (`hooks`, which only self-tests scripts) goes to the streams,
+# wherever it stands in the list.
 #
 # Streams (gate_stream): `rust` (compiles and tests; one cargo target dir, so these queue on its lock
 # anyway), `node` (the UI chain; no cargo until ui-e2e starts its fixture) and `misc` (secrets, deny,
@@ -26,7 +28,7 @@
 gate_stream() {
     case $1 in
     ui | ui-licences | ui-audit | ui-e2e) echo node ;;
-    secrets | deny | advisories | notices | quality) echo misc ;;
+    secrets | deny | advisories | notices | quality | hooks) echo misc ;;
     *) echo rust ;;
     esac
 }
@@ -131,10 +133,10 @@ gate_report() {
 run_gates() {
     gate_all=
     for g; do gate_in "$g" $gate_all || gate_all="$gate_all $g"; done
-    # The serial prefix: leading gates named in $serial_gates.
+    # The serial prefix: every gate named in $serial_gates, in the run's order.
     rest=
     for g in $gate_all; do
-        if [ -z "$rest" ] && gate_in "$g" ${serial_gates:-}; then
+        if gate_in "$g" ${serial_gates:-}; then
             run_gate "$g"
         else
             rest="$rest $g"

@@ -69,6 +69,6 @@ pub async fn reply_to(
                 }
             }
         }
-        _ => HostReply::Ignored,
+        HostMessage::Unknown => HostReply::Ignored,
     }
 }

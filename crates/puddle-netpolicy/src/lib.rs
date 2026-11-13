@@ -26,6 +26,7 @@
 //! - **Puddle's own listeners** are their own class, blocked whatever the toggles say.
 //! - A blocked request names the toggle that would allow it ([`block_message`]).
 #![forbid(unsafe_code)]
+#![warn(clippy::wildcard_enum_match_arm)]
 
 mod access;
 mod classify;

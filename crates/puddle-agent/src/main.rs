@@ -2,6 +2,7 @@
 //! `puddle-agent`: see the library docs. This file only wires the command line, logging and the
 //! runtime.
 #![forbid(unsafe_code)]
+#![warn(clippy::wildcard_enum_match_arm)]
 
 use std::process::ExitCode;
 

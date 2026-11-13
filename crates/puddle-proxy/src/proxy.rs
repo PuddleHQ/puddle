@@ -1358,10 +1358,6 @@ async fn admit_into(
                 refused_first.get_or_insert((addr.ip(), RefusedReason::Guard(reason)));
                 blocked.push(reason);
             }
-            other => {
-                tracing::warn!(%addr, verdict = ?other, "unknown address verdict, address dropped");
-                blocked.push(BlockReason::LocalAddress);
-            }
         }
     }
     event.refused_address = event.refused_address.or(refused_first);
@@ -1662,7 +1658,7 @@ fn allowed(
                     PendingOutcome::Unlisted => format!(
                         "{host} is not listed for approval in Puddle yet: this workspace already has more waiting requests than Puddle lists. Answer some of them in Puddle, then retry and this one is listed"
                     ),
-                    _ => format!(
+                    PendingOutcome::New(_) | PendingOutcome::Repeat(_) => format!(
                         "{host} is waiting for approval in Puddle; approve it there, then retry"
                     ),
                 },
@@ -1701,7 +1697,12 @@ fn block_at(request: &EgressRequest, reasons: &[BlockReason], ip: Option<IpAddr>
     tracing::info!(workspace = %request.workspace, %host, port = request.port, %reason, "blocked");
     let message = match reason {
         BlockReason::CompanyNetwork(signal) => company_network_message(host, ip, Some(signal)),
-        _ => block_message(host, &request.workspace, reasons),
+        BlockReason::SshUnsupported
+        | BlockReason::UdpUnsupported
+        | BlockReason::PuddleEndpoint
+        | BlockReason::LocalAddress
+        | BlockReason::LocalToggle(_)
+        | BlockReason::SettingsUnreadable => block_message(host, &request.workspace, reasons),
     };
     Refusal::new("403 Forbidden", message)
         .header("x-puddle-decision", "blocked")

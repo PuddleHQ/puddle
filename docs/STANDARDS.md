@@ -674,7 +674,11 @@ before opening the PR.
 The msb runtime they boot is the SDK's fork tag (`ci/msb-tag.sh`, read from `Cargo.lock`): release
 assets pinned by SHA-256 in `ci/msb-runtime.sha256`, on Linux too (`msb-linux-x86_64`, built by the
 fork's release job; a tag with none pinned is built from its pinned commit, with a warning). Bumping the fork tag: see the comment above the SDK lines in
-the root `Cargo.toml`; `puddle-runtime`'s expected version follows from the lock.
+the root `Cargo.toml`; `puddle-runtime`'s expected version follows from the lock. The same pins are built into
+Puddle (`puddle-runtime`'s build script): at start-up `BundledRuntime::open` hashes `msb` and the firmware and refuses
+any other bytes, so a bump of the fork tag needs its lines in `ci/msb-runtime.sha256` or the build has nothing to check
+against (`DigestStatus::Unpinned`). `PUDDLE_DEV_ANY_RUNTIME=1` (development builds) accepts other files and says so in
+`puddle doctor`.
 
 ## 11. Licence headers
 

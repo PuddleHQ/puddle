@@ -1270,7 +1270,9 @@ pub(crate) fn upstream_tls_refusal(name: &str, err: &TlsConnectError) -> Refusal
         TlsConnectError::Certificate(reason) => {
             format!("the certificate of {name} was not accepted ({reason}); nothing was sent")
         }
-        other => format!("could not set up TLS with {name} ({other})"),
+        TlsConnectError::InvalidName(_) | TlsConnectError::Handshake(_) => {
+            format!("could not set up TLS with {name} ({err})")
+        }
     };
     Refusal::new("502 Bad Gateway", message)
         .header("x-puddle-blocked-by", "upstream-tls")

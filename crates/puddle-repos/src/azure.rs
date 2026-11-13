@@ -26,7 +26,7 @@ const MAX_REPOS: usize = 5000;
 pub(crate) fn authorization(token: Arc<Secret>) -> Authorization {
     match azure_devops_scheme(token.expose()) {
         TokenScheme::Bearer => Authorization::Bearer(token),
-        _ => Authorization::BasicPassword(token),
+        TokenScheme::BasicPassword => Authorization::BasicPassword(token),
     }
 }
 

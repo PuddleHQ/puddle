@@ -208,11 +208,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             Self::claimed(&state, id)?;
         }
+        // The listing boots the maintenance image like a delete check does, so it waits for the
+        // same download and runs on a task the service owns.
+        let (this, target) = (self.clone(), id.clone());
         let listed = self
-            .inner
-            .workspaces
-            .list_checkouts_of_unheld_volume(&self.inner.runtime, id)
-            .await
+            .maintenance_job(async move {
+                this.inner
+                    .workspaces
+                    .list_checkouts_of_unheld_volume(&this.inner.runtime, &target)
+                    .await
+            })
+            .await?
             .map_err(|e| match e {
                 puddle_workspace::WorkspaceError::InUse { .. } => {
                     WorkspaceError::Conflict(e.to_string())

@@ -343,6 +343,32 @@ jobs:
               @{ n = 'Command'; e = { if (& $ours $_) { $_.CommandLine } else { $_.Name } } } | Format-Table -AutoSize -Wrap | Out-String -Width 400
           )
           $report | Tee-Object -FilePath "$env:RUNNER_TEMP\vm-processes.txt"
+      - name: stage msb logs that still exist
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
+        shell: pwsh
+        run: |
+          # Copy the msb logs that still exist into one folder for the upload below. A run home that is
+          # gone (a cancelled run can tear it down) is a warning, not a failed upload.
+          $src = Join-Path $env:RUNNER_TEMP 'pvm'
+          $dest = Join-Path $env:RUNNER_TEMP 'msb-logs'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          if (-not (Test-Path -LiteralPath $src -PathType Container)) {
+            "::warning::no msb run home at $src, so no sandbox logs to upload (expected when the run was cancelled)"
+            exit 0
+          }
+          Get-ChildItem -LiteralPath $src -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $rel = [System.IO.Path]::GetRelativePath($src, $_.FullName)
+            # The upload glob pvm/**/logs/**: only files under a directory named logs.
+            if ($rel -notmatch '(^|[\\/])logs[\\/]') { return }
+            $to = Join-Path $dest $rel
+            try {
+              New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+              Copy-Item -LiteralPath $_.FullName -Destination $to -Force -ErrorAction Stop
+            } catch {
+              "::warning::could not copy $($_.FullName): $($_.Exception.Message)"
+            }
+          }
+          exit 0
       - name: upload test results and msb logs
         if: ${{ always() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -353,7 +379,7 @@ jobs:
             target/nextest/vm/junit.xml
             ${{ runner.temp }}/vm-tests.log
             ${{ runner.temp }}/vm-processes.txt
-            ${{ runner.temp }}/pvm/**/logs/**
+            ${{ runner.temp }}/msb-logs/**
           retention-days: 14
           if-no-files-found: ignore
       - name: Cancel the rest of the merge group
@@ -464,6 +490,32 @@ jobs:
             --archive-file "$(cygpath -m "$RUNNER_TEMP")/bundle/vm-tests.tar.zst" \
             --extract-to "$(cygpath -m "$RUNNER_TEMP")/vmx" --workspace-remap . \
             -E "$(ci/vm-filter.sh vscode)" --no-tests=fail
+      - name: stage msb logs that still exist
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
+        shell: pwsh
+        run: |
+          # Copy the msb logs that still exist into one folder for the upload below. A run home that is
+          # gone (a cancelled run can tear it down) is a warning, not a failed upload.
+          $src = Join-Path $env:RUNNER_TEMP 'pvm'
+          $dest = Join-Path $env:RUNNER_TEMP 'msb-logs'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          if (-not (Test-Path -LiteralPath $src -PathType Container)) {
+            "::warning::no msb run home at $src, so no sandbox logs to upload (expected when the run was cancelled)"
+            exit 0
+          }
+          Get-ChildItem -LiteralPath $src -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $rel = [System.IO.Path]::GetRelativePath($src, $_.FullName)
+            # The upload glob pvm/**/logs/**: only files under a directory named logs.
+            if ($rel -notmatch '(^|[\\/])logs[\\/]') { return }
+            $to = Join-Path $dest $rel
+            try {
+              New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+              Copy-Item -LiteralPath $_.FullName -Destination $to -Force -ErrorAction Stop
+            } catch {
+              "::warning::could not copy $($_.FullName): $($_.Exception.Message)"
+            }
+          }
+          exit 0
       - name: upload pictures, VS Code logs and msb logs
         if: ${{ always() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -472,7 +524,7 @@ jobs:
           path: |
             ${{ runner.temp }}/vscode-out/**
             ${{ runner.temp }}/vmx/target/nextest/vm/junit.xml
-            ${{ runner.temp }}/pvm/**/logs/**
+            ${{ runner.temp }}/msb-logs/**
           retention-days: 14
           if-no-files-found: ignore
       - name: Cancel the rest of the merge group

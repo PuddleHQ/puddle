@@ -3599,6 +3599,15 @@ async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceId, name:
     password
 }
 
+/// Stops the workspace, resets its root disk (the sandbox is removed) and starts it again, so the
+/// next start makes a new sandbox on the same volume. A changed variable no longer does this: it
+/// keeps the sandbox and its root disk.
+async fn rebuild_sandbox(api: &Api, events: &mut support::Events, name: &str) {
+    for step in ["stop", "reset-root-disk", "start"] {
+        op_and_wait(api, events, name, step).await;
+    }
+}
+
 /// What the guest says about Docker's data folder: its mount, the mounts of the root and of the
 /// workspace volume for comparison, and the folder's size in bytes.
 fn docker_disk_script(name: &str) -> String {
@@ -3689,24 +3698,8 @@ async fn vm_host_dockers_data_is_on_a_disk_of_the_sandbox_that_a_rebuild_replace
     let kept = guest(&runtime, &sandbox, &script).await;
     assert_eq!(said(&kept, "marker"), "layer", "{kept}");
 
-    // A rebuild (a changed variable makes the next start create a new sandbox) leaves it behind.
-    let changed = api
-        .put(
-            &format!("/api/workspaces/{name}/env/REBUILD"),
-            &json!({"kind": "plain", "value": "1"}).to_string(),
-        )
-        .await;
-    assert_eq!(changed.status, 200, "{}", changed.body);
-    for step in ["stop", "start"] {
-        let reply = api
-            .post(&format!("/api/workspaces/{name}/{step}"), "")
-            .await;
-        assert_eq!(reply.status, 202, "{}", reply.body);
-        let end = events
-            .until(ended(name_static), Duration::from_secs(300))
-            .await;
-        assert_eq!(end["step"], "done", "{end}");
-    }
+    // A rebuild (a root-disk reset makes the next start create a new sandbox) leaves it behind.
+    rebuild_sandbox(&api, &mut events, name_static).await;
     let rebuilt = guest(
         &runtime,
         &sandbox,
@@ -3828,25 +3821,9 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     )
     .await;
 
-    // Rebuild the sandbox: a changed variable makes the next start create a new sandbox on the
+    // Rebuild the sandbox: a root-disk reset makes the next start create a new sandbox on the
     // same volume.
-    let changed = api
-        .put(
-            &format!("/api/workspaces/{name}/env/REBUILD"),
-            &json!({"kind": "plain", "value": "1"}).to_string(),
-        )
-        .await;
-    assert_eq!(changed.status, 200, "{}", changed.body);
-    for step in ["stop", "start"] {
-        let reply = api
-            .post(&format!("/api/workspaces/{name}/{step}"), "")
-            .await;
-        assert_eq!(reply.status, 202, "{}", reply.body);
-        let end = events
-            .until(ended(name_static), Duration::from_secs(300))
-            .await;
-        assert_eq!(end["step"], "done", "{end}");
-    }
+    rebuild_sandbox(&api, &mut events, name_static).await;
     editor_up(&runtime, &sandbox).await;
     let after = guest(
         &runtime,
@@ -5218,4 +5195,115 @@ async fn vm_host_a_deleted_workspaces_id_is_never_reused_and_a_version_2_list_ke
     assert_eq!(seen.trim(), "kept\nkept", "{seen}");
     op_and_wait(&api, &mut events, &second, "stop").await;
     host.shutdown().await;
+}
+
+/// A changed variable keeps the root disk: a package installed with apt and a file in the home
+/// directory are still there after a stop, a variable change and a start, the guest sees the new
+/// value, and the guest's boot id is new (so the start really was a start, not a no-op). The
+/// package is built in the guest and installed from the file, so apt does the install and no
+/// third-party mirror is involved.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_a_changed_variable_keeps_the_root_disk_across_the_next_start() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("envkeep").await;
+    let name = format!("{}-envkeep", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let put = |value: &'static str| {
+        let api = &api;
+        async move {
+            let reply = api
+                .put(
+                    "/api/env/KEEP_PROBE",
+                    &json!({"kind": "plain", "value": value}).to_string(),
+                )
+                .await;
+            assert_eq!(reply.status, 200, "{}", reply.body);
+        }
+    };
+    put("before").await;
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "memory_mib": 1024}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(
+        guest(&runtime, &sandbox, "printenv KEEP_PROBE")
+            .await
+            .trim(),
+        "before"
+    );
+
+    // A package installed through apt and a file in the home directory, both on the root disk.
+    guest_within(
+        &runtime,
+        &sandbox,
+        "set -e; d=$(mktemp -d); mkdir -p $d/pkg/DEBIAN $d/pkg/usr/local/bin; \
+         printf 'Package: puddle-keep-probe\nVersion: 1\nArchitecture: all\nMaintainer: t <t@example.invalid>\nDescription: probe\n' > $d/pkg/DEBIAN/control; \
+         printf '#!/bin/sh\necho installed\n' > $d/pkg/usr/local/bin/puddle-keep-probe; \
+         chmod 755 $d/pkg/usr/local/bin/puddle-keep-probe; \
+         dpkg-deb --build $d/pkg $d/probe.deb >/dev/null; \
+         apt-get install -y $d/probe.deb >/dev/null; \
+         echo kept > \"$HOME/keep-probe-file\"; sync",
+        Duration::from_secs(180),
+    )
+    .await;
+    let boot_id = || guest(&runtime, &sandbox, "cat /proc/sys/kernel/random/boot_id");
+    let boot_before = boot_id().await.trim().to_owned();
+    assert!(!boot_before.is_empty(), "no boot id");
+
+    let reply = api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    put("after").await;
+    let reply = api.post(&format!("/api/workspaces/{name}/start"), "").await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+
+    assert_eq!(
+        guest(&runtime, &sandbox, "printenv KEEP_PROBE")
+            .await
+            .trim(),
+        "after",
+        "the guest has the new value"
+    );
+    let kept = guest(
+        &runtime,
+        &sandbox,
+        "puddle-keep-probe; dpkg-query -W -f='${Status}\\n' puddle-keep-probe; cat \"$HOME/keep-probe-file\"",
+    )
+    .await;
+    assert_eq!(
+        kept.trim(),
+        "installed\ninstall ok installed\nkept",
+        "the package and the home file survive a variable change"
+    );
+    assert_ne!(boot_id().await.trim(), boot_before, "the guest restarted");
+    let seen_notice = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again"))
+    });
+    assert!(!seen_notice, "a kept root disk needs no reset notice");
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
 }

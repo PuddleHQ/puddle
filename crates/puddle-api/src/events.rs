@@ -127,9 +127,11 @@ impl Audience {
         } else {
             let store = self.store.clone();
             let id = workspace.clone();
+            // A workspace with no recorded user is nobody's: its events reach no one (and are not
+            // remembered, as a user is recorded before anything about a workspace is announced).
             match crate::error::blocking(move || Ok(store.workspace_owner(&id)?)).await {
-                Ok(user) => *self.known.entry(workspace.clone()).or_insert(user),
-                Err(_) => return false,
+                Ok(Some(user)) => *self.known.entry(workspace.clone()).or_insert(user),
+                Ok(None) | Err(_) => return false,
             }
         };
         user == self.user

@@ -160,7 +160,7 @@ async fn own(
     mut records: Vec<WorkspaceRecord>,
 ) -> Result<Vec<WorkspaceRecord>, ApiError> {
     let owners = authz::owners(state).await?;
-    records.retain(|r| owners.of(&r.id) == principal.user);
+    records.retain(|r| owners.is(&r.id, principal.user));
     Ok(records)
 }
 
@@ -242,8 +242,6 @@ pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> 
 /// settings, and its entry in the answer says so; the workspace is not undone for it.
 pub(super) struct StoreGitSetup {
     store: Arc<Store>,
-    /// Whose a new workspace is, for a create; `None` (and the owner) records nothing.
-    user: Option<UserId>,
     /// Whether it also allows the hosts of the repositories no rule decides yet (a create, or
     /// adding a repository; not a clone again or an adopted volume).
     allow_hosts: bool,
@@ -255,7 +253,6 @@ impl StoreGitSetup {
     pub(super) fn new(store: Arc<Store>) -> Self {
         Self {
             store,
-            user: None,
             allow_hosts: false,
             started: Mutex::new(Vec::new()),
             allowed: Mutex::new(Vec::new()),
@@ -268,14 +265,6 @@ impl StoreGitSetup {
         Self {
             allow_hosts: true,
             ..Self::new(store)
-        }
-    }
-
-    /// Records a new workspace as `user`'s (see [`GitSetup::claim`]).
-    pub(super) fn for_user(self, user: UserId) -> Self {
-        Self {
-            user: Some(user),
-            ..self
         }
     }
 
@@ -341,22 +330,17 @@ fn warn_not_allowed(workspace: &WorkspaceId, err: &puddle_store::StoreError) {
 }
 
 impl GitSetup for StoreGitSetup {
-    fn claim(&self, workspace: &WorkspaceId) -> Result<(), WorkspaceError> {
-        // A workspace with no recorded user is the owner's, so the owner's creates write nothing.
-        match self.user {
-            Some(user) if user != UserId::OWNER => self
-                .store
-                .set_workspace_owner(workspace, user)
-                .map_err(|err| match err {
-                    puddle_store::StoreError::WorkspaceOwned(_) => {
-                        WorkspaceError::Conflict(format!("the workspace id {workspace} is taken"))
-                    }
-                    err => WorkspaceError::Unavailable(format!(
-                        "whose the new workspace is could not be saved ({err}); nothing was created"
-                    )),
-                }),
-            _ => Ok(()),
-        }
+    fn claim(&self, workspace: &WorkspaceId, owner: UserId) -> Result<(), WorkspaceError> {
+        self.store
+            .set_workspace_owner(workspace, owner)
+            .map_err(|err| match err {
+                puddle_store::StoreError::WorkspaceOwned(_) => {
+                    WorkspaceError::Conflict(format!("the workspace id {workspace} is taken"))
+                }
+                err => WorkspaceError::Unavailable(format!(
+                    "whose the new workspace is could not be saved ({err}); nothing was created"
+                )),
+            })
     }
 
     fn set_up<'a>(
@@ -437,14 +421,14 @@ pub(crate) async fn create_workspace(
             .collect())
     })
     .await?;
-    let new = body.into_new(|id| known.contains(&id), &locals)?;
+    let new = body.into_new(user, |id| known.contains(&id), &locals)?;
     let store = state.store.clone();
     let requests: Vec<RepoGitRequest> = new.repositories.iter().filter_map(git_request).collect();
     blocking(move || Ok(store.check_repository_git(user, None, &requests)?)).await?;
     let hosts =
         repository_hosts::hosts_of(new.repositories.iter().map(|r| r.repository.url.as_str()));
     repository_hosts::refuse_blocked(&state.store, user, None, hosts).await?;
-    let git = StoreGitSetup::allowing_hosts(state.store.clone()).for_user(user);
+    let git = StoreGitSetup::allowing_hosts(state.store.clone());
     let record = state.workspaces.create(new, &git).await?;
     // A new workspace may start with direct SSH on (the global default).
     crate::system_managed::refresh(&state).await;

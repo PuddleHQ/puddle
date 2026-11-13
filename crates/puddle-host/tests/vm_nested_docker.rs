@@ -230,7 +230,11 @@ async fn vm_nested_docker_build_publish_bridge_and_compose_work_through_the_prox
 
     // What stayed inside the guest never reached the proxy: no inbox row, no audit line names a
     // container, a service or a network.
-    let rows = vm.host.store().open_pending(Some(&workspace)).unwrap();
+    let rows = vm
+        .host
+        .store()
+        .open_pending_every_user(Some(&workspace))
+        .unwrap();
     assert!(rows.is_empty(), "inbox rows from nested traffic: {rows:?}");
     let audit = vm.host.store().audit_lines(0, 100_000).unwrap();
     for inner in ["neighbour", "compose-server", "pub", "bridge-two"] {

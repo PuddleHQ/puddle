@@ -75,3 +75,36 @@ fn agrees_with_fetch_msb_on_every_pin_line() {
     assert_eq!(shell("v0.0.0-nope", LIBKRUNFW_LINUX_VERSION), None);
     assert_eq!(pinned(&pins, "v0.0.0-nope", LIBKRUNFW_LINUX_VERSION), None);
 }
+
+const SUM: &str = "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12";
+const OTHER: &str = "cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34";
+
+#[test]
+fn a_download_matching_its_pin_passes_whatever_the_case() {
+    let pins = format!("# c\nv1 msb {}\n", SUM.to_ascii_uppercase());
+    verify(&pins, "v1", "msb", SUM).unwrap();
+}
+
+#[test]
+fn a_download_with_another_hash_is_refused_naming_file_list_and_both_hashes() {
+    let pins = format!("v1 msb {SUM}\n");
+    let err = verify(&pins, "v1", "msb", OTHER).unwrap_err().to_string();
+    assert!(
+        err.contains("checksum mismatch for msb")
+            && err.contains("ci/msb-runtime.sha256 (v1)")
+            && err.contains(SUM)
+            && err.contains(OTHER),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_download_nobody_pinned_is_refused_naming_it() {
+    // Another tag's line for the same file must not count.
+    let pins = format!("v2 msb {SUM}\nv1 other {SUM}\n");
+    let err = verify(&pins, "v1", "msb", SUM).unwrap_err().to_string();
+    assert!(
+        err.contains("msb has no entry in ci/msb-runtime.sha256 (v1)"),
+        "{err}"
+    );
+}

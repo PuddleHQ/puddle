@@ -198,7 +198,7 @@ fn footprint(store: &Store) -> (usize, usize) {
         .into_iter()
         .filter(|(_, line)| !line.contains("\"type\":\"rule_"))
         .count();
-    (store.open_pending(None).unwrap().len(), audit)
+    (store.open_pending_every_user(None).unwrap().len(), audit)
 }
 
 // ---- a minimal DNS client ----
@@ -452,7 +452,7 @@ async fn an_srv_target_nothing_allows_is_left_out_and_raised_as_one_request_at_i
     let (udp, _) = rig.agent.dns_addrs().unwrap();
     let srv = dns(udp, "_http._tcp.mirror.example.net", TYPE_SRV).await;
     assert_eq!((srv.rcode, srv.answers, srv.additional), (0, 0, 0));
-    let open = rig.store.open_pending(None).unwrap();
+    let open = rig.store.open_pending_every_user(None).unwrap();
     assert_eq!(open.len(), 1, "{open:?}");
     assert_eq!(
         (open[0].host.to_string(), open[0].port),
@@ -470,7 +470,7 @@ async fn an_srv_query_for_an_unmatched_name_raises_one_request_for_its_base_name
         let srv = dns(udp, "_mongodb._tcp.cluster.example.net", TYPE_SRV).await;
         assert_eq!((srv.rcode, srv.answers), (0, 0));
     }
-    let open = rig.store.open_pending(None).unwrap();
+    let open = rig.store.open_pending_every_user(None).unwrap();
     assert_eq!(open.len(), 1, "three queries, one request");
     assert_eq!(open[0].host.to_string(), "cluster.example.net");
     // The stub answers repeats from its cache for the answer's TTL, so the host sees one.
@@ -485,7 +485,7 @@ async fn an_srv_query_for_an_unmatched_name_raises_one_request_for_its_base_name
     ] {
         dns(udp, name, qtype).await;
     }
-    assert_eq!(rig.store.open_pending(None).unwrap().len(), 1);
+    assert_eq!(rig.store.open_pending_every_user(None).unwrap().len(), 1);
     assert_eq!(rig.counted.resolver.lookups(), 0);
     assert_eq!(rig.counted.records.lookups(), 0);
     assert_ne!(footprint(&rig.store), before);
@@ -498,7 +498,7 @@ async fn a_flood_of_srv_queries_for_random_names_opens_one_row_each_up_to_the_ca
     for i in 0..400 {
         dns(udp, &format!("_x._tcp.flood-{i}.example.net"), TYPE_SRV).await;
     }
-    let open = rig.store.open_pending(None).unwrap().len();
+    let open = rig.store.open_pending_every_user(None).unwrap().len();
     assert_eq!(
         open, 400,
         "every name waits, none is refused for the volume"

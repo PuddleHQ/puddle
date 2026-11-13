@@ -145,6 +145,10 @@ test("a fresh install is led through every step and then opens on the workspaces
     .getByLabel(/Git repository/)
     .fill("https://github.com/example/shop-api.git");
   await expect(form.getByLabel("Name")).toHaveValue("shop-api");
+  // The form is settled once the host note is in: it appears 300 ms after the typing stops and
+  // pushes the button down, so a press that began before it can end on something else and
+  // submit nothing.
+  await expect(form.getByTestId("hosts-new")).toContainText("github.com");
   await form.getByRole("button", { name: "Create workspace" }).click();
   await expect(page).toHaveURL(/\/workspaces$/);
   await expect(page.getByText("shop-api").first()).toBeVisible();

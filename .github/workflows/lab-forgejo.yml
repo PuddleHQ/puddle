@@ -98,6 +98,21 @@ jobs:
           PUDDLE_VM_PREFIX="f${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             cargo nextest run -p puddle-host --profile vm --locked --no-capture \
               -E 'test(/(^|::)vm_radar_forgejo_/)'
+      - name: stage msb logs that still exist
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          src="$RUNNER_TEMP/pvm"
+          dest="$RUNNER_TEMP/msb-logs"
+          mkdir -p "$dest"
+          if [ ! -d "$src" ]; then
+            echo "::warning::no msb run home at $src, so no sandbox logs to upload (expected when the run was cancelled)"
+            exit 0
+          fi
+          cd "$src" || exit 0
+          while IFS= read -r -d '' f; do
+            mkdir -p "$dest/$(dirname "$f")" 2>/dev/null && cp "$f" "$dest/$f" 2>/dev/null || true
+          done < <(find . -path '*/logs/*' -type f -print0 2>/dev/null || true)
       - name: upload test results and msb logs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -105,7 +120,7 @@ jobs:
           name: lab-forgejo-results
           path: |
             target/nextest/vm/junit.xml
-            ${{ runner.temp }}/pvm/**/logs/**
+            ${{ runner.temp }}/msb-logs/**
           retention-days: 14
           if-no-files-found: ignore
 
@@ -175,6 +190,25 @@ jobs:
           PUDDLE_VM_PREFIX="w${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             cargo nextest run -p puddle-host --profile vm --locked --no-capture \
               -E 'test(/(^|::)vm_radar_forgejo_/)' --no-tests=fail
+      - name: stage msb logs that still exist
+        if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}
+        shell: bash
+        run: |
+          # The Linux stage step with Windows paths: the runner's RUNNER_TEMP is a C:\ path that Git Bash
+          # reads only through cygpath. globstar walks the tree, since find may resolve to find.exe.
+          src="$(cygpath -u "$RUNNER_TEMP")/pvm"
+          dest="$(cygpath -u "$RUNNER_TEMP")/msb-logs"
+          mkdir -p "$dest"
+          if [ ! -d "$src" ]; then
+            echo "::warning::no msb run home at $src, so no sandbox logs to upload (expected when the run was cancelled)"
+            exit 0
+          fi
+          shopt -s globstar nullglob
+          cd "$src" || exit 0
+          for f in ./**/logs/**; do
+            [ -f "$f" ] || continue
+            mkdir -p "$dest/$(dirname "$f")" 2>/dev/null && cp "$f" "$dest/$f" 2>/dev/null || true
+          done
       - name: upload test results and msb logs
         if: ${{ !cancelled() && steps.whp.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -182,6 +216,6 @@ jobs:
           name: lab-forgejo-windows-results
           path: |
             target/nextest/vm/junit.xml
-            ${{ runner.temp }}/pvm/**/logs/**
+            ${{ runner.temp }}/msb-logs/**
           retention-days: 14
           if-no-files-found: ignore

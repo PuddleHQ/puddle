@@ -15,12 +15,12 @@
 //! fake website and a fake package index.
 //!
 //! The sites the tests reach are a fake website behind a fake company proxy (`web_internet`), so no
-//! result here depends on a public site being up. Two tests keep a live third party on purpose, and
-//! their failure messages name it: the second installs the real `nftables` package from
-//! `deb.debian.org` (the test needs a real `nft` binary; a mirror would have to serve that
-//! package and its libraries, signed, to apt's default sources), and the third runs the real
-//! `apt-get update` against Debian's mirrors (the assertion is about apt's own behaviour with
-//! Debian's `SRV` records, which a stand-in mirror would not carry).
+//! result here depends on a public site being up. The packages the tests bring (`nft`, `pip`) are
+//! saved from the real mirror on the first run and served from the fake website after that
+//! (`vm_support::PackageKit`), so a warm cache needs no package mirror; the cold run names the mirror
+//! when it fails. One test keeps a live third party on purpose: the third runs the real `apt-get update`
+//! against Debian's mirrors (the assertion is about apt's own behaviour with Debian's `SRV` records,
+//! which a stand-in mirror would not carry).
 //!
 //! Every guest command runs as root through the runtime's exec, which carries the workspace's
 //! proxy settings; the probes that must not use them say `env -i` or `--noproxy '*'`.
@@ -42,9 +42,9 @@ use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, named_id_options};
 use vm_support::{
-    PROBE_IMAGE, VmHost, WebInternet, allowed_connections, as_agent, container_fetch,
-    create_workspace_from, field, guest, guest_as, guest_live, reached_by_host, start_vm_host,
-    start_vm_host_platform, wait_for_connection_record, web_internet,
+    Flavour, KIT_HOST, PROBE_IMAGE, PackageKit, VmHost, WebInternet, allowed_connections, as_agent,
+    container_fetch, create_workspace_from, field, guest, guest_as, guest_live, reached_by_host,
+    start_vm_host, start_vm_host_platform, wait_for_connection_record, web_internet,
 };
 
 /// The fake website's name (it answers plain HTTP and HTTPS).
@@ -277,14 +277,25 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
 /// through (the VM has no route of its own), and the agent puts the rules back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_survives_a_root_that_deletes_the_rules() {
-    let net = web_internet(&[SITE], WebOptions::default(), named_id_options()).await;
+    let kit = PackageKit::open(
+        Flavour::Apt,
+        puddle_api::DEFAULT_IMAGE,
+        "nftables",
+        "deb.debian.org and security.debian.org",
+    );
+    let net = web_internet(
+        &[SITE, KIT_HOST],
+        kit.options(WebOptions::default()),
+        named_id_options(),
+    )
+    .await;
     let vm = start_vm_host_platform("flush", net.options, &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let workspace = create_workspace(
         &vm,
         &api,
         "flush",
-        &[SITE, "deb.debian.org", "security.debian.org"],
+        &[SITE, KIT_HOST, "deb.debian.org", "security.debian.org"],
     )
     .await;
     let run = |script: String| {
@@ -292,21 +303,12 @@ async fn vm_capture_survives_a_root_that_deletes_the_rules() {
         async move { guest(runtime, workspace, &bash_script(&script)).await }
     };
 
-    // The image ships no nft; the test brings one, through the proxy, as any tool would.
-    let installed = guest_live(
-        &vm.runtime,
-        &workspace,
-        &bash_script(
-            "export DEBIAN_FRONTEND=noninteractive
-         { apt-get update -qq; apt-get install -y -qq nftables; } >/tmp/apt.log 2>&1
-         command -v nft || { echo 'no nft; the end of apt output:'; tail -15 /tmp/apt.log; curl -sv --max-time 20 -o /dev/null http://deb.debian.org/debian/dists/trixie/InRelease 2>&1 | tail -25; }",
-        ),
-        "deb.debian.org and security.debian.org",
-    )
-    .await;
+    // The image ships no nft; the test brings one, through the proxy, as any tool would: from
+    // the saved package files on a warm cache, from Debian's mirrors on the first run.
+    let installed = kit.install(&vm, &workspace, "command -v nft").await;
     assert!(
         installed.trim_end().ends_with("/nft"),
-        "nftables could not be installed (live third party: deb.debian.org, security.debian.org; an outage there fails this test): {installed}"
+        "nftables is not usable: {installed}"
     );
 
     for attack in ["nft flush ruleset", "nft delete table inet puddle"] {
@@ -410,12 +412,18 @@ async fn vm_capture_apt_update_works_with_no_proxy_file_and_no_proxy_setting() {
 /// (the live package mirrors, named when they fail).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
+    let kit = PackageKit::open(
+        Flavour::Apt,
+        puddle_api::DEFAULT_IMAGE,
+        "python3 python3-pip",
+        "deb.debian.org and security.debian.org",
+    );
     let net = web_internet(
-        &[SITE, INDEX],
-        WebOptions {
+        &[SITE, INDEX, KIT_HOST],
+        kit.options(WebOptions {
             responder: Some(pip_index(INDEX, PROJECT)),
             ..WebOptions::default()
-        },
+        }),
         named_id_options(),
     )
     .await;
@@ -425,7 +433,13 @@ async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
         &vm,
         &api,
         "pyth",
-        &[SITE, INDEX, "deb.debian.org", "security.debian.org"],
+        &[
+            SITE,
+            INDEX,
+            KIT_HOST,
+            "deb.debian.org",
+            "security.debian.org",
+        ],
     )
     .await;
     let run = |script: String| {
@@ -433,20 +447,12 @@ async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
         async move { guest(runtime, workspace, &bash_script(&script)).await }
     };
 
-    let installed = guest_live(
-        &vm.runtime,
-        &workspace,
-        &bash_script(
-            "export DEBIAN_FRONTEND=noninteractive
-             { apt-get update -qq; apt-get install -y -qq python3 python3-pip; } >/tmp/apt.log 2>&1
-             python3 -m pip --version || { echo 'no pip; the end of apt output:'; tail -15 /tmp/apt.log; }",
-        ),
-        "deb.debian.org and security.debian.org",
-    )
-    .await;
+    let installed = kit
+        .install(&vm, &workspace, "python3 -m pip --version")
+        .await;
     assert!(
-        installed.contains("pip ") && !installed.contains("no pip"),
-        "python3-pip could not be installed (live third party: deb.debian.org, security.debian.org; an outage there fails this test): {installed}"
+        installed.contains("pip "),
+        "python3-pip is not usable: {installed}"
     );
 
     // An allowed name through `urllib`: it resolves to a stand-in, the capture redirects the
@@ -703,29 +709,36 @@ async fn docker_phase(vm: &VmHost, net: &WebInternet, workspace: &WorkspaceId, p
 /// bridge get to a site only through a rule, and the session user works through `sudo`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_capture_coexists_with_a_real_dockerd_in_both_start_orders() {
-    let net = web_internet(&DOCKER_SITES, WebOptions::default(), named_id_options()).await;
+    let kit = PackageKit::open(
+        Flavour::Apk,
+        "docker:dind",
+        "nftables",
+        "dl-cdn.alpinelinux.org",
+    );
+    let mut sites = DOCKER_SITES.to_vec();
+    sites.push(KIT_HOST);
+    let net = web_internet(
+        &sites,
+        kit.options(WebOptions::default()),
+        named_id_options(),
+    )
+    .await;
     let vm = start_vm_host_platform("dock", net.options.clone(), &net.platform, |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let workspace = create_workspace_from(
         &vm,
         &api,
         "dock",
-        &["dl-cdn.alpinelinux.org"],
+        &["dl-cdn.alpinelinux.org", KIT_HOST],
         json!({"image": "docker:dind", "memory_mib": 2048}),
     )
     .await;
-    // The image ships no `nft`; the test brings one, through the proxy, as any tool would.
-    let (code, installed) = guest_as(
-        &vm.runtime,
-        &workspace,
-        "root",
-        "apk add --no-cache nftables >/tmp/apk.log 2>&1; nft --version || tail -15 /tmp/apk.log",
-        Duration::from_secs(100),
-    )
-    .await;
+    // The image ships no `nft`; the test brings one, through the proxy, as any tool would: from
+    // the saved package files on a warm cache, from Alpine's mirror on the first run.
+    let installed = kit.install(&vm, &workspace, "nft --version").await;
     assert!(
-        code == 0 && installed.contains("nftables"),
-        "nftables could not be installed (live third party: dl-cdn.alpinelinux.org; an outage there fails this test): {installed}"
+        installed.contains("nftables"),
+        "nftables is not usable: {installed}"
     );
 
     // Boot order: the agent first, dockerd after it.

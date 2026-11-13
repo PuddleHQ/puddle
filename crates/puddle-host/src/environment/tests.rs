@@ -131,14 +131,14 @@ fn a_secret_whose_value_is_gone_or_unreadable_stops_the_start_with_its_name() {
         &["api.example.com"],
     );
     vault.delete(&StoredId::new("env-TOKEN").unwrap()).unwrap();
-    let gone = resolve(&store, &vault, &ws("a")).unwrap_err();
+    let gone = resolve(&store, &vault, &ws("a")).unwrap_err().to_string();
     assert!(
         gone.contains("TOKEN") && gone.contains("Environment tab"),
         "{gone}"
     );
 
     vault.break_it();
-    let broken = resolve(&store, &vault, &ws("a")).unwrap_err();
+    let broken = resolve(&store, &vault, &ws("a")).unwrap_err().to_string();
     assert!(
         broken.contains("TOKEN") && broken.contains("credential store"),
         "{broken}"
@@ -179,7 +179,7 @@ fn a_secret_that_the_proxy_would_not_swap_stops_the_start_instead_of_starting_de
             EnvDraft::secret(id, vec![SecretHost::new("api.example.com").unwrap()]).unwrap(),
         )
         .unwrap();
-    let err = resolve(&store, &vault, &ws("a")).unwrap_err();
+    let err = resolve(&store, &vault, &ws("a")).unwrap_err().to_string();
     assert!(
         err.contains("BAD") && err.contains("cannot be used"),
         "{err}"

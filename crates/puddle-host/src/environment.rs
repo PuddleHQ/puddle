@@ -13,6 +13,65 @@ use puddle_secrets::SecretStore;
 use puddle_store::{SecretPlace, StartValue, Store};
 use puddle_types::{GuestEnv, WorkspaceId};
 
+/// Why a workspace's environment could not be resolved. The messages are for the user.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum EnvironmentError {
+    /// The store could not produce the variables.
+    #[error("cannot read {workspace}'s environment: {source}")]
+    Store {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// What went wrong.
+        #[source]
+        source: Box<puddle_store::StoreError>,
+    },
+    /// The secret has no value in the credential store.
+    #[error(
+        "the value of the secret {name} is not in this computer's credential store; \
+         set it again (the workspace's Environment tab, or Settings for a global secret)"
+    )]
+    SecretMissing {
+        /// The variable's name.
+        name: String,
+    },
+    /// The credential store could not be read.
+    #[error(
+        "cannot read the secret {name} from the operating system's credential store; \
+         unlock it or check that it is running, then start the workspace again"
+    )]
+    VaultUnreadable {
+        /// The variable's name.
+        name: String,
+    },
+    /// The hosts a secret may go to are not usable patterns.
+    #[error("the hosts of the secret {name} are not usable: {source}")]
+    Hosts {
+        /// The variable's name.
+        name: String,
+        /// What went wrong.
+        #[source]
+        source: puddle_proxy::PatternError,
+    },
+    /// The proxy would not swap the secret.
+    #[error("the secret {name} cannot be used: {source}")]
+    Secret {
+        /// The variable's name.
+        name: String,
+        /// What went wrong.
+        #[source]
+        source: puddle_proxy::StandInError,
+    },
+    /// The guest's environment refused the variable.
+    #[error("the variable {name} cannot be set: {source}")]
+    Variable {
+        /// The variable's name.
+        name: String,
+        /// What went wrong.
+        #[source]
+        source: puddle_types::ValidationError,
+    },
+}
+
 /// What a workspace's environment comes to at one moment.
 pub(crate) struct Resolved {
     /// What the guest starts with: every plain variable, and a stand-in under each secret's name.
@@ -35,19 +94,22 @@ impl std::fmt::Debug for Resolved {
 /// threads.
 ///
 /// # Errors
-/// A message for the user that names the variable and the way out. A secret whose value cannot be
+/// An [`EnvironmentError`] whose message names the variable and the way out. A secret whose value cannot be
 /// read stops the start: a workspace that started without it would only fail later in a tool, with
 /// no hint of the cause.
 pub(crate) fn resolve(
     store: &Store,
     vault: &dyn SecretStore,
     workspace: &WorkspaceId,
-) -> Result<Resolved, String> {
+) -> Result<Resolved, EnvironmentError> {
     let vars = store
         .env_for_start(workspace, &mut |name| {
             secret_stand_in(name.as_str()).map_err(|e| e.to_string())
         })
-        .map_err(|e| format!("cannot read {workspace}'s environment: {e}"))?;
+        .map_err(|source| EnvironmentError::Store {
+            workspace: workspace.clone(),
+            source: Box::new(source),
+        })?;
     let mut guest = GuestEnv::new();
     let mut entries = Vec::new();
     for var in vars {
@@ -63,20 +125,21 @@ pub(crate) fn resolve(
                 let real = match vault.get(&id) {
                     Ok(Some(real)) => real,
                     Ok(None) => {
-                        return Err(format!(
-                            "the value of the secret {name} is not in this computer's credential store; \
-                             set it again (the workspace's Environment tab, or Settings for a global secret)"
-                        ));
+                        return Err(EnvironmentError::SecretMissing {
+                            name: name.to_owned(),
+                        });
                     }
                     Err(_) => {
-                        return Err(format!(
-                            "cannot read the secret {name} from the operating system's credential store; \
-                             unlock it or check that it is running, then start the workspace again"
-                        ));
+                        return Err(EnvironmentError::VaultUnreadable {
+                            name: name.to_owned(),
+                        });
                     }
                 };
                 let set = TerminationSet::parse(hosts.iter().map(puddle_store::SecretHost::as_str))
-                    .map_err(|e| format!("the hosts of the secret {name} are not usable: {e}"))?;
+                    .map_err(|source| EnvironmentError::Hosts {
+                        name: name.to_owned(),
+                        source,
+                    })?;
                 let entry = StandIn::new(
                     StandInOrigin::Secret,
                     name,
@@ -85,14 +148,20 @@ pub(crate) fn resolve(
                     set,
                 )
                 .map(|entry| entry.placed(placement(place)))
-                .map_err(|e| format!("the secret {name} cannot be used: {e}"))?;
+                .map_err(|source| EnvironmentError::Secret {
+                    name: name.to_owned(),
+                    source,
+                })?;
                 entries.push(entry);
                 stand_in
             }
         };
         guest
             .set(name, &text)
-            .map_err(|e| format!("the variable {name} cannot be set: {e}"))?;
+            .map_err(|source| EnvironmentError::Variable {
+                name: name.to_owned(),
+                source,
+            })?;
     }
     Ok(Resolved { guest, entries })
 }

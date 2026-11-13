@@ -164,6 +164,21 @@ impl WorkspaceRecord {
     }
 }
 
+/// Why a workspace name is refused. The messages are for the user.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DisplayNameError {
+    /// Nothing but white space.
+    #[error("the name must not be empty")]
+    Empty,
+    /// More than [`DisplayName::MAX_CHARS`] characters.
+    #[error("the name is longer than {} characters", DisplayName::MAX_CHARS)]
+    TooLong,
+    /// A control character, a line break included.
+    #[error("the name must not contain line breaks or control characters")]
+    ControlCharacter,
+}
+
 /// A workspace's name: free text of 1 to [`DisplayName::MAX_CHARS`]
 /// characters, trimmed, with no control characters (a line break included).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -177,20 +192,17 @@ impl DisplayName {
     ///
     /// # Errors
     ///
-    /// A message for the user when the name is empty, too long or has control characters.
-    pub fn parse(text: &str) -> Result<Self, String> {
+    /// [`DisplayNameError`] when the name is empty, too long or has control characters.
+    pub fn parse(text: &str) -> Result<Self, DisplayNameError> {
         let text = text.trim();
         if text.is_empty() {
-            return Err("the name must not be empty".into());
+            return Err(DisplayNameError::Empty);
         }
         if text.chars().count() > Self::MAX_CHARS {
-            return Err(format!(
-                "the name is longer than {} characters",
-                Self::MAX_CHARS
-            ));
+            return Err(DisplayNameError::TooLong);
         }
         if text.chars().any(char::is_control) {
-            return Err("the name must not contain line breaks or control characters".into());
+            return Err(DisplayNameError::ControlCharacter);
         }
         Ok(Self(text.to_owned()))
     }
@@ -280,6 +292,30 @@ pub const DEFAULT_DISK_MIB: u64 = 32 * 1024;
 /// The root disk size the fake workspaces show: msb's default writable layer.
 pub const DEFAULT_ROOT_DISK_MIB: u64 = 4 * 1024;
 
+/// Why a repository URL is refused. The messages are for the user and say what to change.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RepoUrlError {
+    /// An `ssh://` or scp-like remote.
+    #[error("SSH remotes are not supported yet; use the repository's HTTPS URL instead")]
+    Ssh,
+    /// Longer than [`MAX_REPO_URL_LEN`].
+    #[error("the repository URL is longer than {MAX_REPO_URL_LEN} characters")]
+    TooLong,
+    /// A space or control character.
+    #[error("the repository URL must not contain spaces or control characters")]
+    Whitespace,
+    /// Not `https://`.
+    #[error("use an https:// URL for the repository")]
+    NotHttps,
+    /// A user name or password in the URL.
+    #[error("remove the user name and password from the URL; Puddle supplies credentials itself")]
+    Credentials,
+    /// No host.
+    #[error("the repository URL has no host")]
+    NoHost,
+}
+
 /// A checked HTTPS repository URL: no credentials, no whitespace, a host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoUrl(String);
@@ -292,37 +328,30 @@ impl RepoUrl {
     ///
     /// # Errors
     ///
-    /// A message for the user: SSH remotes get the "not supported yet" one, anything else that
-    /// is not a plain `https://` URL says what to change.
-    pub fn parse(url: &str) -> Result<Self, String> {
+    /// [`RepoUrlError`]: SSH remotes get the "not supported yet" one, anything else that is not a
+    /// plain `https://` URL says what to change.
+    pub fn parse(url: &str) -> Result<Self, RepoUrlError> {
         let url = url.trim();
         let lower = url.to_ascii_lowercase();
         if lower.starts_with("ssh://") || is_scp_like(url) {
-            return Err(
-                "SSH remotes are not supported yet; use the repository's HTTPS URL instead".into(),
-            );
+            return Err(RepoUrlError::Ssh);
         }
         if url.len() > MAX_REPO_URL_LEN {
-            return Err(format!(
-                "the repository URL is longer than {MAX_REPO_URL_LEN} characters"
-            ));
+            return Err(RepoUrlError::TooLong);
         }
         if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
-            return Err("the repository URL must not contain spaces or control characters".into());
+            return Err(RepoUrlError::Whitespace);
         }
         let Some(rest) = lower.strip_prefix("https://") else {
-            return Err("use an https:// URL for the repository".into());
+            return Err(RepoUrlError::NotHttps);
         };
         let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
         if authority.contains('@') {
-            return Err(
-                "remove the user name and password from the URL; Puddle supplies credentials itself"
-                    .into(),
-            );
+            return Err(RepoUrlError::Credentials);
         }
         let host = authority.rsplit_once(':').map_or(authority, |(h, _)| h);
         if host.is_empty() {
-            return Err("the repository URL has no host".into());
+            return Err(RepoUrlError::NoHost);
         }
         Ok(Self(url.to_owned()))
     }
@@ -379,25 +408,28 @@ impl Repository {
     }
 }
 
+/// Why a repository entry got no id: every draw was taken or gave nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("no free repository entry id was found; the system's random source may be broken")]
+#[non_exhaustive]
+pub struct NoFreeEntryId;
+
 /// A fresh entry id ([`EntryId::from_random`] over the operating system's random source) that
 /// `taken` does not know, drawn up to [`MAX_ID_DRAWS`] times; `taken` says whether the entry
 /// list of the workspace already has it.
 ///
 /// # Errors
 ///
-/// The message for the user when every draw was taken or the random source gave nothing.
-pub fn new_entry_id(taken: impl Fn(&EntryId) -> bool) -> Result<EntryId, String> {
-    draw_entry_id(
-        |bytes| getrandom::fill(bytes).map_err(|e| e.to_string()),
-        taken,
-    )
+/// [`NoFreeEntryId`] when every draw was taken or the random source gave nothing.
+pub fn new_entry_id(taken: impl Fn(&EntryId) -> bool) -> Result<EntryId, NoFreeEntryId> {
+    draw_entry_id(|bytes| getrandom::fill(bytes), taken)
 }
 
 /// [`new_entry_id`] over any source of five bytes.
-fn draw_entry_id(
-    mut fill: impl FnMut(&mut [u8; 5]) -> Result<(), String>,
+fn draw_entry_id<E: fmt::Display>(
+    mut fill: impl FnMut(&mut [u8; 5]) -> Result<(), E>,
     taken: impl Fn(&EntryId) -> bool,
-) -> Result<EntryId, String> {
+) -> Result<EntryId, NoFreeEntryId> {
     for attempt in 0..MAX_ID_DRAWS {
         let mut bytes = [0_u8; 5];
         match fill(&mut bytes) {
@@ -411,7 +443,7 @@ fn draw_entry_id(
             Err(reason) => tracing::warn!(%reason, attempt, "no entry id was drawn"),
         }
     }
-    Err("no free repository entry id was found; the system's random source may be broken".into())
+    Err(NoFreeEntryId)
 }
 
 /// Most repositories one workspace holds (where the delete check stops counting checkouts).
@@ -431,6 +463,25 @@ pub struct NewRepository {
     /// The `.git` directory of the checkout on this computer it is cloned from (canonical), or
     /// `None` to clone from its address.
     pub local: Option<PathBuf>,
+}
+
+/// Why a folder on this computer can't be the start of a workspace. The messages are for the
+/// user.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum LocalCheckoutError {
+    /// The service does not look at folders.
+    #[error("starting from a checkout on this computer is not available here")]
+    NotAvailable,
+    /// The folder has no `.git`.
+    #[error("{} is not a git checkout: it has no .git", folder.display())]
+    NotCheckout {
+        /// The folder as looked at.
+        folder: PathBuf,
+    },
+    /// The checkout reader or the runtime refused the folder, with its own reason.
+    #[error("{0}")]
+    Refused(String),
 }
 
 /// A checkout on this computer, as the service found it (see
@@ -463,6 +514,108 @@ pub struct RepositoryDraft {
     pub local: Option<String>,
 }
 
+/// Why a checkout on this computer can't stand for a repository of a create.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CheckoutProblem {
+    /// The service found nothing for the entry.
+    #[error("it was not looked at")]
+    NotLooked,
+    /// The folder can't be used.
+    #[error(transparent)]
+    Unusable(LocalCheckoutError),
+    /// The checkout has no `origin` Puddle can use, with the reason.
+    #[error("{0}")]
+    NoOrigin(String),
+}
+
+/// What is wrong with one entry of a create's repository list.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum EntryProblem {
+    /// The address is refused.
+    #[error(transparent)]
+    Url(RepoUrlError),
+    /// The directory is not a checkout directory.
+    #[error("{}", .0.reason())]
+    Directory(puddle_types::ValidationError),
+    /// The picked identity does not exist.
+    #[error("there is no identity {}", .0.0)]
+    UnknownIdentity(IdentityId),
+    /// No entry id could be drawn.
+    #[error(transparent)]
+    NoEntryId(NoFreeEntryId),
+}
+
+/// Why a create's repository list is refused. The messages are for the user and name the entry by
+/// its place in the list and its address.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RepositoryListError {
+    /// More than [`MAX_REPOSITORIES`].
+    #[error("a workspace holds at most {MAX_REPOSITORIES} repositories; this list has {count}")]
+    TooMany {
+        /// How many the list has.
+        count: usize,
+    },
+    /// An entry that starts from a checkout on this computer can't use it.
+    #[error("repository {n} (the checkout {checkout}): {problem}")]
+    Checkout {
+        /// The entry's place in the list, from 1.
+        n: usize,
+        /// The checkout as given or as found.
+        checkout: String,
+        /// What is wrong.
+        problem: CheckoutProblem,
+    },
+    /// An entry is refused.
+    #[error("repository {n} ({address}): {problem}")]
+    Entry {
+        /// The entry's place in the list, from 1.
+        n: usize,
+        /// The address, safe to quote.
+        address: String,
+        /// What is wrong.
+        problem: EntryProblem,
+    },
+    /// Two entries go into one directory.
+    #[error(
+        "repositories {first} ({first_url}) and {second} ({second_url}) both go into {directory}; \
+         give one of them another directory, such as {suggestion}"
+    )]
+    SameDirectory {
+        /// The first entry's place, from 1.
+        first: usize,
+        /// Its address.
+        first_url: String,
+        /// The second entry's place, from 1.
+        second: usize,
+        /// Its address.
+        second_url: String,
+        /// The directory both use.
+        directory: CheckoutDir,
+        /// A free directory to use instead.
+        suggestion: CheckoutDir,
+    },
+    /// Two entries name one repository.
+    #[error(
+        "repositories {first} ({first_url}) and {second} ({second_url}) are the same repository, \
+         {spelling}; list it once"
+    )]
+    SameRepository {
+        /// The first entry's place, from 1.
+        first: usize,
+        /// Its address.
+        first_url: String,
+        /// The second entry's place, from 1.
+        second: usize,
+        /// Its address.
+        second_url: String,
+        /// How the repository table spells it.
+        spelling: String,
+    },
+}
+
 /// Checks a create's repository list as a whole, before anything exists. Each
 /// refusal names the entry by its place in the list and its address: an address the create
 /// checks refuse, a bad directory, two entries with one directory (with a free name to use
@@ -471,11 +624,11 @@ pub struct RepositoryDraft {
 ///
 /// # Errors
 ///
-/// The message for the user.
+/// A [`RepositoryListError`], whose message is for the user.
 pub fn check_repositories(
     drafts: &[RepositoryDraft],
     identity_exists: impl Fn(IdentityId) -> bool,
-) -> Result<Vec<NewRepository>, String> {
+) -> Result<Vec<NewRepository>, RepositoryListError> {
     check_repositories_with(drafts, identity_exists, &BTreeMap::new())
 }
 
@@ -486,47 +639,64 @@ pub fn check_repositories(
 ///
 /// # Errors
 ///
-/// The message for the user, as [`check_repositories`], and the reason a checkout can't be used.
+/// A [`RepositoryListError`], as [`check_repositories`], and the reason a checkout can't be used.
 pub fn check_repositories_with(
     drafts: &[RepositoryDraft],
     identity_exists: impl Fn(IdentityId) -> bool,
-    locals: &BTreeMap<String, Result<LocalSource, String>>,
-) -> Result<Vec<NewRepository>, String> {
+    locals: &BTreeMap<String, Result<LocalSource, LocalCheckoutError>>,
+) -> Result<Vec<NewRepository>, RepositoryListError> {
     if drafts.len() > MAX_REPOSITORIES {
-        return Err(format!(
-            "a workspace holds at most {MAX_REPOSITORIES} repositories; this list has {}",
-            drafts.len()
-        ));
+        return Err(RepositoryListError::TooMany {
+            count: drafts.len(),
+        });
     }
     let mut checked: Vec<NewRepository> = Vec::with_capacity(drafts.len());
     for (n, draft) in (1..).zip(drafts) {
         let local = match &draft.local {
             None => None,
             Some(path) => {
-                let named =
-                    |reason: &str| format!("repository {n} (the checkout {path}): {reason}");
+                let named = |problem: CheckoutProblem| RepositoryListError::Checkout {
+                    n,
+                    checkout: path.clone(),
+                    problem,
+                };
                 let found = locals
                     .get(path)
-                    .ok_or_else(|| named("it was not looked at"))?
+                    .ok_or_else(|| named(CheckoutProblem::NotLooked))?
                     .as_ref()
-                    .map_err(|e| named(e))?;
+                    .map_err(|e| named(CheckoutProblem::Unusable(e.clone())))?;
                 Some(found)
             }
         };
         let typed = draft.url.trim();
         let address = match local {
-            Some(found) if typed.is_empty() => found.origin.clone().map_err(|why| {
-                format!(
-                    "repository {n} (the checkout {}): {why}",
-                    found.git_dir.parent().unwrap_or(&found.git_dir).display()
-                )
-            })?,
+            Some(found) if typed.is_empty() => {
+                found
+                    .origin
+                    .clone()
+                    .map_err(|why| RepositoryListError::Checkout {
+                        n,
+                        checkout: found
+                            .git_dir
+                            .parent()
+                            .unwrap_or(&found.git_dir)
+                            .display()
+                            .to_string(),
+                        problem: CheckoutProblem::NoOrigin(why),
+                    })?
+            }
             _ => draft.url.clone(),
         };
-        let named = |reason: &str| format!("repository {n} ({}): {reason}", shown(&address));
-        let url = RepoUrl::parse(&address).map_err(|e| named(&e))?;
+        let named = |problem: EntryProblem| RepositoryListError::Entry {
+            n,
+            address: shown(&address),
+            problem,
+        };
+        let url = RepoUrl::parse(&address).map_err(|e| named(EntryProblem::Url(e)))?;
         let directory = match (&draft.directory, local) {
-            (Some(dir), _) => CheckoutDir::new(dir).map_err(|e| named(e.reason()))?,
+            (Some(dir), _) => {
+                CheckoutDir::new(dir).map_err(|e| named(EntryProblem::Directory(e)))?
+            }
             (None, Some(found)) => CheckoutDir::new(&found.folder_name)
                 .unwrap_or_else(|_| CheckoutDir::from_url(url.as_str())),
             (None, None) => CheckoutDir::from_url(url.as_str()),
@@ -534,10 +704,10 @@ pub fn check_repositories_with(
         if let Some(id) = draft.identity
             && !identity_exists(id)
         {
-            return Err(named(&format!("there is no identity {}", id.0)));
+            return Err(named(EntryProblem::UnknownIdentity(id)));
         }
         let entry = new_entry_id(|id| checked.iter().any(|c| c.repository.entry == *id))
-            .map_err(|e| named(&e))?;
+            .map_err(|e| named(EntryProblem::NoEntryId(e)))?;
         checked.push(NewRepository {
             repository: Repository {
                 entry,
@@ -550,30 +720,40 @@ pub fn check_repositories_with(
             local: local.map(|found| found.git_dir.clone()),
         });
     }
+    refuse_duplicates(&checked)?;
+    Ok(checked)
+}
+
+/// Refuses two entries that go into one directory or name one repository.
+fn refuse_duplicates(checked: &[NewRepository]) -> Result<(), RepositoryListError> {
     for (i, a) in checked.iter().enumerate() {
         for (j, b) in checked.iter().enumerate().skip(i + 1) {
             let (an, bn) = (i + 1, j + 1);
             if a.repository.directory == b.repository.directory {
                 let dir = &a.repository.directory;
-                return Err(format!(
-                    "repositories {an} ({}) and {bn} ({}) both go into {dir}; give one of them \
-                     another directory, such as {}",
-                    a.repository.url,
-                    b.repository.url,
-                    free_directory(dir, &checked)
-                ));
+                return Err(RepositoryListError::SameDirectory {
+                    first: an,
+                    first_url: a.repository.url.to_string(),
+                    second: bn,
+                    second_url: b.repository.url.to_string(),
+                    directory: dir.clone(),
+                    suggestion: free_directory(dir, checked),
+                });
             }
             if let (Ok(ra), Ok(rb)) = (table_spelling(a), table_spelling(b))
                 && ra == rb
             {
-                return Err(format!(
-                    "repositories {an} ({}) and {bn} ({}) are the same repository, {ra}; list it once",
-                    a.repository.url, b.repository.url
-                ));
+                return Err(RepositoryListError::SameRepository {
+                    first: an,
+                    first_url: a.repository.url.to_string(),
+                    second: bn,
+                    second_url: b.repository.url.to_string(),
+                    spelling: ra.to_string(),
+                });
             }
         }
     }
-    Ok(checked)
+    Ok(())
 }
 
 /// `url` as an error message may quote it: trimmed, cut to a readable length, and with any user
@@ -684,6 +864,36 @@ impl StartFolderChange {
     }
 }
 
+/// Why a start folder is refused. The messages are for the user and name the rule broken.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum StartFolderError {
+    /// An empty path.
+    #[error("the start folder must not be empty; use null for the volume root")]
+    Empty,
+    /// Longer than [`StartFolder::MAX_BYTES`].
+    #[error("the start folder is longer than {} bytes", StartFolder::MAX_BYTES)]
+    TooLong,
+    /// A leading `/`.
+    #[error("the start folder is a path under the volume, without a leading /")]
+    Absolute,
+    /// A control character or a backslash.
+    #[error("the start folder must not contain control characters or \\")]
+    ControlCharacter,
+    /// An empty, `.` or `..` part.
+    #[error("the start folder has an empty, . or .. part ({path}); name each folder")]
+    BadPart {
+        /// The path as given.
+        path: String,
+    },
+    /// Inside a folder Puddle keeps for itself.
+    #[error("the start folder must not be inside {folder}")]
+    Reserved {
+        /// The reserved first part.
+        folder: String,
+    },
+}
+
 /// A start folder: a relative path under the volume root, `/` between its
 /// parts, no part empty, `.` or `..`, no control character or `\`, not inside `.puddle` or
 /// `lost+found`, at most [`StartFolder::MAX_BYTES`] bytes.
@@ -698,33 +908,32 @@ impl StartFolder {
     ///
     /// # Errors
     ///
-    /// A message for the user that says which rule the path breaks.
-    pub fn parse(path: &str) -> Result<Self, String> {
+    /// [`StartFolderError`], which says which rule the path breaks.
+    pub fn parse(path: &str) -> Result<Self, StartFolderError> {
         if path.is_empty() {
-            return Err("the start folder must not be empty; use null for the volume root".into());
+            return Err(StartFolderError::Empty);
         }
         if path.len() > Self::MAX_BYTES {
-            return Err(format!(
-                "the start folder is longer than {} bytes",
-                Self::MAX_BYTES
-            ));
+            return Err(StartFolderError::TooLong);
         }
         if path.starts_with('/') {
-            return Err("the start folder is a path under the volume, without a leading /".into());
+            return Err(StartFolderError::Absolute);
         }
         if path.chars().any(|c| c.is_control() || c == '\\') {
-            return Err("the start folder must not contain control characters or \\".into());
+            return Err(StartFolderError::ControlCharacter);
         }
         for part in path.split('/') {
             if matches!(part, "" | "." | "..") {
-                return Err(format!(
-                    "the start folder has an empty, . or .. part ({path}); name each folder"
-                ));
+                return Err(StartFolderError::BadPart {
+                    path: path.to_owned(),
+                });
             }
         }
         let first = path.split('/').next().unwrap_or_default();
         if first == ".puddle" || first == CheckoutDir::LOST_AND_FOUND {
-            return Err(format!("the start folder must not be inside {first}"));
+            return Err(StartFolderError::Reserved {
+                folder: first.to_owned(),
+            });
         }
         Ok(Self(path.to_owned()))
     }
@@ -758,6 +967,18 @@ pub const MAX_ID_DRAWS: u32 = 16;
 #[non_exhaustive]
 pub struct NoFreeId;
 
+/// Why an [`IdSource`] gave no id for one draw. That draw counts, and the create draws again.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum IdDrawError {
+    /// The operating system's random source failed.
+    #[error("no randomness: {0}")]
+    Random(getrandom::Error),
+    /// The text made from the name is not an id.
+    #[error(transparent)]
+    Invalid(#[from] puddle_types::ValidationError),
+}
+
 /// Where new workspace ids come from.
 pub trait IdSource: Send + Sync {
     /// Draw number `attempt` (counted from 0) for a new workspace called `name`. A create
@@ -765,8 +986,8 @@ pub trait IdSource: Send + Sync {
     ///
     /// # Errors
     ///
-    /// When the source gave nothing, with the reason. That draw counts.
-    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String>;
+    /// [`IdDrawError`] when the source gave nothing. That draw counts.
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, IdDrawError>;
 }
 
 /// The operating system's random source, five bytes a draw ([`WorkspaceId::from_random`]);
@@ -775,9 +996,9 @@ pub trait IdSource: Send + Sync {
 pub struct RandomIds;
 
 impl IdSource for RandomIds {
-    fn draw(&self, _name: &DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
+    fn draw(&self, _name: &DisplayName, _attempt: u32) -> Result<WorkspaceId, IdDrawError> {
         let mut bytes = [0_u8; 5];
-        getrandom::fill(&mut bytes).map_err(|e| format!("no randomness: {e}"))?;
+        getrandom::fill(&mut bytes).map_err(IdDrawError::Random)?;
         Ok(WorkspaceId::from_random(bytes))
     }
 }
@@ -791,16 +1012,18 @@ impl IdSource for RandomIds {
 pub struct NameIds;
 
 impl IdSource for NameIds {
-    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String> {
-        let base = id_for_name(name).map_err(|e| e.to_string())?;
+    fn draw(&self, name: &DisplayName, attempt: u32) -> Result<WorkspaceId, IdDrawError> {
+        let base = id_for_name(name)?;
         if attempt == 0 {
             return Ok(base);
         }
         let suffix = format!("-{}", attempt + 1);
         let room = WorkspaceId::MAX_LEN - suffix.len();
         let stem: String = base.as_str().chars().take(room).collect();
-        WorkspaceId::new(&format!("{}{suffix}", stem.trim_end_matches('-')))
-            .map_err(|e| e.to_string())
+        Ok(WorkspaceId::new(&format!(
+            "{}{suffix}",
+            stem.trim_end_matches('-')
+        ))?)
     }
 }
 
@@ -1115,6 +1338,32 @@ pub enum WorkspaceError {
     Internal(String),
 }
 
+impl WorkspaceError {
+    /// [`WorkspaceError::Conflict`] with the message of `cause`.
+    #[must_use]
+    pub fn conflict(cause: impl fmt::Display) -> Self {
+        Self::Conflict(cause.to_string())
+    }
+
+    /// [`WorkspaceError::Invalid`] with the message of `cause`.
+    #[must_use]
+    pub fn invalid(cause: impl fmt::Display) -> Self {
+        Self::Invalid(cause.to_string())
+    }
+
+    /// [`WorkspaceError::Unavailable`] with the message of `cause`.
+    #[must_use]
+    pub fn unavailable(cause: impl fmt::Display) -> Self {
+        Self::Unavailable(cause.to_string())
+    }
+
+    /// [`WorkspaceError::Internal`] with the message of `cause`.
+    #[must_use]
+    pub fn internal(cause: impl fmt::Display) -> Self {
+        Self::Internal(cause.to_string())
+    }
+}
+
 /// What running a shell init in a throwaway shell in the workspace showed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellInitCheck {
@@ -1182,10 +1431,10 @@ pub trait WorkspaceService: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Why the folder can't be used, for the user.
-    fn local_checkout(&self, path: &str) -> Result<LocalSource, String> {
+    /// [`LocalCheckoutError`] says why the folder can't be used.
+    fn local_checkout(&self, path: &str) -> Result<LocalSource, LocalCheckoutError> {
         let _ = path;
-        Err("starting from a checkout on this computer is not available here".into())
+        Err(LocalCheckoutError::NotAvailable)
     }
 
     /// Boots a workspace that is down.

@@ -159,7 +159,7 @@ fn ssh_remotes_get_the_not_supported_message() {
         "github.com:acme/api",
         "user@host:path",
     ] {
-        let err = RepoUrl::parse(ssh).unwrap_err();
+        let err = RepoUrl::parse(ssh).unwrap_err().to_string();
         assert!(
             err.contains("SSH remotes are not supported yet"),
             "{ssh}: {err}"
@@ -189,12 +189,17 @@ fn other_urls_say_what_to_change() {
         ("https://github.com/a\nb", "control"),
     ];
     for (url, wants) in cases {
-        let err = RepoUrl::parse(url).unwrap_err();
+        let err = RepoUrl::parse(url).unwrap_err().to_string();
         assert!(err.contains(wants), "{url:?}: {err}");
         assert!(!err.contains("secret"), "{err}");
     }
     let long = format!("https://github.com/{}", "a".repeat(MAX_REPO_URL_LEN));
-    assert!(RepoUrl::parse(&long).unwrap_err().contains("longer than"));
+    assert!(
+        RepoUrl::parse(&long)
+            .unwrap_err()
+            .to_string()
+            .contains("longer than")
+    );
 }
 
 #[test]
@@ -328,7 +333,7 @@ fn display_names_are_trimmed_and_bounded() {
         ("two\nlines", "line breaks"),
         ("tab\there", "control"),
     ] {
-        let err = DisplayName::parse(bad).unwrap_err();
+        let err = DisplayName::parse(bad).unwrap_err().to_string();
         assert!(err.contains(wants), "{bad:?}: {err}");
     }
     // Sixty multi-byte characters are within the limit: it counts characters, not bytes.
@@ -419,14 +424,14 @@ struct Stuck {
 }
 
 impl IdSource for Stuck {
-    fn draw(&self, _name: &DisplayName, attempt: u32) -> Result<WorkspaceId, String> {
+    fn draw(&self, _name: &DisplayName, attempt: u32) -> Result<WorkspaceId, IdDrawError> {
         assert_eq!(
             attempt,
             self.draws.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
         self.id
             .clone()
-            .ok_or_else(|| "the source is empty".to_owned())
+            .ok_or(IdDrawError::Random(getrandom::Error::UNSUPPORTED))
     }
 }
 
@@ -436,7 +441,7 @@ fn an_entry_id_is_drawn_again_while_taken_and_given_up_on_after_sixteen_draws() 
     let counting = |bytes: &mut [u8; 5]| {
         calls.set(calls.get() + 1);
         *bytes = [calls.get(); 5];
-        Ok(())
+        Ok::<(), getrandom::Error>(())
     };
     let first = EntryId::from_random([1; 5]);
     let id = draw_entry_id(counting, |e| *e == first).unwrap();
@@ -446,15 +451,18 @@ fn an_entry_id_is_drawn_again_while_taken_and_given_up_on_after_sixteen_draws() 
     let err = draw_entry_id(
         |_| {
             draws.set(draws.get() + 1);
-            Ok(())
+            Ok::<(), getrandom::Error>(())
         },
         |_| true,
     )
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert_eq!(draws.get(), MAX_ID_DRAWS);
     assert!(err.contains("no free repository entry id"), "{err}");
 
-    let empty = draw_entry_id(|_| Err("no randomness".to_owned()), |_| false).unwrap_err();
+    let empty = draw_entry_id(|_| Err("no randomness"), |_| false)
+        .unwrap_err()
+        .to_string();
     assert!(empty.contains("random source may be broken"), "{empty}");
     assert!(new_entry_id(|_| false).is_ok());
 }
@@ -645,7 +653,9 @@ fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
     );
     locals.insert(
         "/home/u/plain".to_owned(),
-        Err("/home/u/plain is not a git checkout: it has no .git".to_owned()),
+        Err(LocalCheckoutError::NotCheckout {
+            folder: PathBuf::from("/home/u/plain"),
+        }),
     );
     let checked = check_repositories_with(
         &[
@@ -669,8 +679,11 @@ fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
         "https://example.org/acme/x.git"
     );
     assert!(checked.iter().all(|r| r.pull && r.push));
-    let refused =
-        |d: RepositoryDraft| check_repositories_with(&[d], |_| false, &locals).unwrap_err();
+    let refused = |d: RepositoryDraft| {
+        check_repositories_with(&[d], |_| false, &locals)
+            .unwrap_err()
+            .to_string()
+    };
     assert_eq!(
         refused(local("/home/u/none", "")),
         "repository 1 (the checkout /home/u/none): it has no origin remote"
@@ -694,7 +707,10 @@ fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
 
 #[test]
 fn the_default_service_has_no_checkouts_on_this_computer() {
-    let err = NoWorkspaces.local_checkout("/home/u/shop").unwrap_err();
+    let err = NoWorkspaces
+        .local_checkout("/home/u/shop")
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("not available"), "{err}");
 }
 
@@ -743,7 +759,11 @@ fn a_repository_list_takes_defaults_and_keeps_its_order() {
 
 #[test]
 fn a_repository_list_is_refused_naming_the_entry() {
-    let refused = |drafts: &[RepositoryDraft]| check_repositories(drafts, |_| false).unwrap_err();
+    let refused = |drafts: &[RepositoryDraft]| {
+        check_repositories(drafts, |_| false)
+            .unwrap_err()
+            .to_string()
+    };
     let clash = refused(&[
         draft("https://github.com/acme/api"),
         draft("https://github.com/acme/web"),
@@ -808,15 +828,18 @@ fn a_repository_list_is_refused_naming_the_entry() {
 
 #[test]
 fn a_refused_address_is_named_without_its_credentials() {
-    let err =
-        check_repositories(&[draft("  https://me:tok@github.com/a/b  ")], |_| false).unwrap_err();
+    let err = check_repositories(&[draft("  https://me:tok@github.com/a/b  ")], |_| false)
+        .unwrap_err()
+        .to_string();
     assert!(
         err.starts_with("repository 1 (https://***@github.com/a/b): remove the user name"),
         "{err}"
     );
     assert!(!err.contains("tok"), "{err}");
     let long = format!("https://github.com/{}", "a".repeat(3000));
-    let err = check_repositories(&[draft(&long)], |_| false).unwrap_err();
+    let err = check_repositories(&[draft(&long)], |_| false)
+        .unwrap_err()
+        .to_string();
     assert!(err.len() < 400, "{}", err.len());
 }
 
@@ -836,7 +859,8 @@ fn a_long_directory_still_gets_a_free_name_that_fits() {
         ],
         |_| false,
     )
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     let suggested = refused.rsplit(' ').next().unwrap();
     assert_eq!(suggested, format!("{}-2", "a".repeat(98)));
 }
@@ -862,7 +886,7 @@ fn a_start_folder_is_a_plain_path_under_the_volume() {
         ("lost+found/x", "inside lost+found"),
         (&"a".repeat(256), "255 bytes"),
     ] {
-        let err = StartFolder::parse(bad).unwrap_err();
+        let err = StartFolder::parse(bad).unwrap_err().to_string();
         assert!(err.contains(why), "{bad:?}: {err}");
     }
     assert_eq!(

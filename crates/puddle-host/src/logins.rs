@@ -18,7 +18,7 @@ use puddle_secrets::SecretStore;
 use puddle_settings::resolve;
 use puddle_types::{Event, EventSink, LoginProblemKind, WorkspaceId};
 
-use crate::settings_read;
+use crate::settings_read::{self, SettingsReadError};
 
 /// Turns what `puddle-logins` reports into the event the user's screens show a notice for.
 struct EventNotices {
@@ -126,7 +126,7 @@ pub(crate) fn capture_enabled(
     settings: &dyn puddle_api::SettingsRepo,
     workspace: &WorkspaceId,
 ) -> bool {
-    let read = || -> Result<bool, String> {
+    let read = || -> Result<bool, SettingsReadError> {
         let global = settings_read::global(settings)?;
         let own = settings_read::workspace(settings, workspace)?;
         Ok(resolve(&global, Some(&own)).capture_logins.value)
@@ -144,7 +144,7 @@ pub(crate) fn foreign_warning_enabled(
     settings: &dyn puddle_api::SettingsRepo,
     workspace: &WorkspaceId,
 ) -> bool {
-    let read = || -> Result<bool, String> {
+    let read = || -> Result<bool, SettingsReadError> {
         let global = settings_read::global(settings)?;
         let own = settings_read::workspace(settings, workspace)?;
         Ok(resolve(&global, Some(&own)).warn_foreign_credentials.value)

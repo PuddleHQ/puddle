@@ -26,6 +26,78 @@ use crate::ssh_login::{LoginKey, SSH_DIR};
 const CONFIG_FILE: &str = "config";
 const KNOWN_HOSTS_DIR: &str = "known_hosts";
 
+/// Why Puddle's ssh config could not be made, written or linked. The messages are for the user.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SshConfigError {
+    /// The login key could not be made. Shared (`Arc`) because it is kept from start and said each
+    /// time it matters.
+    #[error("cannot make the login key in {}: {source}", dir.display())]
+    LoginKey {
+        /// Where the key lives.
+        dir: PathBuf,
+        /// What went wrong.
+        source: std::sync::Arc<io::Error>,
+    },
+    /// The login key file could not be read.
+    #[error("the login key cannot be read: {0}")]
+    LoginKeyUnreadable(#[source] russh::keys::Error),
+    /// No `puddle` program to run as the bridge.
+    #[error("this Puddle has no `puddle` program to run as the ssh bridge")]
+    NoBridge,
+    /// The old host key could not be removed.
+    #[error("cannot forget the old host key: {0}")]
+    ForgetHostKey(#[source] io::Error),
+    /// Puddle's config file could not be written.
+    #[error("cannot write {}: {source}", path.display())]
+    Write {
+        /// The file.
+        path: PathBuf,
+        /// What went wrong.
+        source: io::Error,
+    },
+    /// An entry could not be taken out of the file.
+    #[error("cannot take {host} out of {}: {source}", path.display())]
+    Withdraw {
+        /// The entry's host name.
+        host: String,
+        /// The file.
+        path: PathBuf,
+        /// What went wrong.
+        source: Box<SshConfigError>,
+    },
+    /// The include line could not be added to the user's file.
+    #[error("cannot add Puddle's include line to {}: {source}", path.display())]
+    Include {
+        /// The user's file.
+        path: PathBuf,
+        /// What went wrong.
+        source: Box<SshConfigError>,
+    },
+    /// A value an ssh config cannot hold safely.
+    #[error("{value:?} has the character {character:?}, which an ssh config cannot hold safely")]
+    Unsafe {
+        /// The value.
+        value: String,
+        /// The character that makes it unsafe.
+        character: char,
+    },
+    /// A path that is not text.
+    #[error("{} is not valid UTF-8", .0.display())]
+    NotUtf8(PathBuf),
+    /// The user's config is a link to nothing.
+    #[error(
+        "{} is a symbolic link to a file that is not there, and Puddle will not replace the link",
+        .0.display()
+    )]
+    DanglingLink(PathBuf),
+    /// The user's config is read-only.
+    #[error("{} is read-only, and Puddle will not change it", .0.display())]
+    ReadOnly(PathBuf),
+    /// A file-system call failed.
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
 /// One workspace's entry: the endpoint `ssh` reaches it through and the guest user it logs in as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
@@ -55,7 +127,7 @@ pub fn ssh_host(workspace: &WorkspaceId) -> String {
 #[derive(Debug)]
 pub(crate) struct SshSetup {
     dir: PathBuf,
-    login: Result<LoginKey, String>,
+    login: Result<LoginKey, std::sync::Arc<io::Error>>,
     bridge: Option<PathBuf>,
     user_config: Option<PathBuf>,
     entries: Mutex<BTreeMap<WorkspaceId, Entry>>,
@@ -68,7 +140,7 @@ impl SshSetup {
         let dir = data.join(SSH_DIR);
         let login = puddle_fs::private::create_dir(&dir)
             .and_then(|()| LoginKey::open(&dir))
-            .map_err(|e| format!("cannot make the login key in {}: {e}", dir.display()));
+            .map_err(std::sync::Arc::new);
         let setup = Self {
             dir,
             login,
@@ -89,11 +161,21 @@ impl SshSetup {
         self.login.as_ref().ok().map(LoginKey::public_line)
     }
 
+    /// The login key, or why there is none.
+    fn login(&self) -> Result<&LoginKey, SshConfigError> {
+        self.login
+            .as_ref()
+            .map_err(|source| SshConfigError::LoginKey {
+                dir: self.dir.clone(),
+                source: std::sync::Arc::clone(source),
+            })
+    }
+
     /// The login key as the host's own SSH client signs in with it (the terminal). The private
     /// file is read into memory for the session and never logged or shown.
-    pub(crate) fn identity(&self) -> Result<crate::terminals::Identity, String> {
-        let key = self.login.as_ref().map_err(Clone::clone)?;
-        crate::terminals::Identity::load(key.private_path())
+    pub(crate) fn identity(&self) -> Result<crate::terminals::Identity, SshConfigError> {
+        crate::terminals::Identity::load(self.login()?.private_path())
+            .map_err(SshConfigError::LoginKeyUnreadable)
     }
 
     /// Puddle's own ssh config file.
@@ -117,11 +199,9 @@ impl SshSetup {
         workspace: &WorkspaceId,
         endpoint: &Path,
         user: SessionUser,
-    ) -> Result<(), String> {
-        let login = self.login.as_ref().map_err(Clone::clone)?;
-        let bridge = self.bridge.as_deref().ok_or_else(|| {
-            "this Puddle has no `puddle` program to run as the ssh bridge".to_owned()
-        })?;
+    ) -> Result<(), SshConfigError> {
+        let login = self.login()?;
+        let bridge = self.bridge.as_deref().ok_or(SshConfigError::NoBridge)?;
         let known_hosts = self.known_hosts(workspace);
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         let before = entries.insert(
@@ -145,14 +225,17 @@ impl SshSetup {
                 match std::fs::remove_file(&known_hosts) {
                     Ok(()) => {}
                     Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(format!("cannot forget the old host key: {e}")),
+                    Err(e) => return Err(SshConfigError::ForgetHostKey(e)),
                 }
             }
             puddle_fs::private::create_dir(context.known_hosts_dir)
                 .and_then(|()| {
                     puddle_fs::private::write_atomic(&self.config_path(), text.as_bytes())
                 })
-                .map_err(|e| format!("cannot write {}: {e}", self.config_path().display()))
+                .map_err(|source| SshConfigError::Write {
+                    path: self.config_path(),
+                    source,
+                })
         });
         if let Err(e) = written {
             // Nothing was written: the file still matches what was there before.
@@ -173,17 +256,17 @@ impl SshSetup {
     /// Why the file could not be rewritten: the entry is then still in it, naming an endpoint that
     /// is about to close, and the caller says so. The entry is out of the live set either way, so
     /// the next write of the file (any workspace's) drops it.
-    pub(crate) fn withdraw(&self, workspace: &WorkspaceId) -> Result<(), String> {
+    pub(crate) fn withdraw(&self, workspace: &WorkspaceId) -> Result<(), SshConfigError> {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         if entries.remove(workspace).is_none() {
             return Ok(());
         }
         if let Err(e) = self.write_config(&entries) {
-            return Err(format!(
-                "cannot take {} out of {}: {e}",
-                ssh_host(workspace),
-                self.config_path().display()
-            ));
+            return Err(SshConfigError::Withdraw {
+                host: ssh_host(workspace),
+                path: self.config_path(),
+                source: Box::new(e),
+            });
         }
         let _ = std::fs::remove_file(self.known_hosts(workspace));
         Ok(())
@@ -199,10 +282,12 @@ impl SshSetup {
             .map(|e| e.endpoint.clone())
     }
 
-    fn write_config(&self, entries: &BTreeMap<WorkspaceId, Entry>) -> Result<(), String> {
+    fn write_config(&self, entries: &BTreeMap<WorkspaceId, Entry>) -> Result<(), SshConfigError> {
         let (Ok(login), Some(bridge)) = (&self.login, &self.bridge) else {
-            return puddle_fs::private::write_atomic(&self.config_path(), HEADER.as_bytes())
-                .map_err(|e| e.to_string());
+            return Ok(puddle_fs::private::write_atomic(
+                &self.config_path(),
+                HEADER.as_bytes(),
+            )?);
         };
         let context = Context {
             bridge,
@@ -210,19 +295,19 @@ impl SshSetup {
             known_hosts_dir: &self.dir.join(KNOWN_HOSTS_DIR),
         };
         let text = render(entries, &context)?;
-        puddle_fs::private::write_atomic(&self.config_path(), text.as_bytes())
-            .map_err(|e| e.to_string())
+        Ok(puddle_fs::private::write_atomic(
+            &self.config_path(),
+            text.as_bytes(),
+        )?)
     }
 
-    fn include(&self) -> Result<(), String> {
+    fn include(&self) -> Result<(), SshConfigError> {
         let Some(user) = &self.user_config else {
             return Ok(());
         };
-        ensure_include(user, &self.config_path()).map_err(|e| {
-            format!(
-                "cannot add Puddle's include line to {}: {e}",
-                user.display()
-            )
+        ensure_include(user, &self.config_path()).map_err(|source| SshConfigError::Include {
+            path: user.clone(),
+            source: Box::new(source),
         })
     }
 }
@@ -239,7 +324,10 @@ struct Context<'a> {
 }
 
 /// The whole of Puddle's ssh config for `entries`.
-fn render(entries: &BTreeMap<WorkspaceId, Entry>, context: &Context<'_>) -> Result<String, String> {
+fn render(
+    entries: &BTreeMap<WorkspaceId, Entry>,
+    context: &Context<'_>,
+) -> Result<String, SshConfigError> {
     let mut text = HEADER.to_owned();
     for (workspace, Entry { endpoint, user }) in entries {
         let host = ssh_host(workspace);
@@ -272,24 +360,25 @@ fn render(entries: &BTreeMap<WorkspaceId, Entry>, context: &Context<'_>) -> Resu
 
 /// A value that is safe inside double quotes in an ssh config and inside the shell or `cmd`
 /// that runs a `ProxyCommand`: nothing that ends the word, expands, or starts a second line.
-fn checked(value: &str) -> Result<&str, String> {
+fn checked(value: &str) -> Result<&str, SshConfigError> {
     let forbidden = |c: char| {
         c.is_control() || matches!(c, '"' | '%' | '$' | '`') || (!cfg!(windows) && c == '\\')
     };
     match value.chars().find(|&c| forbidden(c)) {
         None => Ok(value),
-        Some(c) => Err(format!(
-            "{value:?} has the character {c:?}, which an ssh config cannot hold safely"
-        )),
+        Some(character) => Err(SshConfigError::Unsafe {
+            value: value.to_owned(),
+            character,
+        }),
     }
 }
 
 /// `path` as a double-quoted ssh config word, with forward slashes on Windows (OpenSSH reads a
 /// backslash as an escape in some places).
-fn quoted(path: &Path) -> Result<String, String> {
+fn quoted(path: &Path) -> Result<String, SshConfigError> {
     let text = path
         .to_str()
-        .ok_or_else(|| format!("{} is not valid UTF-8", path.display()))?;
+        .ok_or_else(|| SshConfigError::NotUtf8(path.to_owned()))?;
     let text = if cfg!(windows) {
         text.replace('\\', "/")
     } else {
@@ -300,11 +389,11 @@ fn quoted(path: &Path) -> Result<String, String> {
 
 /// `"<bridge>" ssh-bridge "<endpoint>"`: the rest of the line is the command, which the shell
 /// (or `cmd` on Windows) reads, so the endpoint keeps its backslashes (`\\.\pipe\...`).
-fn proxy_command(bridge: &Path, endpoint: &Path) -> Result<String, String> {
-    let word = |p: &Path| -> Result<String, String> {
+fn proxy_command(bridge: &Path, endpoint: &Path) -> Result<String, SshConfigError> {
+    let word = |p: &Path| -> Result<String, SshConfigError> {
         let text = p
             .to_str()
-            .ok_or_else(|| format!("{} is not valid UTF-8", p.display()))?;
+            .ok_or_else(|| SshConfigError::NotUtf8(p.to_owned()))?;
         Ok(format!("\"{}\"", checked(text)?))
     };
     Ok(format!("{} ssh-bridge {}", word(bridge)?, word(endpoint)?))
@@ -319,29 +408,26 @@ fn proxy_command(bridge: &Path, endpoint: &Path) -> Result<String, String> {
 /// # Errors
 ///
 /// Any file-system error, one of the refusals above, or a path that cannot be quoted.
-pub(crate) fn ensure_include(user: &Path, puddle: &Path) -> Result<(), String> {
+pub(crate) fn ensure_include(user: &Path, puddle: &Path) -> Result<(), SshConfigError> {
     let line = format!("Include {}", quoted(puddle)?);
     let target = match std::fs::canonicalize(user) {
         Ok(real) => real,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             let is_link = std::fs::symlink_metadata(user).is_ok_and(|m| m.is_symlink());
             if is_link {
-                return Err(format!(
-                    "{} is a symbolic link to a file that is not there, and Puddle will not replace the link",
-                    user.display()
-                ));
+                return Err(SshConfigError::DanglingLink(user.to_path_buf()));
             }
             user.to_path_buf()
         }
-        Err(e) => return Err(e.to_string()),
+        Err(e) => return Err(e.into()),
     };
     let (existing, seen) = match std::fs::read(&target) {
         Ok(bytes) => {
-            let meta = std::fs::metadata(&target).map_err(|e| e.to_string())?;
+            let meta = std::fs::metadata(&target)?;
             (Some(bytes), Some(meta))
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => (None, None),
-        Err(e) => return Err(e.to_string()),
+        Err(e) => return Err(e.into()),
     };
     let old = existing.as_deref().unwrap_or_default();
     if has_top_level_line(old, line.as_bytes()) {
@@ -359,15 +445,12 @@ pub(crate) fn ensure_include(user: &Path, puddle: &Path) -> Result<(), String> {
         new.extend_from_slice(old);
     }
     let Some(seen) = seen else {
-        return puddle_fs::private::write_atomic(&target, &new).map_err(|e| e.to_string());
+        return Ok(puddle_fs::private::write_atomic(&target, &new)?);
     };
     if seen.permissions().readonly() {
-        return Err(format!(
-            "{} is read-only, and Puddle will not change it",
-            target.display()
-        ));
+        return Err(SshConfigError::ReadOnly(target));
     }
-    replace_keeping_permissions(&target, &new, &seen).map_err(|e| e.to_string())
+    Ok(replace_keeping_permissions(&target, &new, &seen)?)
 }
 
 /// Whether `line` is in `old` before its first `Host` or `Match` line: after one, `ssh` applies
@@ -400,7 +483,7 @@ fn replace_keeping_permissions(
 ) -> io::Result<()> {
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
     let mut suffix = [0u8; 6];
-    getrandom::fill(&mut suffix).map_err(|e| io::Error::other(e.to_string()))?;
+    getrandom::fill(&mut suffix).map_err(io::Error::other)?;
     let tmp = dir.join(format!(
         ".puddle-config-{:012x}.tmp",
         u64::from_be_bytes([

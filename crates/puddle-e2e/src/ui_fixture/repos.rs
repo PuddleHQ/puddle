@@ -49,7 +49,9 @@ impl HeldRepos {
         for seed in profiles {
             let read = profile_read(seed);
             match (&seed.source, &seed.token) {
-                (Some(source), None) => self.inner.set_profile(source.clone().into_spec()?, read),
+                (Some(source), None) => self
+                    .inner
+                    .set_profile(source.clone().into_spec().map_err(|e| e.to_string())?, read),
                 (None, Some(token)) => by_token.push((token.clone(), read)),
                 _ => {
                     return Err("a profile seed names a `source` or a `token`, not both".to_owned());

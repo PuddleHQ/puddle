@@ -20,7 +20,7 @@ fn what_cannot_be_used_is_refused_in_words() {
         host: "not a host".into(),
         account: "me".into(),
     };
-    assert_eq!(bad.into_spec().unwrap_err(), "not a valid host");
+    assert_eq!(bad.into_spec().unwrap_err().message, "not a valid host");
     let nameless = IdentityRequest {
         label: "x".into(),
         author: IdentityAuthor {

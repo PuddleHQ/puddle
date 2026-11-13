@@ -98,7 +98,7 @@ fn entries_for(
 /// A new entry id that none of `found` has.
 fn fresh_entry(found: &[Repository]) -> Result<EntryId, WorkspaceError> {
     puddle_api::new_entry_id(|e| found.iter().any(|f| f.entry == *e))
-        .map_err(WorkspaceError::Unavailable)
+        .map_err(WorkspaceError::unavailable)
 }
 
 /// The address and directory of a checkout whose remote address Puddle could read and use.

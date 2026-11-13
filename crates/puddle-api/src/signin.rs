@@ -106,7 +106,9 @@ fn wrong_credentials() -> ApiError {
 fn weak(err: PasswordError) -> ApiError {
     match err {
         PasswordError::Weak(why) => ApiError::invalid(why),
-        PasswordError::Failed(why) => internal(&why),
+        failed @ (PasswordError::Random(_) | PasswordError::Params(_) | PasswordError::Hash(_)) => {
+            internal(&failed.to_string())
+        }
     }
 }
 
@@ -551,7 +553,10 @@ pub enum ResetError {
     Store(#[from] StoreError),
     /// The system has no randomness.
     #[error("cannot make a secret: {0}")]
-    Random(String),
+    Random(getrandom::Error),
+    /// The store's one-time sign-in secrets were already taken (a bug in the caller).
+    #[error("cannot make a secret: the sign-in secrets were already taken")]
+    SecretsTaken,
 }
 
 /// The server-side password reset: takes `name`'s password away, signs every one of its devices
@@ -569,7 +574,7 @@ pub fn reset_account(
     let user = store
         .user_named(name)?
         .ok_or_else(|| ResetError::UnknownUser(name.to_owned()))?;
-    let secret = random_secret().map_err(|e| ResetError::Random(e.to_string()))?;
+    let secret = random_secret().map_err(ResetError::Random)?;
     let expires_at = now.saturating_add(INVITE_TTL_MS);
     secrets.clear_password(user.id)?;
     store.revoke_devices_of(user.id, None)?;

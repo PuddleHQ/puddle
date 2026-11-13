@@ -228,7 +228,8 @@ impl CredentialService for HostCredentials {
             })?;
             drop(token);
             // `tok-` and 128 random bits, with the user's mark.
-            let id = crate::stored_ids::fresh(user, "tok").map_err(CredentialsError::Internal)?;
+            let id = crate::stored_ids::fresh(user, "tok")
+                .map_err(|e| CredentialsError::Internal(e.to_string()))?;
             let (store, key) = (Arc::clone(&self.store), id.clone());
             tokio::task::spawn_blocking(move || store.set(&key, &secret))
                 .await

@@ -184,7 +184,7 @@ impl HostConfig {
     /// [`HostError::DataDir`] without a per-user data folder; [`HostError::Runtime`] when the
     /// folders are not absolute.
     pub fn installed_for_user(exe: &Path) -> Result<Self, HostError> {
-        let data = puddle_fs::data_dir().map_err(|e| HostError::DataDir(e.to_string()))?;
+        let data = puddle_fs::data_dir().map_err(HostError::DataDir)?;
         let mut config = Self::installed(exe, &data)?;
         // Only the user's own installation touches the user's own ssh config: a host over an
         // explicit data folder (tests, a second profile) leaves it alone.

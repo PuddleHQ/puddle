@@ -36,7 +36,7 @@ impl ApiToken {
     /// [`ConnectionFileError::Random`] if the OS has no randomness to give.
     pub fn generate() -> Result<Self, ConnectionFileError> {
         let mut bytes = Zeroizing::new([0u8; TOKEN_BYTES]);
-        getrandom::fill(&mut *bytes).map_err(|err| ConnectionFileError::Random(err.to_string()))?;
+        getrandom::fill(&mut *bytes).map_err(ConnectionFileError::Random)?;
         Ok(Self(hex(&*bytes)))
     }
 
@@ -53,7 +53,7 @@ impl ApiToken {
         &self.0
     }
 
-    fn parse(text: String) -> Result<Self, String> {
+    fn parse(text: String) -> Result<Self, MalformedToken> {
         // A malformed text is dropped on the error path; this wipes it there too.
         let mut text = Zeroizing::new(text);
         let well_formed = text.len() == TOKEN_BYTES * 2
@@ -63,7 +63,7 @@ impl ApiToken {
         if well_formed {
             Ok(Self(std::mem::take(&mut *text)))
         } else {
-            Err("token is not 64 lower-case hex characters".to_owned())
+            Err(MalformedToken)
         }
     }
 }
@@ -218,10 +218,16 @@ impl ConnectionInfo {
         }
         Ok(Self {
             url: std::mem::take(&mut parsed.url),
-            token: ApiToken::parse(std::mem::take(&mut parsed.token)).map_err(format_err)?,
+            token: ApiToken::parse(std::mem::take(&mut parsed.token))
+                .map_err(|e| format_err(e.to_string()))?,
         })
     }
 }
+
+/// A token that is not 64 lower-case hex characters. Never carries the text.
+#[derive(Debug, thiserror::Error)]
+#[error("token is not 64 lower-case hex characters")]
+struct MalformedToken;
 
 /// Why the connection file couldn't be written or read. Never contains the token.
 #[derive(Debug, thiserror::Error)]
@@ -229,7 +235,7 @@ impl ConnectionInfo {
 pub enum ConnectionFileError {
     /// The OS random source failed.
     #[error("cannot generate a random token: {0}")]
-    Random(String),
+    Random(getrandom::Error),
     /// A file-system call failed.
     #[error("connection file {}: {source}", path.display())]
     Io {

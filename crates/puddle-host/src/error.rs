@@ -10,7 +10,10 @@ use std::path::PathBuf;
 pub enum HostError {
     /// The per-user data folder could not be found.
     #[error("cannot find Puddle's data folder: {0}")]
-    DataDir(String),
+    DataDir(#[source] puddle_fs::DataDirError),
+    /// This program's own folder could not be found.
+    #[error("cannot find this program's folder: {0}")]
+    ProgramFolder(#[source] std::io::Error),
     /// Another Puddle process already uses the data folder, or the folder cannot be locked.
     #[error(transparent)]
     DataFolder(#[from] puddle_fs::LockError),
@@ -31,7 +34,7 @@ pub enum HostError {
     Front(std::io::Error),
     /// The host's corporate root certificates could not be read.
     #[error("cannot read the host's certificate stores: {0}")]
-    Roots(String),
+    Roots(#[source] puddle_certs::StoreError),
     /// Puddle's TLS client, which verifies the servers of decrypted hosts, could not be built.
     #[error("cannot set up TLS toward decrypted hosts: {0}")]
     Tls(#[from] puddle_upstream::TlsSetupError),
@@ -51,7 +54,7 @@ pub enum HostError {
     },
     /// Cleaning up after an earlier run failed.
     #[error("cannot reconcile with the runtime: {0}")]
-    Reconcile(String),
+    Reconcile(#[source] puddle_compute::ComputeError),
     /// The API could not start.
     #[error(transparent)]
     Api(#[from] puddle_api::ServeError),

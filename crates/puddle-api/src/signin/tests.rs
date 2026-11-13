@@ -795,7 +795,7 @@ async fn what_a_sign_in_hands_back_never_shows_its_secrets_in_a_debug_print() {
 #[test]
 fn a_hash_that_cannot_be_made_is_an_internal_error_and_a_weak_password_is_invalid() {
     assert_eq!(
-        code(&weak(PasswordError::Failed("no randomness".to_owned()))),
+        code(&weak(PasswordError::Random(getrandom::Error::UNSUPPORTED))),
         ErrorCode::Internal
     );
     assert_eq!(

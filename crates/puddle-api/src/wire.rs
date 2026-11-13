@@ -1800,7 +1800,7 @@ impl From<&settings::WorkspaceLayer> for SettingsLayer {
 impl SettingsLayer {
     /// Writes these values into `layer`, leaving its unknown fields alone.
     pub(crate) fn apply_to(self, layer: &mut settings::WorkspaceLayer) -> Result<(), ApiError> {
-        let invalid = |err: puddle_types::ValidationError| ApiError::invalid(err.to_string());
+        let invalid = |err: puddle_types::ValidationError| ApiError::invalid(err);
         let Self {
             memory,
             cpus,
@@ -2254,13 +2254,13 @@ fn colour_text(colour: Option<&settings::HexColour>) -> Option<String> {
 fn free_gb(gb: Option<u32>) -> Result<Option<settings::FreeGb>, ApiError> {
     gb.map(settings::FreeGb::new)
         .transpose()
-        .map_err(|err| ApiError::invalid(err.to_string()))
+        .map_err(ApiError::invalid)
 }
 
 fn parse_colour(text: Option<String>) -> Result<Option<settings::HexColour>, ApiError> {
     text.map(|t| settings::HexColour::new(&t))
         .transpose()
-        .map_err(|err| ApiError::invalid(err.to_string()))
+        .map_err(ApiError::invalid)
 }
 
 impl UiPrefs {
@@ -2310,7 +2310,7 @@ impl UiPrefs {
         prefs.disk_warning_percent = disk_warning_percent
             .map(settings::DiskWarningPercent::new)
             .transpose()
-            .map_err(|err| ApiError::invalid(err.to_string()))?;
+            .map_err(ApiError::invalid)?;
         prefs.notify_unexpected_stop = notify_unexpected_stop;
         prefs.confirm_global_rules = confirm_global_rules;
         prefs.inbox_shortcuts = inbox_shortcuts;
@@ -2327,7 +2327,7 @@ impl UiPrefs {
                 .disk_fail_free_gb
                 .unwrap_or(settings::FreeGb::DEFAULT_FAIL),
         )
-        .map_err(|err| ApiError::invalid(err.to_string()))?;
+        .map_err(ApiError::invalid)?;
         Ok(())
     }
 }
@@ -2684,8 +2684,8 @@ pub struct ConsentRequest {
 
 impl ConsentRequest {
     pub(crate) fn into_consent(self, now_ms: u64) -> Result<settings::Consent, ApiError> {
-        let terms_version = settings::TermsVersion::new(&self.terms_version)
-            .map_err(|err| ApiError::invalid(err.to_string()))?;
+        let terms_version =
+            settings::TermsVersion::new(&self.terms_version).map_err(ApiError::invalid)?;
         let at = settings::UnixMillis(now_ms);
         Ok(match self.decision {
             ConsentDecision::Granted => settings::Consent::Granted { at, terms_version },

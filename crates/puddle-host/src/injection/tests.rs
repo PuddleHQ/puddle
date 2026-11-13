@@ -888,7 +888,7 @@ async fn a_start_whose_secret_cannot_be_read_fails_with_the_reason_and_registers
     let ws = workspace("alpha");
     add_secret(&store, &vault, &ws, "T", &["x.example.org"]);
     vault.break_it();
-    let err = injection.begin(&ws, false).await.err().unwrap();
+    let err = injection.begin(&ws, false).await.err().unwrap().to_string();
     assert!(
         err.contains('T') && err.contains("credential store"),
         "{err}"
@@ -1017,7 +1017,7 @@ async fn a_credential_store_that_does_not_answer_fails_that_workspace_in_time_an
         assert!(began.is_ok());
     };
     let (stuck_result, ()) = tokio::join!(waiting, others);
-    let err = stuck_result.err().unwrap();
+    let err = stuck_result.err().unwrap().to_string();
     assert!(err.contains("did not answer within"), "{err}");
     assert!(err.contains("stuck") && err.contains("unlock"), "{err}");
     assert_eq!(vault.asked.lock().unwrap().len(), 1);
@@ -1051,7 +1051,7 @@ async fn stand_ins_that_overlap_stop_a_start_and_leave_a_running_workspace_as_it
     add_secret(&store, &vault, &ws, "A", &["a.example.org"]);
     add_secret(&store, &vault, &ws, "B", &["b.example.org"]);
     overlapping_stand_ins(&store, &ws);
-    let err = injection.begin(&ws, false).await.err().unwrap();
+    let err = injection.begin(&ws, false).await.err().unwrap().to_string();
     assert!(err.contains("cannot be registered"), "{err}");
     assert!(terminations.termination(&ws).is_none());
 

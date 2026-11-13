@@ -70,7 +70,12 @@ impl FakePlatform {
     fn call(&self, what: &'static str) -> Result<(), HostError> {
         self.log.lock().unwrap().push(what.to_owned());
         if self.refuse == Some(what) {
-            return Err(HostError::Roots(format!("{what} refused")));
+            return Err(HostError::Roots(
+                puddle_certs::StoreError::DisallowedUnreadable {
+                    store: SOURCES[0],
+                    reason: format!("{what} refused"),
+                },
+            ));
         }
         Ok(())
     }
@@ -6625,7 +6630,11 @@ async fn a_drawn_id_that_anything_is_kept_under_is_drawn_again_and_what_is_kept_
 struct Always(&'static str);
 
 impl puddle_api::IdSource for Always {
-    fn draw(&self, _name: &puddle_api::DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
+    fn draw(
+        &self,
+        _name: &puddle_api::DisplayName,
+        _attempt: u32,
+    ) -> Result<WorkspaceId, puddle_api::IdDrawError> {
         Ok(WorkspaceId::new(self.0).unwrap())
     }
 }

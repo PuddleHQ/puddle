@@ -36,9 +36,104 @@ use tokio::time::Instant;
 use puddle_logins::Logins;
 use puddle_proxy::ForeignCredentialWarning;
 
-use crate::environment::{Resolved, resolve};
+use crate::environment::{EnvironmentError, Resolved, resolve};
 use crate::git_hosts::{SshListing, decrypt_set, ssh_credential_hosts};
 use crate::logins::LoginKeeper;
+
+/// Why the proxy's per-workspace state could not be made or changed. The messages are for the
+/// user.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum InjectionError {
+    /// The workspace's environment could not be resolved.
+    #[error(transparent)]
+    Environment(#[from] EnvironmentError),
+    /// The environment task did not finish.
+    #[error("cannot read {workspace}'s environment: {source}")]
+    EnvironmentTask {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// What went wrong.
+        #[source]
+        source: tokio::task::JoinError,
+    },
+    /// The credential store did not answer in time.
+    #[error(
+        "the operating system's credential store did not answer within {seconds} seconds while \
+         reading {workspace}'s secrets; unlock it or check that it is running, then try again"
+    )]
+    VaultTimeout {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// The limit that passed.
+        seconds: u64,
+    },
+    /// A setting could not be read from the store.
+    #[error("cannot read {what}: {source}")]
+    Settings {
+        /// What was read, as a phrase.
+        what: String,
+        /// What went wrong.
+        #[source]
+        source: Box<puddle_store::StoreError>,
+    },
+    /// The SSH host keys' task did not finish.
+    #[error("cannot make {workspace}'s SSH host keys: {source}")]
+    HostKeysTask {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// What went wrong.
+        #[source]
+        source: tokio::task::JoinError,
+    },
+    /// The SSH host keys could not be made.
+    #[error("{workspace}: {source}")]
+    HostKeys {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// What went wrong.
+        #[source]
+        source: puddle_proxy::GitSshKeyError,
+    },
+    /// The workspace's certificate authority could not be made.
+    #[error("cannot make {workspace}'s certificate authority: {source}")]
+    Authority {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// What went wrong.
+        #[source]
+        source: puddle_ca::CaError,
+    },
+    /// The stand-ins could not be put into the registry.
+    #[error("the secrets of {workspace} cannot be registered: {source}")]
+    Registry {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// What went wrong.
+        #[source]
+        source: puddle_proxy::StandInError,
+    },
+    /// A deleted workspace's rows could not be removed.
+    #[error("cannot remove {workspace}'s rules and environment: {source}")]
+    Removal {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// What went wrong.
+        #[source]
+        source: Box<puddle_store::StoreError>,
+    },
+    /// The removal task did not finish.
+    #[error("{0}")]
+    RemovalTask(#[source] tokio::task::JoinError),
+    /// Secret values stayed in the credential store.
+    #[error(
+        "the stored value of {names} could not be removed from the operating system's credential \
+         store; remove it there (it is filed under Puddle)"
+    )]
+    ValuesKept {
+        /// The variables, comma separated.
+        names: String,
+    },
+}
 
 /// What an injector is built from.
 #[derive(Clone)]
@@ -243,7 +338,7 @@ impl Injection {
 
     /// Reads `workspace`'s environment off the async threads, giving up when the credential store
     /// does not answer in time.
-    async fn environment_of(&self, workspace: &WorkspaceId) -> Result<Resolved, String> {
+    async fn environment_of(&self, workspace: &WorkspaceId) -> Result<Resolved, InjectionError> {
         let (store, vault, name) = (
             Arc::clone(&self.inputs.store),
             Arc::clone(&self.vault),
@@ -251,12 +346,14 @@ impl Injection {
         );
         let read = tokio::task::spawn_blocking(move || resolve(&store, vault.as_ref(), &name));
         match tokio::time::timeout(self.vault_timeout, read).await {
-            Ok(done) => done.map_err(|e| format!("cannot read {workspace}'s environment: {e}"))?,
-            Err(_) => Err(format!(
-                "the operating system's credential store did not answer within {} seconds while \
-                 reading {workspace}'s secrets; unlock it or check that it is running, then try again",
-                self.vault_timeout.as_secs().max(1)
-            )),
+            Ok(done) => Ok(done.map_err(|source| InjectionError::EnvironmentTask {
+                workspace: workspace.clone(),
+                source,
+            })??),
+            Err(_) => Err(InjectionError::VaultTimeout {
+                workspace: workspace.clone(),
+                seconds: self.vault_timeout.as_secs().max(1),
+            }),
         }
     }
 
@@ -265,11 +362,14 @@ impl Injection {
     }
 
     /// The workspace's Git settings, from the database.
-    pub(crate) fn git(&self, workspace: &WorkspaceId) -> Result<WorkspaceGit, String> {
+    pub(crate) fn git(&self, workspace: &WorkspaceId) -> Result<WorkspaceGit, InjectionError> {
         self.inputs
             .store
             .workspace_git(workspace)
-            .map_err(|e| format!("cannot read {workspace}'s Git settings: {e}"))
+            .map_err(|source| InjectionError::Settings {
+                what: format!("{workspace}'s Git settings"),
+                source: Box::new(source),
+            })
     }
 
     /// Makes `workspace`'s CA for this start, reads its environment and the logins kept for it,
@@ -283,7 +383,7 @@ impl Injection {
         &self,
         workspace: &WorkspaceId,
         capture: bool,
-    ) -> Result<Began, String> {
+    ) -> Result<Began, InjectionError> {
         // Held until the workspace is registered: a change to its environment in the meantime
         // waits for that and then finds it running.
         let lock = self.environment_lock(workspace);
@@ -305,15 +405,21 @@ impl Injection {
     async fn host_keys_for(
         &self,
         workspace: &WorkspaceId,
-    ) -> Result<Option<Arc<GitSshHostKeys>>, String> {
+    ) -> Result<Option<Arc<GitSshHostKeys>>, InjectionError> {
         if !self.git_ssh {
             return Ok(None);
         }
         let made = tokio::task::spawn_blocking(GitSshHostKeys::generate)
             .await
-            .map_err(|e| format!("cannot make {workspace}'s SSH host keys: {e}"))?;
+            .map_err(|source| InjectionError::HostKeysTask {
+                workspace: workspace.clone(),
+                source,
+            })?;
         made.map(|keys| Some(Arc::new(keys)))
-            .map_err(|e| format!("{workspace}: {e}"))
+            .map_err(|source| InjectionError::HostKeys {
+                workspace: workspace.clone(),
+                source,
+            })
     }
 
     fn register(
@@ -323,7 +429,7 @@ impl Injection {
         stand_ins: Arc<StandIns>,
         logins: Logins,
         ssh_keys: Option<Arc<GitSshHostKeys>>,
-    ) -> Result<Began, String> {
+    ) -> Result<Began, InjectionError> {
         let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
         let git = self.git(workspace)?;
         // The common name shows in the guest's trust store and in a tool's error message.
@@ -331,11 +437,12 @@ impl Injection {
             .chars()
             .take(64)
             .collect();
-        let ca = Arc::new(
-            CaBuilder::new(&name)
-                .build()
-                .map_err(|e| format!("cannot make {workspace}'s certificate authority: {e}"))?,
-        );
+        let ca = Arc::new(CaBuilder::new(&name).build().map_err(|source| {
+            InjectionError::Authority {
+                workspace: workspace.clone(),
+                source,
+            }
+        })?);
         let certificate = ca.certificate().clone();
         let injector = self.factory.as_ref().map_or_else(
             || git_injector(&self.inputs, workspace),
@@ -344,7 +451,10 @@ impl Injection {
         let Resolved { guest, entries } = resolved;
         stand_ins
             .replace_origin(StandInOrigin::Secret, entries)
-            .map_err(|e| format!("the secrets of {workspace} cannot be registered: {e}"))?;
+            .map_err(|source| InjectionError::Registry {
+                workspace: workspace.clone(),
+                source,
+            })?;
         // The registry and the list of running CAs change together, under the list's lock, so a
         // `resync` or an `end` never sees one without the other.
         let mut running = self.running();
@@ -406,25 +516,29 @@ impl Injection {
         match applied {
             Ok(guest) => Some(guest),
             Err(reason) => {
-                self.failed(workspace, reason);
+                self.failed(workspace, &reason);
                 None
             }
         }
     }
 
     /// Tells the user, and the log, that a change to `workspace`'s environment did not apply.
-    fn failed(&self, workspace: &WorkspaceId, reason: String) {
+    fn failed(&self, workspace: &WorkspaceId, reason: &InjectionError) {
         tracing::warn!(workspace = %workspace, %reason, "a change to the workspace's environment is not applied");
         self.inputs.events.emit(Event::WorkspaceEnvFailed {
             workspace: workspace.clone(),
-            reason,
+            reason: reason.to_string(),
         });
     }
 
     /// Makes the registry of the running `workspace` hold `resolved`'s entries, then makes what it
     /// decrypts follow the registry. Not an error when the workspace stopped meanwhile: its next
     /// start reads its secrets itself.
-    fn apply_environment(&self, workspace: &WorkspaceId, resolved: Resolved) -> Result<(), String> {
+    fn apply_environment(
+        &self,
+        workspace: &WorkspaceId,
+        resolved: Resolved,
+    ) -> Result<(), InjectionError> {
         let registry = self
             .running()
             .get(workspace)
@@ -432,7 +546,10 @@ impl Injection {
         registry.map_or(Ok(()), |stand_ins| {
             stand_ins
                 .replace_origin(StandInOrigin::Secret, resolved.entries)
-                .map_err(|e| format!("the secrets of {workspace} cannot be registered: {e}"))?;
+                .map_err(|source| InjectionError::Registry {
+                    workspace: workspace.clone(),
+                    source,
+                })?;
             self.resync(workspace).map(|_| ())
         })
     }
@@ -440,7 +557,10 @@ impl Injection {
     /// Reads the running `workspace`'s settings again and changes what it decrypts to match, with
     /// the CA it has. `Ok(None)` when it has no CA (it is not running, so the next start reads the
     /// settings itself); the settings otherwise.
-    pub(crate) fn resync(&self, workspace: &WorkspaceId) -> Result<Option<WorkspaceGit>, String> {
+    pub(crate) fn resync(
+        &self,
+        workspace: &WorkspaceId,
+    ) -> Result<Option<WorkspaceGit>, InjectionError> {
         let _one_at_a_time = self.syncing.lock().unwrap_or_else(PoisonError::into_inner);
         let git = self.git(workspace)?;
         // Held until the registry is changed: an `end` in between would otherwise leave a CA
@@ -493,24 +613,38 @@ impl Injection {
         &self,
         workspace: &WorkspaceId,
         learned: &Arc<PassThrough>,
-    ) -> Result<Interception, String> {
+    ) -> Result<Interception, InjectionError> {
         let store = &self.inputs.store;
-        let own = store
-            .workspace_interception(workspace)
-            .map_err(|e| format!("cannot read what {workspace} decrypts: {e}"))?;
+        let own =
+            store
+                .workspace_interception(workspace)
+                .map_err(|source| InjectionError::Settings {
+                    what: format!("what {workspace} decrypts"),
+                    source: Box::new(source),
+                })?;
         let global = store
             .global_never_decrypt()
-            .map_err(|e| format!("cannot read the never-decrypt names: {e}"))?;
+            .map_err(|source| InjectionError::Settings {
+                what: "the never-decrypt names".to_owned(),
+                source: Box::new(source),
+            })?;
         let limits = store
             .learned_limits()
-            .map_err(|e| format!("cannot read the learned-host limits: {e}"))?;
+            .map_err(|source| InjectionError::Settings {
+                what: "the learned-host limits".to_owned(),
+                source: Box::new(source),
+            })?;
         learned.set_limits(
             Duration::from_secs(u64::from(limits.ttl_secs)),
             usize::try_from(limits.cap).unwrap_or(usize::MAX),
         );
-        let settings = store
-            .interception_settings()
-            .map_err(|e| format!("cannot read the interception setting: {e}"))?;
+        let settings =
+            store
+                .interception_settings()
+                .map_err(|source| InjectionError::Settings {
+                    what: "the interception setting".to_owned(),
+                    source: Box::new(source),
+                })?;
         let mode = own.mode.unwrap_or_else(|| settings.effective_mode());
         let mut curated = TerminationSet::new();
         if mode == InterceptionMode::AllExceptCurated {
@@ -535,12 +669,15 @@ impl Injection {
 
     /// The rules on method and path that apply to `workspace`, global and its own. A row the
     /// proxy cannot take (a host that is no longer valid) is left out and logged.
-    fn request_rules(&self, workspace: &WorkspaceId) -> Result<RequestRules, String> {
+    fn request_rules(&self, workspace: &WorkspaceId) -> Result<RequestRules, InjectionError> {
         let rows = self
             .inputs
             .store
             .request_rules_for(workspace)
-            .map_err(|e| format!("cannot read the rules on method and path: {e}"))?;
+            .map_err(|source| InjectionError::Settings {
+                what: "the rules on method and path".to_owned(),
+                source: Box::new(source),
+            })?;
         let mut rules = Vec::with_capacity(rows.len());
         for row in rows {
             match RequestRule::new(RuleId(row.id), &row.host, row.methods, row.path) {
@@ -606,9 +743,13 @@ impl Injection {
             workspace.clone(),
         );
         let outcome = tokio::task::spawn_blocking(move || {
-            let deletion = store
-                .delete_workspace(&name)
-                .map_err(|e| format!("cannot remove {name}'s rules and environment: {e}"))?;
+            let deletion =
+                store
+                    .delete_workspace(&name)
+                    .map_err(|source| InjectionError::Removal {
+                        workspace: name.clone(),
+                        source: Box::new(source),
+                    })?;
             let left: Vec<String> = deletion
                 .secrets
                 .iter()
@@ -618,17 +759,15 @@ impl Injection {
             if left.is_empty() {
                 return Ok(());
             }
-            Err(format!(
-                "the stored value of {} could not be removed from the operating system's credential \
-                 store; remove it there (it is filed under Puddle)",
-                left.join(", ")
-            ))
+            Err(InjectionError::ValuesKept {
+                names: left.join(", "),
+            })
         })
         .await
-        .map_err(|e| e.to_string())
+        .map_err(InjectionError::RemovalTask)
         .and_then(|removed| removed);
         if let Err(reason) = outcome {
-            self.failed(workspace, reason);
+            self.failed(workspace, &reason);
         }
         self.login_keeper.delete_workspace(workspace).await;
     }

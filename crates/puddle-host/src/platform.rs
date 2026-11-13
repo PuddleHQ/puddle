@@ -75,7 +75,7 @@ impl Platform for SystemPlatform {
     }
 
     fn corporate_roots(&self) -> Result<CorporateRoots, HostError> {
-        let snapshot = read_host_stores().map_err(|e| HostError::Roots(e.to_string()))?;
+        let snapshot = read_host_stores().map_err(HostError::Roots)?;
         Ok(CorporateRoots::select(
             &snapshot,
             std::time::SystemTime::now(),

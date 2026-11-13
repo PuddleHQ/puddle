@@ -78,7 +78,10 @@ pub(crate) fn workspace(
         reason = "the tools layer starts reading it in the next tasks"
     )
 )]
-pub(crate) fn mise(repo: &dyn SettingsRepo, name: &WorkspaceId) -> Result<MiseMode, String> {
+pub(crate) fn mise(
+    repo: &dyn SettingsRepo,
+    name: &WorkspaceId,
+) -> Result<MiseMode, SettingsReadError> {
     let global = global(repo)?;
     if !global.tools.mise() {
         // Off needs no workspace document, so a damaged one cannot turn the layer back on.

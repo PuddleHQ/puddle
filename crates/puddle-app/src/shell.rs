@@ -271,7 +271,7 @@ where
         ))),
         _ => None,
     };
-    let mut host = HostOptions::default();
+    let mut host = HostOptions::system();
     if let Some(launcher) = &launcher {
         host.launcher = launcher.clone();
     }

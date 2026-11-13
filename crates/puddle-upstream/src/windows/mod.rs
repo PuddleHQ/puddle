@@ -7,11 +7,13 @@
     reason = "FFI to WinHTTP and the registry; each block is small and commented"
 )]
 
+mod network;
 mod pac;
 mod settings;
 mod sspi;
 mod watch;
 
+pub(crate) use network::WinNetwork;
 pub(crate) use sspi::SspiSource;
 
 use crate::hop::Hop;

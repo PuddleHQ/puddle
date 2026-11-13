@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The bundled code-server installs an extension in a fresh workspace on the first try, with no
 //! rule added by anyone (K on Linux KVM): System managed allows Open VSX for every workspace from
 //! the start (rules spec R-41), whether or not that workspace's browser editor was ever opened.

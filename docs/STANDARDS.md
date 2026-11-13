@@ -682,8 +682,8 @@ against (`DigestStatus::Unpinned`). `PUDDLE_DEV_ANY_RUNTIME=1` (development buil
 
 ## 11. Licence headers
 
-Every source file starts with `SPDX-License-Identifier: GPL-3.0-or-later` in its own comment
-syntax (after a shebang, if any); manifests carry `license = "GPL-3.0-or-later"` through the
+Every source file starts with `SPDX-License-Identifier: AGPL-3.0-or-later` in its own comment
+syntax (after a shebang, if any); manifests carry `license = "AGPL-3.0-or-later"` through the
 workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
 [CONTRIBUTING.md](../CONTRIBUTING.md#licence-headers).
 
@@ -691,7 +691,7 @@ workspace. `scripts/check-spdx.sh` enforces it. Details and third-party files:
 
 - Declare versions once, in `[workspace.dependencies]`; crates use `dep = { workspace = true }`.
   Turn off default features you don't need.
-- `cargo deny check` gates licences (only GPL-3.0-or-later-compatible ones, list in `deny.toml`),
+- `cargo deny check` gates licences (only AGPL-3.0-or-later-compatible ones, list in `deny.toml`),
   advisories (a RustSec vulnerability, unmaintained or unsound advisory in any dependency, direct
   or transitive, or a yanked crate fails; see below for where it runs), bans (no wildcards) and sources (crates.io only;
   Puddle's own forks on GitHub once added). An exception names the advisory or crate, the reason

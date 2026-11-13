@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Who has a port on this computer, for the message that says a forward could not use it.
 
 use std::fmt;

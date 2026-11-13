@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Pending requests and how the user decides them (`docs/spec/rules.md` §3).
 
 use std::time::Duration;

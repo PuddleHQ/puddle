@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git over SSH, the guest's side: Puddle's own SSH server for the Git hosts it terminates.
 //!
 //! A workspace's SSH to a Git host (`github.com`, `ssh.dev.azure.com`, the host of an identity's

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Refreshes the `windows` Rust cache entry when develop's dependencies change. Pull requests only
 # restore that entry (windows.yml saves it only on the nightly), so after a change to a manifest, the
 # lockfile or the toolchain every pull request until the next nightly restored an older entry and

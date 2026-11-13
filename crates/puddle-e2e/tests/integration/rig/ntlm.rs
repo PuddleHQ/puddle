@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! An NTLM client for the lab's NTLM proxy where there is no SSPI: it builds the Type 1 and Type 3
 //! messages by hand, so the chain's three-leg `407` handling runs against a proxy that speaks
 //! NTLM. The Type 3 is shaped (user, domain, NTLMv2-sized response) but proves no identity, which

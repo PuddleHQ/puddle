@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle user reset <name>`: the server's own way to give a user back their way in. It takes
 //! the password away, signs every device of that user out, and makes a one-time invite; it never
 //! sets or shows a password. Like `puddle backup`, it works on the database file while the host

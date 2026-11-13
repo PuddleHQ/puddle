@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host: one start-up sequence and one shutdown sequence for the whole process.
 //!
 //! Starting has two phases because one step has to run before the process has any other thread:

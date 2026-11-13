@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reads the version msb embeds in its own binary, without running it.
 //!
 //! msb's CLI (since 0.7.6) stores its Cargo package version as plain UTF-8 in a section named

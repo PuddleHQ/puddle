@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Driving the UI fixture backend from a test: emit events, move the clock, run the scenario's
 // scripts, restart the API (open event streams end) or reset the data.
 //

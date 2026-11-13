@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The checks of the `dns_message` cargo-fuzz target: the DNS message the stub reads from the
 //! guest. Included by the fuzz target and by the stable corpus replay in `puddle-agent`'s tests
 //! (a `fuzzing` feature on the shipped agent would fail the release-feature check). It takes arbitrary bytes, never panics, and panics only when an invariant the stub's

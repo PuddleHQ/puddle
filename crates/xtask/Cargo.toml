@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "xtask"
 description = "Developer and release tasks: `cargo xtask runtime` assembles the bundled msb runtime folder with its licence files; `cargo xtask code-server` unpacks the pinned code-server release; `cargo xtask openapi` writes the API contract"

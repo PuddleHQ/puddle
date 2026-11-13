@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A real Forgejo as the lab's Git host: smart HTTP over TLS and its own built-in SSH server, on
 //! loopback ports, with one account, `acme`, that owns the repositories.
 //!

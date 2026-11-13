@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The browser editor on an Alpine image (musl, no glibc) on a real microVM (K on Linux KVM): the
 //! workspace starts and runs commands, the editor server does not run, and the user is told why in
 //! a problem on the workspace instead of finding a window that never loads.

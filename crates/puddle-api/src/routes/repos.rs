@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The repositories an identity's credentials reach, and who a credential's account is
 //! (credentials spec §8). Read on the host with the credential's own token; nothing here returns
 //! a secret and nothing reaches a workspace.

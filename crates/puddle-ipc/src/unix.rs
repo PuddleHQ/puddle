@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Unix: sockets mode `0600` inside a fresh directory mode `0700`.
 //!
 //! The directory is the real barrier: it is created by Puddle under a random name (`mkdir` fails

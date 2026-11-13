@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The one-time notice for an install that was set up before the interception choice existed: it
 // keeps decrypting only the hosts Puddle has a reason to read until the user picks a mode. The
 // notice stays until it is answered: "Keep it as it is" says so, choosing in Settings does too.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `host-control` stream: the host tells the agent to do something in the guest.
 //!
 //! The host opens one stream per message ([`crate::kind::StreamKind::HostControl`]), writes

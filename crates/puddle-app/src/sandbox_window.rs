@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's browser editor window.
 //!
 //! The editor is a web page served by the guest, so it is hostile as far as the shell is

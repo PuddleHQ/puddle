@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The workspace disks Puddle keeps whose workspace its list does not name, for the workspace
 // list. Puddle cannot tell from outside whether such a disk holds any files, so nothing here
 // says so. Restoring one adds a list entry for it; no call here deletes a disk.

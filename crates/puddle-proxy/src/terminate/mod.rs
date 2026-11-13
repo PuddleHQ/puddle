@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! TLS termination for the hosts a workspace has a credential for.
 //!
 //! Almost every connection through the proxy is spliced: the guest and the real server talk TLS

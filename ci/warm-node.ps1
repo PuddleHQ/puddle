@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 <#
 .SYNOPSIS
 Starts node once on an idle runner, so the tests' node processes find it in memory.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The WebKitGTK half of the terminal's key assumptions, the
 // engine behind the Linux shell, which has no DevTools Protocol: drives `terminal-keys.html` in
 // WebKitGTK's own browser through WebKitWebDriver (W3C WebDriver over HTTP, plain Node 24, no

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `cargo xtask runtime` against a fixture release: the folder it builds for Windows and for Linux,
 //! and every check that must stop it (checksum, version, missing licence entry, existing output,
 //! no pinned firmware version).

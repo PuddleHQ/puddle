@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The lab's real Git host: a Forgejo with its own SSH server, started for the run on the runner
 # (crates/puddle-e2e/src/lab/forgejo.rs). It holds no outside host, account, token or secret: its
 # account, token and SSH keys are made for the run, so the workflow needs no secret and runs on a

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeEach, describe, expect, it } from "vitest";
 import { MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { FakeSettings } from "#lib/testing/fake-settings.ts";

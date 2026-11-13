@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the endpoint says before SSH starts: a hello, then the SSH banner or a refusal line.
 //!
 //! On accept the endpoint at once writes [`HELLO`] (the bridge strips it; `ssh` never sees it),

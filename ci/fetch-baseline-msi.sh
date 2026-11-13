@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Downloads the MSI an upgrade starts from: what a user has installed before this build.
 #
 #   ci/fetch-baseline-msi.sh <out-dir>

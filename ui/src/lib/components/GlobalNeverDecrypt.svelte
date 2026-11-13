@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import NeverDecryptEditor from "#lib/components/NeverDecryptEditor.svelte";
   import { GlobalNeverDecrypt } from "#lib/stores/interception.svelte.ts";

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Test runner settings. Retries stay at 0: a flaky proxy or transparency test is the bug itself
 # (docs/STANDARDS.md, "Flaky tests"). Only infrastructure steps may retry, and they do so in the
 # harness, visibly. The one exception is the Windows nightly, which passes `--retries 1` on the

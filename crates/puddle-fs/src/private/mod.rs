@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Owner-only files and folders: the one place that knows how each OS says "only this user".
 //!
 //! | OS | Folder | File | [`check`] |

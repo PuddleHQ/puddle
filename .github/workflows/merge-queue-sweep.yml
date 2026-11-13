@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Backstop for pull requests that are armed for auto-merge and green but never enter the merge queue: GitHub does not
 # always hand an armed pull request to a ruleset queue (seen on a Dependabot PR armed with the workflow token, which sat
 # green for 2 h until it was disarmed and armed again). ci/merge-queue-sweep.sh adds each such PR's head commit to the

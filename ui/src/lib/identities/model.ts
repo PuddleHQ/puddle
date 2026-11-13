@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the Identities screens know about identities and their credentials, as pure functions:
 // how a source is worded, what a credential covers, what the last check of it came to, and the
 // checks a form makes before it asks. Nothing here holds a secret; a credential is a reference.

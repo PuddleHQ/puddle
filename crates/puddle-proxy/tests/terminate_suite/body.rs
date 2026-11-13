@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! An injector that decides on a request's body ([`Injector::body_wanted`]): the proxy reads the
 //! whole body first (within the limit the injector names), the injector decides on it, and the
 //! request goes upstream with the same body. Both HTTP versions. A refusal is recorded in the

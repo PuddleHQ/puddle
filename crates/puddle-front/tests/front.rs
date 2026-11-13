@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The front through real sockets: a client on the loopback speaks HTTP to the front, which carries
 //! it to a fake editor server over a second socket. What a request must look like to be routed,
 //! what the server sees of it, what the client sees of the answer, and how `WebSockets` and the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Decrypting every host on the wire: a workspace's switch and the names that are never decrypted.
 
 use puddle_types::{InterceptionMode, WorkspaceId};

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A real Squid as an explicit corporate proxy, open or with Basic authentication.
 //!
 //! Started from `PUDDLE_SQUID_BIN` (a `squid` binary, as on the CI runner) or

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // One terminal: the ticket, the socket, the flow control and the size rules, between an emulator (`Screen`) and the host. The emulator and the socket are handed in, so
 // every rule here is tested without a browser. No byte of the terminal is logged or stored: the
 // scrollback lives in the emulator, in the page.

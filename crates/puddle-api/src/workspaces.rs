@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspaces the API serves: the [`WorkspaceService`] trait the routes call, the domain
 //! types it speaks, and the [`Launcher`] that opens a desktop editor.
 //!

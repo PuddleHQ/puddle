@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Readers for the text formats proxies are described in: PAC answers, the WinINet
 //! `ProxyRules` value, and the `ProxyOverride` bypass list.
 

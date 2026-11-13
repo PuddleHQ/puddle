@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Which local-destination toggle (R-14) an IP literal falls under, so a request that needs a
 // switched-off toggle can say so. The proxy is the authority; this only names the toggle in
 // the UI. Hosts that are names return `null`: they are checked after resolving, in the proxy.

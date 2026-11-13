@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One proxied guest connection: read the request head, decide, connect, splice.
 //!
 //! The order matters for security: the head is bounded in size and time before anything else;

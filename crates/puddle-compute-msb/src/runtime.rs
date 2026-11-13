@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! [`MsbRuntime`]: [`puddle_compute::Runtime`] over the msb SDK.
 
 use std::collections::{BTreeMap, BTreeSet};

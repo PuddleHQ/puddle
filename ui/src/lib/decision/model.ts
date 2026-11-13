@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The four-outcome model of an approve or deny (rules spec R-15), as pure functions: effect x scope x
 // match x duration go in, the `DecisionRequest` body of the API comes out. No UI layout is in
 // here, so another control (four buttons, a pie menu) can be built on it. The one rule it

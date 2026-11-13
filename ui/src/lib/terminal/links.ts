@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What a link in a terminal's output may do: `http` and `https` addresses open in the
 // default browser; an address on this computer opens only when the workspace forwards that port
 // to the same port; everything else opens nothing.

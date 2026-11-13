@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shell init rows in the store.
 
 use puddle_types::{Event, WorkspaceId};

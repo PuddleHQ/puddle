@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The account a program the agent starts runs as: the workspace's session user, read from the
 //! guest's own `/etc/passwd` and `/etc/group` (the boot hook wrote the user there).
 

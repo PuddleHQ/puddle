@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The build script's `BUILT_FOR` check (`build/built_for.rs`): the version comes from the msb
 //! SDK's fork tag in `Cargo.lock`, and a lock that mixes sources or isn't on the fork fails.
 

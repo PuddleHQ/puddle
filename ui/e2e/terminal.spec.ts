@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The Terminal tab against the real API on the fixture backend (scenario `lived-in`: web-shop runs,
 // docs-site is stopped). The fixture's shell is a stand-in that echoes what is typed, answers `size`
 // with "<rows> <cols>" and ends on `exit N`. Waits are on conditions (the screen's text, a focus).

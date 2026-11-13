@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Every character the UI's own source puts on screen must be in a bundled font. A character the
 // fonts lack is drawn from a system font, and the first such character makes the browser search
 // the system's fonts; on Windows that search waits on the system font cache and held the page for

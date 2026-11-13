@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A fake Git host: the real `git http-backend` behind a TLS server whose root the test hands to
 //! whoever must trust it. It records every request (the `Authorization` it saw, the HTTP version
 //! it was spoken in) so a test can say what a client sent and what the proxy added.

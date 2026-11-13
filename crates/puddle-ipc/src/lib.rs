@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Per-workspace host endpoints that only the current user can open.
 //!
 //! msb connects each guest vsock route to a host endpoint: a named pipe on Windows, a Unix socket

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Serving the single-page app from the API's own origin. The page and the API
 //! share one origin, so there is no CORS (the API's `Origin` check stays intact), SSE works, and the shell and a
 //! browser tab run identical code.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 fn frame(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {

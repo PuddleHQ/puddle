@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The compute-plane traits: [`Runtime`] (sandboxes, volumes, images) and [`Sandbox`] (one
 //! running VM).
 

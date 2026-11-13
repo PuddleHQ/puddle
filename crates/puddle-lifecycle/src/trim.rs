@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `fstrim` before a stop (ADR 0006 point 7): msb mounts volumes without `discard`, so space the
 //! guest freed only returns to the host's disk image when Puddle trims.
 

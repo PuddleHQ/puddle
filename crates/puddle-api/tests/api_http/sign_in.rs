@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Browser sign-in over real HTTP under a public name: the first visitor, passwords, the cookie,
 //! CSRF and origin checks, session fixation, brute force, devices and revoking, and that no answer
 //! carries a credential it should not.

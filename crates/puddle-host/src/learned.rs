@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's side of the learned list: the service the API reads and edits it through. The
 //! pass-through lives in memory in each running workspace's [`Interception`]; it is reached
 //! through the registry of terminations the proxy asks. The history of refusals (first and last

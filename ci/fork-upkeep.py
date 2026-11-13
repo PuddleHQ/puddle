@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Fork upkeep: label every commit the forks carry, and dry-run replay them on upstream's newest code.
 
 Puddle ships patched copies of microsandbox, libkrun, russh, imago and libkrunfw (PuddleHQ forks, pinned

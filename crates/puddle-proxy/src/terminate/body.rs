@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Request bodies on a terminated connection: decoded from the guest's framing frame by frame,
 //! and handed to the upstream client as a streaming body.
 //!

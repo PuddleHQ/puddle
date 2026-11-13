@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One request to the host's agent with a time limit: the key list, or a signature.
 
 use std::io::{self, Read, Write};

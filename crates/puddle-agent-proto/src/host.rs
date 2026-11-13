@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host side of one agent connection: accept the yamux session, serve the control stream,
 //! hand every other stream to the proxy.
 //!

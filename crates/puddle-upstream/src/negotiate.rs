@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Negotiate and NTLM sign-in to a proxy, as a [`ProxyAuth`] over a pluggable token source.
 //!
 //! This module is the protocol half and is portable: which scheme to speak, how a `407`

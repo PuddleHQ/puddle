@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Packages a test brings into a guest (`nft`, `pip`) without a live package mirror on a warm cache.
 //!
 //! A [`PackageKit`] is the set of package files (`.deb` or `.apk`, dependencies included) that

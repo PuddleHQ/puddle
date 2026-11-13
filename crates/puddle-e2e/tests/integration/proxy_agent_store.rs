@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! L2 end to end, no VM: a guest TCP client → the real guest agent → yamux over the workspace's
 //! real endpoint (`puddle-ipc`, a Unix socket) → the real proxy → local servers, with the real
 //! SQLite rules engine (`puddle-store`) as the policy and as the proxy's connection log, so every

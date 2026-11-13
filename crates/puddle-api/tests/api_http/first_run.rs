@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `GET` and `PUT /api/first-run`: the flag lives in the global settings document and survives
 //! the Settings screen's own saves.
 

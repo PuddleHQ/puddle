@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Puts msb + libkrunfw for this host in <dest-dir>, for the VM tests (PUDDLE_VM_RUNTIME_DIR). Every
 # downloaded file must match its SHA-256 pinned in ci/msb-runtime.sha256, and a source checkout its
 # pinned commit.

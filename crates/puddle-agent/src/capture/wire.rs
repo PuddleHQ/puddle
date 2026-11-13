@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The DNS messages the stub speaks: a strict parser for queries from the guest (hostile input)
 //! and a builder for the answers. Only what the stub needs: one question, no name compression in
 //! queries, `A`/`SRV`/`TXT`/`MX` answers, an `OPT` echo for `EDNS(0)`.

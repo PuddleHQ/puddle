@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The per-workspace and per-connection limits of terminated HTTP/2: the stream budget, sockets of
 //! the HTTP/1.1 pool, streams that are never polled, a peer that ignores the shutdown, a stream
 //! queued behind the server's own limit, a dead server asked by many streams, the window of the

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Runner disk evidence that survives a dead runner. A hosted runner that fills its disk loses its job log, so
 # the only record is what was written to the job summary and the annotations before the runner died.
 #

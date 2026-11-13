@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The addresses of a reverse proxy in front of Puddle that runs on another machine.
 //!
 //! The guard blocks the front's names, but a guest can name the same machine in other ways: its

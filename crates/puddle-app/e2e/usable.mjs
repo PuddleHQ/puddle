@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The "usable" run (install, create, approve, edit, build, push), with no person: the installed,
 // release build of the app on Windows, driven through the REST API its own screens call, with real
 // virtual machines and a real Git forge (the lab's, see below).

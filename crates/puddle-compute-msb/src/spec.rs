@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! [`puddle_compute::SandboxSpec`] to the SDK's `SandboxBuilder`, and the list of every SDK option
 //! Puddle sets or leaves at its default ([`SDK_OPTIONS`], input for the escape-hardening review).
 

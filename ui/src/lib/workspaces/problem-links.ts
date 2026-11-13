@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Where a background problem about a workspace sends you. The host names a problem with a key
 // (`start-folder:<id>`, `clone:<id>:<entry>`), where `<id>` is the workspace's id; a missing start folder goes to the
 // setting, every other problem about a workspace to the workspace's overview (which holds the

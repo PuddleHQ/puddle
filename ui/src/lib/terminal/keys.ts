@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Which keys are the terminal's own: everything else goes to the shell, and the page
 // cancels the browser's default for the keys it hands over.
 

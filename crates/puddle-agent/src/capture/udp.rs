@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tells the host about UDP the rules refused.
 //!
 //! The refusal itself is the kernel's (an `icmpx port-unreachable`, so the sender fails in well

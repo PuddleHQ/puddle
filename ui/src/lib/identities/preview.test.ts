@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import { credential, identity } from "#lib/testing/fake-identities.ts";
 import { previewIdentity } from "./preview.ts";

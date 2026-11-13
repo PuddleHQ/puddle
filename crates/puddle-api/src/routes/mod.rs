@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The routes. Each handler carries its `#[utoipa::path]`, and [`api_router`] registers routes
 //! and spec together (`utoipa-axum`), so the published spec can't drift from what is served.
 

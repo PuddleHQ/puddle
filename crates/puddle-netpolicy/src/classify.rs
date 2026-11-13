@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Address classes: which [`LocalCategory`] an IP address is in, or public.
 //!
 //! Fails closed: anything that is not plainly global unicast lands in a category. IPv4 embedded

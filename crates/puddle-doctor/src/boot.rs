@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The test boot: msb boots a microVM from a tiny root file system that holds one program, which
 //! exits with [`PROBE_EXIT_CODE`]. That exit code proves the whole path: msb started, the
 //! hypervisor made a VM, the guest kernel and msb's agent came up, and a program ran inside.

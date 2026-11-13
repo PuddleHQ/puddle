@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! xtask's `git` ignores the repository variables a git hook exports: with `GIT_DIR` pointing at
 //! another repository, `git init --bare` run through [`xtask::tools::git_command`] must create the
 //! new repository and leave the one `GIT_DIR` names alone (unstripped, it re-initialises that one

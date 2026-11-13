@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the identities screens ask of the host about credentials: the accounts already signed in
 //! here, whether a credential can be read now, a pasted token (write-only) and signing in on a
 //! click. Nothing here returns a secret value.

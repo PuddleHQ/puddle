@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Binding, serving and shutting down. Connections are served by hyper directly (not
 //! `axum::serve`) so headers have a read timeout and every connection task has an owner.
 

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # gitleaks configuration for scripts/check.sh secrets (docs/STANDARDS.md, "Secret scanning").
 # The default rules stay on; the allowlist below is the reviewed list of fake test values in
 # this repository's history. An entry matches only when BOTH the file path and the exact matched

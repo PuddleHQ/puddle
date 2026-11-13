@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Do Edge, Chrome and Firefox accept the development certificate once Windows trusts it? On the
 //! hosted runner the dialog is answered No first (the control: every browser shows its
 //! certificate warning for the same leaf), then Yes, and the same three browsers load the page

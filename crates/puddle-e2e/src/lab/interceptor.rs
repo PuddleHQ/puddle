@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! mitmproxy (`mitmdump`) as two corporate proxies: a TLS interceptor whose root is made for the
 //! run, and a proxy that demands NTLM. Needs `PUDDLE_MITMDUMP_BIN`; with it unset `start` skips,
 //! unless `PUDDLE_REQUIRE_MITMPROXY=1`, which makes a missing mitmproxy a failure (CI sets it).

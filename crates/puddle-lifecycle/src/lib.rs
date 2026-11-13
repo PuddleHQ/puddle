@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shutdown and reconcile: Puddle's VMs live and die with Puddle.
 //!
 //! - **Shutdown.** [`Lifecycle`] holds the owning handle of every sandbox Puddle runs. When Puddle

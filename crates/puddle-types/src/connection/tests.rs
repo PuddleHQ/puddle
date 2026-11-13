@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #[test]
 fn a_refused_reason_has_the_code_the_audit_records() {
     use crate::CompanySignal;

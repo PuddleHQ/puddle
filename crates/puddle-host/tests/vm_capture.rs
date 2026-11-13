@@ -74,7 +74,7 @@ fn bash_script(script: &str) -> String {
 fn open_rows(vm: &VmHost, workspace: &WorkspaceId) -> Vec<String> {
     vm.host
         .store()
-        .open_pending_every_user(Some(workspace))
+        .open_pending_every_user(&puddle_store::testing::all_users(), Some(workspace))
         .unwrap()
         .iter()
         .map(|r| format!("{}:{}", r.host, r.port))
@@ -94,7 +94,7 @@ async fn wait_for_row(
             let rows = vm
                 .host
                 .store()
-                .open_pending_every_user(Some(workspace))
+                .open_pending_every_user(&puddle_store::testing::all_users(), Some(workspace))
                 .unwrap();
             rows.iter()
                 .find(|r| r.host.to_string() == wanted)

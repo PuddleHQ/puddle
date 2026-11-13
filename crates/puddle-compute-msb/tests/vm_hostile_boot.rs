@@ -276,7 +276,11 @@ async fn vm_hostile_hg04_hg05_a_guest_cannot_reach_puddles_own_listeners_through
             }
         }
     }
-    let pending = rig.store.open_pending_every_user(None).unwrap().len();
+    let pending = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap()
+        .len();
     guest.finish().await;
     pull.shutdown().await;
     assert!(failures.is_empty(), "{failures:#?}");

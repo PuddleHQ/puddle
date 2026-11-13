@@ -38,7 +38,9 @@ use puddle_proxy::{
 use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
 use puddle_settings::resolve;
-use puddle_store::{ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock};
+use puddle_store::{
+    AllUsers, ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock,
+};
 use puddle_types::{
     ConnectionLog, Event, EventSink, Problem, Problems, WorkspaceId, WorkspaceStatus,
 };
@@ -520,6 +522,7 @@ impl<R: Runtime + Clone> Host<R> {
         let clock = Arc::new(SystemClock);
         let State {
             store,
+            all_users,
             settings,
             book,
             stored,
@@ -677,6 +680,7 @@ impl<R: Runtime + Clone> Host<R> {
                 clock: clock.clone(),
                 settings: settings.clone(),
                 store: store.clone(),
+                all_users,
                 launcher: options.launcher,
                 ssh,
                 book,
@@ -993,6 +997,8 @@ impl<R: Runtime + Clone> Host<R> {
 /// What `open_state` opened.
 struct State {
     store: Arc<Store>,
+    /// The reach across every user's data, taken before anything serves.
+    all_users: AllUsers,
     settings: Arc<dyn SettingsRepo>,
     book: WorkspaceBook,
     stored: Vec<crate::files::Stored>,
@@ -1010,6 +1016,12 @@ fn open_state(
         Store::open(&paths.store(), clock.clone(), Limits::default())?
             .with_events(events.clone() as Arc<dyn EventSink>),
     );
+    // Taken here, before the store reaches anything that serves requests, so no request handler
+    // can take it after.
+    let all_users = store.take_all_users().ok_or(HostError::State {
+        what: "the database",
+        reason: "the reach across every user was taken before the host started".to_owned(),
+    })?;
     let settings: Arc<dyn SettingsRepo> = Arc::new(FileSettings::new(paths.settings()));
     let book = WorkspaceBook::new(paths.workspace_book());
     let crate::files::Book {
@@ -1018,6 +1030,7 @@ fn open_state(
     } = book.load()?;
     Ok(State {
         store,
+        all_users,
         settings,
         book,
         stored,

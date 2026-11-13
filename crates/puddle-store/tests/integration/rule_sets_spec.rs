@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use puddle_store::testing::own;
 use puddle_store::{
     Actor, BUILT_IN_SETS, Effect, Limits, ManualClock, NewRule, Pattern, PendingState, Resolution,
     Scope, ScopeChoice, Store, StoreError, SystemPlan, SystemReason, parse_rule_set,
@@ -26,7 +27,15 @@ const T0: u64 = 1_800_000_000_000;
 fn fixture() -> (Arc<ManualClock>, Store) {
     let clock = Arc::new(ManualClock::new(T0));
     let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
+    own_workspaces(&store);
     (clock, store)
+}
+
+/// The workspaces these tests use, each the owner's.
+fn own_workspaces(store: &Store) {
+    for name in ["a", "b", "c", "gone", "ssh"] {
+        own(store, &sb(name));
+    }
 }
 
 fn sb(id: &str) -> WorkspaceId {
@@ -358,7 +367,12 @@ fn r38_set_names_are_checked_renamed_and_deleting_a_set_deletes_its_entries() {
         .unwrap();
     let deleted = store.delete_rule_set(OWNER, one, Actor::Ui).unwrap();
     assert_eq!(deleted.entries.len(), 1);
-    assert!(store.rules_every_user().iter().all(|rule| rule.id != r.id));
+    assert!(
+        store
+            .rules_every_user(&puddle_store::testing::all_users())
+            .iter()
+            .all(|rule| rule.id != r.id)
+    );
     assert!(matches!(
         decide(&store, "a", "x.example"),
         Decision::Pending(_)
@@ -518,7 +532,9 @@ fn r41_system_managed_follows_the_plan_and_records_each_change() {
         decide(&store, "a", "marketplace.visualstudio.com"),
         Decision::Pending(_)
     ));
-    let hosts = store.system_managed_every_user().unwrap();
+    let hosts = store
+        .system_managed_every_user(&puddle_store::testing::all_users())
+        .unwrap();
     assert!(hosts.iter().any(|h| h.pattern == "open-vsx.org"
         && h.reason == SystemReason::CodeServer
         && h.workspace.is_none()));
@@ -559,7 +575,12 @@ fn r41_system_managed_follows_the_plan_and_records_each_change() {
     assert!(decide(&store, "a", "marketplace.visualstudio.com").is_allow());
     // Nothing chosen: nothing allowed.
     store.set_system_managed(&SystemPlan::default()).unwrap();
-    assert_eq!(store.system_managed_every_user().unwrap(), Vec::new());
+    assert_eq!(
+        store
+            .system_managed_every_user(&puddle_store::testing::all_users())
+            .unwrap(),
+        Vec::new()
+    );
     assert!(matches!(
         decide(&store, "a", "marketplace.visualstudio.com"),
         Decision::Pending(_)
@@ -582,7 +603,12 @@ fn r41_deleting_a_workspace_removes_its_switches_and_system_reasons() {
         )
         .unwrap();
     store.delete_workspace(&sb("gone")).unwrap();
-    assert_eq!(store.system_managed_every_user().unwrap(), Vec::new());
+    assert_eq!(
+        store
+            .system_managed_every_user(&puddle_store::testing::all_users())
+            .unwrap(),
+        Vec::new()
+    );
     let github = store.rule_set(OWNER, RuleSetId::BuiltIn("github")).unwrap();
     assert_eq!(github.overrides, Vec::new());
 }
@@ -635,7 +661,11 @@ fn r43_connection_records_name_the_set_that_decided() {
     assert_eq!(record["rule_id"], Value::Null);
     assert_eq!(record["rule_set"], "system");
     assert_eq!(event.decision, ConnectionDecision::Allow);
-    let rows: Vec<RuleId> = store.rules_every_user().iter().map(|r| r.id).collect();
+    let rows: Vec<RuleId> = store
+        .rules_every_user(&puddle_store::testing::all_users())
+        .iter()
+        .map(|r| r.id)
+        .collect();
     assert!(rows.is_empty(), "System managed writes no rule rows");
 }
 
@@ -645,7 +675,9 @@ fn r40_system_managed_lists_every_host_with_its_reason_and_no_rule_rows() {
     store
         .set_system_managed(&plan(&[SystemReason::MicrosoftServer], &[]))
         .unwrap();
-    let hosts = store.system_managed_every_user().unwrap();
+    let hosts = store
+        .system_managed_every_user(&puddle_store::testing::all_users())
+        .unwrap();
     assert_eq!(hosts.len(), SystemReason::MicrosoftServer.hosts().len());
     for host in &hosts {
         assert_eq!(host.reason, SystemReason::MicrosoftServer);
@@ -657,7 +689,10 @@ fn r40_system_managed_lists_every_host_with_its_reason_and_no_rule_rows() {
             .describe()
             .contains("Microsoft's VS Code server")
     );
-    assert_eq!(store.rules_every_user(), Vec::new());
+    assert_eq!(
+        store.rules_every_user(&puddle_store::testing::all_users()),
+        Vec::new()
+    );
     // Not a set: it can't be listed or switched as one.
     assert!(matches!(
         store.rule_set(OWNER, RuleSetId::System),
@@ -710,7 +745,7 @@ fn r37_stored_switches_and_reasons_this_version_cannot_read_are_ignored() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store.db");
     let clock = Arc::new(ManualClock::new(T0));
-    drop(Store::open(&path, clock.clone(), Limits::default()).unwrap());
+    own_workspaces(&Store::open(&path, clock.clone(), Limits::default()).unwrap());
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch(
         "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at) VALUES
@@ -728,7 +763,9 @@ fn r37_stored_switches_and_reasons_this_version_cannot_read_are_ignored() {
     // The readable rows count; the others are skipped.
     assert!(decide(&store, "a", "github.com").is_allow());
     assert!(!decide(&store, "b", "github.com").is_allow());
-    let hosts = store.system_managed_every_user().unwrap();
+    let hosts = store
+        .system_managed_every_user(&puddle_store::testing::all_users())
+        .unwrap();
     assert!(hosts.iter().all(|h| h.workspace == Some(sb("a"))));
     assert!(decide(&store, "a", "open-vsx.org").is_allow());
 }

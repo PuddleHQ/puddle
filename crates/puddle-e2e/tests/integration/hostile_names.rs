@@ -195,7 +195,10 @@ async fn hostile_hg13_hostile_names_are_refused_or_waiting_under_their_ascii_for
             expected_rows.push(row.clone());
         }
     }
-    let rows = rig.store.open_pending_every_user(None).unwrap();
+    let rows = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap();
     let mut hosts: Vec<String> = rows.iter().map(|r| r.host.to_string()).collect();
     hosts.sort();
     expected_rows.sort();

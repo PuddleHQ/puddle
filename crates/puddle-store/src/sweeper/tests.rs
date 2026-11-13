@@ -43,7 +43,7 @@ async fn a_sweep_that_cannot_write_is_a_problem_until_one_works() {
     .await;
     sweeper.shutdown().await;
     assert_eq!(
-        store.rules_every_user().len(),
+        store.rules_every_user(&crate::testing::all_users()).len(),
         0,
         "the rule was removed in the end"
     );

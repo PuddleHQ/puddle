@@ -392,8 +392,18 @@ pub(super) fn delete_workspace_rows(
     tx: &Transaction<'_>,
     workspace: &WorkspaceId,
 ) -> Result<(Vec<(EnvName, StoredId)>, bool), StoreError> {
-    let user = users::owner_in(tx, workspace)?;
-    let own = list(tx, user, &EnvScope::Workspace(workspace.clone()))?;
+    // Every row of the workspace, whoever's: a workspace that is nobody's is cleaned up too.
+    let own = {
+        let mut stmt = tx.prepare(&format!(
+            "SELECT {COLUMNS} FROM env_vars WHERE workspace_id = ?1 ORDER BY name"
+        ))?;
+        let rows = stmt
+            .query_map([workspace.as_str()], raw)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(entry_of)
+            .collect::<Result<Vec<_>, _>>()?
+    };
     let held = tx.execute(
         "DELETE FROM env_stand_ins WHERE workspace_id = ?1",
         [workspace.as_str()],

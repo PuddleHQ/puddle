@@ -6,7 +6,7 @@
 use puddle_types::{Event, Methods, PathPattern, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use super::{Store, append_for, lock, users};
+use super::{AllUsers, Store, append_for, lock, users};
 use crate::audit::{AuditRecord, RequestRuleWire, RuleDeleteReason, actor_str};
 use crate::error::StoreError;
 use crate::rule::Actor;
@@ -170,7 +170,7 @@ impl Store {
     ///
     /// # Errors
     /// A database error, or a stored row that no longer reads.
-    pub fn request_rules_every_user(&self) -> Result<Vec<RequestRule>, StoreError> {
+    pub fn request_rules_every_user(&self, _: &AllUsers) -> Result<Vec<RequestRule>, StoreError> {
         list(&lock(&self.conn), "", &[])
     }
 

@@ -4,10 +4,10 @@
 //! Puddle keeps such a disk (a lost or outdated workspace list is the usual cause) and never
 //! removes it. A restore adds the list entry back; there is no route that deletes a disk.
 
+use crate::authz::Principal;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_store::UserId;
 use puddle_types::WorkspaceId;
 
 use crate::ApiErrorBody;
@@ -66,6 +66,7 @@ pub(crate) async fn list_orphan_volumes(
 )]
 pub(crate) async fn restore_orphan_volume(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<RestoreOrphanRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
@@ -79,9 +80,9 @@ pub(crate) async fn restore_orphan_volume(
     let store = state.store.clone();
     let restored = id.clone();
     blocking(move || {
-        // The disk of a workspace a user had stays theirs; any other is the owner's, who alone
-        // restores disks. Recorded first, so the workspace is never listed as nobody's.
-        let owner = store.workspace_owner(&restored)?.unwrap_or(UserId::OWNER);
+        // The disk of a workspace a user had stays theirs; any other becomes the restorer's (only
+        // the owner restores disks). Recorded first, so the workspace is never listed as nobody's.
+        let owner = store.workspace_owner(&restored)?.unwrap_or(principal.user);
         Ok(StoreGitSetup::new(store).claim(&restored, owner)?)
     })
     .await?;

@@ -185,7 +185,10 @@ async fn assert_denied_by(rig: &Rig, name: &str, port: u16, rule: &Rule) {
         "{name}: {headers:?}"
     );
     assert_eq!(
-        rig.store.open_pending_every_user(None).unwrap().len(),
+        rig.store
+            .open_pending_every_user(&puddle_store::testing::all_users(), None)
+            .unwrap()
+            .len(),
         0,
         "{name}"
     );
@@ -264,7 +267,11 @@ async fn r27_an_ip_deny_wins_over_exact_wildcard_and_approved_name_allows() {
         .await
         .unwrap();
     assert_eq!(code, 403);
-    let row = rig.store.open_pending_every_user(None).unwrap()[0].id;
+    let row = rig
+        .store
+        .open_pending_every_user(&puddle_store::testing::all_users(), None)
+        .unwrap()[0]
+        .id;
     rig.store
         .resolve_pending(row, &Resolution::allow(), Actor::Cli)
         .unwrap();

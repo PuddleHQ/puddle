@@ -404,7 +404,7 @@ impl Fixture {
         let state = self.state.lock().await;
         state
             .store
-            .inbox_every_user()
+            .inbox(UserId::OWNER)
             .map(|groups| groups.iter().map(|g| g.rows.len()).sum())
             .unwrap_or_default()
     }

@@ -48,7 +48,9 @@ use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
 use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, WorkspaceSettings, resolve};
 use puddle_ssh::SshEndpoint;
-use puddle_store::{Actor, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome};
+use puddle_store::{
+    Actor, AllUsers, Clock, NewWorkspaceOp, Store, WorkspaceOpKind, WorkspaceOpOutcome,
+};
 use puddle_types::{
     CheckoutDir, CpuCount, DiskKind, EntryId, Event, EventSink, GuestEnv, GuestFile, GuestPath,
     ImageRef, MemoryMib, Problem, Problems, SessionUser, WorkspaceId, WorkspaceStatus,
@@ -162,6 +164,9 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) settings: Arc<dyn puddle_api::SettingsRepo>,
     /// Where the audit log is written.
     pub(crate) store: Arc<Store>,
+    /// The reach across every user's data, for recording the owner of the workspaces made before
+    /// every create recorded its user.
+    pub(crate) all_users: AllUsers,
     pub(crate) launcher: Arc<dyn Launcher>,
     /// The login key and ssh config of direct SSH.
     pub(crate) ssh: Arc<SshSetup>,
@@ -760,6 +765,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             };
             slots.insert(id, Slot::new(record, false));
         }
+        let all_users = parts.all_users;
         let service = Self {
             inner: Arc::new(Inner {
                 runtime: parts.runtime,
@@ -805,7 +811,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }),
         };
         service.note_names(&service.state());
-        service.adopt_listed()?;
+        service.adopt_listed(&all_users)?;
         if interrupted && let Err(e) = service.persist(&service.state()) {
             // Harmless: the entries still say "being created" or "being deleted", so the next
             // start settles them the same way, and every later save writes the list without them.
@@ -817,11 +823,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// On the first start of this build, records the owner as the user of every listed workspace
     /// that has none: they were made before every create recorded its user. Before anything serves
     /// them, or no user would reach them; later starts change nothing.
-    fn adopt_listed(&self) -> Result<(), HostError> {
+    fn adopt_listed(&self, all_users: &AllUsers) -> Result<(), HostError> {
         let adopted = self
             .inner
             .store
-            .adopt_unowned_workspaces(self.state().slots.keys())
+            .adopt_unowned_workspaces(all_users, self.state().slots.keys())
             .map_err(|e| HostError::State {
                 what: "the database",
                 reason: format!("whose the listed workspaces are could not be recorded: {e}"),

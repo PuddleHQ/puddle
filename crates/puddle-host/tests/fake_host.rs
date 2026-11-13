@@ -9123,7 +9123,9 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
         1
     );
     assert!(
-        host.store().rules_every_user().is_empty(),
+        host.store()
+            .rules_every_user(&puddle_store::testing::all_users())
+            .is_empty(),
         "its rules went with it"
     );
 

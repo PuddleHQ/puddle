@@ -54,7 +54,7 @@ pub use learned::LearnedRow;
 pub use ports::PinnedPort;
 pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
-pub use users::WorkspaceOwners;
+pub use users::{AllUsers, WorkspaceOwners};
 
 /// Tunable limits. The defaults are the spec's *(default)* values.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +221,8 @@ pub struct Store {
     conn: Arc<Mutex<Connection>>,
     /// Whether [`Store::take_account_secrets`] has handed the sign-in secrets out.
     secrets_taken: AtomicBool,
+    /// Whether [`Store::take_all_users`] has handed the reach across every user out.
+    all_users_taken: AtomicBool,
     rules: RwLock<Arc<RuleIndex>>,
     workspaces: Mutex<HashMap<WorkspaceId, WorkspaceState>>,
     /// The connection limit of Puddle's own connections, which have no workspace.
@@ -294,6 +296,7 @@ impl Store {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             secrets_taken: AtomicBool::new(false),
+            all_users_taken: AtomicBool::new(false),
             rules: RwLock::new(Arc::new(rules)),
             workspaces: Mutex::new(HashMap::new()),
             puddle_connections: Mutex::new(ConnectionWindow::default()),
@@ -321,7 +324,7 @@ impl Store {
     /// entries of the rule sets users made (scope [`Scope::Set`]). For the install's own jobs
     /// (backups, checks); what a user is shown comes from [`Store::rules`].
     #[must_use]
-    pub fn rules_every_user(&self) -> Vec<Rule> {
+    pub fn rules_every_user(&self, _: &AllUsers) -> Vec<Rule> {
         self.snapshot().rules().to_vec()
     }
 
@@ -355,14 +358,15 @@ impl Store {
     /// Decides one request (R-5 to R-12): the deciding rule, or a pending outcome.
     ///
     /// # Errors
-    /// [`StoreError`] if the pending row can't be written. The caller fails closed.
+    /// [`StoreError::UnknownWorkspace`] for a workspace that is nobody's, or [`StoreError`] if
+    /// the pending row can't be written. The caller fails closed.
     pub fn decide(
         &self,
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Decision, StoreError> {
         let now = self.clock.now_ms();
-        if let Some(decision) = self.match_rules(request, now, suffix_allows) {
+        if let Some(decision) = self.match_rules(request, now, suffix_allows)? {
             return Ok(decision);
         }
         self.decide_locked(&mut lock(&self.conn), request, now, suffix_allows)
@@ -378,7 +382,7 @@ impl Store {
     ) -> Result<Decision, StoreError> {
         // Snapshots are only swapped under `conn`; look again so a rule committed while we
         // waited for the lock decides instead of a new pending row.
-        if let Some(decision) = self.match_rules(request, now, suffix_allows) {
+        if let Some(decision) = self.match_rules(request, now, suffix_allows)? {
             return Ok(decision);
         }
         let tx = write_tx(conn)?;
@@ -389,16 +393,24 @@ impl Store {
         Ok(Decision::Pending(outcome))
     }
 
+    /// What the rules of the workspace's user say about `request`, or `None` when none decides.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownWorkspace`] for a workspace that is nobody's: it has no rules, and a
+    /// pending row for it would reach no one.
     fn match_rules(
         &self,
         request: &EgressRequest,
         now: u64,
         suffix_allows: SuffixAllows,
-    ) -> Option<Decision> {
+    ) -> Result<Option<Decision>, StoreError> {
         let index = self.snapshot();
-        index
-            .decide(&request.workspace, &request.host, now, suffix_allows)
-            .map(Hit::decision)
+        let user = index
+            .owner_of(&request.workspace)
+            .ok_or_else(|| StoreError::UnknownWorkspace(request.workspace.clone()))?;
+        Ok(index
+            .decide_as(user, &request.workspace, &request.host, now, suffix_allows)
+            .map(Hit::decision))
     }
 
     fn record_pending(
@@ -561,9 +573,15 @@ impl Store {
 
     /// What the rules say about `host` for `workspace` right now, without recording anything:
     /// the same answer [`Store::decide`] gives, but `None` where that would open a pending row.
-    /// A workspace that does not exist yet sees only the global rules and the sets' defaults.
-    #[must_use]
-    pub fn peek(&self, workspace: &WorkspaceId, host: &Host) -> Option<Decision> {
+    /// For a workspace that is not made yet, see [`Store::peek_as`].
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownWorkspace`] for a workspace that is nobody's.
+    pub fn peek(
+        &self,
+        workspace: &WorkspaceId,
+        host: &Host,
+    ) -> Result<Option<Decision>, StoreError> {
         self.match_rules(
             &EgressRequest::new(workspace.clone(), host.clone(), 443),
             self.clock.now_ms(),
@@ -601,7 +619,7 @@ impl Store {
     ) -> Result<Vec<Rule>, StoreError> {
         let mut made = Vec::new();
         for host in hosts {
-            if self.peek(workspace, host).is_some() {
+            if self.peek(workspace, host)?.is_some() {
                 continue;
             }
             made.push(self.add_rule(&NewRule {
@@ -765,6 +783,7 @@ impl Store {
     /// A database error, or [`StoreError::Corrupt`].
     pub fn open_pending_every_user(
         &self,
+        _: &AllUsers,
         workspace: Option<&WorkspaceId>,
     ) -> Result<Vec<PendingRow>, StoreError> {
         self.open_pending_where(None, workspace)
@@ -805,8 +824,8 @@ impl Store {
     ///
     /// # Errors
     /// As [`Store::open_pending`].
-    pub fn inbox_every_user(&self) -> Result<Vec<InboxGroup>, StoreError> {
-        Ok(group_by_domain(self.open_pending_every_user(None)?))
+    pub fn inbox_every_user(&self, _: &AllUsers) -> Result<Vec<InboxGroup>, StoreError> {
+        Ok(group_by_domain(self.open_pending_where(None, None)?))
     }
 
     /// The open rows of `user`'s workspaces grouped by registrable domain for the inbox (R-18),
@@ -1230,6 +1249,16 @@ impl Store {
     /// A database error.
     pub fn audit_query_every_user(
         &self,
+        _: &AllUsers,
+        filter: &AuditFilter,
+        cursor: AuditCursor,
+        limit: u32,
+    ) -> Result<Vec<(i64, String)>, StoreError> {
+        self.audit_query_where(filter, cursor, limit)
+    }
+
+    fn audit_query_where(
+        &self,
         filter: &AuditFilter,
         cursor: AuditCursor,
         limit: u32,
@@ -1258,7 +1287,7 @@ impl Store {
             user: Some(user),
             ..filter.clone()
         };
-        self.audit_query_every_user(&filter, cursor, limit)
+        self.audit_query_where(&filter, cursor, limit)
     }
 
     /// Remembers `name` as the current name of `workspace`; audit records written from now on
@@ -1429,7 +1458,10 @@ impl Policy for Store {
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Option<Decision>, PolicyError> {
-        Ok(self.match_rules(request, self.clock.now_ms(), suffix_allows))
+        self.match_rules(request, self.clock.now_ms(), suffix_allows)
+            .map_err(|err| PolicyError {
+                reason: err.to_string(),
+            })
     }
 }
 

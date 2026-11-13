@@ -97,7 +97,10 @@ fn backup_restores_to_an_equal_store_and_leaves_credentials_out() {
 
     // Opening the copy makes its -wal/-shm, so it comes after the listing above.
     let restored = open(&dest.join(BACKUP_DATABASE));
-    assert_eq!(restored.rules_every_user(), live.rules_every_user());
+    assert_eq!(
+        restored.rules_every_user(&puddle_store::testing::all_users()),
+        live.rules_every_user(&puddle_store::testing::all_users())
+    );
     assert_eq!(
         restored.audit_lines(0, 1000).unwrap(),
         live.audit_lines(0, 1000).unwrap()
@@ -130,23 +133,29 @@ fn backup_while_the_store_is_being_written_is_one_consistent_point() {
     puddle_test_kit::eventually_blocking(
         "the writer has committed 20 rules",
         std::time::Duration::from_secs(10),
-        || live.rules_every_user().len() >= 20,
+        || {
+            live.rules_every_user(&puddle_store::testing::all_users())
+                .len()
+                >= 20
+        },
     );
     let mut copies = Vec::new();
     for i in 0..5 {
         let dest = root.path().join(format!("out{i}"));
-        let before = live.rules_every_user().len();
+        let before = live
+            .rules_every_user(&puddle_store::testing::all_users())
+            .len();
         backup(&paths, &dest).unwrap();
         copies.push((dest, before));
     }
     stop.store(true, Ordering::Relaxed);
     let total = writer.join().unwrap();
 
-    let final_rules = live.rules_every_user();
+    let final_rules = live.rules_every_user(&puddle_store::testing::all_users());
     assert_eq!(final_rules.len(), total);
     for (dest, before) in copies {
         let restored = open(&dest.join(BACKUP_DATABASE));
-        let rules = restored.rules_every_user();
+        let rules = restored.rules_every_user(&puddle_store::testing::all_users());
         // A prefix of the live history: every rule the host had committed before the copy
         // began is in it, and it matches the live store row for row up to its own length.
         assert!(rules.len() >= before, "{} < {before}", rules.len());

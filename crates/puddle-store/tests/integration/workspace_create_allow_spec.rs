@@ -8,15 +8,20 @@
 
 use std::sync::Arc;
 
+use puddle_store::testing::own;
 use puddle_store::{Actor, Effect, Limits, ManualClock, NewRule, Pattern, Scope, Store};
 use puddle_types::{Decision, EgressRequest, Host, PendingOutcome, SuffixAllows, WorkspaceId};
 
 fn store() -> Store {
-    Store::open_in_memory(
+    let store = Store::open_in_memory(
         Arc::new(ManualClock::new(1_800_000_000_000)),
         Limits::default(),
     )
-    .unwrap()
+    .unwrap();
+    for name in ["aaaaaaaa", "bbbbbbbb"] {
+        own(&store, &ws(name));
+    }
+    store
 }
 
 fn ws(id: &str) -> WorkspaceId {
@@ -44,7 +49,10 @@ fn a_fresh_store_does_not_allow_github_so_a_clone_waits_for_the_user() {
     // The check behind the create's grant: a repository host is pending until some rule says
     // otherwise, with or without a Git identity (a credential never allows a host).
     let store = store();
-    assert_eq!(store.peek(&ws("aaaaaaaa"), &host("github.com")), None);
+    assert_eq!(
+        store.peek(&ws("aaaaaaaa"), &host("github.com")).unwrap(),
+        None
+    );
     let decision = store
         .decide(
             &EgressRequest::new(ws("aaaaaaaa"), host("github.com"), 443),
@@ -60,8 +68,17 @@ fn a_fresh_store_does_not_allow_github_so_a_clone_waits_for_the_user() {
 #[test]
 fn peek_records_nothing() {
     let store = store();
-    assert_eq!(store.peek(&ws("aaaaaaaa"), &host("github.com")), None);
-    assert_eq!(store.inbox_every_user().unwrap().len(), 0);
+    assert_eq!(
+        store.peek(&ws("aaaaaaaa"), &host("github.com")).unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .inbox_every_user(&puddle_store::testing::all_users())
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -76,13 +93,21 @@ fn the_create_allows_a_new_host_for_that_workspace_only_as_a_rule_it_made() {
     assert_eq!(rule.effect, Effect::Allow);
     assert_eq!(rule.scope, Scope::Workspace(ws("aaaaaaaa")));
     assert_eq!(rule.expires_at, None);
-    assert!(store.rules_every_user().iter().any(|r| r.id == rule.id));
+    assert!(
+        store
+            .rules_every_user(&puddle_store::testing::all_users())
+            .iter()
+            .any(|r| r.id == rule.id)
+    );
     assert!(matches!(
-        store.peek(&ws("aaaaaaaa"), &host("github.com")),
+        store.peek(&ws("aaaaaaaa"), &host("github.com")).unwrap(),
         Some(Decision::Allow { .. })
     ));
     // Another workspace is unaffected.
-    assert_eq!(store.peek(&ws("bbbbbbbb"), &host("github.com")), None);
+    assert_eq!(
+        store.peek(&ws("bbbbbbbb"), &host("github.com")).unwrap(),
+        None
+    );
     // The audit says who made it.
     let lines = store.audit_lines(0, 100).unwrap();
     assert!(
@@ -132,7 +157,9 @@ fn a_block_rule_is_never_overridden_by_the_create() {
         .unwrap();
     assert_eq!(made.len(), 0);
     assert!(matches!(
-        store.peek(&ws("aaaaaaaa"), &host("api.github.com")),
+        store
+            .peek(&ws("aaaaaaaa"), &host("api.github.com"))
+            .unwrap(),
         Some(Decision::Deny { .. })
     ));
 }
@@ -147,9 +174,21 @@ fn the_grant_closes_a_pending_request_it_decides() {
         )
         .unwrap();
     assert!(matches!(decision, Decision::Pending(_)));
-    assert_eq!(store.inbox_every_user().unwrap().len(), 1);
+    assert_eq!(
+        store
+            .inbox_every_user(&puddle_store::testing::all_users())
+            .unwrap()
+            .len(),
+        1
+    );
     store
         .allow_hosts_for_create(&ws("aaaaaaaa"), &[host("github.com")])
         .unwrap();
-    assert_eq!(store.inbox_every_user().unwrap().len(), 0);
+    assert_eq!(
+        store
+            .inbox_every_user(&puddle_store::testing::all_users())
+            .unwrap()
+            .len(),
+        0
+    );
 }

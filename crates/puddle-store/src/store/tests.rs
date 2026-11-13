@@ -119,7 +119,10 @@ fn corrupt_rows_are_reported_not_trusted() {
         "{err}"
     );
     // The bad row also blocks reloading the rule set, so no change commits on top of it.
-    assert_eq!(store.rules_every_user(), Vec::<Rule>::new());
+    assert_eq!(
+        store.rules_every_user(&crate::testing::all_users()),
+        Vec::<Rule>::new()
+    );
 }
 
 fn is_corrupt(err: &StoreError, in_table: &str) -> bool {

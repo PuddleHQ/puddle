@@ -82,6 +82,12 @@ tracing-subscriber = { workspace = true }
 name = "vm_desktop_attach"
 harness = false
 
+# JetBrains Gateway's own SSH client against the same entry: this binary is the bridge program, and
+# it answers the test runner's `--list` itself.
+[[test]]
+name = "vm_gateway_attach"
+harness = false
+
 # The same, for the desktop VS Code test: this binary is the ssh config entry's bridge program, and it
 # answers the runner's `--list` itself.
 [[test]]

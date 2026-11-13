@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The per-OS runtime table and the guest architecture: the one place that spells the file names
 //! of msb and its firmware and the Rust target of the guest agent. `check.sh`'s
 //! `platform-literals` gate fails on those names anywhere else in `crates/`.

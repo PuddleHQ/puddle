@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settings in, [`GuestEnv`] and [`GuestFile`]s out.
 
 use std::fmt::Write as _;

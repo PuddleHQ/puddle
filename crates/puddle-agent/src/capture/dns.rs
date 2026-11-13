@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The stub DNS server.
 //!
 //! Tools that ignore the proxy settings resolve a name and connect to the answer. The stub answers

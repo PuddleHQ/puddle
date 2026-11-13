@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Boot-time proxy config for the guest.
 //!
 //! Every tool in the guest reaches the network through the agent's proxy listener. Most tools

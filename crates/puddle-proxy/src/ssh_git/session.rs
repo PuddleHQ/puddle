@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One SSH connection from a workspace to a terminated Git host: the server, its channels, the
 //! table check and the audit record.
 #![expect(

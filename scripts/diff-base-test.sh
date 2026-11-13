@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Tests scripts/diff-base.sh in a throwaway repository: a pull request merge ref whose base branch moved
 # on (another change added a file) is measured from the base's current tip, so the file the PR did not
 # touch is not in `git diff <base>`; other runs keep DIFF_BASE; a missing or unknown DIFF_BASE falls back

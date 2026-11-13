@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-app"
 description = "The desktop shell: a Tauri 2 window around the SPA that puddle-api serves, with the Puddle host in-process"

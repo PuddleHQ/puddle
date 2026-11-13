@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reading the host's certificate stores: `CryptoAPI` on Windows, nothing elsewhere (only Windows
 //! has the admin- and user-added root stores Puddle syncs).
 

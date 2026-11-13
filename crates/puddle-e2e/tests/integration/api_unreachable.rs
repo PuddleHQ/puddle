@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A hostile guest tries Puddle's own API through the real proxy: the guest agent's CONNECT to the
 //! API's address and port is refused with a reason, whatever the loopback toggle and the rules
 //! say.

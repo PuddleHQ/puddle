@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `OpenAPI` 3.1 contract (ADR 0004), generated from the routes and the [`crate::wire`]
 //! types. Committed as `crates/puddle-api/openapi/openapi.json`, with the TypeScript types
 //! generated from it; a test and the `openapi` gate fail when either is stale.

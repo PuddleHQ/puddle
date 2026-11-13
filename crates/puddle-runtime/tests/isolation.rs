@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A user's own msb setup never leaks into the msb Puddle starts: their `MSB_*` variables are
 //! dropped and an `msb` on `PATH` is never what runs. nextest runs each test in its own
 //! process, so changing the process environment here is safe.

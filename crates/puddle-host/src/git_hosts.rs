@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the Git hosts are called in URLs: the names Puddle decrypts for a credential, and the
 //! remote URLs that belong to an owner (which choose the commit author).
 //!

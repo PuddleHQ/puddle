@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What every Unix shares: file permissions, and the Windows-only checks reporting nothing.
 //! `linux.rs` and `macos.rs` hold the hypervisor probes.
 

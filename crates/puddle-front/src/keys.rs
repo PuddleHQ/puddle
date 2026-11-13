@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The server half of Microsoft's secret-storage key, one per workspace, kept in a file only the
 //! user can read.
 //!

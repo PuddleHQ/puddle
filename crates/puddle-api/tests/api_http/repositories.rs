@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's checkouts and the calls that add, manage and remove its repositories, over real
 //! HTTP against `FakeWorkspaces`: every refusal of API-56 and what API-57 lists.
 

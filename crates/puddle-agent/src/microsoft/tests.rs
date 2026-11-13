@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 const COMMIT: &str = "e646868227c3e3a9e3f24277c8c7220be42c0be7";

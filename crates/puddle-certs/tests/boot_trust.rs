@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Root sync through the real `boot.sh` and `guest/ca-bundle.sh`, on the test host against a
 //! fake guest root (stubbed `sysctl` and a Debian-like `update-ca-certificates`), under dash and
 //! bash. The VM version is `puddle-vm-tests/tests/vm_root_sync.rs`.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Whose an entry in the operating system's credential store is: its name says so.
 //!
 //! A pasted token or a secret's value is kept under a name Puddle makes. The owner's names are as

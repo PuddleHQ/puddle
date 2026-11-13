@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for the environment, shell init and ports endpoints (and the rule list the delete
 // dialog counts), for unit and component tests, in the shape openapi-fetch returns them. It keeps
 // real state, so a change shows in the next read, and it never returns a secret's value: those are

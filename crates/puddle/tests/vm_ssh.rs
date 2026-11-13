@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The SSH bar on real microVMs (tier K on Linux KVM, W on Windows WHP): the system OpenSSH
 //! client runs `puddle ssh-bridge` as its `ProxyCommand`, the bridge reaches a Puddle
 //! [`SshEndpoint`], and the endpoint serves each client with msb's own SSH server

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The hosts each workspace may use the user's SSH agent for (the filtered agent's switch).
 //!
 //! A row exists only while the user has the agent on for that host: there is no "off" row and no

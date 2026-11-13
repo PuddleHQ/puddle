@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The product name is "Puddle" in prose (docs, UI text, messages, comments) and `puddle` in
 # identifiers (the command, crates, paths, packages, the `PUDDLE_` prefix). This gate flags a bare
 # lowercase `puddle` that reads as prose: it stands alone as a word, in a sentence, in a heading,

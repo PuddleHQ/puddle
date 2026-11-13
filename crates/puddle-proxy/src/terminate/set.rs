@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which hosts a workspace's proxy decrypts.
 
 use std::collections::BTreeSet;

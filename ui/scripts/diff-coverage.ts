@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The diff-coverage gate (docs/STANDARDS.md, "Coverage"): every line a change adds or changes in
 // code that a coverage run measured must be executed by a test, or sit in the reviewed exclusion
 // file (scripts/diff-coverage-exclusions/<crate>.txt: `path glob | whole line, or * | [xN |] reason`).

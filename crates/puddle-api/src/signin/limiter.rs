@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The limits on password attempts. Puddle never trusts `X-Forwarded-*`, so it cannot tell two
 //! clients behind one proxy apart: there is no per-address limit. The limits are on what the
 //! attacker has to guess, and on the work the server does:

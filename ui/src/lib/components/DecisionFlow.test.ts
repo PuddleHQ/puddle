@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The confirmation before a decision that covers every workspace, and the Settings switch that
 // turns it off. The rest of the decision flow is exercised through the inbox page's tests.
 import {

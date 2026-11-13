@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import type { Rule } from "#lib/rules/model.ts";
 import { FakeEnvApi, secret, variable } from "#lib/testing/fake-environment.ts";

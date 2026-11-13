@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The main-thread stack of the fixture backend.
 //!
 //! A stack overflow is an abort with no message (`thread 'main' has overflowed its stack`, exit

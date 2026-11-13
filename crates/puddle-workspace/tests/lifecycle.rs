@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! U tests of the workspace lifecycle on the msb fake ("on the fake").
 #![expect(
     clippy::unwrap_used,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle user reset [--config <path>] [--data-dir <path>] <name>`: gives a user back their way
 //! in. It takes the user's password away, signs every one of their browsers out, and prints a
 //! one-time invite link that sets a new password. It never prints or sets a password.

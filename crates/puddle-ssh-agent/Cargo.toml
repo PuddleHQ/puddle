@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-ssh-agent"
 description = "A client for the SSH agent on the host: where it listens and which keys it holds"

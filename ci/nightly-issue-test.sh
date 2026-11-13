@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/nightly-issue.sh with a stub `gh` (answers `issue list` and `run list` from variables, records
 # every write call and keeps the issue body), and a structure check of .github/workflows/nightly-signal.yml: it
 # names only workflows that exist, and every workflow with a cron trigger is either named there or listed below

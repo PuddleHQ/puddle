@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Generates Tauri's context and the app ACL manifest .
 //!
 //! With a manifest, an app command is allowed to nobody until a capability grants it by name.

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-secrets"
 description = "where Puddle gets a secret on the host: signed-in gh, Git Credential Manager, a pasted token in the OS store"

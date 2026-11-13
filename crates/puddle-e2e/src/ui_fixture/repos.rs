@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fake Git hosts' repository lists: [`FakeRepos`] with a gate, so a test can keep a list
 //! slow (the request stays open) and then let it go, and the seed types turned into the lists the
 //! real service would answer with.

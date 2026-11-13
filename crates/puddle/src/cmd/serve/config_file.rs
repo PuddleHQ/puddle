@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `puddle serve` config file: one TOML file of start-up options, read strictly.
 //!
 //! An unknown key, a value of the wrong type or an invalid value, a repeated key and a syntax

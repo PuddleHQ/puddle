@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Puts the pinned desktop VS Code (Windows x64 zip) and its Remote-SSH package in <dest-dir>, for the desktop VS Code VM
 # tests (PUDDLE_VSCODE_DIR): <dest-dir>/app/Code.exe and <dest-dir>/remote-ssh.vsix. Each download must match the SHA-256
 # pinned in ci/vscode.sha256. The release is not made portable (no `data` folder): the tests pass their own user-data and

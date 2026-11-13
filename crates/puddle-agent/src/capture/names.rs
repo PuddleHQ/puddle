@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which names the stub answers itself, and which are plain enough to carry to the host.
 
 use puddle_agent_proto::resolve::MAX_NAME;

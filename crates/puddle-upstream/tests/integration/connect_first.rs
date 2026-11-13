@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Connecting to a destination with several addresses, as a client that races them does: one
 //! address whose connection attempts are lost (a route that drops packets, a server whose backlog
 //! is full) must not hold the connection up for the whole connect timeout.

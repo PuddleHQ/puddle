@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Puddle's guest CA bundle: the image's own CA bundle with Puddle's extra CAs appended
 # (the host's corporate and user-added roots, Puddle's own CAs), every certificate once.

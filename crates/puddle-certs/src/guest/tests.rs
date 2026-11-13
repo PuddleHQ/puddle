@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use std::time::{Duration, UNIX_EPOCH};
 
 use puddle_ca::{CaBuilder, GUEST_BUNDLE_PATH};

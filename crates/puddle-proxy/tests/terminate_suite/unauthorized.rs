@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A `401` from the real server is replaced by the injector's own answer when the injector added
 //! the request's credential, and only then: any other `401` is the server's answer like every
 //! other. Both HTTP versions.

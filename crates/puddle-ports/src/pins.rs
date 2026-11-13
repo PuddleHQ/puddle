@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where pinned forwards are kept. The host stores them in the database; the tests keep them in
 //! memory.
 

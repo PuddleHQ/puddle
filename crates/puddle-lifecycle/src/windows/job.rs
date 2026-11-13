@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's one kill-on-close job, held for the life of the process.
 
 use std::sync::{Mutex, OnceLock, PoisonError};

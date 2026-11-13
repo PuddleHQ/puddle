@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A healthy network-health report to change in a test. Not shipped (tests import it).
 import type { NetworkHealth } from "#lib/network/model.ts";
 

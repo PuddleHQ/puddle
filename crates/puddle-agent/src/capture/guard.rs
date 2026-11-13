@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Keeps the capture rules in place for the life of the agent.
 //!
 //! Each tick makes sure the interface exists, works out which interface is outbound, and compares

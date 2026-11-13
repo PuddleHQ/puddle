@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The scenario file: what the fixture holds at start, and the named scripts a test can run.
 //!
 //! Everything a scenario names is applied through the same store calls the proxy and the API

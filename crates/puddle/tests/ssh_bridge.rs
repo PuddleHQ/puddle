@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle ssh-bridge` as `ssh` runs it: the built binary as the `ProxyCommand`.
 //!
 //! On Unix the endpoint serves each client with a real OpenSSH server (`sshd -i`, as the test

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Helpers the host tests share: a minimal HTTP client for the API and a reader of its event
 //! stream, written on raw sockets so they depend on nothing the API's own tests do not.
 #![expect(

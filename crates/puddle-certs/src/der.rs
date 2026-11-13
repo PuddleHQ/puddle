@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Just enough DER to select roots: issuer, subject, `notAfter`, public key and common name of an
 //! X.509 certificate. Input is the host's own certificate stores, but any bytes are handled
 //! without panicking (property test below).

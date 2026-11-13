@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // How this browser is signed in. The desktop window has the shell's token and never signs in
 // (mode `local`). A browser that reached Puddle under a public name signs in with a name and a
 // password; the service sets a cookie the page cannot read and answers with a 15-minute access

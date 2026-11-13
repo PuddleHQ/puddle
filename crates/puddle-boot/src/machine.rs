@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! VS Code's Machine settings in the guest: how ports are forwarded and the
 //! accident guard that keeps desktop VS Code from handing its git credentials to the guest.
 

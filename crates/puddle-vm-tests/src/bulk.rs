@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A bulk byte source for the vsock load tests: an HTTP/1.1 server that answers `GET /gate/<n>` with
 //! `n` zero bytes once a whole load has connected, and `GET /stall/<n>` with a head and the first
 //! 64 KiB of `n` bytes, then nothing until the client leaves. Test code only.

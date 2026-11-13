@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle-agent merge-file`: applies a merged guest file for the boot hook.
 //!
 //! The boot hook (`boot.sh`) can't parse JSON, so for each [`ApplyKind::Merge`] file it runs

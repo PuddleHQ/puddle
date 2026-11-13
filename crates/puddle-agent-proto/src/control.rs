@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The control stream: one yamux stream per session on which the agent reports to the host.
 //!
 //! The agent opens it like any other stream and writes [`PREAMBLE`], then one JSON

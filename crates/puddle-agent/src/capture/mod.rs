@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Capture for tools that ignore the proxy settings.
 //!
 //! A client that doesn't use `HTTPS_PROXY` resolves a name and connects to the answer. The agent

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Stale git lock files after a crash: `guest/clear-locks.sh` run after a boot, and its
 //! parsed result.
 //!

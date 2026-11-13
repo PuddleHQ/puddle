@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The boot hook on real microVMs (K on Linux KVM, W on Windows WHP): the VM bar.
 //!
 //! Runs on the msb adapter (`puddle-compute-msb`) over the VM harness's private msb home,

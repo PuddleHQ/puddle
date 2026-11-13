@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Ends the first-run flow: records that it is done and opens the workspace list. The list opens
 // even when Puddle could not keep that, so a failing service never traps the user in the flow;
 // the toast says why, and that the flow may come back.

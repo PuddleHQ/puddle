@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's environment as the host applies it: the variables its guest starts with, and the
 //! stand-ins the proxy swaps for the secrets among them.
 //!

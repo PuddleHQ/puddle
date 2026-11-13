@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where the runtime's parts come from: the fork's GitHub release (msb), upstream's release or a
 //! release of Puddle's libkrunfw fork (the firmware), the fork's source at the tag (commits,
 //! firmware source, licences of msb's tree), or a fixture folder with the same parts for tests and

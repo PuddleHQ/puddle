@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! From facts to findings: the order of the checks, what depends on what, and the exact text of
 //! every finding and fix. Pure, so every case is tested with a faked [`Probe`].
 

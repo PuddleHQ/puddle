@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The agent protocol from the agent's side (`draft-miller-ssh-agent`): the requests a client sends
 //! and the answers the filtered agent gives. Every request comes from the guest, so the parsers
 //! assume nothing about it: a field cut short, bytes left over or an unknown type is a refusal.

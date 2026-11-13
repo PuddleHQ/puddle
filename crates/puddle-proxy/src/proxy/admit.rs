@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Admission: the order of checks from a parsed request to a connected upstream.
 
 use std::io;

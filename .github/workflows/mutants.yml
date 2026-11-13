@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Mutation testing (docs/STANDARDS.md, "Mutation testing"; scripts/mutants.sh, cargo-mutants): a mutant is a
 # small change to product code, and a test suite that still passes has not tested that code.
 #  - pull requests: the mutants on the lines the change adds or changes, in the crates of

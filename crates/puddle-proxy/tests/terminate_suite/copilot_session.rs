@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Copilot session token through the real proxy: the extension trades the stand-in GitHub
 //! token for a session token with a `GET`, the workspace gets a stand-in with the real token's
 //! fields and a random MAC, and the real token goes out only toward the Copilot hosts. A hostile

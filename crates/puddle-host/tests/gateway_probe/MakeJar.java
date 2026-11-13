@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Packs a folder into a jar: `java MakeJar.java <folder> <jar>` (Gateway's runtime ships no `jar` tool).
 import java.io.OutputStream;
 import java.nio.file.Files;

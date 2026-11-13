@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The daily quality report: one standing issue ("Code quality: open alerts and sites without a reason") with the open
 # code-scanning alerts, the open Dependabot alerts and the sites that lack a written reason, and what changed since
 # the day before (ci/quality-issue.sh; docs/STANDARDS.md, section 5). It never fails on a finding: the gate on pull

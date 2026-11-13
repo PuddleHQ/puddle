@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! L2 end to end, no VM: a DNS client → the guest agent's stub DNS → a `resolve` stream over the
 //! workspace's real endpoint (a Unix socket) → the real proxy with the real SQLite rules engine.
 //!

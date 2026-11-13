@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real Claude Code, GitHub CLI and Copilot CLI signing in and refreshing from inside a real
 //! microVM, against the real services, with credentials made up for the test. No account is
 //! involved: a made-up code, refresh token or access token is refused, and the refusal is what

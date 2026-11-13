@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 /// `blank` under a hang guard. A scanner that stops advancing would otherwise loop and allocate

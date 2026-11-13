@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's repositories: URLs, entries and the checks on a requested set.
 
 use std::collections::BTreeMap;

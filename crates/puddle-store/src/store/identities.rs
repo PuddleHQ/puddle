@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Identities and each workspace's Git settings in the store (`docs/arch/spec/credentials.md`
 //! §7 and §8). Credentials are stored as references to their sources; no value passes through.
 

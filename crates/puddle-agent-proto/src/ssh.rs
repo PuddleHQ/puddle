@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Recognising an SSH client by the first bytes it sends.
 //!
 //! An SSH client starts with its identification line (RFC 4253 section 4.2):

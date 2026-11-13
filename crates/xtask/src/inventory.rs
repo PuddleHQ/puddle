@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Third-party notices: cargo-about's licence report, checked against the dependency graph Cargo
 //! resolves, and rendered as a plain-text notices file.
 //!

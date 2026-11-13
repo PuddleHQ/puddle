@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Merged guest files: Puddle owns only some keys of a file that otherwise belongs to the user.
 //!
 //! A [`MergeSpec`] names the keys Puddle owns and their values. Applying it to the file in the

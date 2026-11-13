@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Prints the msb fork tag Puddle is built against (e.g. v0.7.8-puddle.2), read from the msb SDK's
 # source in Cargo.lock. The root Cargo.toml's `tag =` on the SDK lines is the only place the
 # version is written; puddle-runtime's build script reads the same entry (BUILT_FOR).

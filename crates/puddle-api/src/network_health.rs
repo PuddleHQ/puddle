@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The network-health report the API serves: the [`NetworkHealthService`] trait the route calls,
 //! [`HostNetworkHealth`] that builds the report from the live pieces (proxy discovery, the
 //! sign-in chain, the synced company roots, the pull proxy), and [`FakeNetworkHealth`] for tests

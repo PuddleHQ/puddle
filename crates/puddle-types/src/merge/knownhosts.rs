@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `ssh_known_hosts`: Puddle owns the lines between two marker lines and nothing else.
 //!
 //! The file is the image's and the user's, so every byte outside the markers stays as it is. A

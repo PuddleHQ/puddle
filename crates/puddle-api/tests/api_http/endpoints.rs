@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The API registers its address in the netpolicy endpoint registry while it is bound.
 
 use std::sync::Arc;

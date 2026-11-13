@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reading a Git host's answer: ok, the host's rate limit (and for how long to leave it alone),
 //! a rejected token, a refusal. Pure functions over an [`ApiReply`], so every rule has a test on
 //! the answers the hosts document.

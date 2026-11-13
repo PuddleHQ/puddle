@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `Alt-Svc` on responses Puddle decrypts: the HTTP/3 alternatives are removed.
 //!
 //! A workspace has no UDP path out, so a client that is told "this server speaks HTTP/3" would

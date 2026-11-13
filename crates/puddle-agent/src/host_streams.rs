@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The streams the host opens to the agent, told apart by their preamble
 //! ([`puddle_agent_proto::kind`]): `forward` (a connection to a guest port, [`crate::forward`]),
 //! `host-control` (a message to act on, [`crate::host_control`]) and `editor` (the editor server,

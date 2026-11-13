@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/tools-cache-heal.sh with a fake `gh`: no dispatch while the entry exists or a recent nightly or
 # dispatch run on develop exists (a pull request or merge queue run, or an old run, does not count); one dispatch
 # otherwise; none under DRY_RUN=1. Prints ok only when every case passes.

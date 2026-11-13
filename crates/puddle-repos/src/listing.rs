@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One list out of every credential's: repositories reached by more than one identity appear
 //! once with all of them, filtered by what the user typed and cut to a page. The Identities tab
 //! and the create form both read this, so they agree on order and spelling.

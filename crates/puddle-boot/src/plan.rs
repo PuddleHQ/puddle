@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The boot plan: everything one run of `boot.sh` applies, rendered as the shell fragment it
 //! reads on stdin.
 //!

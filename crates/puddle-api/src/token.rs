@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The API's bearer token, and the user-only connection file that hands it (with the URL) to the
 //! CLI and the UI.
 

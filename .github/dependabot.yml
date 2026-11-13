@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Weekly, grouped to save CI minutes. PRs go to develop, labelled by ecosystem. A release waits 3 days
 # (cooldown) before it is proposed; security updates skip the wait. cargo, ui and openapi-codegen split
 # into an `auto` group (patch and minor: the dependabot-auto-merge workflow arms auto-merge, so the PR lands

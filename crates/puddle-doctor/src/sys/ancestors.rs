@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The folders above Puddle's data folder, read by msb's own rule (`verify_ancestors` in msb's
 //! catalog storage): walking from `/` down, a folder that group or everyone can write in, without
 //! the sticky bit, lets another account swap the folders below it, so msb refuses to open its

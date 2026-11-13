@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settings and consents through the API, over the versioned documents of `puddle-settings`.
 
 use puddle_api::SettingsRepo;

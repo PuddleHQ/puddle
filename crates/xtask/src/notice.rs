@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The runtime's NOTICE file: what is bundled, under which licence, what Puddle changed in msb
 //! (Apache-2.0 §4(b)), and the written offer for the firmware's source (GPL-2.0 §3(b)).
 
@@ -95,7 +95,7 @@ This offer is valid for anyone in receipt of this runtime.
 3. Puddle
 ---------
 
-Puddle itself is GPL-3.0-or-later. Its third-party crates are listed in THIRD-PARTY-puddle.txt.
+Puddle itself is AGPL-3.0-or-later. Its third-party crates are listed in THIRD-PARTY-puddle.txt.
 ",
         lv = fw.libkrunfw_version,
         kv = fw.kernel_version,

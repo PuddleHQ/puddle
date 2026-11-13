@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The first-run flow of a fresh install on a real host and runtime (tiers K and W), through the
 //! API the app window talks to: the system check boots a test machine (`GET /api/doctor`), then
 //! three workspaces are created at once, each is its own running machine, and all three stop at once.

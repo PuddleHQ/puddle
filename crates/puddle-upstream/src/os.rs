@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The seam to the operating system: what the OS says about proxies, in neutral terms. Discovery
 //! only talks to [`OsProxy`], so every decision path is tested with [`crate::FakeOs`]. The
 //! Windows implementation (WinINet and WinHTTP, `windows/`) keeps its own field names and syntax

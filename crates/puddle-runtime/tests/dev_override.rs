@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The dev override can't reach a shipped build: no crate enables it, and a release build with it
 //! doesn't compile.
 #![expect(

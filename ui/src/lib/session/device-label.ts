@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What a browser calls itself in the device list, from its user-agent text: "Firefox on Linux".
 // Only the browser and the system are kept, never the version or anything that identifies a person.
 

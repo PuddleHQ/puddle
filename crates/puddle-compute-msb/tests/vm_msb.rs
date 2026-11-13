@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The adapter's own VM bars, beyond the contract suite: ext4 volumes and owned disks,
 //! three sandboxes at once with their own routes, `--max-memory` never set, the guest's open-file
 //! limits, a stop that gives the guest's processes their SIGTERM first, and (fork) SSH reporting a

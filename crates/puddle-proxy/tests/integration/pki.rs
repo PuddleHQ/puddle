@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests for the certificate distribution point exception: a plain-HTTP `GET` or `HEAD`
 //! of a CRL or authority-information-access URL named in a synced root is let through with no rule
 //! and no toggle when the host is on the company or a private network, and nothing else about the

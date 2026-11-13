@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! TLS from the host to a real server: Puddle's side of a terminated connection, and of its own
 //! requests.
 //!

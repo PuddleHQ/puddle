@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's side of the browser editor's front: which guests it serves and with which server.
 
 use std::collections::BTreeMap;

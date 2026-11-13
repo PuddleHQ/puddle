@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Starting a workspace from a checkout on this computer.
 //!
 //! Only the checkout's `.git` directory goes to a guest, read-only, and only to the short-lived

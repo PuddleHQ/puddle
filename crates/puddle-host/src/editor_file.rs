@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the editor opens in a workspace: its start folder, or one window for every checkout.
 //!
 //! With no start folder set and two or more checkouts on the volume, the editor opens a multi-root

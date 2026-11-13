@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The background problems that stand: things Puddle does on its own that failed.
 
 use axum::Json;

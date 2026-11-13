@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest tier W: a real second local user (a throwaway account the test makes and logs
 //! on) against the API and its connection file. The API listens on loopback, where any local user
 //! can connect, so the token is the only gate and the connection file is the only place it is

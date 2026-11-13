@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The start-up options of `puddle serve`, declared once.
 //!
 //! [`OPTIONS`] is the only place that names an option: the command-line flag, the environment

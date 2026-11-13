@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #![expect(
     unsafe_code,
     reason = "a global allocator that looks at a block just before it is freed is the only way to see that a dropped secret was wiped"

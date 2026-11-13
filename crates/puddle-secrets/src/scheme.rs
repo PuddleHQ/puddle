@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! How a token for Azure DevOps goes into an `Authorization` header: the one place that decides
 //! it, for the Git injector and for repository discovery alike.
 

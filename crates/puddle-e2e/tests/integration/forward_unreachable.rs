@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A hostile guest tries a port forward of its own workspace through the real proxy: the forward's
 //! listener on this computer's loopback is one of Puddle's own, so the agent's `CONNECT` to it is
 //! refused with a reason, whatever the loopback toggles and the rules say. Without that, a guest

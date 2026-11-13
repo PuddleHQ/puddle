@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What discovery reports about itself for the network-health page, over faked OS answers.
 
 use std::ffi::OsString;

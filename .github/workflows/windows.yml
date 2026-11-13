@@ -256,8 +256,20 @@ jobs:
         if: needs.test-build.outputs.run == 'true'
         shell: pwsh
         run: ./ci/warm-node.ps1
+      # A hung download would hold the job until its job limit (the same stall cost vm-linux 39 minutes once). Each download gets a step
+      # limit (the archive 8 minutes; the slowest seen on this runner is under 2), then one more try that fails the job when it also fails.
       - name: the test archive from the build job
+        id: archive
         if: needs.test-build.outputs.run == 'true'
+        timeout-minutes: 8
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-tests-build
+          path: ${{ runner.temp }}/bundle
+      - name: the test archive from the build job (second try)
+        if: needs.test-build.outputs.run == 'true' && steps.archive.outcome != 'success'
+        timeout-minutes: 8
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-tests-build

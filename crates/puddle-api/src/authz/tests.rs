@@ -44,8 +44,8 @@ fn every_route_declares_an_action_and_a_resource() {
     let operations = operations();
     assert_eq!(
         operations.len(),
-        125,
-        "124 documented operations and the contract"
+        openapi::committed_operation_count() + 1,
+        "every committed operation and the contract itself"
     );
     let missing: Vec<String> = operations
         .iter()

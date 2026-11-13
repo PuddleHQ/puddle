@@ -78,7 +78,7 @@ fn walk_ancestors(top: &Path, dir: &Path, euid: u32) -> io::Result<Walk> {
                 by: BlockedBy::OtherOwner { uid: meta.uid() },
             });
         }
-        if !private_boundary && mode & WRITE_BY_OTHERS != 0 && mode & STICKY == 0 {
+        if meta.is_dir() && !private_boundary && mode & WRITE_BY_OTHERS != 0 && mode & STICKY == 0 {
             found.push(WritableFolder {
                 path: folder.to_path_buf(),
                 mode: mode & 0o7777,

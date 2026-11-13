@@ -79,7 +79,7 @@ commands:
   release-features  fail when a test-only feature (`testing`, `fuzzing`) is on in a shipped program
             --target <triple>      only this target (default: every ship target)
             --offline              no network for cargo
-  openapi   write crates/puddle-api/openapi/{openapi.json,schema.d.ts} and ui/src/lib/api/schema.d.ts
+  openapi   write crates/puddle-api/openapi/openapi.json and ui/src/lib/api/schema.d.ts
             (needs Node for the types)
             --check                only check that both are current (types skipped without Node
                                    unless CI is set)";
@@ -241,7 +241,7 @@ fn openapi_command(opts: &Options) -> Result<String> {
         opts.has("--check"),
         types,
         &generator,
-        &[workspace_root().join(openapi::UI_TYPES_PATH)],
+        &workspace_root().join(openapi::UI_TYPES_PATH),
     )?;
     Ok(report.line())
 }

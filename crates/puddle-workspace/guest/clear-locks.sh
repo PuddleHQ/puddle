@@ -109,12 +109,16 @@ problem() {
     printf 'P\t%s\t%s\n' "$1" "$2"
 }
 
-# Rewrites a zero-filled HEAD of the checkout $1 (a path under the volume root).
+# Rewrites a zero-filled HEAD. $1 is the git dir (it holds HEAD and logs/HEAD), $2 the common dir
+# (objects, refs, packed-refs: the same dir for an ordinary repository or a submodule, the main
+# repository's for a linked worktree), $3 the git dir as shown in the report (relative to the
+# volume root).
 repair_head() {
-    gd=$1/.git
+    gd=$1
+    cd_=$2
     zero_filled "$gd/HEAD" || return 0
-    [ -d "$gd/objects" ] && [ -d "$gd/refs" ] || return 0
-    shown=$(clean "$1/.git/HEAD")
+    [ -d "$cd_/objects" ] && [ -d "$cd_/refs" ] || return 0
+    shown=$(clean "$3/HEAD")
     log=$gd/logs/HEAD
     last=
     [ -f "$log" ] && last=$(tail -n 1 "$log")
@@ -125,7 +129,7 @@ repair_head() {
         problem "$shown" "HEAD is damaged and logs/HEAD has no readable last entry"
         return 0
     fi
-    if ! commit_exists "$gd" "$sha"; then
+    if ! commit_exists "$cd_" "$sha"; then
         problem "$shown" "HEAD is damaged and the last commit in logs/HEAD ($sha) is not in the repository"
         return 0
     fi
@@ -134,11 +138,11 @@ repair_head() {
         problem "$shown" "HEAD is damaged and logs/HEAD does not say which branch was checked out"
         return 0
     fi
-    tip=$(ref_value "$gd" "refs/heads/$branch")
+    tip=$(ref_value "$cd_" "refs/heads/$branch")
     if [ -z "$tip" ] && [ ! -e "$gd/refs/heads/$branch" ]; then
         # No such branch: a detached checkout, unless a branch sits on the commit (a renamed branch
         # writes no checkout entry), which a guess cannot settle.
-        if branch_at "$gd" "$sha"; then
+        if branch_at "$cd_" "$sha"; then
             problem "$shown" "HEAD is damaged and logs/HEAD cannot tell a detached checkout from a renamed branch at $sha"
             return 0
         fi
@@ -166,11 +170,13 @@ repair_head() {
     printf 'R\t%s\t%s\n' "$shown" "HEAD was zero-filled, rewritten: $(clean "$what")"
 }
 
-# Rebuilds an unreadable index of the checkout $1 from HEAD.
+# Rebuilds an unreadable index from HEAD. $1 is the git dir, $2 the common dir, $3 the git dir as
+# shown in the report.
 repair_index() {
-    gd=$1/.git
+    gd=$1
+    cd_=$2
     idx=$gd/index
-    shown=$(clean "$1/.git/index")
+    shown=$(clean "$3/index")
     [ -f "$idx" ] && [ ! -L "$idx" ] && [ -f "$gd/HEAD" ] || return 0
     zero_filled "$gd/HEAD" && return 0
     if zero_filled "$idx"; then
@@ -194,7 +200,7 @@ repair_index() {
             return 0
         fi
     done
-    if [ -s "$gd/info/sparse-checkout" ] || [ "$(git config --bool core.sparseCheckout 2>/dev/null)" = true ]; then
+    if [ -s "$gd/info/sparse-checkout" ] || [ -s "$cd_/info/sparse-checkout" ] || [ "$(git config --bool core.sparseCheckout 2>/dev/null)" = true ]; then
         problem "$shown" "the index is damaged and the checkout is sparse, which a rebuild would lose"
         return 0
     fi
@@ -222,20 +228,80 @@ repair_index() {
     printf 'R\t%s\t%s\n' "$shown" "index was damaged, rebuilt from HEAD (staged changes are not kept)"
 }
 
-# Repairs checkout $1 (a directory under the volume root). A subshell, so its git environment
-# stays out of the rest of the script.
-repair_checkout() (
+# Repairs one repository: $1 its work tree, $2 its git dir, $3 the common dir, $4 the git dir as
+# shown in the report. Absolute paths for $1 to $3. A subshell, so its git environment stays out
+# of the rest of the script.
+repair_repo() (
     export LC_ALL=C GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0
-    export GIT_DIR="$PWD/$1/.git" GIT_WORK_TREE="$PWD/$1"
+    export GIT_DIR="$2" GIT_WORK_TREE="$1"
     export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
-    repair_head "$1"
-    repair_index "$1"
+    repair_head "$2" "$3" "$4"
+    repair_index "$2" "$3" "$4"
 )
+
+# A directory $1 resolved to an absolute path with no symlink in it, when it is a real directory
+# inside the volume root $root (resolved once at the start); nothing otherwise.
+inside_volume() {
+    [ -d "$1" ] && [ ! -L "$1" ] || return 1
+    r=$(cd -P -- "$1" 2>/dev/null && pwd -P) || return 1
+    case $r in
+        "$root"/*) printf %s "$r" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Follows the `.git` file $1 (`gitdir: <path>`, relative to the file's directory) of a linked
+# worktree or a submodule and repairs the git dir it points at. A pointer that leads out of the
+# volume, to a dir that is no git dir, or through a symlink is reported and left alone: the script
+# runs as root and the pointer is guest-controlled text.
+repair_pointer() {
+    f=$1
+    shownf=$(clean "$f")
+    line=
+    read -r line <"$f" 2>/dev/null || true
+    case $line in
+        'gitdir: '?*) ;;
+        *) return 0 ;;
+    esac
+    target=${line#gitdir: }
+    case $target in /*) ;; *) target=$(dirname -- "$f")/$target ;; esac
+    wt=$(inside_volume "$(dirname -- "$f")") || return 0
+    gd=$(inside_volume "$target") || {
+        problem "$shownf" "the gitdir it points at is missing, is a symlink or is outside the volume, so it was left alone"
+        return 0
+    }
+    [ -f "$gd/HEAD" ] || [ -d "$gd/objects" ] || [ -f "$gd/commondir" ] || return 0
+    common=$gd
+    if [ -f "$gd/commondir" ]; then
+        cline=
+        read -r cline <"$gd/commondir" 2>/dev/null || true
+        case $cline in /*) ;; *) cline=$gd/$cline ;; esac
+        common=$(inside_volume "$cline") || {
+            problem "$shownf" "the common git dir of the worktree is missing, is a symlink or is outside the volume, so it was left alone"
+            return 0
+        }
+    fi
+    out=$(repair_repo "$wt" "$gd" "$common" "${gd#"$root"/}")
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out"
+    fi
+}
+
+# The `.git` files (gitdir pointers) of submodules and linked worktrees below checkout $1, at most
+# eight levels down; find does not follow symlinks and does not enter any `.git` dir.
+repair_nested() {
+    find "$1" -mindepth 1 -maxdepth 8 -name .git -type d -prune -o -name .git -type f -print 2>/dev/null |
+        while IFS= read -r p; do
+            [ "$p" = "$1/.git" ] && continue
+            repair_pointer "$p"
+        done
+}
 
 cd -- "$1" || {
     fail . "cannot enter $1"
     exit 3
 }
+root=$(pwd -P)
 
 for comm in "$proc"/[0-9]*/comm; do
     [ -r "$comm" ] || continue
@@ -252,7 +318,14 @@ done
 for d in * .[!.]* ..?*; do
     case $d in .puddle | lost+found) continue ;; esac
     [ -d "$d" ] && [ ! -L "$d" ] || continue
-    [ -d "$d/.git" ] && [ ! -L "$d/.git" ] || continue
+    if [ -f "$d/.git" ] && [ ! -L "$d/.git" ]; then
+        # A linked worktree or a submodule checked out at the top level.
+        repair_pointer "$d/.git"
+    fi
+    [ -d "$d/.git" ] && [ ! -L "$d/.git" ] || {
+        repair_nested "$d"
+        continue
+    }
     find "$d/.git" -type f -name '*.lock' -exec sh -c '
         for f; do
             if rm -f -- "$f"; then
@@ -261,9 +334,10 @@ for d in * .[!.]* ..?*; do
                 printf "E\t%s\t%s\n" "$(printf %s "$f" | tr "\t\n" "??")" "cannot remove"
             fi
         done' sh {} + || fail "$(printf %s "$d" | tr '\t\n' '??')" "find failed"
-    out=$(repair_checkout "$d")
+    out=$(repair_repo "$root/$d" "$root/$d/.git" "$root/$d/.git" "$d/.git")
     if [ -n "$out" ]; then
         printf '%s\n' "$out"
     fi
+    repair_nested "$d"
 done
 printf 'D\n'

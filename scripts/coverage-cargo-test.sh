@@ -22,7 +22,7 @@ ws=$tmp/ws
 mkdir -p "$ws/scripts" "$ws/ui/scripts" "$tmp/bin" "$tmp/target"
 cp "$here/scripts/check.sh" "$here/scripts/gate-sched.sh" "$here/scripts/diff-base.sh" "$ws/scripts/"
 echo '{}' >"$ws/scripts/coverage-baseline.json"
-: >"$ws/scripts/diff-coverage-exclusions.txt"
+mkdir -p "$ws/scripts/diff-coverage-exclusions"
 # The coverage tests step: logs the cargo it was given (check.sh's first argument), like the real one does.
 cat >"$ws/scripts/coverage-run.sh" <<'STUB'
 #!/bin/sh

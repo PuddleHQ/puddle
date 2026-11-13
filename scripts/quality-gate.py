@@ -456,15 +456,17 @@ def scan(root):
                 add("noreason", "config", "deny.toml", i, "advisory ignore: no reason | " + line)
         if re.search(r'\{\s*(crate|name)\s*=', line) and "skip" in "".join(lines_of("deny.toml")[max(0, i - 30):i]):
             add("deny-skip-or-exception", "config", "deny.toml", i, line)
-    excl = os.path.join(root, "scripts/diff-coverage-exclusions.txt")
-    if os.path.exists(excl):
-        with open(excl, encoding="utf-8") as h:
+    excl_dir = os.path.join(root, "scripts/diff-coverage-exclusions")
+    excl_files = sorted(f for f in os.listdir(excl_dir) if f.endswith(".txt")) if os.path.isdir(excl_dir) else []
+    for name in excl_files:
+        rel = "scripts/diff-coverage-exclusions/" + name
+        with open(os.path.join(excl_dir, name), encoding="utf-8") as h:
             for i, line in enumerate(h):
                 if line.strip() and not line.lstrip().startswith("#"):
-                    add("coverage-exclusion", "config", "scripts/diff-coverage-exclusions.txt", i, line)
+                    add("coverage-exclusion", "config", rel, i, line)
                     parts = line.rstrip("\n").split(" | ")
                     if len(parts) < 3 or not parts[-1].strip():
-                        add("noreason", "config", "scripts/diff-coverage-exclusions.txt", i, "coverage exclusion: no reason | " + line)
+                        add("noreason", "config", rel, i, "coverage exclusion: no reason | " + line)
     for i, line in enumerate(lines_of("Cargo.toml")):
         if re.match(r"\s*[\w:]+\s*=\s*(\"allow\"|\{\s*level\s*=\s*\"allow\")", line):
             add("cargo-lint-allow", "config", "Cargo.toml", i, line)

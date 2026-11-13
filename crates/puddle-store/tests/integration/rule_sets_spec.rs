@@ -985,12 +985,8 @@ fn m8_the_hidden_state_is_stored_and_a_repeated_plan_changes_nothing() {
         decide(&reopened, "a", "nodejs.org"),
         Decision::Pending(_)
     ));
-    assert!(
-        reopened
-            .set_system_managed(&hide_mise())
-            .unwrap()
-            .is_empty()
-    );
+    let closed = reopened.set_system_managed(&hide_mise()).unwrap();
+    assert_eq!(closed.len(), 0);
     // A slug this version doesn't ship is not stored.
     let plan = SystemPlan {
         hidden_sets: ["nope"].into(),

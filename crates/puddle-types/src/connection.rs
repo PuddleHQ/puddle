@@ -131,7 +131,7 @@ impl From<BlockReason> for RefusedReason {
 
 /// Why the proxy decided as it did (R-24). Serialised as a string: `rule`, `no_rule`, a
 /// [`BlockReason::code`] (`toggle:<category>`, `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`,
-/// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`,
+/// `local_address`, `settings_unreadable`), `policy_unavailable`, `puddle_request`, `pki_distribution_point`, `sni_mismatch`, `guest_tls_rejected`, `certificate_unavailable`,
 /// `connection_limit`, `request_rule`, `suppressed`, `merged`, `limit:<code>` (a limit ended the connection or cut a stream of it), `pass_through:<code>` (a host the workspace decrypts only because it decrypts every host was passed through untouched), `puddle_request_failed:<code>` or, for a request the credential rules refused on a decrypted connection, the
 /// refusal's code (`push_denied`, `pull_denied`, `credential_unavailable`, `token_endpoint_spliced`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +147,10 @@ pub enum ConnectionReason {
     PolicyUnavailable,
     /// Puddle's own request, which no rule decides (an image pull that passed the address guard).
     PuddleRequest,
+    /// A plain-HTTP `GET` or `HEAD` of a certificate distribution point or authority-information-
+    /// access URL named in a root the host synced, to an address on the company or private
+    /// network: allowed without a rule and without the company-network toggle.
+    PkiDistributionPoint,
     /// A rule on method and path refused a request on a decrypted connection (R-49); the
     /// record's `request_rule` names it and `method` and `path` the request.
     RequestRule,
@@ -199,6 +203,7 @@ impl fmt::Display for ConnectionReason {
             Self::Blocked(reason) => f.write_str(reason.code()),
             Self::PolicyUnavailable => f.write_str("policy_unavailable"),
             Self::PuddleRequest => f.write_str("puddle_request"),
+            Self::PkiDistributionPoint => f.write_str("pki_distribution_point"),
             Self::RequestRule => f.write_str("request_rule"),
             Self::SniMismatch => f.write_str("sni_mismatch"),
             Self::ConnectionLimit => f.write_str("connection_limit"),

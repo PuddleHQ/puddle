@@ -29,7 +29,7 @@ fn user_of(row: &Row<'_>) -> Result<User, StoreError> {
     })
 }
 
-/// Every recorded workspace user; a workspace with no row is the owner's.
+/// Every recorded workspace user.
 pub(super) fn load_owners(conn: &Connection) -> Result<HashMap<WorkspaceId, UserId>, StoreError> {
     let mut stmt = conn.prepare("SELECT workspace_id, user_id FROM workspace_owners")?;
     let mut rows = stmt.query([])?;
@@ -43,7 +43,10 @@ pub(super) fn load_owners(conn: &Connection) -> Result<HashMap<WorkspaceId, User
     Ok(map)
 }
 
-/// The user `workspace` belongs to, read inside a transaction.
+/// The user `workspace` belongs to, read inside a transaction. A workspace with no row counts as
+/// the owner's here, for deciding its requests and checking writes; every listed workspace has a
+/// row (see [`Store::adopt_unowned_workspaces`]), and what a user may reach is read through
+/// [`Store::workspace_owner`], where such a workspace is nobody's.
 pub(super) fn owner_in(conn: &Connection, workspace: &WorkspaceId) -> Result<UserId, StoreError> {
     let id: Option<i64> = conn
         .query_row(
@@ -143,16 +146,53 @@ impl Store {
         })
     }
 
-    /// The user `workspace` belongs to: the one recorded for it, else the owner (every workspace
-    /// made before there were users, and every one the owner makes).
+    /// The user `workspace` belongs to, or `None` when no user is recorded for it: such a workspace
+    /// is nobody's, so no user reaches it. Every create records its user before the workspace is
+    /// listed, and the first start after the upgrade records the owner for the workspaces made
+    /// before (see [`Store::adopt_unowned_workspaces`]).
     ///
     /// # Errors
     /// A database error.
-    pub fn workspace_owner(&self, workspace: &WorkspaceId) -> Result<UserId, StoreError> {
-        owner_in(&lock(&self.conn), workspace)
+    pub fn workspace_owner(&self, workspace: &WorkspaceId) -> Result<Option<UserId>, StoreError> {
+        let id: Option<i64> = lock(&self.conn)
+            .query_row(
+                "SELECT user_id FROM workspace_owners WHERE workspace_id = ?1",
+                [workspace.as_str()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(id.map(UserId::from_stored))
     }
 
-    /// Every recorded workspace user; a workspace that is not in the map is the owner's.
+    /// Records the owner as the user of each of `workspaces` that has none, once: the workspaces
+    /// listed when this build first starts were made before every create recorded its user, so
+    /// they are the owner's. Later calls change nothing, so a workspace that lost its row is never
+    /// handed to the owner. Returns how many it recorded.
+    ///
+    /// # Errors
+    /// A database error; nothing is recorded then, and the next call tries again.
+    pub fn adopt_unowned_workspaces<'a>(
+        &self,
+        workspaces: impl IntoIterator<Item = &'a WorkspaceId>,
+    ) -> Result<usize, StoreError> {
+        let workspaces: Vec<&WorkspaceId> = workspaces.into_iter().collect();
+        self.change(|conn, _now, _fx| {
+            let open = conn.execute("DELETE FROM workspace_owners_adoption", [])? > 0;
+            if !open {
+                return Ok(0);
+            }
+            let mut stmt = conn.prepare(
+                "INSERT OR IGNORE INTO workspace_owners (workspace_id, user_id) VALUES (?1, ?2)",
+            )?;
+            let mut recorded = 0;
+            for workspace in workspaces {
+                recorded += stmt.execute(params![workspace.as_str(), UserId::OWNER.get()])?;
+            }
+            Ok(recorded)
+        })
+    }
+
+    /// Every recorded workspace user; a workspace that is not in the map is nobody's.
     ///
     /// # Errors
     /// A database error, or a stored id that is not a workspace id.
@@ -203,16 +243,15 @@ impl Store {
     }
 }
 
-/// Who owns which workspace, read once for a list: [`WorkspaceOwners::of`] answers the owner for
-/// a workspace that has no row.
+/// Who owns which workspace, read once for a list.
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceOwners(HashMap<WorkspaceId, UserId>);
 
 impl WorkspaceOwners {
-    /// The user `workspace` belongs to.
+    /// Whether `workspace` is `user`'s. A workspace with no recorded user is nobody's.
     #[must_use]
-    pub fn of(&self, workspace: &WorkspaceId) -> UserId {
-        self.0.get(workspace).copied().unwrap_or(UserId::OWNER)
+    pub fn is(&self, workspace: &WorkspaceId, user: UserId) -> bool {
+        self.0.get(workspace) == Some(&user)
     }
 }
 

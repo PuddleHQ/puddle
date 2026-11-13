@@ -191,6 +191,21 @@ fn load_switches(conn: &Connection) -> Result<Switches, StoreError> {
     Ok(switches)
 }
 
+/// Each host of each reason, in catalogue order per reason.
+fn system_hosts(reasons: Vec<(Option<WorkspaceId>, SystemReason)>) -> Vec<SystemHost> {
+    reasons
+        .into_iter()
+        .flat_map(|(workspace, reason)| {
+            reason.hosts().iter().map(move |entry| SystemHost {
+                pattern: entry.pattern,
+                note: entry.note,
+                reason,
+                workspace: workspace.clone(),
+            })
+        })
+        .collect()
+}
+
 fn load_reasons(conn: &Connection) -> Result<Vec<(Option<WorkspaceId>, SystemReason)>, StoreError> {
     let mut stmt = conn
         .prepare("SELECT workspace_id, reason FROM system_reasons ORDER BY workspace_id, reason")?;
@@ -704,23 +719,32 @@ impl Store {
         Ok(closed)
     }
 
-    /// The System managed hosts and why each is allowed (R-40), in catalogue order per reason.
+    /// The System managed hosts of every workspace and why each is allowed (R-40), in catalogue
+    /// order per reason. For the install's own jobs; what a user is shown comes from
+    /// [`Store::system_managed`].
     ///
     /// # Errors
     /// A database error.
-    pub fn system_managed(&self) -> Result<Vec<SystemHost>, StoreError> {
+    pub fn system_managed_every_user(&self) -> Result<Vec<SystemHost>, StoreError> {
         let reasons = load_reasons(&lock(&self.conn))?;
-        Ok(reasons
-            .into_iter()
-            .flat_map(|(workspace, reason)| {
-                reason.hosts().iter().map(move |entry| SystemHost {
-                    pattern: entry.pattern,
-                    note: entry.note,
-                    reason,
-                    workspace: workspace.clone(),
-                })
-            })
-            .collect())
+        Ok(system_hosts(reasons))
+    }
+
+    /// The System managed hosts `user`'s requests meet (R-40): the ones for every workspace (the
+    /// install's own choices) and the ones for `user`'s workspaces, in catalogue order per reason.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn system_managed(&self, user: UserId) -> Result<Vec<SystemHost>, StoreError> {
+        let conn = lock(&self.conn);
+        let owners = users::load_owners(&conn)?;
+        let mut reasons = load_reasons(&conn)?;
+        reasons.retain(|(workspace, _)| {
+            workspace
+                .as_ref()
+                .is_none_or(|w| owners.get(w) == Some(&user))
+        });
+        Ok(system_hosts(reasons))
     }
 
     /// Replaces the System managed reasons with `plan`, derived from the user's setup (R-41).

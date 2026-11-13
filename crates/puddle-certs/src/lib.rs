@@ -36,6 +36,7 @@
 mod der;
 pub mod devcert;
 mod guest;
+mod pki;
 mod platform;
 mod select;
 mod store;

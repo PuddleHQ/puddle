@@ -102,5 +102,45 @@ pub(crate) fn sweep_in_background(
     tokio::task::spawn_blocking(move || report(sweep(vault.as_ref(), &store), &problems))
 }
 
+/// How long shutdown waits for the sweep: a locked keyring may take far longer, and a quit must
+/// not hang on it. The sweep goes on in the background; the next start repeats whatever it left.
+pub(crate) const SWEEP_SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How the wait for the sweep at shutdown ended.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SweepEnd {
+    Finished,
+    /// The sweep task panicked (a panic inside the sweep is not reported anywhere else).
+    Panicked,
+    /// Still running after the wait.
+    StillRunning,
+}
+
+/// Waits up to `within` for the sweep started by [`sweep_in_background`], and logs a panic or a
+/// sweep that is still running.
+pub(crate) async fn finish_sweep(
+    sweep: tokio::task::JoinHandle<()>,
+    within: std::time::Duration,
+) -> SweepEnd {
+    let end = match tokio::time::timeout(within, sweep).await {
+        Ok(Ok(())) => SweepEnd::Finished,
+        Ok(Err(_)) => SweepEnd::Panicked,
+        Err(_) => SweepEnd::StillRunning,
+    };
+    match end {
+        SweepEnd::Finished => {}
+        SweepEnd::Panicked => {
+            tracing::warn!("the credential store sweep panicked; the next start repeats it");
+        }
+        SweepEnd::StillRunning => {
+            tracing::warn!(
+                waited = ?within,
+                "the credential store did not answer while quitting; the sweep is left running"
+            );
+        }
+    }
+    end
+}
+
 #[cfg(test)]
 mod tests;

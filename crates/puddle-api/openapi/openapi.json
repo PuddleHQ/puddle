@@ -8951,7 +8951,7 @@
         "tags": [
           "interception"
         ],
-        "summary": "Never decrypts a learned host again, in this workspace or in every workspace: the host joins\nthat never-decrypt list and leaves the learned list, history included.",
+        "summary": "Never decrypts a learned host again, in this workspace or in every workspace: the host joins\nthat never-decrypt list and leaves the learned list, history included. Every workspace's list\nis the install's, so `global` is for the owner alone, as `PUT /api/interception/never-decrypt`\nis.",
         "operationId": "make_permanent",
         "parameters": [
           {
@@ -8998,7 +8998,7 @@
             }
           },
           "403": {
-            "description": "forbidden origin",
+            "description": "`global` and the caller is not the owner",
             "content": {
               "application/json": {
                 "schema": {

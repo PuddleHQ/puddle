@@ -10,6 +10,10 @@ use puddle_types::{
 };
 use tokio::io::AsyncReadExt;
 
+use self::hostile::{
+    hg01_guest_has_no_direct_network, hg01_raw_and_packet_sockets_reach_no_network,
+    hg02_no_other_vsock_address_accepts, hg02_only_the_routed_vsock_port_accepts,
+};
 use super::{Case, STEP_TIMEOUT};
 use crate::{
     ComputeError, DiskSize, ExecOutput, ExecRequest, FileMount, OwnedDisk, Runtime, Sandbox,
@@ -27,14 +31,16 @@ macro_rules! check {
     };
 }
 
+mod hostile;
+
 /// Declares the cases once: [`CASES`], [`CASE_NOTES`] and the dispatcher come from this list.
 macro_rules! cases {
     ($($name:ident => $note:literal,)*) => {
         /// Every contract case, in run order.
         pub const CASES: &[&str] = &[$(stringify!($name)),*];
 
-        /// Per case: where its expected behaviour comes from. "observed on msb 0.7.6" = seen
-        /// through the SDK; "assumed" = not observed yet, confirmed or corrected by the VM tests.
+        /// Per case: the behaviour it pins. A runtime that is not the fake runs every case in the
+        /// VM lanes on each merge, so a note is a claim those runs check, not a version's memory.
         pub const CASE_NOTES: &[(&str, &str)] = &[$((stringify!($name), $note)),*];
 
         pub(super) async fn dispatch<R: Runtime>(case: &Case<'_, R>, name: &str) -> Outcome {
@@ -48,36 +54,41 @@ macro_rules! cases {
 }
 
 cases! {
-    probe_reports_runtime_version => "observed on msb 0.7.6 (the version is readable)",
-    pull_image_returns_its_config => "observed on msb 0.7.6 (image config facts); unknown image fails: assumed",
-    unknown_image_fails_create_cleanly => "assumed",
-    create_boots_and_returns_owning_handle => "observed on msb 0.7.6 (create as owner, list); puddle_owned from the owner label",
-    create_refuses_a_taken_name => "assumed",
+    probe_reports_runtime_version => "the runtime's version string is readable",
+    pull_image_returns_its_config => "image config facts (entrypoint, command, env, user); an unknown image fails",
+    unknown_image_fails_create_cleanly => "a create with an unknown image fails and leaves nothing behind",
+    create_boots_and_returns_owning_handle => "create returns a running owning handle that list shows; puddle_owned comes from the owner label",
+    create_refuses_a_taken_name => "a second create under a taken name is refused",
     invalid_spec_is_refused_before_anything_exists => "Puddle-side check (SandboxSpec::validate)",
-    stop_then_start_boots_again => "observed on msb 0.7.6 (status after stop, restart); stop twice: assumed",
-    dropping_the_owning_handle_stops_the_vm => "observed on msb 0.7.6 (dropping the owner handle: Crashed); msb 0.7.7: Stopped; the case accepts either",
-    get_readopts_a_running_sandbox_without_owning_it => "observed on msb 0.7.6 (re-adopting a running sandbox)",
-    unknown_names_are_not_found => "observed on msb 0.7.6 (not found after remove); others assumed",
-    remove_needs_a_stopped_sandbox_and_frees_the_name => "observed on msb 0.7.6 (remove frees the name); refusal while running: assumed",
-    exec_exit_codes_are_exact => "observed on msb 0.7.6 (exit codes 0, 3 and 127)",
-    signal_killed_exec_is_a_failure => "observed on msb 0.7.6 (a SIGKILLed command reports code -1)",
-    exec_timeout_is_enforced => "assumed (SDK exec timeout)",
-    exec_needs_a_running_sandbox => "assumed",
-    create_env_reaches_exec => "observed on msb 0.7.6 (create-time env visible in exec); per-exec env: assumed",
-    stdin_reaches_exec => "assumed (SDK stdin_bytes)",
-    file_mount_is_read_only => "observed on msb 0.7.6 (a file mount is read-only)",
-    dir_mount_is_read_only => "assumed (bind + readonly on a directory); checked by the VM tests",
-    root_disk_survives_restart_not_remove => "observed on msb 0.7.6 (root disk files persist across restart)",
-    owned_disk_survives_restart_not_remove => "observed on msb 0.7.6 (owned disk kept across restart, gone with the sandbox)",
-    named_volume_survives_restart_and_remove => "observed on msb 0.7.6 (volume data kept across restart, recreate and remove; reattach by name)",
-    volume_capacity_reads_back => "observed on msb 0.7.6 (volume capacity reads back); duplicate create: assumed",
-    second_attach_is_refused_naming_the_holder => "observed on msb 0.7.6 (second attach refused, leaving a Stopped record); holder named by Puddle (ADR 0006 point 8)",
-    failed_create_leaves_a_stale_dir_unless_fixed => "observed on msb 0.7.6 (a wrong-size volume error leaves a stale directory)",
-    missing_volume_fails_create => "assumed",
-    ssh_server_speaks_first => "observed on msb 0.7.6 (SSH banner); four first connections at once on msb 0.7.8; full SSH exec is covered by the VM tests",
-    routes_and_no_network_are_accepted => "observed on msb 0.7.6 (network spec accepted); guest network behaviour is covered by the VM tests",
-    memory_change_applies_at_next_start => "the memory setting: modify().memory().next_start() on msb, checked by the VM tests",
-    cpus_change_applies_at_next_start => "the cpus setting: modify().cpus().next_start() on msb, checked by the VM tests",
+    stop_then_start_boots_again => "status after stop and after a restart",
+    dropping_the_owning_handle_stops_the_vm => "dropping the owner handle shuts the VM down; the record reads Stopped or Crashed, and the case accepts either",
+    get_readopts_a_running_sandbox_without_owning_it => "get re-adopts a running sandbox without owning it",
+    unknown_names_are_not_found => "an unknown or removed name is not found",
+    remove_needs_a_stopped_sandbox_and_frees_the_name => "remove refuses a running sandbox and frees the name of a stopped one",
+    exec_exit_codes_are_exact => "exit codes 0, 3 and 127 come through exactly",
+    signal_killed_exec_is_a_failure => "a SIGKILLed command reports a failure code, not success",
+    exec_timeout_is_enforced => "a command that outlives its timeout fails with ExecTimeout",
+    exec_needs_a_running_sandbox => "exec on a stopped sandbox is refused",
+    create_env_reaches_exec => "create-time env is visible in exec",
+    stdin_reaches_exec => "stdin bytes reach the command",
+    file_mount_is_read_only => "a file mount is read-only in the guest",
+    dir_mount_is_read_only => "a directory mount is read-only in the guest",
+    root_disk_survives_restart_not_remove => "root disk files persist across a restart and go with remove",
+    owned_disk_survives_restart_not_remove => "an owned disk is kept across a restart and goes with the sandbox",
+    named_volume_survives_restart_and_remove => "volume data is kept across restart, recreate and remove; a plain named mount reattaches it",
+    volume_capacity_reads_back => "a volume's capacity reads back",
+    second_attach_is_refused_naming_the_holder => "a second attach is refused and leaves a Stopped record; the holder is named by Puddle (ADR 0006 point 8)",
+    failed_create_leaves_no_stale_dir => "a create that fails its volume check leaves no stale directory behind",
+    missing_volume_fails_create => "a named volume that does not exist fails create and is not created implicitly",
+    ssh_server_speaks_first => "the SSH banner arrives first, also with several first connections at once; full SSH exec is covered by the VM tests",
+    routes_and_no_network_are_accepted => "a spec with vsock routes is accepted and boots",
+    memory_change_applies_at_next_start => "the memory setting: modify().memory().next_start() on msb",
+    cpus_change_applies_at_next_start => "the cpus setting: modify().cpus().next_start() on msb",
+    env_change_applies_at_next_start_and_keeps_the_root_disk => "modify().env()/remove_env().next_start() on msb: the new value is seen and the root disk stays",
+    hg01_guest_has_no_direct_network => "as root, direct IP, DNS, UDP, IPv6 and raw ICMP reach nothing while loopback works",
+    hg01_raw_and_packet_sockets_reach_no_network => "as root, raw IP and AF_PACKET sockets reach nothing, also over a sink device given an address and a route",
+    hg02_only_the_routed_vsock_port_accepts => "a vsock connect sweep of the host and CIDs 0, 1 and 3: only the routed port accepts, and its bytes arrive",
+    hg02_no_other_vsock_address_accepts => "a vsock sweep of other guests' CIDs, the largest CIDs, CID_ANY and the guest's own CID: none accepts",
 }
 
 /// Awaits a runtime call with [`STEP_TIMEOUT`] and turns its error into a case failure.
@@ -750,9 +761,8 @@ async fn second_attach_is_refused_naming_the_holder<R: Runtime>(c: &Case<'_, R>)
     Ok(())
 }
 
-async fn failed_create_leaves_a_stale_dir_unless_fixed<R: Runtime>(c: &Case<'_, R>) -> Outcome {
+async fn failed_create_leaves_no_stale_dir<R: Runtime>(c: &Case<'_, R>) -> Outcome {
     let rt = c.runtime();
-    let caps = step("probe", rt.probe()).await?;
     let name = c.sandbox("a")?;
     let vol = c.volume("ws")?;
     let mount = path("/workspaces/puddle-ct")?;
@@ -789,20 +799,7 @@ async fn failed_create_leaves_a_stale_dir_unless_fixed<R: Runtime>(c: &Case<'_, 
         .await?
         .iter()
         .any(|d| d == name.as_str());
-    if caps.stale_dir_fixed {
-        check!(!stale, "stale dir left although stale_dir_fixed");
-    } else {
-        check!(
-            stale,
-            "no stale dir although the upstream stale-directory bug is unfixed"
-        );
-        let err = fails("create on a blocked name", rt.create(sized(256))).await?;
-        check!(
-            matches!(err, ComputeError::StaleDir { .. }),
-            "want StaleDir, got {err:?}"
-        );
-        step("remove stale dir", rt.remove_stale_dir(&name)).await?;
-    }
+    check!(!stale, "a stale directory is left for {name}");
     let _sb = step("create with the right size", rt.create(sized(256))).await?;
     Ok(())
 }
@@ -981,6 +978,68 @@ async fn cpus_change_applies_at_next_start<R: Runtime>(c: &Case<'_, R>) -> Outco
     let err = fails(
         "set cpus of an unknown sandbox",
         rt.set_cpus(&c.sandbox("nope")?, CpuCount::MIN),
+    )
+    .await?;
+    check!(
+        matches!(err, ComputeError::NotFound { .. }),
+        "want NotFound, got {err:?}"
+    );
+    Ok(())
+}
+
+/// The four variables the case watches as one guest sees them ("unset" for an absent one), then
+/// the root disk marker.
+async fn env_and_marker<S: Sandbox>(sb: &S) -> Result<String, String> {
+    let mut seen = Vec::new();
+    for var in ["KEPT", "CHANGED", "ADDED", "GONE"] {
+        let out = step("printenv", sb.exec(ExecRequest::new("printenv", [var]))).await?;
+        seen.push(if out.status.success() {
+            out.stdout_text().trim_end().to_owned()
+        } else {
+            "unset".to_owned()
+        });
+    }
+    let marker = read_file(sb, "/root-disk-marker").await?;
+    Ok(format!(
+        "{} {}",
+        seen.join(" "),
+        marker.unwrap_or_else(|| "no marker".to_owned()).trim_end()
+    ))
+}
+
+fn guest_env(pairs: &[(&str, &str)]) -> Result<GuestEnv, String> {
+    let mut env = GuestEnv::new();
+    for (k, v) in pairs {
+        env.set(k, v).map_err(|e| e.to_string())?;
+    }
+    Ok(env)
+}
+
+async fn env_change_applies_at_next_start_and_keeps_the_root_disk<R: Runtime>(
+    c: &Case<'_, R>,
+) -> Outcome {
+    let rt = c.runtime();
+    let name = c.sandbox("a")?;
+    let made_with = guest_env(&[("KEPT", "same"), ("CHANGED", "old"), ("GONE", "1")])?;
+    let sb = step("create", rt.create(spec(c, &name).with_env(&made_with))).await?;
+    write_file(&sb, "/root-disk-marker", "on-the-root-disk\n").await?;
+    let now = guest_env(&[("KEPT", "same"), ("CHANGED", "new"), ("ADDED", "yes")])?;
+    step("set env", rt.set_env(&name, &now)).await?;
+    let running = env_and_marker(&sb).await?;
+    check!(
+        running == "same old unset 1 on-the-root-disk",
+        "the running sandbox changed its variables: {running:?}"
+    );
+    step("stop", sb.stop()).await?;
+    let sb = step("start", rt.start(&name)).await?;
+    let after = env_and_marker(&sb).await?;
+    check!(
+        after == "same new yes unset on-the-root-disk",
+        "after the restart: {after:?}, want the new variables and the root disk file"
+    );
+    let err = fails(
+        "set env of an unknown sandbox",
+        rt.set_env(&c.sandbox("nope")?, &now),
     )
     .await?;
     check!(

@@ -41,7 +41,7 @@ use super::super::exchange::AnswerBody;
 use super::super::foreign;
 use super::super::leg::BoxError;
 use super::StandIns;
-use super::answer::Decoder;
+use super::answer::{Decoder, Pushed};
 use crate::terminate::{Context, ForeignCredentialWarning};
 
 /// The longest run read as a token: a JSON Web Token is the longest kind, and a longer run is
@@ -181,6 +181,11 @@ pub(crate) struct TokenScanner {
 }
 
 impl TokenScanner {
+    /// How many more bytes of the answer are read.
+    fn room(&self) -> usize {
+        MAX_SCANNED.saturating_sub(self.scanned)
+    }
+
     /// Reads `data`, the next bytes of the answer (`end`: the last ones), and gives the kinds
     /// found for the first time. `holds` says whether a run is Puddle's own (never found).
     pub(crate) fn feed(
@@ -189,7 +194,7 @@ impl TokenScanner {
         end: bool,
         holds: &dyn Fn(&[u8]) -> bool,
     ) -> Vec<UnknownTokenKind> {
-        let room = MAX_SCANNED.saturating_sub(self.scanned);
+        let room = self.room();
         let capped = data.len() >= room;
         let data = data.get(..data.len().min(room)).unwrap_or_default();
         self.scanned += data.len();
@@ -366,35 +371,43 @@ impl ScanBody {
         }
     }
 
-    /// Reads one piece of the body as it is on the wire (`None`: the body ended).
+    /// Reads one piece of the body as it is on the wire (`None`: the body ended). Past the cap
+    /// nothing is copied or decoded: the decoder is dropped and later pieces pass untouched.
     fn read(&mut self, data: Option<&[u8]>) {
         if self.done {
             return;
         }
         let end = data.is_none();
+        let data = data.unwrap_or_default();
+        let room = self.scanner.room();
         let plain = match self.decoder.as_mut() {
-            None => Zeroizing::new(data.unwrap_or_default().to_vec()),
+            None => Zeroizing::new(
+                data.get(..data.len().min(room))
+                    .unwrap_or_default()
+                    .to_vec(),
+            ),
             Some(decoder) => {
                 let mut plain = Zeroizing::new(Vec::new());
-                let result = decoder
-                    .push(data.unwrap_or_default(), &mut plain)
-                    .and_then(|()| {
-                        if end {
-                            decoder.finish(&mut plain)
-                        } else {
-                            Ok(())
-                        }
-                    });
-                if result.is_err() {
-                    // Whatever decoded before the fault was read; the rest cannot be.
+                let result = decoder.push(data, &mut plain, room).and_then(|pushed| {
+                    if end {
+                        decoder.finish(&mut plain)?;
+                    }
+                    Ok(pushed)
+                });
+                // The cap, or a fault: whatever decoded before it was read; the rest cannot be
+                // (or need not be).
+                if !matches!(result, Ok(Pushed::All)) {
                     self.done = true;
                 }
                 plain
             }
         };
         self.scan(&plain, end || self.done);
-        if end {
+        if end || self.scanner.room() == 0 {
             self.done = true;
+        }
+        if self.done {
+            self.decoder = None;
         }
     }
 }

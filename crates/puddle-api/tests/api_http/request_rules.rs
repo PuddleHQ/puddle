@@ -9,6 +9,8 @@ use crate::interception::workspace;
 #[tokio::test]
 async fn a_rule_is_made_listed_by_scope_and_deleted() {
     let api = start().await;
+    api.own("other");
+    api.own("shop");
     assert_eq!(
         api.get("/api/request-rules").await.json(),
         json!({"rules": []})

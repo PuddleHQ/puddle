@@ -145,6 +145,7 @@ async fn a_block_rule_refuses_the_create_naming_the_host_and_the_rule_and_it_mak
 #[tokio::test]
 async fn adding_a_repository_allows_its_host_for_that_workspace_and_a_block_refuses_it() {
     let api = start().await;
+    api.own("web");
     let mut record = WorkspaceRecord::new(
         WorkspaceId::new("web").unwrap(),
         DisplayName::parse("web").unwrap(),

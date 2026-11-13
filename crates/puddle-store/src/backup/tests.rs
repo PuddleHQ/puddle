@@ -13,12 +13,12 @@ fn copy_has_the_committed_rows_and_the_schema_version() {
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("puddle.db");
     let store = open(&src);
-    let rules = store.rules().len();
+    let rules = store.rules_every_user().len();
     let dest = dir.path().join("copy.db");
     let info = backup_database(&src, &dest).unwrap();
     assert_eq!(info.schema_version, crate::SCHEMA_VERSION);
     let copy = open(&dest);
-    assert_eq!(copy.rules().len(), rules);
+    assert_eq!(copy.rules_every_user().len(), rules);
 }
 
 #[test]

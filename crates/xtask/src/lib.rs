@@ -56,9 +56,10 @@ commands:
             --msb <file>           Linux only: ship this msb instead of the release's
                                    msb-linux-x86_64 (for a tag whose release has none:
                                    ci/fetch-msb.sh builds one from the tag's source)
-            --pins <file>          runtime pin list (default: ci/msb-runtime.sha256), where the Linux
-                                   firmware version and the libkrunfw fork release it comes from
-                                   (PuddleHQ/libkrunfw, upstream's firmware when none) are read
+            --pins <file>          runtime pin list (default: ci/msb-runtime.sha256): every download
+                                   must match the hash it pins, and on Linux it gives the firmware
+                                   version and the libkrunfw fork release it comes from
+                                   (PuddleHQ/libkrunfw, upstream's firmware when none)
             --tag <tag>            fork tag (default: v<BUILT_FOR>, the version this Puddle runs)
             --upstream-tag <tag>   upstream base tag (default: derived from a -puddle.N tag)
             --fork <owner/name>    fork repository (default: PuddleHQ/microsandbox)
@@ -311,7 +312,12 @@ fn runtime(opts: &Options) -> Result<String> {
         .value("--out")
         .map_or_else(|| target_dir().join("runtime"), PathBuf::from);
     let cargo = Cargo::from_env(opts.has("--offline"));
-    let target = runtime_target(opts, &tag)?;
+    let pins_path = opts
+        .value("--pins")
+        .map_or_else(|| workspace_root().join(pin::PIN_FILE), PathBuf::from);
+    let pins = std::fs::read_to_string(&pins_path)
+        .map_err(|e| XtaskError::io(format!("reading {}", pins_path.display()), e))?;
+    let target = runtime_target(opts, &tag, &pins)?;
 
     let (source, puddle): (Box<dyn ReleaseSource>, Inventory) = if let Some(dir) =
         opts.value("--from")
@@ -339,7 +345,7 @@ fn runtime(opts: &Options) -> Result<String> {
         };
         (Box::new(source), puddle_inventory(&cargo)?)
     };
-    let manifest = assemble::assemble(source.as_ref(), &expected, &puddle, &target, &out)?;
+    let manifest = assemble::assemble(source.as_ref(), &expected, &puddle, &pins, &target, &out)?;
     Ok(format!(
         "runtime {} assembled in {} ({} sha256 {})",
         manifest.version,
@@ -351,7 +357,7 @@ fn runtime(opts: &Options) -> Result<String> {
 
 /// The runtime folder the options ask for: this OS's unless `--os` says otherwise; Linux needs
 /// the firmware version pinned for `tag`.
-fn runtime_target(opts: &Options, tag: &str) -> Result<assemble::Target> {
+fn runtime_target(opts: &Options, tag: &str, pins: &str) -> Result<assemble::Target> {
     let os = match opts.value("--os") {
         Some(name) => HostOs::from_target_os(name),
         None => Some(HostOs::current()),
@@ -365,18 +371,11 @@ fn runtime_target(opts: &Options, tag: &str) -> Result<assemble::Target> {
             }
             Ok(assemble::Target::Windows)
         }
-        Some(HostOs::Linux) => {
-            let pins_path = opts
-                .value("--pins")
-                .map_or_else(|| workspace_root().join(pin::PIN_FILE), PathBuf::from);
-            let pins = std::fs::read_to_string(&pins_path)
-                .map_err(|e| XtaskError::io(format!("reading {}", pins_path.display()), e))?;
-            Ok(assemble::Target::Linux {
-                msb: opts.value("--msb").map(PathBuf::from),
-                libkrunfw_version: pin::libkrunfw_linux_version(&pins, tag)?,
-                firmware_tag: pin::libkrunfw_linux_tag(&pins, tag),
-            })
-        }
+        Some(HostOs::Linux) => Ok(assemble::Target::Linux {
+            msb: opts.value("--msb").map(PathBuf::from),
+            libkrunfw_version: pin::libkrunfw_linux_version(pins, tag)?,
+            firmware_tag: pin::libkrunfw_linux_tag(pins, tag),
+        }),
         Some(HostOs::MacOs) | None => Err(XtaskError::Usage(
             "runtime folders are built for windows and linux only".into(),
         )),

@@ -10,7 +10,10 @@ use puddle_api::{NewRepository, RepoUrl};
 use puddle_types::VolumeName;
 use puddle_workspace::{CheckoutList, FoundCheckout};
 
-use super::*;
+use super::{
+    CheckoutDir, DisplayName, EntryId, GitSetup, HostWorkspaces, Problem, Repository, Runtime,
+    SAVE_HINT, Slot, State, WorkspaceError, WorkspaceId, WorkspaceRecord, WorkspaceStatus,
+};
 
 /// The key of the problem that names the unclaimed disks.
 pub(crate) const PROBLEM_KEY: &str = "orphan-volumes";

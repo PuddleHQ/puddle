@@ -12,7 +12,12 @@ use puddle_api::{
     check_seen, checkouts_view, why_no_remote,
 };
 
-use super::*;
+use super::{
+    Arc, CheckoutDir, EntryId, Event, EventSink, GatedSandbox, GitSetup, HostWorkspaces, Operation,
+    PoisonError, Problem, Repository, Runtime, SAVE_HINT, State, WorkspaceError, WorkspaceId,
+    WorkspaceRecord, WorkspaceStatus, clone_problem_key, not_found, workspace_error,
+};
+use crate::op_error::OpError;
 
 /// What the last listing of one workspace found, when it started and when it ended (epoch ms). Its lock is held while a
 /// listing runs, so calls at the same moment share one.

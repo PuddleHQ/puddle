@@ -141,13 +141,20 @@ fn free_port_from(first: u16, span: u16, start: u32, call: u32) -> Option<u16> {
 /// The claims this process holds, for as long as it lives.
 static CLAIMS: std::sync::Mutex<Vec<std::fs::File>> = std::sync::Mutex::new(Vec::new());
 
-/// The exclusive lock that makes `port` this process's, or `None` when another process holds it.
+/// The exclusive lock that makes `port` this process's, or `None` when it cannot be taken (another
+/// process holds it; a lock that fails for another reason skips the port too, and a pick with no
+/// port left fails loudly in the caller).
 ///
 /// # Panics
-/// When the claim folder or file cannot be made or locked for another reason than being held.
+/// When the claim folder or file cannot be made.
 fn claim(port: u16) -> Option<std::fs::File> {
-    use std::fs::{File, TryLockError};
-    let dir = std::env::temp_dir().join("puddle-test-ports");
+    use std::fs::File;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the folder must be the same one for every test process, so it cannot be a unique tempfile path"
+    )]
+    let temp = std::env::temp_dir();
+    let dir = temp.join("puddle-test-ports");
     std::fs::create_dir_all(&dir).expect("make the folder test processes claim ports in");
     let file = File::options()
         .create(true)
@@ -155,11 +162,7 @@ fn claim(port: u16) -> Option<std::fs::File> {
         .write(true)
         .open(dir.join(port.to_string()))
         .expect("open a port's claim file");
-    match file.try_lock() {
-        Ok(()) => Some(file),
-        Err(TryLockError::WouldBlock) => None,
-        Err(TryLockError::Error(err)) => panic!("lock a port's claim file: {err}"),
-    }
+    file.try_lock().is_ok().then_some(file)
 }
 
 /// Whether a listener accepts a connection on `addr` (loopback only: the connect blocks, up to a

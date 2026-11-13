@@ -35,14 +35,7 @@ pub(crate) fn workspace(
 }
 
 /// What the managed mise layer does in one workspace: [`MiseMode::Off`] while the global switch is
-/// off, whatever the workspace stores. Nothing reads it yet (the layer's pieces follow).
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the tools layer starts reading it in the next tasks"
-    )
-)]
+/// off, whatever the workspace stores..
 pub(crate) fn mise(repo: &dyn SettingsRepo, name: &WorkspaceId) -> Result<MiseMode, String> {
     let global = global(repo)?;
     if !global.tools.mise() {
@@ -50,6 +43,15 @@ pub(crate) fn mise(repo: &dyn SettingsRepo, name: &WorkspaceId) -> Result<MiseMo
         return Ok(MiseMode::Off);
     }
     Ok(mise_mode(&global, Some(&workspace(repo, name)?)))
+}
+
+/// [`mise`] for a start: settings that cannot be read leave the layer off, which is what the
+/// workspace had before it existed, so a damaged file never turns it on.
+pub(crate) fn mise_or_off(repo: &dyn SettingsRepo, name: &WorkspaceId) -> MiseMode {
+    mise(repo, name).unwrap_or_else(|reason| {
+        tracing::warn!(workspace = %name, %reason, "managed tools stay off: the settings cannot be read");
+        MiseMode::Off
+    })
 }
 
 #[cfg(test)]

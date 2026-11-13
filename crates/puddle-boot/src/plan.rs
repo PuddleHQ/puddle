@@ -583,7 +583,9 @@ impl BootPlanBuilder {
         let mut files = Vec::new();
         let mut entry_env = vec![guest_path(ENV_FILE_GUEST)];
         files.push(env_file(&self.env));
-        if let Some(path) = self.image.env_var("PATH") {
+        // A PATH among Puddle's own variables (the managed tools' shims first) is the one login
+        // shells get too: Debian's /etc/profile resets PATH before the profile.d files run.
+        if let Some(path) = self.env.get("PATH").or_else(|| self.image.env_var("PATH")) {
             if path.contains(['\0', '\n']) {
                 return Err(PlanError::ImageValue { what: "ENV PATH" });
             }

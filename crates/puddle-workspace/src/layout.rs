@@ -23,6 +23,9 @@ pub const WORKSPACES_ROOT: &str = "/workspaces";
 /// Puddle's own directory on the volume, beside the checkouts.
 pub const PUDDLE_DIR: &str = ".puddle";
 
+/// The managed tools' folder below [`PUDDLE_DIR`].
+const MISE_DIR: &str = "mise";
+
 /// ext4's recovery directory; ignored at the volume root (msb 0.7.7's mkfs doesn't make one).
 pub const LOST_AND_FOUND: &str = CheckoutDir::LOST_AND_FOUND;
 
@@ -67,6 +70,16 @@ impl Layout {
     /// [`WorkspaceError::Layout`] (never for a valid layout).
     pub fn puddle_dir(&self) -> Result<GuestPath, WorkspaceError> {
         self.child(PUDDLE_DIR)
+    }
+
+    /// The managed tools' folder, `/workspaces/<id>/.puddle/mise`: mise's binary, data, cache and
+    /// state.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkspaceError::Layout`] (never for a valid layout).
+    pub fn mise_dir(&self) -> Result<GuestPath, WorkspaceError> {
+        self.child(&format!("{PUDDLE_DIR}/{MISE_DIR}"))
     }
 
     /// The checkout directory `dir`, `/workspaces/<id>/<dir>`.

@@ -80,14 +80,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
             .get(name)
             .map(|live| live.spec_env.clone());
-        if made_with.is_some_and(|env| env != guest.env) {
+        if made_with.is_some_and(|env| env != spec_env) {
             if let Err(e) = inner.runtime.set_env(&name.sandbox_name(), &spec_env).await {
                 tracing::warn!(workspace = %name, error = %e, "the changed variables could not be applied to the stopped sandbox");
                 inner.injection.end(name);
                 return Ok(false);
             }
             if let Some(live) = inner.live.lock().await.get_mut(name) {
-                live.spec_env = guest.env.clone();
+                live.spec_env = spec_env;
             }
         }
         let started = self.start_planned(record, &plan).await;

@@ -14,12 +14,15 @@ use puddle_ca::{CaCertificate, TrustBundle};
 use puddle_certs::devcert::GuestDevCert;
 use puddle_certs::{CorporateRoots, GuestTrust};
 use puddle_compute::{DiskSize, FileMount, ImageConfig, OwnedDisk, SandboxSpec, VsockRoute};
-use puddle_guest_env::{ProxySettings, guest_proxy_config, ssh_known_hosts_file};
+use puddle_guest_env::{
+    MiseSettings, ProxySettings, guest_proxy_config, mise_config, ssh_known_hosts_file,
+};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
+use puddle_settings::MiseMode;
 use puddle_store::Store;
 use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId};
-use puddle_workspace::Layout;
+use puddle_workspace::{Layout, WORKSPACES_ROOT};
 
 use crate::dev_cert::GuestCertSource;
 use crate::git_hosts::{Authors, SshListing};
@@ -131,6 +134,31 @@ pub(crate) struct GuestInputs<'a> {
     /// Whether the guest gets its SSH agent socket, which carries each client to the user's agent
     /// on the host (for the hosts the workspace has it on for).
     pub(crate) ssh_agent: bool,
+    /// The managed mise layer, when it is on for this workspace.
+    pub(crate) mise: Option<&'a MiseLayer>,
+}
+
+/// Where the managed mise layer lives in one workspace and what it may trust.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MiseLayer {
+    /// `/workspaces/<id>/.puddle/mise`.
+    pub(crate) dir: GuestPath,
+    /// The workspace's volume when the repository's own code is trusted (`repo_code`).
+    pub(crate) trusted: Option<GuestPath>,
+}
+
+impl MiseLayer {
+    /// The layer of workspace `id` for `mode`; `None` while the layer is off.
+    pub(crate) fn of(id: &WorkspaceId, mode: MiseMode) -> Result<Option<Self>, String> {
+        let MiseMode::On { trust } = mode else {
+            return Ok(None);
+        };
+        let layout = Layout::new(id).map_err(|e| e.to_string())?;
+        Ok(Some(Self {
+            dir: layout.mise_dir().map_err(|e| e.to_string())?,
+            trusted: trust.then(|| layout.mount().clone()),
+        }))
+    }
 }
 
 impl BootKit {
@@ -239,11 +267,31 @@ impl BootKit {
         let mut env = guest.env.clone();
         env.extend(&proxy.env);
         env.extend(&trust.env());
+        let mise = guest
+            .mise
+            .map(|layer| {
+                mise_config(&MiseSettings {
+                    dir: layer.dir.clone(),
+                    ceiling: GuestPath::new(WORKSPACES_ROOT).map_err(|e| e.to_string())?,
+                    trusted: layer.trusted.clone(),
+                    image_path: image_env
+                        .iter()
+                        .rev()
+                        .find(|(name, _)| name == "PATH")
+                        .map(|(_, value)| value.clone()),
+                })
+                .map_err(|e| e.to_string())
+            })
+            .transpose()?;
+        if let Some(mise) = &mise {
+            env.extend(&mise.env);
+        }
         let mut builder = BootPlan::builder(image)
             .session_user(user)
             .env(&env)
             .files(proxy.files)
             .files(trust.guest_files())
+            .files(mise.map(|m| m.files).unwrap_or_default())
             .file(shell_init::loader())
             .file(puddle_boot::start_folder_file(
                 guest.root,

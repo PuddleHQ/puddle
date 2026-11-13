@@ -29,9 +29,7 @@ const OWNER_POLL: Duration = Duration::from_millis(250);
 ///
 /// When the folder can't be made or the socket can't be bound.
 pub fn bind(socket: &Path) -> io::Result<UnixListener> {
-    if let Some(dir) = socket.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
+    socket.parent().map(std::fs::create_dir_all).transpose()?;
     match std::fs::remove_file(socket) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
         _ => {}
@@ -84,17 +82,15 @@ pub async fn serve(config: SshAgentConfig, upstream: Arc<Upstream>) {
 
 /// Carries each client of `listener` to the host until the listener fails.
 pub async fn accept(listener: UnixListener, upstream: Arc<Upstream>) {
-    loop {
+    let error = loop {
         match listener.accept().await {
             Ok((client, _)) => {
                 tokio::spawn(relay(client, Arc::clone(&upstream)));
             }
-            Err(e) => {
-                tracing::warn!(error = %e, "the ssh agent socket stopped accepting");
-                return;
-            }
+            Err(e) => break e,
         }
-    }
+    };
+    tracing::warn!(error = %error, "the ssh agent socket stopped accepting");
 }
 
 /// One client: an `ssh-agent` stream to the host, its bytes both ways until either side ends.

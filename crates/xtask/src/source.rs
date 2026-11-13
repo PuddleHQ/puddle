@@ -5,12 +5,12 @@
 //! offline runs.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use puddle_runtime::HostOs;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, XtaskError};
+use crate::github::GitHub;
 use crate::inventory::{Inventory, shipped_packages};
 use crate::tools::{Cargo, Features, git_command, run};
 
@@ -171,7 +171,7 @@ impl ReleaseSource for DirSource {
     }
 }
 
-/// The real thing: `gh` for releases and the compare API, `git` for the fork's source at the tag,
+/// The real thing: plain HTTPS ([`GitHub`]) for releases and the compare API, `git` for the fork's source at the tag,
 /// cargo-about on that source.
 #[derive(Debug, Clone)]
 pub struct GitHubSource {
@@ -191,6 +191,8 @@ pub struct GitHubSource {
     pub about_config: PathBuf,
     /// The cargo to run.
     pub cargo: Cargo,
+    /// Where releases and API answers come from.
+    pub github: GitHub,
 }
 
 impl GitHubSource {
@@ -222,7 +224,7 @@ impl GitHubSource {
         Ok(src)
     }
 
-    fn firmware(src: &Path) -> Result<Firmware> {
+    fn firmware(&self, src: &Path) -> Result<Firmware> {
         let tree =
             run(git_command()
                 .arg("-C")
@@ -232,32 +234,29 @@ impl GitHubSource {
         let modules = std::fs::read_to_string(src.join(".gitmodules"))
             .map_err(|e| XtaskError::io("reading .gitmodules", e))?;
         let repo_url = parse_submodule_url(&modules, LIBKRUNFW_SUBMODULE)?;
-        Self::firmware_at(&github_slug(&repo_url)?, commit, None)
+        self.firmware_at(&github_slug(&repo_url)?, commit, None)
     }
 
     /// The firmware of the libkrunfw fork's release `tag`: the commit the tag names.
-    fn fork_firmware(tag: &str) -> Result<Firmware> {
-        let commit = run(Command::new("gh").args([
-            "api",
-            "--jq",
-            ".sha",
-            &format!("repos/{FIRMWARE_FORK}/commits/{tag}"),
-        ]))?;
-        Self::firmware_at(
-            FIRMWARE_FORK,
-            commit.trim().to_owned(),
-            Some(tag.to_owned()),
-        )
+    fn fork_firmware(&self, tag: &str) -> Result<Firmware> {
+        let json = self
+            .github
+            .api(&format!("repos/{FIRMWARE_FORK}/commits/{tag}"), false)?;
+        let commit = parse_commit_sha(&json)?;
+        self.firmware_at(FIRMWARE_FORK, commit, Some(tag.to_owned()))
     }
 
     /// The firmware facts of libkrunfw `slug` at `commit`, from its Makefile there.
-    fn firmware_at(slug: &str, commit: String, fork_tag: Option<String>) -> Result<Firmware> {
-        let makefile = run(Command::new("gh").args([
-            "api",
-            "-H",
-            "Accept: application/vnd.github.raw",
+    fn firmware_at(
+        &self,
+        slug: &str,
+        commit: String,
+        fork_tag: Option<String>,
+    ) -> Result<Firmware> {
+        let makefile = self.github.api(
             &format!("repos/{slug}/contents/Makefile?ref={commit}"),
-        ]))?;
+            true,
+        )?;
         let (libkrunfw_version, kernel_version) = parse_libkrunfw_makefile(&makefile)?;
         Ok(Firmware {
             libkrunfw_version,
@@ -272,27 +271,14 @@ impl GitHubSource {
 impl ReleaseSource for GitHubSource {
     fn fetch(&self, origin: Origin, name: &str, dir: &Path) -> Result<PathBuf> {
         let (repo, tag) = self.repo(origin)?;
-        run(Command::new("gh")
-            .args([
-                "release",
-                "download",
-                tag,
-                "--repo",
-                repo,
-                "--pattern",
-                name,
-                "--clobber",
-                "--dir",
-            ])
-            .arg(dir))?;
-        Ok(dir.join(name))
+        self.github.release_asset(repo, tag, name, dir)
     }
 
     fn facts(&self) -> Result<ForkFacts> {
-        let compare = run(Command::new("gh").args([
-            "api",
+        let compare = self.github.api(
             &compare_path(&self.fork, &self.upstream, &self.upstream_tag, &self.tag),
-        ]))?;
+            false,
+        )?;
         let commits = parse_compare(&compare)?;
         let src = self.checkout()?;
         Ok(ForkFacts {
@@ -302,8 +288,8 @@ impl ReleaseSource for GitHubSource {
             upstream_tag: self.upstream_tag.clone(),
             commits,
             firmware: match &self.firmware_tag {
-                Some(tag) => Self::fork_firmware(tag)?,
-                None => Self::firmware(&src)?,
+                Some(tag) => self.fork_firmware(tag)?,
+                None => self.firmware(&src)?,
             },
         })
     }
@@ -395,6 +381,17 @@ fn compare_path(fork: &str, upstream: &str, upstream_tag: &str, tag: &str) -> St
         .split_once('/')
         .map_or(upstream, |(owner, _)| owner);
     format!("repos/{fork}/compare/{owner}:{upstream_tag}...{tag}")
+}
+
+/// The `sha` of a GitHub commit API response.
+fn parse_commit_sha(json: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Commit {
+        sha: String,
+    }
+    serde_json::from_str::<Commit>(json)
+        .map(|c| c.sha)
+        .map_err(|e| XtaskError::parse("GitHub commit response", e))
 }
 
 /// The commits of a GitHub compare API response, oldest first.

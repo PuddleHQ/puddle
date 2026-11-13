@@ -716,7 +716,7 @@ async fn check_variables_survive_sudo_and_new_shells(image: &str, tag: &str) {
     // piece); the files carry the new one, which is what a new terminal reads.
     let (code, said) = as_agent(
         &again,
-        "env -u KEPT_T_VAR bash -ic 'printf \"%s\" \"$KEPT_T_VAR\"'",
+        "env -u KEPT_T_VAR bash -ic 'printf \"%s\" \"$KEPT_T_VAR\"' 2>/dev/null",
     )
     .await;
     assert_eq!(
@@ -747,7 +747,7 @@ async fn check_variable<S: Sandbox>(sb: &GatedSandbox<S>, value: &str) {
     );
     let (code, said) = as_agent(
         sb,
-        "env -u KEPT_T_VAR bash -ic 'printf \"%s\" \"$KEPT_T_VAR\"'",
+        "env -u KEPT_T_VAR bash -ic 'printf \"%s\" \"$KEPT_T_VAR\"' 2>/dev/null",
     )
     .await;
     assert_eq!((code, said.as_str()), (0, value), "a bash without a login");

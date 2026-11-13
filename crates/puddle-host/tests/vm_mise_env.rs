@@ -142,8 +142,8 @@ async fn vm_radar_mise_environment_reaches_every_way_into_the_guest_and_follows_
         "the root disk was kept: {out}"
     );
     assert!(
-        out.contains(&format!("path={mount}/.puddle/mise/data/shims:")),
-        "shims first, even after /etc/profile reset PATH: {out}"
+        out.contains(&format!("{mount}/.puddle/mise/data/shims:/usr/local/sbin")),
+        "shims ahead of the system folders, even after /etc/profile reset PATH (msb adds its own folder before): {out}"
     );
 
     // The pinned binary in the layer's folder (the fetch of M-3 puts it there once it exists).

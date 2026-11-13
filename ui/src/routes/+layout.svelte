@@ -4,6 +4,7 @@
   import "#lib/theme/tokens.css";
   import "#lib/theme/base.css";
   import { onMount, untrack } from "svelte";
+  import { version } from "$app/env";
   import { page } from "$app/state";
   import Notices from "#lib/components/Notices.svelte";
   import Sidebar from "#lib/components/Sidebar.svelte";
@@ -11,6 +12,7 @@
   import { documentTitle } from "#lib/nav.ts";
   import { NoticeWatcher } from "#lib/notify/watcher.ts";
   import { session } from "#lib/session/session.svelte.ts";
+  import { BuildGuard } from "#lib/stores/build-guard.ts";
   import { live } from "#lib/stores/live.svelte.ts";
   import { networkHealth } from "#lib/stores/network-health.svelte.ts";
   import { density } from "#lib/theme/density.svelte.ts";
@@ -21,6 +23,8 @@
   let { children } = $props();
 
   const watcher = new NoticeWatcher({ source: live });
+  // A tab left open across a server upgrade reloads into the build the server serves now.
+  const build = new BuildGuard({ current: version, source: live });
   // The first-run flow has the whole window: the app's sidebar would invite leaving it half done.
   const welcome = $derived(isWelcome(page.url.pathname));
 
@@ -43,7 +47,12 @@
       void density.sync();
       palette.init();
       void palette.sync();
-      const stops = [live.start(), networkHealth.start(), watcher.start()];
+      const stops = [
+        live.start(),
+        networkHealth.start(),
+        watcher.start(),
+        build.start(),
+      ];
       return () => stops.forEach((stop) => stop());
     });
   });

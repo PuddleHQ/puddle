@@ -609,6 +609,7 @@ impl ApiServer {
             proxy_sign_ins: services.proxy_sign_ins,
             company_signals: services.company_signals,
             sign_in: sign_in.clone(),
+            ui_build_id: config.ui.as_deref().and_then(crate::ui::build_id),
             shutdown,
         };
         // System managed follows the stored setup from the first request on (rules spec R-41).

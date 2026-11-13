@@ -109,3 +109,41 @@ async fn without_an_app_everything_needs_the_token() {
     let reply = get(&api, "/", "").await;
     assert_eq!(reply.status, 401, "{reply:?}");
 }
+
+fn config_with_version(version_json: &'static str) -> ApiConfig {
+    let mut config = ApiConfig::default();
+    config.ui = Some(Arc::new(Files(HashMap::from([
+        ("index.html", ("<html></html>", "text/html")),
+        ("_app/version.json", (version_json, "application/json")),
+    ]))));
+    config
+}
+
+#[tokio::test]
+async fn health_names_the_build_of_the_app_it_serves() {
+    let api = start_with(config_with_version(r#"{"version":"1731456000000"}"#)).await;
+    let health = api.get("/api/health").await.json();
+    assert_eq!(health["ui_build_id"], "1731456000000");
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn health_names_no_build_when_the_app_has_no_readable_version() {
+    for version_json in ["not json", r#"{"version":7}"#, "{}"] {
+        let api = start_with(config_with_version(version_json)).await;
+        let health = api.get("/api/health").await.json();
+        assert_eq!(
+            health["ui_build_id"],
+            serde_json::Value::Null,
+            "{version_json}"
+        );
+        api.running.shutdown().await;
+    }
+    let api = start_with(config()).await;
+    assert_eq!(
+        api.get("/api/health").await.json()["ui_build_id"],
+        serde_json::Value::Null,
+        "an app build without a version file"
+    );
+    api.running.shutdown().await;
+}

@@ -36,6 +36,7 @@ fn stored(id: &str) -> Stored {
         disk_size_mib: 2048,
         root_disk_grown_mib: Some(32_768),
         creating: false,
+        deleting: false,
     }
 }
 

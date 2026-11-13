@@ -367,6 +367,8 @@ struct Background {
     sweeper: Sweeper,
     // Holds the store; awaited at shutdown so the database is closed when the host is.
     vault_sweep: tokio::task::JoinHandle<()>,
+    // Also holds the store (the injection removes rows); awaited at shutdown for the same reason.
+    retired_sweep: tokio::task::JoinHandle<()>,
     pull: PullRoute,
     front: Front,
     // Dropped (stopped) with the rest; `None` where the OS cannot watch.
@@ -702,6 +704,11 @@ impl<R: Runtime + Clone> Host<R> {
         )?;
         // Downloads the image the delete check boots now, while nobody is waiting on it.
         service.warm_maintenance_image_for_listed();
+        // Finishes what a delete that did not end left under its id.
+        let retired_sweep = tokio::spawn({
+            let service = service.clone();
+            async move { service.sweep_retired().await }
+        });
         let (git_changes, sign_in_notices) = injecting.watch(&service, &events);
         let editor_windows = front.windows().clone();
         let editor_updates = AbortOnDrop(crate::editor_updates::spawn(
@@ -781,6 +788,7 @@ impl<R: Runtime + Clone> Host<R> {
             background: AsyncMutex::new(Some(Background {
                 sweeper,
                 vault_sweep,
+                retired_sweep,
                 pull,
                 front,
                 _watching: watching,
@@ -948,6 +956,7 @@ impl<R: Runtime + Clone> Host<R> {
                     background.front.close().await;
                     // A panic in the sweep was reported by the sweep; nothing more to do here.
                     let _ = background.vault_sweep.await;
+                    let _ = background.retired_sweep.await;
                     for task in [
                         &mut background.network_events,
                         &mut background.sign_in_failures,

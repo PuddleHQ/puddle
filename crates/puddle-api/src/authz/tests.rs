@@ -633,7 +633,7 @@ async fn hostile_every_declared_route_naming_a_resource_answers_as_for_an_unknow
         assert_eq!(theirs.0, want, "{m} {path}: {}", theirs.1);
         checked += 1;
     }
-    assert_eq!(checked, 50, "routes that name a resource");
+    assert_eq!(checked, 53, "routes that name a resource");
     shut_down(pair).await;
 }
 

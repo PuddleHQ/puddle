@@ -28,6 +28,8 @@
 //! | `PUDDLE_AGENT_CAPTURE_IFACE` | `dummy0` | the dummy interface that carries the stub's address; made when missing |
 //! | `PUDDLE_AGENT_CAPTURE_POLL_MS` | `500` | how often the rules are compared with the kernel's table |
 //! | `PUDDLE_AGENT_CAPTURE_LOG_GROUP` | `1291` | the netfilter log group refused UDP is read from; `0` leaves the logging out |
+//! | `PUDDLE_AGENT_SSH_AGENT` | `off` | the guest's SSH agent socket (`/run/puddle/ssh-agent.sock` when the host turns it on): each client is carried to the host's filtered agent; `off` makes none |
+//! | `PUDDLE_AGENT_SSH_AGENT_USER` | `root` | the session user, who owns the socket (mode 0600) |
 //! | `PUDDLE_AGENT_LOG` | `info` | `error`, `warn`, `info`, `debug` or `trace` (to stderr) |
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -210,6 +212,17 @@ impl Default for CaptureConfig {
     }
 }
 
+/// The guest's SSH agent socket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshAgentConfig {
+    /// Where the socket listens.
+    pub socket: PathBuf,
+    /// The session user, who owns the socket.
+    pub user: String,
+    /// How long to keep looking for the session user before the socket stays root's.
+    pub owner_wait: Duration,
+}
+
 /// Everything the agent needs to run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -237,6 +250,8 @@ pub struct Config {
     pub editor: Option<EditorConfig>,
     /// Transparent capture, `None` when it is off. Needs [`Config::dns`].
     pub capture: Option<CaptureConfig>,
+    /// The guest's SSH agent socket, `None` when it is off.
+    pub ssh_agent: Option<SshAgentConfig>,
     /// Log level.
     pub log: tracing::Level,
 }
@@ -256,6 +271,7 @@ impl Default for Config {
             entrypoint: Some(EntrypointWatch::default()),
             editor: None,
             capture: None,
+            ssh_agent: None,
             log: tracing::Level::INFO,
         }
     }
@@ -339,6 +355,16 @@ impl Config {
         config.capture = capture;
         config.dns = dns;
         config.editor = editor_from(&get)?;
+        config.ssh_agent = match lookup("PUDDLE_AGENT_SSH_AGENT") {
+            None => None,
+            Some((v, _)) if v == "off" => None,
+            Some((v, var)) => Some(SshAgentConfig {
+                socket: path(var, &v)?,
+                user: lookup("PUDDLE_AGENT_SSH_AGENT_USER")
+                    .map_or_else(|| "root".to_owned(), |(user, _)| user),
+                owner_wait: Duration::from_secs(60),
+            }),
+        };
         if let Some((v, var)) = lookup("PUDDLE_AGENT_LOG") {
             config.log = v
                 .parse()

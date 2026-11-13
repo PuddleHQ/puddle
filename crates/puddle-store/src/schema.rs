@@ -13,11 +13,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22,
+    V22, V23,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 22;
+pub const SCHEMA_VERSION: u32 = 23;
 
 const V1: &str = r"
 CREATE TABLE rules (
@@ -699,6 +699,18 @@ CREATE TABLE workspace_owners_adoption (
     id INTEGER PRIMARY KEY CHECK (id = 1)
 ) STRICT;
 INSERT INTO workspace_owners_adoption (id) VALUES (1);
+";
+
+/// The hosts each workspace may use the user's SSH agent for. A row is the user's "on"; `keys`
+/// holds the allowed keys' SHA-256 fingerprints one per line, `NULL` for every key.
+const V23: &str = r"
+CREATE TABLE ssh_agent_hosts (
+    workspace_id TEXT    NOT NULL,
+    host         TEXT    NOT NULL CHECK (length(host) BETWEEN 1 AND 253),
+    keys         TEXT    CHECK (keys IS NULL OR length(keys) > 0),
+    changed_at   INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, host)
+) STRICT;
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.

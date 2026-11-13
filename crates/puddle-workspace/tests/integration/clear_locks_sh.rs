@@ -65,7 +65,7 @@ fn git_ok(dir: &Path, args: &[&str]) {
 }
 
 struct Fixture {
-    _tmp: tempfile::TempDir,
+    tmp: tempfile::TempDir,
     vol: PathBuf,
     proc_dir: PathBuf,
 }
@@ -117,11 +117,7 @@ fn fixture() -> Fixture {
     std::fs::create_dir(vol.join("linked")).unwrap();
     std::os::unix::fs::symlink(&outside, vol.join("linked/.git")).unwrap();
     std::os::unix::fs::symlink(&outside, vol.join("linkdir")).unwrap();
-    Fixture {
-        _tmp: tmp,
-        vol,
-        proc_dir,
-    }
+    Fixture { tmp, vol, proc_dir }
 }
 
 async fn run(shell: &'static str, fx: &Fixture) -> LockReport {
@@ -293,11 +289,7 @@ fn repair_fixture() -> Fixture {
     git_ok(&api, &["checkout", "-q", "feature"]);
     std::fs::write(api.join("a.txt"), "edited, not staged\n").unwrap();
     std::fs::write(api.join("new.txt"), "untracked\n").unwrap();
-    Fixture {
-        _tmp: tmp,
-        vol,
-        proc_dir,
-    }
+    Fixture { tmp, vol, proc_dir }
 }
 
 /// Overwrites `path` with `len` NUL bytes, as a power cut leaves a renamed file.
@@ -705,5 +697,162 @@ async fn every_checkout_of_the_volume_is_repaired() {
             git_ok(&fx.vol.join(repo), &["fsck", "--full"]);
         }
         assert_eq!(git_text(&web, &["branch", "--show-current"]), "side");
+    }
+}
+
+/// `repair_fixture` plus a linked worktree `wt` of `api` (branch `wtb`, switched to and from
+/// `main` so `logs/HEAD` ends in a branch switch) and a submodule `api/sub` (its git dir is
+/// `api/.git/modules/sub`, which `api/sub/.git` points at).
+fn linked_fixture() -> Fixture {
+    let fx = repair_fixture();
+    let api = fx.vol.join("api");
+    git_ok(&api, &["worktree", "add", "-q", "../wt", "-b", "wtb"]);
+    let wt = fx.vol.join("wt");
+    std::fs::write(wt.join("w.txt"), "w\n").unwrap();
+    git_ok(&wt, &["add", "w.txt"]);
+    git_ok(&wt, &["commit", "-qm", "in the worktree"]);
+    git_ok(&wt, &["checkout", "-q", "--detach"]);
+    git_ok(&wt, &["checkout", "-q", "wtb"]);
+    std::fs::write(wt.join("w.txt"), "edited, not staged\n").unwrap();
+
+    let lib = fx.tmp.path().join("lib");
+    std::fs::create_dir(&lib).unwrap();
+    git_ok(&lib, &["init", "-q", "-b", "main"]);
+    std::fs::write(lib.join("l.txt"), "l\n").unwrap();
+    git_ok(&lib, &["add", "."]);
+    git_ok(&lib, &["commit", "-qm", "lib"]);
+    git_ok(
+        &api,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            lib.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    // A branch switch in the submodule, for the same reason.
+    git_ok(&api.join("sub"), &["checkout", "-qb", "side"]);
+    git_ok(&api.join("sub"), &["checkout", "-q", "main"]);
+    git_ok(&api.join("sub"), &["checkout", "-q", "side"]);
+    fx
+}
+
+#[tokio::test]
+async fn a_linked_worktree_and_a_submodule_git_dir_are_repaired() {
+    for shell in shells() {
+        let fx = linked_fixture();
+        let (api, wt, sub) = (
+            fx.vol.join("api"),
+            fx.vol.join("wt"),
+            fx.vol.join("api/sub"),
+        );
+        let wt_gd = api.join(".git/worktrees/wt");
+        let sub_gd = api.join(".git/modules/sub");
+        let wt_tip = git_text(&wt, &["rev-parse", "HEAD"]);
+        let sub_tip = git_text(&sub, &["rev-parse", "HEAD"]);
+        let api_head = std::fs::read(api.join(".git/HEAD")).unwrap();
+        let api_index = std::fs::read(api.join(".git/index")).unwrap();
+        for gd in [&wt_gd, &sub_gd] {
+            zero_fill(&gd.join("HEAD"), 24);
+            zero_fill(&gd.join("index"), 600);
+        }
+        assert!(!git(&wt, &["status"]).status.success(), "{shell}");
+        assert!(!git(&sub, &["status"]).status.success(), "{shell}");
+
+        let report = run(shell, &fx).await;
+        let mut repaired = report.repaired.clone();
+        repaired.sort();
+        assert_eq!(
+            repaired,
+            [
+                "api/.git/modules/sub/HEAD: HEAD was zero-filled, rewritten: branch side",
+                "api/.git/modules/sub/index: index was damaged, rebuilt from HEAD (staged changes are not kept)",
+                "api/.git/worktrees/wt/HEAD: HEAD was zero-filled, rewritten: branch wtb",
+                "api/.git/worktrees/wt/index: index was damaged, rebuilt from HEAD (staged changes are not kept)",
+            ],
+            "{shell}: {report:?}"
+        );
+        assert!(
+            report.damaged.is_empty() && report.errors.is_empty(),
+            "{shell}: {report:?}"
+        );
+        assert_eq!(git_text(&wt, &["rev-parse", "HEAD"]), wt_tip, "{shell}");
+        assert_eq!(git_text(&wt, &["branch", "--show-current"]), "wtb");
+        assert_eq!(git_text(&sub, &["rev-parse", "HEAD"]), sub_tip, "{shell}");
+        assert_eq!(git_text(&sub, &["branch", "--show-current"]), "side");
+        git_ok(&wt, &["fsck", "--full"]);
+        git_ok(&sub, &["fsck", "--full"]);
+        // The working trees are as the user left them.
+        assert_eq!(
+            std::fs::read_to_string(wt.join("w.txt")).unwrap(),
+            "edited, not staged\n"
+        );
+        assert!(git_text(&wt, &["status", "--porcelain"]).contains(" M w.txt"));
+        // The main repository was healthy and is byte for byte what it was.
+        assert_eq!(std::fs::read(api.join(".git/HEAD")).unwrap(), api_head);
+        assert_eq!(std::fs::read(api.join(".git/index")).unwrap(), api_index);
+        let again = run(shell, &fx).await;
+        assert!(
+            again.repaired.is_empty() && again.damaged.is_empty(),
+            "{shell}: {again:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn healthy_linked_worktrees_and_submodules_are_not_touched() {
+    for shell in shells() {
+        let fx = linked_fixture();
+        let api = fx.vol.join("api");
+        let files = [
+            ".git/worktrees/wt/HEAD",
+            ".git/worktrees/wt/index",
+            ".git/modules/sub/HEAD",
+            ".git/modules/sub/index",
+        ];
+        let before: Vec<_> = files
+            .iter()
+            .map(|f| std::fs::read(api.join(f)).unwrap())
+            .collect();
+        let report = run(shell, &fx).await;
+        assert!(
+            report.repaired.is_empty() && report.damaged.is_empty() && report.errors.is_empty(),
+            "{shell}: {report:?}"
+        );
+        for (f, b) in files.iter().zip(before) {
+            assert_eq!(std::fs::read(api.join(f)).unwrap(), b, "{shell}: {f}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_gitdir_pointer_that_leaves_the_volume_is_reported_and_not_followed() {
+    for shell in shells() {
+        let fx = linked_fixture();
+        let outside = fx.tmp.path().join("outside-git");
+        std::fs::create_dir_all(outside.join("objects")).unwrap();
+        std::fs::create_dir_all(outside.join("refs")).unwrap();
+        zero_fill(&outside.join("HEAD"), 12);
+        std::fs::create_dir(fx.vol.join("evil")).unwrap();
+        std::fs::write(
+            fx.vol.join("evil/.git"),
+            format!("gitdir: {}\n", outside.display()),
+        )
+        .unwrap();
+        // A pointer through a symlink inside the volume is refused as well.
+        std::fs::create_dir(fx.vol.join("sneaky")).unwrap();
+        std::os::unix::fs::symlink(&outside, fx.vol.join("sneaky/gd")).unwrap();
+        std::fs::write(fx.vol.join("sneaky/.git"), "gitdir: gd\n").unwrap();
+        let report = run(shell, &fx).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert_eq!(report.damaged.len(), 2, "{shell}: {report:?}");
+        assert_eq!(
+            std::fs::read(outside.join("HEAD")).unwrap(),
+            vec![0_u8; 12],
+            "{shell}"
+        );
     }
 }

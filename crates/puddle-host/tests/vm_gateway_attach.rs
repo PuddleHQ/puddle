@@ -199,7 +199,14 @@ mod gateway {
                 break status.success();
             }
             if std::time::Instant::now() > deadline {
-                // Gateway's launcher execs java, so the child is Gateway itself.
+                // Gateway's launcher execs java, so the child is Gateway itself: its threads first.
+                if let Ok(dump) = std::process::Command::new(gateway_dir.join("jbr/bin/jstack"))
+                    .arg(child.id().to_string())
+                    .output()
+                {
+                    let _ = std::fs::write(dir.join("launcher.err.jstack"), &dump.stdout);
+                    eprintln!("--- jstack\n{}", String::from_utf8_lossy(&dump.stdout));
+                }
                 let _ = child.kill();
                 let _ = child.wait();
                 eprintln!("gateway probe: killed after {} s", PROBE_LIMIT.as_secs());
@@ -249,12 +256,12 @@ mod gateway {
             .until(ended(name_static), Duration::from_secs(600))
             .await;
         assert_eq!(end["step"], "done", "{end}");
-        // Gateway's bootstrap warns below two cores (its "minimal requirements" check), so the
-        // workspace gets two, as a user would set it, and starts again to take them.
+        // Gateway's bootstrap warns below four cores (its "minimal requirements" check; two still
+        // warned), so the workspace gets four, as a user would set it, and starts again to take them.
         let reply = api
             .put(
                 &format!("/api/settings/workspaces/{name}"),
-                &json!({"overrides": {"direct_ssh": true, "cpus": 2}}).to_string(),
+                &json!({"overrides": {"direct_ssh": true, "cpus": 4}}).to_string(),
             )
             .await;
         assert_eq!(reply.status, 200, "{}", reply.body);

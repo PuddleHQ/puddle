@@ -170,7 +170,7 @@ public final class ProbeStarter implements ApplicationStarter {
         });
         if (session[0] == null) return;
         step("exec-identity", () -> {
-            Exec e = exec(cb, "id -un; echo \"$HOME\"; uname -sm; sudo -n id -un; echo shell=$SHELL; getent passwd $(id -un); command -v python3 busybox nc setsid", null);
+            Exec e = exec(cb, "id -un; echo \"$HOME\"; uname -sm; sudo -n id -un; echo shell=$SHELL; getent passwd $(id -un); command -v python3 busybox perl nc setsid; true", null);
             if (e.code != 0) throw new IllegalStateException("exit " + e.code + " err=" + e.err);
             return e.out;
         });
@@ -210,6 +210,10 @@ public final class ProbeStarter implements ApplicationStarter {
             try (InputStream i = sftp.inputStream(path)) {
                 back = i.readAllBytes();
             }
+            String remoteSha = exec(cb, "sha256sum '" + path + "' | cut -d' ' -f1", null).out.trim();
+            say("INFO sftp: local sha " + sha(data) + ", file in the guest " + remoteSha + ", read back " + sha(back)
+                    + " (" + back.length + " bytes), first difference at "
+                    + java.util.Arrays.mismatch(data, back));
             int listed = sftp.ls(dir).size();
             sftp.rm(path);
             if (size != data.length || !sha(back).equals(sha(data)))
@@ -219,7 +223,8 @@ public final class ProbeStarter implements ApplicationStarter {
         step("detached-listener", () -> {
             // A process started in the background must outlive its exec channel (Gateway starts its backend so).
             String server = "command -v python3 >/dev/null && exec python3 -m http.server " + guestPort
-                    + " --bind 127.0.0.1; exec busybox httpd -f -p 127.0.0.1:" + guestPort + " -h /tmp";
+                    + " --bind 127.0.0.1; exec perl -MIO::Socket::INET -e '\\''$s=IO::Socket::INET->new(LocalAddr=>q(127.0.0.1),LocalPort=>"
+                    + guestPort + ",Listen=>5,ReuseAddr=>1) or die $!; while($c=$s->accept){<$c>; print $c qq(HTTP/1.0 200 OK\\r\\n\\r\\nok\\n); close $c}'\\''";
             Exec e = exec(cb, "cd /tmp && nohup sh -c '" + server + "' >/tmp/probe-listener.log 2>&1 </dev/null & echo started", null);
             Thread.sleep(3000);
             Exec log = exec(cb, "cat /tmp/probe-listener.log; ps -eo pid,ppid,args | grep -E 'http' | grep -v grep", null);

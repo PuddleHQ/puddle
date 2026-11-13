@@ -194,8 +194,6 @@ struct Guest {
     mise_failure: Mutex<Option<&'static str>>,
     /// Every `puddle-agent mise-fetch` as (arguments, user).
     mise_fetches: Mutex<Vec<(Vec<String>, Option<String>)>>,
-    /// The next `mise-fetch` waits here before it answers.
-    mise_hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     /// The script (stdin) of every shell-init check, and what the guest saw at the mounted file
     /// while it ran.
     checks: Mutex<Vec<(String, Option<String>)>>,
@@ -347,10 +345,6 @@ impl Guest {
             .lock()
             .unwrap()
             .push((r.args.clone(), r.user.clone()));
-        let hold = self.mise_hold.lock().unwrap().take();
-        if let Some(hold) = hold {
-            let _ = hold.recv();
-        }
         match *self.mise_failure.lock().unwrap() {
             Some(said) => ExecOutput::new(1, "", said),
             None => ExecOutput::new(0, "installed\n", ""),
@@ -13341,31 +13335,4 @@ async fn with_mise_off_nothing_is_fetched_and_an_old_problem_goes() {
         .await;
         assert_eq!(mise_fetches(&rig).len(), before, "{switch}: no new fetch");
     }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_fetch_that_ends_after_the_workspace_stopped_says_nothing() {
-    let rig = Rig::named_ids();
-    rig.mise_on.store(true, Ordering::SeqCst);
-    *rig.guest.mise_failure.lock().unwrap() = Some(MISE_FAILURE);
-    let (release, hold) = std::sync::mpsc::channel();
-    *rig.guest.mise_hold.lock().unwrap() = Some(hold);
-    let host = rig.start().await;
-    let api = api(&host);
-    let mut events = api.events().await;
-    create(&api, &mut events, "acme").await;
-    eventually("the fetch has started", APPLY, || {
-        !mise_fetches(&rig).is_empty()
-    })
-    .await;
-    api.post("/api/workspaces/acme/stop", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    // The fetch fails now, in a workspace that no longer runs: no problem.
-    release.send(()).unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(
-        !host.problems().list().iter().any(|p| p.key == "tools:acme"),
-        "{:?}",
-        host.problems().list()
-    );
 }

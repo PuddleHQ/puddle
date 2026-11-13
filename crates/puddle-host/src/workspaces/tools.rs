@@ -48,19 +48,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         // `None`: the workspace was not running before or after the fetch, which says nothing
         // about mise.
-        let Some(outcome) = self.run_mise_fetch(name).await else {
-            return;
-        };
-        let reason = match outcome {
+        if let Some(outcome) = self.run_mise_fetch(name).await {
+            self.record_mise_outcome(name, outcome);
+        }
+    }
+
+    /// Clears the problem after a good fetch, raises it after a failed one.
+    fn record_mise_outcome(&self, name: &WorkspaceId, outcome: Result<ExecOutput, ComputeError>) {
+        let problems = &self.inner.problems;
+        match outcome {
             Ok(output) if output.status.code == 0 => {
                 tracing::info!(workspace = %name, result = %output.stdout_text().trim(), "mise is on the volume");
-                inner.problems.clear(&key);
-                return;
+                problems.clear(&tools_key(name));
             }
-            failed => failure_reason(failed),
-        };
-        tracing::warn!(workspace = %name, %reason, "mise could not be put on the volume");
-        inner.problems.raise(self.mise_problem(name, &reason));
+            failed => {
+                let reason = failure_reason(failed);
+                tracing::warn!(workspace = %name, %reason, "mise could not be put on the volume");
+                problems.raise(self.mise_problem(name, &reason));
+            }
+        }
     }
 
     /// Runs `puddle-agent mise-fetch` in the guest as the session user. `None` when the workspace
@@ -74,12 +80,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .as_user(user.name())
             .with_timeout(FETCH_TIMEOUT);
         let outcome = gated.ungated().exec(request).await;
-        inner
+        // A stop keeps the entry but takes its sandbox away.
+        let running = inner
             .live
             .lock()
             .await
-            .contains_key(name)
-            .then_some(outcome)
+            .get(name)
+            .is_some_and(|l| l.gated.is_some());
+        running.then_some(outcome)
     }
 
     /// The problem for a failed fetch: what failed, that the workspace works without tools, and,

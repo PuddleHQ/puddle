@@ -193,6 +193,8 @@ mod gateway {
             .spawn()
             .expect("Gateway's launcher runs");
         // Well under the runner's limit, so a hung step still leaves its report and logs here.
+        // flake-ok: not a wait for a condition but a hard limit on a child process: on expiry the
+        // test takes a thread dump and kills Gateway, so a hang shows where it stopped.
         let deadline = std::time::Instant::now() + PROBE_LIMIT;
         let ok = loop {
             if let Some(status) = child.try_wait().unwrap() {

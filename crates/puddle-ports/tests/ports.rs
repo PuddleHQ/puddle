@@ -129,6 +129,24 @@ impl StreamHandler for Route {
     }
 }
 
+#[tokio::test]
+async fn an_ended_agent_session_is_announced_by_workspace() {
+    let rig = rig("ended").await;
+    let mut ended = rig.ports.agent_sessions_ended();
+    GuestWatcher::session_ended(&rig.ports, &rig.workspace);
+    assert_eq!(ended.next().await, rig.workspace);
+}
+
+#[tokio::test]
+async fn a_reader_that_fell_behind_still_gets_a_name() {
+    let rig = rig("behind").await;
+    let mut ended = rig.ports.agent_sessions_ended();
+    for _ in 0..200 {
+        GuestWatcher::session_ended(&rig.ports, &rig.workspace);
+    }
+    assert_eq!(ended.next().await, rig.workspace);
+}
+
 struct Rig {
     ports: Ports,
     pins: Arc<MemoryPins>,

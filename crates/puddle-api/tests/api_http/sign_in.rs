@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, PublicHost, RemoteServing,
+    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, PublicHost, Remote, RemoteServing,
     RunningApi, Services, SettingsRepo, reset_account,
 };
 use puddle_store::{Clock as _, Limits, ManualClock, Store, UserName};
@@ -69,7 +69,9 @@ async fn site_with(multi_user: bool) -> Site {
     )
     .with_account_secrets(store.take_account_secrets().unwrap());
     let mut config = ApiConfig::default();
-    config.remote = Some(RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap());
+    config.remote = Some(Remote::new(
+        RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap(),
+    ));
     config.multi_user = multi_user;
     let token = ApiToken::generate().unwrap();
     let server = ApiServer::bind(config, token.clone(), services)
@@ -1163,7 +1165,9 @@ async fn without_accounts_the_routes_answer_unavailable() {
         clock,
     );
     let mut config = ApiConfig::default();
-    config.remote = Some(RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap());
+    config.remote = Some(Remote::new(
+        RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap(),
+    ));
     let server = ApiServer::bind(config, ApiToken::generate().unwrap(), services)
         .await
         .unwrap();
@@ -1194,7 +1198,9 @@ async fn signing_a_device_out_closes_its_open_terminal() {
     use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
     let mut config = ApiConfig::default();
-    config.remote = Some(RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap());
+    config.remote = Some(Remote::new(
+        RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap(),
+    ));
     let api = crate::common::start_with(config).await;
     let made = api
         .send(

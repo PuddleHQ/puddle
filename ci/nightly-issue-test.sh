@@ -68,10 +68,10 @@ listed=$(sed -n '/^    workflows:/,/^    types:/p' "$wf" | sed -n 's/^ *- *\[\?\
 for n in $listed; do
     grep -q "^name: $n\$" "$here/../.github/workflows/"*.yml || fail "nightly-signal.yml names '$n', which no workflow has"
 done
-# covered otherwise: ci (its nightly jobs have their own issue: ci/advisories-issue.sh), quality (a standing
+# covered otherwise: fork-upkeep (weekly; its own issue, ci/fork-upkeep-issue.sh), ci (its nightly jobs have their own issue: ci/advisories-issue.sh), quality (a standing
 # report that never fails), cache-gc (housekeeping, health.sh watches it), merge-queue-sweep (every 10 min; a PR it
 # misses shows as stuck-armed in pr-status.sh), the signal itself
-covered=" ci quality cache-gc merge-queue-sweep nightly-signal "
+covered=" ci quality cache-gc merge-queue-sweep nightly-signal fork-upkeep "
 for f in "$here/../.github/workflows/"*.yml; do
     grep -q '^  schedule:' "$f" || continue
     n=$(sed -n 's/^name: //p' "$f" | head -1)

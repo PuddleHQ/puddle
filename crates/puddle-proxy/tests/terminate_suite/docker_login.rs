@@ -2,8 +2,9 @@
 //! The Docker Hub login through the real proxy and the shipped profile, against fake servers that
 //! speak the CLI's wire format: the device flow's poll (a form in, JSON out), the personal access token
 //! `desktop-generate` mints from the access token (a nested `data.token`), the `Basic` credential the
-//! token is sent in toward `auth.docker.io`, and the revoke that carries the refresh token back (an
-//! empty answer). The real tokens reach only the hosts they belong to.
+//! token is sent in toward `auth.docker.io`, the registry's bearer token that server answers with
+//! (sent on to the registry), and the revoke that carries the refresh token back (an empty answer).
+//! The real tokens reach only the hosts they belong to.
 use crate::terminate_support;
 
 use std::sync::{Arc, Mutex, PoisonError};
@@ -23,6 +24,7 @@ use terminate_support::{
 const LOGIN: &str = "login.docker.com";
 const HUB: &str = "hub.docker.com";
 const REGISTRY_AUTH: &str = "auth.docker.io";
+const REGISTRY: &str = "registry-1.docker.io";
 const REFRESH: &str = "v1.CANARY0docker0refresh0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const PAT: &str = "dckr_pat_CANARY0docker0pat0AAAAAAA";
 
@@ -44,6 +46,15 @@ fn real_access() -> String {
 
 fn real_id() -> String {
     jwt(&json!({"sub": "auth0|1"}), 'I')
+}
+
+/// The registry's bearer token, with the claims the live token server puts in one.
+fn real_bearer() -> String {
+    jwt(
+        &json!({"iss": "auth.docker.io", "aud": "registry.docker.io", "sub": "someone", "exp": 1_893_456_300,
+            "access": [{"type": "repository", "name": "someone/app", "actions": ["pull"]}]}),
+        'B',
+    )
 }
 
 struct Quiet(Mutex<Vec<Problem>>);
@@ -115,7 +126,18 @@ async fn docker_logs_in_makes_a_pat_logs_into_the_registry_and_revokes_with_stan
     let hub = FakeServer::tls(pki.server_config(HUB, Flaw::None), hub_handler()).await;
     let registry_auth = FakeServer::tls(
         pki.server_config(REGISTRY_AUTH, Flaw::None),
-        Arc::new(|_| reply("200 OK", r#"{"token":"registry-bearer"}"#)),
+        Arc::new(|_| {
+            let bearer = real_bearer();
+            reply(
+                "200 OK",
+                &json!({"token": bearer, "access_token": bearer, "expires_in": 300}).to_string(),
+            )
+        }),
+    )
+    .await;
+    let registry_server = FakeServer::tls(
+        pki.server_config(REGISTRY, Flaw::None),
+        Arc::new(|_| reply("200 OK", "{}")),
     )
     .await;
     let registry = Arc::new(StandIns::new());
@@ -130,11 +152,12 @@ async fn docker_logs_in_makes_a_pat_logs_into_the_registry_and_revokes_with_stan
         puddle_logins::Marker::none(),
     );
     let rig = RigBuilder::new(&pki)
-        .bound(vec![LOGIN, HUB, REGISTRY_AUTH])
-        .allow(vec![LOGIN, HUB, REGISTRY_AUTH])
+        .bound(vec![LOGIN, HUB, REGISTRY_AUTH, REGISTRY])
+        .allow(vec![LOGIN, HUB, REGISTRY_AUTH, REGISTRY])
         .name(LOGIN, login.addr)
         .name(HUB, hub.addr)
         .name(REGISTRY_AUTH, registry_auth.addr)
+        .name(REGISTRY, registry_server.addr)
         .injector(TestInjector::new(|_| InjectDecision::PassThrough))
         .stand_ins(&registry)
         .exchanges(Arc::new(logins))
@@ -204,7 +227,17 @@ async fn docker_logs_in_makes_a_pat_logs_into_the_registry_and_revokes_with_stan
             .as_bytes(),
         )
         .await;
-    assert_eq!(auth_client.response("GET").await.status, 200);
+    let response = auth_client.response("GET").await;
+    assert_eq!(response.status, 200);
+    // The registry's bearer token the server answered with reaches the guest as a stand-in only.
+    let text = String::from_utf8(response.body.clone()).unwrap();
+    assert!(
+        !text.contains(&"B".repeat(342)),
+        "a real bearer reached the guest"
+    );
+    let answered: Value = serde_json::from_str(&text).unwrap();
+    let bearer_stand_in = answered["token"].as_str().unwrap().to_owned();
+    assert_eq!(answered["access_token"], answered["token"]);
     let seen = registry_auth.recorded();
     let sent = seen.last().unwrap().header("authorization").unwrap();
     let decoded = STANDARD
@@ -215,6 +248,26 @@ async fn docker_logs_in_makes_a_pat_logs_into_the_registry_and_revokes_with_stan
         format!("someone:{PAT}")
     );
     auth_client.close().await;
+
+    // The pull: the stand-in is the real bearer at the registry.
+    let mut pull = guest.tls(&format!("{REGISTRY}:443"), None).await.unwrap();
+    pull.send(
+        format!(
+            "GET /v2/someone/app/manifests/latest HTTP/1.1\r\nHost: {REGISTRY}\r\nAuthorization: Bearer {bearer_stand_in}\r\nContent-Length: 0\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await;
+    assert_eq!(pull.response("GET").await.status, 200);
+    assert_eq!(
+        registry_server
+            .recorded()
+            .last()
+            .unwrap()
+            .header("authorization"),
+        Some(format!("Bearer {}", real_bearer()).as_str())
+    );
+    pull.close().await;
 
     // The revoke (`docker logout`): the refresh token's stand-in is the real one upstream, and the
     // empty answer is not an unexpected answer.

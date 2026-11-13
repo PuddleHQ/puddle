@@ -159,6 +159,24 @@ pub enum Scope {
     Api,
     /// Only the token endpoints: a refresh token has no business anywhere else.
     TokenEndpoint,
+    /// Only these hosts (exact names or `*.suffix`): a token that one API takes, where the profile
+    /// has tokens for several. Each is also one of the profile's `api_hosts`, so it is decrypted.
+    Hosts(&'static [&'static str]),
+}
+
+/// Where the real token behind a stand-in is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Keep {
+    /// In the operating system's credential store, read back at the workspace's next start: a
+    /// login's tokens.
+    Stored,
+    /// In memory only, for a token the service mints for one request and that lasts minutes (a
+    /// registry's bearer token for one pull). Every answer gets a new stand-in, the last few stay
+    /// swapped, nothing is written to the credential store and nothing outlives the workspace's
+    /// run: the tool asks for a new one, as it does when one runs out. Such a token is not a login,
+    /// so it is not listed among the kept ones.
+    Memory,
 }
 
 /// One field of a token answer that holds a token.
@@ -191,6 +209,8 @@ pub struct Field {
     pub scope: Scope,
     /// Which answers the field applies to.
     pub audience: Audience,
+    /// Where the real token is kept.
+    pub keep: Keep,
 }
 
 impl Field {
@@ -278,7 +298,7 @@ impl Profile {
 
     /// The hosts a stand-in with `scope` is swapped toward: for [`Scope::Api`] the API hosts and
     /// every token endpoint's host, for [`Scope::TokenEndpoint`] only the hosts of the endpoints
-    /// that take a refresh token.
+    /// that take a refresh token, for [`Scope::Hosts`] the hosts it names.
     #[must_use]
     pub fn hosts_for(&self, scope: Scope) -> TerminationSet {
         let mut set = TerminationSet::new();
@@ -291,6 +311,7 @@ impl Profile {
                     .collect(),
                 &[],
             ),
+            Scope::Hosts(hosts) => (Vec::new(), hosts),
         };
         for host in endpoints.iter().map(|e| e.host).chain(api.iter().copied()) {
             // The patterns are literals in this file, and a test checks that each one is accepted.
@@ -313,11 +334,23 @@ impl Profile {
         format!("{}-{}", self.id, slot.key())
     }
 
-    /// The slots this profile has stand-ins for: each slot with the scope of its stand-in.
+    /// The slots whose tokens this profile keeps in the credential store ([`Keep::Stored`]): each
+    /// slot with the scope of its stand-in. These are the login.
     #[must_use]
     pub fn slots(&self) -> Vec<(Slot, Scope)> {
+        self.slots_kept(Keep::Stored)
+    }
+
+    /// The slots whose tokens are held in memory only ([`Keep::Memory`]).
+    #[must_use]
+    pub fn memory_slots(&self) -> Vec<(Slot, Scope)> {
+        self.slots_kept(Keep::Memory)
+    }
+
+    fn slots_kept(&self, keep: Keep) -> Vec<(Slot, Scope)> {
         let mut slots: Vec<(Slot, Scope)> = self
             .fields()
+            .filter(|(_, field)| field.keep == keep)
             .map(|(_, field)| (field.slot(), field.scope))
             .collect();
         slots.sort_by_key(|(slot, _)| *slot);
@@ -352,6 +385,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Any,
+        keep: Keep::Stored,
     },
     Field {
         path: "refresh_token",
@@ -363,6 +397,7 @@ const CLAUDE_TOKEN_FIELDS: &[Field] = &[
         only_prefixed: false,
         scope: Scope::TokenEndpoint,
         audience: Audience::Any,
+        keep: Keep::Stored,
     },
 ];
 
@@ -403,6 +438,7 @@ pub const CLAUDE: Profile = Profile {
                 only_prefixed: false,
                 scope: Scope::Api,
                 audience: Audience::Any,
+                keep: Keep::Stored,
             }],
         },
     ],
@@ -439,6 +475,7 @@ pub const GITHUB: Profile = Profile {
                     only_prefixed: false,
                     scope: Scope::Api,
                     audience: Audience::Any,
+                    keep: Keep::Stored,
                 },
                 Field {
                     path: "refresh_token",
@@ -450,6 +487,7 @@ pub const GITHUB: Profile = Profile {
                     only_prefixed: false,
                     scope: Scope::TokenEndpoint,
                     audience: Audience::Any,
+                    keep: Keep::Stored,
                 },
             ],
         },
@@ -470,6 +508,7 @@ pub const GITHUB: Profile = Profile {
                 only_prefixed: false,
                 scope: Scope::Api,
                 audience: Audience::Any,
+                keep: Keep::Stored,
             }],
         },
     ],
@@ -485,6 +524,7 @@ pub const GITHUB: Profile = Profile {
 const ENTRA_TOKEN_FIELDS: &[Field] = &[
     // One access token field per resource: a tool holds tokens for several at once (`az` has one for
     // Azure Resource Manager and one for Graph), and a refresh of one must not replace the other.
+    // Each is swapped only toward its own resource's hosts.
     Field {
         path: "access_token",
         resource: Some("arm"),
@@ -494,9 +534,11 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         keep_last: 0,
         stand_in: StandInKind::Jwt,
         only_prefixed: false,
-        scope: Scope::Api,
+        scope: Scope::Hosts(&["management.azure.com", "management.core.windows.net"]),
         audience: Audience::Named(&["management.azure.com", "management.core.windows.net"]),
+        keep: Keep::Stored,
     },
+    // Microsoft Graph, and the older Azure AD Graph that some tools still ask for.
     Field {
         path: "access_token",
         resource: Some("graph"),
@@ -506,11 +548,14 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         keep_last: 0,
         stand_in: StandInKind::Jwt,
         only_prefixed: false,
-        scope: Scope::Api,
+        scope: Scope::Hosts(&["graph.microsoft.com", "graph.windows.net"]),
         audience: Audience::Named(&[
             "graph.microsoft.com",
             "00000003-0000-0000-c000-000000000000",
+            "graph.windows.net",
+            "00000002-0000-0000-c000-000000000000",
         ]),
+        keep: Keep::Stored,
     },
     Field {
         path: "access_token",
@@ -521,12 +566,13 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         keep_last: 0,
         stand_in: StandInKind::Jwt,
         only_prefixed: false,
-        scope: Scope::Api,
+        scope: Scope::Hosts(&["dev.azure.com", "*.dev.azure.com", "*.visualstudio.com"]),
         audience: Audience::Named(&[
             "499b84ac-1321-427f-aa17-267ca6975798",
             "dev.azure.com",
             "visualstudio.com",
         ]),
+        keep: Keep::Stored,
     },
     Field {
         path: "access_token",
@@ -537,11 +583,15 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         keep_last: 0,
         stand_in: StandInKind::Jwt,
         only_prefixed: false,
-        scope: Scope::Api,
+        scope: Scope::Hosts(&["*.vault.azure.net"]),
         audience: Audience::Named(&["vault.azure.net"]),
+        keep: Keep::Stored,
     },
     // A resource none of the above names (Storage, Azure SQL, Azure Data Explorer, an app's own
-    // API): they share one slot, which keeps the last few stand-ins.
+    // API): they share one slot, which keeps the last few stand-ins. Their hosts are not known in
+    // advance (Storage's are under a public suffix, which no pattern may cover), so the stand-in is
+    // swapped toward no API: only back toward the login hosts. A tool that sends it to such a
+    // resource gets that resource's refusal, and the real token never leaves the host.
     Field {
         path: "access_token",
         resource: Some("other"),
@@ -551,8 +601,9 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         keep_last: 0,
         stand_in: StandInKind::Jwt,
         only_prefixed: false,
-        scope: Scope::Api,
+        scope: Scope::TokenEndpoint,
         audience: Audience::Unnamed,
+        keep: Keep::Stored,
     },
     Field {
         path: "refresh_token",
@@ -566,6 +617,7 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         only_prefixed: false,
         scope: Scope::TokenEndpoint,
         audience: Audience::Any,
+        keep: Keep::Stored,
     },
     // The tool reads who signed in and for how long from it; no service takes it as a credential.
     Field {
@@ -578,34 +630,83 @@ const ENTRA_TOKEN_FIELDS: &[Field] = &[
         only_prefixed: false,
         scope: Scope::TokenEndpoint,
         audience: Audience::Any,
+        keep: Keep::Stored,
+    },
+];
+
+/// The token endpoints of Entra's public cloud, `/{tenant}/oauth2/v2.0/token` and the older
+/// `/{tenant}/oauth2/token`, on `login.microsoftonline.com` and its aliases, which answer the same
+/// token requests (a tool or a library may be set to any of them).
+const ENTRA_ENDPOINTS: &[Endpoint] = &[
+    Endpoint {
+        host: "login.microsoftonline.com",
+        method: Method::Post,
+        path: "/*/oauth2/v2.0/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.microsoftonline.com",
+        method: Method::Post,
+        path: "/*/oauth2/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.windows.net",
+        method: Method::Post,
+        path: "/*/oauth2/v2.0/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.windows.net",
+        method: Method::Post,
+        path: "/*/oauth2/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.microsoft.com",
+        method: Method::Post,
+        path: "/*/oauth2/v2.0/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "login.microsoft.com",
+        method: Method::Post,
+        path: "/*/oauth2/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "sts.windows.net",
+        method: Method::Post,
+        path: "/*/oauth2/v2.0/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
+    },
+    Endpoint {
+        host: "sts.windows.net",
+        method: Method::Post,
+        path: "/*/oauth2/token",
+        request_fields: &["refresh_token"],
+        fields: ENTRA_TOKEN_FIELDS,
     },
 ];
 
 /// Microsoft Entra (`az login`, Git Credential Manager for Azure `DevOps`, VS Code's Azure
 /// sign-in): the OAuth token endpoint of the public cloud, `/{tenant}/oauth2/v2.0/token` and the
-/// older `/{tenant}/oauth2/token`, answered as JSON for the code exchange, the device flow's poll
-/// and the refresh. The tenant is any one segment (an id, a domain, `common`, `organizations`).
-/// The access tokens go to Azure Resource Manager, Graph, Azure `DevOps` and Key Vault, and to the
-/// other hosts the tokens name. The national clouds (their own login hosts) are not covered.
+/// older `/{tenant}/oauth2/token`, on `login.microsoftonline.com` and its aliases, answered as JSON
+/// for the code exchange, the device flow's poll and the refresh. The tenant is any one segment (an
+/// id, a domain, `common`, `organizations`). Each access token goes to its own resource's hosts:
+/// Azure Resource Manager, Graph, Azure `DevOps` or Key Vault. The national clouds (their own login
+/// hosts) are not covered.
 pub const ENTRA: Profile = Profile {
     id: "entra",
     name: "Microsoft Entra",
-    endpoints: &[
-        Endpoint {
-            host: "login.microsoftonline.com",
-            method: Method::Post,
-            path: "/*/oauth2/v2.0/token",
-            request_fields: &["refresh_token"],
-            fields: ENTRA_TOKEN_FIELDS,
-        },
-        Endpoint {
-            host: "login.microsoftonline.com",
-            method: Method::Post,
-            path: "/*/oauth2/token",
-            request_fields: &["refresh_token"],
-            fields: ENTRA_TOKEN_FIELDS,
-        },
-    ],
+    endpoints: ENTRA_ENDPOINTS,
     api_hosts: &[
         "management.azure.com",
         "management.core.windows.net",
@@ -652,6 +753,7 @@ pub const OPENAI: Profile = Profile {
                 only_prefixed: true,
                 scope: Scope::Api,
                 audience: Audience::Any,
+                keep: Keep::Stored,
             },
             Field {
                 path: "access_token",
@@ -663,6 +765,7 @@ pub const OPENAI: Profile = Profile {
                 only_prefixed: false,
                 scope: Scope::Api,
                 audience: Audience::Any,
+                keep: Keep::Stored,
             },
             Field {
                 path: "id_token",
@@ -674,6 +777,7 @@ pub const OPENAI: Profile = Profile {
                 only_prefixed: false,
                 scope: Scope::TokenEndpoint,
                 audience: Audience::Any,
+                keep: Keep::Stored,
             },
             Field {
                 path: "refresh_token",
@@ -685,6 +789,7 @@ pub const OPENAI: Profile = Profile {
                 only_prefixed: false,
                 scope: Scope::TokenEndpoint,
                 audience: Audience::Any,
+                keep: Keep::Stored,
             },
         ],
     }],
@@ -705,6 +810,7 @@ const DOCKER_TOKEN_FIELDS: &[Field] = &[
         only_prefixed: false,
         scope: Scope::Api,
         audience: Audience::Any,
+        keep: Keep::Stored,
     },
     Field {
         path: "id_token",
@@ -716,6 +822,7 @@ const DOCKER_TOKEN_FIELDS: &[Field] = &[
         only_prefixed: false,
         scope: Scope::TokenEndpoint,
         audience: Audience::Any,
+        keep: Keep::Stored,
     },
     Field {
         path: "refresh_token",
@@ -727,6 +834,67 @@ const DOCKER_TOKEN_FIELDS: &[Field] = &[
         only_prefixed: false,
         scope: Scope::TokenEndpoint,
         audience: Audience::Any,
+        keep: Keep::Stored,
+    },
+];
+
+/// A personal or organization access token that Docker Hub's API creates and shows once: in the
+/// answer's `token` field, kept under its own slot (`resource`) so it never replaces the token the
+/// CLI's login made. A second token of the same kind gets the same stand-in, with the newer token
+/// behind it.
+const DOCKER_CREATED_PAT: &[Field] = &[Field {
+    path: "token",
+    resource: Some("created"),
+    role: Role::ApiKey,
+    prefixes: &["dckr_pat_"],
+    keep_last: 0,
+    stand_in: StandInKind::Shaped,
+    only_prefixed: false,
+    scope: Scope::Api,
+    audience: Audience::Any,
+    keep: Keep::Stored,
+}];
+
+/// An organization's access token, as [`DOCKER_CREATED_PAT`].
+const DOCKER_CREATED_OAT: &[Field] = &[Field {
+    path: "token",
+    resource: Some("org"),
+    role: Role::ApiKey,
+    prefixes: &["dckr_oat_"],
+    keep_last: 0,
+    stand_in: StandInKind::Shaped,
+    only_prefixed: false,
+    scope: Scope::Api,
+    audience: Audience::Any,
+    keep: Keep::Stored,
+}];
+
+/// The registry's bearer token, which `auth.docker.io` mints for one repository and a few minutes
+/// (the answer has it twice, as `token` and `access_token`). It goes to the registry only.
+const DOCKER_REGISTRY_FIELDS: &[Field] = &[
+    Field {
+        path: "token",
+        resource: Some("registry"),
+        role: Role::Access,
+        prefixes: &[],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        only_prefixed: false,
+        scope: Scope::Hosts(&["registry-1.docker.io"]),
+        audience: Audience::Any,
+        keep: Keep::Memory,
+    },
+    Field {
+        path: "access_token",
+        resource: Some("registry"),
+        role: Role::Access,
+        prefixes: &[],
+        keep_last: 0,
+        stand_in: StandInKind::Jwt,
+        only_prefixed: false,
+        scope: Scope::Hosts(&["registry-1.docker.io"]),
+        audience: Audience::Any,
+        keep: Keep::Memory,
     },
 ];
 
@@ -736,10 +904,20 @@ const DOCKER_TOKEN_FIELDS: &[Field] = &[
 /// trades the access token for a personal access token at
 /// `hub.docker.com/v2/access-tokens/desktop-generate` (answer `{"data":{"token":"dckr_pat_..."}}`),
 /// stores it, and sends it as the password of a `Basic` credential to `auth.docker.io`, which
-/// answers with a registry bearer token (not captured, see the credential audit's E2). A password
-/// typed to `docker login -u` is not a login answer and is not covered here.
+/// answers with a registry bearer token for the registry.
 ///
-/// The hosts and fields are from the Docker CLI source (`internal/oauth`), not from a recording.
+/// Every answer in this chain that carries a credential is read, so none reaches the workspace:
+/// - the registry's bearer token from `auth.docker.io/token` (asked with `GET`, or with `POST` in
+///   the `OAuth2` form) is held in memory ([`Keep::Memory`]), because it is minted for every pull,
+///   lasts minutes, and an anonymous pull gets one too;
+/// - an access token that a request to Docker Hub's API creates with the access token's stand-in
+///   (`POST /v2/access-tokens`, and `POST /v2/orgs/{org}/access-tokens` for an organization's) is
+///   kept like the login's own.
+///
+/// A password typed to `docker login -u` is not a login answer and is not covered here. The hosts
+/// and fields are from the Docker CLI source (`internal/oauth`) and Docker Hub's published API
+/// description, and the routes and the token answer's shape were checked against the live service;
+/// none is from a recorded sign-in.
 pub const DOCKER: Profile = Profile {
     id: "docker",
     name: "Docker Hub",
@@ -775,7 +953,31 @@ pub const DOCKER: Profile = Profile {
                 only_prefixed: false,
                 scope: Scope::Api,
                 audience: Audience::Any,
+                keep: Keep::Stored,
             }],
+        },
+        Endpoint {
+            host: "hub.docker.com",
+            method: Method::Post,
+            path: "/v2/access-tokens",
+            request_fields: &[],
+            fields: DOCKER_CREATED_PAT,
+        },
+        Endpoint {
+            host: "hub.docker.com",
+            method: Method::Post,
+            path: "/v2/orgs/*/access-tokens",
+            request_fields: &[],
+            fields: DOCKER_CREATED_OAT,
+        },
+        // No request field is swapped: the token is asked for with a `Basic` credential in a
+        // header, which is swapped as any header is.
+        Endpoint {
+            host: "auth.docker.io",
+            method: Method::Any,
+            path: "/token",
+            request_fields: &[],
+            fields: DOCKER_REGISTRY_FIELDS,
         },
     ],
     api_hosts: &["auth.docker.io", "registry-1.docker.io"],

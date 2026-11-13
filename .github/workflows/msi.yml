@@ -8,6 +8,12 @@
 # touch the installer (paths below), nightly on develop (skipped when this workflow already has a
 # green run on the commit), and by hand. The MSI of the run is kept as an artifact.
 #
+# The `upgrade` job tests the upgrade a user makes, on a machine of its own: it installs the last
+# release's MSI (ci/fetch-baseline-msi.sh; while there is none, the MSI the newest green develop
+# run kept), makes a workspace and writes files to it, upgrades to this run's build, and checks that
+# the workspace starts with its files intact under the newer runtime (ci/msi-install-test.ps1
+# -BaselineMsi).
+#
 # The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI
 # this run built, per user, starts the installed app, and drives its real window with Windows UI Automation, plus the REST API for what
 # no screen shows (crates/puddle-app/e2e/usable.mjs, uia.mjs, uia.ps1; a release build has no DevTools port): an SSH remote is refused with the explicit message, a workspace
@@ -29,6 +35,7 @@ on:
       - .github/workflows/msi.yml
       - ci/build-msi.sh
       - ci/msi-install-test.ps1
+      - ci/fetch-baseline-msi.sh
       - ci/fetch-tauri-cli.sh
       - ci/fetch-retry.sh
       - ci/tauri-cli.sha256
@@ -148,11 +155,68 @@ jobs:
           path: ${{ runner.temp }}/msi-out/*.msi
           retention-days: 14
           if-no-files-found: ignore
+      # For the upgrade job only: the same program as the kept MSI, under the next package version.
+      - name: upload the newer MSI for the upgrade job
+        if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: puddle-msi-next
+          path: ${{ runner.temp }}/msi-upgrade/*.msi
+          retention-days: 1
+          if-no-files-found: ignore
       - name: upload the installer logs
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: puddle-msi-logs
+          path: ${{ runner.temp }}/msi-logs
+          retention-days: 14
+          if-no-files-found: ignore
+
+  upgrade:
+    name: upgrade (from the last release, a workspace with files)
+    needs: msi
+    # Runs although the install test failed: the MSIs are kept by then, and the two say different things.
+    if: ${{ !cancelled() && needs.msi.outputs.run == 'true' }}
+    runs-on: windows-2025
+    timeout-minutes: 60
+    # `actions: read` to download the MSI an earlier run kept.
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: the MSI a user upgrades from (the last release)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          msi=$(ci/fetch-baseline-msi.sh "$RUNNER_TEMP/msi-baseline" | tail -n 1)
+          echo "BASELINE_MSI=$(cygpath -w "$msi")" >>"$GITHUB_ENV"
+      - name: this run's build, under the next package version
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: puddle-msi-next
+          path: ${{ runner.temp }}/msi-next
+      - name: install the older build, make a workspace with files, upgrade, start it, check the files
+        shell: pwsh
+        run: |
+          $next = Get-ChildItem "$env:RUNNER_TEMP\msi-next" -Filter *.msi | Select-Object -First 1
+          ./ci/msi-install-test.ps1 -BaselineMsi $env:BASELINE_MSI -UpgradeMsi $next.FullName -LogDir "$env:RUNNER_TEMP\msi-logs"
+      - name: what the app and the runtime logged
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $logs = Join-Path $env:RUNNER_TEMP 'msi-logs\runtime-logs'
+          New-Item -ItemType Directory -Force -Path $logs | Out-Null
+          Get-ChildItem "$env:LOCALAPPDATA\puddle" -Recurse -Filter *.log -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -lt 5MB } | Select-Object -First 60 |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $logs ($_.FullName.Substring($env:LOCALAPPDATA.Length).TrimStart('\') -replace '[\\/:]', '_')) }
+      - name: upload the installer and runtime logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: puddle-msi-upgrade-logs
           path: ${{ runner.temp }}/msi-logs
           retention-days: 14
           if-no-files-found: ignore

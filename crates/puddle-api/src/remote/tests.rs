@@ -201,17 +201,67 @@ fn the_tls_identity_shows_a_fingerprint_and_never_its_key() {
     assert_eq!(identity.cert_der(), [1, 2, 3]);
 }
 
+fn ip(text: &str) -> IpAddr {
+    text.parse().unwrap()
+}
+
 #[test]
-fn a_network_listener_needs_a_proxy_that_may_connect() {
-    let listener = |allowed: Vec<IpAddr>| NetworkListener {
-        interface: "10.0.0.1".parse().unwrap(),
-        port: 0,
-        allowed_proxies: allowed,
-        tls: TlsIdentity::new(vec![1], vec![2]),
+fn a_network_endpoint_needs_a_proxy_that_may_connect_and_a_named_interface() {
+    let endpoint = |interface: &str, allowed: &[&str]| {
+        NetworkEndpoint::new(ip(interface), 0, allowed.iter().map(|a| ip(a)).collect())
     };
-    assert_eq!(
-        listener(Vec::new()).check(),
-        Err(RemoteError::NoAllowedProxy)
+    assert_eq!(endpoint("10.0.0.1", &[]), Err(RemoteError::NoAllowedProxy));
+    let ok = endpoint("10.0.0.1", &["10.0.0.2"]).unwrap();
+    assert_eq!(ok.interface(), ip("10.0.0.1"));
+    assert_eq!(ok.allowed_proxies(), [ip("10.0.0.2")]);
+    // Every interface is not "one chosen interface", also written as a mapped IPv4 address.
+    for any in ["0.0.0.0", "::", "::ffff:0.0.0.0"] {
+        assert_eq!(
+            endpoint(any, &["10.0.0.2"]),
+            Err(RemoteError::UnspecifiedInterface { interface: ip(any) }),
+            "{any}"
+        );
+    }
+    // A peer address nobody has would pass an at-least-one check and admit nobody.
+    for any in ["0.0.0.0", "::"] {
+        assert_eq!(
+            endpoint("10.0.0.1", &["10.0.0.2", any]),
+            Err(RemoteError::UnspecifiedProxy { proxy: ip(any) }),
+            "{any}"
+        );
+    }
+    assert!(endpoint("::1", &["::1"]).is_ok());
+}
+
+#[test]
+fn a_public_host_one_label_below_the_base_domain_is_refused() {
+    // With a base domain of its own.
+    assert!(matches!(
+        RemoteServing::new(
+            vec![host("puddle.example.org"), host("box.ws.example.net")],
+            Some("ws.example.net")
+        ),
+        Err(RemoteError::PublicHostIsWorkspaceName { host, .. }) if host == "box.ws.example.net"
+    ));
+    // Without one the UI's host is the base, so a second host below it clashes too.
+    assert!(matches!(
+        RemoteServing::new(
+            vec![host("puddle.example.org"), host("x.puddle.example.org")],
+            None
+        ),
+        Err(RemoteError::PublicHostIsWorkspaceName { .. })
+    ));
+    // Deeper than one label, a sibling, or another domain is not a workspace's name.
+    assert!(
+        RemoteServing::new(
+            vec![
+                host("puddle.example.org"),
+                host("a.b.ws.example.net"),
+                host("ws.example.net.evil.test"),
+                host("other.example.org"),
+            ],
+            Some("ws.example.net")
+        )
+        .is_ok()
     );
-    assert_eq!(listener(vec!["10.0.0.2".parse().unwrap()]).check(), Ok(()));
 }

@@ -4,6 +4,8 @@
 //! Migrations only ever get appended. Each runs in its own transaction together with the
 //! version bump, so a crash leaves the database at the previous version, never in between.
 
+use std::path::{Path, PathBuf};
+
 use rusqlite::Connection;
 
 use crate::error::StoreError;
@@ -692,6 +694,12 @@ pub(crate) fn migrate_up_to(conn: &mut Connection, version: usize) -> Result<u32
     migrate_with(conn, &MIGRATIONS[..version])
 }
 
+/// How many `puddle.db.pre-v<N>` copies stay next to the database.
+const BACKUPS_KEPT: usize = 2;
+
+/// One row of `PRAGMA foreign_key_check`: (child table, child rowid, parent table, constraint).
+type Violation = (String, Option<i64>, String, i64);
+
 fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
     let start: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
     let supported = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
@@ -701,13 +709,102 @@ fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, Store
             supported,
         });
     }
+    if start == supported {
+        return Ok(start);
+    }
+    if start > 0 {
+        back_up_before(conn, supported)?;
+    }
+    // The pragma is a no-op inside a transaction, so it is switched here. With it on, a table
+    // rebuild (`DROP TABLE` of a parent) cascades deletes into the child tables.
+    let foreign_keys: bool = conn.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    conn.pragma_update(None, "foreign_keys", false)?;
+    let result = run_steps(conn, migrations, start);
+    if foreign_keys {
+        conn.pragma_update(None, "foreign_keys", true)?;
+    }
+    result.map(|()| start)
+}
+
+fn run_steps(conn: &mut Connection, migrations: &[&str], start: u32) -> Result<(), StoreError> {
+    // Violations a step did not cause (an older bug, a hand edit) never block the upgrade.
+    let known = violations(conn)?;
     for (version, sql) in (start..).zip(migrations.iter().skip(start as usize)) {
         let tx = conn.transaction()?;
         tx.execute_batch(sql)?;
+        if let Some((table, _, parent, _)) = violations(&tx)?
+            .into_iter()
+            .find(|found| !known.contains(found))
+        {
+            return Err(StoreError::MigrationBrokeForeignKeys {
+                version: version + 1,
+                table,
+                parent,
+            });
+        }
         tx.pragma_update(None, "user_version", version + 1)?;
         tx.commit()?;
     }
-    Ok(start)
+    Ok(())
+}
+
+fn violations(conn: &Connection) -> Result<Vec<Violation>, StoreError> {
+    let mut stmt = conn.prepare("PRAGMA foreign_key_check")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Copies the database to `<file>.pre-v<target>` before the first step, so a bad release can be
+/// rolled back by putting the copy in place. In-memory databases have nothing to copy.
+fn back_up_before(conn: &Connection, target: u32) -> Result<(), StoreError> {
+    let Some(path) = conn.path().filter(|p| !p.is_empty() && *p != ":memory:") else {
+        return Ok(());
+    };
+    let path = Path::new(path);
+    let backup = backup_path(path, target);
+    let io = |err: std::io::Error| StoreError::Backup(format!("{}: {err}", backup.display()));
+    // A failed earlier run may have left a copy; `VACUUM INTO` refuses an existing file.
+    match std::fs::remove_file(&backup) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(io(err)),
+    }
+    conn.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
+    prune_backups(path).map_err(|err| StoreError::Backup(err.to_string()))
+}
+
+fn backup_path(db: &Path, version: u32) -> PathBuf {
+    let mut name = db.as_os_str().to_owned();
+    name.push(format!(".pre-v{version}"));
+    PathBuf::from(name)
+}
+
+/// Deletes all but the newest [`BACKUPS_KEPT`] copies next to `db`.
+fn prune_backups(db: &Path) -> std::io::Result<()> {
+    let dir = db
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let file = db.file_name().unwrap_or_default();
+    let prefix = format!("{}.pre-v", file.to_string_lossy());
+    let mut copies: Vec<(u32, PathBuf)> = std::fs::read_dir(dir)?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let version = name.strip_prefix(&prefix)?.parse().ok()?;
+            Some((version, entry.path()))
+        })
+        .collect();
+    copies.sort_unstable_by_key(|copy| std::cmp::Reverse(copy.0));
+    for (_, stale) in copies.into_iter().skip(BACKUPS_KEPT) {
+        // Name the file that failed, not the copy just made.
+        std::fs::remove_file(&stale).map_err(|err| {
+            std::io::Error::new(err.kind(), format!("{}: {err}", stale.display()))
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

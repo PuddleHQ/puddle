@@ -584,7 +584,7 @@ fn remote_serving_on_takes_the_public_hosts_and_defaults_the_workspace_names_to_
         remote.serving.workspace_names().base_domain(),
         "puddle.example.org"
     );
-    assert_eq!(remote.listener, None);
+    assert_eq!(remote.network, None);
     let own = with_env(&[
         ("PUDDLE_REMOTE", "true"),
         ("PUDDLE_PUBLIC_HOSTS", "puddle.example.org"),
@@ -616,14 +616,14 @@ fn the_network_listener_needs_an_interface_and_a_proxy_and_defaults_its_port() {
     ])
     .unwrap()
     .unwrap()
-    .listener
+    .network
     .unwrap();
     assert_eq!(
-        listener.interface,
+        listener.interface(),
         "192.168.1.10".parse::<IpAddr>().unwrap()
     );
-    assert_eq!(listener.port, DEFAULT_LISTEN_PORT);
-    assert_eq!(listener.allowed_proxies.len(), 2);
+    assert_eq!(listener.port(), DEFAULT_LISTEN_PORT);
+    assert_eq!(listener.allowed_proxies().len(), 2);
     let set_port = with(&[
         ("PUDDLE_LISTEN_INTERFACE", "192.168.1.10"),
         ("PUDDLE_LISTEN_PORT", "9443"),
@@ -631,7 +631,33 @@ fn the_network_listener_needs_an_interface_and_a_proxy_and_defaults_its_port() {
     ])
     .unwrap()
     .unwrap();
-    assert_eq!(set_port.listener.unwrap().port, 9443);
+    assert_eq!(set_port.network.unwrap().port(), 9443);
+    for (interface, proxies, said) in [
+        ("0.0.0.0", "192.168.1.20", "unspecified address"),
+        ("::", "192.168.1.20", "unspecified address"),
+        ("192.168.1.10", "192.168.1.20,0.0.0.0", "allowed proxy"),
+    ] {
+        let err = with(&[
+            ("PUDDLE_LISTEN_INTERFACE", interface),
+            ("PUDDLE_ALLOWED_PROXIES", proxies),
+        ])
+        .unwrap_err();
+        assert!(
+            err.to_string().contains(said),
+            "{interface} {proxies}: {err}"
+        );
+    }
+    let clash = with_env(&[
+        ("PUDDLE_REMOTE", "true"),
+        (
+            "PUDDLE_PUBLIC_HOSTS",
+            "puddle.example.org,box.ws.example.net",
+        ),
+        ("PUDDLE_WORKSPACE_BASE_DOMAIN", "ws.example.net"),
+    ])
+    .remote()
+    .unwrap_err();
+    assert!(clash.to_string().contains("one label below"), "{clash}");
     let none_allowed = with(&[("PUDDLE_LISTEN_INTERFACE", "192.168.1.10")]).unwrap_err();
     assert!(
         none_allowed.to_string().contains("`allowed_proxies`"),

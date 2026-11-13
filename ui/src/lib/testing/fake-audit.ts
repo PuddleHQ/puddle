@@ -91,6 +91,7 @@ export interface AuditQuery {
   workspace?: string;
   type?: string;
   outcome?: string;
+  category?: string;
   q?: string;
   from?: number;
   to?: number;
@@ -153,6 +154,9 @@ export class FakeAudit {
           workspaceOf(record) === query.workspace) &&
         (query.type === undefined || record.type === query.type) &&
         (query.outcome === undefined || outcomeOf(record) === query.outcome) &&
+        (query.category === undefined ||
+          (record.type === "connection" &&
+            record.category === query.category)) &&
         (query.q === undefined ||
           searchTextOf(record).includes(query.q.toLowerCase())) &&
         (query.from === undefined || record.ts >= query.from) &&

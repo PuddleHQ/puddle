@@ -157,6 +157,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("empty", 0, 0),
         ("lived-in", 8, 6),
         ("corporate-network", 0, 0),
+        ("company-network", 2, 0),
         ("network-trouble", 0, 0),
         ("volume-missing", 0, 0),
         ("disks-full", 0, 0),
@@ -190,6 +191,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "empty",
             "lived-in",
             "corporate-network",
+            "company-network",
             "network-trouble",
             "volume-missing",
             "disks-full",
@@ -443,6 +445,28 @@ async fn a_dropped_file_makes_requests_arrive_in_the_old_serve_ui_format() {
         .map(|r| r["attempts"].as_i64().unwrap())
         .collect();
     assert_eq!(attempts, [2]);
+}
+
+#[tokio::test]
+async fn a_dropped_file_is_gone_only_once_its_steps_are_applied() {
+    let run = start("empty").await;
+    let dir = tempfile::tempdir().unwrap();
+    let _watch = watch_drop_dir(run.fixture.clone(), dir.path().to_owned());
+    let file = dir.path().join("a.json");
+    // The wait step holds the file's work up for a real 300 ms, so a file that is deleted
+    // before its steps run is seen gone while nothing is applied yet.
+    std::fs::write(
+        dir.path().join("a.tmp"),
+        json!([
+            {"do": "wait", "ms": 300},
+            {"workspace": "demo", "host": "one.example.org"}
+        ])
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::rename(dir.path().join("a.tmp"), &file).unwrap();
+    puddle_test_kit::eventually("the drop file was taken", STEP, || !file.exists()).await;
+    assert_eq!(run.state().await["pending"], 1);
 }
 
 #[test]

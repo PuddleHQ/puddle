@@ -24,6 +24,7 @@ use utoipa::ToSchema;
 use crate::error::ApiError;
 
 mod app_icon;
+mod auth;
 mod credentials;
 mod doctor;
 mod environment;
@@ -45,6 +46,11 @@ mod start_folder;
 mod workspaces;
 
 pub use app_icon::{AppIconChoice, AppIcons, BuiltInIcon, CustomIcon};
+pub use auth::{
+    AuthStatus, ChangePasswordRequest, DeviceList, DeviceView, InviteRequest,
+    PasswordSignInRequest, SessionGrant, SetupRequest, SignInMethodKind, SignInMethodRequest,
+    SignInMethodView, SignInMethods, UserView,
+};
 pub(crate) use credentials::source_problem;
 pub use credentials::{
     CheckRequest, CheckResult, FoundAccount, FoundAccounts, FoundProblem, FoundVia, SignInRequest,
@@ -70,9 +76,9 @@ pub use interception::{
 };
 pub use logins::{KeptLoginList, KeptLoginView};
 pub use network_health::{
-    DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,
-    ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,
-    SignInReport, SignInResult, SkippedRoot, SyncedRoot,
+    CompanyNetworkReport, DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode,
+    ProxyProblem, ProxyProblemKind, ProxyReport, PullProxyReport, RootKind, RootsReport,
+    RouteDecision, RouteSource, SignInAttempt, SignInReport, SignInResult, SkippedRoot, SyncedRoot,
 };
 pub use orphans::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest};
 pub use ports::{PortEntry, PortForwardRequest, WorkspacePorts};
@@ -249,6 +255,12 @@ pub struct PendingRequest {
     /// otherwise, and always for a closed request.
     #[schema(required = true)]
     pub blocked_by: Option<puddle_types::LocalCategory>,
+    /// For an open request to an IP literal on the company network, whether or not its toggle is
+    /// on: what put the address there (`pac_direct`, `dns_suffix`, `private_access_cgnat` or
+    /// `vpn_route`). `null` otherwise. A client that reads the address ranges itself needs it to
+    /// tell a company address from the plain range it also falls in.
+    #[schema(required = true)]
+    pub company_signal: Option<String>,
 }
 
 impl PendingRequest {
@@ -281,6 +293,7 @@ impl PendingRequest {
             rule_id: rule_id.map(|r| r.0),
             rule_set,
             blocked_by: None,
+            company_signal: None,
         })
     }
 }

@@ -15,6 +15,7 @@ ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 enc
 info  SSH agent             the agent on \\.\pipe\openssh-ssh-agent did not answer within 2 s; it may be waiting for you to unlock it
       note: Agents that ask you before they answer (1Password, Bitwarden) do this while they are
             locked. Unlock the agent and run the check again. Git hosts need no agent.
+ok    Azure CLI (az)        version 2.64.0
 ok    Global Secure Access  client not installed
 
 No problems found. (1.2 s)
@@ -80,6 +81,11 @@ No problems found. (1.2 s)
       "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent did not answer within 2 s; it may be waiting for you to unlock it",
       "finding": "ssh_agent_slow",
       "fix": "Agents that ask you before they answer (1Password, Bitwarden) do this while they are locked. Unlock the agent and run the check again. Git hosts need no agent."
+    },
+    {
+      "id": "az_cli",
+      "status": "ok",
+      "summary": "version 2.64.0"
     },
     {
       "id": "global_secure_access",

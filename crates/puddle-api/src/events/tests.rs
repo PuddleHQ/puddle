@@ -53,6 +53,7 @@ async fn stream_filters_reports_lag_and_ends_on_shutdown() {
         owner(&store()),
         Some(name("a")),
         shutdown,
+        std::future::pending(),
     ));
     hub.emit(oom("b"));
     hub.emit(Event::StatusChanged {
@@ -78,7 +79,13 @@ async fn stream_filters_reports_lag_and_ends_on_shutdown() {
 async fn stream_ends_when_the_hub_goes() {
     let hub = EventHub::default();
     let (_stop, shutdown) = watch::channel(false);
-    let mut s = Box::pin(stream(hub.subscribe(), owner(&store()), None, shutdown));
+    let mut s = Box::pin(stream(
+        hub.subscribe(),
+        owner(&store()),
+        None,
+        shutdown,
+        std::future::pending(),
+    ));
     drop(hub);
     assert!(s.next().await.is_none());
 }
@@ -100,8 +107,20 @@ async fn each_stream_carries_only_its_principals_events() {
         },
         store.clone(),
     );
-    let mut anns = Box::pin(stream(hub.subscribe(), as_ann, None, shutdown.clone()));
-    let mut owners = Box::pin(stream(hub.subscribe(), owner(&store), None, shutdown));
+    let mut anns = Box::pin(stream(
+        hub.subscribe(),
+        as_ann,
+        None,
+        shutdown.clone(),
+        std::future::pending(),
+    ));
+    let mut owners = Box::pin(stream(
+        hub.subscribe(),
+        owner(&store),
+        None,
+        shutdown,
+        std::future::pending(),
+    ));
     hub.emit(Event::AuditAppended { id: 7, user: 1 });
     hub.emit(oom("owners"));
     hub.emit(oom("anns"));
@@ -159,4 +178,28 @@ async fn each_stream_carries_only_its_principals_events() {
     ] {
         assert!(text(owners.next().await).contains(kind), "{kind}");
     }
+}
+
+#[tokio::test]
+async fn stream_ends_when_its_device_is_signed_out() {
+    let hub = EventHub::default();
+    let (_stop, shutdown) = watch::channel(false);
+    let (signed_out, ended) = tokio::sync::oneshot::channel::<()>();
+    let mut s = Box::pin(stream(
+        hub.subscribe(),
+        owner(&store()),
+        None,
+        shutdown,
+        async move {
+            let _ = ended.await;
+        },
+    ));
+    hub.emit(Event::RulesChanged {});
+    assert!(s.next().await.is_some(), "events flow until then");
+    signed_out.send(()).unwrap();
+    let end = tokio::time::timeout(Duration::from_secs(5), async {
+        while s.next().await.is_some() {}
+    })
+    .await;
+    assert!(end.is_ok(), "stream ended when the device was revoked");
 }

@@ -64,6 +64,7 @@ mod repos;
 mod routes;
 mod server;
 mod settings;
+mod signin;
 mod stored_ids;
 mod system_managed;
 mod terminals;
@@ -99,6 +100,7 @@ pub use remote::{
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsRepo, SettingsRepoError};
+pub use signin::{INVITE_TTL_MS, ResetError, ResetInvite, reset_account};
 pub use terminals::{
     EndReason, FakeTerminals, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals,
     SUBPROTOCOL, TICKET_LIFETIME, TerminalEnd, TerminalError, TerminalInput, TerminalLink,

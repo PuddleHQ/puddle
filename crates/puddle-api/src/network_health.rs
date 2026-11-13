@@ -21,11 +21,13 @@ use puddle_upstream::{
 };
 use tokio::task::JoinHandle;
 
+use puddle_netpolicy::{CompanySignals, NoSignals};
+
 use crate::proxy_sign_in::ProxySignInService;
 use crate::wire::{
-    DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode, ProxyProblem, ProxyProblemKind,
-    ProxyReport, PullProxyReport, RootKind, RootsReport, RouteDecision, RouteSource, SignInAttempt,
-    SignInReport, SignInResult, SkippedRoot, SyncedRoot,
+    CompanyNetworkReport, DeadProxy, NetworkHealth, PacState, ProxyDetected, ProxyMode,
+    ProxyProblem, ProxyProblemKind, ProxyReport, PullProxyReport, RootKind, RootsReport,
+    RouteDecision, RouteSource, SignInAttempt, SignInReport, SignInResult, SkippedRoot, SyncedRoot,
 };
 
 /// Why a report could not be made.
@@ -74,6 +76,7 @@ pub struct HostNetworkHealth {
     /// Company certificates Puddle's own TLS client could not use.
     left_out_of_tls: RwLock<Vec<SkippedRoot>>,
     pull: RwLock<PullProxyReport>,
+    company: Arc<dyn CompanySignals>,
 }
 
 impl std::fmt::Debug for HostNetworkHealth {
@@ -98,7 +101,15 @@ impl HostNetworkHealth {
                 active: false,
                 via_upstream: false,
             }),
+            company: Arc::new(NoSignals),
         }
+    }
+
+    /// Reports what `signals` found for the company-network category.
+    #[must_use]
+    pub fn with_company_signals(mut self, signals: Arc<dyn CompanySignals>) -> Self {
+        self.company = signals;
+        self
     }
 
     /// Reports the sign-ins of `chain`.
@@ -193,6 +204,13 @@ impl HostNetworkHealth {
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone(),
             routes: proxy.routes.iter().map(route).collect(),
+            company_network: {
+                let found = self.company.found();
+                CompanyNetworkReport {
+                    private_access_client: found.private_access_client,
+                    dns_suffixes: found.dns_suffixes,
+                }
+            },
         }
     }
 }

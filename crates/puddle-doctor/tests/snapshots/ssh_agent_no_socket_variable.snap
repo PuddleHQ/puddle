@@ -13,6 +13,7 @@ info  SSH agent           no agent is named: SSH_AUTH_SOCK is not set in Puddle'
             that SSH_AUTH_SOCK is set, or name its socket in the settings (`ui.ssh_agent_pipe`).
             Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is
             not affected.
+ok    Azure CLI (az)      version 2.64.0
 
 No problems found. (1.2 s)
 
@@ -65,6 +66,11 @@ No problems found. (1.2 s)
       "summary": "no agent is named: SSH_AUTH_SOCK is not set in Puddle's session",
       "finding": "ssh_agent_missing",
       "fix": "SSH to servers other than Git hosts gets no key from Puddle. Start your agent (ssh-agent, gpg-agent, 1Password or Bitwarden) in the session that starts Puddle so that SSH_AUTH_SOCK is set, or name its socket in the settings (`ui.ssh_agent_pipe`). Git hosts need no agent: Puddle ends their SSH sessions itself, so Git over SSH is not affected."
+    },
+    {
+      "id": "az_cli",
+      "status": "ok",
+      "summary": "version 2.64.0"
     }
   ],
   "elapsed_ms": 1234

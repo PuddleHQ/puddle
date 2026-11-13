@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.29.0"
+    "version": "0.30.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -339,6 +339,15 @@
             }
           },
           {
+            "name": "category",
+            "in": "query",
+            "description": "`connection` records in this destination category; only `company_network`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "description": "records at or after this epoch ms",
@@ -433,6 +442,707 @@
             }
           }
         }
+      }
+    },
+    "/api/auth/invite": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Sets a password with the secret of an invite link the server's reset command made, and signs in.\nA link works once.",
+        "operationId": "invite",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the password is set and this browser is signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionGrant"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "the link is not valid any more",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the password was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "too many attempts: see `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/auth/methods": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Which ways of signing in exist, and whether each is on.",
+        "operationId": "get_methods",
+        "responses": {
+          "200": {
+            "description": "the methods",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignInMethods"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Switches a way of signing in on or off (the owner). The last one that is on can't be switched\noff.",
+        "operationId": "put_methods",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignInMethodRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the methods now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignInMethods"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "that would leave no way to sign in, or the method does not exist yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/password": {
+      "put": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Changes the signed-in user's password; every other device is signed out. Only a signed-in\nbrowser can: the desktop window and the command line have no password to change.",
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "changed"
+          },
+          "401": {
+            "description": "the current password is wrong",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the new password was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "too many attempts: see `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "A new access token, for the browser whose session cookie comes with the request. The request\nmust name the page's own `Origin`.",
+        "operationId": "refresh",
+        "responses": {
+          "200": {
+            "description": "a new access token for 15 minutes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionGrant"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "this browser is not signed in (any more)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/auth/setup": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The first visitor makes the owner account and is signed in as it. Works once: after that it\nanswers 409, and resetting the owner's password never reopens it.",
+        "operationId": "setup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "the owner account exists and this browser is signed in; the refresh token is in the `Set-Cookie` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionGrant"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "the owner account is already made",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the name or password was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "too many attempts: see `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/auth/sign-in": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs in with a name and a password. A wrong name and a wrong password answer the same, and\nrepeated failures lock the account for a while (429 with `Retry-After`).",
+        "operationId": "password_sign_in",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordSignInRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "signed in; the refresh token is in the `Set-Cookie` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionGrant"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "wrong name or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "too many attempts: see `Retry-After`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/auth/sign-out": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs this browser out: its device is revoked, its tokens end, its cookie is cleared. Signing\nout a browser that is not signed in is fine.",
+        "operationId": "sign_out",
+        "responses": {
+          "204": {
+            "description": "signed out"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/auth/status": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Whether the owner account has to be made, and whether a password signs in. Public: it names\nno one.",
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "what the sign-in page shows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "signing in is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/consents": {
@@ -1169,6 +1879,143 @@
           },
           "403": {
             "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The signed-in user's devices (browsers that are signed in), the one used last first.",
+        "operationId": "list_devices",
+        "responses": {
+          "200": {
+            "description": "the devices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices/{id}": {
+      "delete": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs a device out: its access tokens, its refresh token and its event streams end. A device\nthat is not the caller's answers as one that does not exist.",
+        "operationId": "revoke_device",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "the device",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "revoked"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such device",
             "content": {
               "application/json": {
                 "schema": {
@@ -11712,6 +12559,24 @@
           "audit_trimmed"
         ]
       },
+      "AuthStatus": {
+        "type": "object",
+        "description": "Whether this Puddle can be signed in to, and how. Anyone who can reach the address may read\nit; it holds no name.",
+        "required": [
+          "setup_open",
+          "password_login"
+        ],
+        "properties": {
+          "password_login": {
+            "type": "boolean",
+            "description": "Whether a password signs in."
+          },
+          "setup_open": {
+            "type": "boolean",
+            "description": "`true` until the first visitor has made the owner account."
+          }
+        }
+      },
       "BuiltInIcon": {
         "type": "object",
         "description": "One built-in icon, drawn for the Settings screen to preview.",
@@ -11727,6 +12592,27 @@
           "png_base64": {
             "type": "string",
             "description": "A 64 pixel PNG of the icon, base64 (standard alphabet, padded)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "description": "Changes the signed-in user's password. The other devices are signed out.",
+        "required": [
+          "current",
+          "new"
+        ],
+        "properties": {
+          "current": {
+            "type": "string",
+            "format": "password",
+            "description": "The password now."
+          },
+          "new": {
+            "type": "string",
+            "format": "password",
+            "description": "The new password: at least 12 characters."
           }
         },
         "additionalProperties": false
@@ -11966,6 +12852,28 @@
           "tray",
           "quit"
         ]
+      },
+      "CompanyNetworkReport": {
+        "type": "object",
+        "description": "What Puddle found on this computer that puts a destination on the company network. Both are\nempty when this computer can't be read for them, which leaves the category empty.",
+        "required": [
+          "private_access_client",
+          "dns_suffixes"
+        ],
+        "properties": {
+          "dns_suffixes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The DNS suffixes and namespaces of this computer, lower case, each once."
+          },
+          "private_access_client": {
+            "type": "boolean",
+            "description": "A private-access client (Zscaler, Netskope, WARP, Tailscale) is installed and active."
+          }
+        },
+        "additionalProperties": false
       },
       "ConnectionDecision": {
         "type": "string",
@@ -12502,6 +13410,67 @@
           "unsupported"
         ]
       },
+      "DeviceList": {
+        "type": "object",
+        "description": "The signed-in user's devices.",
+        "required": [
+          "devices"
+        ],
+        "properties": {
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceView"
+            },
+            "description": "The ones that still work, the one used last first."
+          }
+        }
+      },
+      "DeviceView": {
+        "type": "object",
+        "description": "One signed-in browser.",
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "last_seen_at",
+          "expires_at",
+          "current"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it signed in, epoch ms.",
+            "minimum": 0
+          },
+          "current": {
+            "type": "boolean",
+            "description": "Whether this is the browser asking."
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it signs out by itself unless used, epoch ms.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The id."
+          },
+          "last_seen_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it last asked for an access token, epoch ms.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "What it calls itself."
+          }
+        }
+      },
       "DiskKind": {
         "type": "string",
         "description": "Which of a workspace's two disks an event or figure is about.",
@@ -12926,6 +13895,7 @@
           "identity_collision",
           "newer_settings",
           "settings_unreadable",
+          "rate_limited",
           "unavailable",
           "internal"
         ]
@@ -14662,6 +15632,34 @@
           }
         }
       },
+      "InviteRequest": {
+        "type": "object",
+        "description": "Uses an invite link (made by the server's command line) to set a password.",
+        "required": [
+          "secret",
+          "password"
+        ],
+        "properties": {
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this browser calls itself in the device list; `null` for the default."
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "description": "The new password: at least 12 characters."
+          },
+          "secret": {
+            "type": "string",
+            "format": "password",
+            "description": "The secret after `#` in the invite link."
+          }
+        },
+        "additionalProperties": false
+      },
       "KeptLoginList": {
         "type": "object",
         "description": "The logins kept for a workspace. No token, stand-in or account detail is in it.",
@@ -14964,9 +15962,14 @@
           "sign_in",
           "roots",
           "pull_proxy",
-          "routes"
+          "routes",
+          "company_network"
         ],
         "properties": {
+          "company_network": {
+            "$ref": "#/components/schemas/CompanyNetworkReport",
+            "description": "What drives the company-network destination category."
+          },
           "generated_at": {
             "type": "integer",
             "format": "int64",
@@ -15290,6 +16293,33 @@
           "custom"
         ]
       },
+      "PasswordSignInRequest": {
+        "type": "object",
+        "description": "A password sign-in.",
+        "required": [
+          "name",
+          "password"
+        ],
+        "properties": {
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this browser calls itself in the device list; `null` for the default."
+          },
+          "name": {
+            "type": "string",
+            "description": "The account's name."
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "description": "The password."
+          }
+        },
+        "additionalProperties": false
+      },
       "PatternKind": {
         "type": "string",
         "description": "How a rule's pattern matches.",
@@ -15347,7 +16377,8 @@
           "decided_by",
           "rule_id",
           "rule_set",
-          "blocked_by"
+          "blocked_by",
+          "company_signal"
         ],
         "properties": {
           "attempts": {
@@ -15366,6 +16397,13 @@
                 "type": "null"
               }
             ]
+          },
+          "company_signal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For an open request to an IP literal on the company network, whether or not its toggle is\non: what put the address there (`pac_direct`, `dns_suffix`, `private_access_cgnat` or\n`vpn_route`). `null` otherwise. A client that reads the address ranges itself needs it to\ntell a company address from the plain range it also falls in."
           },
           "decided_at": {
             "type": [
@@ -17114,6 +18152,36 @@
           "microsoft"
         ]
       },
+      "SessionGrant": {
+        "type": "object",
+        "description": "What a sign-in or a refresh gives the browser: an access token to send as\n`Authorization: Bearer` for the next 15 minutes. The long-lived part, the refresh token, is\nnever in a body: it is in an `HttpOnly` cookie the page cannot read.",
+        "required": [
+          "access_token",
+          "expires_at",
+          "user",
+          "device"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "The access token. Keep it in memory only."
+          },
+          "device": {
+            "$ref": "#/components/schemas/DeviceView",
+            "description": "This browser's entry in the device list."
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it stops working, epoch ms; ask for a new one before.",
+            "minimum": 0
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserView",
+            "description": "Who signed in."
+          }
+        }
+      },
       "SessionUser": {
         "type": "string",
         "description": "Who sessions run as in the guest. The default is the one for a new workspace; a boot plan that\nnames no user stays `root` (see `puddle-boot`), so nothing changes for a caller that never asks.\n\n```\nuse puddle_types::SessionUser;\nassert_eq!(SessionUser::default(), SessionUser::Agent);\nassert_eq!(SessionUser::Agent.name(), \"agent\");\nassert_eq!(SessionUser::Agent.home(), \"/home/agent\");\nassert_eq!(SessionUser::Root.home(), \"/root\");\n```",
@@ -17244,6 +18312,33 @@
         },
         "additionalProperties": false
       },
+      "SetupRequest": {
+        "type": "object",
+        "description": "The first visitor makes the owner account.",
+        "required": [
+          "name",
+          "password"
+        ],
+        "properties": {
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this browser calls itself in the device list; `null` for the default."
+          },
+          "name": {
+            "type": "string",
+            "description": "The owner's name."
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "description": "The password: at least 12 characters."
+          }
+        },
+        "additionalProperties": false
+      },
       "ShellInitRequest": {
         "type": "object",
         "description": "The script to save.",
@@ -17357,6 +18452,67 @@
           }
         },
         "additionalProperties": false
+      },
+      "SignInMethodKind": {
+        "type": "string",
+        "description": "A way of signing in.",
+        "enum": [
+          "password",
+          "passkey"
+        ]
+      },
+      "SignInMethodRequest": {
+        "type": "object",
+        "description": "Switches one method on or off. The last method that is on can't be switched off.",
+        "required": [
+          "method",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The new state."
+          },
+          "method": {
+            "$ref": "#/components/schemas/SignInMethodKind",
+            "description": "Which."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SignInMethodView": {
+        "type": "object",
+        "description": "One sign-in method and whether it is on.",
+        "required": [
+          "method",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether it signs anyone in."
+          },
+          "method": {
+            "$ref": "#/components/schemas/SignInMethodKind",
+            "description": "Which."
+          }
+        }
+      },
+      "SignInMethods": {
+        "type": "object",
+        "description": "The sign-in methods that exist.",
+        "required": [
+          "methods"
+        ],
+        "properties": {
+          "methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SignInMethodView"
+            },
+            "description": "Each method."
+          }
+        }
       },
       "SignInReport": {
         "type": "object",
@@ -17995,6 +19151,30 @@
           "jwt_with_refresh_token"
         ]
       },
+      "UserView": {
+        "type": "object",
+        "description": "Whose session it is.",
+        "required": [
+          "id",
+          "name",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The user's id."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name."
+          },
+          "role": {
+            "type": "string",
+            "description": "`owner` or `user`."
+          }
+        }
+      },
       "VsCodeServer": {
         "type": "object",
         "description": "Options for the VS Code server in the guest. `null` means Puddle's default.",
@@ -18567,6 +19747,10 @@
     {
       "name": "events",
       "description": "The server-sent event stream"
+    },
+    {
+      "name": "auth",
+      "description": "Browser sign-in on a public address: the first visitor's owner account, passwords, devices and the sign-in methods"
     },
     {
       "name": "pending",

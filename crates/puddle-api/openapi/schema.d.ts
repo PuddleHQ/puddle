@@ -70,6 +70,167 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sets a password with the secret of an invite link the server's reset command made, and signs in.
+         *     A link works once.
+         */
+        post: operations["invite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/methods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Which ways of signing in exist, and whether each is on. */
+        get: operations["get_methods"];
+        /**
+         * Switches a way of signing in on or off (the owner). The last one that is on can't be switched
+         *     off.
+         */
+        put: operations["put_methods"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Changes the signed-in user's password; every other device is signed out. Only a signed-in
+         *     browser can: the desktop window and the command line have no password to change.
+         */
+        put: operations["change_password"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A new access token, for the browser whose session cookie comes with the request. The request
+         *     must name the page's own `Origin`.
+         */
+        post: operations["refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The first visitor makes the owner account and is signed in as it. Works once: after that it
+         *     answers 409, and resetting the owner's password never reopens it.
+         */
+        post: operations["setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sign-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Signs in with a name and a password. A wrong name and a wrong password answer the same, and
+         *     repeated failures lock the account for a while (429 with `Retry-After`).
+         */
+        post: operations["password_sign_in"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sign-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Signs this browser out: its device is revoked, its tokens end, its cookie is cleared. Signing
+         *     out a browser that is not signed in is fine.
+         */
+        post: operations["sign_out"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the owner account has to be made, and whether a password signs in. Public: it names
+         *     no one.
+         */
+        get: operations["status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/consents": {
         parameters: {
             query?: never;
@@ -245,6 +406,43 @@ export interface paths {
          */
         post: operations["trust_dev_certificate"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The signed-in user's devices (browsers that are signed in), the one used last first. */
+        get: operations["list_devices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/devices/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Signs a device out: its access tokens, its refresh token and its event streams end. A device
+         *     that is not the caller's answers as one that does not exist.
+         */
+        delete: operations["revoke_device"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2438,12 +2636,35 @@ export interface components {
          * @enum {string}
          */
         AuditType: "connection" | "pending_created" | "pending_decided" | "pending_expired" | "pending_suppressed" | "rule_created" | "rule_updated" | "rule_deleted" | "rule_expired" | "request_rule_created" | "request_rule_deleted" | "rule_set_created" | "rule_set_updated" | "rule_set_deleted" | "rule_set_switched" | "rule_set_changed" | "system_managed_changed" | "workspace_op" | "audit_trimmed";
+        /**
+         * @description Whether this Puddle can be signed in to, and how. Anyone who can reach the address may read
+         *     it; it holds no name.
+         */
+        AuthStatus: {
+            /** @description Whether a password signs in. */
+            password_login: boolean;
+            /** @description `true` until the first visitor has made the owner account. */
+            setup_open: boolean;
+        };
         /** @description One built-in icon, drawn for the Settings screen to preview. */
         BuiltInIcon: {
             /** @description The choice that selects it. */
             choice: components["schemas"]["AppIconChoice"];
             /** @description A 64 pixel PNG of the icon, base64 (standard alphabet, padded). */
             png_base64: string;
+        };
+        /** @description Changes the signed-in user's password. The other devices are signed out. */
+        ChangePasswordRequest: {
+            /**
+             * Format: password
+             * @description The password now.
+             */
+            current: string;
+            /**
+             * Format: password
+             * @description The new password: at least 12 characters.
+             */
+            new: string;
         };
         /** @description A credential to try. */
         CheckRequest: {
@@ -2546,6 +2767,16 @@ export interface components {
          * @enum {string}
          */
         CloseBehaviour: "tray" | "quit";
+        /**
+         * @description What Puddle found on this computer that puts a destination on the company network. Both are
+         *     empty when this computer can't be read for them, which leaves the category empty.
+         */
+        CompanyNetworkReport: {
+            /** @description The DNS suffixes and namespaces of this computer, lower case, each once. */
+            dns_suffixes: string[];
+            /** @description A private-access client (Zscaler, Netskope, WARP, Tailscale) is installed and active. */
+            private_access_client: boolean;
+        };
         /**
          * @description How the proxy handled a connection.
          * @enum {string}
@@ -2768,6 +2999,38 @@ export interface components {
          * @enum {string}
          */
         DevCertificate: "not_checked" | "reusing_existing" | "trusted" | "needs_trust" | "trust_declined" | "trust_failed" | "unsupported";
+        /** @description The signed-in user's devices. */
+        DeviceList: {
+            /** @description The ones that still work, the one used last first. */
+            devices: components["schemas"]["DeviceView"][];
+        };
+        /** @description One signed-in browser. */
+        DeviceView: {
+            /**
+             * Format: int64
+             * @description When it signed in, epoch ms.
+             */
+            created_at: number;
+            /** @description Whether this is the browser asking. */
+            current: boolean;
+            /**
+             * Format: int64
+             * @description When it signs out by itself unless used, epoch ms.
+             */
+            expires_at: number;
+            /**
+             * Format: int64
+             * @description The id.
+             */
+            id: number;
+            /**
+             * Format: int64
+             * @description When it last asked for an access token, epoch ms.
+             */
+            last_seen_at: number;
+            /** @description What it calls itself. */
+            name: string;
+        };
         /**
          * @description Which of a workspace's two disks an event or figure is about.
          * @enum {string}
@@ -2948,7 +3211,7 @@ export interface components {
          * @description What went wrong, as a stable code a client can switch on.
          * @enum {string}
          */
-        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "forbidden" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "unavailable" | "internal";
+        ErrorCode: "misdirected_host" | "forbidden_origin" | "unauthorized" | "forbidden" | "bad_request" | "unsupported_media_type" | "payload_too_large" | "invalid" | "not_found" | "conflict" | "identity_collision" | "newer_settings" | "settings_unreadable" | "rate_limited" | "unavailable" | "internal";
         /**
          * @description Something the user should hear about. Serialised as one internally tagged enum
          *     (`{"type":"oom_kill",...}`, ADR 0002).
@@ -3594,6 +3857,21 @@ export interface components {
             /** @description The workspace. */
             workspace: components["schemas"]["WorkspaceId"];
         };
+        /** @description Uses an invite link (made by the server's command line) to set a password. */
+        InviteRequest: {
+            /** @description What this browser calls itself in the device list; `null` for the default. */
+            device_name?: string | null;
+            /**
+             * Format: password
+             * @description The new password: at least 12 characters.
+             */
+            password: string;
+            /**
+             * Format: password
+             * @description The secret after `#` in the invite link.
+             */
+            secret: string;
+        };
         /** @description The logins kept for a workspace. No token, stand-in or account detail is in it. */
         KeptLoginList: {
             /** @description The services with a login kept; empty when none is. */
@@ -3741,6 +4019,8 @@ export interface components {
         };
         /** @description `GET /api/network-health`: everything Puddle knows about how it reaches the internet. */
         NetworkHealth: {
+            /** @description What drives the company-network destination category. */
+            company_network: components["schemas"]["CompanyNetworkReport"];
             /**
              * Format: int64
              * @description Epoch ms the report was made.
@@ -3908,6 +4188,18 @@ export interface components {
          * @enum {string}
          */
         PaletteChoice: "pond" | "dusk" | "meadow" | "ember" | "graphite" | "custom";
+        /** @description A password sign-in. */
+        PasswordSignInRequest: {
+            /** @description What this browser calls itself in the device list; `null` for the default. */
+            device_name?: string | null;
+            /** @description The account's name. */
+            name: string;
+            /**
+             * Format: password
+             * @description The password.
+             */
+            password: string;
+        };
         /**
          * @description How a rule's pattern matches.
          * @enum {string}
@@ -3936,6 +4228,13 @@ export interface components {
              */
             attempts: number;
             blocked_by: components["schemas"]["LocalCategory"] | null;
+            /**
+             * @description For an open request to an IP literal on the company network, whether or not its toggle is
+             *     on: what put the address there (`pac_direct`, `dns_suffix`, `private_access_cgnat` or
+             *     `vpn_route`). `null` otherwise. A client that reads the address ranges itself needs it to
+             *     tell a company address from the plain range it also falls in.
+             */
+            company_signal: string | null;
             /**
              * Format: int64
              * @description Epoch ms it was decided or expired.
@@ -4733,6 +5032,24 @@ export interface components {
          */
         ServerChoice: "code_server" | "microsoft";
         /**
+         * @description What a sign-in or a refresh gives the browser: an access token to send as
+         *     `Authorization: Bearer` for the next 15 minutes. The long-lived part, the refresh token, is
+         *     never in a body: it is in an `HttpOnly` cookie the page cannot read.
+         */
+        SessionGrant: {
+            /** @description The access token. Keep it in memory only. */
+            access_token: string;
+            /** @description This browser's entry in the device list. */
+            device: components["schemas"]["DeviceView"];
+            /**
+             * Format: int64
+             * @description When it stops working, epoch ms; ask for a new one before.
+             */
+            expires_at: number;
+            /** @description Who signed in. */
+            user: components["schemas"]["UserView"];
+        };
+        /**
          * @description Who sessions run as in the guest. The default is the one for a new workspace; a boot plan that
          *     names no user stays `root` (see `puddle-boot`), so nothing changes for a caller that never asks.
          *
@@ -4803,6 +5120,18 @@ export interface components {
             /** @description Whether the browser window's zoom hotkeys work. */
             zoom_hotkeys: boolean | null;
         };
+        /** @description The first visitor makes the owner account. */
+        SetupRequest: {
+            /** @description What this browser calls itself in the device list; `null` for the default. */
+            device_name?: string | null;
+            /** @description The owner's name. */
+            name: string;
+            /**
+             * Format: password
+             * @description The password: at least 12 characters.
+             */
+            password: string;
+        };
         /** @description The script to save. */
         ShellInitRequest: {
             /**
@@ -4853,6 +5182,30 @@ export interface components {
             result: components["schemas"]["SignInResult"];
             /** @description The scheme sent (`Negotiate`, `NTLM`, `Basic`); `null` when none was. */
             scheme: string | null;
+        };
+        /**
+         * @description A way of signing in.
+         * @enum {string}
+         */
+        SignInMethodKind: "password" | "passkey";
+        /** @description Switches one method on or off. The last method that is on can't be switched off. */
+        SignInMethodRequest: {
+            /** @description The new state. */
+            enabled: boolean;
+            /** @description Which. */
+            method: components["schemas"]["SignInMethodKind"];
+        };
+        /** @description One sign-in method and whether it is on. */
+        SignInMethodView: {
+            /** @description Whether it signs anyone in. */
+            enabled: boolean;
+            /** @description Which. */
+            method: components["schemas"]["SignInMethodKind"];
+        };
+        /** @description The sign-in methods that exist. */
+        SignInMethods: {
+            /** @description Each method. */
+            methods: components["schemas"]["SignInMethodView"][];
         };
         /** @description How Puddle signs in to the company proxy. */
         SignInReport: {
@@ -5091,6 +5444,18 @@ export interface components {
          * @enum {string}
          */
         UnknownTokenKind: "github_token" | "github_fine_grained_token" | "gitlab_token" | "npm_token" | "azure_devops_token" | "anthropic_key" | "openai_key" | "jwt_with_refresh_token";
+        /** @description Whose session it is. */
+        UserView: {
+            /**
+             * Format: int64
+             * @description The user's id.
+             */
+            id: number;
+            /** @description The name. */
+            name: string;
+            /** @description `owner` or `user`. */
+            role: string;
+        };
         /** @description Options for the VS Code server in the guest. `null` means Puddle's default. */
         VsCodeServer: {
             /** @description Whether Puddle updates the server (default on). */
@@ -5588,6 +5953,8 @@ export interface operations {
                 host_contains?: string;
                 /** @description records whose host (a rule's pattern), method, path or reason contains this text, case-insensitive; combines with the other filters */
                 q?: string;
+                /** @description `connection` records in this destination category; only `company_network` */
+                category?: string;
                 /** @description records at or after this epoch ms */
                 from?: number;
                 /** @description records before this epoch ms */
@@ -5655,6 +6022,616 @@ export interface operations {
             };
             /** @description Puddle failed; see its log */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    invite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteRequest"];
+            };
+        };
+        responses: {
+            /** @description the password is set and this browser is signed in */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionGrant"];
+                };
+            };
+            /** @description the link is not valid any more */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the password was refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description too many attempts: see `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_methods: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the methods */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInMethods"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_methods: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignInMethodRequest"];
+            };
+        };
+        responses: {
+            /** @description the methods now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInMethods"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description that would leave no way to sign in, or the method does not exist yet */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    change_password: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description changed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the current password is wrong */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the new password was refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description too many attempts: see `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    refresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description a new access token for 15 minutes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionGrant"];
+                };
+            };
+            /** @description this browser is not signed in (any more) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupRequest"];
+            };
+        };
+        responses: {
+            /** @description the owner account exists and this browser is signed in; the refresh token is in the `Set-Cookie` header */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionGrant"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the owner account is already made */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the name or password was refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description too many attempts: see `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    password_sign_in: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordSignInRequest"];
+            };
+        };
+        responses: {
+            /** @description signed in; the refresh token is in the `Set-Cookie` header */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionGrant"];
+                };
+            };
+            /** @description wrong name or password */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description too many attempts: see `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    sign_out: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description signed out */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description what the sign-in page shows */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthStatus"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description signing in is not available */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6300,6 +7277,128 @@ export interface operations {
             };
             /** @description forbidden origin */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_devices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the devices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceList"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_device: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the device */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such device */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

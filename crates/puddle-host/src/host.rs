@@ -569,8 +569,14 @@ impl<R: Runtime + Clone> Host<R> {
             proxy_passwords.clone(),
             egress.chain.clone(),
         ));
-        let network_health =
-            network_health_of(&egress.chain, &discovery, &clock, &roots, sign_ins.clone());
+        let network_health = network_health_of(
+            &egress.chain,
+            &discovery,
+            &clock,
+            &roots,
+            sign_ins.clone(),
+            company_signals(&options),
+        );
         network_health.set_tls_left_out(injecting.tls.rejected_roots(), &roots);
         let pull_url = pull.proxy_url();
         // Image pulls are Puddle's own traffic: audited with origin `puddle`, like sandbox traffic.
@@ -746,6 +752,11 @@ impl<R: Runtime + Clone> Host<R> {
         .with_proxy_sign_ins(sign_ins)
         .with_company_signals(signals)
         .with_endpoints(endpoints.clone());
+        // Browsers sign in against the database's secrets, which only the API ever holds.
+        let services = match store.take_account_secrets() {
+            Some(secrets) => services.with_account_secrets(secrets),
+            None => services,
+        };
         let served = serve_api(&config, services).await?;
         steps.push(Step::ApiServing);
         tracing::info!(url = %served.url, "Puddle is up");
@@ -1023,11 +1034,13 @@ fn network_health_of(
     clock: &Arc<SystemClock>,
     roots: &CorporateRoots,
     sign_ins: Arc<dyn ProxySignInService>,
+    signals: Arc<dyn CompanySignals>,
 ) -> Arc<HostNetworkHealth> {
     let health = Arc::new(
         HostNetworkHealth::new(discovery.clone(), clock.clone())
             .with_chain(chain.clone())
-            .with_sign_ins(sign_ins),
+            .with_sign_ins(sign_ins)
+            .with_company_signals(signals),
     );
     health.set_roots(Arc::new(roots.clone()));
     health
@@ -1301,6 +1314,7 @@ async fn serve_api(config: &HostConfig, services: Services) -> Result<ServedApi,
         api_config.ui = Some(ui.clone());
     }
     api_config.remote.clone_from(&config.api.remote);
+    api_config.multi_user = config.api.multi_user;
     let mut certificate = None;
     if let Some(listener) = &config.api.network_listener {
         let (network, cert_file) = network_listener(config, listener)?;

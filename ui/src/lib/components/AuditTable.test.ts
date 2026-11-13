@@ -32,6 +32,21 @@ const refused = (rule: number) =>
   });
 
 describe("AuditTable", () => {
+  it("marks a company-network connection with a chip that says why, and no other", () => {
+    render(AuditTable, {
+      entries: [
+        connection(2, { category: "company_network", signal: "vpn_route" }),
+        connection(1),
+      ],
+      now: NOW,
+    });
+    const chips = screen.getAllByText("Company network");
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveAttribute(
+      "title",
+      "Reached through a VPN connection.",
+    );
+  });
   it("links a refusing rule on method and path to its row on the Rules screen", () => {
     render(AuditTable, { entries: [refused(7)], now: NOW });
     const link = screen.getByRole("link", { name: "method and path rule 7" });

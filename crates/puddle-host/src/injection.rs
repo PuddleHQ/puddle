@@ -631,11 +631,10 @@ impl Injection {
         learned: &Arc<PassThrough>,
     ) -> Result<Interception, InjectionError> {
         let store = &self.inputs.store;
+        let decrypts = format!("what {workspace} decrypts");
         let own = store
             .workspace_interception(workspace)
-            .map_err(InjectionError::settings(format!(
-                "what {workspace} decrypts"
-            )))?;
+            .map_err(InjectionError::settings(decrypts))?;
         let global = store
             .global_never_decrypt()
             .map_err(InjectionError::settings("the never-decrypt names"))?;

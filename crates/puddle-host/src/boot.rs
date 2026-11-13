@@ -89,6 +89,10 @@ pub(crate) struct BootKit {
     dev_cert: Option<Arc<dyn GuestCertSource>>,
 }
 
+/// Where the agent listens for the guest's SSH clients when the workspace uses the user's SSH
+/// agent for a host.
+const GUEST_SSH_AGENT_SOCKET: &str = "/run/puddle/ssh-agent.sock";
+
 /// How long a start waits for the development certificate: the system's one-time confirmation
 /// may be open on the user's desktop. After that the workspace starts without it (and gets it at
 /// its next start).
@@ -121,6 +125,9 @@ pub(crate) struct GuestInputs<'a> {
     /// The guest user sessions run as: the boot hook adds it, and per-user settings go to its
     /// home.
     pub(crate) session_user: SessionUser,
+    /// Whether the guest gets its SSH agent socket, which carries each client to the user's agent
+    /// on the host (for the hosts the workspace has it on for).
+    pub(crate) ssh_agent: bool,
 }
 
 impl BootKit {
@@ -210,8 +217,14 @@ impl BootKit {
         let mut image_env = image.env.clone();
         image_env.extend(guest.env.iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
         let user = guest.session_user;
+        let ssh_agent = guest
+            .ssh_agent
+            .then(|| GuestPath::new(GUEST_SSH_AGENT_SOCKET))
+            .transpose()
+            .map_err(|e| e.to_string())?;
         let settings = ProxySettings {
             home: GuestPath::new(user.home()).map_err(|e| e.to_string())?,
+            ssh_agent: ssh_agent.clone(),
             ..ProxySettings::default()
         };
         let proxy = guest_proxy_config(&settings, &image_env).map_err(|e| e.to_string())?;
@@ -253,6 +266,11 @@ impl BootKit {
             for (name, value) in editor.env() {
                 builder = builder.agent_env(name, value);
             }
+        }
+        if let Some(socket) = &ssh_agent {
+            builder = builder
+                .agent_env("PUDDLE_AGENT_SSH_AGENT", socket.as_str())
+                .agent_env("PUDDLE_AGENT_SSH_AGENT_USER", user.name());
         }
         let plan = builder.build().map_err(|e| e.to_string())?;
         Ok((plan, env))

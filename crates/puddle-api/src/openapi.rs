@@ -55,6 +55,7 @@ const BEARER: &str = "bearer";
         (name = "ports", description = "A workspace's ports: what listens in it, forwards to this computer's loopback, pinned forwards"),
         (name = "environment", description = "Environment variables and secrets, global and per workspace; a secret's value is write-only"),
         (name = "interception", description = "Decrypting every host: a workspace's switch and the names that are never decrypted"),
+        (name = "ssh-agent", description = "The filtered SSH agent: the hosts a workspace may use the user's SSH agent for"),
         (name = "shell-init", description = "A workspace's shell init: the script its login shells source; the host's copy is the only source of truth"),
         (name = "logins", description = "The logins Puddle kept for a workspace: listing them and forgetting one"),
         (name = "orphan-volumes", description = "Workspace disks the workspace list does not name, and restoring one as a workspace"),

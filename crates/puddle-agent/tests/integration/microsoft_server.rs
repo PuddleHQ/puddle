@@ -20,10 +20,11 @@ use std::time::Duration;
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use puddle_agent::download::{Downloader, Fetch};
 use puddle_agent::editor::{self, Control, EditorConfig, UpdateTimes};
 use puddle_agent::microsoft::{
-    Downloader, Fetch, InstallError, Update, confirm, current_build, download_url, ensure_build,
-    install_latest, latest_url, on_trial, roll_back, stage_update, switch_to_staged, versions_url,
+    InstallError, Update, confirm, current_build, download_url, ensure_build, install_latest,
+    latest_url, on_trial, roll_back, stage_update, switch_to_staged, versions_url,
 };
 use puddle_agent_proto::editor::EditorServer;
 use sha2::{Digest as _, Sha256};

@@ -32,4 +32,17 @@ fn arguments_map_to_commands() {
         Command::MergeFile(_)
     ));
     assert!(matches!(parse(&["merge-file"]), Command::Usage(_)));
+    assert_eq!(
+        parse(&["mise-fetch", "/workspaces/w/.puddle/mise"]),
+        Command::MiseFetch(mise::Request {
+            dir: "/workspaces/w/.puddle/mise".into()
+        })
+    );
+    for bad in [
+        &["mise-fetch"][..],
+        &["mise-fetch", ""],
+        &["mise-fetch", "a", "b"],
+    ] {
+        assert!(matches!(parse(bad), Command::Usage(_)), "{bad:?}");
+    }
 }

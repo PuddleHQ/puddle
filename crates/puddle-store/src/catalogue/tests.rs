@@ -102,6 +102,11 @@ fn r41_system_reasons_round_trip_and_explain_themselves() {
     ));
     assert!(!has(SystemReason::DirectSshZed, "plugins.jetbrains.com"));
     assert!(!has(SystemReason::MicrosoftServer, "open-vsx.org"));
+    // mise's two hosts, and nothing a tool itself reaches (those are the user's to allow).
+    assert!(has(SystemReason::Mise, "mise.jdx.dev"));
+    assert!(has(SystemReason::Mise, "mise-versions.jdx.dev"));
+    assert!(!has(SystemReason::Mise, "github.com"));
+    assert!(!has(SystemReason::Mise, "nodejs.org"));
 }
 
 /// The provenance rule (R-36): a deny set's description names where its list came from, the

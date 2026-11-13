@@ -35,14 +35,7 @@ pub(crate) fn workspace(
 }
 
 /// What the managed mise layer does in one workspace: [`MiseMode::Off`] while the global switch is
-/// off, whatever the workspace stores. Nothing reads it yet (the layer's pieces follow).
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the tools layer starts reading it in the next tasks"
-    )
-)]
+/// off, whatever the workspace stores.
 pub(crate) fn mise(repo: &dyn SettingsRepo, name: &WorkspaceId) -> Result<MiseMode, String> {
     let global = global(repo)?;
     if !global.tools.mise() {

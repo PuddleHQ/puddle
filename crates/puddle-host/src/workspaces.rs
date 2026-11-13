@@ -68,6 +68,7 @@ mod plumbing;
 mod service;
 mod settle;
 mod start_stop_delete;
+mod tools;
 
 impl<R: Runtime + Clone> crate::editor_updates::Builds for HostWorkspaces<R> {
     fn on_microsoft_server(&self) -> Vec<WorkspaceId> {

@@ -493,6 +493,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         // From here ports can be forwarded, and the pinned forwards come back.
         self.inner.ports.started(name).await;
+        // Last, and in the background: the start is done whatever mise does.
+        self.fetch_mise_later(name);
         Ok(())
     }
 }

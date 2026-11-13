@@ -5434,7 +5434,7 @@ export interface components {
          * @description Why Puddle allows a System managed host: a choice you made.
          * @enum {string}
          */
-        SystemReason: "microsoft_server" | "code_server" | "direct_ssh" | "direct_ssh_cursor" | "direct_ssh_jetbrains" | "direct_ssh_zed";
+        SystemReason: "microsoft_server" | "code_server" | "direct_ssh" | "direct_ssh_cursor" | "direct_ssh_jetbrains" | "direct_ssh_zed" | "mise";
         /** @description The size a new terminal starts with. */
         TerminalRequest: {
             /**

@@ -3,7 +3,7 @@
 //! Derived from the settings here and handed to the store, at start and after every settings
 //! or consent change, so the allows follow the choices that justify them.
 
-use puddle_settings::{GlobalSettings, ServerChoice};
+use puddle_settings::{GlobalSettings, MiseMode, ServerChoice, WorkspaceSettings, mise_mode};
 use puddle_store::{SystemPlan, SystemReason};
 use puddle_types::{Problem, WorkspaceId};
 
@@ -28,10 +28,16 @@ const DIRECT_SSH_REASONS: [SystemReason; 4] = [
 ///   bundled code-server gives Open VSX.
 /// - `direct_ssh`: the workspaces with direct SSH on, which get the hosts of the desktop editors
 ///   for themselves (VS Code installs Microsoft's server and extensions there; Cursor, `JetBrains` Gateway and Zed, their own).
+/// - `mise`: the workspaces with mise on (the global switch and their own), which get the two
+///   hosts of the pinned download and the version lists.
 ///
 /// Nothing else is derived: a workspace used with another tool gets no host for VS Code's sake.
 #[must_use]
-pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceId]) -> SystemPlan {
+pub(crate) fn plan(
+    global: &GlobalSettings,
+    direct_ssh: &[WorkspaceId],
+    mise: &[WorkspaceId],
+) -> SystemPlan {
     let mut plan = SystemPlan::default();
     match global.editor_server() {
         ServerChoice::Microsoft => {
@@ -48,6 +54,12 @@ pub(crate) fn plan(global: &GlobalSettings, direct_ssh: &[WorkspaceId]) -> Syste
             .entry(workspace.clone())
             .or_default()
             .extend(DIRECT_SSH_REASONS);
+    }
+    for workspace in mise {
+        plan.workspaces
+            .entry(workspace.clone())
+            .or_default()
+            .insert(SystemReason::Mise);
     }
     plan
 }
@@ -70,17 +82,24 @@ pub(crate) async fn refresh(state: &AppState) {
     let result = blocking(move || {
         let repo = settings.as_ref();
         let global = load_global(repo)?;
-        let direct: Vec<WorkspaceId> = names
-            .into_iter()
-            .filter(|name| {
-                load_workspace(repo, name).is_ok_and(|own| {
-                    resolve(&global.settings, Some(&own.settings))
-                        .direct_ssh
-                        .value
-                })
-            })
-            .collect();
-        Ok(store.set_system_managed(&plan(&global.settings, &direct))?)
+        let mut direct = Vec::new();
+        let mut mise = Vec::new();
+        for name in names {
+            // A workspace whose settings cannot be read gets neither: an allow is only ever dropped.
+            let Ok(own) = load_workspace(repo, &name) else {
+                continue;
+            };
+            if resolve(&global.settings, Some(&own.settings))
+                .direct_ssh
+                .value
+            {
+                direct.push(name.clone());
+            }
+            if mise_on(&global.settings, &own.settings) {
+                mise.push(name);
+            }
+        }
+        Ok(store.set_system_managed(&plan(&global.settings, &direct, &mise))?)
     })
     .await;
     match (result, list_error) {
@@ -110,6 +129,10 @@ pub(crate) async fn refresh(state: &AppState) {
             ),
         )),
     }
+}
+
+fn mise_on(global: &GlobalSettings, own: &WorkspaceSettings) -> bool {
+    matches!(mise_mode(global, Some(own)), MiseMode::On { .. })
 }
 
 /// The key of the problem a failed [`refresh`] raises.

@@ -184,6 +184,11 @@ struct Guest {
     during_boot: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// What the shell-init check answers, as exit code and stdout, instead of "quiet".
     check_answer: Mutex<Option<(i32, &'static str)>>,
+    /// What `puddle-agent mise-fetch` answers on standard error with exit code 1, instead of
+    /// success.
+    mise_failure: Mutex<Option<&'static str>>,
+    /// Every `puddle-agent mise-fetch` as (arguments, user).
+    mise_fetches: Mutex<Vec<(Vec<String>, Option<String>)>>,
     /// The script (stdin) of every shell-init check, and what the guest saw at the mounted file
     /// while it ran.
     checks: Mutex<Vec<(String, Option<String>)>>,
@@ -244,6 +249,7 @@ impl Guest {
             ("sh", _) if second == Some(DELETE_CHECK_SH) => "check",
             ("sh", _) if second.is_some_and(|s| s.contains("fstrim")) => "shutdown-trim",
             ("sh", _) if second.is_some_and(|s| s.contains("mktemp")) => "shell-init-check",
+            ("/puddle/puddle-agent", Some("mise-fetch")) => "mise-fetch",
             ("fstrim", _) => "trim",
             ("git", _) => "clone",
             ("sync", _) => "sync",
@@ -276,6 +282,7 @@ impl Guest {
                 ExecOutput::new(0, "", "")
             }
             "shell-init-check" => self.answer_shell_init_check(ctx, r),
+            "mise-fetch" => self.answer_mise_fetch(r),
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
                 "",
@@ -325,6 +332,18 @@ impl Guest {
             }
             _ => ExecOutput::new(0, "", ""),
         })
+    }
+
+    /// Records a `mise-fetch` and answers as set up.
+    fn answer_mise_fetch(&self, r: &ExecRequest) -> ExecOutput {
+        self.mise_fetches
+            .lock()
+            .unwrap()
+            .push((r.args.clone(), r.user.clone()));
+        match *self.mise_failure.lock().unwrap() {
+            Some(said) => ExecOutput::new(1, "", said),
+            None => ExecOutput::new(0, "installed\n", ""),
+        }
     }
 
     /// Records the script a shell-init check ran and the file it saw, then answers as set up.
@@ -447,6 +466,11 @@ impl Guest {
 
     /// Notes that `r` ran in `ctx`'s sandbox as a command of `kind`, and as whom.
     fn record(&self, ctx: &ExecContext<'_>, kind: &str, r: &ExecRequest) {
+        // Not in the command log: the mise fetch runs in the background after a start, so its
+        // place among the commands a test counts is a race. `mise_fetches` has it.
+        if kind == "mise-fetch" {
+            return;
+        }
         self.commands
             .lock()
             .unwrap()
@@ -682,6 +706,10 @@ struct Rig {
     git_ssh: AtomicBool,
     /// Where new ids come from, for a test about them; else random ids, as on a real host.
     ids: Mutex<Option<Arc<dyn puddle_api::IdSource>>>,
+    /// Whether the managed tools layer is on. Off by default: its background download runs a
+    /// command at a moment no test chose, which would move the count of commands that a test
+    /// injects a fault after.
+    mise_on: AtomicBool,
 }
 
 impl Rig {
@@ -709,6 +737,7 @@ impl Rig {
             rewrite_gate: Mutex::new(None),
             git_ssh: AtomicBool::new(false),
             ids: Mutex::new(None),
+            mise_on: AtomicBool::new(false),
         };
         // A host that restarts reuses the port its front stored. A port the first run took from
         // port 0 is free again the moment it quits, and a parallel test's port 0 or source port can
@@ -754,6 +783,15 @@ impl Rig {
 
     async fn start_with(&self, config: HostConfig) -> Host<FakeRuntime> {
         let prepared = prepare(config, &FakePlatform::new(&self.log)).unwrap();
+        if !self.mise_on.load(Ordering::SeqCst) {
+            let dir = self.dir.path().join("data").join("settings");
+            let file = dir.join("global.json");
+            if !file.exists() {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&file, br#"{"schema_version": 2, "tools": {"mise": false}}"#)
+                    .unwrap();
+            }
+        }
         let mut options = hermetic_options();
         options.launcher = if self.windowless.load(Ordering::SeqCst) {
             Arc::new(DesktopOnly(self.launcher.clone()))
@@ -13036,4 +13074,158 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
         Err(puddle_api::TerminalError::NotRunning(_))
     ));
     host.shutdown().await;
+}
+
+// ---- mise after a start -----------------------------------------------------------------------
+
+const MISE_FAILURE: &str = "Puddle could not download mise: curl failed (exit status: 56): 403";
+
+fn mise_fetches(rig: &Rig) -> Vec<(Vec<String>, Option<String>)> {
+    rig.guest.mise_fetches.lock().unwrap().clone()
+}
+
+fn tools_problem(
+    problems: &[(String, Option<String>, String, String)],
+) -> Option<&(String, Option<String>, String, String)> {
+    problems.iter().find(|p| p.0 == "tools:acme")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mise_is_fetched_in_the_background_after_the_start_and_a_good_fetch_raises_nothing() {
+    let rig = Rig::named_ids();
+    rig.mise_on.store(true, Ordering::SeqCst);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    eventually("the guest is asked for mise", APPLY, || {
+        !mise_fetches(&rig).is_empty()
+    })
+    .await;
+    let fetches = mise_fetches(&rig);
+    assert_eq!(fetches.len(), 1, "{fetches:?}");
+    assert_eq!(
+        fetches[0].0,
+        ["mise-fetch", "/workspaces/acme/.puddle/mise"]
+    );
+    assert_eq!(
+        fetches[0].1.as_deref(),
+        Some("agent"),
+        "as the session user"
+    );
+    assert_eq!(tools_problem(&problems_of(&api).await), None);
+    // Every start asks again: the agent finds the binary current and does nothing.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    eventually("the second start asks too", APPLY, || {
+        mise_fetches(&rig).len() == 2
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_mise_fetch_is_a_problem_with_the_blocking_rule_and_the_start_still_ends_done() {
+    let rig = Rig::named_ids();
+    rig.mise_on.store(true, Ordering::SeqCst);
+    *rig.guest.mise_failure.lock().unwrap() = Some(MISE_FAILURE);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    host.store()
+        .add_rule(&puddle_store::NewRule {
+            scope: puddle_store::Scope::Workspace(name("acme")),
+            pattern: puddle_store::Pattern::parse("mise.jdx.dev").unwrap(),
+            effect: puddle_store::Effect::Deny,
+            expires_at: None,
+            created_by: puddle_store::Actor::Cli,
+        })
+        .unwrap();
+    create(&api, &mut events, "acme").await;
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
+    eventually("the problem is raised", APPLY, || {
+        // Polled on the host's own state: the API call below is async.
+        host.problems().list().iter().any(|p| p.key == "tools:acme")
+    })
+    .await;
+    let problems = problems_of(&api).await;
+    let (_, workspace, title, detail) = tools_problem(&problems).unwrap();
+    assert_eq!(workspace.as_deref(), Some("acme"));
+    assert!(title.contains("mise"), "{title}");
+    assert!(detail.contains(MISE_FAILURE), "{detail}");
+    assert!(detail.contains("works without them"), "{detail}");
+    assert!(
+        detail.contains("deny mise.jdx.dev"),
+        "names the rule: {detail}"
+    );
+    // The next start finds the download working and the problem ends.
+    *rig.guest.mise_failure.lock().unwrap() = None;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    eventually("the problem ends", APPLY, || {
+        !host.problems().list().iter().any(|p| p.key == "tools:acme")
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_mise_fetch_without_an_own_rule_names_no_rule() {
+    let rig = Rig::named_ids();
+    rig.mise_on.store(true, Ordering::SeqCst);
+    *rig.guest.mise_failure.lock().unwrap() = Some(MISE_FAILURE);
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    eventually("the problem is raised", APPLY, || {
+        host.problems().list().iter().any(|p| p.key == "tools:acme")
+    })
+    .await;
+    let problems = problems_of(&api).await;
+    let (_, _, _, detail) = tools_problem(&problems).unwrap();
+    assert!(!detail.contains("A rule you made"), "{detail}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_mise_off_nothing_is_fetched_and_an_old_problem_goes() {
+    for switch in ["global", "workspace"] {
+        let rig = Rig::named_ids();
+        rig.mise_on.store(true, Ordering::SeqCst);
+        *rig.guest.mise_failure.lock().unwrap() = Some(MISE_FAILURE);
+        let host = rig.start().await;
+        let api = api(&host);
+        let mut events = api.events().await;
+        create(&api, &mut events, "acme").await;
+        eventually("the problem is raised", APPLY, || {
+            host.problems().list().iter().any(|p| p.key == "tools:acme")
+        })
+        .await;
+        let before = mise_fetches(&rig).len();
+        let reply = if switch == "global" {
+            api.put(
+                "/api/settings",
+                &json!({"tools": {"mise": false}}).to_string(),
+            )
+            .await
+        } else {
+            api.put(
+                "/api/settings/workspaces/acme",
+                &json!({"tools": {"mise": false}}).to_string(),
+            )
+            .await
+        };
+        assert_eq!(reply.status, 200, "{switch}: {}", reply.body);
+        api.post("/api/workspaces/acme/stop", "").await;
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+        api.post("/api/workspaces/acme/start", "").await;
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+        eventually("the old problem ends", APPLY, || {
+            !host.problems().list().iter().any(|p| p.key == "tools:acme")
+        })
+        .await;
+        assert_eq!(mise_fetches(&rig).len(), before, "{switch}: no new fetch");
+    }
 }

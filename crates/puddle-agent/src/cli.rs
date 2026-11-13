@@ -2,9 +2,10 @@
 //! The command line: `puddle-agent` runs the agent, `puddle-agent --version` prints the version.
 //! `puddle-agent merge-file ...` applies a merged guest file for the boot hook
 //! ([`crate::merge_file`]). `puddle-agent connect <host> <port> [<name>]` is the ssh
-//! `ProxyCommand` ([`crate::connect`]).
+//! `ProxyCommand` ([`crate::connect`]). `puddle-agent mise-fetch <dir>` puts the pinned mise below
+//! `<dir>` ([`crate::mise`]).
 
-use crate::{connect, merge_file};
+use crate::{connect, merge_file, mise};
 
 /// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +18,8 @@ pub enum Command {
     MergeFile(merge_file::Request),
     /// Carry stdin and stdout to a destination through the proxy (the ssh `ProxyCommand`).
     Connect(connect::Request),
+    /// Download the pinned mise below a folder.
+    MiseFetch(mise::Request),
     /// Anything else: print this usage error, exit 2.
     Usage(String),
 }
@@ -36,6 +39,9 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Command {
         }
         [first, rest @ ..] if first.as_ref() == "merge-file" => {
             merge_file::Request::parse(rest).map_or_else(Command::Usage, Command::MergeFile)
+        }
+        [first, rest @ ..] if first.as_ref() == "mise-fetch" => {
+            mise::Request::parse(rest).map_or_else(Command::Usage, Command::MiseFetch)
         }
         [first, ..] => Command::Usage(format!(
             "unknown argument {:?}\n{USAGE}",

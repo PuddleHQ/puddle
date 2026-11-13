@@ -458,3 +458,58 @@ async fn every_set_has_a_colour_and_your_own_can_be_chosen_and_changed() {
     }
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn mise_hosts_follow_the_two_switches() {
+    let api = start().await;
+    for name in ["tools", "plain"] {
+        let reply = api
+            .send(
+                "POST",
+                "/api/workspaces",
+                Some(&json!({"name": name, "repositories": [{"url": "https://github.com/acme/api.git"}]})),
+            )
+            .await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+    }
+    // On by default: both workspaces may reach mise's two hosts, and nothing a tool reaches.
+    for name in ["tools", "plain"] {
+        assert!(decide(&api, name, "mise.jdx.dev").is_allow(), "{name}");
+        assert!(
+            decide(&api, name, "mise-versions.jdx.dev").is_allow(),
+            "{name}"
+        );
+        assert!(!decide(&api, name, "nodejs.org").is_allow(), "{name}");
+    }
+    let list = api.get("/api/rule-sets").await.json();
+    assert!(
+        list["system_managed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["reason"] == "mise" && h["workspace"] == "tools")
+    );
+    // The workspace's own switch drops it for that workspace only.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings/workspaces/plain",
+            Some(&json!({"tools": {"mise": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!decide(&api, "plain", "mise.jdx.dev").is_allow());
+    assert!(decide(&api, "tools", "mise.jdx.dev").is_allow());
+    // The global switch drops it everywhere.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!decide(&api, "tools", "mise.jdx.dev").is_allow());
+    assert!(!decide(&api, "tools", "mise-versions.jdx.dev").is_allow());
+    api.running.shutdown().await;
+}

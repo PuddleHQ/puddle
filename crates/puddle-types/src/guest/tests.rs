@@ -111,7 +111,9 @@ fn guest_file_defaults_and_mode_check() {
 #[test]
 fn the_build_time_path_check_agrees_with_the_runtime_one() {
     let long = format!("/{}", "a".repeat(4096));
+    let longest = format!("/{}", "a".repeat(4095));
     let samples = [
+        &longest,
         "/",
         "/a",
         "/a/b",
@@ -135,6 +137,7 @@ fn the_build_time_path_check_agrees_with_the_runtime_one() {
         "/a/b/c/",
         &long,
     ];
+    assert!(is_valid_path(&longest));
     for sample in samples {
         assert_eq!(
             is_valid_path(sample),

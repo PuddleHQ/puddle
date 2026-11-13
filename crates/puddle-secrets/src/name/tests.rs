@@ -59,7 +59,9 @@ fn error_names_the_kind() {
 #[test]
 fn the_build_time_host_check_agrees_with_the_runtime_one() {
     let long = "a".repeat(257);
+    let longest = "a".repeat(256);
     let samples = [
+        &longest,
         "github.com",
         "dev.azure.com",
         "host:8443",
@@ -72,6 +74,7 @@ fn the_build_time_host_check_agrees_with_the_runtime_one() {
         "a_b",
         &long,
     ];
+    assert!(is_valid_host(&longest));
     for sample in samples {
         assert_eq!(
             is_valid_host(sample),

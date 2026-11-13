@@ -461,6 +461,42 @@ async fn read_request<S: AsyncRead + Unpin>(
 // ---------------------------------------------------------------------------------------------
 // The injector.
 
+/// A server that records the bytes it receives and answers nothing.
+pub(crate) struct RawServer {
+    pub(crate) addr: SocketAddr,
+    received: Arc<Mutex<Vec<u8>>>,
+}
+
+impl RawServer {
+    pub(crate) async fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = received.clone();
+        tokio::spawn(async move {
+            while let Ok((mut conn, _)) = listener.accept().await {
+                let sink = sink.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    while let Ok(n) = conn.read(&mut buf).await {
+                        if n == 0 {
+                            break;
+                        }
+                        sink.lock()
+                            .unwrap()
+                            .extend_from_slice(buf.get(..n).unwrap_or_default());
+                    }
+                });
+            }
+        });
+        Self { addr, received }
+    }
+
+    pub(crate) fn received(&self) -> Vec<u8> {
+        self.received.lock().unwrap().clone()
+    }
+}
+
 /// An injector with a script that records what it was asked.
 pub(crate) struct TestInjector {
     script: Box<dyn Fn(&RequestView<'_>) -> InjectDecision + Send + Sync>,
@@ -638,6 +674,8 @@ pub(crate) struct RigBuilder {
     /// Git over SSH for the bound names (off by default).
     pub(crate) git_ssh: Option<puddle_proxy::GitSsh>,
     pub(crate) git_ssh_keys: Option<Arc<puddle_proxy::GitSshHostKeys>>,
+    /// The hosts of `box`'s Git credentials (the bound names unless a test sets them).
+    pub(crate) git_ssh_hosts: Option<Vec<&'static str>>,
     /// The warning about a credential Puddle did not add that `box` has (on by default).
     pub(crate) foreign_warning: Option<Arc<puddle_proxy::ForeignCredentialWarning>>,
     /// Where the proxy's events go.
@@ -662,6 +700,7 @@ impl RigBuilder {
             request_rules: puddle_proxy::RequestRules::default(),
             git_ssh: None,
             git_ssh_keys: None,
+            git_ssh_hosts: None,
             foreign_warning: None,
             sink: Arc::new(puddle_types::CollectingSink::default()),
         }
@@ -763,6 +802,12 @@ impl RigBuilder {
         self
     }
 
+    /// Makes `hosts`, not the bound names, the hosts of `box`'s Git credentials.
+    pub(crate) fn git_ssh_hosts(mut self, hosts: Vec<&'static str>) -> Self {
+        self.git_ssh_hosts = Some(hosts);
+        self
+    }
+
     pub(crate) fn bound(mut self, bound: Vec<&'static str>) -> Self {
         self.bound = bound;
         self
@@ -809,7 +854,16 @@ impl RigBuilder {
         .with_stand_ins(self.stand_ins.0)
         .with_interception(self.interception.clone())
         .with_request_rules(self.request_rules)
-        .with_git_ssh_hosts(TerminationSet::parse(self.bound.iter().copied()).unwrap());
+        .with_git_ssh_hosts(
+            TerminationSet::parse(
+                self.git_ssh_hosts
+                    .as_ref()
+                    .unwrap_or(&self.bound)
+                    .iter()
+                    .copied(),
+            )
+            .unwrap(),
+        );
         if let Some(exchanges) = self.exchanges {
             termination = termination.with_exchanges(exchanges);
         }
@@ -1059,15 +1113,28 @@ impl Guest {
 
     /// Opens a `CONNECT authority` tunnel; the status line and the tunnel's stream.
     pub(crate) async fn connect_to(&mut self, authority: &str) -> (u16, BufReader<StreamHandle>) {
+        self.connect_with(authority, &[]).await
+    }
+
+    /// [`Self::connect_to`] with `headers` (whole lines without the line end) on the `CONNECT`.
+    pub(crate) async fn connect_with(
+        &mut self,
+        authority: &str,
+        headers: &[&str],
+    ) -> (u16, BufReader<StreamHandle>) {
         let mut stream = self.open_stream().await;
-        let origin = if self.in_container {
+        let mut extra = if self.in_container {
             format!("{ORIGIN_HEADER}: {CONTAINER}\r\n")
         } else {
             String::new()
         };
+        for header in headers {
+            extra.push_str(header);
+            extra.push_str("\r\n");
+        }
         stream
             .write_all(
-                format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n{origin}\r\n")
+                format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n{extra}\r\n")
                     .as_bytes(),
             )
             .await

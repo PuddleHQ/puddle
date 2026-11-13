@@ -71,6 +71,7 @@ fn a_field_named_by_a_dotted_path_is_named_at_that_path_only() {
         stand_in: crate::profile::StandInKind::Shaped,
         scope: Scope::Api,
         audience: Audience::Any,
+        keep: Keep::Stored,
         only_prefixed: false,
     }];
     let mut endpoint = CLAUDE.endpoints[0];

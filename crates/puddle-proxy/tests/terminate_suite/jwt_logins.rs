@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_logins::{
-    Audience, Endpoint, Field, LoginNotices, Logins, Method, Problem, Profile, Role, Scope,
+    Audience, Endpoint, Field, Keep, LoginNotices, Logins, Method, Problem, Profile, Role, Scope,
     StandInKind,
 };
 use puddle_proxy::{InjectDecision, StandIns};
@@ -41,6 +41,7 @@ static PROFILE: [Profile; 1] = [Profile {
             only_prefixed: false,
             scope: Scope::Api,
             audience: Audience::Any,
+            keep: Keep::Stored,
         }],
     }],
     api_hosts: &[API_HOST],

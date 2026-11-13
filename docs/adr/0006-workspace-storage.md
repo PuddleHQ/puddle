@@ -56,6 +56,11 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
    again). The name the user types is display text and names no volume, sandbox or folder, so a
    workspace made again under a deleted one's name finds none of its data. Workspaces made before
    ids were generated keep the id they have, which is the name they were created with.
+   A delete keeps the workspace's entry in the list, marked as being deleted, until the volume
+   and the cleanup are done. A start that finds a marked entry whose volume is gone finishes the
+   delete (the id is retired); one whose volume is still there lists the workspace again. Every
+   start also sweeps each retired id in the background: a sandbox, store rows, credential-store
+   values, the settings file and the browser editor's data still named by it are removed.
 2. **Code gets in by cloning inside the VM** through Puddle's proxy in the first milestone, with
    git HTTPS credentials injected by the proxy. **"Start from my Windows checkout"** is the first
    thing after it; the measurements showed the mechanism works (a read-only bind of the checkout +

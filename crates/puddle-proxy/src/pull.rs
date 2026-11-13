@@ -526,7 +526,7 @@ async fn relay(
     tracing::info!(host = %target.host, port = target.port, addr = ?out.addr, hop = ?out.hop, "image-pull connection");
     match path {
         None => {
-            tunnel(reader, out.stream, None, out.watch, None, None).await;
+            tunnel(reader.into(), out.stream, None, out.watch, None, None).await;
         }
         Some(path) => {
             forward(

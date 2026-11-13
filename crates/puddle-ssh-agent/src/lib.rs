@@ -33,6 +33,7 @@ mod git_hosts;
 mod identity;
 pub mod kex;
 mod list;
+mod parked;
 pub mod request;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

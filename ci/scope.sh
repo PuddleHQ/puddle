@@ -98,7 +98,7 @@ path_class() {
         .gitattributes | _typos.toml | .gitleaks.toml | deny.toml | about.toml | about.hbs | clippy.toml | \
         rustfmt.toml | ci/* | .github/workflows/* | .github/actions/*)
         echo always ;;
-    scripts/diff-coverage-exclusions.txt | scripts/coverage-baseline.json | scripts/standalone-allow.txt)
+    scripts/diff-coverage-exclusions.txt | scripts/diff-coverage-exclusions/*.txt | scripts/coverage-baseline.json | scripts/standalone-allow.txt)
         echo gate ;;
     scripts/* | ui/scripts/diff-coverage.ts | ui/scripts/coverage-ratchet.ts | crates/puddle-vm-tests/* | crates/puddle-api/openapi/* | crates/puddle-store/tests/data/repo-urls.json | \
         ui/src/lib/api/schema.d.ts | ui/package-lock.json | ui/THIRD-PARTY-NOTICES.txt)

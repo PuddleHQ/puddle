@@ -42,7 +42,7 @@ vm_unrelated_only() {
 # 1. Replay of the merged pull requests: class and outputs as recorded, and an independent check
 # that any pull request with an always-run path got a full run.
 always_re='^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|\.cargo/|\.config/|\.githooks/|\.github/workflows/|ci/|scripts/|crates/puddle-vm-tests/|crates/puddle-api/openapi/|ui/package-lock\.json|ui/src/lib/api/schema\.d\.ts|.*/Cargo\.toml$)'
-data_re='^scripts/(diff-coverage-exclusions\.txt|coverage-baseline\.json|standalone-allow\.txt)$'
+data_re='^scripts/(diff-coverage-exclusions\.txt|diff-coverage-exclusions/[^/]+\.txt|coverage-baseline\.json|standalone-allow\.txt)$'
 replayed=0
 declare -A seen_class=()
 pr="" exp="" paths=()
@@ -107,6 +107,7 @@ want "299 docs files" "docs false false false false" "${many[@]}"
 want "docs only" "docs false false false false" docs/STANDARDS.md README.md .github/dependabot.yml
 want "ui only" "ui false false true false" ui/src/lib/a.ts ui/e2e/b.spec.ts docs/x.md
 want "ui and gate data" "mixed true false true false" ui/src/a.ts scripts/diff-coverage-exclusions.txt
+want "ui and a crate's exclusions" "mixed true false true false" ui/src/a.ts scripts/diff-coverage-exclusions/puddle-api.txt
 want "gate data only" "rust true false true false" scripts/coverage-baseline.json
 want "ui fixtures" "mixed true true true false" ui/e2e/fixtures/workspaces.json
 want "vm crate" "rust true true true true" crates/puddle-compute-msb/src/lib.rs

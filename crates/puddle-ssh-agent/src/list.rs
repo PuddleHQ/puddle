@@ -12,7 +12,7 @@ use std::time::Duration;
 use crate::endpoint::AgentEndpoint;
 use crate::error::AgentError;
 use crate::identity::Identity;
-use crate::{request, wire};
+use crate::{parked, request, wire};
 
 /// What a request that lost its thread reports.
 const THREAD_ENDED: &str = "the request thread ended without an answer";
@@ -29,7 +29,8 @@ type Exchange<T> = Box<dyn FnOnce(&mut dyn Stream) -> Result<T, AgentError> + Se
 ///
 /// An agent that asks the user before it answers (1Password, Bitwarden) may wait for them past any
 /// limit; the caller then gets [`AgentError::TimedOut`] and the request thread ends when the agent
-/// answers or closes.
+/// answers or closes. On Windows a read on the pipe cannot be cancelled, so while that thread is
+/// parked no further request is sent to the same pipe: each gets [`AgentError::TimedOut`] at once.
 ///
 /// # Errors
 ///
@@ -70,13 +71,31 @@ fn within<T: Send + 'static>(
     limit: Duration,
     exchange: Exchange<T>,
 ) -> Result<T, AgentError> {
+    // A pipe read cannot be cancelled (see `parked`); a Unix socket read ends at its own limit.
+    within_gated(endpoint, limit, exchange, cfg!(windows))
+}
+
+/// [`within`], where `one_parked_at_most` refuses to start a request at an endpoint whose earlier
+/// request is still parked in its read after its caller gave up.
+fn within_gated<T: Send + 'static>(
+    endpoint: &AgentEndpoint,
+    limit: Duration,
+    exchange: Exchange<T>,
+    one_parked_at_most: bool,
+) -> Result<T, AgentError> {
+    if one_parked_at_most && parked::is_parked(endpoint.path()) {
+        return Err(AgentError::TimedOut(limit));
+    }
     let (sender, receiver) = mpsc::channel();
     let endpoint = endpoint.clone();
+    let request = parked::Request::new(endpoint.path());
+    let thread_request = request.clone();
     let worker = thread::Builder::new()
         .name("ssh-agent-request".into())
         .spawn(move || {
             // The receiver is gone when the limit passed first; nobody wants the answer then.
             let _late = sender.send(ask(&endpoint, limit, exchange));
+            thread_request.finished();
         })
         .map_err(AgentError::Io)?;
     match receiver.recv_timeout(limit) {
@@ -85,7 +104,10 @@ fn within<T: Send + 'static>(
             let _joined = worker.join();
             result
         }
-        Err(Timeout) => Err(AgentError::TimedOut(limit)),
+        Err(Timeout) => {
+            request.abandoned();
+            Err(AgentError::TimedOut(limit))
+        }
         // The thread ended without an answer: it panicked.
         Err(Disconnected) => Err(AgentError::Io(io::Error::other(THREAD_ENDED))),
     }
@@ -145,6 +167,7 @@ fn as_timeout(error: AgentError, limit: Duration) -> AgentError {
 #[cfg(windows)]
 fn ask_pipe<T>(
     endpoint: &AgentEndpoint,
+    // Nothing here can enforce it; `within_gated` bounds the cost of a read that never ends.
     _limit: Duration,
     exchange: Exchange<T>,
 ) -> Result<T, AgentError> {
@@ -163,3 +186,6 @@ compile_error!("puddle-ssh-agent supports unix and windows hosts");
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(all(test, windows))]
+mod windows_tests;

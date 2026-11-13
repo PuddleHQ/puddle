@@ -1,0 +1,5 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed, under crates/puddle-types/.
+# Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
+# path glob here starts with crates/puddle-types/; the gate refuses another crate's entry, so two pull requests that
+# touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-types/src/connection.rs | Self::Workspace => "workspace", | the line only changed in the sandbox to workspace rename; it ran in no test before either (log line, failure path or a rustfmt re-wrap of one)

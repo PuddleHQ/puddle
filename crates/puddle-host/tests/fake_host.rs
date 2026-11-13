@@ -8348,6 +8348,7 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     host.shutdown().await;
 }
 
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_changed_environment_is_applied_to_the_stopped_sandbox_at_the_next_start_and_keeps_the_root_disk()
  {

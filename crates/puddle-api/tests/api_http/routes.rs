@@ -25,6 +25,7 @@ async fn health_names_the_versions() {
 #[tokio::test]
 async fn a_pending_request_is_listed_approved_and_then_allowed() {
     let api = start().await;
+    api.own("box");
     let id = api.request("box", "api.example.com");
     let other = api.request("other", "example.org");
 
@@ -182,6 +183,7 @@ async fn bad_decisions_are_refused_without_changing_anything() {
 #[tokio::test]
 async fn rules_are_created_listed_changed_and_deleted() {
     let api = start().await;
+    api.own("box");
     let open = api.request("box", "registry.npmjs.org");
     let reply = api
         .send(
@@ -612,6 +614,7 @@ async fn local_destinations_name_the_toggle_that_blocks_their_approval() {
 async fn a_company_network_destination_names_its_toggle_and_only_while_it_is_off() {
     let signals = puddle_netpolicy::StaticSignals::new().with_private_access_client();
     let api = start_with_company_signals(Arc::new(signals)).await;
+    api.own("box");
     let company = api.request("box", "100.64.3.7");
     let private = api.request("box", "10.0.0.5");
     let one = |id: i64| {

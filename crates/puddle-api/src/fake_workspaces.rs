@@ -740,7 +740,7 @@ impl WorkspaceService for FakeWorkspaces {
                         new.name
                     )));
                 }
-                git.claim(&id)?;
+                git.claim(&id, new.owner)?;
                 state.entries.insert(
                     id,
                     Entry {

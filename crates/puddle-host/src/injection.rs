@@ -539,7 +539,7 @@ impl Injection {
         let rows = self
             .inputs
             .store
-            .request_rules(Some(workspace))
+            .request_rules_for(workspace)
             .map_err(|e| format!("cannot read the rules on method and path: {e}"))?;
         let mut rules = Vec::with_capacity(rows.len());
         for row in rows {

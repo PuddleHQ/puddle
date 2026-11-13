@@ -318,15 +318,26 @@ impl Store {
     }
 
     /// Every rule of every user, including expired ones the sweeper hasn't removed yet, and the
-    /// entries of the rule sets users made (scope [`Scope::Set`]).
+    /// entries of the rule sets users made (scope [`Scope::Set`]). For the install's own jobs
+    /// (backups, checks); what a user is shown comes from [`Store::rules`].
     #[must_use]
-    pub fn rules(&self) -> Vec<Rule> {
+    pub fn rules_every_user(&self) -> Vec<Rule> {
         self.snapshot().rules().to_vec()
     }
 
-    /// [`Store::rules`] of one user.
+    /// Whose rule `id` is, or `None` when there is no such rule.
     #[must_use]
-    pub fn rules_of(&self, user: UserId) -> Vec<Rule> {
+    pub fn rule_owner(&self, id: RuleId) -> Option<UserId> {
+        self.snapshot()
+            .rules()
+            .iter()
+            .find(|rule| rule.id == id)
+            .map(|rule| rule.user)
+    }
+
+    /// The rules of `user`, as [`Store::rules_every_user`] lists them.
+    #[must_use]
+    pub fn rules(&self, user: UserId) -> Vec<Rule> {
         self.snapshot()
             .rules()
             .iter()
@@ -747,44 +758,86 @@ impl Store {
         load_pending(&lock(&self.conn), id)
     }
 
-    /// Open (`requested`) rows, of one workspace or all, most recent first.
+    /// Open (`requested`) rows of every user's workspaces, of one workspace or all, most recent
+    /// first. For the install's own jobs; what a user is shown comes from [`Store::open_pending`].
+    ///
+    /// # Errors
+    /// A database error, or [`StoreError::Corrupt`].
+    pub fn open_pending_every_user(
+        &self,
+        workspace: Option<&WorkspaceId>,
+    ) -> Result<Vec<PendingRow>, StoreError> {
+        self.open_pending_where(None, workspace)
+    }
+
+    /// Open (`requested`) rows of `user`'s workspaces, of one of them or all, most recent first.
+    /// A workspace with no recorded user is nobody's, so its rows are in no user's list.
     ///
     /// # Errors
     /// A database error, or [`StoreError::Corrupt`].
     pub fn open_pending(
         &self,
+        user: UserId,
+        workspace: Option<&WorkspaceId>,
+    ) -> Result<Vec<PendingRow>, StoreError> {
+        self.open_pending_where(Some(user), workspace)
+    }
+
+    fn open_pending_where(
+        &self,
+        user: Option<UserId>,
         workspace: Option<&WorkspaceId>,
     ) -> Result<Vec<PendingRow>, StoreError> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(&format!(
             "SELECT {PENDING_COLUMNS} FROM pending
              WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1)
+               AND (?2 IS NULL OR workspace_id IN
+                    (SELECT workspace_id FROM workspace_owners WHERE user_id = ?2))
              ORDER BY last_seen DESC, id DESC"
         ))?;
-        let rows = stmt.query_map([workspace.map(WorkspaceId::as_str)], raw_pending)?;
+        let rows = stmt.query_map(
+            params![workspace.map(WorkspaceId::as_str), user.map(UserId::get)],
+            raw_pending,
+        )?;
         rows.map(|raw| pending_from_raw(&raw?)).collect()
     }
 
-    /// Open rows grouped by registrable domain for the inbox (R-18), most recent group first.
-    /// Grouping is for display only and decides nothing.
+    /// [`Store::inbox`] over every user's workspaces, for the install's own jobs.
     ///
     /// # Errors
     /// As [`Store::open_pending`].
-    pub fn inbox(&self) -> Result<Vec<InboxGroup>, StoreError> {
-        let mut groups: Vec<InboxGroup> = Vec::new();
-        for row in self.open_pending(None)? {
-            let domain = registrable_domain(&row.host);
-            match groups.iter_mut().find(|g| g.registrable_domain == domain) {
-                Some(group) => group.rows.push(row),
-                None => groups.push(InboxGroup {
-                    registrable_domain: domain,
-                    rows: vec![row],
-                }),
-            }
-        }
-        Ok(groups)
+    pub fn inbox_every_user(&self) -> Result<Vec<InboxGroup>, StoreError> {
+        Ok(group_by_domain(self.open_pending_every_user(None)?))
     }
 
+    /// The open rows of `user`'s workspaces grouped by registrable domain for the inbox (R-18),
+    /// most recent group first. Grouping is for display only and decides nothing.
+    ///
+    /// # Errors
+    /// As [`Store::open_pending`].
+    pub fn inbox(&self, user: UserId) -> Result<Vec<InboxGroup>, StoreError> {
+        Ok(group_by_domain(self.open_pending(user, None)?))
+    }
+}
+
+/// Open rows, most recent first, grouped by registrable domain in that order.
+fn group_by_domain(rows: Vec<PendingRow>) -> Vec<InboxGroup> {
+    let mut groups: Vec<InboxGroup> = Vec::new();
+    for row in rows {
+        let domain = registrable_domain(&row.host);
+        match groups.iter_mut().find(|g| g.registrable_domain == domain) {
+            Some(group) => group.rows.push(row),
+            None => groups.push(InboxGroup {
+                registrable_domain: domain,
+                rows: vec![row],
+            }),
+        }
+    }
+    groups
+}
+
+impl Store {
     /// Writes a `connection` record (R-24), subject to the per-workspace limit (R-26).
     ///
     /// # Errors
@@ -1177,7 +1230,7 @@ impl Store {
     ///
     /// # Errors
     /// A database error.
-    pub fn audit_query(
+    pub fn audit_query_every_user(
         &self,
         filter: &AuditFilter,
         cursor: AuditCursor,
@@ -1190,6 +1243,24 @@ impl Store {
             Ok((row.get(0)?, row.get(1)?))
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// [`Store::audit_query_every_user`] kept to `user`'s records, whatever `filter.user` says.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn audit_query(
+        &self,
+        user: UserId,
+        filter: &AuditFilter,
+        cursor: AuditCursor,
+        limit: u32,
+    ) -> Result<Vec<(i64, String)>, StoreError> {
+        let filter = AuditFilter {
+            user: Some(user),
+            ..filter.clone()
+        };
+        self.audit_query_every_user(&filter, cursor, limit)
     }
 
     /// Remembers `name` as the current name of `workspace`; audit records written from now on

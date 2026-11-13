@@ -1612,7 +1612,9 @@ export interface paths {
         put?: never;
         /**
          * Never decrypts a learned host again, in this workspace or in every workspace: the host joins
-         *     that never-decrypt list and leaves the learned list, history included.
+         *     that never-decrypt list and leaves the learned list, history included. Every workspace's list
+         *     is the install's, so `global` is for the owner alone, as `PUT /api/interception/never-decrypt`
+         *     is.
          */
         post: operations["make_permanent"];
         delete?: never;
@@ -13248,7 +13250,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description forbidden origin */
+            /** @description `global` and the caller is not the owner */
             403: {
                 headers: {
                     [name: string]: unknown;

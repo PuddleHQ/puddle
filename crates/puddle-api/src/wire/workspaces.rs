@@ -317,10 +317,12 @@ impl NewWorkspaceRequest {
             .collect()
     }
 
-    /// The checked request; `identity_exists` says whether an identity id names one, and
+    /// The checked request for a workspace of `owner`; `identity_exists` says whether an identity
+    /// id names one, and
     /// `locals` holds what the service found at each [`NewWorkspaceRequest::local_paths`].
     pub(crate) fn into_new(
         self,
+        owner: puddle_store::UserId,
         identity_exists: impl Fn(puddle_store::IdentityId) -> bool,
         locals: &std::collections::BTreeMap<String, Result<domain::LocalSource, String>>,
     ) -> Result<domain::NewWorkspace, ApiError> {
@@ -362,6 +364,7 @@ impl NewWorkspaceRequest {
             .map_err(|e| ApiError::invalid(e.to_string()))?;
         let name = domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)?;
         Ok(domain::NewWorkspace {
+            owner,
             name,
             repositories,
             start_folder,

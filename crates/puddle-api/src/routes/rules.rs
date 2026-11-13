@@ -28,7 +28,7 @@ pub(crate) async fn list_rules(
     Ok(Json(RuleList {
         rules: state
             .store
-            .rules_of(principal.user)
+            .rules(principal.user)
             .into_iter()
             .map(Rule::from_store)
             .collect::<Result<_, _>>()?,

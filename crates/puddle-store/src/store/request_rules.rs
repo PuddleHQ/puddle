@@ -165,35 +165,70 @@ pub(super) fn delete_workspace_rows(
 }
 
 impl Store {
-    /// Every rule on method and path of every user, or the ones that apply to `workspace` (the
-    /// global ones of its user and its own), in id order.
+    /// Every rule on method and path of every user, in id order. For the install's own jobs; what
+    /// a user is shown comes from [`Store::request_rules`].
+    ///
+    /// # Errors
+    /// A database error, or a stored row that no longer reads.
+    pub fn request_rules_every_user(&self) -> Result<Vec<RequestRule>, StoreError> {
+        list(&lock(&self.conn), "", &[])
+    }
+
+    /// The rules on method and path that apply to `workspace` (the global ones of its user and
+    /// its own), in id order: what its requests are checked against.
+    ///
+    /// # Errors
+    /// A database error, or a stored row that no longer reads.
+    pub fn request_rules_for(
+        &self,
+        workspace: &WorkspaceId,
+    ) -> Result<Vec<RequestRule>, StoreError> {
+        let conn = lock(&self.conn);
+        let user = users::owner_in(&conn, workspace)?;
+        list(
+            &conn,
+            "WHERE (workspace_id IS NULL AND user_id = ?2) OR workspace_id = ?1",
+            &[&workspace.as_str(), &user.get()],
+        )
+    }
+
+    /// The rules on method and path of `user`, in id order: all of them, global and of their
+    /// workspaces, or with `workspace` the ones that apply to it. A workspace that is not
+    /// `user`'s has none of theirs.
     ///
     /// # Errors
     /// A database error, or a stored row that no longer reads.
     pub fn request_rules(
         &self,
+        user: UserId,
         workspace: Option<&WorkspaceId>,
     ) -> Result<Vec<RequestRule>, StoreError> {
         let conn = lock(&self.conn);
         match workspace {
-            None => list(&conn, "", &[]),
-            Some(name) => {
-                let user = users::owner_in(&conn, name)?;
-                list(
-                    &conn,
-                    "WHERE (workspace_id IS NULL AND user_id = ?2) OR workspace_id = ?1",
-                    &[&name.as_str(), &user.get()],
-                )
-            }
+            None => list(&conn, "WHERE user_id = ?1", &[&user.get()]),
+            Some(workspace) => list(
+                &conn,
+                "WHERE user_id = ?1 AND (workspace_id IS NULL OR workspace_id = ?2)
+                   AND EXISTS (SELECT 1 FROM workspace_owners
+                               WHERE workspace_id = ?2 AND user_id = ?1)",
+                &[&user.get(), &workspace.as_str()],
+            ),
         }
     }
 
-    /// The rules on method and path of `user`, global and of their workspaces, in id order.
+    /// Whose rule on method and path `id` is, or `None` when there is no such rule.
     ///
     /// # Errors
-    /// A database error, or a stored row that no longer reads.
-    pub fn request_rules_of(&self, user: UserId) -> Result<Vec<RequestRule>, StoreError> {
-        list(&lock(&self.conn), "WHERE user_id = ?1", &[&user.get()])
+    /// A database error.
+    pub fn request_rule_owner(&self, id: i64) -> Result<Option<UserId>, StoreError> {
+        let user: Option<i64> = lock(&self.conn)
+            .query_row(
+                "SELECT user_id FROM request_rules WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(user.map(UserId::from_stored))
     }
 
     /// Makes a rule of the owner (see [`Store::add_request_rule_as`]) and tells running

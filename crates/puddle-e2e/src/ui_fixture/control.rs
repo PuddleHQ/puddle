@@ -23,7 +23,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use puddle_types::{Event, EventSink};
+use puddle_types::Event;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -120,8 +120,10 @@ async fn state(State(fixture): State<Arc<Fixture>>) -> Json<ControlState> {
 }
 
 async fn emit(State(fixture): State<Arc<Fixture>>, Json(event): Json<Event>) -> Response {
-    fixture.event_sink().await.emit(event);
-    StatusCode::NO_CONTENT.into_response()
+    match fixture.emit(event).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => failed(err),
+    }
 }
 
 async fn advance(State(fixture): State<Arc<Fixture>>, Json(body): Json<Advance>) -> Response {

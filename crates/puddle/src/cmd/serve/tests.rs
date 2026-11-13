@@ -215,7 +215,6 @@ fn config_for(env: &[(&'static str, &'static str)]) -> Result<HostConfig, String
 fn remote_serving_off_leaves_the_api_settings_as_they_were() {
     let config = config_for(&[]).unwrap();
     assert!(config.api.remote.is_none());
-    assert!(config.api.network_listener.is_none());
     // Off with the rest set: still nothing.
     let config = config_for(&[("PUDDLE_PUBLIC_HOSTS", "puddle.example.org")]).unwrap();
     assert!(config.api.remote.is_none());
@@ -231,10 +230,13 @@ fn the_remote_options_reach_the_host_configuration() {
     ])
     .unwrap();
     let remote = config.api.remote.unwrap();
-    assert_eq!(remote.public_hosts()[0].authority(), "puddle.example.org");
-    let listener = config.api.network_listener.unwrap();
-    assert_eq!(listener.port, options::DEFAULT_LISTEN_PORT);
-    assert_eq!(listener.interface.to_string(), "192.168.1.10");
+    assert_eq!(
+        remote.serving.public_hosts()[0].authority(),
+        "puddle.example.org"
+    );
+    let listener = remote.network.unwrap();
+    assert_eq!(listener.port(), options::DEFAULT_LISTEN_PORT);
+    assert_eq!(listener.interface().to_string(), "192.168.1.10");
 }
 
 #[test]

@@ -13,8 +13,8 @@ use std::ffi::OsString;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
-use puddle_api::{PublicHost, RemoteServing};
-use puddle_host::NetworkListenerSettings;
+use puddle_api::{NetworkEndpoint, PublicHost, RemoteServing};
+use puddle_host::RemoteSettings;
 use puddle_types::DomainName;
 
 use puddle_log::ScopedFilter;
@@ -450,28 +450,21 @@ impl Effective {
             Some((Value::Port(port), _)) => Some(*port),
             _ => None,
         };
-        let listener = match interface {
-            Some(interface) if proxies.is_empty() => {
-                return Err(fail(format!(
-                    "the network listener on {interface} needs at least one proxy address that may connect (`allowed_proxies`)"
-                )));
+        let network = if let Some(interface) = interface {
+            Some(
+                NetworkEndpoint::new(interface, port.unwrap_or(DEFAULT_LISTEN_PORT), proxies)
+                    .map_err(|e| fail(e.to_string()))?,
+            )
+        } else {
+            if port.is_some() || !proxies.is_empty() {
+                return Err(fail(
+                    "`listen_port` and `allowed_proxies` belong to the network listener; set `listen_interface` too or remove them"
+                        .to_owned(),
+                ));
             }
-            Some(interface) => Some(NetworkListenerSettings {
-                interface,
-                port: port.unwrap_or(DEFAULT_LISTEN_PORT),
-                allowed_proxies: proxies,
-            }),
-            None => {
-                if port.is_some() || !proxies.is_empty() {
-                    return Err(fail(
-                        "`listen_port` and `allowed_proxies` belong to the network listener; set `listen_interface` too or remove them"
-                            .to_owned(),
-                    ));
-                }
-                None
-            }
+            None
         };
-        Ok(Some(RemoteSettings { serving, listener }))
+        Ok(Some(RemoteSettings { serving, network }))
     }
 
     /// The log filter, `info` when none was set.
@@ -501,15 +494,6 @@ impl Effective {
 
 /// The port of the network listener when `listen_port` is not set.
 pub const DEFAULT_LISTEN_PORT: u16 = 8443;
-
-/// Remote serving as the options set it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemoteSettings {
-    /// The public names, and the base domain of workspace web apps.
-    pub serving: RemoteServing,
-    /// The listener for a reverse proxy on another machine, when `listen_interface` is set.
-    pub listener: Option<NetworkListenerSettings>,
-}
 
 /// The options given as flags, by option key.
 pub type Flags = BTreeMap<&'static str, Value>;

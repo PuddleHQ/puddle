@@ -59,9 +59,10 @@ pub use schema::SCHEMA_VERSION;
 pub use shell_init::{MAX_SHELL_INIT_BYTES, ShellInit, ShellInitText};
 pub use store::{
     AuditCursor, AuditFilter, DEFAULT_LEARNED_CAP, DEFAULT_LEARNED_TTL_SECS, InterceptionSettings,
-    LearnedLimits, LearnedRow, Limits, MAX_REQUEST_RULES, NewRequestRule, NewWorkspaceOp,
-    PinnedPort, RequestRule, RuleSetEntryInfo, RuleSetInfo, Store, SweepReport, SystemHost,
-    SystemPlan, WorkspaceDeletion, WorkspaceInterception, WorkspaceOwners, parse_rule_set,
+    LearnedLimits, LearnedRow, Limits, MAX_REQUEST_RULES, MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS,
+    NewRequestRule, NewWorkspaceOp, PinnedPort, RequestRule, RuleSetEntryInfo, RuleSetInfo,
+    SshAgentHost, Store, SweepReport, SystemHost, SystemPlan, WorkspaceDeletion,
+    WorkspaceInterception, WorkspaceOwners, parse_rule_set,
 };
 pub use sweeper::{DEFAULT_SWEEP_PERIOD, SWEEP_PROBLEM, Sweeper};
 pub use users::{

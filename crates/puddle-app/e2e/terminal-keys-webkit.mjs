@@ -69,17 +69,30 @@ const chord = (...keys) =>
     ],
   });
 
-/** Copies `text` to the system clipboard as a user does: select it in a scratch field and press Ctrl+C. */
+/**
+ * Copies `text` to the system clipboard as a user does: select it in a scratch field and press Ctrl+C.
+ * The field's own `copy` event proves the keystroke landed in it: under Xvfb the window can still be
+ * taking focus, and a Ctrl+C that reaches the probe's input is cancelled by the page and copies nothing.
+ */
 const copy = async (text) => {
-  await script(`
-    const field = document.createElement("textarea");
-    field.id = "scratch";
-    field.value = ${JSON.stringify(text)};
-    document.body.append(field);
-    field.focus();
-    field.select();`);
-  await chord(KEY.ctrl, "c");
-  await script(`document.getElementById("scratch").remove(); document.getElementById("input").focus();`);
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await script(`
+      document.getElementById("scratch")?.remove();
+      const field = document.createElement("textarea");
+      field.id = "scratch";
+      field.value = ${JSON.stringify(text)};
+      window.copied = false;
+      field.addEventListener("copy", () => { window.copied = true; });
+      document.body.append(field);
+      field.focus();
+      field.select();`);
+    await chord(KEY.ctrl, "c");
+    const landed = await until("the copy event", () => script("return window.copied"), 1_000).catch(() => false);
+    await script(`document.getElementById("scratch").remove(); document.getElementById("input").focus();`);
+    if (landed) return;
+    await sleep(500);
+  }
+  throw new Error("Ctrl+C never reached the scratch field, so nothing was copied");
 };
 
 async function until(what, probe, within = 15_000) {

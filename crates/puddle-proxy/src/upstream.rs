@@ -203,7 +203,7 @@ fn refusal(err: &ChainError, target: &Target) -> Refusal {
             "signing in to the company proxy failed; check the proxy credentials in Puddle",
         )
         .header("x-puddle-blocked-by", "upstream-auth"),
-        _ => Refusal::new(
+        ChainError::Unreachable { .. } => Refusal::new(
             "502 Bad Gateway",
             format!("could not connect to {host}:{port} (no route to it works)"),
         ),
@@ -214,7 +214,9 @@ fn refusal(err: &ChainError, target: &Target) -> Refusal {
         } => ConnectionOutcome::Timeout,
         ChainError::Unreachable { .. } => ConnectionOutcome::ConnectFailed,
         // The company proxy answered, or turned the sign-in down: it is the proxy's refusal.
-        _ => ConnectionOutcome::UpstreamRefused,
+        ChainError::Refused { .. }
+        | ChainError::AuthRequired { .. }
+        | ChainError::AuthFailed { .. } => ConnectionOutcome::UpstreamRefused,
     })
 }
 

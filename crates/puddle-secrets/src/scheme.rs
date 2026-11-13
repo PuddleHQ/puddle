@@ -4,7 +4,6 @@
 
 /// The `Authorization` scheme a token goes out under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum TokenScheme {
     /// `Authorization: Bearer <token>`.
     Bearer,

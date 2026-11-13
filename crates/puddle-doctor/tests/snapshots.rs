@@ -432,6 +432,25 @@ fn windows_runtime_version_mismatch() {
 }
 
 #[test]
+fn windows_runtime_digest_mismatch() {
+    let fake = Fake {
+        runtime: RuntimeState::Unusable(RuntimeError::Digest {
+            path: MSB.into(),
+            expected: "a".repeat(64),
+            found: "b".repeat(64),
+        }),
+        ..windows()
+    };
+    check(
+        "windows_runtime_digest_mismatch",
+        &fake,
+        CheckId::Runtime,
+        Some(Finding::RuntimeDigestMismatch),
+    );
+    assert_eq!((fake.launches.get(), fake.boots.get()), (0, 0));
+}
+
+#[test]
 fn windows_runtime_unreadable() {
     let fake = Fake {
         runtime: RuntimeState::Unusable(RuntimeError::Unreadable {
@@ -463,6 +482,24 @@ fn windows_runtime_permissions() {
         CheckId::Runtime,
         Some(Finding::RuntimePermissions),
     );
+}
+
+#[test]
+fn windows_runtime_dev_override_of_the_files_alone_says_the_files_differ() {
+    let fake = Fake {
+        runtime: RuntimeState::Ready {
+            version: EXPECTED.into(),
+            overridden: true,
+        },
+        ..windows()
+    };
+    let r = check(
+        "windows_runtime_files_overridden",
+        &fake,
+        CheckId::Runtime,
+        Some(Finding::RuntimeOverridden),
+    );
+    assert!(r.ok);
 }
 
 #[test]

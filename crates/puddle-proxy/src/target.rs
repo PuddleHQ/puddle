@@ -22,7 +22,7 @@ impl Target {
     pub(crate) fn host_header(&self) -> String {
         let host = match &self.host {
             Host::Ip(IpAddr::V6(ip)) => format!("[{ip}]"),
-            other => other.to_string(),
+            Host::Name(_) | Host::Ip(IpAddr::V4(_)) => self.host.to_string(),
         };
         if self.port == 80 {
             host

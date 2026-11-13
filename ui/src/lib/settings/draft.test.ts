@@ -9,9 +9,10 @@ import {
   setLayer,
   setServer,
   setToggle,
+  setTools,
   setUi,
 } from "./draft.ts";
-import type { GlobalView } from "./model.ts";
+import { bodyFrom, type GlobalView } from "./model.ts";
 
 describe("the draft", () => {
   it("is clean until a value differs from the stored one", () => {
@@ -22,7 +23,7 @@ describe("the draft", () => {
     expect(EMPTY_DRAFT.ui).toEqual({});
   });
 
-  it("keeps the four parts apart", () => {
+  it("keeps the five parts apart", () => {
     let d = setLayer(EMPTY_DRAFT, "memory", 4096, 8192);
     d = setToggle(d, "private", true, false);
     d = setServer(d, "auto_update", false, true);
@@ -31,6 +32,7 @@ describe("the draft", () => {
       layer: { memory: 4096 },
       toggles: { private: true },
       server: { auto_update: false },
+      tools: {},
       ui: { theme: "dark" },
     });
   });
@@ -53,6 +55,7 @@ describe("the change a save sends", () => {
       ui: fake.ui,
       unknown_fields: [],
       vscode_server: fake.vscode,
+      tools: fake.tools,
       workspace_defaults: fake.layer,
     };
   };
@@ -65,6 +68,17 @@ describe("the change a save sends", () => {
       private: true,
       metadata: null,
     });
+  });
+
+  it("sends the global mise switch only when it was changed, and putting it back is no change", () => {
+    const on = setTools(EMPTY_DRAFT, "mise", false, true);
+    expect(isDirty(on)).toBe(true);
+    expect(savePatch(view(), on).tools).toEqual({ mise: false });
+    expect(isDirty(setTools(on, "mise", true, true))).toBe(false);
+    expect(bodyFrom(view(), savePatch(view(), on)).tools).toEqual({
+      mise: false,
+    });
+    expect(bodyFrom(view()).tools).toEqual({ mise: null });
   });
 
   it("leaves the toggles out when none changed", () => {

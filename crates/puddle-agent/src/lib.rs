@@ -33,6 +33,7 @@
 //!
 //! Unsafe code exists only in the Linux `vsock` module, which says why; elsewhere it is forbidden.
 #![cfg_attr(not(target_os = "linux"), forbid(unsafe_code))]
+#![warn(clippy::wildcard_enum_match_arm)]
 
 pub mod account;
 pub mod bridge;
@@ -57,6 +58,8 @@ pub mod oom;
 pub mod origin;
 pub mod ports;
 pub mod serve;
+#[cfg(unix)]
+pub mod ssh_agent;
 pub mod upstream;
 #[cfg(target_os = "linux")]
 mod vsock;
@@ -69,7 +72,7 @@ use puddle_agent_proto::AgentMessage;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
-pub use config::Config;
+pub use config::{Config, SshAgentConfig};
 
 /// Reports waiting for the control stream.
 const REPORT_QUEUE: usize = 64;
@@ -152,6 +155,10 @@ impl Agent {
         }
         let capture =
             start_capture(&config, stand_ins.as_ref(), &upstream, &tx, &mut tasks).await?;
+        #[cfg(unix)]
+        if let Some(socket) = config.ssh_agent.clone() {
+            tasks.spawn(ssh_agent::serve(socket, Arc::clone(&upstream)));
+        }
         tasks.spawn(control::run(upstream, rx));
         if let Some(watch) = config.ports.clone() {
             tasks.spawn(ports::watch(watch, bound.reserved_ports(), tx.clone()));

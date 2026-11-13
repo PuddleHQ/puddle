@@ -16,17 +16,16 @@ pub const LIBKRUNFW_LINUX_VERSION: &str = "libkrunfw-linux-version";
 /// tag's Linux firmware comes from, instead of upstream's.
 pub const LIBKRUNFW_LINUX_TAG: &str = "libkrunfw-linux-tag";
 
-/// The value of the first line `<tag> <name> <value>`: whitespace-separated fields, so comment
-/// lines (first field `#`) never match.
+// The reader is one file with `puddle-runtime`'s build script, which embeds the expected hashes
+// from the same list.
+#[path = "../../puddle-runtime/build/pin_list.rs"]
+mod pin_list;
+
+/// The value of the first line `<tag> <name> <value>` of `pins`: whitespace-separated fields, so
+/// comment lines never match.
 #[must_use]
 pub fn pinned<'a>(pins: &'a str, tag: &str, name: &str) -> Option<&'a str> {
-    pins.lines().find_map(|line| {
-        let mut fields = line.split_whitespace();
-        match (fields.next(), fields.next(), fields.next()) {
-            (Some(t), Some(n), Some(value)) if t == tag && n == name => Some(value),
-            _ => None,
-        }
-    })
+    pin_list::pinned(pins, tag, name)
 }
 
 /// The libkrunfw version `tag`'s Linux msb is built to look for (`libkrunfw.so.<version>`).

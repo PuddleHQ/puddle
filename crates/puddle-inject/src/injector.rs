@@ -421,7 +421,7 @@ impl Injector for GitInjector {
                 access: Access::Batch,
                 ..
             }) => Some(MAX_LFS_BATCH),
-            _ => None,
+            Classified::NotGit | Classified::Ambiguous(_) | Classified::Git(_) => None,
         }
     }
 }

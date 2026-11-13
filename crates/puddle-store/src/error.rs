@@ -130,6 +130,9 @@ pub enum StoreError {
     /// A rule on method and path was refused; the text says why.
     #[error("{0}")]
     RequestRuleInvalid(String),
+    /// A workspace has the SSH agent on for as many hosts as it may.
+    #[error("at most {0} hosts may use the SSH agent in one workspace")]
+    TooManySshAgentHosts(usize),
     /// No rule on method and path has this id.
     #[error("no rule on method and path {0}")]
     UnknownRequestRule(i64),

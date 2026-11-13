@@ -42,6 +42,7 @@ mod repository_hosts;
 mod request_rules;
 mod rule_sets;
 mod shell_init;
+mod ssh_agent;
 mod start_folder;
 mod workspaces;
 
@@ -99,6 +100,7 @@ pub use rule_sets::{
     SystemReason,
 };
 pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};
+pub use ssh_agent::{SshAgentHostRequest, SshAgentHostView, SshAgentView};
 pub use start_folder::{StartFolderRequest, StartFolderSet};
 
 pub use workspaces::{
@@ -1946,6 +1948,42 @@ pub struct VsCodeServer {
     pub auto_update: Option<bool>,
 }
 
+/// The global tool switches. Global only: no workspace value can override them.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GlobalTools {
+    /// Whether Puddle manages tools with mise in workspaces (default on). Off removes the whole
+    /// managed layer for every workspace and keeps every stored value.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub mise: Option<bool>,
+}
+
+/// One workspace's tool switches. `null` means Puddle's default (on). While the global switch
+/// (`GlobalTools::mise`) is off, they are kept but have no effect.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceTools {
+    /// Manage this workspace's tools with mise (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub mise: Option<bool>,
+    /// Let mise run the repository's own code in this workspace, that is trust its `mise.toml`
+    /// (default on).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub repo_code: Option<bool>,
+}
+
+impl From<&settings::WorkspaceTools> for WorkspaceTools {
+    fn from(t: &settings::WorkspaceTools) -> Self {
+        Self {
+            mise: t.mise,
+            repo_code: t.repo_code,
+        }
+    }
+}
+
 /// Which VS Code server browser VS Code runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -2495,6 +2533,8 @@ pub struct GlobalSettingsView {
     pub vscode_server: VsCodeServer,
     /// Preferences for Puddle's window.
     pub ui: UiPrefs,
+    /// The tool switches (global only).
+    pub tools: GlobalTools,
     /// The effective values for a workspace with no overrides.
     pub effective: EffectiveSettings,
     /// Fields in the stored document this Puddle doesn't know (written by a newer one); they
@@ -2515,6 +2555,9 @@ pub struct GlobalSettingsRequest {
     /// Preferences for Puddle's window.
     #[serde(default)]
     pub ui: UiPrefs,
+    /// The tool switches.
+    #[serde(default)]
+    pub tools: GlobalTools,
 }
 
 impl GlobalSettingsRequest {
@@ -2528,7 +2571,9 @@ impl GlobalSettingsRequest {
                     auto_update,
                 },
             ui,
+            tools: GlobalTools { mise },
         } = self;
+        global.tools.mise = mise;
         workspace_defaults.apply_to(&mut global.workspace_defaults)?;
         global.vscode_server.server = server.map(Into::into);
         global.vscode_server.telemetry = telemetry;
@@ -2548,6 +2593,9 @@ impl GlobalSettingsView {
                 auto_update: global.vscode_server.auto_update,
             },
             ui: (&global.ui).into(),
+            tools: GlobalTools {
+                mise: global.tools.mise,
+            },
             effective: settings::resolve(global, None).into(),
             unknown_fields: loaded.unknown_fields.clone(),
         }
@@ -2561,6 +2609,8 @@ pub struct WorkspaceSettingsView {
     pub workspace: WorkspaceId,
     /// Its overrides; `null` inherits.
     pub overrides: SettingsLayer,
+    /// Its own tool switches; `null` is the default.
+    pub tools: WorkspaceTools,
     /// What it gets.
     pub effective: EffectiveSettings,
     /// Unknown fields in its stored document (kept).
@@ -2574,6 +2624,9 @@ pub struct WorkspaceSettingsRequest {
     /// The overrides.
     #[serde(default)]
     pub overrides: SettingsLayer,
+    /// Its tool switches.
+    #[serde(default)]
+    pub tools: WorkspaceTools,
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -24,5 +24,6 @@ mod microsoft_server;
 mod oom;
 mod real_bridge;
 mod relay;
+mod ssh_agent;
 mod ssh_refusal;
 mod version;

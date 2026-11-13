@@ -36,11 +36,14 @@ fn ci_runtime() -> RuntimePair {
     RuntimePair::find_in(&settings().runtime_dir).expect("runtime pair")
 }
 
-/// The real probe with one fact fixed: the disk encryption of the machine the test runs on.
-/// Whether a CI runner's disk and swap are encrypted says nothing about the runtime, the
-/// test boot or the paths this test checks, and the hosted runners are not encrypted, so the
-/// "every check ok or info" bar below would depend on the runner image. The probe's own
-/// answer on the real machine is tested in `puddle-doctor`'s `system_probe` tests.
+/// The real probe with three facts of the machine the test runs on fixed: its disk encryption,
+/// its Azure CLI and its credential store. Whether a CI runner's disk and swap are encrypted
+/// says nothing about the runtime, the test boot or the paths this test checks, and the hosted
+/// runners are not encrypted, so the "every check ok or info" bar below would depend on the
+/// runner image. The same goes for `az`: the real one is a slow Python CLI that a cold, busy
+/// runner can take over the doctor's 10 s limit to answer, which made this test flake. The
+/// probe's own answers on the real machine are tested in `puddle-doctor`'s `system_probe`
+/// tests.
 ///
 /// The credential store is fixed the same way: a hosted runner is headless and has no Secret
 /// Service, so the real answer there is "not available" (a warning, by design) and says
@@ -104,8 +107,10 @@ impl Probe for EncryptedHost {
     fn ssh_agent(&self, limit: Duration) -> SshAgentFacts {
         self.0.ssh_agent(limit)
     }
-    fn az_cli(&self, limit: Duration) -> AzCliFacts {
-        self.0.az_cli(limit)
+    fn az_cli(&self, _limit: Duration) -> AzCliFacts {
+        AzCliFacts::Found {
+            version: "fixed for this test".into(),
+        }
     }
     fn credential_store(&self) -> StoreHealth {
         self.1

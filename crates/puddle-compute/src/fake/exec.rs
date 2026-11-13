@@ -245,6 +245,9 @@ pub(super) fn builtin(
     ctx: &mut ExecContext<'_>,
     request: &ExecRequest,
 ) -> Result<ExecOutput, ComputeError> {
+    if let Some((probe, args)) = crate::probes::Probe::of(request) {
+        return Ok(super::guest_probes::answer(probe, &args, ctx.spec));
+    }
     let program = request
         .program
         .rsplit('/')

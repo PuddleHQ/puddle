@@ -164,7 +164,7 @@ pub struct NewRepository {
 }
 
 /// A checkout on this computer, as the service found it (see
-/// [`WorkspaceService::local_checkout`]).
+/// [`super::WorkspaceService::local_checkout`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalSource {
     /// The canonical path of its `.git` directory.

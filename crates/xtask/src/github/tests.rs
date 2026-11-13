@@ -6,7 +6,7 @@ use super::*;
 
 /// Serves `routes` (path to body) over HTTP on localhost until the test process ends; returns its
 /// base URL. An unlisted path answers 404.
-fn serve(routes: &'static [(&'static str, &'static [u8])]) -> String {
+pub(crate) fn serve(routes: &'static [(&'static str, &'static [u8])]) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     std::thread::spawn(move || {
@@ -30,6 +30,7 @@ fn serve(routes: &'static [(&'static str, &'static [u8])]) -> String {
 
 const ROUTES: &[(&str, &[u8])] = &[
     ("/repos/f/m/commits/v1", b"{\"sha\":\"abc\"}"),
+    ("/repos/f/m/contents/Makefile", b"raw file"),
     ("/f/m/releases/download/v1/asset.bin", b"\x00\x01payload"),
 ];
 
@@ -40,6 +41,10 @@ fn reads_an_api_answer_and_a_release_asset() {
     assert_eq!(
         gh.api("repos/f/m/commits/v1", false).unwrap(),
         "{\"sha\":\"abc\"}"
+    );
+    assert_eq!(
+        gh.api("repos/f/m/contents/Makefile", true).unwrap(),
+        "raw file"
     );
     let dir = tempfile::tempdir().unwrap();
     let got = gh

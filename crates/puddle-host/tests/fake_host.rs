@@ -5229,7 +5229,7 @@ async fn a_workspace_list_with_a_bad_name_stops_the_start() {
 /// a request may: it is downloaded when a workspace stops, not when the delete asks for it.
 #[tokio::test(flavor = "multi_thread")]
 async fn stopping_a_workspace_downloads_the_image_the_delete_check_boots() {
-    const CHECK_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:debian";
+    const CHECK_IMAGE: &str = puddle_workspace::WorkspaceConfig::DEFAULT_MAINTENANCE_IMAGE;
     let rig = Rig::named_ids();
     let host = rig.start().await;
     let api = api(&host);

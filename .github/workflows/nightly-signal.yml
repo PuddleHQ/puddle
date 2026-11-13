@@ -20,6 +20,7 @@ on:
       - mutants
       - full-test
       - coverage-baseline
+      - refresh-image-pins
       - stress
       - lab-override
       - live-contracts

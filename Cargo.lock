@@ -6245,6 +6245,7 @@ dependencies = [
 name = "puddle-compute"
 version = "0.0.0"
 dependencies = [
+ "puddle-ipc",
  "puddle-types",
  "russh",
  "tempfile",

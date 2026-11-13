@@ -491,8 +491,6 @@ async fn start_checks_volumes_again() {
 async fn images_and_probe() {
     let rt = FakeRuntime::with_config(FakeConfig {
         runtime_version: "0.7.7-puddle.1".into(),
-        stale_dir_fixed: true,
-        ssh_reports_signal_exit: true,
     });
     let caps = rt.probe().await.unwrap();
     assert_eq!(caps.runtime_version, "0.7.7-puddle.1");
@@ -796,4 +794,34 @@ async fn a_root_disk_never_shrinks_and_an_unknown_sandbox_is_not_found() {
         .await
         .unwrap_err();
     assert!(matches!(err, ComputeError::NotFound { .. }), "{err:?}");
+}
+
+async fn sweep(sb: &FakeSandbox, cid: &str, ranges: &[&str]) -> ExecOutput {
+    let mut args = vec!["-e", crate::probes::VSOCK_SWEEP, "hello", cid];
+    args.extend(ranges);
+    run(sb, "perl", &args).await
+}
+
+#[tokio::test]
+async fn the_fake_guest_sweeps_ports_and_ranges_of_the_host_only() {
+    use crate::VsockRoute;
+    use crate::probes::VSOCK_SWEEP;
+    let rt = FakeRuntime::new();
+    let sb = rt
+        .create(
+            spec("a")
+                .with_route(VsockRoute::new(5000, "/nonexistent/a"))
+                .with_route(VsockRoute::new(5001, "/nonexistent/b")),
+        )
+        .await
+        .unwrap();
+    let out = sweep(&sb, "2", &["4990-5000", "5001", "9-1"]).await;
+    assert_eq!(out.stdout_text(), "accepted 5000\naccepted 5001\n");
+    assert_eq!(sweep(&sb, "2", &["1-4999"]).await.stdout_text(), "");
+    assert_eq!(sweep(&sb, "3", &["1-65535"]).await.stdout_text(), "");
+    assert_eq!(sweep(&sb, "2", &["x"]).await.stdout_text(), "");
+    let bad_cid = sweep(&sb, "host", &["5000"]).await;
+    assert_eq!(bad_cid.status.code, 2);
+    let no_args = run(&sb, "perl", &["-e", VSOCK_SWEEP]).await;
+    assert_eq!(no_args.status.code, 2);
 }

@@ -33,6 +33,7 @@ scenario() {
     mkdir -p "$d/spec"
     (
         trap 'echo $? >"$d/rc"' EXIT
+        export CHECK_GATE_DONE_DIR="$d/done"
         # shellcheck source=scripts/gate-sched.sh
         . "$here/scripts/gate-sched.sh"
         run_gate() {
@@ -100,6 +101,10 @@ for g in clippy ui notices; do
 done
 grep -q '^check: 3 streams' "$tmp/s1/out" || fail "s1: no summary line"
 
+for g in clippy ui notices; do
+    [ -e "$tmp/s1/done/$g" ] || fail "s1: no gate-done marker for $g"
+done
+
 # S2
 [ "$(rc_of s2)" = 3 ] || fail "s2: exit $(rc_of s2), expected the earliest failure's 3 (doc)"
 grep -q '^-- coverage: skipped' "$tmp/s2/out" || fail "s2: coverage ran or was not reported after doc failed"
@@ -109,21 +114,33 @@ grep -q '^-- notices: ok' "$tmp/s2/out" || fail "s2: the misc stream did not fin
 [ "$(grep '^==> ' "$tmp/s2/out" | tail -n 2 | head -n 1)" = "==> ui-e2e" ] || fail "s2: failures are not printed in reverse run order"
 grep -q '^check: failed: doc ui-e2e' "$tmp/s2/out" || fail "s2: failed gates not listed in run order"
 
+# a gate that failed has ended too (its marker is there); a skipped one never ran (none)
+for g in clippy doc ui ui-e2e notices; do
+    [ -e "$tmp/s2/done/$g" ] || fail "s2: no gate-done marker for $g"
+done
+[ ! -e "$tmp/s2/done/coverage" ] || fail "s2: a gate-done marker for the skipped coverage"
+
 # S3
 [ "$(rc_of s3)" = 0 ] || fail "s3: exit $(rc_of s3)"
 [ "$(cat "$tmp/s3/start.coverage")" -ge "$(cat "$tmp/s3/end.ui")" ] || fail "s3: coverage started before ui finished"
 [ "$(rc_of s3b)" = 5 ] || fail "s3b: exit $(rc_of s3b), expected ui's 5"
 grep -q '^-- coverage: skipped (needs ui' "$tmp/s3b/out" || fail "s3b: coverage was not skipped for the failed ui"
 [ ! -e "$tmp/s3b/start.coverage" ] || fail "s3b: coverage ran without ui"
+[ ! -e "$tmp/s3b/done/coverage" ] || fail "s3b: a gate-done marker for the skipped coverage"
 
 # S4
 [ "$(rc_of s4)" = 0 ] || fail "s4: exit $(rc_of s4)"
 [ "$(grep '^==> ' "$tmp/s4/out" | tr '\n' ' ')" = "==> clippy ==> ui ==> notices " ] || fail "s4: gates not run in order"
 ! grep -q '^--\|^check:' "$tmp/s4/out" || fail "s4: the inline run printed scheduler lines"
 
+for g in clippy ui notices; do
+    [ -e "$tmp/s4/done/$g" ] || fail "s4: no gate-done marker for the inline gate $g"
+done
+
 # S5
 [ "$(rc_of s5)" = 2 ] || fail "s5: exit $(rc_of s5), expected fmt's 2"
 [ ! -e "$tmp/s5/start.typos" ] && [ ! -e "$tmp/s5/start.clippy" ] || fail "s5: a gate ran after the prefix failed"
+[ ! -e "$tmp/s5/done/typos" ] && [ ! -e "$tmp/s5/done/clippy" ] || fail "s5: a marker for a gate that never ran"
 
 # The notices skip: a scratch repository with this check.sh and a stub cargo and cargo-about.
 n=$tmp/notices

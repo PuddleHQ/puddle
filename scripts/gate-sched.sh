@@ -18,6 +18,7 @@
 # gate finishes, followed by `-- <gate>: ok, N s`. A failed gate prints `-- <gate>: FAILED` at once
 # and its whole log at the end, in reverse run order, so the earliest failure in run order is the
 # last `==> ` line, as it was when the run stopped there. The exit status is that gate's.
+# CHECK_GATE_DONE_DIR=DIR: every gate that ends leaves an empty file DIR/<gate> (gate_mark).
 # On INT, TERM or HUP it stops every stream and all that they started (a process tree walk with ps).
 
 # shellcheck disable=SC2086 # the gate lists are space-separated names by design
@@ -46,10 +47,24 @@ gate_in() {
     return 1
 }
 
+# A gate that ended (any status but skipped) leaves an empty file `$CHECK_GATE_DONE_DIR/<gate>` when that variable names a directory. The
+# host's disk guard (remote-check-host.sh) reads these to trim the target dirs that only finished gates used while the rest of the run goes on.
+# Best effort: a directory that cannot be written costs the guard its information, never the run.
+gate_mark() {
+    [ -z "${CHECK_GATE_DONE_DIR:-}" ] || { mkdir -p "$CHECK_GATE_DONE_DIR" && : >"$CHECK_GATE_DONE_DIR/$1"; } 2>/dev/null || true
+}
+
+# A gate run in this shell (the serial prefix, a single stream): its marker follows when it passed (a failure ends the run, `set -e`).
+gate_run_inline() {
+    run_gate "$1"
+    gate_mark "$1"
+}
+
 # Writes a gate's result atomically: "<exit status | skipped> <seconds> <reason>".
 gate_record() {
     printf '%s %s %s\n' "$2" "$3" "${4:-}" >"$run_tmp/$1.rc.part"
     mv "$run_tmp/$1.rc.part" "$run_tmp/$1.rc"
+    [ "$2" = skipped ] || gate_mark "$1"
 }
 
 # One stream, in a background subshell: gate_stream_run <stream> <gate>...
@@ -135,7 +150,7 @@ run_gates() {
     rest=
     for g in $gate_all; do
         if [ -z "$rest" ] && gate_in "$g" ${serial_gates:-}; then
-            run_gate "$g"
+            gate_run_inline "$g"
         else
             rest="$rest $g"
         fi
@@ -153,7 +168,7 @@ run_gates() {
         [ -z "$l" ] || streams=$((streams + 1))
     done
     if [ -n "${PUDDLE_CHECK_SERIAL:-}" ] || [ "$streams" -lt 2 ]; then
-        for g in $rest; do run_gate "$g"; done
+        for g in $rest; do gate_run_inline "$g"; done
         return 0
     fi
 

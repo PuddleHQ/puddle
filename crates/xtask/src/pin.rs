@@ -61,5 +61,32 @@ pub fn libkrunfw_linux_tag(pins: &str, tag: &str) -> Option<String> {
     pinned(pins, tag, LIBKRUNFW_LINUX_TAG).map(ToOwned::to_owned)
 }
 
+/// Checks `actual`, the SHA-256 of the downloaded `asset` of release `tag`, against the committed
+/// pin list: a release's own `checksums.sha256` is replaceable together with its assets, this
+/// list is reviewed in Puddle's repository.
+///
+/// # Errors
+///
+/// [`XtaskError::NotListed`] when the list has no line for `tag` and `asset`,
+/// [`XtaskError::Checksum`] naming the file, the list and both hashes when it pins another hash.
+pub fn verify(pins: &str, tag: &str, asset: &str, actual: &str) -> Result<()> {
+    let list = format!("{PIN_FILE} ({tag})");
+    let Some(expected) = pinned(pins, tag, asset) else {
+        return Err(XtaskError::NotListed {
+            file: asset.to_owned(),
+            list,
+        });
+    };
+    if expected.eq_ignore_ascii_case(actual) {
+        return Ok(());
+    }
+    Err(XtaskError::Checksum {
+        file: asset.to_owned(),
+        list,
+        expected: expected.to_ascii_lowercase(),
+        actual: actual.to_owned(),
+    })
+}
+
 #[cfg(test)]
 mod tests;

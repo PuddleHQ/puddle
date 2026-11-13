@@ -164,7 +164,6 @@ impl Decision {
 
 /// Why a request was [`Decision::Blocked`]. Each has its audit `reason` code ([`Self::code`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum BlockReason {
     /// SSH through the proxy isn't supported yet (F-8; audit reason `ssh_unsupported`).
     SshUnsupported,

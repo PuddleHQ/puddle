@@ -192,11 +192,7 @@ pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made,
     {
         Ok(Ok(made)) => made,
         Ok(Err(err)) => {
-            let pass_through = match err {
-                puddle_upstream::TlsConnectError::Certificate(_) => Some("server_certificate"),
-                puddle_upstream::TlsConnectError::Handshake(_) => Some("server_tls"),
-                _ => None,
-            };
+            let pass_through = tls_pass_through(&err);
             return Err(ConnectError {
                 refusal: upstream_tls_refusal(&name, &err),
                 pass_through,
@@ -392,6 +388,16 @@ impl Drop for Lease {
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(conn);
         }
+    }
+}
+
+/// The pass-through reason a failed upstream TLS connect is remembered under; an invalid name
+/// is the guest's own mistake and is never passed through.
+fn tls_pass_through(err: &puddle_upstream::TlsConnectError) -> Option<&'static str> {
+    match err {
+        puddle_upstream::TlsConnectError::Certificate(_) => Some("server_certificate"),
+        puddle_upstream::TlsConnectError::Handshake(_) => Some("server_tls"),
+        puddle_upstream::TlsConnectError::InvalidName(_) => None,
     }
 }
 

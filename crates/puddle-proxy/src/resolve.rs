@@ -93,7 +93,9 @@ impl WorkspaceHandler {
                 let answer = records_answer(proxy, &query.name, RecordType::Srv).await;
                 self.only_reachable_targets(&name, answer).await
             }
-            rtype => records_answer(proxy, &query.name, rtype).await,
+            rtype @ (RecordType::Txt | RecordType::Mx) => {
+                records_answer(proxy, &query.name, rtype).await
+            }
         }
     }
 }

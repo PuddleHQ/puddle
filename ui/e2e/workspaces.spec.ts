@@ -199,7 +199,7 @@ test.describe("creating", () => {
       .fill("https://github.com/acme/Ledger_Service.git");
     await expect(dialog.getByLabel("Name")).toHaveValue("Ledger_Service");
     const before = await create.boundingBox();
-    expect(before).not.toBeNull();
+    if (before === null) throw new Error("the create button has no box");
     release();
     await expect(dialog.getByTestId("hosts-new")).toContainText("github.com");
     await expect.poll(() => create.boundingBox()).toEqual(before);

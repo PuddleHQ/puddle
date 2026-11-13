@@ -63,7 +63,7 @@ fn dns_type(rtype: RecordType) -> Option<DnsType> {
         RecordType::Srv => Some(DnsType::SRV),
         RecordType::Txt => Some(DnsType::TXT),
         RecordType::Mx => Some(DnsType::MX),
-        _ => None,
+        RecordType::A => None,
     }
 }
 
@@ -136,6 +136,10 @@ impl LeftOut {
 /// The records of `answers` the stub can carry, and the smallest time to live among them. What is
 /// left out (another type, a target that is not a plain host name, TXT past its byte cap, more
 /// than [`MAX_RECORDS`]) is said in the log: the guest sees a shorter answer.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "hickory's RData has dozens of record types (and a hidden unknown one); only SRV, MX and TXT are carried and every other type is left out"
+)]
 fn collect<'a>(fqdn: &str, answers: impl Iterator<Item = (&'a RData, u32)>) -> (Vec<Record>, u32) {
     let mut records = Vec::new();
     let mut ttl = TTL_RANGE.1;

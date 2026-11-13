@@ -284,7 +284,9 @@ fn nat_chain(s: &Settings, name: &'static str, hook: Hook) -> Chain {
     let mut rules = Vec::new();
     match hook {
         Hook::Output => {}
-        _ => rules.push(rule(vec![Match::InIf(s.wan.clone())], vec![Stmt::Return])),
+        Hook::Prerouting | Hook::Forward => {
+            rules.push(rule(vec![Match::InIf(s.wan.clone())], vec![Stmt::Return]));
+        }
     }
     rules.push(rule(vec![Match::Ipv4, host(s.stub)], vec![Stmt::Return]));
     if hook == Hook::Output {

@@ -120,7 +120,11 @@ impl InstallError {
             Self::Checksum { .. } => {
                 "the download does not match the checksum Microsoft published for it".to_owned()
             }
-            other => other.to_string(),
+            Self::Unsupported(_)
+            | Self::Resolve(_)
+            | Self::Download(_)
+            | Self::Archive(_)
+            | Self::Io(_) => self.to_string(),
         }
     }
 }
@@ -728,7 +732,10 @@ fn below_top(path: &Path) -> Result<Option<PathBuf>, InstallError> {
     for part in parts {
         match part {
             Component::Normal(name) => rest.push(name),
-            _ => {
+            Component::Prefix(_)
+            | Component::RootDir
+            | Component::CurDir
+            | Component::ParentDir => {
                 return Err(InstallError::Archive(format!(
                     "the path {}, which leaves the folder",
                     path.display()
@@ -742,6 +749,10 @@ fn below_top(path: &Path) -> Result<Option<PathBuf>, InstallError> {
 /// Unpacks the server tarball at `tarball` into `dest`, without its top folder. Only files and
 /// folders are unpacked (Microsoft's tarball has no links; one in it is an error, since a link is
 /// how a later entry could write outside `dest`).
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "tar's EntryType has a hidden catch-all variant, so the kinds cannot be listed; every kind not unpacked is an error"
+)]
 fn unpack(tarball: &Path, dest: &Path) -> Result<(), InstallError> {
     let mut archive = tar::Archive::new(GzDecoder::new(std::fs::File::open(tarball)?));
     std::fs::create_dir_all(dest)?;

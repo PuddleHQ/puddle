@@ -12,6 +12,7 @@
 //! only answers the proxy's [`puddle_proxy::Injector`] questions.
 
 #![forbid(unsafe_code)]
+#![warn(clippy::wildcard_enum_match_arm)]
 
 mod git_path;
 mod header;

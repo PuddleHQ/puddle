@@ -111,9 +111,10 @@ pub use rules::{
 };
 pub use settings_view::{
     ClipboardRead, CloseBehaviour, DensityChoice, EffectiveSettings, EffectiveToggles,
-    GlobalSettingsRequest, GlobalSettingsView, LocalToggles, PaletteChoice, ResolvedBool,
-    ResolvedClipboardRead, ResolvedNumber, ServerChoice, SettingSource, SettingsLayer, ThemeChoice,
-    UiPrefs, VsCodeServer, WorkspaceSettingsRequest, WorkspaceSettingsView,
+    GlobalSettingsRequest, GlobalSettingsView, GlobalTools, LocalToggles, PaletteChoice,
+    ResolvedBool, ResolvedClipboardRead, ResolvedNumber, ServerChoice, SettingSource,
+    SettingsLayer, ThemeChoice, UiPrefs, VsCodeServer, WorkspaceSettingsRequest,
+    WorkspaceSettingsView, WorkspaceTools,
 };
 pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};
 pub use ssh_agent::{SshAgentHostRequest, SshAgentHostView, SshAgentView};

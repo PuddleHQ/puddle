@@ -267,6 +267,7 @@ fn global_request_sets_vscode_options() {
             disk_warn_free_gb: Some(50),
             disk_fail_free_gb: Some(10),
         },
+        tools: GlobalTools { mise: Some(false) },
     }
     .apply_to(&mut g)
     .unwrap();
@@ -298,6 +299,7 @@ fn global_request_sets_vscode_options() {
     assert_eq!((lines.warn().gb(), lines.fail().gb()), (50, 10));
     assert!(g.vscode_server.telemetry());
     assert!(!g.vscode_server.auto_update());
+    assert!(!g.tools.mise());
     let view = GlobalSettingsView::new(&settings::Loaded {
         settings: g,
         migrated_from: None,

@@ -90,7 +90,7 @@ impl AddressCheck for Toggles {
                 AddressVerdict::ExactOnly(LocalCategory::Private)
             }
             IpAddr::V4(a) if a.is_loopback() => AddressVerdict::Block(BlockReason::PuddleEndpoint),
-            _ => AddressVerdict::Allow,
+            IpAddr::V4(_) | IpAddr::V6(_) => AddressVerdict::Allow,
         }
     }
 }

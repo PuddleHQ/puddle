@@ -5,7 +5,7 @@
 //! fail-closed, refuse or report instead of treating damage as "nothing set".
 
 use puddle_api::SettingsRepo;
-use puddle_settings::{GlobalSettings, WorkspaceSettings};
+use puddle_settings::{GlobalSettings, MiseMode, WorkspaceSettings, mise_mode};
 use puddle_types::WorkspaceId;
 use serde_json::json;
 
@@ -32,6 +32,24 @@ pub(crate) fn workspace(
     WorkspaceSettings::from_document(doc)
         .map(|loaded| loaded.settings)
         .map_err(|e| format!("the settings of workspace {name} are not valid: {e}"))
+}
+
+/// What the managed mise layer does in one workspace: [`MiseMode::Off`] while the global switch is
+/// off, whatever the workspace stores. Nothing reads it yet (the layer's pieces follow).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the tools layer starts reading it in the next tasks"
+    )
+)]
+pub(crate) fn mise(repo: &dyn SettingsRepo, name: &WorkspaceId) -> Result<MiseMode, String> {
+    let global = global(repo)?;
+    if !global.tools.mise() {
+        // Off needs no workspace document, so a damaged one cannot turn the layer back on.
+        return Ok(MiseMode::Off);
+    }
+    Ok(mise_mode(&global, Some(&workspace(repo, name)?)))
 }
 
 #[cfg(test)]

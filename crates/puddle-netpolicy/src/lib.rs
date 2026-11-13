@@ -10,7 +10,7 @@
 //! | address | [`NetPolicy::check_address`], [`AddressVerdict`] | allow, exact-allow only (toggle on), or block naming the toggle |
 //! | company | [`CompanySignals`], [`StaticSignals`], [`AddressClass::Company`] | the company-network category: what the host reads (proxy script, DNS suffixes, private-access clients, routes) and how it puts a private address there; empty until the host reads a signal |
 //! | settings | [`LocalAccess`], [`LocalAccessSource`] | one workspace's toggles and "wildcards reach local addresses", from `puddle-settings` |
-//! | endpoints | [`PuddleEndpoints`], [`EndpointKind`] | the registry every Puddle listener joins when it binds |
+//! | endpoints | [`PuddleEndpoints`], [`EndpointKind`] | the registry every Puddle listener joins when it binds, and the names and addresses of a reverse proxy on another machine |
 //! | message | [`block_message`] | the `403` text: what was found and which toggle would allow it; for SSH, the refusal and (on a Git host) the HTTPS form of the remote |
 //!
 //! The rules it applies:

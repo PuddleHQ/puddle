@@ -50,6 +50,8 @@ mod error;
 mod exec;
 #[cfg(feature = "fake")]
 pub mod fake;
+#[cfg(any(feature = "fake", feature = "contract"))]
+pub mod probes;
 mod runtime;
 mod spec;
 

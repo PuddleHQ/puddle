@@ -963,6 +963,21 @@ fn a_frame_that_inflates_past_the_limit_stops_decoding_there() {
 }
 
 #[test]
+fn no_room_left_stops_before_a_piece_that_would_add_nothing() {
+    // A gzip header decodes to no bytes, so only the room check can say `Full` for it.
+    let packed = gzip(b"payload");
+    let mut decoder = Decoder::for_encoding(Some(&HeaderValue::from_static("gzip")))
+        .unwrap()
+        .unwrap();
+    let mut out = Vec::new();
+    assert_eq!(
+        decoder.push(&packed[..10], &mut out, 0).unwrap(),
+        Pushed::Full
+    );
+    assert!(out.is_empty());
+}
+
+#[test]
 fn a_frame_under_the_limit_decodes_whole_in_every_coding() {
     let plain = format!("{{\"echo\":\"Bearer {REAL_GH} done\"}}");
     let zstd = zstd::stream::encode_all(plain.as_bytes(), 3).unwrap();

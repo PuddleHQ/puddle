@@ -86,14 +86,8 @@ pub(crate) enum InjectionError {
         source: tokio::task::JoinError,
     },
     /// The SSH host keys could not be made.
-    #[error("{workspace}: {source}")]
-    HostKeys {
-        /// The workspace.
-        workspace: WorkspaceId,
-        /// What went wrong.
-        #[source]
-        source: puddle_proxy::GitSshKeyError,
-    },
+    #[error("cannot make the SSH host keys: {0}")]
+    HostKeys(#[from] puddle_proxy::GitSshKeyError),
     /// The workspace's certificate authority could not be made.
     #[error("cannot make {workspace}'s certificate authority: {source}")]
     Authority {
@@ -133,6 +127,39 @@ pub(crate) enum InjectionError {
         /// The variables, comma separated.
         names: String,
     },
+}
+
+impl InjectionError {
+    fn environment_task(workspace: &WorkspaceId) -> impl FnOnce(tokio::task::JoinError) -> Self {
+        let workspace = workspace.clone();
+        move |source| Self::EnvironmentTask { workspace, source }
+    }
+
+    fn host_keys_task(workspace: &WorkspaceId) -> impl FnOnce(tokio::task::JoinError) -> Self {
+        let workspace = workspace.clone();
+        move |source| Self::HostKeysTask { workspace, source }
+    }
+
+    fn authority(workspace: &WorkspaceId) -> impl FnOnce(puddle_ca::CaError) -> Self {
+        let workspace = workspace.clone();
+        move |source| Self::Authority { workspace, source }
+    }
+
+    fn settings(what: impl Into<String>) -> impl FnOnce(puddle_store::StoreError) -> Self {
+        let what = what.into();
+        move |source| Self::Settings {
+            what,
+            source: Box::new(source),
+        }
+    }
+
+    fn removal(workspace: &WorkspaceId) -> impl FnOnce(puddle_store::StoreError) -> Self {
+        let workspace = workspace.clone();
+        move |source| Self::Removal {
+            workspace,
+            source: Box::new(source),
+        }
+    }
 }
 
 /// What an injector is built from.
@@ -346,10 +373,7 @@ impl Injection {
         );
         let read = tokio::task::spawn_blocking(move || resolve(&store, vault.as_ref(), &name));
         match tokio::time::timeout(self.vault_timeout, read).await {
-            Ok(done) => Ok(done.map_err(|source| InjectionError::EnvironmentTask {
-                workspace: workspace.clone(),
-                source,
-            })??),
+            Ok(done) => Ok(done.map_err(InjectionError::environment_task(workspace))??),
             Err(_) => Err(InjectionError::VaultTimeout {
                 workspace: workspace.clone(),
                 seconds: self.vault_timeout.as_secs().max(1),
@@ -411,15 +435,8 @@ impl Injection {
         }
         let made = tokio::task::spawn_blocking(GitSshHostKeys::generate)
             .await
-            .map_err(|source| InjectionError::HostKeysTask {
-                workspace: workspace.clone(),
-                source,
-            })?;
-        made.map(|keys| Some(Arc::new(keys)))
-            .map_err(|source| InjectionError::HostKeys {
-                workspace: workspace.clone(),
-                source,
-            })
+            .map_err(InjectionError::host_keys_task(workspace))?;
+        Ok(Some(Arc::new(made?)))
     }
 
     fn register(
@@ -437,12 +454,11 @@ impl Injection {
             .chars()
             .take(64)
             .collect();
-        let ca = Arc::new(CaBuilder::new(&name).build().map_err(|source| {
-            InjectionError::Authority {
-                workspace: workspace.clone(),
-                source,
-            }
-        })?);
+        let ca = Arc::new(
+            CaBuilder::new(&name)
+                .build()
+                .map_err(InjectionError::authority(workspace))?,
+        );
         let certificate = ca.certificate().clone();
         let injector = self.factory.as_ref().map_or_else(
             || git_injector(&self.inputs, workspace),
@@ -615,36 +631,24 @@ impl Injection {
         learned: &Arc<PassThrough>,
     ) -> Result<Interception, InjectionError> {
         let store = &self.inputs.store;
-        let own =
-            store
-                .workspace_interception(workspace)
-                .map_err(|source| InjectionError::Settings {
-                    what: format!("what {workspace} decrypts"),
-                    source: Box::new(source),
-                })?;
+        let own = store
+            .workspace_interception(workspace)
+            .map_err(InjectionError::settings(format!(
+                "what {workspace} decrypts"
+            )))?;
         let global = store
             .global_never_decrypt()
-            .map_err(|source| InjectionError::Settings {
-                what: "the never-decrypt names".to_owned(),
-                source: Box::new(source),
-            })?;
+            .map_err(InjectionError::settings("the never-decrypt names"))?;
         let limits = store
             .learned_limits()
-            .map_err(|source| InjectionError::Settings {
-                what: "the learned-host limits".to_owned(),
-                source: Box::new(source),
-            })?;
+            .map_err(InjectionError::settings("the learned-host limits"))?;
         learned.set_limits(
             Duration::from_secs(u64::from(limits.ttl_secs)),
             usize::try_from(limits.cap).unwrap_or(usize::MAX),
         );
-        let settings =
-            store
-                .interception_settings()
-                .map_err(|source| InjectionError::Settings {
-                    what: "the interception setting".to_owned(),
-                    source: Box::new(source),
-                })?;
+        let settings = store
+            .interception_settings()
+            .map_err(InjectionError::settings("the interception setting"))?;
         let mode = own.mode.unwrap_or_else(|| settings.effective_mode());
         let mut curated = TerminationSet::new();
         if mode == InterceptionMode::AllExceptCurated {
@@ -674,10 +678,7 @@ impl Injection {
             .inputs
             .store
             .request_rules_for(workspace)
-            .map_err(|source| InjectionError::Settings {
-                what: "the rules on method and path".to_owned(),
-                source: Box::new(source),
-            })?;
+            .map_err(InjectionError::settings("the rules on method and path"))?;
         let mut rules = Vec::with_capacity(rows.len());
         for row in rows {
             match RequestRule::new(RuleId(row.id), &row.host, row.methods, row.path) {
@@ -743,13 +744,9 @@ impl Injection {
             workspace.clone(),
         );
         let outcome = tokio::task::spawn_blocking(move || {
-            let deletion =
-                store
-                    .delete_workspace(&name)
-                    .map_err(|source| InjectionError::Removal {
-                        workspace: name.clone(),
-                        source: Box::new(source),
-                    })?;
+            let deletion = store
+                .delete_workspace(&name)
+                .map_err(InjectionError::removal(&name))?;
             let left: Vec<String> = deletion
                 .secrets
                 .iter()

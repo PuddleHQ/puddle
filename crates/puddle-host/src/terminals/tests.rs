@@ -431,6 +431,16 @@ async fn a_server_that_ends_before_or_after_the_client_gave_up_still_gives_its_r
     })
     .await;
     assert!(silent.message.is_some());
+    // The client gives up first and the server, asked why, has nothing to add: the client's own
+    // words are the reason.
+    let unexplained = open_with_server(|stream| async move {
+        drop(stream);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        Ok(())
+    })
+    .await;
+    let message = unexplained.message.unwrap();
+    assert!(message.contains("the SSH connection failed"), "{message}");
 }
 
 #[tokio::test]

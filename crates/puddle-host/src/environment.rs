@@ -72,6 +72,26 @@ pub(crate) enum EnvironmentError {
     },
 }
 
+impl EnvironmentError {
+    fn store(workspace: &WorkspaceId) -> impl FnOnce(puddle_store::StoreError) -> Self {
+        let workspace = workspace.clone();
+        move |source| Self::Store {
+            workspace,
+            source: Box::new(source),
+        }
+    }
+
+    fn hosts(name: &str) -> impl FnOnce(puddle_proxy::PatternError) -> Self {
+        let name = name.to_owned();
+        move |source| Self::Hosts { name, source }
+    }
+
+    fn variable(name: &str) -> impl FnOnce(puddle_types::ValidationError) -> Self {
+        let name = name.to_owned();
+        move |source| Self::Variable { name, source }
+    }
+}
+
 /// What a workspace's environment comes to at one moment.
 pub(crate) struct Resolved {
     /// What the guest starts with: every plain variable, and a stand-in under each secret's name.
@@ -106,10 +126,7 @@ pub(crate) fn resolve(
         .env_for_start(workspace, &mut |name| {
             secret_stand_in(name.as_str()).map_err(|e| e.to_string())
         })
-        .map_err(|source| EnvironmentError::Store {
-            workspace: workspace.clone(),
-            source: Box::new(source),
-        })?;
+        .map_err(EnvironmentError::store(workspace))?;
     let mut guest = GuestEnv::new();
     let mut entries = Vec::new();
     for var in vars {
@@ -136,10 +153,7 @@ pub(crate) fn resolve(
                     }
                 };
                 let set = TerminationSet::parse(hosts.iter().map(puddle_store::SecretHost::as_str))
-                    .map_err(|source| EnvironmentError::Hosts {
-                        name: name.to_owned(),
-                        source,
-                    })?;
+                    .map_err(EnvironmentError::hosts(name))?;
                 let entry = StandIn::new(
                     StandInOrigin::Secret,
                     name,
@@ -158,10 +172,7 @@ pub(crate) fn resolve(
         };
         guest
             .set(name, &text)
-            .map_err(|source| EnvironmentError::Variable {
-                name: name.to_owned(),
-                source,
-            })?;
+            .map_err(EnvironmentError::variable(name))?;
     }
     Ok(Resolved { guest, entries })
 }

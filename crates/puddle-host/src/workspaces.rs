@@ -922,17 +922,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// says the create never finished, and the next start would remove its volume.
     fn mark_created(&self, id: &WorkspaceId) -> Result<(), OpError> {
         let mut state = self.state();
-        let Some(slot) = state.slots.get_mut(id) else {
-            return Err(not_found(id).into());
-        };
-        slot.creating = false;
+        // A slot that is gone has nothing to mark; a create holds the workspace busy, so none
+        // can go while it runs.
+        if let Some(slot) = state.slots.get_mut(id) {
+            slot.creating = false;
+        }
         let saved = self.persist(&state);
         if saved.is_err()
             && let Some(slot) = state.slots.get_mut(id)
         {
             slot.creating = true;
         }
-        saved.map_err(OpError::from)
+        saved.map_err(|source| OpError::NewNotSaved { source })
     }
 
     fn status_event(&self, record: &WorkspaceRecord) {
@@ -1506,6 +1507,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         })
     }
 
+    /// The workspace's image and what the runtime says about it, pulled if it is not local yet.
+    async fn pulled_image(
+        &self,
+        record: &WorkspaceRecord,
+        announce_pull: bool,
+    ) -> Result<(ImageRef, ImageConfig), OpError> {
+        let image = ImageRef::new(&record.image)?;
+        if announce_pull {
+            self.progress(
+                &record.id,
+                WorkspaceStep::PullingImage,
+                Some(record.image.clone()),
+            );
+        }
+        let config = self.image_config(&image).await?;
+        Ok((image, config))
+    }
+
     /// The image config of `image`, pulling it if needed.
     async fn image_config(&self, image: &ImageRef) -> Result<ImageConfig, OpError> {
         Ok(self.inner.runtime.pull_image(image).await?)
@@ -1610,28 +1629,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             e
         })?;
         *created_volume = attachment.created_volume();
-        let image = match ImageRef::new(&record.image) {
-            Ok(image) => image,
-            Err(e) => return Err(self.abort_attachment(attachment, e.into()).await),
-        };
-        if announce_pull {
-            self.progress(
-                name,
-                WorkspaceStep::PullingImage,
-                Some(record.image.clone()),
-            );
-        }
-        let config = match self.image_config(&image).await {
-            Ok(config) => config,
+        let (image, config) = match self.pulled_image(record, announce_pull).await {
+            Ok(pulled) => pulled,
             Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
         self.progress(name, WorkspaceStep::Starting, None);
-        if let Err(reason) = self.publish_shell_init(id) {
-            return Err(self.abort_attachment(attachment, reason).await);
-        }
-        let route = match inner.kit.route(name) {
+        let route = match self
+            .publish_shell_init(id)
+            .and_then(|()| inner.kit.route(name).map_err(OpError::from))
+        {
             Ok(route) => route,
-            Err(reason) => return Err(self.abort_attachment(attachment, reason.into()).await),
+            Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
         // The CA comes after the route: a start that fails here has nothing else to take back.
         let (plan, env, guest) = match self.plan_guest_for(record, config).await {
@@ -2631,9 +2639,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await;
         let mount = Layout::new(id)?.mount().clone();
         let handle = inner.runtime.get(&name.sandbox_name()).await?;
-        if inner.lifecycle.manage(handle, vec![mount]).is_err() {
-            return Err(OpError::ShuttingDown);
-        }
+        inner
+            .lifecycle
+            .manage(handle, vec![mount])
+            .or(Err(OpError::ShuttingDown))?;
         // Direct SSH is off unless the user allowed it: then there is no endpoint to connect to
         // and no ssh config entry, however the guest behaves.
         if self.direct_ssh_allowed(name) {
@@ -2693,18 +2702,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         let live = self.inner.live.lock().await;
         let entry = live.get(name);
-        let Some(endpoint) = entry
-            .and_then(|e| e.ssh.as_ref())
-            .map(|ssh| ssh.endpoint().path().to_path_buf())
-        else {
+        // A running workspace with direct SSH on has both; the entry has neither before its start
+        // finished or after its stop began, and then there is nothing to name.
+        let (Some(endpoint), Some(guest)) = (
+            entry
+                .and_then(|e| e.ssh.as_ref())
+                .map(|ssh| ssh.endpoint().path().to_path_buf()),
+            entry.and_then(|e| e.guest.as_ref()),
+        ) else {
             return Err(OpError::NoEndpoint(name.clone()));
         };
-        let guest = entry.and_then(|e| e.guest.as_ref());
-        let user = guest.map_or(SessionUser::Root, |g| g.session_user);
-        let open = match guest {
-            Some(guest) => Self::open_target(record, guest),
-            None => return Err(OpError::StartFirst(name.clone())),
-        };
+        let user = guest.session_user;
+        let open = Self::open_target(record, guest);
         let key = problem_key("ssh", name);
         self.inner
             .ssh
@@ -3117,11 +3126,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         // Nobody has worked in it yet, so undoing it now loses nothing; keeping it would leave
         // a workspace the next start takes for an unfinished create.
-        if let Err(e) = self.mark_created(&record.id) {
-            let reason = match e {
-                OpError::Persist(source) => OpError::NewNotSaved { source },
-                other => other,
-            };
+        if let Err(reason) = self.mark_created(&record.id) {
             return Err(self.undo_boot(&record, true, created_volume, reason).await);
         }
         self.refresh_checkouts_later(&record.id);
@@ -3922,10 +3927,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         self.inner
             .runtime
             .check_checkout(&found.git_dir)
-            .map_err(|e| match e {
-                ComputeError::InvalidSpec { reason } => LocalCheckoutError::Refused(reason),
-                other => LocalCheckoutError::Refused(other.to_string()),
-            })?;
+            .map_err(checkout_refusal)?;
         Ok(LocalSource {
             folder_name: found
                 .folder
@@ -4667,8 +4669,20 @@ mod kept_login_rows;
 #[cfg(test)]
 mod no_link_words;
 
+/// Why the runtime refuses a checkout, as the user is told: the reason of a refused spec as it is
+/// (the runtime's own wording names the folder), any other failure by its message.
+fn checkout_refusal(error: ComputeError) -> LocalCheckoutError {
+    match error {
+        ComputeError::InvalidSpec { reason } => LocalCheckoutError::Refused(reason),
+        other => LocalCheckoutError::Refused(other.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod download_wait_tests;
 
 #[cfg(test)]
 mod name_or_id_tests;
+
+#[cfg(test)]
+mod checkout_refusal_tests;

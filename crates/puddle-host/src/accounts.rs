@@ -38,10 +38,10 @@ pub fn reset_user(paths: &HostPaths, name: &str) -> Result<ResetInvite, AccountE
     }
     let clock = Arc::new(SystemClock);
     let store = Store::open(&db, clock.clone(), Limits::default())?;
-    let Some(secrets) = store.take_account_secrets() else {
-        // A fresh handle always has them; reaching here means this function was changed.
-        return Err(ResetError::SecretsTaken.into());
-    };
+    // A fresh handle always has them; a miss here means this function was changed.
+    let secrets = store
+        .take_account_secrets()
+        .ok_or(ResetError::SecretsTaken)?;
     Ok(reset_account(&store, &secrets, name, clock.now_ms())?)
 }
 

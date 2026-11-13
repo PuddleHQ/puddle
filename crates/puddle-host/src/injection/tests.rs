@@ -1683,3 +1683,49 @@ async fn deleting_a_workspace_deletes_the_logins_kept_for_it() {
     injection.begin(&ws, true).await.unwrap();
     assert_eq!(login_ids(&terminations, &ws).len(), 0);
 }
+
+#[tokio::test]
+async fn each_failure_to_start_or_remove_names_its_workspace_and_what_broke() {
+    let ws = workspace("a");
+    let aborted = {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        task.await.unwrap_err()
+    };
+    let err = InjectionError::environment_task(&ws)(aborted);
+    assert!(
+        err.to_string().starts_with("cannot read a's environment: "),
+        "{err}"
+    );
+
+    let aborted = {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        task.await.unwrap_err()
+    };
+    let err = InjectionError::host_keys_task(&ws)(aborted);
+    assert!(
+        err.to_string()
+            .starts_with("cannot make a's SSH host keys: "),
+        "{err}"
+    );
+
+    let err = InjectionError::authority(&ws)(puddle_ca::CaError::Expired);
+    assert_eq!(
+        err.to_string(),
+        "cannot make a's certificate authority: the CA certificate has expired"
+    );
+
+    let broke = || puddle_store::StoreError::Backup("disk full".to_owned());
+    let err = InjectionError::settings("the interception setting")(broke());
+    assert_eq!(
+        err.to_string(),
+        "cannot read the interception setting: could not back up the database before migrating: disk full"
+    );
+
+    let err = InjectionError::removal(&ws)(broke());
+    assert_eq!(
+        err.to_string(),
+        "cannot remove a's rules and environment: could not back up the database before migrating: disk full"
+    );
+}

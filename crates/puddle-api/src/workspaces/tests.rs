@@ -900,3 +900,20 @@ fn operations_have_wire_names() {
     assert_eq!(Operation::Reclaiming.to_string(), "reclaiming");
     assert_eq!(Operation::Deleting.to_string(), "deleting");
 }
+
+#[test]
+fn an_error_made_from_a_cause_says_the_causes_message() {
+    assert_eq!(
+        WorkspaceError::conflict("it is running"),
+        WorkspaceError::Conflict("it is running".to_owned())
+    );
+    assert_eq!(WorkspaceError::invalid("bad name").to_string(), "bad name");
+    assert_eq!(
+        WorkspaceError::unavailable("no runtime").to_string(),
+        "no runtime"
+    );
+    assert_eq!(
+        WorkspaceError::internal("disk gone"),
+        WorkspaceError::Internal("disk gone".to_owned())
+    );
+}

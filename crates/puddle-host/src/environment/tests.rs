@@ -280,3 +280,28 @@ fn the_hosts_the_store_accepts_are_the_hosts_a_stand_in_accepts() {
         }
     }
 }
+
+#[test]
+fn each_failure_names_its_workspace_or_variable_for_the_user() {
+    let store = puddle_store::StoreError::Backup("disk full".to_owned());
+    let err = EnvironmentError::store(&ws("a"))(store);
+    assert_eq!(
+        err.to_string(),
+        "cannot read a's environment: could not back up the database before migrating: disk full"
+    );
+
+    let bad = TerminationSet::parse(["not a host"]).unwrap_err();
+    let err = EnvironmentError::hosts("TOKEN")(bad);
+    assert_eq!(
+        err.to_string(),
+        "the hosts of the secret TOKEN are not usable: \"not a host\" is not a host name"
+    );
+
+    let refused = QueryName::new("bad name").unwrap_err();
+    let err = EnvironmentError::variable("bad name")(refused);
+    assert!(
+        err.to_string()
+            .starts_with("the variable bad name cannot be set: "),
+        "{err}"
+    );
+}

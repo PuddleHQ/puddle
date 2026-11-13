@@ -34,9 +34,6 @@ pub(crate) enum OpError {
     /// Direct SSH has no endpoint to name.
     #[error("direct SSH has no endpoint in {0}; restart the workspace to try again")]
     NoEndpoint(WorkspaceId),
-    /// The workspace must run first.
-    #[error("{0} is not running; start it first")]
-    StartFirst(WorkspaceId),
     /// The ssh config entry could not be written.
     #[error("direct SSH is on but the ssh config could not be written: {0}")]
     SshEntry(#[source] SshConfigError),

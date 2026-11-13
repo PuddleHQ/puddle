@@ -278,6 +278,32 @@ mod files {
     }
 
     #[test]
+    fn a_config_file_that_cannot_be_written_says_which_one_and_leaves_no_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ssh, _) = setup(dir.path(), false);
+        // A folder where the file belongs cannot be replaced by a file.
+        std::fs::create_dir_all(ssh.config_path()).unwrap();
+        let err = ssh
+            .publish(&name("web"), Path::new("/run/ep"), SessionUser::Root)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.starts_with(&format!("cannot write {}: ", ssh.config_path().display())),
+            "{err}"
+        );
+        assert_eq!(ssh.endpoint(&name("web")), None);
+    }
+
+    #[test]
+    fn emptying_the_file_of_a_setup_without_key_or_program_reports_a_failed_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssh = SshSetup::open(&dir.path().join("data"), &SshSettings::default());
+        std::fs::create_dir_all(ssh.config_path()).unwrap();
+        let err = ssh.write_config(&BTreeMap::new()).unwrap_err();
+        assert!(matches!(err, SshConfigError::Io(_)), "{err}");
+    }
+
+    #[test]
     fn a_config_path_below_a_file_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("file");

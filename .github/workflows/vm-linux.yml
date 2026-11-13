@@ -375,6 +375,26 @@ jobs:
           else
             echo "no browser test in this partition"; echo "needed=false" >> "$GITHUB_OUTPUT"
           fi
+      # JetBrains Gateway (about 350 MB unpacked, ci/gateway.sha256) is fetched only on a partition that runs
+      # `vm_gateway_attach`. Same reading of the partition's filterset as the browser check above; the hash split
+      # (no `test(=`) cannot be read, so the partition is assumed to need it.
+      - name: does this partition run the Gateway test?
+        id: gateway
+        if: steps.kvm.outputs.ok == 'true'
+        run: |
+          sel=$(ci/vm-partition.sh args "${{ matrix.partition }}" "${{ strategy.job-total }}" \
+            "$RUNNER_TEMP/bundle/vm-tests.list" ci/vm-test-timings-linux.tsv 'test(/(^|::)vm_gateway_attach/)') || exit 1
+          if ! grep -q 'test(=' <<<"$sel" || grep -Eq 'test\(=([A-Za-z0-9_]+::)*vm_gateway_attach' <<<"$sel"; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no Gateway test in this partition"; echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: JetBrains Gateway (pinned release; download, verify)
+        if: steps.gateway.outputs.needed == 'true'
+        timeout-minutes: 20
+        run: |
+          ci/fetch-gateway.sh "$RUNNER_TEMP/gateway"
+          echo "PUDDLE_GATEWAY_DIR=$RUNNER_TEMP/gateway" >> "$GITHUB_ENV"
       - name: disk after the archive download (evidence, never a gate)
         if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
         timeout-minutes: 3

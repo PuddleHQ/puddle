@@ -885,7 +885,7 @@ async fn a_scenario_with_a_bad_workspace_fails_to_start() {
         ),
         (
             json!({"name": "a", "repositories": [{"url": "git@x.test:a/b"}]}),
-            "SSH remotes",
+            "ssh remotes",
         ),
         (
             json!({"name": "a", "repositories": [{"url": "https://x.test/a"}], "memory_mib": 1}),

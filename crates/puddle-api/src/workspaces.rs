@@ -1051,6 +1051,9 @@ pub struct Attached {
     pub opened: bool,
     /// Why nothing was opened, when that is not an error.
     pub message: Option<String>,
+    /// What a client on another machine can open to reach the editor itself: the `vscode://` link
+    /// of a desktop attach. `None` when there is nothing a client could open (a browser attach).
+    pub open_uri: Option<String>,
 }
 
 impl Attached {
@@ -1060,6 +1063,7 @@ impl Attached {
         Self {
             opened: true,
             message: None,
+            open_uri: None,
         }
     }
 
@@ -1069,7 +1073,15 @@ impl Attached {
         Self {
             opened: false,
             message: Some(message.into()),
+            open_uri: None,
         }
+    }
+
+    /// The same result, naming what a client can open itself.
+    #[must_use]
+    pub fn with_open_uri(mut self, uri: impl Into<String>) -> Self {
+        self.open_uri = Some(uri.into());
+        self
     }
 }
 
@@ -1554,6 +1566,34 @@ pub struct DesktopTarget {
     pub path: String,
     /// Whether `path` is a `.code-workspace` file rather than a folder.
     pub is_workspace_file: bool,
+}
+
+impl DesktopTarget {
+    /// The `vscode-remote` URI of the place (`--folder-uri` or `--file-uri` take it), on the
+    /// workspace's ssh host; the path is percent-encoded.
+    #[must_use]
+    pub fn remote_uri(&self) -> String {
+        use std::fmt::Write as _;
+        let mut path = String::new();
+        for byte in self.path.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~') {
+                path.push(char::from(byte));
+            } else {
+                let _ = write!(path, "%{byte:02X}");
+            }
+        }
+        format!("vscode-remote://ssh-remote+{}{path}", self.ssh_host)
+    }
+
+    /// The link that opens the place from another program, which VS Code registers as the handler
+    /// of `vscode://`: what a browser on the user's own computer follows when the host cannot open
+    /// an editor there itself.
+    #[must_use]
+    pub fn open_uri(&self) -> String {
+        let remote = self.remote_uri();
+        let rest = remote.strip_prefix("vscode-remote://").unwrap_or(&remote);
+        format!("vscode://vscode-remote/{rest}")
+    }
 }
 
 /// The desktop editor could not be opened.

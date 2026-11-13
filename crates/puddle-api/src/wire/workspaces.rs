@@ -557,6 +557,12 @@ pub struct AttachResponse {
     /// installed).
     #[schema(required = true)]
     pub message: Option<String>,
+    /// A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,
+    /// for a client on another machine than the host (a browser on a device that reached
+    /// `puddle serve`). Present for a desktop attach, whether or not the host opened a window
+    /// itself; `null` for a browser attach.
+    #[schema(required = true)]
+    pub open_uri: Option<String>,
 }
 
 impl From<domain::Attached> for AttachResponse {
@@ -564,6 +570,7 @@ impl From<domain::Attached> for AttachResponse {
         Self {
             opened: a.opened,
             message: a.message,
+            open_uri: a.open_uri,
         }
     }
 }

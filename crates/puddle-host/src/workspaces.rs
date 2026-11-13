@@ -4410,7 +4410,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     Ok(target) => match self.inner.launcher.open_desktop(&record, &target).await {
                         Ok(()) => Attached::opened(),
                         Err(err) => Attached::not_opened(err.to_string()),
-                    },
+                    }
+                    .with_open_uri(target.open_uri()),
                 }),
             }
         })

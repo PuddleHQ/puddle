@@ -68,6 +68,15 @@ impl UiAssets for EmbeddedUi {
     }
 }
 
+/// The identity of the app build `assets` holds: the `version` in `_app/version.json`, which the
+/// build writes and the app itself carries (`$app/environment`'s `version`). `None` when the
+/// assets have no such file or it is not the shape the build writes.
+pub(crate) fn build_id(assets: &dyn UiAssets) -> Option<String> {
+    let file = assets.get("_app/version.json")?;
+    let json: serde_json::Value = serde_json::from_slice(&file.body).ok()?;
+    json.get("version")?.as_str().map(str::to_owned)
+}
+
 /// The app's files plus the headers they are served with.
 #[derive(Clone)]
 pub(crate) struct UiService {

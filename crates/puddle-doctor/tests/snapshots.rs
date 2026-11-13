@@ -1695,6 +1695,26 @@ fn encryption_is_ok_on_an_encrypted_machine_and_with_no_swap() {
 }
 
 #[test]
+fn a_missing_data_folder_is_unknown_not_ok_even_with_no_swap() {
+    let fake = Fake {
+        enc: DiskEncryptionFacts {
+            data: DataEncryption::NoFolder,
+            swap: SwapFacts::None,
+        },
+        ..linux()
+    };
+    let r = check(
+        "encryption_no_folder",
+        &fake,
+        CheckId::DiskEncryption,
+        Some(Finding::DiskEncryptionUnknown),
+    );
+    let c = r.check(CheckId::DiskEncryption).unwrap();
+    assert_eq!(c.status, Status::Info);
+    assert!(c.detail.as_deref().unwrap().contains("data folder"));
+}
+
+#[test]
 fn an_unencrypted_drive_warns_and_names_what_it_means_for_secrets() {
     let fake = Fake {
         enc: encryption(

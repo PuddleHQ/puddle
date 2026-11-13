@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Whether the data folder's drive and the swap are encrypted. Each OS reads what it can without
-//! administrator rights: `linux.rs` walks `/sys`, `windows.rs` asks `PowerShell` for the shell's
+//! administrator rights (on Windows that is nothing for `BitLocker`: the answer is unknown unless the
+//! process is elevated): `linux.rs` walks `/sys`, `windows.rs` asks `PowerShell` for the shell's
 //! `BitLocker` property, `macos.rs` runs `fdesetup` and `sysctl`.
 
 #[cfg(target_os = "linux")]

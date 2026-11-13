@@ -42,7 +42,7 @@ vm_unrelated_only() {
 # 1. Replay of the merged pull requests: class and outputs as recorded, and an independent check
 # that any pull request with an always-run path got a full run.
 always_re='^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|\.cargo/|\.config/|\.githooks/|\.github/workflows/|ci/|scripts/|crates/puddle-vm-tests/|crates/puddle-api/openapi/|ui/package-lock\.json|ui/src/lib/api/schema\.d\.ts|.*/Cargo\.toml$)'
-data_re='^scripts/(diff-coverage-exclusions\.txt|coverage-baseline\.json|standalone-allow\.txt)$'
+data_re='^scripts/(diff-coverage-exclusions\.txt|diff-coverage-exclusions/[^/]+\.txt|coverage-baseline\.json|standalone-allow\.txt)$'
 replayed=0
 declare -A seen_class=()
 pr="" exp="" paths=()
@@ -107,6 +107,7 @@ want "299 docs files" "docs false false false false" "${many[@]}"
 want "docs only" "docs false false false false" docs/STANDARDS.md README.md .github/dependabot.yml
 want "ui only" "ui false false true false" ui/src/lib/a.ts ui/e2e/b.spec.ts docs/x.md
 want "ui and gate data" "mixed true false true false" ui/src/a.ts scripts/diff-coverage-exclusions.txt
+want "ui and a crate's exclusions" "mixed true false true false" ui/src/a.ts scripts/diff-coverage-exclusions/puddle-api.txt
 want "gate data only" "rust true false true false" scripts/coverage-baseline.json
 want "ui fixtures" "mixed true true true false" ui/e2e/fixtures/workspaces.json
 want "vm crate" "rust true true true true" crates/puddle-compute-msb/src/lib.rs
@@ -891,8 +892,10 @@ if 'hash:${PARTITION}/${PARTITIONS}' not in wtext2 or "PARTITIONS: ${{ strategy.
     bad.append("windows: the partitions must split by nextest `--partition hash:` over strategy.job-total")
 up = [s for s in wj["test-build"]["steps"] if s.get("uses", "").startswith("actions/upload-artifact")]
 dn = [s for s in wj["tests"]["steps"] if s.get("uses", "").startswith("actions/download-artifact")]
-if len(up) != 1 or len(dn) != 1 or up[0]["with"]["name"] != dn[0]["with"]["name"]:
-    bad.append("windows: the build job's upload and the partition job's download must name the same artifact")
+if len(up) != 1 or len(dn) != 2 or {s["with"]["name"] for s in dn} != {up[0]["with"]["name"]}:
+    bad.append("windows: the build job's upload and the partition job's download (first try and second try) must name the same artifact")
+if [s.get("timeout-minutes") for s in dn] != [8, 8] or dn[0].get("continue-on-error") is not True or not dn[1]["name"].endswith("(second try)"):
+    bad.append("windows: the archive download needs a step limit, continue-on-error and a second try (a hung download must not hold the job to its limit)")
 if "cargo nextest archive --workspace --all-features --locked --profile ci" not in wtext2:
     bad.append("windows: the build job must archive the workspace with --all-features --locked --profile ci")
 if 'export RUSTUP_TOOLCHAIN' not in wtext2 or "rust-toolchain.toml" not in str(wj["tests"]["steps"]):

@@ -529,8 +529,14 @@ fn disk_encryption(os: Os, facts: &DiskEncryptionFacts) -> Check {
     let id = CheckId::DiskEncryption;
     let mut parts = Vec::new();
     let mut protections: Vec<(&str, &Protection)> = Vec::new();
+    let mut folder_unknown = None;
     match &facts.data {
-        DataEncryption::NoFolder => parts.push("data folder not found".to_owned()),
+        DataEncryption::NoFolder => {
+            parts.push("data folder not found".to_owned());
+            folder_unknown = Some(
+                "Puddle's data folder could not be found, so its drive was not asked".to_owned(),
+            );
+        }
         DataEncryption::Volume { protection, .. } => {
             parts.push(format!("data drive {}", protection_text(protection)));
             protections.push(("data", protection));
@@ -557,9 +563,13 @@ fn disk_encryption(os: Os, facts: &DiskEncryptionFacts) -> Check {
     let swap_bad = protections
         .iter()
         .any(|(k, p)| *k == "swap" && **p == Protection::NotEncrypted);
-    let unknowns: Vec<String> = protections
-        .iter()
-        .filter_map(|(_, p)| unknown_why(p).map(str::to_owned))
+    let unknowns: Vec<String> = folder_unknown
+        .into_iter()
+        .chain(
+            protections
+                .iter()
+                .filter_map(|(_, p)| unknown_why(p).map(str::to_owned)),
+        )
         .chain(match &facts.swap {
             SwapFacts::Unreadable { why } => Some(why.clone()),
             _ => None,

@@ -6732,6 +6732,7 @@ version = "0.0.0"
 dependencies = [
  "puddle-ipc",
  "puddle-ssh-agent",
+ "puddle-test-kit",
  "signature",
  "ssh-key",
  "tempfile",

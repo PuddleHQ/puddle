@@ -1,0 +1,5 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed, under crates/puddle-inject/.
+# Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
+# path glob here starts with crates/puddle-inject/; the gate refuses another crate's entry, so two pull requests that
+# touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-inject/src/injector.rs | _ => refuse(502, "credential_unavailable", UNCHOOSABLE), | the arm for a choice a newer puddle-store adds to the non-exhaustive `CredentialChoice`; no such variant exists yet

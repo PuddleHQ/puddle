@@ -19,7 +19,7 @@
 //!   gate).
 //!
 //! Needs `cargo-about` (`cargo install cargo-about --locked --features cli`); `runtime` also needs
-//! `gh` and `git` unless `--from` points at a folder with the parts ([`source::DirSource`]).
+//! `git` and `curl` (no `gh`, no sign-in) unless `--from` points at a folder with the parts ([`source::DirSource`]).
 #![forbid(unsafe_code)]
 
 pub mod assemble;
@@ -27,6 +27,7 @@ pub mod checksums;
 pub mod code_server;
 pub mod error;
 pub mod features;
+pub mod github;
 pub mod inventory;
 pub mod notice;
 pub mod openapi;
@@ -210,7 +211,7 @@ fn code_server_command(opts: &Options) -> Result<String> {
     let licences = opts.value("--licenses").map(PathBuf::from);
     let source: Box<dyn code_server::CodeServerSource> = match opts.value("--from") {
         Some(dir) => Box::new(code_server::DirReleases(PathBuf::from(dir))),
-        None => Box::new(code_server::GitHubReleases),
+        None => Box::new(code_server::GitHubReleases(github::GitHub::public())),
     };
     let manifest = code_server::assemble(source.as_ref(), pin, &out, licences.as_deref())?;
     Ok(format!(
@@ -334,6 +335,7 @@ fn runtime(opts: &Options) -> Result<String> {
             work: target_dir().join("xtask-runtime-src"),
             about_config: workspace_root().join("crates/xtask/about/msb.toml"),
             cargo: cargo.clone(),
+            github: github::GitHub::public(),
         };
         (Box::new(source), puddle_inventory(&cargo)?)
     };

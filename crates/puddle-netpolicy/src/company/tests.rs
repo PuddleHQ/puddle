@@ -35,8 +35,8 @@ fn routes_and_subnets_match_their_family_and_prefix_only() {
     assert!(!s.vpn_routed(ip("10.9.0.0")));
     assert!(s.vpn_routed(ip("fd12::1")));
     assert!(!s.vpn_routed(ip("fe80::1")));
-    assert!(s.on_physical_lan(ip("192.168.1.77")));
-    assert!(!s.on_physical_lan(ip("192.168.2.1")));
+    assert_eq!(s.physical_lan(ip("192.168.1.77")), LanReading::OnLan);
+    assert_eq!(s.physical_lan(ip("192.168.2.1")), LanReading::OffLan);
     // A /0 route covers its whole family and nothing of the other.
     let all = StaticSignals::new().with_vpn_route(ip("0.0.0.0"), 0);
     assert!(all.vpn_routed(ip("10.1.1.1")));
@@ -153,13 +153,52 @@ fn a_prefix_longer_than_the_address_matches_nothing() {
     assert!(!s.vpn_routed(ip("fd00::1")));
 }
 
-/// A host that can read only the proxy script: the signals it cannot read answer "no".
+/// A host that can read only the proxy script and its LAN interfaces (none has a private
+/// subnet): the signals it cannot read answer "no".
 struct PacOnly;
 
 impl CompanySignals for PacOnly {
     fn pac_direct(&self, name: &str) -> bool {
         name == "nexus.corp.example"
     }
+
+    fn physical_lan(&self, _ip: IpAddr) -> LanReading {
+        LanReading::OffLan
+    }
+}
+
+/// A host whose proxy script says everything is direct but that could not read its interfaces.
+struct PacButNoLan;
+
+impl CompanySignals for PacButNoLan {
+    fn pac_direct(&self, _name: &str) -> bool {
+        true
+    }
+}
+
+#[test]
+fn an_unread_lan_keeps_every_private_address_out_of_the_company_network() {
+    // A trait default that says "not on the LAN" would put a home address in the category.
+    for addr in ["192.168.1.5", "10.1.2.3", "100.64.3.7"] {
+        assert_eq!(
+            company_signal(true, ip(addr), Some("nas.home.test"), &PacButNoLan),
+            None,
+            "{addr}"
+        );
+    }
+    assert_eq!(
+        PacButNoLan.physical_lan(ip("192.168.1.5")),
+        LanReading::Unread
+    );
+    let unread = StaticSignals::new()
+        .with_pac_direct("nas.home.test")
+        .with_lan_subnet(ip("10.0.0.0"), 8)
+        .with_lan_unread();
+    assert_eq!(unread.physical_lan(ip("172.16.0.1")), LanReading::Unread);
+    assert_eq!(
+        company_signal(true, ip("172.16.0.1"), Some("nas.home.test"), &unread),
+        None
+    );
 }
 
 #[test]
@@ -213,5 +252,40 @@ fn the_default_found_reports_the_client_the_host_read_and_no_suffixes() {
             dns_suffixes: Vec::new(),
             private_access_client: true,
         }
+    );
+}
+
+#[test]
+fn a_host_that_implements_nothing_answers_no_to_every_signal_and_unread_to_the_lan() {
+    let none = NoSignals;
+    assert!(!none.pac_direct("nexus.corp.example"));
+    assert!(!none.in_dns_namespace("nexus.corp.example"));
+    assert!(!none.private_access_client());
+    assert!(!none.vpn_routed(ip("10.8.0.1")));
+    assert_eq!(none.physical_lan(ip("10.8.0.1")), LanReading::Unread);
+}
+
+#[test]
+fn a_private_address_with_no_signal_on_a_read_lan_stays_private() {
+    let s = StaticSignals::new().with_lan_subnet(ip("192.168.1.0"), 24);
+    assert_eq!(
+        company_signal(true, ip("10.1.2.3"), Some("a.test"), &s),
+        None
+    );
+    assert_eq!(company_signal(true, ip("172.16.0.9"), None, &s), None);
+}
+
+#[test]
+fn a_native_ipv6_private_address_has_no_address_signal_but_a_name_still_counts() {
+    // The CGNAT and VPN-route signals are IPv4 notions; a unique-local IPv6 address only
+    // qualifies through its name.
+    let s = StaticSignals::new()
+        .with_dns_suffix("corp.example")
+        .with_private_access_client()
+        .with_vpn_route(ip("10.0.0.0"), 8);
+    assert_eq!(company_signal(true, ip("fd00::1"), None, &s), None);
+    assert_eq!(
+        company_signal(true, ip("fd00::1"), Some("host.corp.example"), &s),
+        Some(CompanySignal::DnsSuffix)
     );
 }

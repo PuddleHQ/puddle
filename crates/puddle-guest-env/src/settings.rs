@@ -50,6 +50,10 @@ pub struct ProxySettings {
     pub home: GuestPath,
     /// The agent binary, which `ssh` runs as its `ProxyCommand`.
     pub agent: GuestPath,
+    /// The agent's SSH agent socket, which carries each client to the user's agent on the host,
+    /// or `None` when the workspace uses no host for that. Sets `SSH_AUTH_SOCK` and ssh's
+    /// `IdentityAgent`.
+    pub ssh_agent: Option<GuestPath>,
 }
 
 impl Default for ProxySettings {
@@ -60,6 +64,7 @@ impl Default for ProxySettings {
             no_proxy: Vec::new(),
             home: default_home(),
             agent: default_agent(),
+            ssh_agent: None,
         }
     }
 }

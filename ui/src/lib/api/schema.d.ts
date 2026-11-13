@@ -1860,6 +1860,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{id}/ssh-agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The hosts the workspace may use the user's SSH agent for, with the keys each may use. */
+        get: operations["get_ssh_agent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{id}/ssh-agent/{host}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Lets the workspace use the user's SSH agent for SSH to `host`, with every key or only the
+         *     listed ones, or changes the keys of a host it is on for. The workspace's `ssh` then logs in to
+         *     that host with those keys, and only to a session Puddle saw it open there. A workspace that
+         *     started with no host on gets its agent socket at its next start.
+         */
+        put: operations["put_ssh_agent_host"];
+        post?: never;
+        /** Turns the agent off for `host`. A login to it already going on gets no more signatures. */
+        delete: operations["delete_ssh_agent_host"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{id}/start": {
         parameters: {
             query?: never;
@@ -5266,6 +5306,36 @@ export interface components {
             reason: string;
             /** @description The subject's common name, when readable. */
             subject: string | null;
+        };
+        /** @description Which keys a host may use. */
+        SshAgentHostRequest: {
+            /**
+             * @description SHA-256 fingerprints (`SHA256:` and 43 base64 characters, at most 64 of them); absent or
+             *     `null` for every key the agent holds.
+             */
+            keys?: string[] | null;
+        };
+        /** @description One host a workspace may use the user's SSH agent for. */
+        SshAgentHostView: {
+            /**
+             * Format: int64
+             * @description Epoch ms the agent was turned on for the host, or its keys last changed.
+             */
+            changed_at: number;
+            /** @description The host, as `ssh` in the workspace names it: a lower-case name or an IP address. */
+            host: string;
+            /**
+             * @description The keys it may use, as SHA-256 fingerprints (`SHA256:...`, as `ssh-keygen -l` prints
+             *     them), sorted; `null` for every key the agent holds.
+             */
+            keys: string[] | null;
+        };
+        /** @description The hosts a workspace may use the user's SSH agent for. Empty unless the user turned it on. */
+        SshAgentView: {
+            /** @description The hosts, sorted by name. */
+            hosts: components["schemas"]["SshAgentHostView"][];
+            /** @description The workspace. */
+            workspace: components["schemas"]["WorkspaceId"];
         };
         /** @description `PUT /api/workspaces/{id}/start-folder`. */
         StartFolderRequest: {
@@ -14441,6 +14511,234 @@ export interface operations {
             };
             /** @description Host is not the API's own address */
             421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_ssh_agent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the hosts, sorted by name; none until the user turns the agent on for one */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshAgentView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_ssh_agent_host: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the host's name or IP address, as ssh in the workspace names it */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SshAgentHostRequest"];
+            };
+        };
+        responses: {
+            /** @description on; the host now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshAgentHostView"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not a host, a pattern, a key that is not a SHA-256 fingerprint, an empty or too long key list, or the workspace has the agent on for too many hosts */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_ssh_agent_host: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description workspace id */
+                id: string;
+                /** @description the host's name or IP address */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description off */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description no such workspace, or the agent is not on for the host */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description not a host */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

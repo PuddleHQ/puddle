@@ -26,9 +26,10 @@ use puddle_proxy::{
     StandIns, Termination, TerminationSet, TerminationSource, Terminations,
 };
 use puddle_secrets::{Fetch, ReadLog, SecretCache, SecretStore, SourceSpec, Sources};
+use puddle_ssh_agent::filter::AllowedKeys;
 use puddle_store::{Store, WorkspaceGit};
 use puddle_types::{
-    CURATED_PASS_THROUGH, Event, EventSink, GuestEnv, InterceptionMode, RuleId, WorkspaceId,
+    CURATED_PASS_THROUGH, Event, EventSink, GuestEnv, Host, InterceptionMode, RuleId, WorkspaceId,
 };
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -89,6 +90,9 @@ pub(crate) struct Began {
     /// The variables the guest starts with: the workspace's own and the global ones, each secret
     /// as its stand-in.
     pub(crate) env: GuestEnv,
+    /// Whether the workspace had the user's SSH agent on for at least one host at this start: the
+    /// guest then gets its agent socket until the next start.
+    pub(crate) ssh_agent: bool,
 }
 
 /// What a running sandbox holds in memory: its CA, the injector made for this start, the
@@ -118,8 +122,10 @@ impl Running {
         set: TerminationSet,
         interception: Interception,
         request_rules: RequestRules,
+        ssh_agent_hosts: HashMap<Host, AllowedKeys>,
     ) -> Termination {
         let termination = Termination::new(set, Arc::clone(&self.ca), Arc::clone(&self.injector))
+            .with_ssh_agent_hosts(ssh_agent_hosts)
             .with_stand_ins(Arc::clone(&self.stand_ins))
             .with_exchanges(Arc::new(self.logins.clone()))
             .with_interception(interception)
@@ -349,6 +355,8 @@ impl Injection {
         // `resync` or an `end` never sees one without the other.
         let mut running = self.running();
         let now_keys = ssh_keys.clone();
+        let ssh_agent_hosts = self.ssh_agent_hosts(workspace)?;
+        let ssh_agent = !ssh_agent_hosts.is_empty();
         let now = Running {
             ca,
             ssh_keys,
@@ -365,6 +373,7 @@ impl Injection {
                 decrypted(&git, &now.stand_ins, &now.logins),
                 self.interception(workspace, &now.learned)?,
                 self.request_rules(workspace)?,
+                ssh_agent_hosts,
             ),
         );
         running.insert(workspace.clone(), now);
@@ -375,6 +384,7 @@ impl Injection {
             git,
             ssh,
             env: guest,
+            ssh_agent,
         })
     }
 
@@ -456,6 +466,7 @@ impl Injection {
                 decrypted(&git, &now.stand_ins, &now.logins),
                 self.interception(workspace, &now.learned)?,
                 self.request_rules(workspace)?,
+                self.ssh_agent_hosts(workspace)?,
             ),
         );
         drop(running);
@@ -531,6 +542,17 @@ impl Injection {
             .curated(curated)
             .learn_from_rejections(settings.learn_from_rejections)
             .never_decrypt(never))
+    }
+
+    /// The hosts `workspace` may use the user's SSH agent for, read from the store.
+    fn ssh_agent_hosts(
+        &self,
+        workspace: &WorkspaceId,
+    ) -> Result<HashMap<Host, AllowedKeys>, String> {
+        let rows = self.inputs.store.ssh_agent_hosts(workspace).map_err(|e| {
+            format!("cannot read the hosts {workspace} may use the SSH agent for: {e}")
+        })?;
+        Ok(crate::ssh_agent::allowed_hosts(rows))
     }
 
     /// The rules on method and path that apply to `workspace`, global and its own. A row the

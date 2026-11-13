@@ -311,6 +311,42 @@ fn the_stub_dns_is_off_until_asked_for_and_binds_one_specific_address() {
 }
 
 #[test]
+fn the_ssh_agent_socket_is_off_until_the_host_names_it_and_belongs_to_the_session_user() {
+    assert_eq!(from(&[]).unwrap().ssh_agent, None);
+    assert_eq!(
+        from(&[("PUDDLE_AGENT_SSH_AGENT", "off")])
+            .unwrap()
+            .ssh_agent,
+        None
+    );
+    assert_eq!(
+        from(&[("PUDDLE_AGENT_SSH_AGENT_USER", "agent")])
+            .unwrap()
+            .ssh_agent,
+        None,
+        "a user without a socket turns nothing on"
+    );
+    let root = from(&[("PUDDLE_AGENT_SSH_AGENT", "/run/puddle/ssh-agent.sock")])
+        .unwrap()
+        .ssh_agent
+        .unwrap();
+    assert_eq!(root.socket, PathBuf::from("/run/puddle/ssh-agent.sock"));
+    assert_eq!(root.user, "root");
+    assert_eq!(root.owner_wait, Duration::from_secs(60));
+    let session = from(&[
+        ("PUDDLE_AGENT_SSH_AGENT", "/x/agent.sock"),
+        ("PUDDLE_AGENT_SSH_AGENT_USER", "agent"),
+    ])
+    .unwrap()
+    .ssh_agent
+    .unwrap();
+    assert_eq!(session.socket, PathBuf::from("/x/agent.sock"));
+    assert_eq!(session.user, "agent");
+    let err = from(&[("PUDDLE_AGENT_SSH_AGENT", "")]).unwrap_err();
+    assert_eq!(err.var, "PUDDLE_AGENT_SSH_AGENT");
+}
+
+#[test]
 fn an_echoed_value_is_cut() {
     let long = "x".repeat(500);
     let err = from(&[("PUDDLE_AGENT_LISTEN", &long)]).unwrap_err();

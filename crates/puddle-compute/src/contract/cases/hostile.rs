@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use puddle_ipc::IpcRoot;
 use tokio::io::AsyncReadExt;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use super::{Case, Outcome, sh, spec, step};
@@ -32,9 +33,6 @@ const OTHER_CIDS: [u32; 7] = [4, 5, 6, 100, 0x7fff_ffff, 0xffff_fffe, 0xffff_fff
 /// the usual proxy and web ports and the ephemeral range's start.
 const OTHER_CID_PORTS: [&str; 5] = ["1-1024", "3128", "4990-5010", "8080", "49152-49300"];
 
-/// How long a probe may run past its own timeout before the case gives up on it.
-const PROBE_SLACK: Duration = Duration::from_secs(60);
-
 /// How long the host waits for a connection a sweep made to reach its endpoint.
 const DELIVERY_WAIT: Duration = Duration::from_secs(10);
 
@@ -52,11 +50,10 @@ async fn probe<S: Sandbox>(
     let request = ExecRequest::new(program, args)
         .as_user("root")
         .with_timeout(timeout);
-    match tokio::time::timeout(timeout + PROBE_SLACK, sb.exec(request)).await {
-        Ok(Ok(out)) => Ok(out),
-        Ok(Err(e)) => Err(format!("{what}: unexpected error: {e}")),
-        Err(_) => Err(format!("{what}: no answer within {timeout:?}")),
-    }
+    // The runtime enforces the request's timeout (`exec_timeout_is_enforced`).
+    sb.exec(request)
+        .await
+        .map_err(|e| format!("{what}: unexpected error: {e}"))
 }
 
 async fn perl<S: Sandbox>(
@@ -183,6 +180,7 @@ pub(super) async fn hg01_raw_and_packet_sockets_reach_no_network<R: Runtime>(
 struct HostEndpoint {
     path: PathBuf,
     lines: Arc<Mutex<Vec<String>>>,
+    stop: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
 }
 
@@ -193,10 +191,16 @@ impl HostEndpoint {
         let path = listener.endpoint().path().to_owned();
         let lines = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&lines);
+        let (stop, mut stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
             // The root's directory goes away with its last holder.
             let _root = root;
-            while let Ok(mut conn) = listener.accept().await {
+            loop {
+                let accepted = tokio::select! {
+                    _ = &mut stopped => break,
+                    accepted = listener.accept() => accepted,
+                };
+                let Ok(mut conn) = accepted else { break };
                 let mut buf = Vec::new();
                 let _ =
                     tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf)).await;
@@ -206,7 +210,12 @@ impl HostEndpoint {
                     .push(line);
             }
         });
-        Ok(Self { path, lines, task })
+        Ok(Self {
+            path,
+            lines,
+            stop: Some(stop),
+            task,
+        })
     }
 
     fn seen(&self) -> Vec<String> {
@@ -218,7 +227,7 @@ impl HostEndpoint {
 
     /// Waits for `expected` connections, then a little longer for any extra, and returns what
     /// arrived.
-    async fn finish(&self, expected: usize) -> Vec<String> {
+    async fn finish(mut self, expected: usize) -> Vec<String> {
         let _ = tokio::time::timeout(DELIVERY_WAIT, async {
             while self.seen().len() < expected {
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -226,6 +235,10 @@ impl HostEndpoint {
         })
         .await;
         tokio::time::sleep(EXTRA_WAIT).await;
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        let _ = (&mut self.task).await;
         self.seen()
     }
 }

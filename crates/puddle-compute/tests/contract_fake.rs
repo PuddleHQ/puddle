@@ -251,3 +251,45 @@ async fn the_suite_catches_a_guest_that_reaches_a_vsock_address_it_should_not() 
         ]
     );
 }
+
+#[tokio::test]
+async fn a_probe_that_exits_non_zero_fails_its_case_with_what_it_said() {
+    use puddle_compute::ExecOutput;
+    use puddle_compute::probes::Probe;
+    for (probe, case) in [
+        (Probe::Icmp, "hg01_guest_has_no_direct_network"),
+        (
+            Probe::Packet,
+            "hg01_raw_and_packet_sockets_reach_no_network",
+        ),
+        (Probe::VsockSweep, "hg02_only_the_routed_vsock_port_accepts"),
+        (Probe::VsockSweep, "hg02_no_other_vsock_address_accepts"),
+        (Probe::NoDirectNetwork, "hg01_guest_has_no_direct_network"),
+    ] {
+        let rt = guest_answers(probe, ExecOutput::new(1, "", "probe broke"), None);
+        let env = ContractEnv::new(rt, ImageRef::new(FakeRuntime::DEBIAN).unwrap());
+        let err = contract::run_case(case, &env).await.unwrap_err();
+        assert!(err.message.contains("probe broke"), "{case}: {err}");
+    }
+}
+
+#[tokio::test]
+async fn a_runtime_that_cannot_run_a_probe_fails_its_case() {
+    use puddle_compute::ComputeError;
+    use puddle_compute::fake::{Fault, Op};
+    let rt = FakeRuntime::new();
+    // The first exec of the case is its shell script; the second is the probe.
+    rt.inject(
+        Op::Exec,
+        Fault::once(ComputeError::Runtime {
+            op: "exec",
+            message: "agent gone".into(),
+        })
+        .after(1),
+    );
+    let env = ContractEnv::new(rt, ImageRef::new(FakeRuntime::DEBIAN).unwrap());
+    let err = contract::run_case("hg01_guest_has_no_direct_network", &env)
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("agent gone"), "{err}");
+}

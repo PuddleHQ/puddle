@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use puddle_types::{GuestEnv, GuestFile, GuestPath, SessionUser};
+use puddle_types::{FileMode, GuestEnv, GuestFile, GuestPath, SessionUser, guest_path};
 use zeroize::Zeroizing;
 
 use super::DevCertMaterial;
@@ -86,26 +86,31 @@ impl GuestDevCert {
     /// the system-store copy, the certificate and the key under [`DEV_CERT_DIR`] (the key
     /// mode `0600`, so its bytes never print), then the step script (`0755`).
     pub(crate) fn guest_files(&self) -> Vec<GuestFile> {
-        // The modes are constants within 0o7777: `with_mode` can't fail, and a file that somehow
-        // could not be made would be left out, never written with the default mode.
-        let file = |path: &str, contents: Vec<u8>, mode: u32| {
-            GuestFile::new(guest_path(path), contents)
-                .with_mode(mode)
-                .ok()
+        let file = |path: GuestPath, contents: Vec<u8>, mode: FileMode| {
+            GuestFile::new(path, contents).with_mode(mode)
         };
-        [
+        vec![
             file(
-                DEV_SYSTEM_CA_PATH,
+                guest_path!(DEV_SYSTEM_CA_PATH),
                 self.cert_pem.clone().into_bytes(),
-                0o644,
+                FileMode::new(0o644),
             ),
-            file(DEV_CERT_PATH, self.cert_pem.clone().into_bytes(), 0o644),
-            file(DEV_KEY_PATH, self.key_pem.as_bytes().to_vec(), 0o600),
-            file(DEV_STEP_PATH, DEV_STEP_SH.as_bytes().to_vec(), 0o755),
+            file(
+                guest_path!(DEV_CERT_PATH),
+                self.cert_pem.clone().into_bytes(),
+                FileMode::new(0o644),
+            ),
+            file(
+                guest_path!(DEV_KEY_PATH),
+                self.key_pem.as_bytes().to_vec(),
+                FileMode::new(0o600),
+            ),
+            file(
+                guest_path!(DEV_STEP_PATH),
+                DEV_STEP_SH.as_bytes().to_vec(),
+                FileMode::new(0o755),
+            ),
         ]
-        .into_iter()
-        .flatten()
-        .collect()
     }
 
     /// The variables: the file paths for tools that take them (Vite, Angular, Next.js), .NET's
@@ -127,14 +132,6 @@ impl GuestDevCert {
 
     /// The step the plan runs after the bundle step.
     pub(crate) fn step() -> GuestPath {
-        guest_path(DEV_STEP_PATH)
+        guest_path!(DEV_STEP_PATH)
     }
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "invariant: only called with this module's absolute, normalised constants"
-)]
-fn guest_path(p: &str) -> GuestPath {
-    GuestPath::new(p).expect("a constant guest path is valid")
 }

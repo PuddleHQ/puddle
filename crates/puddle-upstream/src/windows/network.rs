@@ -159,6 +159,9 @@ struct ForwardTable(*mut MIB_IPFORWARD_TABLE2);
 
 impl Drop for ForwardTable {
     fn drop(&mut self) {
+        if self.0.is_null() {
+            return;
+        }
         // SAFETY: the table came from `GetIpForwardTable2` and is not used after this.
         unsafe { FreeMibTable(self.0.cast::<c_void>()) };
     }
@@ -169,15 +172,16 @@ fn routes() -> Result<Vec<Route>, String> {
     let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
     // SAFETY: `table` is a valid out-pointer; Windows allocates the table.
     let status = unsafe { GetIpForwardTable2(AF_INET, &raw mut table) };
-    if status != ERROR_SUCCESS || table.is_null() {
+    if status != ERROR_SUCCESS {
         return Err(format!("GetIpForwardTable2: error {status}"));
     }
     let table = ForwardTable(table);
-    // SAFETY: the table holds `NumEntries` rows from `Table` on, valid until `table` drops.
-    let rows = unsafe {
-        let head = &*table.0;
-        std::slice::from_raw_parts(head.Table.as_ptr(), head.NumEntries as usize)
+    // SAFETY: `as_ref` yields `None` for null; a non-null table is valid until `table` drops.
+    let Some(head) = (unsafe { table.0.as_ref() }) else {
+        return Err("GetIpForwardTable2: no table".to_owned());
     };
+    // SAFETY: the table holds `NumEntries` rows from `Table` on, valid until `table` drops.
+    let rows = unsafe { std::slice::from_raw_parts(head.Table.as_ptr(), head.NumEntries as usize) };
     Ok(rows
         .iter()
         .map(|row| {

@@ -737,7 +737,7 @@ async fn check_variable<S: Sandbox>(sb: &GatedSandbox<S>, value: &str) {
     // `sudo -i` and a bash without a login read the files.
     let (code, said) = as_agent(
         sb,
-        "env -u KEPT_T_VAR sudo -n -i sh -c 'printf \"%s\" \"$KEPT_T_VAR\"'",
+        "echo 'printf \"%s\" \"$KEPT_T_VAR\"' | env -u KEPT_T_VAR sudo -n -i",
     )
     .await;
     assert_eq!(

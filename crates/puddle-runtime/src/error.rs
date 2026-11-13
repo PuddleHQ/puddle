@@ -58,4 +58,17 @@ pub enum RuntimeError {
         /// What the binary says, made printable and cut to 64 characters.
         found: String,
     },
+    /// A runtime file isn't the one this build of Puddle ships with: another hash than the one
+    /// built in from `ci/msb-runtime.sha256`.
+    #[error(
+        "bundled runtime file {path} is not the one this Puddle ships with: its SHA-256 is {found}, expected {expected}; repair or reinstall Puddle"
+    )]
+    Digest {
+        /// The file.
+        path: PathBuf,
+        /// The hash this build expects (lowercase hex).
+        expected: String,
+        /// The hash of the file on disk (lowercase hex).
+        found: String,
+    },
 }

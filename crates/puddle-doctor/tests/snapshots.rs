@@ -427,6 +427,25 @@ fn windows_runtime_version_mismatch() {
 }
 
 #[test]
+fn windows_runtime_digest_mismatch() {
+    let fake = Fake {
+        runtime: RuntimeState::Unusable(RuntimeError::Digest {
+            path: MSB.into(),
+            expected: "a".repeat(64),
+            found: "b".repeat(64),
+        }),
+        ..windows()
+    };
+    check(
+        "windows_runtime_digest_mismatch",
+        &fake,
+        CheckId::Runtime,
+        Some(Finding::RuntimeDigestMismatch),
+    );
+    assert_eq!((fake.launches.get(), fake.boots.get()), (0, 0));
+}
+
+#[test]
 fn windows_runtime_unreadable() {
     let fake = Fake {
         runtime: RuntimeState::Unusable(RuntimeError::Unreadable {

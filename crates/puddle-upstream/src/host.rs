@@ -125,4 +125,10 @@ mod tests {
         .await;
         assert_eq!(got, vec![ip]);
     }
+
+    #[test]
+    fn a_stand_in_lookup_prints_without_showing_its_closure() {
+        let lookup = crate::chain::HostLookup::new(|_, _| async { Ok(Vec::new()) });
+        assert_eq!(format!("{lookup:?}"), "HostLookup(..)");
+    }
 }

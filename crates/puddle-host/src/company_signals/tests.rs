@@ -652,19 +652,17 @@ mod proxy_script {
 
     const MAX_NAMES_FOR_TEST: usize = 1024;
 
-    #[test]
-    fn the_default_reader_evaluates_on_a_thread_of_its_own() {
+    #[tokio::test]
+    async fn the_default_reader_evaluates_on_a_thread_of_its_own() {
         let os = script(corporate);
         let pac = PacReader::new(os, PacTiming::default());
         pac.direct("intranet.corp.example");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !pac.direct("intranet.corp.example") {
-            assert!(
-                Instant::now() < deadline,
-                "the background evaluation never finished"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        puddle_test_kit::eventually(
+            "the background evaluation finished",
+            Duration::from_secs(10),
+            || pac.direct("intranet.corp.example"),
+        )
+        .await;
     }
 
     #[test]

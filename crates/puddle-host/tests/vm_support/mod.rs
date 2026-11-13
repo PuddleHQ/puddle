@@ -13,9 +13,7 @@
     reason = "VM test: JSON read from the API, a missing key fails the test"
 )]
 
-mod kit;
-
-pub(crate) use kit::{Flavour, KIT_HOST, PackageKit};
+pub(crate) mod kit;
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -41,10 +41,11 @@ use puddle_test_kit::{eventually, eventually_async};
 use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, named_id_options};
+use vm_support::kit::{Flavour, KIT_HOST, PackageKit};
 use vm_support::{
-    Flavour, KIT_HOST, PROBE_IMAGE, PackageKit, VmHost, WebInternet, allowed_connections, as_agent,
-    container_fetch, create_workspace_from, field, guest, guest_as, guest_live, reached_by_host,
-    start_vm_host, start_vm_host_platform, wait_for_connection_record, web_internet,
+    PROBE_IMAGE, VmHost, WebInternet, allowed_connections, as_agent, container_fetch,
+    create_workspace_from, field, guest, guest_as, guest_live, reached_by_host, start_vm_host,
+    start_vm_host_platform, wait_for_connection_record, web_internet,
 };
 
 /// The fake website's name (it answers plain HTTP and HTTPS).

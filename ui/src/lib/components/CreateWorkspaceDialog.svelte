@@ -729,12 +729,6 @@
       </div>
     </details>
 
-    <RepositoryHostsNotice
-      urls={rows.map((row) => row.url)}
-      {...hostCheck ? { check: hostCheck } : {}}
-      onBlocked={(b) => (hostBlocked = b)}
-    />
-
     {#if errors.form}
       <p class="error" role="alert">{errors.form}</p>
     {/if}
@@ -756,6 +750,14 @@
         {working ? "Creating…" : "Create workspace"}
       </button>
     </div>
+
+    <!-- Below the buttons: the answer arrives after the typing stops, and a note above them
+         would push the button away from a press already under way. -->
+    <RepositoryHostsNotice
+      urls={rows.map((row) => row.url)}
+      {...hostCheck ? { check: hostCheck } : {}}
+      onBlocked={(b) => (hostBlocked = b)}
+    />
   </form>
 </FormDialog>
 

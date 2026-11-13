@@ -192,6 +192,7 @@ export class FakeWorkspaces {
   attachReply: components["schemas"]["AttachResponse"] = {
     opened: true,
     message: null,
+    open_uri: null,
   };
 
   private reply(

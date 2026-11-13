@@ -220,7 +220,11 @@ export class FakeSettings {
           custom_png_base64: this.customIcon,
         } satisfies S["AppIcons"]);
       case "/api/health":
-        return this.reply(200, { version: this.version, api_version: "0.3.0" });
+        return this.reply(200, {
+          version: this.version,
+          api_version: "0.3.0",
+          ui_build_id: null,
+        });
     }
     throw new Error(`unexpected GET ${path}`);
   };

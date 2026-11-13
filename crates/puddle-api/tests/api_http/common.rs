@@ -58,48 +58,37 @@ pub(crate) async fn start() -> Api {
 }
 
 pub(crate) async fn start_with(config: ApiConfig) -> Api {
-    start_inner(config, true, None, None, None, true, None).await
+    start_inner(Options {
+        config,
+        ..Options::default()
+    })
+    .await
 }
 
 /// An API serving this network-health report.
 pub(crate) async fn start_with_network(network: Arc<dyn NetworkHealthService>) -> Api {
-    start_inner(
-        ApiConfig::default(),
-        true,
-        Some(network),
-        None,
-        None,
-        true,
-        None,
-    )
+    start_inner(Options {
+        network: Some(network),
+        ..Options::default()
+    })
     .await
 }
 
 /// An API running the system check through `doctor`.
 pub(crate) async fn start_with_doctor(doctor: Arc<dyn DoctorService>) -> Api {
-    start_inner(
-        ApiConfig::default(),
-        true,
-        None,
-        None,
-        Some(doctor),
-        true,
-        None,
-    )
+    start_inner(Options {
+        doctor: Some(doctor),
+        ..Options::default()
+    })
     .await
 }
 
 /// An API reporting the development certificate's state through `dev_cert`.
 pub(crate) async fn start_with_dev_cert(dev_cert: Arc<dyn DevCertService>) -> Api {
-    start_inner(
-        ApiConfig::default(),
-        true,
-        None,
-        None,
-        None,
-        true,
-        Some(dev_cert),
-    )
+    start_inner(Options {
+        dev_cert: Some(dev_cert),
+        ..Options::default()
+    })
     .await
 }
 
@@ -108,72 +97,52 @@ pub(crate) async fn start_with_config_and_dev_cert(
     config: ApiConfig,
     dev_cert: Arc<dyn DevCertService>,
 ) -> Api {
-    start_inner(config, true, None, None, None, true, Some(dev_cert)).await
+    start_inner(Options {
+        config,
+        dev_cert: Some(dev_cert),
+        ..Options::default()
+    })
+    .await
 }
 
 /// An API whose services have no workspaces implementation (what `Services::new` gives).
 pub(crate) async fn start_without_workspaces() -> Api {
-    start_inner(ApiConfig::default(), false, None, None, None, true, None).await
+    start_inner(Options {
+        with_workspaces: false,
+        ..Options::default()
+    })
+    .await
 }
 
 /// An API whose credentials service is `credentials` (`Api::credentials` is then an unused fake).
 pub(crate) async fn start_with_credentials(credentials: Arc<dyn CredentialService>) -> Api {
-    start_inner(
-        ApiConfig::default(),
-        true,
-        None,
-        Some(credentials),
-        None,
-        true,
-        None,
-    )
+    start_inner(Options {
+        own_credentials: Some(credentials),
+        ..Options::default()
+    })
     .await
 }
 
 /// An API whose services have no repository lists (what `Services::new` gives).
 pub(crate) async fn start_without_repos() -> Api {
-    start_inner(ApiConfig::default(), true, None, None, None, false, None).await
+    start_inner(Options {
+        with_repos: false,
+        ..Options::default()
+    })
+    .await
 }
 
 /// An API whose host reads the company network through `signals`.
 pub(crate) async fn start_with_company_signals(signals: Arc<dyn CompanySignals>) -> Api {
-    start_inner_with(
-        ApiConfig::default(),
-        true,
-        None,
-        None,
-        None,
-        true,
-        None,
-        Some(signals),
-    )
+    start_inner(Options {
+        company_signals: Some(signals),
+        ..Options::default()
+    })
     .await
 }
 
-async fn start_inner(
-    config: ApiConfig,
-    with_workspaces: bool,
-    network: Option<Arc<dyn NetworkHealthService>>,
-    own_credentials: Option<Arc<dyn CredentialService>>,
-    doctor: Option<Arc<dyn DoctorService>>,
-    with_repos: bool,
-    dev_cert: Option<Arc<dyn DevCertService>>,
-) -> Api {
-    start_inner_with(
-        config,
-        with_workspaces,
-        network,
-        own_credentials,
-        doctor,
-        with_repos,
-        dev_cert,
-        None,
-    )
-    .await
-}
-
-#[expect(clippy::too_many_arguments, reason = "a test fixture's switches")]
-async fn start_inner_with(
+/// What a test's API is wired with; the default is the usual server with every fake wired.
+struct Options {
     config: ApiConfig,
     with_workspaces: bool,
     network: Option<Arc<dyn NetworkHealthService>>,
@@ -182,7 +151,34 @@ async fn start_inner_with(
     with_repos: bool,
     dev_cert: Option<Arc<dyn DevCertService>>,
     company_signals: Option<Arc<dyn CompanySignals>>,
-) -> Api {
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            config: ApiConfig::default(),
+            with_workspaces: true,
+            network: None,
+            own_credentials: None,
+            doctor: None,
+            with_repos: true,
+            dev_cert: None,
+            company_signals: None,
+        }
+    }
+}
+
+async fn start_inner(options: Options) -> Api {
+    let Options {
+        config,
+        with_workspaces,
+        network,
+        own_credentials,
+        doctor,
+        with_repos,
+        dev_cert,
+        company_signals,
+    } = options;
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
     let store = Arc::new(

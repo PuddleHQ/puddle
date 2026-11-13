@@ -580,26 +580,31 @@ async fn owners_things(pair: &Pair) -> OwnersThings {
     }
 }
 
-/// From Ann's session, every route that names a resource answers for the owner's
-/// workspace, request and rules exactly as for ids nobody has, and never with the resource. The
-/// owner, in turn, gets nothing of Ann's. Lists keep to their caller.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-async fn hostile_every_route_keeps_each_user_to_their_own() {
+/// The owner's things from `owners_things`, with the two servers, for a test of Ann's reach.
+async fn pair_with_owners_things() -> (Pair, OwnersThings) {
     let pair = pair().await;
-    let (owner, ann) = (pair.owner.0, pair.ann.0);
-    let token = pair.token.as_str();
+    let things = owners_things(&pair).await;
+    (pair, things)
+}
+
+async fn shut_down(pair: Pair) {
+    pair.owner.1.shutdown().await;
+    pair.ann.1.shutdown().await;
+}
+
+/// From Ann's session, every route that names a resource answers for the owner's
+/// workspace, request and rules exactly as for ids nobody has, and never with the resource.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_every_declared_route_naming_a_resource_answers_as_for_an_unknown_one() {
+    let (pair, things) = pair_with_owners_things().await;
+    let (ann, token) = (pair.ann.0, pair.token.as_str());
     let OwnersThings {
         workspace: box_id,
         pending,
         rule: rule_id,
         request_rule: request_rule_id,
-        identity,
-        rule_set,
-        global_rule,
-        global_request_rule,
-        token: stored_token,
-    } = owners_things(&pair).await;
+        ..
+    } = things;
 
     let mut checked = 0;
     for (method, path) in operations() {
@@ -629,11 +634,43 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         checked += 1;
     }
     assert_eq!(checked, 50, "routes that name a resource");
+    shut_down(pair).await;
+}
 
-    // The routes of a user's own collections name the resource by an id the store looks up for
-    // the principal: the owner's answer exactly as ids nobody has.
-    let user_set = |id: &str| id.to_owned();
-    let by_id: Vec<(&str, String, String, Option<Value>)> = vec![
+type ByIdRoute = (&'static str, String, String, Option<Value>);
+
+/// Each route, called by Ann with the owner's id and with one nobody has, answers alike and 404.
+async fn assert_owners_id_answers_as_an_unknown_one(pair: &Pair, routes: Vec<ByIdRoute>) {
+    let (ann, token) = (pair.ann.0, pair.token.as_str());
+    for (method, theirs_path, nobodys_path, body) in routes {
+        let theirs = send(ann, token, method, &theirs_path, body.as_ref()).await;
+        let nobodys = send(ann, token, method, &nobodys_path, body.as_ref()).await;
+        let id_of = |path: &str| {
+            path.rsplit('/')
+                .find(|p| {
+                    p.chars().any(|c| c.is_ascii_digit())
+                        || p.contains("ONLY")
+                        || p.contains("NOBODY")
+                })
+                .unwrap_or_default()
+                .to_owned()
+        };
+        assert_eq!(
+            (theirs.0, theirs.1.replace(&id_of(&theirs_path), "ID")),
+            (nobodys.0, nobodys.1.replace(&id_of(&nobodys_path), "ID")),
+            "{method} {theirs_path}"
+        );
+        assert_eq!(theirs.0, 404, "{method} {theirs_path}: {}", theirs.1);
+    }
+}
+
+/// The routes of a user's own identities name the resource by an id the store looks up for
+/// the principal: the owner's answer exactly as ids nobody has.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_identity_routes_answer_the_owners_id_as_an_unknown_one() {
+    let (pair, things) = pair_with_owners_things().await;
+    let identity = things.identity;
+    let routes: Vec<ByIdRoute> = vec![
         (
             "GET",
             format!("/api/identities/{identity}"),
@@ -661,9 +698,26 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
             "/api/identities/999999/default".into(),
             None,
         ),
+    ];
+    assert_owners_id_answers_as_an_unknown_one(&pair, routes).await;
+    shut_down(pair).await;
+}
+
+/// The routes of a user's own rule sets, rules, request rules and variables name the resource by
+/// an id the store looks up for the principal: the owner's answer exactly as ids nobody has.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_rule_set_rule_and_variable_routes_answer_the_owners_id_as_an_unknown_one() {
+    let (pair, things) = pair_with_owners_things().await;
+    let OwnersThings {
+        rule_set,
+        global_rule,
+        global_request_rule,
+        ..
+    } = things;
+    let routes: Vec<ByIdRoute> = vec![
         (
             "PUT",
-            format!("/api/rule-sets/{}", user_set(&rule_set)),
+            format!("/api/rule-sets/{rule_set}"),
             "/api/rule-sets/user:999999".into(),
             Some(json!({"name": "x", "description": ""})),
         ),
@@ -704,38 +758,33 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
             None,
         ),
     ];
-    for (method, theirs_path, nobodys_path, body) in by_id {
-        let theirs = send(ann, token, method, &theirs_path, body.as_ref()).await;
-        let nobodys = send(ann, token, method, &nobodys_path, body.as_ref()).await;
-        let id_of = |path: &str| {
-            path.rsplit('/')
-                .find(|p| {
-                    p.chars().any(|c| c.is_ascii_digit())
-                        || p.contains("ONLY")
-                        || p.contains("NOBODY")
-                })
-                .unwrap_or_default()
-                .to_owned()
-        };
-        assert_eq!(
-            (theirs.0, theirs.1.replace(&id_of(&theirs_path), "ID")),
-            (nobodys.0, nobodys.1.replace(&id_of(&nobodys_path), "ID")),
-            "{method} {theirs_path}"
-        );
-        assert_eq!(theirs.0, 404, "{method} {theirs_path}: {}", theirs.1);
-    }
-    // Rule sets: a switch for the owner's workspace is refused as an unknown workspace.
+    assert_owners_id_answers_as_an_unknown_one(&pair, routes).await;
+    shut_down(pair).await;
+}
+
+/// Rule sets: a switch for the owner's workspace is refused as an unknown workspace.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_a_rule_set_switch_for_the_owners_workspace_is_an_unknown_workspace() {
+    let (pair, things) = pair_with_owners_things().await;
+    let (ann, token) = (pair.ann.0, pair.token.as_str());
     let (status, body) = send(
         ann,
         token,
         "PUT",
         "/api/rule-sets/builtin:github/switch",
-        Some(&json!({"workspace": box_id, "enabled": true})),
+        Some(&json!({"workspace": things.workspace, "enabled": true})),
     )
     .await;
     assert_eq!(status, 404, "{body}");
-    // A pasted token of the owner's: refused the same as one made up, never removed.
-    let theirs_source = json!({"kind": "stored", "id": stored_token, "host": "github.com"});
+    shut_down(pair).await;
+}
+
+/// A pasted token of the owner's: refused the same as one made up, and not usable for an identity.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_a_pasted_token_of_the_owners_is_refused_as_one_made_up() {
+    let (pair, things) = pair_with_owners_things().await;
+    let (ann, token) = (pair.ann.0, pair.token.as_str());
+    let theirs_source = json!({"kind": "stored", "id": things.token, "host": "github.com"});
     let made_up = json!({"kind": "stored", "id": "tok-0000", "host": "github.com"});
     let made_up_of_ann =
         json!({"kind": "stored", "id": format!("u{}-tok-0000", pair.ann_id), "host": "github.com"});
@@ -770,6 +819,15 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
     )
     .await;
     assert_eq!(status, 422, "{body}");
+    shut_down(pair).await;
+}
+
+/// A pasted token of the owner's is never removed by Ann, even when she deletes it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_deleting_the_owners_pasted_token_removes_nothing() {
+    let (pair, things) = pair_with_owners_things().await;
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let stored_token = things.token;
     let (status, _) = send(
         ann,
         token,
@@ -783,12 +841,19 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         owner,
         token,
         "GET",
-        &format!("/api/identities/{identity}"),
+        &format!("/api/identities/{}", things.identity),
         None,
     )
     .await;
     assert!(owners_view.contains(&stored_token), "{owners_view}");
-    // The accounts signed in on the computer are the owner's.
+    shut_down(pair).await;
+}
+
+/// The accounts signed in on the computer are the owner's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_the_accounts_signed_in_on_the_computer_are_the_owners_alone() {
+    let pair = pair().await;
+    let (ann, token) = (pair.ann.0, pair.token.as_str());
     let gh = json!({"kind": "gh", "host": "github.com", "account": "me"});
     for (method, path, body) in [
         ("GET", "/api/credentials/found", None),
@@ -807,14 +872,22 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         let (status, answer) = send(ann, token, method, path, body.as_ref()).await;
         assert_eq!(status, 403, "{method} {path}: {answer}");
     }
+    shut_down(pair).await;
+}
 
+/// Ann's lists hold nothing of the owner's: every list there is, read from the route table so
+/// a new one is checked too (the event stream has its own test; the lookup is below). The
+/// owner's lists do hold them (the control).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_lists_hold_only_their_callers_things() {
+    let (pair, things) = pair_with_owners_things().await;
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let box_id = things.workspace;
+    let stored_token = things.token;
     pair.problems
         .raise(puddle_types::Problem::new("ws", "t", "d").about(ws(&box_id)));
     pair.problems
         .raise(puddle_types::Problem::new("puddle", "own", "d"));
-    // Ann's lists hold nothing of the owner's: every list there is, read from the route table so
-    // a new one is checked too (the event stream has its own test; the lookup is below).
-    let get = |path: &'static str| async move { send(ann, token, "GET", path, None).await };
     let lists: Vec<String> = operations()
         .into_iter()
         .filter(|(method, path)| {
@@ -840,9 +913,8 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
             assert!(!body.contains(owners), "{path} holds {owners}: {body}");
         }
     }
-    let (status, _) = get("/api/workspaces/lookup?q=box").await;
+    let (status, _) = send(ann, token, "GET", "/api/workspaces/lookup?q=box", None).await;
     assert_eq!(status, 404);
-    // The owner's do (the control).
     for path in [
         "/api/workspaces",
         "/api/pending",
@@ -854,8 +926,15 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         let (_, body) = send(owner, token, "GET", path, None).await;
         assert!(body.contains(&box_id), "{path}: {body}");
     }
+    shut_down(pair).await;
+}
 
-    // A rule for the owner's workspace is refused as an unknown workspace.
+/// A rule or a request rule for the owner's workspace is refused as an unknown workspace.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hostile_a_rule_for_the_owners_workspace_is_refused_as_an_unknown_workspace() {
+    let (pair, things) = pair_with_owners_things().await;
+    let (ann, token) = (pair.ann.0, pair.token.as_str());
+    let box_id = things.workspace;
     let theirs = json!({"scope": {"type": "workspace", "workspace": box_id}, "pattern": "d.example", "effect": "allow"});
     assert_eq!(
         send(ann, token, "POST", "/api/rules", Some(&theirs))
@@ -870,8 +949,7 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
             .0,
         404
     );
-    pair.owner.1.shutdown().await;
-    pair.ann.1.shutdown().await;
+    shut_down(pair).await;
 }
 
 /// Ann may make rules for, and decide the requests of, a workspace of her own; a decision for
@@ -1101,17 +1179,11 @@ async fn odd_requests_meet_the_same_checks() {
     pair.ann.1.shutdown().await;
 }
 
-/// A user's own collections work end to end from their session, and nothing in them reaches the
-/// owner: a global rule, a rule set, a global variable, an identity on a pasted token of theirs,
-/// a workspace they make (recorded as theirs before it is listed).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
-async fn a_user_manages_their_own_collections() {
-    let pair = pair().await;
-    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+/// Makes Ann's workspace from her session, answering as the API does, and gives its id.
+async fn ann_makes_a_workspace(pair: &Pair) -> WorkspaceId {
     let (status, created) = send(
-        ann,
-        token,
+        pair.ann.0,
+        pair.token.as_str(),
         "POST",
         "/api/workspaces",
         Some(&json!({"name": "anns"})),
@@ -1119,47 +1191,193 @@ async fn a_user_manages_their_own_collections() {
     .await;
     assert_eq!(status, 202, "{created}");
     let anns: Value = serde_json::from_str(&created).unwrap();
-    let anns = ws(anns["id"].as_str().unwrap());
-    assert_eq!(
-        pair.store.workspace_owner(&anns).unwrap(),
-        Some(pair.ann_id)
-    );
-    let (_, listed) = send(owner, token, "GET", "/api/workspaces", None).await;
-    assert!(!listed.contains(anns.as_str()), "{listed}");
+    ws(anns["id"].as_str().unwrap())
+}
 
-    let rule = make(
-        ann,
-        token,
+/// Ann's global rule for `anns.example`, made from her session; gives its id.
+async fn ann_makes_a_global_rule(pair: &Pair) -> Value {
+    make(
+        pair.ann.0,
+        pair.token.as_str(),
         "/api/rules",
         &json!({"scope": {"type": "global"}, "pattern": "anns.example", "effect": "allow"}),
     )
-    .await;
-    let set = make(
-        ann,
-        token,
-        "/api/rule-sets",
-        &json!({"name": "Mine", "description": ""}),
-    )
-    .await;
-    make(
-        ann,
-        token,
-        "/api/env/ANNS",
-        &json!({"kind": "secret", "value": "anns-secret", "hosts": ["anns.example"]}),
-    )
-    .await;
+    .await
+}
+
+/// Ann's pasted token, made from her session; gives its source id.
+async fn ann_pastes_a_token(pair: &Pair) -> String {
     let source = make(
-        ann,
-        token,
+        pair.ann.0,
+        pair.token.as_str(),
         "/api/credentials/stored",
         &json!({"host": "github.com", "token": made_up_token("anns")}),
     )
     .await;
-    let source = source.as_str().unwrap().to_owned();
+    source.as_str().unwrap().to_owned()
+}
+
+/// The owner's `DELETE` of each path is answered as an unknown one.
+async fn owner_cannot_delete(pair: &Pair, paths: &[String]) {
+    for path in paths {
+        let (status, body) = send(pair.owner.0, pair.token.as_str(), "DELETE", path, None).await;
+        assert_eq!(status, 404, "{path}: {body}");
+    }
+}
+
+/// A user's own workspace is recorded as theirs before it is listed, and the owner's list lacks it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_user_makes_a_workspace_recorded_as_theirs_and_unlisted_for_the_owner() {
+    let pair = pair().await;
+    let anns = ann_makes_a_workspace(&pair).await;
+    assert_eq!(
+        pair.store.workspace_owner(&anns).unwrap(),
+        Some(pair.ann_id)
+    );
+    let (_, listed) = send(
+        pair.owner.0,
+        pair.token.as_str(),
+        "GET",
+        "/api/workspaces",
+        None,
+    )
+    .await;
+    assert!(!listed.contains(anns.as_str()), "{listed}");
+    shut_down(pair).await;
+}
+
+/// A user's global rule decides their workspace and not the owner's, and the owner cannot see or
+/// remove it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_users_global_rule_decides_their_workspace_and_is_out_of_the_owners_reach() {
+    let pair = pair().await;
+    let (owner, token) = (pair.owner.0, pair.token.as_str());
+    let anns = ann_makes_a_workspace(&pair).await;
+    let rule = ann_makes_a_global_rule(&pair).await;
+    let request = |workspace: &WorkspaceId| {
+        EgressRequest::new(
+            workspace.clone(),
+            Host::parse_normalised("anns.example").unwrap(),
+            443,
+        )
+    };
+    assert!(matches!(
+        pair.store
+            .decide(&request(&anns), SuffixAllows::Count)
+            .unwrap(),
+        puddle_types::Decision::Allow { .. }
+    ));
+    assert!(matches!(
+        pair.store
+            .decide(&request(&ws("ownerbox")), SuffixAllows::Count)
+            .unwrap(),
+        puddle_types::Decision::Pending(_)
+    ));
+    let (_, body) = send(owner, token, "GET", "/api/rules", None).await;
+    assert!(
+        !body.contains("anns.example"),
+        "/api/rules holds it: {body}"
+    );
+    owner_cannot_delete(&pair, &[format!("/api/rules/{rule}")]).await;
+    shut_down(pair).await;
+}
+
+/// A user's rule set is theirs: the owner's list lacks it and the owner cannot remove it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_users_rule_set_is_out_of_the_owners_reach() {
+    let pair = pair().await;
+    let set = make(
+        pair.ann.0,
+        pair.token.as_str(),
+        "/api/rule-sets",
+        &json!({"name": "Mine", "description": ""}),
+    )
+    .await;
+    let (_, body) = send(
+        pair.owner.0,
+        pair.token.as_str(),
+        "GET",
+        "/api/rule-sets",
+        None,
+    )
+    .await;
+    assert!(!body.contains("Mine"), "/api/rule-sets holds it: {body}");
+    owner_cannot_delete(
+        &pair,
+        &[format!("/api/rule-sets/{}", set.as_str().unwrap())],
+    )
+    .await;
+    shut_down(pair).await;
+}
+
+/// A user's global variable keeps its secret under their name in the credential store, and the
+/// owner cannot see or remove it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_users_variable_keeps_its_secret_under_their_name_and_is_out_of_the_owners_reach() {
+    let pair = pair().await;
+    make(
+        pair.ann.0,
+        pair.token.as_str(),
+        "/api/env/ANNS",
+        &json!({"kind": "secret", "value": "anns-secret", "hosts": ["anns.example"]}),
+    )
+    .await;
+    // Her variable's secret is under her name in the credential store.
+    let secret = pair
+        .store
+        .env_entries(pair.ann_id, &puddle_store::EnvScope::Global)
+        .unwrap();
+    let marked = secret[0]
+        .value
+        .as_secret()
+        .unwrap()
+        .id
+        .as_str()
+        .starts_with(&format!("u{}-env-", pair.ann_id));
+    assert!(marked, "the secret's entry name carries Ann's id");
+    let (_, body) = send(pair.owner.0, pair.token.as_str(), "GET", "/api/env", None).await;
+    for anns_own in ["anns.example", "ANNS"] {
+        assert!(
+            !body.contains(anns_own),
+            "/api/env holds {anns_own}: {body}"
+        );
+    }
+    owner_cannot_delete(&pair, &["/api/env/ANNS".to_owned()]).await;
+    shut_down(pair).await;
+}
+
+/// A user's pasted token is stored under their id, and the owner's identity list does not show it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_users_pasted_token_is_stored_under_their_id_and_unseen_by_the_owner() {
+    let pair = pair().await;
+    let source = ann_pastes_a_token(&pair).await;
     assert!(
         source.starts_with(&format!("u{}-tok-", pair.ann_id)),
         "{source}"
     );
+    let (_, body) = send(
+        pair.owner.0,
+        pair.token.as_str(),
+        "GET",
+        "/api/identities",
+        None,
+    )
+    .await;
+    assert!(
+        !body.contains(source.as_str()),
+        "/api/identities holds {source}: {body}"
+    );
+    shut_down(pair).await;
+}
+
+/// A user's identity on a pasted token of theirs attaches to their workspace and sets their git
+/// defaults; the owner sees none of it and cannot remove it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_users_identity_attaches_to_their_workspace_and_is_out_of_the_owners_reach() {
+    let pair = pair().await;
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let anns = ann_makes_a_workspace(&pair).await;
+    let source = ann_pastes_a_token(&pair).await;
     let identity = make(
         ann,
         token,
@@ -1189,67 +1407,29 @@ async fn a_user_manages_their_own_collections() {
     .await;
     assert_eq!(status, 200, "{body}");
 
-    // Ann's rule decides her workspace and not the owner's.
-    let request = |workspace: &WorkspaceId| {
-        EgressRequest::new(
-            workspace.clone(),
-            Host::parse_normalised("anns.example").unwrap(),
-            443,
-        )
-    };
-    assert!(matches!(
-        pair.store
-            .decide(&request(&anns), SuffixAllows::Count)
-            .unwrap(),
-        puddle_types::Decision::Allow { .. }
-    ));
-    assert!(matches!(
-        pair.store
-            .decide(&request(&ws("ownerbox")), SuffixAllows::Count)
-            .unwrap(),
-        puddle_types::Decision::Pending(_)
-    ));
-    // Her variable's secret is under her name in the credential store.
-    let secret = pair
-        .store
-        .env_entries(pair.ann_id, &puddle_store::EnvScope::Global)
-        .unwrap();
-    let marked = secret[0]
-        .value
-        .as_secret()
-        .unwrap()
-        .id
-        .as_str()
-        .starts_with(&format!("u{}-env-", pair.ann_id));
-    assert!(marked, "the secret's entry name carries Ann's id");
-
-    // The owner sees none of it.
-    for path in [
-        "/api/rules",
-        "/api/rule-sets",
-        "/api/env",
-        "/api/identities",
-    ] {
-        let (_, body) = send(owner, token, "GET", path, None).await;
-        for anns_own in ["anns.example", "Mine", "ANNS", "Anns", source.as_str()] {
-            assert!(!body.contains(anns_own), "{path} holds {anns_own}: {body}");
-        }
+    let (_, body) = send(owner, token, "GET", "/api/identities", None).await;
+    for anns_own in ["Anns", source.as_str()] {
+        assert!(
+            !body.contains(anns_own),
+            "/api/identities holds {anns_own}: {body}"
+        );
     }
     let (_, defaults) = send(owner, token, "GET", "/api/identities/git-defaults", None).await;
     assert!(
         defaults.contains(r#""only_push_listed":true"#),
         "{defaults}"
     );
-    for path in [
-        format!("/api/rules/{rule}"),
-        format!("/api/rule-sets/{}", set.as_str().unwrap()),
-        format!("/api/identities/{identity}"),
-        "/api/env/ANNS".to_owned(),
-    ] {
-        let (status, body) = send(owner, token, "DELETE", &path, None).await;
-        assert_eq!(status, 404, "{path}: {body}");
-    }
-    // Her audit holds her records; the owner's does not.
+    owner_cannot_delete(&pair, &[format!("/api/identities/{identity}")]).await;
+    shut_down(pair).await;
+}
+
+/// A user's audit holds their records and not the owner's, and the owner's audit lacks theirs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_users_audit_holds_their_records_and_the_owners_does_not() {
+    let pair = pair().await;
+    let (owner, ann, token) = (pair.owner.0, pair.ann.0, pair.token.as_str());
+    let anns = ann_makes_a_workspace(&pair).await;
+    ann_makes_a_global_rule(&pair).await;
     let (_, audit) = send(ann, token, "GET", "/api/audit", None).await;
     assert!(audit.contains("anns.example"), "{audit}");
     let (_, audit) = send(owner, token, "GET", "/api/audit", None).await;
@@ -1258,6 +1438,5 @@ async fn a_user_manages_their_own_collections() {
         !audit.contains(&format!(r#""workspace_id":"{anns}""#)),
         "{audit}"
     );
-    pair.owner.1.shutdown().await;
-    pair.ann.1.shutdown().await;
+    shut_down(pair).await;
 }

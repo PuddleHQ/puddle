@@ -17,6 +17,7 @@ use super::{
     PoisonError, Problem, Repository, Runtime, SAVE_HINT, State, WorkspaceError, WorkspaceId,
     WorkspaceRecord, WorkspaceStatus, clone_problem_key, not_found, workspace_error,
 };
+use crate::op_error::OpError;
 
 /// What the last listing of one workspace found, when it started and when it ended (epoch ms). Its lock is held while a
 /// listing runs, so calls at the same moment share one.
@@ -72,7 +73,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let gated = if record.status == WorkspaceStatus::Running {
             self.gated(&record.id).await
         } else {
-            Err("the workspace is not running; start it to see its checkouts".to_owned())
+            Err(OpError::NoCheckoutsListed)
         };
         let gated = match gated {
             Ok(gated) => gated,
@@ -80,7 +81,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 let (at, kept) = cached
                     .as_ref()
                     .map_or((None, None), |(_, at, l)| (Some(*at), Some(l)));
-                return Ok(checkouts_view(false, at, Some(problem), kept, &entries));
+                return Ok(checkouts_view(
+                    false,
+                    at,
+                    Some(problem.to_string()),
+                    kept,
+                    &entries,
+                ));
             }
         };
         // A listing that began after this call did, while it waited for the lock, is as good as
@@ -160,7 +167,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Self::ready_to(record, to)?;
         self.gated(&record.id)
             .await
-            .map_err(WorkspaceError::Conflict)
+            .map_err(WorkspaceError::conflict)
     }
 
     /// Saves the list with `slot`'s repositories as `entries`; when the save fails the list is
@@ -295,7 +302,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         record: &WorkspaceRecord,
         repository: &Repository,
-    ) -> Result<(), String> {
+    ) -> Result<(), OpError> {
         let gated = self.gated(&record.id).await?;
         self.progress_cloning(&record.id, repository);
         let key = clone_problem_key(&record.id, &repository.entry);
@@ -316,8 +323,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.inner
                     .workspaces
                     .sync(gated.ungated(), &record.id)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    .await?;
             }
             Err(puddle_workspace::WorkspaceError::Clone { reason, .. }) => {
                 let listed = self.state().slots.get(&record.id).is_some_and(|s| {
@@ -331,7 +337,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     self.raise_clone_problem(record, repository, &reason, false);
                 }
             }
-            Err(other) => return Err(other.to_string()),
+            Err(other) => return Err(other.into()),
         }
         self.refresh_checkouts_later(&record.id);
         Ok(())
@@ -397,7 +403,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             )));
         }
         let url = match &now.remote_url {
-            Some(url) => RepoUrl::parse(url).map_err(WorkspaceError::Conflict)?,
+            Some(url) => RepoUrl::parse(url).map_err(WorkspaceError::conflict)?,
             None => {
                 return Err(WorkspaceError::Conflict(format!(
                     "cannot manage {directory}: {}",
@@ -407,7 +413,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         };
         check_seen(directory, seen, &url)?;
         let entry = puddle_api::new_entry_id(|e| record.repositories.iter().any(|r| r.entry == *e))
-            .map_err(WorkspaceError::Unavailable)?;
+            .map_err(WorkspaceError::unavailable)?;
         let new = NewRepository {
             repository: Repository {
                 entry,

@@ -334,3 +334,73 @@ fn a_generated_key_is_random_and_each_source_tag_has_a_name() {
     }
     assert_eq!(KeySourceTag::from_byte(0), None);
 }
+
+#[test]
+fn a_folder_where_the_vault_should_be_is_an_io_error_not_a_missing_vault() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        FileVault::open(dir.path(), key(1)).err(),
+        Some(VaultError::Io)
+    );
+}
+
+#[test]
+fn a_vault_under_a_file_instead_of_a_folder_is_an_io_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("not-a-folder");
+    fs::write(&blocker, b"x").unwrap();
+    assert_eq!(
+        FileVault::create(&blocker.join("vault"), key(1), KeySourceTag::KeyFile).err(),
+        Some(VaultError::Io)
+    );
+    assert_eq!(fs::read(&blocker).unwrap(), b"x");
+}
+
+#[test]
+fn an_entry_too_short_to_hold_its_tag_makes_the_file_corrupt() {
+    let (_dir, path, vault) = three();
+    let short = Entry {
+        id: "a".to_owned(),
+        nonce: [0; NONCE_LEN],
+        sealed: vec![0; TAG_LEN - 1],
+    };
+    fs::write(&path, vault.serialize(&[short]).unwrap()).unwrap();
+    assert_eq!(
+        FileVault::open(&path, key(1)).err(),
+        Some(VaultError::Corrupt)
+    );
+}
+
+#[test]
+fn an_entry_that_decrypts_to_text_that_is_not_utf8_fails_only_its_own_read() {
+    let (_dir, _path, vault) = three();
+    let nonce = fresh_nonce().unwrap();
+    let mut sealed = vec![0xff, 0xfe, 0xfd];
+    vault
+        .key
+        .cipher()
+        .encrypt_in_place(&Nonce::from(nonce), &vault.aad("bad"), &mut sealed)
+        .unwrap();
+    let mut entries = vault.load().unwrap().entries;
+    entries.push(Entry {
+        id: "bad".to_owned(),
+        nonce,
+        sealed,
+    });
+    vault.commit(&entries).unwrap();
+    assert_eq!(read(&vault, "bad"), Err(StoreError));
+    assert_eq!(read(&vault, "a").unwrap().as_deref(), Some("value-a"));
+}
+
+#[test]
+fn a_rename_that_fails_removes_the_temp_file_and_keeps_what_is_there() {
+    let (_dir, path, vault) = three();
+    let tmp = vault.write_temp(b"new content").unwrap();
+    // A folder with something in it cannot be replaced by a file.
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("kept"), b"kept").unwrap();
+    assert_eq!(vault.rename_over(&tmp), Err(VaultError::Io));
+    assert!(!tmp.exists());
+    assert_eq!(fs::read(path.join("kept")).unwrap(), b"kept");
+}

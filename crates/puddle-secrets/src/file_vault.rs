@@ -381,10 +381,7 @@ impl FileVault {
             file.write_all(bytes)?;
             file.sync_all()
         })();
-        if written.is_err() {
-            let _ = fs::remove_file(&tmp);
-            return Err(VaultError::Io);
-        }
+        written.map_err(|_| discard(&tmp))?;
         Ok(tmp)
     }
 
@@ -395,10 +392,7 @@ impl FileVault {
         } else {
             fs::rename(tmp, &self.path)
         };
-        if renamed.is_err() {
-            let _ = fs::remove_file(tmp);
-            return Err(VaultError::Io);
-        }
+        renamed.map_err(|_| discard(tmp))?;
         sync_folder(&self.path);
         Ok(())
     }
@@ -440,20 +434,16 @@ impl SecretStore for FileVault {
         let _guard = self.write.lock().unwrap_or_else(PoisonError::into_inner);
         let mut loaded = self.load().map_err(|_| StoreError)?;
         let nonce = fresh_nonce().map_err(|_| StoreError)?;
-        let mut sealed = secret.expose().as_bytes().to_vec();
-        let encrypted = self.key.cipher().encrypt_in_place(
-            &Nonce::from(nonce),
-            &self.aad(id.as_str()),
-            &mut sealed,
-        );
-        if encrypted.is_err() {
-            sealed.zeroize();
-            return Err(StoreError);
-        }
+        // Plain text until the encryption succeeds, so wiped on every way out.
+        let mut sealed = Zeroizing::new(secret.expose().as_bytes().to_vec());
+        self.key
+            .cipher()
+            .encrypt_in_place(&Nonce::from(nonce), &self.aad(id.as_str()), &mut *sealed)
+            .map_err(|_| StoreError)?;
         let entry = Entry {
             id: id.as_str().to_owned(),
             nonce,
-            sealed,
+            sealed: std::mem::take(&mut *sealed),
         };
         match loaded.entries.iter_mut().find(|e| e.id == entry.id) {
             Some(slot) => *slot = entry,
@@ -482,6 +472,12 @@ fn check_aad(tag: u8, vault_id: &[u8; ID_LEN]) -> Vec<u8> {
     aad.extend_from_slice(vault_id);
     aad.extend_from_slice(CHECK_LABEL);
     aad
+}
+
+/// A failed change: the half-made temporary file goes, the old vault stays.
+fn discard(tmp: &Path) -> VaultError {
+    let _ = fs::remove_file(tmp);
+    VaultError::Io
 }
 
 fn fresh_nonce() -> Result<[u8; NONCE_LEN], VaultError> {

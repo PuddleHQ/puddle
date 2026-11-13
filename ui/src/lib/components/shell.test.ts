@@ -154,7 +154,8 @@ describe("root layout", () => {
     expect(theme.choice).toBe("light");
     expect(live.start).toHaveBeenCalledTimes(1);
     expect(health.start).toHaveBeenCalledTimes(1);
-    expect(live.subscribe).toHaveBeenCalledTimes(1);
+    // The notice watcher and the build guard each listen to the shell's stream.
+    expect(live.subscribe).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("region", { name: "Notices" })).toBeInTheDocument();
     expect(document.title).toBe("Inbox - Puddle");
     unmount();

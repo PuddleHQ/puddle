@@ -17,7 +17,11 @@ async fn health_names_the_versions() {
     assert_eq!(reply.status, 200);
     assert_eq!(
         reply.json(),
-        json!({ "version": puddle_types::VERSION, "api_version": puddle_api::API_VERSION })
+        json!({
+            "version": puddle_types::VERSION,
+            "api_version": puddle_api::API_VERSION,
+            "ui_build_id": null
+        })
     );
     api.running.shutdown().await;
 }

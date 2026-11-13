@@ -38,7 +38,7 @@ fn every_operation_documents_the_guard_refusals() {
             assert!(op["tags"].as_array().is_some_and(|t| !t.is_empty()));
         }
     }
-    assert_eq!(count, 124, "operations in the spec");
+    assert_eq!(count, 127, "operations in the spec");
 }
 
 /// ADR 0002: responses always carry every field (`null`, never absent), so the generated

@@ -10450,6 +10450,291 @@
         }
       }
     },
+    "/api/workspaces/{id}/ssh-agent": {
+      "get": {
+        "tags": [
+          "ssh-agent"
+        ],
+        "summary": "The hosts the workspace may use the user's SSH agent for, with the keys each may use.",
+        "operationId": "get_ssh_agent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the hosts, sorted by name; none until the user turns the agent on for one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshAgentView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspaces/{id}/ssh-agent/{host}": {
+      "put": {
+        "tags": [
+          "ssh-agent"
+        ],
+        "summary": "Lets the workspace use the user's SSH agent for SSH to `host`, with every key or only the\nlisted ones, or changes the keys of a host it is on for. The workspace's `ssh` then logs in to\nthat host with those keys, and only to a session Puddle saw it open there.",
+        "operationId": "put_ssh_agent_host",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "path",
+            "description": "the host's name or IP address, as ssh in the workspace names it",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshAgentHostRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "on; the host now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshAgentHostView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not a host, a pattern, a key that is not a SHA-256 fingerprint, an empty or too long key list, or the workspace has the agent on for too many hosts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ssh-agent"
+        ],
+        "summary": "Turns the agent off for `host`. A login to it already going on gets no more signatures.",
+        "operationId": "delete_ssh_agent_host",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "workspace id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "path",
+            "description": "the host's name or IP address",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "off"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such workspace, or the agent is not on for the host",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not a host",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/{id}/start": {
       "post": {
         "tags": [
@@ -18629,6 +18914,75 @@
         },
         "additionalProperties": false
       },
+      "SshAgentHostRequest": {
+        "type": "object",
+        "description": "Which keys a host may use.",
+        "properties": {
+          "keys": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "SHA-256 fingerprints (`SHA256:` and 43 base64 characters, at most 64 of them); absent or\n`null` for every key the agent holds."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SshAgentHostView": {
+        "type": "object",
+        "description": "One host a workspace may use the user's SSH agent for.",
+        "required": [
+          "host",
+          "keys",
+          "changed_at"
+        ],
+        "properties": {
+          "changed_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch ms the agent was turned on for the host, or its keys last changed.",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string",
+            "description": "The host, as `ssh` in the workspace names it: a lower-case name or an IP address."
+          },
+          "keys": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The keys it may use, as SHA-256 fingerprints (`SHA256:...`, as `ssh-keygen -l` prints\nthem), sorted; `null` for every key the agent holds."
+          }
+        }
+      },
+      "SshAgentView": {
+        "type": "object",
+        "description": "The hosts a workspace may use the user's SSH agent for. Empty unless the user turned it on.",
+        "required": [
+          "workspace",
+          "hosts"
+        ],
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SshAgentHostView"
+            },
+            "description": "The hosts, sorted by name."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId",
+            "description": "The workspace."
+          }
+        }
+      },
       "StartFolderRequest": {
         "type": "object",
         "description": "`PUT /api/workspaces/{id}/start-folder`.",
@@ -19809,6 +20163,10 @@
     {
       "name": "interception",
       "description": "Decrypting every host: a workspace's switch and the names that are never decrypted"
+    },
+    {
+      "name": "ssh-agent",
+      "description": "The filtered SSH agent: the hosts a workspace may use the user's SSH agent for"
     },
     {
       "name": "shell-init",

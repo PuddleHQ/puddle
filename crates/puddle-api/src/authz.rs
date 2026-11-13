@@ -440,7 +440,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/workspaces/{id}/interception"
             | "/api/workspaces/{id}/interception/learned"
             | "/api/workspaces/{id}/logins"
-            | "/api/workspaces/{id}/shell-init",
+            | "/api/workspaces/{id}/shell-init"
+            | "/api/workspaces/{id}/ssh-agent",
         ) => (A::ReadWorkspace, WS),
         ("GET", "/api/settings/workspaces/{workspace}") => {
             (A::ReadWorkspace, T::Workspace("workspace"))
@@ -455,6 +456,7 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/workspaces/{id}/interception"
             | "/api/workspaces/{id}/session-user"
             | "/api/workspaces/{id}/shell-init"
+            | "/api/workspaces/{id}/ssh-agent/{host}"
             | "/api/workspaces/{id}/start-folder",
         )
         | (
@@ -464,7 +466,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/workspaces/{id}/interception/learned"
             | "/api/workspaces/{id}/interception/learned/{host}"
             | "/api/workspaces/{id}/logins/{service}"
-            | "/api/workspaces/{id}/repositories/{entry}",
+            | "/api/workspaces/{id}/repositories/{entry}"
+            | "/api/workspaces/{id}/ssh-agent/{host}",
         )
         | (
             "POST",

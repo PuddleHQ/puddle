@@ -688,3 +688,220 @@ fn v20_gives_everything_to_the_owner_and_keeps_every_row() {
             .is_err()
     );
 }
+
+const PARENT_AND_CHILD: &str = "
+CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent (id) ON DELETE CASCADE);
+INSERT INTO parent VALUES (1, 'a'), (2, 'b');
+INSERT INTO child VALUES (10, 1), (11, 2);
+";
+
+const REBUILD_PARENT: &str = "
+CREATE TABLE parent_new (id INTEGER PRIMARY KEY, name TEXT NOT NULL, extra INTEGER NOT NULL DEFAULT 0);
+INSERT INTO parent_new (id, name) SELECT id, name FROM parent;
+DROP TABLE parent;
+ALTER TABLE parent_new RENAME TO parent;
+";
+
+fn count(conn: &Connection, table: &str) -> i64 {
+    conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+        row.get(0)
+    })
+    .unwrap()
+}
+
+fn foreign_keys_on(conn: &Connection) -> bool {
+    conn.pragma_query_value(None, "foreign_keys", |row| row.get(0))
+        .unwrap()
+}
+
+#[test]
+fn a_table_rebuild_keeps_the_child_rows_and_foreign_keys_come_back_on() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", true).unwrap();
+    migrate_with(&mut conn, &[PARENT_AND_CHILD]).unwrap();
+    migrate_with(&mut conn, &[PARENT_AND_CHILD, REBUILD_PARENT]).unwrap();
+    assert_eq!(count(&conn, "child"), 2);
+    assert_eq!(count(&conn, "parent"), 2);
+    assert!(foreign_keys_on(&conn));
+    // Enforcement is live again after the migration.
+    assert!(
+        conn.execute("INSERT INTO child VALUES (12, 99)", [])
+            .is_err()
+    );
+}
+
+#[test]
+fn a_step_that_orphans_rows_is_rolled_back_and_named() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", true).unwrap();
+    let orphaning = "DELETE FROM parent WHERE id = 1;";
+    let steps = [PARENT_AND_CHILD, orphaning];
+    migrate_with(&mut conn, &steps[..1]).unwrap();
+    assert!(matches!(
+        migrate_with(&mut conn, &steps),
+        Err(StoreError::MigrationBrokeForeignKeys { version: 2, ref table, ref parent })
+            if table == "child" && parent == "parent"
+    ));
+    assert_eq!(version(&conn), 1);
+    assert_eq!(count(&conn, "parent"), 2);
+    assert!(foreign_keys_on(&conn));
+}
+
+#[test]
+fn foreign_keys_stay_off_when_the_caller_had_them_off() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", false).unwrap();
+    migrate_with(&mut conn, &[PARENT_AND_CHILD]).unwrap();
+    assert!(!foreign_keys_on(&conn));
+}
+
+#[test]
+fn an_older_orphan_does_not_block_an_unrelated_step() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrate_with(&mut conn, &[PARENT_AND_CHILD]).unwrap();
+    conn.pragma_update(None, "foreign_keys", false).unwrap();
+    conn.execute("INSERT INTO child VALUES (13, 99)", [])
+        .unwrap();
+    migrate_with(
+        &mut conn,
+        &[PARENT_AND_CHILD, "CREATE TABLE other (x INTEGER);"],
+    )
+    .unwrap();
+    assert_eq!(version(&conn), 2);
+}
+
+fn backups(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".pre-v"))
+        .collect();
+    names.sort();
+    names
+}
+
+fn steps_to(n: usize) -> Vec<String> {
+    let mut steps = vec![PARENT_AND_CHILD.to_owned()];
+    steps.extend((1..n).map(|i| format!("CREATE TABLE t{i} (x INTEGER);")));
+    steps
+}
+
+fn migrate_to(conn: &mut Connection, n: usize) -> Result<u32, StoreError> {
+    let owned = steps_to(n);
+    let steps: Vec<&str> = owned.iter().map(String::as_str).collect();
+    migrate_with(conn, &steps)
+}
+
+#[test]
+fn the_database_is_copied_before_the_first_step_and_only_two_copies_stay() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let mut conn = Connection::open(&path).unwrap();
+    migrate_to(&mut conn, 1).unwrap();
+    assert!(
+        backups(dir.path()).is_empty(),
+        "a new database has nothing to copy"
+    );
+
+    migrate_to(&mut conn, 2).unwrap();
+    assert_eq!(backups(dir.path()), ["puddle.db.pre-v2"]);
+    let copy = Connection::open(dir.path().join("puddle.db.pre-v2")).unwrap();
+    assert_eq!(
+        version(&copy),
+        1,
+        "the copy is the database as it was before"
+    );
+    assert_eq!(count(&copy, "child"), 2);
+    // Windows refuses to delete a file that is still open, and step 4 prunes this copy.
+    drop(copy);
+
+    migrate_to(&mut conn, 3).unwrap();
+    migrate_to(&mut conn, 4).unwrap();
+    assert_eq!(
+        backups(dir.path()),
+        ["puddle.db.pre-v3", "puddle.db.pre-v4"]
+    );
+    migrate_to(&mut conn, 4).unwrap();
+    assert_eq!(
+        backups(dir.path()),
+        ["puddle.db.pre-v3", "puddle.db.pre-v4"],
+        "a database already current is not copied again"
+    );
+}
+
+#[test]
+fn a_failed_step_leaves_the_copy_and_a_rerun_replaces_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let mut conn = Connection::open(&path).unwrap();
+    migrate_to(&mut conn, 1).unwrap();
+    let mut broken = steps_to(2);
+    broken[1] = "NOT SQL;".to_owned();
+    let refs: Vec<&str> = broken.iter().map(String::as_str).collect();
+    assert!(migrate_with(&mut conn, &refs).is_err());
+    assert_eq!(backups(dir.path()), ["puddle.db.pre-v2"]);
+    migrate_to(&mut conn, 2).unwrap();
+    assert_eq!(version(&conn), 2);
+}
+
+#[test]
+fn opening_an_old_store_file_leaves_a_pre_version_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    {
+        let mut conn = Connection::open(&path).unwrap();
+        migrate_up_to(&mut conn, 19).unwrap();
+    }
+    crate::Store::open(
+        &path,
+        std::sync::Arc::new(crate::clock::ManualClock::new(1)),
+        crate::Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        backups(dir.path()),
+        [format!("puddle.db.pre-v{SCHEMA_VERSION}")]
+    );
+}
+
+#[test]
+fn an_in_memory_database_is_never_copied_to_disk() {
+    for name in ["", ":memory:"] {
+        let mut conn = Connection::open(name).unwrap();
+        migrate_to(&mut conn, 1).unwrap();
+        migrate_to(&mut conn, 2).unwrap();
+        assert_eq!(version(&conn), 2);
+    }
+    assert!(
+        !Path::new(".pre-v2").exists() && !Path::new(":memory:.pre-v2").exists(),
+        "a copy of a memory database landed in the working directory"
+    );
+}
+
+#[test]
+fn a_copy_that_cannot_be_pruned_is_named_in_the_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut conn = Connection::open(dir.path().join("puddle.db")).unwrap();
+    migrate_to(&mut conn, 1).unwrap();
+    std::fs::create_dir(dir.path().join("puddle.db.pre-v1")).unwrap();
+    migrate_to(&mut conn, 2).unwrap();
+    let err = migrate_to(&mut conn, 3).unwrap_err().to_string();
+    assert!(
+        err.contains("pre-v1"),
+        "the error blames the wrong file: {err}"
+    );
+}
+
+#[test]
+fn a_copy_that_cannot_be_replaced_stops_the_migration_before_any_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut conn = Connection::open(dir.path().join("puddle.db")).unwrap();
+    migrate_to(&mut conn, 1).unwrap();
+    std::fs::create_dir(dir.path().join("puddle.db.pre-v2")).unwrap();
+    assert!(matches!(
+        migrate_to(&mut conn, 2),
+        Err(StoreError::Backup(_))
+    ));
+    assert_eq!(version(&conn), 1);
+}

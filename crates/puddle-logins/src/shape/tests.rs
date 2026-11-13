@@ -150,6 +150,21 @@ fn a_session_token_keeps_its_fields_and_only_its_mac_is_random() {
 }
 
 #[test]
+fn a_session_token_whose_fields_hold_a_colon_keeps_them_and_replaces_only_the_mac_after_the_last() {
+    // A field value may itself hold a colon; the MAC is what follows the last one.
+    let real = format!("tid=7a1b;exp=1790000000;8kp=1:0;proxy-ep=proxy.example:443:{SESSION_MAC}");
+    let stand_in = stand_in_for(&real, copilot_session()).unwrap();
+    let (fields, mac) = stand_in.rsplit_once(':').unwrap();
+    assert_eq!(
+        fields,
+        "tid=7a1b;exp=1790000000;8kp=1:0;proxy-ep=proxy.example:443"
+    );
+    assert_eq!(mac.len(), SESSION_MAC.len());
+    assert_ne!(mac, SESSION_MAC);
+    assert!(!stand_in.contains(&SESSION_MAC[..12]));
+}
+
+#[test]
 fn a_session_token_may_be_longer_than_an_ordinary_token() {
     let long = format!("tid=1;pad={}:{SESSION_MAC}", "x".repeat(700));
     assert!(stand_in_for(&long, copilot_session()).is_ok());

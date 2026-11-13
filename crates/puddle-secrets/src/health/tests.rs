@@ -92,3 +92,15 @@ fn the_real_probe_agrees_with_a_direct_write_to_the_platform_store() {
     }
     assert_eq!(probe_os_store() == StoreHealth::Working, works);
 }
+
+#[test]
+fn an_entry_name_the_store_refuses_is_reported_as_a_refusing_store() {
+    let store = MemoryStore::new();
+    assert_eq!(
+        probe_entry(&store, "not a valid/id".to_owned(), || panic!(
+            "no write was tried"
+        )),
+        StoreHealth::Locked
+    );
+    assert_eq!(store.ids(), Vec::<String>::new());
+}

@@ -84,8 +84,22 @@ impl StoreHealth {
 /// tells a missing store (`NoProvider`) from a locked one (`Locked`); it runs only then.
 pub fn probe_store(store: &dyn SecretStore, service_answers: impl FnOnce() -> bool) -> StoreHealth {
     // The process id keeps two Puddle processes (the service and `puddle doctor`) from deleting
-    // each other's entry. The name is always valid; the fallback only satisfies the type.
-    let Ok(id) = StoredId::new(format!("startup-probe-{}", std::process::id())) else {
+    // each other's entry.
+    probe_entry(
+        store,
+        format!("startup-probe-{}", std::process::id()),
+        service_answers,
+    )
+}
+
+/// [`probe_store`] with the entry name given. A name the store's id rules refuse cannot be
+/// written, which reads as a refusing store.
+fn probe_entry(
+    store: &dyn SecretStore,
+    name: String,
+    service_answers: impl FnOnce() -> bool,
+) -> StoreHealth {
+    let Ok(id) = StoredId::new(name) else {
         return StoreHealth::Locked;
     };
     if store.set(&id, &Secret::new("probe".to_owned())).is_err() {

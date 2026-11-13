@@ -15,6 +15,8 @@ use puddle_ssh_agent::{
     AgentEndpoint, AgentError, Identity, WINDOWS_DEFAULT_PIPE, key_family, list_identities,
 };
 
+use puddle_secrets::StoreHealth;
+
 use crate::diagnose::Probe;
 use crate::facts::{
     AccessDenied, AgentService, AzCliFacts, BootFacts, CodeIntegrityFacts, DataPathFacts,
@@ -242,6 +244,10 @@ impl Probe for SystemProbe {
 
     fn az_cli(&self, limit: Duration) -> AzCliFacts {
         az_cli_in(std::env::var_os("PATH"), limit)
+    }
+
+    fn credential_store(&self) -> StoreHealth {
+        puddle_secrets::probe_os_store()
     }
 
     fn data_path(&self) -> Option<DataPathFacts> {

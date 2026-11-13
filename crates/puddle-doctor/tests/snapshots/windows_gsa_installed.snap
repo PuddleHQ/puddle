@@ -14,6 +14,7 @@ info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
 ok    Azure CLI (az)        version 2.64.0
+ok    Credential store      a test write and delete worked
 warn  Global Secure Access  Microsoft Entra Global Secure Access client installed (running)
       note: Microsoft documents that this client doesn't tunnel virtual machines' traffic and
             isn't supported on devices that host VMs. Sandboxes have no network of their own:
@@ -88,6 +89,11 @@ No problems found; 1 warning to know about. (1.2 s)
       "id": "az_cli",
       "status": "ok",
       "summary": "version 2.64.0"
+    },
+    {
+      "id": "credential_store",
+      "status": "ok",
+      "summary": "a test write and delete worked"
     },
     {
       "id": "global_secure_access",

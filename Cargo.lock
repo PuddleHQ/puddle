@@ -6687,9 +6687,11 @@ dependencies = [
 name = "puddle-secrets"
 version = "0.0.0"
 dependencies = [
+ "aes-gcm",
  "getrandom 0.4.3",
  "keyring",
  "keyring-core",
+ "puddle-fs",
  "puddle-test-kit",
  "serde",
  "serde_json",

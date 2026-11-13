@@ -85,6 +85,8 @@ keyring = "4.2"
 # The `keyring` wrapper hides the entry modifiers Windows needs (credential persistence).
 keyring-core = "1"
 zeroize = "1.9"
+# The encrypted file vault of puddle-secrets (RustCrypto, AES-256-GCM).
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }
 rust-embed = { version = "8.12", default-features = false, features = ["mime-guess"] }
 hickory-resolver = { version = "0.26.3", default-features = true }
 proptest = { version = "1.11", default-features = false, features = ["std"] }

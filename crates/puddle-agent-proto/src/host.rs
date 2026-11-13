@@ -226,6 +226,11 @@ pub trait GuestWatcher: Send + Sync + 'static {
     /// The ports `workspace`'s guest listens on now: the whole set, ascending, no duplicates, at
     /// most [`MAX_PORTS`]. The guest's claim; nothing else is known.
     fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>);
+
+    /// An agent session of `workspace` ended, however it ended. The guest's agent restarting
+    /// ends one too, so this proves nothing alone; the VM dying is the case it is a fast hint
+    /// for.
+    fn session_ended(&self, workspace: &WorkspaceId);
 }
 
 /// A report from the guest that UDP was refused: the guest's own claim, cleaned by the host

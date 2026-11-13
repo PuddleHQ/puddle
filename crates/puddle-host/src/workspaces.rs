@@ -568,6 +568,10 @@ fn delete_check(report: &puddle_workspace::DeleteReport) -> DeleteCheck {
     }
 }
 
+/// After an agent session ends, how many times the sandboxes are read and how far apart.
+const SESSION_END_READS: u32 = 5;
+const SESSION_END_GAP: Duration = Duration::from_secs(2);
+
 /// Holds the count of running operations up for as long as it lives.
 struct Running(watch::Sender<usize>);
 
@@ -1082,6 +1086,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         ticket.armed = false;
     }
 
+    /// Says which workspace's agent session ended, each time one does.
+    pub(crate) fn agent_sessions_ended(&self) -> puddle_ports::EndedSessions {
+        self.inner.ports.agent_sessions_ended()
+    }
+
+    /// The ports the sandboxes' agents report to (tests drive an agent session's end through it).
+    #[must_use]
+    pub fn ports(&self) -> &Ports {
+        &self.inner.ports
+    }
+
     /// Reads what every workspace's volume and root disk take on the host into the records, so
     /// the list and the single-workspace answer both carry it, then warns about disks that
     /// reached the threshold. A runtime that cannot say leaves the earlier value; the card shows
@@ -1097,6 +1112,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         match self.inner.runtime.list().await {
             Ok(sandboxes) => {
+                self.notice_dead_vms(&sandboxes).await;
                 for slot in self.state().slots.values_mut() {
                     let root = sandboxes
                         .iter()
@@ -1109,6 +1125,55 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(e) => tracing::debug!(error = %e, "the root disks' use of the disk is unknown"),
         }
         self.warn_about_full_disks();
+    }
+
+    /// Reads the sandboxes again for a while after `workspace`'s agent session ended, until the
+    /// workspace stops showing Running. A VM that died takes a moment to be reported down; one
+    /// that did not (the agent restarted) is simply still up after the last read.
+    pub(crate) async fn check_after_session_end(&self, workspace: &WorkspaceId) {
+        for _ in 0..SESSION_END_READS {
+            tokio::time::sleep(SESSION_END_GAP).await;
+            if self.status_of(workspace) != Some(WorkspaceStatus::Running) {
+                return;
+            }
+            self.refresh_disk_use().await;
+        }
+    }
+
+    fn status_of(&self, workspace: &WorkspaceId) -> Option<WorkspaceStatus> {
+        self.state().slots.get(workspace).map(|s| s.record.status)
+    }
+
+    /// Moves every workspace that shows Running while its sandbox is down to Crashed, and lets go
+    /// of what the dead VM held (terminals, forwards, the CA, the SSH endpoint) so a start works.
+    /// A workspace with an operation in progress is left to it; the operation's end decides.
+    pub(crate) async fn notice_dead_vms(&self, sandboxes: &[puddle_compute::SandboxInfo]) {
+        let dead: Vec<WorkspaceRecord> = {
+            let mut state = self.state();
+            state
+                .slots
+                .values_mut()
+                .filter(|slot| {
+                    slot.record.status == WorkspaceStatus::Running && slot.record.busy.is_none()
+                })
+                .filter(|slot| {
+                    let name = slot.record.id.sandbox_name();
+                    sandboxes
+                        .iter()
+                        .any(|s| s.name == name.as_str() && s.status.is_down())
+                })
+                .map(|slot| {
+                    slot.record.status = WorkspaceStatus::Crashed;
+                    slot.record.clone()
+                })
+                .collect()
+        };
+        for record in dead {
+            tracing::warn!(workspace = %record.id, "the VM ended while Puddle ran; the workspace is crashed");
+            self.status_event(&record);
+            self.quiesce(&record.id, false).await;
+            self.inner.reports.end(&record.id);
+        }
     }
 
     /// Says once, per disk, that it reached the warning threshold, and again only after it was

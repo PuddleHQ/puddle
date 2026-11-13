@@ -281,7 +281,7 @@ async fn vm_ssh_agent_logs_in_with_the_users_key_through_the_filter_and_stops_wh
     let off = api
         .delete(&format!("/api/workspaces/{id}/ssh-agent/{NAME}"), None)
         .await;
-    assert_eq!(off.status, 200, "{}", off.body);
+    assert_eq!(off.status, 204, "{}", off.body);
     let (code, out) = login(&vm, &workspace, server.port()).await;
     eprintln!("{out}");
     assert_ne!(code, 0, "{out}");

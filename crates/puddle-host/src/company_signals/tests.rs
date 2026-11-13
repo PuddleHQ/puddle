@@ -695,3 +695,10 @@ fn the_shipped_options_carry_the_machines_signals_and_the_defaults_carry_none() 
     // A machine that cannot read its network answers "unread", never a plain "no" for the LAN.
     assert_ne!(signals.physical_lan(ip("127.0.0.1")), LanReading::OnLan);
 }
+
+#[test]
+fn the_signals_name_themselves_in_debug_output_without_dumping_the_network() {
+    let text = format!("{:?}", signals(with_vpn()));
+    assert!(text.starts_with("HostSignals"), "{text}");
+    assert!(!text.contains("Contoso"), "{text}");
+}

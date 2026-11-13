@@ -41,10 +41,16 @@ fn every_connection_outcome_reaches_the_wire_under_its_own_name() {
 }
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
-use puddle_types::{Host, PendingId, RuleId};
+use puddle_types::{Host, PendingId, RuleId, WorkspaceId};
 use serde_json::json;
 
+use puddle_settings as settings;
+use puddle_store as store;
+
+use super::rules::normalise_pattern;
+use super::settings_view::colour_text;
 use super::*;
 use serde_json::Value;
 

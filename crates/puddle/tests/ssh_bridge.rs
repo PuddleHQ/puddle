@@ -287,7 +287,7 @@ mod openssh {
         // binds it, and the test would then talk to that stranger instead of to the forward.
         let local = rig.dir.path().join("forward.sock");
         let forward = format!("{}:127.0.0.1:{service_port}", local.display());
-        let mut ssh = Command::new("ssh")
+        let ssh = Command::new("ssh")
             .args([
                 "-F",
                 cfg(&rig),
@@ -302,17 +302,23 @@ mod openssh {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        let mut conn = timeout(WAIT, async {
-            loop {
-                if let Ok(c) = UnixStream::connect(&local).await {
-                    break c;
+        let ssh = std::cell::RefCell::new(ssh);
+        let mut conn = puddle_test_kit::eventually_async(
+            "the forward's local socket opens",
+            Duration::from_secs(20),
+            || async {
+                let connected = UnixStream::connect(&local).await;
+                if connected.is_err() {
+                    assert!(
+                        ssh.borrow_mut().try_wait().unwrap().is_none(),
+                        "ssh -L exited early"
+                    );
                 }
-                assert!(ssh.try_wait().unwrap().is_none(), "ssh -L exited early");
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .unwrap();
+                connected
+            },
+        )
+        .await;
+        let mut ssh = ssh.into_inner();
         let data = payload(1024 * 1024);
         let (mut r, mut w) = conn.split();
         let mut back = vec![0_u8; data.len()];

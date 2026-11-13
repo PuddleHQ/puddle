@@ -7,8 +7,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use puddle_runtime::{
-    BundledRuntime, DevOverride, RUNTIME_DIR_NAME, RuntimeError, RuntimeLayout, RuntimeVersion,
-    VersionStatus,
+    BundledRuntime, DevOverride, DigestStatus, RUNTIME_DIR_NAME, RuntimeDigests, RuntimeError,
+    RuntimeLayout, RuntimeVersion, VersionStatus,
 };
 
 use puddle_ssh_agent::{
@@ -29,6 +29,7 @@ pub struct SystemProbe {
     runtime_dir: PathBuf,
     expected: RuntimeVersion,
     dev: DevOverride,
+    digests: RuntimeDigests,
     keep_boot_logs: Option<PathBuf>,
     data_dir: Option<PathBuf>,
     ssh_agent_pipe: Option<String>,
@@ -44,11 +45,20 @@ impl SystemProbe {
             runtime_dir,
             expected,
             dev,
+            digests: RuntimeDigests::built_in(),
             keep_boot_logs: None,
             data_dir: None,
             ssh_agent_pipe: None,
             opened: OnceCell::new(),
         }
+    }
+
+    /// Checks the runtime's files against `digests` instead of the hashes built into this
+    /// Puddle (tests with fake runtime folders).
+    #[must_use]
+    pub fn with_digests(mut self, digests: RuntimeDigests) -> Self {
+        self.digests = digests;
+        self
     }
 
     /// Keeps msb's logs of a failed test boot in a new folder inside `dir` (see
@@ -149,8 +159,10 @@ impl Probe for SystemProbe {
                 detail: e.to_string(),
             }));
         }
-        match BundledRuntime::open(layout, &self.expected, self.dev) {
+        match BundledRuntime::open_with(layout, &self.expected, &self.digests, self.dev) {
             Ok(rt) => {
+                let files_overridden =
+                    matches!(rt.digest_status(), DigestStatus::Overridden { .. });
                 let state = match rt.status() {
                     VersionStatus::Overridden { found } => RuntimeState::Ready {
                         version: found.clone().unwrap_or_else(|| "(no version)".into()),
@@ -158,7 +170,7 @@ impl Probe for SystemProbe {
                     },
                     VersionStatus::Exact => RuntimeState::Ready {
                         version: self.expected.to_string(),
-                        overridden: false,
+                        overridden: files_overridden,
                     },
                 };
                 // Set once: `runtime` runs once per diagnosis.

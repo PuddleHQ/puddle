@@ -1,0 +1,100 @@
+puddle doctor (puddle 0.1.0, windows x86_64)
+
+ok    CPU virtualization    on (the hypervisor uses it)
+ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
+info  Code integrity        memory integrity (HVCI) on; App Control policy for programs off
+FAIL  Bundled runtime       bundled runtime file C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe is not the one this Puddle ships with: its SHA-256 is bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, expected aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; repair or reinstall Puddle
+      fix:  Repair or reinstall Puddle so the runtime in
+            C:\Users\dev\AppData\Local\Programs\puddle\runtime is the one it shipped with. A
+            file there was changed after install (an update that stopped half way, antivirus,
+            disk trouble, or another program replacing it); Puddle only runs the exact files it
+            was built for.
+skip  Runtime starts        not checked: the bundled runtime isn't usable
+skip  Test boot             not checked: the runtime doesn't start
+ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+info  Guest kernel          the guest kernel of the Windows runtime has /dev/mem
+      note: Puddle works. Root in a sandbox can map the virtual devices' registers through
+            /dev/mem, so the runtime's own checks on every register access are the only line
+            there. The Linux runtime's guest kernel is built without /dev/mem.
+ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
+ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
+ok    Azure CLI (az)        version 2.64.0
+ok    Global Secure Access  client not installed
+
+1 problem to fix before Puddle can run sandboxes. (1.2 s)
+
+---
+{
+  "schema_version": 1,
+  "puddle_version": "0.1.0",
+  "os": "windows",
+  "arch": "x86_64",
+  "ok": false,
+  "checks": [
+    {
+      "id": "virtualization",
+      "status": "ok",
+      "summary": "on (the hypervisor uses it)"
+    },
+    {
+      "id": "hypervisor",
+      "status": "ok",
+      "summary": "Windows Hypervisor Platform is on and the hypervisor runs"
+    },
+    {
+      "id": "code_integrity",
+      "status": "info",
+      "summary": "memory integrity (HVCI) on; App Control policy for programs off"
+    },
+    {
+      "id": "runtime",
+      "status": "fail",
+      "summary": "bundled runtime file C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime\\msb.exe is not the one this Puddle ships with: its SHA-256 is bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, expected aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; repair or reinstall Puddle",
+      "finding": "runtime_digest_mismatch",
+      "fix": "Repair or reinstall Puddle so the runtime in C:\\Users\\dev\\AppData\\Local\\Programs\\puddle\\runtime is the one it shipped with. A file there was changed after install (an update that stopped half way, antivirus, disk trouble, or another program replacing it); Puddle only runs the exact files it was built for."
+    },
+    {
+      "id": "launch",
+      "status": "skipped",
+      "summary": "not checked: the bundled runtime isn't usable"
+    },
+    {
+      "id": "test_boot",
+      "status": "skipped",
+      "summary": "not checked: the runtime doesn't start"
+    },
+    {
+      "id": "disk_space",
+      "status": "ok",
+      "summary": "120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)"
+    },
+    {
+      "id": "guest_kernel",
+      "status": "info",
+      "summary": "the guest kernel of the Windows runtime has /dev/mem",
+      "finding": "guest_dev_mem_present",
+      "fix": "Puddle works. Root in a sandbox can map the virtual devices' registers through /dev/mem, so the runtime's own checks on every register access are the only line there. The Linux runtime's guest kernel is built without /dev/mem."
+    },
+    {
+      "id": "disk_encryption",
+      "status": "ok",
+      "summary": "data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)"
+    },
+    {
+      "id": "ssh_agent",
+      "status": "ok",
+      "summary": "the agent on \\\\.\\pipe\\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)"
+    },
+    {
+      "id": "az_cli",
+      "status": "ok",
+      "summary": "version 2.64.0"
+    },
+    {
+      "id": "global_secure_access",
+      "status": "ok",
+      "summary": "client not installed"
+    }
+  ],
+  "elapsed_ms": 1234
+}

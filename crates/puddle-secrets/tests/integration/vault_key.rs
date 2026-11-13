@@ -151,7 +151,7 @@ async fn the_key_file_is_the_fallback_where_sealing_cannot_work() {
     // Each case is something a real machine said when sealing: systemd 255 (no `--user`: exit 1
     // and the text), the varlink service refusing, an unreadable answer, a seal that does not open
     // again, a tool that hangs.
-    let cases: [(&str, String); 6] = [
+    let cases: [(&str, String); 7] = [
         (
             "systemd 255",
             "[--version]\nstdout=systemd 255 (255.4-1ubuntu8.18)\\n\n\
@@ -162,6 +162,13 @@ async fn the_key_file_is_the_fallback_where_sealing_cannot_work() {
             "service refused",
             "[--version]\nstdout=systemd 257 (257.13)\\n\n\
              [encrypt]\nexit=1\nstderr=Failed to determine local credential host secret: Permission denied\\n\n"
+                .to_owned(),
+        ),
+        (
+            "encrypt fails but printed something",
+            "[--version]\nstdout=systemd 257 (257.13)\\n\n\
+             [encrypt]\nexit=1\nstdout=c2VhbGVk\n\
+             [decrypt]\necho_stdin=1\n"
                 .to_owned(),
         ),
         (
@@ -213,10 +220,19 @@ async fn systemd_before_256_is_not_asked_to_seal() {
 }
 
 #[tokio::test]
+async fn systemd_256_is_the_first_version_asked_to_seal() {
+    let setup = Setup::new();
+    let (keys, _) =
+        setup.keys(&HEALTHY.replace("systemd 257 (257.13-1~deb13u1)", "systemd 256 (256.1)"));
+    let found = keys.find_or_make().await.unwrap();
+    assert_eq!(found.source, KeySource::SystemdSealed);
+}
+
+#[tokio::test]
 async fn a_sealed_key_that_does_not_open_says_why_and_is_never_replaced() {
     // The first column is what `decrypt` printed on a real machine, the second what Puddle
     // reports.
-    let cases: [(&str, &str, Unseal); 6] = [
+    let cases: [(&str, &str, Unseal); 7] = [
         (
             "secure boot or machine id changed",
             "[--version]\nstdout=systemd 257 (257.13)\\n\n[decrypt]\nexit=1\nstderr=Failed to decrypt: io.systemd.System\\n\n",
@@ -231,6 +247,11 @@ async fn a_sealed_key_that_does_not_open_says_why_and_is_never_replaced() {
             "the machine went back to systemd 255",
             "[--version]\nstdout=systemd 255 (255.4)\\n\n[decrypt]\nexit=1\nstderr=systemd-creds: unrecognized option '--user'\\n\n",
             Unseal::Unsupported,
+        ),
+        (
+            "systemd 256 knows `--user`, so a refusal is the service's, not the version's",
+            "[--version]\nstdout=systemd 256 (256.1)\\n\n[decrypt]\nexit=1\nstderr=Failed to decrypt: io.systemd.System\\n\n",
+            Unseal::Rejected,
         ),
         (
             "the service is not reachable",

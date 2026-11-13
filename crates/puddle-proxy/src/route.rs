@@ -120,12 +120,15 @@ async fn accept_loop(
                     tokio::time::sleep(ACCEPT_BACKOFF).await;
                 }
             },
-            Some(done) = sessions.join_next(), if !sessions.is_empty() => match done {
+            Some(done) = sessions.join_next(), if !sessions.is_empty() => {
+                proxy.session_ended(handler.workspace());
+                match done {
                 Ok(Ok(())) => tracing::debug!("agent session ended"),
                 Ok(Err(err)) => tracing::info!(error = %err, "agent session failed"),
                 Err(err) if err.is_panic() => tracing::error!("agent session panicked"),
                 Err(_) => {}
-            },
+                }
+            }
         }
     }
 }

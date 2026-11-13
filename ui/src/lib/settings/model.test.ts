@@ -85,9 +85,9 @@ describe("the host-loopback toggle help", () => {
 });
 
 describe("the company-network toggle help", () => {
-  it("says no signal is read yet, so the switch changes nothing", () => {
+  it("says the signals are read on Windows only, so elsewhere the switch changes nothing", () => {
     expect(LOCAL_EXPLAIN.company_network).toContain(
-      "does not read those signals yet",
+      "reads those signals on Windows only",
     );
   });
 });

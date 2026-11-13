@@ -3843,6 +3843,14 @@ impl Runtime for SlowPull {
         self.0.set_cpus(name, cpus)
     }
 
+    fn set_env(
+        &self,
+        name: &SandboxName,
+        env: &GuestEnv,
+    ) -> impl Future<Output = Result<(), puddle_compute::ComputeError>> + Send {
+        self.0.set_env(name, env)
+    }
+
     fn grow_root_disk(
         &self,
         name: &SandboxName,
@@ -8773,8 +8781,9 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     host.shutdown().await;
 }
 
+#[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 #[tokio::test(flavor = "multi_thread")]
-async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_volume_and_an_unchanged_one_restarts_it()
+async fn a_changed_environment_is_applied_to_the_stopped_sandbox_at_the_next_start_and_keeps_the_root_disk()
  {
     let rig = Rig::named_ids();
     let host = rig.start().await;
@@ -8802,8 +8811,7 @@ async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_vo
     assert_eq!(calls_of(&rig, "Create"), creates);
     assert_eq!(calls_of(&rig, "Remove"), 0);
 
-    // A changed variable: a sandbox keeps the environment it was made with, so the start makes
-    // a new one; the volume with the work is the same.
+    // A changed variable is written to the stopped sandbox: no new sandbox, the root disk stays.
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
     put_env(
@@ -8812,19 +8820,20 @@ async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_vo
         json!({"kind": "plain", "value": "nano"}),
     )
     .await;
+    let set_envs = calls_of(&rig, "SetEnv");
     api.post("/api/workspaces/acme/start", "").await;
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
     assert_eq!(end["step"], "done", "{end}");
-    assert_eq!(calls_of(&rig, "Create"), creates + 1);
-    assert_eq!(calls_of(&rig, "Remove"), 1);
-    // Puddle says what it did: the sandbox was made again, the volume kept.
-    let said = events.seen.iter().any(|e| {
+    assert_eq!(calls_of(&rig, "Create"), creates);
+    assert_eq!(calls_of(&rig, "Remove"), 0);
+    assert_eq!(calls_of(&rig, "SetEnv"), set_envs + 1);
+    let warned = events.seen.iter().any(|e| {
         e["type"] == "workspace_progress"
             && e["detail"]
                 .as_str()
-                .is_some_and(|d| d.contains("variables changed") && d.contains("volume"))
+                .is_some_and(|d| d.contains("made again"))
     });
-    assert!(said, "no notice that the sandbox was made again");
+    assert!(!warned, "a kept root disk needs no warning");
     assert_eq!(
         rig.guest
             .boot_envs
@@ -8835,15 +8844,63 @@ async fn a_changed_environment_makes_the_next_start_a_new_sandbox_on_the_same_vo
             .get("EDITOR"),
         Some("nano")
     );
+    // Puddle's own variables are written with them, not dropped.
+    assert_eq!(
+        rig.guest
+            .boot_envs
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("HTTPS_PROXY"),
+        Some("http://127.0.0.1:3128")
+    );
     assert_eq!(volume_names(&rig).await, volumes);
-    assert!(host.workspaces().termination(&name("acme")).is_some());
 
-    // And from then on that is the environment the sandbox was made with.
+    // The same variables at the next start write nothing more.
     api.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
     api.post("/api/workspaces/acme/start", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(calls_of(&rig, "Create"), creates);
+    assert_eq!(calls_of(&rig, "SetEnv"), set_envs + 1);
+
+    // A write that fails falls back to a new sandbox on the same volume, and says so.
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    put_env(
+        &api,
+        "/api/env/EDITOR",
+        json!({"kind": "plain", "value": "emacs"}),
+    )
+    .await;
+    rig.runtime.inject(
+        Op::SetEnv,
+        Fault::once(disk_error("set the environment of")),
+    );
+    api.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
     assert_eq!(calls_of(&rig, "Create"), creates + 1);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again") && d.contains("volume"))
+    });
+    assert!(said, "no notice that the sandbox was made again");
+    assert_eq!(
+        rig.guest
+            .boot_envs
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("EDITOR"),
+        Some("emacs")
+    );
+    assert_eq!(volume_names(&rig).await, volumes);
     host.shutdown().await;
 }
 

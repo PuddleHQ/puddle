@@ -314,9 +314,9 @@ struct Live<R: Runtime> {
     ssh: Option<SshEndpoint>,
     /// What the running guest was given at boot; `None` while it does not run.
     guest: Option<GuestState>,
-    /// The user's variables baked into the sandbox's own spec when it was made. A sandbox keeps
-    /// the environment it was made with (a restart cannot change it), so a start with other
-    /// variables makes a new sandbox on the same volume instead of restarting this one.
+    /// The user's variables in the sandbox's own spec: those it was made with, or the last set
+    /// written to it. A sandbox reads them at its start, so a start with other variables writes
+    /// them first (`Runtime::set_env`) and keeps the sandbox and its root disk.
     spec_env: GuestEnv,
     /// Held while the running guest's author files or login-shell environment file are rewritten,
     /// so two changes never run the boot hook at once.
@@ -3531,8 +3531,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 name,
                 WorkspaceStep::Starting,
                 Some(
-                    "the workspace's variables changed, so its sandbox is made again; \
-                     the volume with your work is kept, what was installed outside it is not"
+                    "the workspace's variables could not be applied to its sandbox, so it is made \
+                     again; the volume with your work is kept, what was installed outside it is not"
                         .to_owned(),
                 ),
             );
@@ -3559,16 +3559,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Ok(())
     }
 
-    /// Starts the stopped sandbox again. `Ok(false)` when it did not: the workspace's variables
-    /// changed since the sandbox was made and a sandbox keeps the environment it was made with, so
-    /// the caller makes a new one on the same volume (the volume holds the work, not the sandbox).
+    /// Starts the stopped sandbox again, with the workspace's variables as they are now: a changed
+    /// set is written to the stopped sandbox first (`Runtime::set_env`), so the root disk (home
+    /// directory, installed packages) is kept. `Ok(false)` only when that write failed: the caller
+    /// then makes a new sandbox on the same volume, the volume holding the work, not the sandbox.
     async fn restart_in_place(&self, record: &WorkspaceRecord) -> Result<bool, String> {
         let inner = &self.inner;
         let name = &record.id;
         let image = ImageRef::new(&record.image).map_err(|e| e.to_string())?;
         let config = self.image_config(&image).await?;
         self.publish_shell_init(&record.id)?;
-        let (plan, _, guest) = self.plan_guest_for(record, config).await?;
+        let (plan, spec_env, guest) = self.plan_guest_for(record, config).await?;
         let made_with = inner
             .live
             .lock()
@@ -3576,8 +3577,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .get(name)
             .map(|live| live.spec_env.clone());
         if made_with.is_some_and(|env| env != guest.env) {
-            inner.injection.end(name);
-            return Ok(false);
+            if let Err(e) = inner.runtime.set_env(&name.sandbox_name(), &spec_env).await {
+                tracing::warn!(workspace = %name, error = %e, "the changed variables could not be applied to the stopped sandbox");
+                inner.injection.end(name);
+                return Ok(false);
+            }
+            if let Some(live) = inner.live.lock().await.get_mut(name) {
+                live.spec_env = guest.env.clone();
+            }
         }
         let started = self.start_planned(record, &plan).await;
         match started {

@@ -192,6 +192,7 @@ async fn the_end_reaches_a_page_that_was_still_sending_when_the_shell_exited() {
         .send(Message::Binary(b"exit 4\r".to_vec().into()))
         .await
         .unwrap();
+    // flake-ok: a producer pacing its sends so some land after the server's close, not a wait for a condition.
     for _ in 0..60 {
         let ack = json!({"type": "ack", "bytes": 1}).to_string();
         if socket.send(Message::Text(ack.into())).await.is_err() {

@@ -249,13 +249,24 @@ mod gateway {
             .until(ended(name_static), Duration::from_secs(600))
             .await;
         assert_eq!(end["step"], "done", "{end}");
+        // Gateway's bootstrap warns below two cores (its "minimal requirements" check), so the
+        // workspace gets two, as a user would set it, and starts again to take them.
         let reply = api
             .put(
                 &format!("/api/settings/workspaces/{name}"),
-                &json!({"overrides": {"direct_ssh": true}}).to_string(),
+                &json!({"overrides": {"direct_ssh": true, "cpus": 2}}).to_string(),
             )
             .await;
         assert_eq!(reply.status, 200, "{}", reply.body);
+        api.post(&format!("/api/workspaces/{name}/stop"), "").await;
+        events
+            .until(ended(name_static), Duration::from_secs(120))
+            .await;
+        api.post(&format!("/api/workspaces/{name}/start"), "").await;
+        let end = events
+            .until(ended(name_static), Duration::from_secs(300))
+            .await;
+        assert_eq!(end["step"], "done", "{end}");
         assert!(host.workspaces().ssh_endpoint(&workspace).await.is_some());
 
         // OpenSSH reads ~/.ssh/config from the passwd entry, not from $HOME, so Gateway's own

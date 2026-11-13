@@ -170,7 +170,7 @@ public final class ProbeStarter implements ApplicationStarter {
         });
         if (session[0] == null) return;
         step("exec-identity", () -> {
-            Exec e = exec(cb, "id -un; echo \"$HOME\"; uname -sm; sudo -n id -un; echo $SHELL", null);
+            Exec e = exec(cb, "id -un; echo \"$HOME\"; uname -sm; sudo -n id -un; echo shell=$SHELL; getent passwd $(id -un); command -v python3 busybox nc setsid", null);
             if (e.code != 0) throw new IllegalStateException("exit " + e.code + " err=" + e.err);
             return e.out;
         });
@@ -197,7 +197,9 @@ public final class ProbeStarter implements ApplicationStarter {
         step("sftp", () -> {
             SftpChannel sftp = cb.openSftpChannel();
             String home = sftp.getHome();
-            String path = home + "/.puddle-gateway-probe";
+            if (!home.startsWith("/home/")) say("INFO sftp home is " + home + ", using the exec home instead");
+            String dir = home.startsWith("/home/") ? home : exec(cb, "echo $HOME", null).out.trim();
+            String path = dir + "/.puddle-gateway-probe";
             byte[] data = new byte[8 << 20];
             new Random(2).nextBytes(data);
             try (OutputStream o = sftp.outputStream(path, false)) {
@@ -208,7 +210,7 @@ public final class ProbeStarter implements ApplicationStarter {
             try (InputStream i = sftp.inputStream(path)) {
                 back = i.readAllBytes();
             }
-            int listed = sftp.ls(home).size();
+            int listed = sftp.ls(dir).size();
             sftp.rm(path);
             if (size != data.length || !sha(back).equals(sha(data)))
                 throw new IllegalStateException("size " + size + " sha " + sha(back));
@@ -216,9 +218,12 @@ public final class ProbeStarter implements ApplicationStarter {
         });
         step("detached-listener", () -> {
             // A process started in the background must outlive its exec channel (Gateway starts its backend so).
-            Exec e = exec(cb, "cd /tmp && (command -v python3 >/dev/null && nohup python3 -m http.server " + guestPort
-                    + " --bind 127.0.0.1 || nohup busybox httpd -f -p 127.0.0.1:" + guestPort
-                    + " -h /tmp) >/dev/null 2>&1 </dev/null & echo started", null);
+            String server = "command -v python3 >/dev/null && exec python3 -m http.server " + guestPort
+                    + " --bind 127.0.0.1; exec busybox httpd -f -p 127.0.0.1:" + guestPort + " -h /tmp";
+            Exec e = exec(cb, "cd /tmp && nohup sh -c '" + server + "' >/tmp/probe-listener.log 2>&1 </dev/null & echo started", null);
+            Thread.sleep(3000);
+            Exec log = exec(cb, "cat /tmp/probe-listener.log; ps -eo pid,ppid,args | grep -E 'http' | grep -v grep", null);
+            say("INFO listener: " + oneLine(log.out));
             Thread.sleep(3000);
             Exec probe = exec(cb, "(ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null || cat /proc/net/tcp) | head -20", null);
             return e.out + " | " + probe.out;

@@ -180,6 +180,31 @@ test.describe("creating", () => {
     return dialog;
   }
 
+  test("the create button stays where it is when the host note shows", async ({
+    page,
+    backend,
+  }) => {
+    // Hold the service's answer so the position before the note is read before it can arrive.
+    let release: () => void = () => {};
+    const held = new Promise<void>((done) => (release = done));
+    await page.route("**/api/repository-hosts", async (route) => {
+      await held;
+      await route.continue();
+    });
+    await openList(page, backend);
+    const dialog = await openCreate(page);
+    const create = dialog.getByRole("button", { name: "Create workspace" });
+    await dialog
+      .getByLabel("Git repository (HTTPS)")
+      .fill("https://github.com/acme/Ledger_Service.git");
+    await expect(dialog.getByLabel("Name")).toHaveValue("Ledger_Service");
+    const before = await create.boundingBox();
+    if (before === null) throw new Error("the create button has no box");
+    release();
+    await expect(dialog.getByTestId("hosts-new")).toContainText("github.com");
+    await expect.poll(() => create.boundingBox()).toEqual(before);
+  });
+
   test("creates from a repository URL, naming it after the repository", async ({
     page,
     request,

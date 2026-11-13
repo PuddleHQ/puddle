@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! [`FakeRuntime`]: an in-memory [`Runtime`] that behaves like msb as observed on msb 0.7.6, for
+//! [`FakeRuntime`]: an in-memory [`Runtime`] that behaves like the msb Puddle pins, for
 //! unit tests of everything above the compute plane (feature `fake`).
 //!
 //! What it reproduces (each pinned by a case in [`crate::contract`]):
@@ -13,8 +13,10 @@
 //!   `remove` and reattach with a plain `named()` mount.
 //! - A second attach of a volume held by a running sandbox is refused naming the holder, and
 //!   leaves the refused sandbox behind as a `Stopped` record.
-//! - A create that fails its volume check (missing volume, size mismatch) leaves a stale
-//!   directory that blocks the name, unless [`FakeConfig::stale_dir_fixed`] (an upstream msb bug).
+//! - A create that fails leaves no stale directory ([`FakeRuntime::add_stale_dir`] plants one, as
+//!   a crash would).
+//! - The guest has no network, and only the sandbox's routed vsock ports on the host accept (the
+//!   hostile-guest probes of [`crate::probes`]).
 //! - The SSH server writes an `SSH-2.0-` identification line first.
 //! - Every boot writes `/proc/meminfo` with `MemTotal` = the spec's memory, so a
 //!   [`Runtime::set_memory`] shows only after the next start.
@@ -47,6 +49,7 @@
 //! ```
 
 mod exec;
+mod guest_probes;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -177,24 +180,17 @@ impl Fault {
     }
 }
 
-/// How the fake behaves where msb versions differ.
+/// What a test can set about the fake itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FakeConfig {
     /// Reported by [`Runtime::probe`].
     pub runtime_version: String,
-    /// When `true`, a failed create leaves no stale directory (the upstream msb bug fixed).
-    pub stale_dir_fixed: bool,
-    /// Reported by [`Runtime::probe`]; the fake's SSH server runs no commands either way.
-    pub ssh_reports_signal_exit: bool,
 }
 
 impl Default for FakeConfig {
-    /// msb 0.7.6 as observed: stale directories, signal exit lost over SSH.
     fn default() -> Self {
         Self {
             runtime_version: "fake".into(),
-            stale_dir_fixed: false,
-            ssh_reports_signal_exit: false,
         }
     }
 }
@@ -387,7 +383,7 @@ impl FakeRuntime {
     /// `alpine:3`: CMD `/bin/sh`.
     pub const ALPINE: &'static str = "alpine:3";
 
-    /// A fake with [`FakeConfig::default`] (msb 0.7.6 behaviour).
+    /// A fake with [`FakeConfig::default`].
     #[must_use]
     pub fn new() -> Self {
         Self::with_config(FakeConfig::default())
@@ -610,13 +606,6 @@ impl FakeRuntime {
     pub fn force_next_stop(&self, name: &SandboxName) {
         self.lock().force_stop.insert(name.to_string());
     }
-
-    /// Marks a failed create's leftover directory, as msb does until the upstream bug is fixed.
-    fn leave_stale_dir(&self, state: &mut State, name: &SandboxName) {
-        if !self.inner.config.stale_dir_fixed {
-            state.stale_dirs.insert(name.to_string());
-        }
-    }
 }
 
 impl Runtime for FakeRuntime {
@@ -628,8 +617,8 @@ impl Runtime for FakeRuntime {
         let c = &self.inner.config;
         Ok(Capabilities {
             runtime_version: c.runtime_version.clone(),
-            stale_dir_fixed: c.stale_dir_fixed,
-            ssh_reports_signal_exit: c.ssh_reports_signal_exit,
+            stale_dir_fixed: true,
+            ssh_reports_signal_exit: true,
         })
     }
 
@@ -691,7 +680,6 @@ impl Runtime for FakeRuntime {
                 _ => None,
             };
             if let Some(e) = failure {
-                self.leave_stale_dir(&mut state, &name);
                 return Err(e);
             }
         }

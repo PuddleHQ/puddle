@@ -183,13 +183,6 @@
       onPick={(repo, by) => picked(repo, by)}
     />
 
-    <RepositoryHostsNotice
-      urls={[url]}
-      {workspace}
-      {...hostCheck ? { check: hostCheck } : {}}
-      onBlocked={(b) => (hostBlocked = b)}
-    />
-
     {#if tableCannotHold(url)}
       <p class="hint warn" data-testid="table-cannot-hold">
         {TABLE_CANNOT_HOLD}
@@ -286,6 +279,14 @@
         >Clone</button
       >
     </div>
+
+    <!-- Below the buttons, so its late answer cannot move the button under a press. -->
+    <RepositoryHostsNotice
+      urls={[url]}
+      {workspace}
+      {...hostCheck ? { check: hostCheck } : {}}
+      onBlocked={(b) => (hostBlocked = b)}
+    />
   </form>
 </FormDialog>
 

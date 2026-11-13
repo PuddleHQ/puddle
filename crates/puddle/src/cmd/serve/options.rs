@@ -516,9 +516,29 @@ pub fn resolve(
     env: &dyn Fn(&str) -> Option<OsString>,
     cwd: &Path,
 ) -> Result<Effective, ConfigError> {
+    resolve_keys(flags, env, cwd, &OPTIONS.map(|spec| spec.key))
+}
+
+/// [`resolve`] for the options named in `keys` only, so a bad value of another option (a
+/// malformed `PUDDLE_PORT`) does not stop a command that never reads it. The `config` option is
+/// always read first, because it names the file the others may come from; the file itself is
+/// still checked as a whole.
+///
+/// # Errors
+///
+/// [`ConfigError`] as [`resolve`] says, for the options in `keys` and the config file.
+pub fn resolve_keys(
+    flags: &Flags,
+    env: &dyn Fn(&str) -> Option<OsString>,
+    cwd: &Path,
+    keys: &[&str],
+) -> Result<Effective, ConfigError> {
     let mut values = BTreeMap::new();
     let mut file: Option<(PathBuf, config_file::FileValues)> = None;
-    for spec in &OPTIONS {
+    for spec in OPTIONS
+        .iter()
+        .filter(|spec| spec.key == CONFIG_KEY || keys.contains(&spec.key))
+    {
         let mut chosen = flag_or_env(spec, flags, env, cwd)?;
         if chosen.is_none() {
             chosen = file.as_ref().and_then(|(path, from_file)| {

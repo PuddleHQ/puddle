@@ -31,6 +31,7 @@ fn run_reports_failures_and_missing_programs() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("cannot start"), "{err}");
+    assert!(err.contains("install it and run the task again"), "{err}");
     let cargo = Cargo::from_env(true);
     let err = run(cargo
         .command()
@@ -112,4 +113,13 @@ fn dev_only_features_do_not_ship() {
         .unwrap();
     assert!(shipped.iter().any(|p| p.name == "object"));
     assert!(shipped.iter().all(|p| p.name != "crc32fast"));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_reports_a_program_that_cannot_be_executed_without_an_install_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = run(&mut Command::new(dir.path())).unwrap_err().to_string();
+    assert!(err.contains("cannot start"), "{err}");
+    assert!(!err.contains("install it"), "{err}");
 }

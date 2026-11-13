@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Running the external tools xtask drives: cargo (tree, cargo-about), gh and git.
+//! Running the external tools xtask drives: cargo (tree, cargo-about) and git.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -58,7 +58,14 @@ pub fn run(command: &mut Command) -> Result<String> {
     );
     let out = command.output().map_err(|e| XtaskError::Tool {
         command: shown.clone(),
-        detail: format!("cannot start: {e}"),
+        detail: if e.kind() == std::io::ErrorKind::NotFound {
+            let program = command.get_program().to_string_lossy();
+            format!(
+                "cannot start: {e}; `{program}` is not installed or not on PATH, install it and run the task again"
+            )
+        } else {
+            format!("cannot start: {e}")
+        },
     })?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);

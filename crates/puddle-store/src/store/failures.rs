@@ -4,6 +4,8 @@
 
 use puddle_types::{ConnectionDecision, ConnectionReason, PatternKind, RuleSetId};
 
+use puddle_types::{ConnectionEvent, ConnectionLog};
+
 use super::*;
 use crate::clock::ManualClock;
 use crate::test_support::Logs;

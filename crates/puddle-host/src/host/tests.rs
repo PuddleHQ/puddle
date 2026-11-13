@@ -2,12 +2,14 @@
 use std::time::SystemTime;
 
 use puddle_api::MemorySettings;
-use puddle_repos::{ApiReply, FakeApi, Freshness, Read, Secrets};
+use puddle_certs::CorporateRoots;
+use puddle_repos::{ApiReply, FakeApi, Freshness, Read, Repos, Secrets};
 use puddle_secrets::{Credential, Secret, SourceError, SourceSpec};
 use puddle_settings::WorkspaceSettings;
-use puddle_types::LocalCategory;
+use puddle_types::{Event, LocalCategory};
 use serde_json::json;
 
+use super::egress::{announce_renewals, distribution_points};
 use super::*;
 
 fn name() -> WorkspaceId {

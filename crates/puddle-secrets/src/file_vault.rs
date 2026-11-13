@@ -398,7 +398,9 @@ impl FileVault {
         renamed.map_err(|_| discard(tmp))?;
         // The new content is in place; a folder that cannot be synced leaves it not known to survive
         // a power cut, which the caller must hear.
-        sync_folder(&self.path).map_err(|_| VaultError::Io)
+        #[cfg(unix)]
+        sync_folder(&self.path).map_err(|_| VaultError::Io)?;
+        Ok(())
     }
 
     fn aad(&self, id: &str) -> Vec<u8> {
@@ -497,11 +499,6 @@ fn sync_folder(path: &Path) -> io::Result<()> {
         .parent()
         .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
     fs::File::open(dir)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_folder(_path: &Path) -> io::Result<()> {
-    Ok(())
 }
 
 /// A cursor over the file's bytes that refuses to run past the end.

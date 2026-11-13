@@ -445,13 +445,11 @@ fn a_key_check_that_opens_under_the_key_but_says_something_else_is_a_wrong_key()
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn syncing_the_folder_of_a_vault_works_and_a_missing_folder_is_reported() {
     let dir = tempfile::tempdir().unwrap();
     assert!(sync_folder(&dir.path().join("vault")).is_ok());
-    #[cfg(unix)]
-    {
-        assert!(sync_folder(&dir.path().join("gone").join("vault")).is_err());
-        assert!(sync_folder(Path::new("/")).is_err());
-    }
+    assert!(sync_folder(&dir.path().join("gone").join("vault")).is_err());
+    assert!(sync_folder(Path::new("/")).is_err());
 }

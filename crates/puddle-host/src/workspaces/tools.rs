@@ -5,10 +5,10 @@
 
 use std::time::Duration;
 
-use puddle_compute::{ExecRequest, Runtime, Sandbox as _};
+use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
 use puddle_settings::MiseMode;
-use puddle_types::{Decision, Host, Problem, WorkspaceId};
-use puddle_workspace::Layout;
+use puddle_types::{Decision, Host, Problem, RuleId, WorkspaceId};
+use puddle_workspace::{PUDDLE_DIR, WORKSPACES_ROOT};
 
 use super::{HostWorkspaces, problem_key};
 
@@ -46,50 +46,40 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 return;
             }
         }
-        let Some(gated) = inner
-            .live
-            .lock()
-            .await
-            .get(name)
-            .and_then(|l| l.gated.clone())
-        else {
+        // `None`: the workspace was not running before or after the fetch, which says nothing
+        // about mise.
+        let Some(outcome) = self.run_mise_fetch(name).await else {
             return;
         };
-        let Ok(dir) = Layout::new(name).and_then(|l| l.puddle_dir()) else {
-            return;
-        };
-        let user = self.booted_user(name).await;
-        let request = ExecRequest::new(
-            puddle_boot::AGENT_GUEST,
-            ["mise-fetch".to_owned(), format!("{dir}/mise")],
-        )
-        .as_user(user.name())
-        .with_timeout(FETCH_TIMEOUT);
-        let outcome = gated.ungated().exec(request).await;
-        // A workspace stopped meanwhile says nothing about mise.
-        if !inner.live.lock().await.contains_key(name) {
-            return;
-        }
         let reason = match outcome {
             Ok(output) if output.status.code == 0 => {
                 tracing::info!(workspace = %name, result = %output.stdout_text().trim(), "mise is on the volume");
                 inner.problems.clear(&key);
                 return;
             }
-            Ok(output) => {
-                let said = output.stderr_text();
-                said.lines()
-                    .rev()
-                    .find(|l| !l.trim().is_empty())
-                    .map_or_else(
-                        || format!("the download ended with exit code {}", output.status.code),
-                        |l| l.trim().to_owned(),
-                    )
-            }
-            Err(e) => e.to_string(),
+            failed => failure_reason(failed),
         };
         tracing::warn!(workspace = %name, %reason, "mise could not be put on the volume");
         inner.problems.raise(self.mise_problem(name, &reason));
+    }
+
+    /// Runs `puddle-agent mise-fetch` in the guest as the session user. `None` when the workspace
+    /// is not running, at the start or when the command ended.
+    async fn run_mise_fetch(&self, name: &WorkspaceId) -> Option<Result<ExecOutput, ComputeError>> {
+        let inner = &self.inner;
+        let gated = inner.live.lock().await.get(name)?.gated.clone()?;
+        let dir = format!("{WORKSPACES_ROOT}/{name}/{PUDDLE_DIR}/mise");
+        let user = self.booted_user(name).await;
+        let request = ExecRequest::new(puddle_boot::AGENT_GUEST, ["mise-fetch".to_owned(), dir])
+            .as_user(user.name())
+            .with_timeout(FETCH_TIMEOUT);
+        let outcome = gated.ungated().exec(request).await;
+        inner
+            .live
+            .lock()
+            .await
+            .contains_key(name)
+            .then_some(outcome)
     }
 
     /// The problem for a failed fetch: what failed, that the workspace works without tools, and,
@@ -114,23 +104,49 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Which rule of the user's blocks the download host for `name`, in words.
     fn download_blocker(&self, name: &WorkspaceId) -> Option<String> {
         let host = Host::parse_normalised(DOWNLOAD_HOST).ok()?;
-        match self.inner.store.peek(name, &host)? {
-            Decision::Deny { rule_id, .. } => {
-                let rule = self
-                    .inner
-                    .store
-                    .rules_every_user()
-                    .into_iter()
-                    .find(|r| r.id == rule_id)?;
-                Some(format!(
-                    "A rule you made blocks {DOWNLOAD_HOST}: deny {}. Remove it on the Network tab to allow the download.",
-                    rule.pattern
-                ))
-            }
-            Decision::SetDeny { .. } => Some(format!(
-                "A rule set you switched on blocks {DOWNLOAD_HOST}; switch it off or add a rule that allows the host on the Network tab."
-            )),
-            _ => None,
-        }
+        let decision = self.inner.store.peek(name, &host)?;
+        blocker_words(decision, |id| {
+            self.inner
+                .store
+                .rules_every_user()
+                .into_iter()
+                .find(|r| r.id == id)
+                .map(|r| r.pattern.to_string())
+        })
     }
 }
+
+/// What a failed fetch says: the last line the command wrote to standard error (the agent's
+/// own message), else its exit code, else why the command could not run.
+fn failure_reason(outcome: Result<ExecOutput, ComputeError>) -> String {
+    match outcome {
+        Ok(output) => output
+            .stderr_text()
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .map_or_else(
+                || format!("the download ended with exit code {}", output.status.code),
+                |l| l.trim().to_owned(),
+            ),
+        Err(e) => e.to_string(),
+    }
+}
+
+/// The sentence about a rule that blocks the download host, when `decision` is a deny. `pattern`
+/// reads the pattern of a rule by its id.
+fn blocker_words(decision: Decision, pattern: impl Fn(RuleId) -> Option<String>) -> Option<String> {
+    match decision {
+        Decision::Deny { rule_id, .. } => Some(format!(
+            "A rule you made blocks {DOWNLOAD_HOST}: deny {}. Remove it on the Network tab to allow the download.",
+            pattern(rule_id)?
+        )),
+        Decision::SetDeny { .. } => Some(format!(
+            "A rule set you switched on blocks {DOWNLOAD_HOST}; switch it off or add a rule that allows the host on the Network tab."
+        )),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests;

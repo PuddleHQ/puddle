@@ -282,7 +282,7 @@ async fn download_and_unpack(
             });
         }
         let partial = dest.join("bin/.mise.partial");
-        let unpacked = unpack_binary(&tar, &partial);
+        let unpacked = unpack_binary(&tar, &partial, MAX_BINARY);
         let installed = unpacked.and_then(|()| {
             let binary = sha256_of(&partial)?;
             std::fs::rename(&partial, dest.join(BINARY))?;
@@ -304,13 +304,13 @@ async fn download_and_unpack(
     .map_err(|e| io::Error::other(format!("the unpack task stopped: {e}")))?
 }
 
-/// Writes the binary of the tarball at `tarball` to `out` (mode 0755). The rest of the tarball
+/// Writes the binary of the tarball at `tarball` to `out` (mode 0755), refusing one over `max` bytes. The rest of the tarball
 /// (manual page, shell snippets, licence) is not unpacked.
 #[expect(
     clippy::wildcard_enum_match_arm,
     reason = "tar's EntryType has a hidden catch-all variant, so the kinds cannot be listed"
 )]
-fn unpack_binary(tarball: &Path, out: &Path) -> Result<(), MiseError> {
+fn unpack_binary(tarball: &Path, out: &Path, max: u64) -> Result<(), MiseError> {
     let archive_error = |e: io::Error| MiseError::Archive(e.to_string());
     let mut archive = tar::Archive::new(GzDecoder::new(std::fs::File::open(tarball)?));
     for entry in archive.entries().map_err(archive_error)? {
@@ -329,10 +329,10 @@ fn unpack_binary(tarball: &Path, out: &Path) -> Result<(), MiseError> {
         }
         let mut file = std::fs::File::create(out)?;
         // One byte past the limit tells a long file from one that fits exactly.
-        let copied = io::copy(&mut entry.take(MAX_BINARY + 1), &mut file)?;
-        if copied > MAX_BINARY {
+        let copied = io::copy(&mut entry.take(max + 1), &mut file)?;
+        if copied > max {
             return Err(MiseError::Archive(format!(
-                "{IN_ARCHIVE} larger than {MAX_BINARY} bytes"
+                "{IN_ARCHIVE} larger than {max} bytes"
             )));
         }
         #[cfg(unix)]

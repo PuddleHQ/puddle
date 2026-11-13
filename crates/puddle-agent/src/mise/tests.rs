@@ -399,3 +399,58 @@ fn outcomes_have_the_words_the_host_reads() {
     assert_eq!(Outcome::Current.as_str(), "current");
     assert_eq!(Outcome::Installed.as_str(), "installed");
 }
+
+#[tokio::test]
+async fn a_marker_that_is_not_three_words_is_not_current() {
+    let dir = tempfile::tempdir().unwrap();
+    let tarball = good_tarball();
+    let pin = pin_for(&tarball);
+    let server = Server::serving(tarball);
+    fetch(&server, &pin, dir.path()).await.unwrap();
+    for garbled in ["", "9.9.9", "9.9.9 a b c d", "not a marker at all"] {
+        std::fs::write(dir.path().join(MARKER), garbled).unwrap();
+        assert_eq!(
+            fetch(&server, &pin, dir.path()).await.unwrap(),
+            Outcome::Installed,
+            "{garbled:?}"
+        );
+    }
+    assert_eq!(server.downloads.load(Ordering::SeqCst), 5);
+}
+
+#[tokio::test]
+async fn an_old_marker_that_cannot_be_removed_is_an_io_error() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder where the marker belongs: it is not a readable marker, and it cannot be deleted
+    // as a file.
+    std::fs::create_dir_all(dir.path().join(MARKER)).unwrap();
+    let tarball = good_tarball();
+    let server = Server::serving(tarball.clone());
+    let err = fetch(&server, &pin_for(&tarball), dir.path())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, MiseError::Io(_)), "{err}");
+    assert_eq!(
+        server.downloads.load(Ordering::SeqCst),
+        0,
+        "nothing was downloaded"
+    );
+}
+
+#[test]
+fn a_binary_over_the_limit_is_refused_and_one_at_the_limit_is_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let tarball = dir.path().join("t.tar.gz");
+    std::fs::write(&tarball, good_tarball()).unwrap();
+    let out = dir.path().join("out");
+    let size = BINARY_BYTES.len() as u64;
+    unpack_binary(&tarball, &out, size).unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), BINARY_BYTES);
+    let err = unpack_binary(&tarball, &out, size - 1).unwrap_err();
+    assert!(matches!(err, MiseError::Archive(_)), "{err}");
+    assert!(
+        err.to_string()
+            .contains(&format!("larger than {} bytes", size - 1)),
+        "{err}"
+    );
+}

@@ -143,9 +143,13 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   rule out that an address is on the LAN, so the address stays local/private (a plain "no" there
   would move a home-LAN address into the category). Image pulls use the same verdict, with the
   workspace's name block, and have no rules, so an address whose toggle is on is reachable.
-  **Status:** the shipped host reads none of these signals yet, so the category is empty today and
-  the toggle changes nothing; the Settings text says so. The trait, the audit fields and the toggle
-  are in place for the host reads that follow.
+  **Status:** on Windows the host reads all four signals, read-only: the system's proxy script
+  (asked in the background, so the first request to a name still reads as plain private network and
+  the next one as company network), the adapters and IPv4 routes, and the DNS suffixes and
+  namespaces. A client counts as private-access when an adapter that is up carries the name of
+  Zscaler, Netskope, Cloudflare WARP, Tailscale or Microsoft's private access. On Linux and macOS
+  the host reads none of them, so the category is empty there and the toggle changes nothing; the
+  Settings text says so.
   Two exceptions belong to the category and have no switch of their own; each use is a
   `connection` record. (1) A plain-HTTP `GET` or `HEAD` of a certificate distribution point or
   authority-information-access URL (CRL, issuer certificate, OCSP responder) named in a root the
@@ -157,7 +161,7 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   `ssh.dev.azure.com` port 22 stays refused (`ssh_unsupported`); when the host's own probe of
   that port fails, the refusal says the company network blocks it and that HTTPS remotes work with
   Puddle's credentials, instead of only pointing at HTTPS.
-  *Added 2026-11-05; status and the unread LAN answer 2026-11-13.*
+  *Added 2026-11-05; the unread LAN answer 2026-11-13; Windows readers 2026-11-13.*
 - **R-27 An exact IP deny wins for a resolved address** (the proxy applies this to every address an
   allowed name resolves to, before R-14). The proxy looks up each address's own rules
   (`Policy::lookup`, R-5 to R-7 as for a request to that literal): if they deny it, the address is

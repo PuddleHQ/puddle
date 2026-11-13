@@ -762,6 +762,22 @@ fn a_workspace_that_lost_its_user_is_refused_and_its_delete_clears_it() {
     assert_eq!(store.workspace_env(&lost).unwrap(), []);
 }
 
+/// The proxy asks through `Policy`: both ways in refuse a nobody's workspace, so its request
+/// fails closed with a reason that names the workspace.
+#[test]
+fn the_proxy_gets_no_answer_for_a_workspace_with_no_user() {
+    let (store, _, _) = fixture();
+    store
+        .add_rule(&allow(Scope::Global, "owners.example"))
+        .unwrap();
+    let request = EgressRequest::new(ws("stray"), host("owners.example"), 443);
+    let looked_up =
+        puddle_types::Policy::lookup(&store, &request, SuffixAllows::Count).unwrap_err();
+    let decided = puddle_types::Policy::decide(&store, &request, SuffixAllows::Count).unwrap_err();
+    assert!(looked_up.reason.contains("stray"), "{}", looked_up.reason);
+    assert_eq!(looked_up.reason, decided.reason);
+}
+
 #[test]
 fn the_reach_across_every_user_is_handed_out_once() {
     let (store, _, _) = fixture();

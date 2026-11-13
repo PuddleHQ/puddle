@@ -430,6 +430,9 @@ the API. *Added 2026-10-08.*
   an update of Puddle updates it. Puddle ships no deny list: built-in entries only allow. Each
   ships switched off. When an update changes a set's entries, the store writes one
   `rule_set_changed` record (`added`, `removed`) when it opens, and the set shows when it changed.
+  A built-in set can be *hidden* while the feature it serves is off (the "mise tools" set, while the
+  global tools switch is off): a hidden set decides nothing, is left out of the list and answers
+  `409` to a switch; the switches stored for it are kept, so it returns as the user left it.
 - **R-37 Switches.** Every set has a switch for every workspace and an override per workspace, each
   on, off or unset; unset passes to the next level (the workspace's, then every workspace's, then the
   set's default: built-in sets off, the user's own sets on). A switch applies to the next request

@@ -208,6 +208,7 @@ impl From<StoreError> for ApiError {
             ),
             StoreError::PendingNotOpen { .. }
             | StoreError::RuleSetOff { .. }
+            | StoreError::RuleSetHidden(_)
             | StoreError::IdentityLabelTaken(_)
             | StoreError::IdentityAttached { .. }
             | StoreError::RepoListed(_)

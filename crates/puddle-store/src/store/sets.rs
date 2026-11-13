@@ -104,6 +104,10 @@ pub struct SystemPlan {
     pub everywhere: BTreeSet<SystemReason>,
     /// Reasons for one workspace each (per-workspace choices).
     pub workspaces: BTreeMap<WorkspaceId, BTreeSet<SystemReason>>,
+    /// Slugs of built-in sets to hide, because the feature they serve is off. A hidden set
+    /// decides nothing, is left out of [`Store::rule_sets`] and can't be switched; its stored
+    /// switches are kept, so it comes back as the user left it.
+    pub hidden_sets: BTreeSet<&'static str>,
 }
 
 /// The set with this wire id (`builtin:<slug>`, `user:<id>`, `system`), if it parses. A built-in
@@ -136,7 +140,12 @@ pub fn parse_rule_set(text: &str) -> Option<RuleSetId> {
 /// Builds the engine's snapshot from the database and the catalogue.
 pub(super) fn load_index(conn: &Connection) -> Result<RuleIndex, StoreError> {
     let rules = load_rules(conn)?;
-    let mut entries = catalogue::set_entries(BUILT_IN_SETS);
+    let hidden = load_hidden(conn)?;
+    let mut entries = catalogue::set_entries(
+        BUILT_IN_SETS
+            .iter()
+            .filter(|set| !hidden.contains(set.slug)),
+    );
     for (workspace, reason) in load_reasons(conn)? {
         for pattern in catalogue::patterns(reason.hosts()) {
             entries.push(SetEntry {
@@ -204,6 +213,14 @@ fn system_hosts(reasons: Vec<(Option<WorkspaceId>, SystemReason)>) -> Vec<System
             })
         })
         .collect()
+}
+
+/// The slugs of the built-in sets that are hidden now. A slug this version doesn't ship is
+/// dropped when the plan is next set, and decides nothing here.
+fn load_hidden(conn: &Connection) -> Result<BTreeSet<String>, StoreError> {
+    let mut stmt = conn.prepare("SELECT slug FROM hidden_builtin_sets")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 fn load_reasons(conn: &Connection) -> Result<Vec<(Option<WorkspaceId>, SystemReason)>, StoreError> {
@@ -454,8 +471,9 @@ impl Store {
     pub fn rule_sets(&self, user: UserId) -> Result<Vec<RuleSetInfo>, StoreError> {
         let index = self.snapshot();
         let conn = lock(&self.conn);
+        let hidden = load_hidden(&conn)?;
         let mut out = Vec::new();
-        for set in BUILT_IN_SETS {
+        for set in BUILT_IN_SETS.iter().filter(|s| !hidden.contains(s.slug)) {
             let id = RuleSetId::BuiltIn(set.slug);
             let changed_at: Option<(i64, Option<i64>)> = conn
                 .query_row(
@@ -687,6 +705,11 @@ impl Store {
             if parse_rule_set(&set.to_string()) != Some(set) {
                 return Err(StoreError::UnknownRuleSet(set.to_string()));
             }
+            if let RuleSetId::BuiltIn(slug) = set
+                && load_hidden(tx)?.contains(slug)
+            {
+                return Err(StoreError::RuleSetHidden(set.to_string()));
+            }
             let key = set.to_string();
             let name = workspace.map(WorkspaceId::as_str);
             tx.execute(
@@ -771,10 +794,24 @@ impl Store {
             }
             map
         };
-        if current == wanted {
+        let hidden_now = load_hidden(&lock(&self.conn))?;
+        let hidden_wanted: BTreeSet<String> = plan
+            .hidden_sets
+            .iter()
+            .filter(|slug| catalogue::built_in(slug).is_some())
+            .map(ToString::to_string)
+            .collect();
+        if current == wanted && hidden_now == hidden_wanted {
             return Ok(Vec::new());
         }
         let closed = self.change(|tx, now, fx| {
+            tx.execute("DELETE FROM hidden_builtin_sets", [])?;
+            for slug in &hidden_wanted {
+                tx.execute(
+                    "INSERT INTO hidden_builtin_sets (slug) VALUES (?1)",
+                    params![slug],
+                )?;
+            }
             tx.execute("DELETE FROM system_reasons", [])?;
             for (workspace, reasons) in &wanted {
                 for reason in reasons {

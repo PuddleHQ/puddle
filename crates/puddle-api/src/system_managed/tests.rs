@@ -69,3 +69,16 @@ fn r41_direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
     );
     assert!(!plan.everywhere.contains(&SystemReason::DirectSsh));
 }
+
+#[test]
+fn m8_the_mise_tools_set_is_hidden_exactly_while_the_global_switch_is_off() {
+    assert!(plan(&GlobalSettings::default(), &[]).hidden_sets.is_empty());
+    let mut off = GlobalSettings::default();
+    off.tools.mise = Some(false);
+    assert_eq!(
+        plan(&off, &[]).hidden_sets.into_iter().collect::<Vec<_>>(),
+        [MISE_TOOLS_SLUG]
+    );
+    off.tools.mise = Some(true);
+    assert!(plan(&off, &[]).hidden_sets.is_empty());
+}

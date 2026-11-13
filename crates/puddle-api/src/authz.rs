@@ -248,9 +248,13 @@ impl Isolation {
         Self { store }
     }
 
-    /// The user `resource` belongs to, and the answer for someone it does not belong to (the
-    /// same as for an id that does not exist). `None` for a resource that is no user's.
-    fn owner(&self, resource: &ResourceRef) -> Result<Option<(UserId, ApiError)>, StoreError> {
+    /// Whose `resource` is (`None`: nobody's, so it reaches no user), and the answer for someone
+    /// it is not (the same as for an id that does not exist). `Ok(None)` for a resource that is
+    /// no user's to begin with.
+    fn owner(
+        &self,
+        resource: &ResourceRef,
+    ) -> Result<Option<(Option<UserId>, ApiError)>, StoreError> {
         Ok(Some(match resource {
             ResourceRef::Service | ResourceRef::Install | ResourceRef::Own => return Ok(None),
             ResourceRef::Workspace(id) => (
@@ -260,31 +264,19 @@ impl Isolation {
             ResourceRef::Pending(id) => {
                 let user = match self.store.pending(*id) {
                     Ok(row) => self.store.workspace_owner(&row.workspace)?,
-                    Err(StoreError::UnknownPending(_)) => UserId::OWNER,
+                    Err(StoreError::UnknownPending(_)) => None,
                     Err(err) => return Err(err),
                 };
                 (user, ApiError::from(StoreError::UnknownPending(*id)))
             }
-            // An unknown rule resolves to the owner, so for anyone else it answers as another
-            // user's would.
-            ResourceRef::Rule(id) => {
-                let rule = self.store.rules().into_iter().find(|r| r.id == *id);
-                (
-                    rule.map_or(UserId::OWNER, |r| r.user),
-                    ApiError::from(StoreError::UnknownRule(*id)),
-                )
-            }
-            ResourceRef::RequestRule(id) => {
-                let rule = self
-                    .store
-                    .request_rules(None)?
-                    .into_iter()
-                    .find(|r| r.id == *id);
-                (
-                    rule.map_or(UserId::OWNER, |r| r.user),
-                    ApiError::from(StoreError::UnknownRequestRule(*id)),
-                )
-            }
+            ResourceRef::Rule(id) => (
+                self.store.rule_owner(*id),
+                ApiError::from(StoreError::UnknownRule(*id)),
+            ),
+            ResourceRef::RequestRule(id) => (
+                self.store.request_rule_owner(*id)?,
+                ApiError::from(StoreError::UnknownRequestRule(*id)),
+            ),
         }))
     }
 }
@@ -304,7 +296,7 @@ impl Authorizer for Isolation {
             return Err(Denial::OwnerOnly);
         }
         match self.owner(resource).map_err(Denial::Failed)? {
-            Some((user, _)) if user == principal.user => Ok(()),
+            Some((Some(user), _)) if user == principal.user => Ok(()),
             Some((_, not_found)) => Err(Denial::NotFound(not_found)),
             None => Ok(()),
         }

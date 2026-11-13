@@ -84,6 +84,14 @@ describe("the host-loopback toggle help", () => {
   });
 });
 
+describe("the company-network toggle help", () => {
+  it("says no signal is read yet, so the switch changes nothing", () => {
+    expect(LOCAL_EXPLAIN.company_network).toContain(
+      "does not read those signals yet",
+    );
+  });
+});
+
 describe("choices", () => {
   it("serverOf defaults to code-server", async () => {
     const v = await view();

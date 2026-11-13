@@ -12,6 +12,7 @@ use puddle_store::InterceptionSettings;
 use puddle_types::{CURATED_PASS_THROUGH, Host, InterceptionMode, WorkspaceId};
 
 use crate::ApiErrorBody;
+use crate::authz::{self, Action, Principal, ResourceRef};
 use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
@@ -333,7 +334,9 @@ pub(crate) async fn forget_learned(
 }
 
 /// Never decrypts a learned host again, in this workspace or in every workspace: the host joins
-/// that never-decrypt list and leaves the learned list, history included.
+/// that never-decrypt list and leaves the learned list, history included. Every workspace's list
+/// is the install's, so `global` is for the owner alone, as `PUT /api/interception/never-decrypt`
+/// is.
 #[utoipa::path(
     post,
     path = "/api/workspaces/{id}/interception/learned/{host}/permanent",
@@ -345,15 +348,26 @@ pub(crate) async fn forget_learned(
     request_body = MakePermanentRequest,
     responses(
         (status = NO_CONTENT, description = "the host is on the never-decrypt list and off the learned list"),
+        (status = FORBIDDEN, description = "`global` and the caller is not the owner", body = ApiErrorBody),
         (status = NOT_FOUND, description = "no such workspace, or the host is not on the learned list", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "the never-decrypt list is full", body = ApiErrorBody)
     )
 )]
 pub(crate) async fn make_permanent(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, host)): Path<(String, String)>,
     crate::extract::Json(body): crate::extract::Json<MakePermanentRequest>,
 ) -> Result<StatusCode, ApiError> {
+    if body.scope == PermanentScope::Global {
+        authz::check(
+            &state,
+            principal,
+            Action::ChangeInstall,
+            ResourceRef::Install,
+        )
+        .await?;
+    }
     let name = named(&state, &id).await?;
     let learned = match normalise_host(&host).map(puddle_netpolicy::Target::into_host) {
         Ok(Host::Name(host)) => host.to_string(),

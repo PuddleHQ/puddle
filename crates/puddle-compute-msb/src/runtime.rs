@@ -15,7 +15,9 @@ use puddle_compute::{
     Capabilities, ComputeError, ImageConfig, RootDiskGrowth, Runtime, SandboxInfo, SandboxSpec,
     VolumeInfo, VolumeSpec,
 };
-use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{
+    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+};
 
 use crate::error::{map, runtime};
 use crate::sandbox::{MsbSandbox, boot_id};
@@ -622,6 +624,39 @@ impl Runtime for MsbRuntime {
         })
     }
 
+    // msb applies this change only in a real VM: the VM tests cover this fn.
+    fn set_env(
+        &self,
+        name: &SandboxName,
+        env: &GuestEnv,
+    ) -> impl Future<Output = Result<(), ComputeError>> + Send {
+        Box::pin(async move {
+            let record = self.existing(name).await?;
+            let stored: Vec<(String, String)> = record
+                .config()
+                .map_err(|e| map("read the environment of", name.as_str(), e))?
+                .spec
+                .env
+                .into_iter()
+                .map(|v| (v.key, v.value))
+                .collect();
+            let patch = EnvPatch::between(&stored, env);
+            if !patch.is_empty() {
+                let mut change = record.modify();
+                for key in patch.remove {
+                    change = change.remove_env(key);
+                }
+                for (key, value) in patch.set {
+                    change = change.env(key, value);
+                }
+                self.sdk(change.next_start().apply())
+                    .await
+                    .map_err(|e| map("set the environment of", name.as_str(), e))?;
+            }
+            Ok(())
+        })
+    }
+
     // Msb answers these calls only in a real VM: the VM tests cover this fn.
     fn grow_root_disk(
         &self,
@@ -876,3 +911,32 @@ impl root_disk::GrowSdk for MsbGrow<'_> {
 
 #[cfg(test)]
 mod tests;
+
+/// What turns the variables a sandbox stores into the ones wanted: the names to drop and the
+/// pairs to write (a changed or a new value). Empty when they already agree, so `set_env` leaves
+/// the stored record alone.
+#[derive(Debug, PartialEq, Eq)]
+struct EnvPatch {
+    remove: Vec<String>,
+    set: Vec<(String, String)>,
+}
+
+impl EnvPatch {
+    fn between(stored: &[(String, String)], wanted: &GuestEnv) -> Self {
+        let remove = stored
+            .iter()
+            .filter(|(key, _)| wanted.get(key).is_none())
+            .map(|(key, _)| key.clone())
+            .collect();
+        let set = wanted
+            .iter()
+            .filter(|(key, value)| !stored.iter().any(|(k, v)| k == key && v == value))
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect();
+        Self { remove, set }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.remove.is_empty() && self.set.is_empty()
+    }
+}

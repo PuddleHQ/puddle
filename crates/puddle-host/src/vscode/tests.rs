@@ -40,6 +40,14 @@ fn a_path_is_percent_encoded_so_it_cannot_change_the_uri() {
 }
 
 #[test]
+fn the_link_for_another_machine_has_the_same_encoded_place_as_the_command() {
+    assert_eq!(
+        target("/w/a b?x#y&z%", false).open_uri(),
+        "vscode://vscode-remote/ssh-remote+puddle-web/w/a%20b%3Fx%23y%26z%25"
+    );
+}
+
+#[test]
 fn the_default_launcher_runs_the_code_command() {
     let launcher = VsCodeLauncher::default();
     let expected = if cfg!(windows) { "code.cmd" } else { "code" };

@@ -7,6 +7,7 @@
     reason = "fixture helpers run outside #[test] but only in tests"
 )]
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use object::write::{Object, StandardSection};
@@ -106,11 +107,10 @@ fn fixture(dir: &Path, embedded: &str) -> PathBuf {
         ),
     )
     .unwrap();
-    std::fs::write(
-        src.join("pins.sha256"),
-        format!("# fixture\nv{VERSION} libkrunfw-linux-version {FW_VERSION}\n"),
-    )
-    .unwrap();
+    write_pins(
+        &src,
+        &format!("v{VERSION} libkrunfw-linux-version {FW_VERSION}\n"),
+    );
     std::fs::write(
         src.join("msb-linux"),
         fake_msb_in(BinaryFormat::Elf, embedded),
@@ -151,6 +151,30 @@ fn fixture(dir: &Path, embedded: &str) -> PathBuf {
     src
 }
 
+/// `<src>/pins.sha256`: the hash of every fixture asset as the release holds it now, under the tag
+/// that pins it, and `extra` lines. Call it after the assets are final: a pin made from tampered
+/// files is the "list and assets replaced together" case.
+fn write_pins(src: &Path, extra: &str) {
+    let hash = |dir: &str, asset: &str| sha256_file(&src.join(dir).join(asset)).unwrap();
+    let mut pins = format!("# fixture\n{extra}");
+    for (tag, dir, asset) in [
+        (format!("v{VERSION}"), "fork", MSB_ASSET),
+        (format!("v{VERSION}"), "fork", MSB_LINUX_ASSET),
+        (format!("v{VERSION}"), "fork", LIBKRUNFW_ASSET),
+        ("v0.7.7".to_owned(), "upstream", LIBKRUNFW_LINUX_ASSET),
+        (
+            "v5.6.1-puddle.1".to_owned(),
+            "firmware",
+            LIBKRUNFW_LINUX_ASSET,
+        ),
+    ] {
+        if src.join(dir).join(asset).is_file() {
+            let _ = writeln!(pins, "{tag} {asset} {}", hash(dir, asset)); // a String can't fail
+        }
+    }
+    std::fs::write(src.join("pins.sha256"), pins).unwrap();
+}
+
 fn run(src: &Path, out: &Path) -> xtask::Result<String> {
     run_with(src, out, &["--os", "windows"])
 }
@@ -164,24 +188,18 @@ fn run_linux(src: &Path, out: &Path) -> xtask::Result<String> {
             "linux",
             "--msb",
             src.join("msb-linux").to_str().unwrap(),
-            "--pins",
-            src.join("pins.sha256").to_str().unwrap(),
         ],
     )
 }
 
 /// Linux with no `--msb`: the msb is the fixture release's `msb-linux-x86_64`.
 fn run_linux_download(src: &Path, out: &Path) -> xtask::Result<String> {
-    let pins = src.join("pins.sha256");
-    run_with(
-        src,
-        out,
-        &["--os", "linux", "--pins", pins.to_str().unwrap()],
-    )
+    run_with(src, out, &["--os", "linux"])
 }
 
 fn run_with(src: &Path, out: &Path, extra: &[&str]) -> xtask::Result<String> {
     let tag = format!("v{VERSION}");
+    let pins = src.join("pins.sha256");
     let args = [
         "runtime",
         "--tag",
@@ -191,6 +209,8 @@ fn run_with(src: &Path, out: &Path, extra: &[&str]) -> xtask::Result<String> {
         "--out",
         out.to_str().unwrap(),
         "--offline",
+        "--pins",
+        pins.to_str().unwrap(),
     ];
     xtask::run(args.iter().chain(extra).map(Into::into))
 }
@@ -455,11 +475,7 @@ fn builds_the_linux_runtime_folder_with_both_firmware_names() {
 fn a_pin_bump_changes_the_versioned_firmware_name() {
     let dir = TempDir::new("bump");
     let src = fixture(&dir.0, VERSION);
-    std::fs::write(
-        src.join("pins.sha256"),
-        format!("v{VERSION} libkrunfw-linux-version 5.7.0\n"),
-    )
-    .unwrap();
+    write_pins(&src, &format!("v{VERSION} libkrunfw-linux-version 5.7.0\n"));
     let out = dir.0.join("runtime");
     run_linux(&src, &out).unwrap();
     assert_eq!(names(&out), linux_files("5.7.0"));
@@ -470,11 +486,7 @@ fn a_pin_bump_changes_the_versioned_firmware_name() {
 fn a_linux_folder_needs_a_pinned_firmware_version() {
     let dir = TempDir::new("nopin");
     let src = fixture(&dir.0, VERSION);
-    std::fs::write(
-        src.join("pins.sha256"),
-        "v9.9.9-puddle.1 libkrunfw-linux-version 5.6.1\n",
-    )
-    .unwrap();
+    write_pins(&src, "v9.9.9-puddle.1 libkrunfw-linux-version 5.6.1\n");
     let err = run_linux(&src, &dir.0.join("runtime"))
         .unwrap_err()
         .to_string();
@@ -597,13 +609,12 @@ fn with_fork_firmware(src: &Path) -> Vec<u8> {
         ),
     )
     .unwrap();
-    std::fs::write(
-        src.join("pins.sha256"),
-        format!(
+    write_pins(
+        src,
+        &format!(
             "v{VERSION} libkrunfw-linux-version {FW_VERSION}\nv{VERSION} libkrunfw-linux-tag v5.6.1-puddle.1\n"
         ),
-    )
-    .unwrap();
+    );
     let mut facts: ForkFacts = serde_json::from_str(&read(&src.join("facts.json"))).unwrap();
     facts.firmware = Firmware {
         libkrunfw_version: FW_VERSION.into(),
@@ -726,4 +737,118 @@ fn the_windows_dll_xtask_ships_is_the_one_the_ci_fetch_pins() {
         }),
         "ci/msb-runtime.sha256 pins no {LIBKRUNFW_ASSET} for {tag}"
     );
+}
+
+/// Replaces `asset` under `<src>/<dir>` with `bytes` and rewrites that release's checksum list to
+/// match, as an attacker who controls the release would; the pin list is not touched.
+fn swap_in_release(src: &Path, dir: &str, asset: &str, bytes: &[u8]) {
+    let dir = src.join(dir);
+    std::fs::write(dir.join(asset), bytes).unwrap();
+    let list = read(&dir.join(CHECKSUMS_ASSET));
+    let new = list
+        .lines()
+        .map(|line| match line.split_once("  ") {
+            Some((_, name)) if name == asset => {
+                format!("{}  {asset}", sha256_file(&dir.join(asset)).unwrap())
+            }
+            _ => line.to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(dir.join(CHECKSUMS_ASSET), new + "\n").unwrap();
+}
+
+/// Asserts the build stopped on the pin list, naming the file, both hashes and the pin file.
+fn assert_pin_mismatch(err: &str, asset: &str, pinned: &str, got: &str) {
+    assert!(
+        err.contains(&format!("checksum mismatch for {asset}"))
+            && err.contains("ci/msb-runtime.sha256")
+            && err.contains(pinned)
+            && err.contains(got),
+        "{err}"
+    );
+}
+
+fn pin_of(src: &Path, tag: &str, asset: &str) -> String {
+    let pins = read(&src.join("pins.sha256"));
+    xtask::pin::pinned(&pins, tag, asset).unwrap().to_owned()
+}
+
+#[test]
+fn an_msb_the_release_list_vouches_for_but_the_pin_list_does_not_is_refused() {
+    for (name, linux) in [("pinmsbwin", false), ("pinmsblinux", true)] {
+        let dir = TempDir::new(name);
+        let src = fixture(&dir.0, VERSION);
+        let (asset, os) = if linux {
+            (MSB_LINUX_ASSET, "linux")
+        } else {
+            (MSB_ASSET, "windows")
+        };
+        let pinned = pin_of(&src, &format!("v{VERSION}"), asset);
+        // Same embedded version, other bytes, and a release list that agrees with them.
+        let mut bytes = std::fs::read(src.join("fork").join(asset)).unwrap();
+        bytes.push(0);
+        swap_in_release(&src, "fork", asset, &bytes);
+        let got = sha256_file(&src.join("fork").join(asset)).unwrap();
+        let out = dir.0.join("runtime");
+        let err = run_with(&src, &out, &["--os", os]).unwrap_err().to_string();
+        assert_pin_mismatch(&err, asset, &pinned, &got);
+        assert!(!out.exists() && !dir.0.join("runtime.partial").exists());
+    }
+}
+
+#[test]
+fn a_firmware_the_release_list_vouches_for_but_the_pin_list_does_not_is_refused() {
+    let dir = TempDir::new("pinfw");
+    let src = fixture(&dir.0, VERSION);
+    let cases: [(&str, &str, &str, &str); 2] = [
+        ("windows", "fork", LIBKRUNFW_ASSET, "v0.7.7-puddle.3"),
+        ("linux", "upstream", LIBKRUNFW_LINUX_ASSET, "v0.7.7"),
+    ];
+    for (os, release, asset, tag) in cases {
+        let pinned = pin_of(&src, tag, asset);
+        swap_in_release(&src, release, asset, b"swapped firmware");
+        let got = sha256_file(&src.join(release).join(asset)).unwrap();
+        let out = dir.0.join(format!("runtime-{os}"));
+        let err = run_with(&src, &out, &["--os", os]).unwrap_err().to_string();
+        assert_pin_mismatch(&err, asset, &pinned, &got);
+        assert!(!out.exists());
+    }
+}
+
+#[test]
+fn a_libkrunfw_fork_firmware_the_pin_list_does_not_vouch_for_is_refused() {
+    let dir = TempDir::new("pinforkfw");
+    let src = fixture(&dir.0, VERSION);
+    with_fork_firmware(&src);
+    let pinned = pin_of(&src, "v5.6.1-puddle.1", LIBKRUNFW_LINUX_ASSET);
+    swap_in_release(
+        &src,
+        "firmware",
+        LIBKRUNFW_LINUX_ASSET,
+        b"swapped fork firmware",
+    );
+    let got = sha256_file(&src.join("firmware").join(LIBKRUNFW_LINUX_ASSET)).unwrap();
+    let err = run_linux(&src, &dir.0.join("runtime"))
+        .unwrap_err()
+        .to_string();
+    assert_pin_mismatch(&err, LIBKRUNFW_LINUX_ASSET, &pinned, &got);
+}
+
+#[test]
+fn a_download_with_no_line_in_the_pin_list_is_refused_naming_it() {
+    for (os, asset) in [("windows", MSB_ASSET), ("linux", MSB_LINUX_ASSET)] {
+        let dir = TempDir::new("pinmissing");
+        let src = fixture(&dir.0, VERSION);
+        let pins = read(&src.join("pins.sha256"));
+        let kept: Vec<_> = pins.lines().filter(|l| !l.contains(asset)).collect();
+        std::fs::write(src.join("pins.sha256"), kept.join("\n") + "\n").unwrap();
+        let out = dir.0.join("runtime");
+        let err = run_with(&src, &out, &["--os", os]).unwrap_err().to_string();
+        assert!(
+            err.contains(&format!("{asset} has no entry in ci/msb-runtime.sha256")),
+            "{err}"
+        );
+        assert!(!out.exists());
+    }
 }

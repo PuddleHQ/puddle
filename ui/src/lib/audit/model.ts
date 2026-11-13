@@ -248,6 +248,8 @@ const REASONS: Record<string, string> = {
   "toggle:company_network": "company network destinations are switched off",
   settings_unreadable: "unreadable settings",
   puddle_request: "Puddle's own request",
+  pki_distribution_point:
+    "a certificate check address named in your company's root certificates",
   push_denied:
     'the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
   pull_denied:

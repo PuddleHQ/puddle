@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::UsageError;
 use crate::cmd::serve::config_file::ConfigError;
-use crate::cmd::serve::options::{Flags, resolve, spec_for_flag};
+use crate::cmd::serve::options::{Flags, resolve_keys, spec_for_flag};
 
-/// The option keys these commands share with serve.
+/// The option keys these commands share with serve. Only these are resolved, so a bad value of
+/// any other option does not stop them.
 const KEYS: [&str; 2] = ["data_dir", "config"];
 
 /// Takes `arg` as `--data-dir <path>` or `--config <path>` into `flags` (the value comes from
@@ -58,7 +59,7 @@ pub fn configured(
     env: &dyn Fn(&str) -> Option<OsString>,
     cwd: &Path,
 ) -> Result<Option<PathBuf>, ConfigError> {
-    Ok(resolve(flags, env, cwd)?
+    Ok(resolve_keys(flags, env, cwd, &KEYS)?
         .path("data_dir")
         .map(Path::to_path_buf))
 }

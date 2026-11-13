@@ -4,7 +4,6 @@
 //! its server in the guest).
 
 use std::ffi::OsString;
-use std::fmt::Write as _;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -132,18 +131,7 @@ pub(crate) fn arguments(target: &DesktopTarget) -> [String; 2] {
     } else {
         "--folder-uri"
     };
-    let mut path = String::new();
-    for byte in target.path.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~') {
-            path.push(char::from(byte));
-        } else {
-            let _ = write!(path, "%{byte:02X}");
-        }
-    }
-    [
-        flag.to_owned(),
-        format!("vscode-remote://ssh-remote+{}{path}", target.ssh_host),
-    ]
+    [flag.to_owned(), target.remote_uri()]
 }
 
 #[cfg(test)]

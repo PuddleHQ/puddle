@@ -138,8 +138,26 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   exact allow counts, and a suffix allow reaches the destination only when "wildcards reach local
   addresses" is on. The toggle allows nothing by itself. On a proxied route the check is made on the
   address the host resolves for the name, with a short timeout. An answer that is public, missing or
-  late does not deny, because the company proxy may be the only resolver.
-  *Added 2026-11-05.*
+  late does not deny, because the company proxy may be the only resolver. The reading of the
+  physical LAN has a third answer, "unread": while the host cannot read its interfaces it cannot
+  rule out that an address is on the LAN, so the address stays local/private (a plain "no" there
+  would move a home-LAN address into the category). Image pulls use the same verdict, with the
+  workspace's name block, and have no rules, so an address whose toggle is on is reachable.
+  **Status:** the shipped host reads none of these signals yet, so the category is empty today and
+  the toggle changes nothing; the Settings text says so. The trait, the audit fields and the toggle
+  are in place for the host reads that follow.
+  Two exceptions belong to the category and have no switch of their own; each use is a
+  `connection` record. (1) A plain-HTTP `GET` or `HEAD` of a certificate distribution point or
+  authority-information-access URL (CRL, issuer certificate, OCSP responder) named in a root the
+  host synced is allowed with no rule and with the toggle off, when the host in the URL resolves
+  only to company-network or private addresses (reason `pki_distribution_point`). The URLs are read
+  from the synced roots at start; the exception covers that exact host, port and path (a request
+  path below the URL counts as a directory, for an OCSP `GET`), never another method, host, port or
+  path, and never loopback, link-local, metadata or a public address. (2) SSH to
+  `ssh.dev.azure.com` port 22 stays refused (`ssh_unsupported`); when the host's own probe of
+  that port fails, the refusal says the company network blocks it and that HTTPS remotes work with
+  Puddle's credentials, instead of only pointing at HTTPS.
+  *Added 2026-11-05; status and the unread LAN answer 2026-11-13.*
 - **R-27 An exact IP deny wins for a resolved address** (the proxy applies this to every address an
   allowed name resolves to, before R-14). The proxy looks up each address's own rules
   (`Policy::lookup`, R-5 to R-7 as for a request to that literal): if they deny it, the address is
@@ -201,7 +219,7 @@ readable as JSONL (one record per line).
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `category` (`company_network` for a destination in that category, `null` otherwise and in older records), `signal` (`pac_direct`, `dns_suffix`, `private_access_cgnat` or `vpn_route`: the signal that put it there, `null` when none is known), `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
   `toggle:<category>` (`toggle:company_network` for the company network), `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
-  `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `bad_git_path` (a Git path Puddle does not read, over HTTPS or SSH), `ssh_command_unsupported` (an SSH command that is not `git-upload-pack` or `git-receive-pack`), `ssh_channel_refused` (an SSH channel request Puddle does not allow), `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
+  `pki_distribution_point`, `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `bad_git_path` (a Git path Puddle does not read, over HTTPS or SSH), `ssh_command_unsupported` (an SSH command that is not `git-upload-pack` or `git-receive-pack`), `ssh_channel_refused` (an SSH channel request Puddle does not allow), `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
   went out unchanged: to a host outside their hosts, or in the path or query; also `stale-stand-in:secret:<name>` and
   `stale-stand-in:github` for a value shaped like a stand-in that the workspace does not hold),
   `scrubbed_stand_ins` (the ids of the stand-ins whose real values an answer from one of their

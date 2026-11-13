@@ -167,10 +167,25 @@ With remote serving on, Puddle also accepts:
 The app's files carry `Cross-Origin-Opener-Policy: same-origin` too, so a page a workspace opened
 cannot navigate the tab that holds Puddle.
 
-Guests never reach any of this. Remote serving registers the front's port (the port of each public
-host) on every address of this machine, and blocks each public name, the workspace base domain and
-the names below it, whatever the network toggles and rules say. A reverse proxy on another machine is
-reached by name, so the name block is what stops a workspace from dialing it.
+Guests never reach any of this. Remote serving blocks the front for guests, whatever the network
+toggles and rules say, in three ways:
+
+- by port: the front's port (the port of each public host) on every address of this machine;
+- by name: each public name, the workspace base domain and the names below it, in any case and
+  with a trailing dot;
+- by address, for a front on another machine, which a guest can name in ways you never wrote
+  down: the proxies you admit (`allowed_proxies`), a public host written as an address, and the
+  addresses each public name and the base domain resolve to, on the front's ports. An address
+  written as an IPv4-mapped IPv6 address is the same address. Puddle resolves the names when it
+  starts and again every minute, so a record that moves is followed, and a name that stops
+  resolving keeps the addresses it last had.
+
+A resolved address that is public is not blocked, because a front behind a content network or a
+shared host has an address that countless other sites use, and blocking it would break them for
+the workspace. A guest can therefore still reach a public front by its address, with the same
+sign-in any visitor on the internet needs. A front that has a private, tailnet or other local
+address is blocked completely on its ports. Only the front's ports are blocked: the same machine's
+other services follow the usual rules.
 
 ### Signing in
 

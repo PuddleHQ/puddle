@@ -280,3 +280,28 @@ async fn the_startup_check_raises_for_a_locked_store_and_stays_quiet_for_a_healt
     assert_eq!(quiet.list(), Vec::new());
     assert_eq!(healthy.ids(), Vec::<String>::new());
 }
+
+#[tokio::test]
+async fn shutdown_does_not_wait_for_ever_for_a_sweep_the_keyring_holds_up() {
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let sweep = tokio::task::spawn_blocking(move || {
+        let _ = held.recv();
+    });
+    let end = finish_sweep(sweep, std::time::Duration::from_millis(50)).await;
+    assert_eq!(end, SweepEnd::StillRunning);
+    drop(release);
+}
+
+#[tokio::test]
+async fn shutdown_reports_a_sweep_that_panicked_and_one_that_finished() {
+    let panicked = tokio::task::spawn_blocking(|| panic!("keyring exploded"));
+    assert_eq!(
+        finish_sweep(panicked, std::time::Duration::from_secs(20)).await,
+        SweepEnd::Panicked
+    );
+    let finished = tokio::task::spawn_blocking(|| {});
+    assert_eq!(
+        finish_sweep(finished, std::time::Duration::from_secs(20)).await,
+        SweepEnd::Finished
+    );
+}

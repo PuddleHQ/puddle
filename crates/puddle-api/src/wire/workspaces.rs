@@ -317,10 +317,12 @@ impl NewWorkspaceRequest {
             .collect()
     }
 
-    /// The checked request; `identity_exists` says whether an identity id names one, and
+    /// The checked request for a workspace of `owner`; `identity_exists` says whether an identity
+    /// id names one, and
     /// `locals` holds what the service found at each [`NewWorkspaceRequest::local_paths`].
     pub(crate) fn into_new(
         self,
+        owner: puddle_store::UserId,
         identity_exists: impl Fn(puddle_store::IdentityId) -> bool,
         locals: &std::collections::BTreeMap<String, Result<domain::LocalSource, String>>,
     ) -> Result<domain::NewWorkspace, ApiError> {
@@ -362,6 +364,7 @@ impl NewWorkspaceRequest {
             .map_err(|e| ApiError::invalid(e.to_string()))?;
         let name = domain::DisplayName::parse(&self.name).map_err(ApiError::invalid)?;
         Ok(domain::NewWorkspace {
+            owner,
             name,
             repositories,
             start_folder,
@@ -557,6 +560,12 @@ pub struct AttachResponse {
     /// installed).
     #[schema(required = true)]
     pub message: Option<String>,
+    /// A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,
+    /// for a client on another machine than the host (a browser on a device that reached
+    /// `puddle serve`). Present for a desktop attach, whether or not the host opened a window
+    /// itself; `null` for a browser attach.
+    #[schema(required = true)]
+    pub open_uri: Option<String>,
 }
 
 impl From<domain::Attached> for AttachResponse {
@@ -564,6 +573,7 @@ impl From<domain::Attached> for AttachResponse {
         Self {
             opened: a.opened,
             message: a.message,
+            open_uri: a.open_uri,
         }
     }
 }

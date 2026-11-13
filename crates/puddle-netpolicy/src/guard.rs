@@ -138,10 +138,19 @@ impl NetPolicy {
         name: Option<&Host>,
         addr: SocketAddr,
     ) -> AddressVerdict {
-        verdict(
-            self.classify_named(name, addr),
-            self.access.local_access(workspace),
-        )
+        self.check_address_with(self.access.local_access(workspace), name, addr)
+    }
+
+    /// The verdict on one address reached by `name` under `access`, for a caller with no
+    /// workspace (Puddle's own requests) that brings its settings itself.
+    #[must_use]
+    pub fn check_address_with(
+        &self,
+        access: LocalAccess,
+        name: Option<&Host>,
+        addr: SocketAddr,
+    ) -> AddressVerdict {
+        verdict(self.classify_named(name, addr), access)
     }
 
     /// The company-network signal that puts `addr` (reached by `name`) in that category, for the
@@ -151,6 +160,19 @@ impl NetPolicy {
         match self.classify_named(name, addr) {
             AddressClass::Company(signal) => Some(signal),
             _ => None,
+        }
+    }
+
+    /// Whether `addr`, reached by `name`, is an address a certificate distribution point may be
+    /// fetched from without a rule: in the company network, or a private (RFC 1918 and
+    /// alike) address. Loopback, link-local, metadata and special-use addresses, Puddle's own
+    /// listeners and public addresses never qualify.
+    #[must_use]
+    pub fn pki_address(&self, name: Option<&Host>, addr: SocketAddr) -> bool {
+        match self.classify_named(name, addr) {
+            AddressClass::Company(_) => true,
+            AddressClass::Local { category, .. } => category == LocalCategory::Private,
+            AddressClass::Public | AddressClass::PuddleEndpoint(_) => false,
         }
     }
 
@@ -164,7 +186,17 @@ impl NetPolicy {
         target: &Target,
         port: u16,
     ) -> Option<BlockReason> {
-        let access = self.access.local_access(workspace);
+        self.check_target_with(self.access.local_access(workspace), target, port)
+    }
+
+    /// [`Self::check_target`] under `access`, for a caller with no workspace.
+    #[must_use]
+    pub fn check_target_with(
+        &self,
+        access: LocalAccess,
+        target: &Target,
+        port: u16,
+    ) -> Option<BlockReason> {
         if let Host::Ip(ip) = target.host() {
             return match verdict(self.classify(SocketAddr::new(*ip, port)), access) {
                 AddressVerdict::Block(reason) => Some(reason),
@@ -310,6 +342,26 @@ pub fn company_network_message(
     });
     format!(
         "{host}{address} is on your company network{found}. Turn on 'Company network' for this workspace to be able to allow it"
+    )
+}
+
+/// The Git host name that Azure DevOps serves SSH on, at port 22 only.
+pub const AZURE_DEVOPS_SSH_HOST: &str = "ssh.dev.azure.com";
+
+/// The refusal text for SSH to `ssh.dev.azure.com:22` when the host's own probe of that port
+/// failed: the company network blocks it, and an HTTPS remote needs no key.
+///
+/// ```
+/// use puddle_netpolicy::azure_devops_ssh_message;
+/// assert_eq!(
+///     azure_devops_ssh_message(),
+///     "your company network blocks SSH to ssh.dev.azure.com:22; HTTPS remotes work and need no key: Puddle adds your credentials"
+/// );
+/// ```
+#[must_use]
+pub fn azure_devops_ssh_message() -> String {
+    format!(
+        "your company network blocks SSH to {AZURE_DEVOPS_SSH_HOST}:22; HTTPS remotes work and need no key: Puddle adds your credentials"
     )
 }
 

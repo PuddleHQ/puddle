@@ -740,7 +740,7 @@ impl WorkspaceService for FakeWorkspaces {
                         new.name
                     )));
                 }
-                git.claim(&id)?;
+                git.claim(&id, new.owner)?;
                 state.entries.insert(
                     id,
                     Entry {
@@ -1212,22 +1212,20 @@ impl WorkspaceService for FakeWorkspaces {
                         },
                     )
                 }
-                AttachMode::Desktop => match self
-                    .inner
-                    .launcher
-                    .open_desktop(
-                        &record,
-                        &DesktopTarget {
-                            ssh_host: format!("puddle-{}", record.id),
-                            path: format!("/workspaces/{}", record.id),
-                            is_workspace_file: false,
-                        },
+                AttachMode::Desktop => {
+                    let target = DesktopTarget {
+                        ssh_host: format!("puddle-{}", record.id),
+                        path: format!("/workspaces/{}", record.id),
+                        is_workspace_file: false,
+                    };
+                    Ok(
+                        match self.inner.launcher.open_desktop(&record, &target).await {
+                            Ok(()) => Attached::opened(),
+                            Err(err) => Attached::not_opened(err.to_string()),
+                        }
+                        .with_open_uri(target.open_uri()),
                     )
-                    .await
-                {
-                    Ok(()) => Ok(Attached::opened()),
-                    Err(err) => Ok(Attached::not_opened(err.to_string())),
-                },
+                }
             }
         })
     }

@@ -95,7 +95,7 @@ describe("the table", () => {
     await table();
     expect(
       screen.getByText(/Plain variables apply at the next start/),
-    ).toHaveTextContent("the sandbox is made again");
+    ).toHaveTextContent("its home folder and installed packages stay");
     expect(screen.getByText(/apply at once, with no restart/)).toBeTruthy();
     expect(document.body.textContent).toContain("never enters the workspace");
   });

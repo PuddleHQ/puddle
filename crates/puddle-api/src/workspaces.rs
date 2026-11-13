@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use puddle_store::{IdentityId, RepoRef};
+use puddle_store::{IdentityId, RepoRef, UserId};
 use puddle_types::{
     CheckoutDir, DiskKind, EntryId, ImageRef, MemoryMib, SandboxName, SessionUser, WorkspaceId,
     WorkspaceStatus,
@@ -841,6 +841,9 @@ fn id_for_name(name: &DisplayName) -> Result<WorkspaceId, puddle_types::Validati
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NewWorkspace {
+    /// Whose it is: recorded before the workspace is listed, saved or announced anywhere, and
+    /// never changed after.
+    pub owner: UserId,
     /// The workspace's name: display text. The id is drawn apart from it (see [`NewWorkspace::id`]).
     pub name: DisplayName,
     /// What to clone, in order, with the Git settings each starts with.
@@ -854,10 +857,11 @@ pub struct NewWorkspace {
 }
 
 impl NewWorkspace {
-    /// A request for a workspace with the defaults.
+    /// A request for a workspace of `owner` with the defaults.
     #[must_use]
-    pub fn new(name: DisplayName, repositories: Vec<NewRepository>) -> Self {
+    pub fn new(owner: UserId, name: DisplayName, repositories: Vec<NewRepository>) -> Self {
         Self {
+            owner,
             name,
             repositories,
             start_folder: None,
@@ -909,17 +913,15 @@ pub trait GitSetup: Send + Sync {
         repositories: &'a [NewRepository],
     ) -> BoxFuture<'a, ()>;
 
-    /// Records whose the new workspace `workspace` is. A create calls it once its id is drawn and
-    /// before the workspace is listed, saved or announced anywhere, so nothing about it is ever
-    /// seen as another user's. The default records nothing: the workspace is the owner's.
+    /// Records that the new workspace `workspace` is `owner`'s ([`NewWorkspace::owner`]). A
+    /// create calls it once its id is drawn and before the workspace is listed, saved or announced
+    /// anywhere, so nothing about it is ever seen as another user's. A workspace with no recorded
+    /// user is nobody's: no user reaches it.
     ///
     /// # Errors
     ///
     /// The record could not be written; the create stops and nothing of it exists.
-    fn claim(&self, workspace: &WorkspaceId) -> Result<(), WorkspaceError> {
-        let _ = workspace;
-        Ok(())
-    }
+    fn claim(&self, workspace: &WorkspaceId, owner: UserId) -> Result<(), WorkspaceError>;
 }
 
 /// A [`GitSetup`] that sets nothing up, for services and tests with no store.
@@ -929,6 +931,11 @@ pub struct NoGitSetup;
 impl GitSetup for NoGitSetup {
     fn set_up<'a>(&'a self, _: &'a WorkspaceId, _: &'a [NewRepository]) -> BoxFuture<'a, ()> {
         Box::pin(async {})
+    }
+
+    /// No store, so nothing to record: only for a service whose workspaces no user reaches.
+    fn claim(&self, _: &WorkspaceId, _: UserId) -> Result<(), WorkspaceError> {
+        Ok(())
     }
 }
 
@@ -1051,6 +1058,9 @@ pub struct Attached {
     pub opened: bool,
     /// Why nothing was opened, when that is not an error.
     pub message: Option<String>,
+    /// What a client on another machine can open to reach the editor itself: the `vscode://` link
+    /// of a desktop attach. `None` when there is nothing a client could open (a browser attach).
+    pub open_uri: Option<String>,
 }
 
 impl Attached {
@@ -1060,6 +1070,7 @@ impl Attached {
         Self {
             opened: true,
             message: None,
+            open_uri: None,
         }
     }
 
@@ -1069,7 +1080,15 @@ impl Attached {
         Self {
             opened: false,
             message: Some(message.into()),
+            open_uri: None,
         }
+    }
+
+    /// The same result, naming what a client can open itself.
+    #[must_use]
+    pub fn with_open_uri(mut self, uri: impl Into<String>) -> Self {
+        self.open_uri = Some(uri.into());
+        self
     }
 }
 
@@ -1554,6 +1573,34 @@ pub struct DesktopTarget {
     pub path: String,
     /// Whether `path` is a `.code-workspace` file rather than a folder.
     pub is_workspace_file: bool,
+}
+
+impl DesktopTarget {
+    /// The `vscode-remote` URI of the place (`--folder-uri` or `--file-uri` take it), on the
+    /// workspace's ssh host; the path is percent-encoded.
+    #[must_use]
+    pub fn remote_uri(&self) -> String {
+        use std::fmt::Write as _;
+        let mut path = String::new();
+        for byte in self.path.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~') {
+                path.push(char::from(byte));
+            } else {
+                let _ = write!(path, "%{byte:02X}");
+            }
+        }
+        format!("vscode-remote://ssh-remote+{}{path}", self.ssh_host)
+    }
+
+    /// The link that opens the place from another program, which VS Code registers as the handler
+    /// of `vscode://`: what a browser on the user's own computer follows when the host cannot open
+    /// an editor there itself.
+    #[must_use]
+    pub fn open_uri(&self) -> String {
+        let remote = self.remote_uri();
+        let rest = remote.strip_prefix("vscode-remote://").unwrap_or(&remote);
+        format!("vscode://vscode-remote/{rest}")
+    }
 }
 
 /// The desktop editor could not be opened.

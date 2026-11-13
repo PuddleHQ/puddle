@@ -53,9 +53,8 @@ pub(crate) async fn list_request_rules(
         let never = state.store.never_decrypt_names()?;
         Ok(state
             .store
-            .request_rules(workspace.as_ref())?
+            .request_rules(principal.user, workspace.as_ref())?
             .into_iter()
-            .filter(|rule| rule.user == principal.user)
             .map(|rule| RequestRule::new(rule, &never))
             .collect())
     })

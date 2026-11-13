@@ -79,6 +79,7 @@ fn seed(api: &Api, name: &str, status: WorkspaceStatus, unsaved: Unsaved) {
         )],
     );
     record.status = status;
+    api.own(record.id.as_str());
     api.workspaces.seed(record, unsaved);
 }
 
@@ -629,6 +630,7 @@ async fn reclaim_shrinks_what_the_disk_holds() {
     );
     record.status = WorkspaceStatus::Stopped;
     record.disk_used_mib = Some(1000);
+    api.own(record.id.as_str());
     api.workspaces.seed(record, Unsaved::default());
     let reply = post(&api, "/api/workspaces/web/reclaim").await;
     assert_eq!(reply.status, 202);
@@ -651,6 +653,7 @@ async fn the_root_disk_figures_and_warnings_follow_the_threshold_and_a_reset_emp
     record.status = WorkspaceStatus::Running;
     record.root_disk_size_mib = Some(4096);
     record.root_disk_used_mib = Some(4000);
+    api.own(record.id.as_str());
     api.workspaces.seed(record, Unsaved::default());
     let ws = api.get("/api/workspaces/web").await.json();
     assert_eq!(ws["root_disk_size_mib"], 4096);
@@ -703,6 +706,7 @@ async fn growing_the_root_disk_answers_202_and_a_size_that_is_not_bigger_is_422(
     );
     record.status = WorkspaceStatus::Running;
     record.root_disk_size_mib = Some(4096);
+    api.own(record.id.as_str());
     api.workspaces.seed(record, Unsaved::default());
     let reply = grow(&api, 30000).await;
     assert_eq!(reply.status, 202, "{}", reply.body);
@@ -978,7 +982,10 @@ async fn browser_attach_opens_the_window_through_the_launcher_and_answers_opened
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    assert_eq!(reply.json(), json!({"opened": true, "message": null}));
+    assert_eq!(
+        reply.json(),
+        json!({"opened": true, "message": null, "open_uri": null})
+    );
     assert_eq!(
         api.launcher.browsers_opened(),
         [WorkspaceId::new("web").unwrap()]
@@ -1005,7 +1012,16 @@ async fn desktop_attach_opens_the_editor_when_direct_ssh_is_on() {
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    assert_eq!(reply.json(), json!({"opened": true, "message": null}));
+    // The link follows the workspace's ssh host and start folder, so a client on another machine
+    // can open the editor itself.
+    assert_eq!(
+        reply.json(),
+        json!({
+            "opened": true,
+            "message": null,
+            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspaces/web"
+        })
+    );
     assert_eq!(api.launcher.opened(), [WorkspaceId::new("web").unwrap()]);
     api.running.shutdown().await;
 }
@@ -1105,6 +1121,7 @@ async fn a_workspace_is_trusted_by_its_own_switch_or_the_global_default() {
 #[tokio::test]
 async fn changing_settings_tells_the_workspaces_service() {
     let api = start().await;
+    api.own("web");
     assert_eq!(api.workspaces.settings_changes(), 0);
     allow_direct_ssh(&api, "web").await;
     assert_eq!(api.workspaces.settings_changes(), 1);
@@ -1136,7 +1153,11 @@ async fn a_desktop_that_cannot_open_says_why() {
     assert_eq!(reply.status, 200);
     assert_eq!(
         reply.json(),
-        json!({"opened": false, "message": "VS Code is not installed"})
+        json!({
+            "opened": false,
+            "message": "VS Code is not installed",
+            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspaces/web"
+        })
     );
     api.running.shutdown().await;
 }
@@ -1156,7 +1177,7 @@ async fn a_browser_window_that_cannot_open_says_why() {
     assert_eq!(reply.status, 200);
     assert_eq!(
         reply.json(),
-        json!({"opened": false, "message": "the editor gave no session"})
+        json!({"opened": false, "message": "the editor gave no session", "open_uri": null})
     );
     api.running.shutdown().await;
 }
@@ -1454,6 +1475,7 @@ async fn lookup_answers_one_none_or_two() {
         Vec::new(),
     );
     other.status = WorkspaceStatus::Stopped;
+    api.own(other.id.as_str());
     api.workspaces.seed(other, Unsaved::default());
     // The legacy workspace is renamed away from its id, then the other takes the id as its name.
     let first = rename(&api, "legacy", &json!({"name": "Legacy shop"})).await;
@@ -1481,6 +1503,7 @@ async fn lookup_answers_one_none_or_two() {
 #[tokio::test]
 async fn without_a_workspaces_service_every_route_says_unavailable() {
     let api = start_without_workspaces().await;
+    api.own("a");
     for (method, path, body) in [
         ("GET", "/api/workspaces", None),
         (

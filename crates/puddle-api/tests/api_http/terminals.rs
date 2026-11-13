@@ -178,6 +178,36 @@ async fn a_terminal_echoes_follows_a_resize_and_ends_with_the_shells_status() {
     assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
 }
 
+/// A page that keeps acknowledging output while the shell ends (it does not know yet) must still be
+/// told how the shell ended: closing a socket with unread data from the peer resets the connection,
+/// and the reset throws away the end message the page has not read yet.
+#[tokio::test]
+async fn the_end_reaches_a_page_that_was_still_sending_when_the_shell_exited() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = connect(&api, "shop", terminal, &ticket).await;
+    read_until(&mut socket, "$ ").await;
+    socket
+        .send(Message::Binary(b"exit 4\r".to_vec().into()))
+        .await
+        .unwrap();
+    for _ in 0..60 {
+        let ack = json!({"type": "ack", "bytes": 1}).to_string();
+        if socket.send(Message::Text(ack.into())).await.is_err() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    read_until(&mut socket, "exit 4").await;
+    let Message::Text(ended) = next(&mut socket).await else {
+        panic!("the end is a text message");
+    };
+    let ended: Value = serde_json::from_str(&ended).unwrap();
+    assert_eq!(ended["status"], 4);
+    assert_eq!(closes_with(&mut socket).await, CloseCode::Normal);
+}
+
 #[tokio::test]
 async fn a_ticket_works_once_and_only_for_its_own_terminal_and_a_foreign_origin_is_refused_first() {
     let api = start().await;

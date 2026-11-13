@@ -5,6 +5,8 @@
 //! ticket in `Sec-WebSocket-Protocol`, never in the URL. Bytes travel as binary messages, control
 //! as JSON text messages.
 
+use std::time::Duration;
+
 use axum::Json;
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
@@ -257,6 +259,24 @@ async fn finish(socket: &mut WebSocket, end: &TerminalEnd) {
             reason: "".into(),
         })))
         .await;
+    await_close(socket).await;
+}
+
+/// How long a closed socket waits for the page's own close.
+const CLOSE_WAIT: Duration = Duration::from_secs(2);
+
+/// Reads what the page still sends until its close arrives. Dropping a socket with unread data from
+/// the page resets the connection, and the reset throws away what the page has not read yet: the
+/// end message, which would then show as a broken connection instead of how the shell ended.
+async fn await_close(socket: &mut WebSocket) {
+    let _ = tokio::time::timeout(CLOSE_WAIT, async {
+        while let Some(Ok(message)) = socket.recv().await {
+            if matches!(message, Message::Close(_)) {
+                break;
+            }
+        }
+    })
+    .await;
 }
 
 async fn refuse(socket: &mut WebSocket) {
@@ -266,6 +286,7 @@ async fn refuse(socket: &mut WebSocket) {
             reason: "bad message".into(),
         })))
         .await;
+    await_close(socket).await;
 }
 
 /// What one message from the page asks for.
@@ -316,6 +337,7 @@ async fn pump(
                         reason: "signed out".into(),
                     })))
                     .await;
+                await_close(socket).await;
                 return;
             }
             () = async { let _ = shutdown.wait_for(|stop| *stop).await; } => {

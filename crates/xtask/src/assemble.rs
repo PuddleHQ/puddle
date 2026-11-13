@@ -13,8 +13,9 @@
 //! <out>/licenses/      Apache-2.0, LGPL-2.1, GPL-2.0, NOTICE, THIRD-PARTY-{msb,puddle}
 //! ```
 //!
-//! Every download is checked against its release's checksum list, and msb's embedded version
-//! against the tag. [`plan`] decides the files; it has no I/O.
+//! Every download is checked against its release's checksum list and against the committed pin
+//! list `ci/msb-runtime.sha256` (a release's own list can be replaced along with its assets), and
+//! msb's embedded version against the tag. [`plan`] decides the files; it has no I/O.
 
 use std::path::{Path, PathBuf};
 
@@ -25,6 +26,7 @@ use crate::checksums::{Checksums, sha256_file};
 use crate::error::{Result, XtaskError};
 use crate::inventory::Inventory;
 use crate::notice;
+use crate::pin;
 use crate::source::{
     CHECKSUMS_ASSET, FIRMWARE_FORK, Firmware, ForkFacts, LIBKRUNFW_ASSET, LIBKRUNFW_LINUX_ASSET,
     MSB_ASSET, MSB_LINUX_ASSET, Origin, ReleaseSource,
@@ -154,7 +156,8 @@ pub struct Manifest {
 }
 
 /// Builds the runtime folder of `target` at `out` for the msb version `expected` (exact embedded
-/// version), with `puddle` as the inventory of Puddle's own tree.
+/// version), with `puddle` as the inventory of Puddle's own tree and `pins` the text of the
+/// committed pin list ([`crate::pin::PIN_FILE`]) every download is checked against.
 ///
 /// # Errors
 ///
@@ -164,6 +167,7 @@ pub fn assemble(
     source: &dyn ReleaseSource,
     expected: &str,
     puddle: &Inventory,
+    pins: &str,
     target: &Target,
     out: &Path,
 ) -> Result<Manifest> {
@@ -180,7 +184,7 @@ pub fn assemble(
         std::fs::remove_dir_all(&staging)
             .map_err(|e| XtaskError::io(format!("removing {}", staging.display()), e))?;
     }
-    let result = build(source, expected, puddle, target, &staging);
+    let result = build(source, expected, puddle, pins, target, &staging);
     match result {
         Ok(manifest) => {
             if out.exists() {
@@ -221,6 +225,7 @@ fn fetch_verified(
     asset: &str,
     dir: &Path,
     list_name: &str,
+    pin: Pin<'_>,
 ) -> Result<(PathBuf, String)> {
     mkdir(dir)?;
     let sums_path = source.fetch(origin, CHECKSUMS_ASSET, dir)?;
@@ -229,7 +234,15 @@ fn fetch_verified(
     let sums = Checksums::parse(list_name, &sums_text)?;
     let file = source.fetch(origin, asset, dir)?;
     let sha = sums.verify(asset, &file)?;
+    pin::verify(pin.list, pin.tag, asset, &sha)?;
     Ok((file, sha))
+}
+
+/// The committed pin list and the release tag whose lines a download is checked against.
+#[derive(Clone, Copy)]
+struct Pin<'a> {
+    list: &'a str,
+    tag: &'a str,
 }
 
 /// Downloads and verifies the firmware library. Windows: the fork release's dll, the one
@@ -238,6 +251,7 @@ fn fetch_verified(
 fn fetch_firmware(
     source: &dyn ReleaseSource,
     facts: &ForkFacts,
+    pins: &str,
     os: HostOs,
     target: &Target,
     downloads: &Path,
@@ -256,6 +270,11 @@ fn fetch_firmware(
             facts.upstream_repo, facts.upstream_tag
         ),
     };
+    let pin_tag = match (fw_origin, &facts.firmware.fork_tag) {
+        (Origin::Fork, _) => &facts.tag,
+        (Origin::FirmwareFork, Some(fork_tag)) => fork_tag,
+        _ => &facts.upstream_tag,
+    };
     fetch_verified(
         source,
         fw_origin,
@@ -265,6 +284,10 @@ fn fetch_firmware(
         },
         &downloads.join("firmware"),
         &fw_list,
+        Pin {
+            list: pins,
+            tag: pin_tag,
+        },
     )
 }
 
@@ -294,6 +317,7 @@ fn build(
     source: &dyn ReleaseSource,
     expected: &str,
     puddle: &Inventory,
+    pins: &str,
     target: &Target,
     staging: &Path,
 ) -> Result<Manifest> {
@@ -302,6 +326,10 @@ fn build(
     let layout = plan(target)?;
     let facts = source.facts()?;
     let downloads = staging.join(".download");
+    let fork_pin = Pin {
+        list: pins,
+        tag: &facts.tag,
+    };
     let (msb, msb_sha256) = match target {
         Target::Windows => fetch_verified(
             source,
@@ -309,6 +337,7 @@ fn build(
             MSB_ASSET,
             &downloads.join("fork"),
             &format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
+            fork_pin,
         )?,
         Target::Linux { msb: Some(msb), .. } => (msb.clone(), sha256_file(msb)?),
         Target::Linux { msb: None, .. } => fetch_verified(
@@ -317,6 +346,7 @@ fn build(
             MSB_LINUX_ASSET,
             &downloads.join("fork"),
             &format!("{} {} {CHECKSUMS_ASSET}", facts.fork_repo, facts.tag),
+            fork_pin,
         )?,
     };
     let found = puddle_runtime::read_embedded_version(&msb)
@@ -327,7 +357,7 @@ fn build(
             found: found.unwrap_or_else(|| "none".into()),
         });
     }
-    let (fw, libkrunfw_sha256) = fetch_firmware(source, &facts, os, target, &downloads)?;
+    let (fw, libkrunfw_sha256) = fetch_firmware(source, &facts, pins, os, target, &downloads)?;
     let msb_inventory = source.msb_inventory(os)?;
     msb_inventory.check()?;
     puddle.check()?;

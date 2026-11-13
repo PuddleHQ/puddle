@@ -542,6 +542,24 @@ jobs:
         timeout-minutes: 2
         continue-on-error: true
         run: ci/vm-tests-report.sh log "$RUNNER_TEMP/vm-tests.log" "${{ matrix.partition }}"
+      # The upload's glob stats every match, and a sandbox directory that a cancelled merge group tore down
+      # mid-glob failed the whole step with ENOENT. So copy the msb logs that still exist, and warn when the
+      # run home is gone; a real upload failure still fails the upload step below.
+      - name: stage msb logs that still exist
+        if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
+        shell: bash
+        run: |
+          src="$RUNNER_TEMP/pvm"
+          dest="$RUNNER_TEMP/msb-logs"
+          mkdir -p "$dest"
+          if [ ! -d "$src" ]; then
+            echo "::warning::no msb run home at $src, so no sandbox logs to upload (expected when the run was cancelled)"
+            exit 0
+          fi
+          cd "$src" || exit 0
+          while IFS= read -r -d '' f; do
+            mkdir -p "$dest/$(dirname "$f")" 2>/dev/null && cp "$f" "$dest/$f" 2>/dev/null || true
+          done < <(find . -path '*/logs/*' -type f -print0 2>/dev/null || true)
       - name: upload test results and msb logs
         if: ${{ always() && steps.kvm.outputs.ok == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -555,7 +573,7 @@ jobs:
             ${{ runner.temp }}/vm-processes.txt
             ${{ runner.temp }}/runner-speed.txt
             ${{ runner.temp }}/disk-watch-*.log
-            ${{ runner.temp }}/pvm/**/logs/**
+            ${{ runner.temp }}/msb-logs/**
           retention-days: 14
           if-no-files-found: ignore
       - name: Cancel the rest of the merge group

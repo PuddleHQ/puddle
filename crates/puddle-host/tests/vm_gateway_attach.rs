@@ -75,6 +75,9 @@ mod gateway {
     /// A port in the guest for the probe's own listener, which it reaches through a forward.
     const GUEST_PORT: &str = "18765";
 
+    /// How long the probe may run before the test kills Gateway and shows what it got.
+    const PROBE_LIMIT: Duration = Duration::from_secs(360);
+
     fn env_dir(name: &str) -> PathBuf {
         let dir = PathBuf::from(
             std::env::var_os(name)
@@ -175,22 +178,39 @@ mod gateway {
         .unwrap();
         let options = dir.join("gateway.vmoptions");
         std::fs::copy(gateway_dir.join("bin/gateway64.vmoptions"), &options).unwrap();
-        let out = std::process::Command::new(gateway_dir.join("bin/gateway.sh"))
+        let log = dir.join("launcher.out");
+        let mut child = std::process::Command::new(gateway_dir.join("bin/gateway.sh"))
             .args(args)
             .env_remove("DISPLAY")
             .env_remove("WAYLAND_DISPLAY")
             .env("GATEWAY_PROPERTIES", &properties)
             .env("GATEWAY_VM_OPTIONS", &options)
             .env("PUDDLE_PROBE_SSH", ssh)
-            .output()
+            .stdout(std::fs::File::create(&log).unwrap())
+            .stderr(std::process::Stdio::from(
+                std::fs::File::create(dir.join("launcher.err")).unwrap(),
+            ))
+            .spawn()
             .expect("Gateway's launcher runs");
+        // Well under the runner's limit, so a hung step still leaves its report and logs here.
+        let deadline = std::time::Instant::now() + PROBE_LIMIT;
+        let ok = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status.success();
+            }
+            if std::time::Instant::now() > deadline {
+                // Gateway's launcher execs java, so the child is Gateway itself.
+                let _ = child.kill();
+                let _ = child.wait();
+                eprintln!("gateway probe: killed after {} s", PROBE_LIMIT.as_secs());
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        };
+        let text = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
         (
-            out.status.success(),
-            format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            ),
+            ok,
+            format!("{}{}", text("launcher.out"), text("launcher.err")),
         )
     }
 

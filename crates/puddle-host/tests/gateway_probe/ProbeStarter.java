@@ -67,6 +67,7 @@ public final class ProbeStarter implements ApplicationStarter {
 
     private void step(String name, Step body) {
         long start = System.nanoTime();
+        say("START " + name);
         try {
             String detail = body.run();
             say("OK " + name + " (" + ms(start) + " ms) " + oneLine(detail));

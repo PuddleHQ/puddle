@@ -933,6 +933,20 @@ async fn a_broken_first_request_is_refused_before_anything_connects() {
             ),
             400,
         ),
+        // A path the upstream request cannot carry is refused at the head, not after the
+        // connect.
+        (
+            format!("GET http://web.test:{port}/a<b HTTP/1.1\r\nHost: web.test\r\n\r\n"),
+            400,
+        ),
+        (
+            format!("GET http://web.test:{port}/a>b HTTP/1.1\r\nHost: web.test\r\n\r\n"),
+            400,
+        ),
+        (
+            format!("GET http://web.test:{port}/a`b HTTP/1.1\r\nHost: web.test\r\n\r\n"),
+            400,
+        ),
     ] {
         let mut guest = rig.guest().await;
         let mut reader = BufReader::new(guest.stream().await);
@@ -942,6 +956,7 @@ async fn a_broken_first_request_is_refused_before_anything_connects() {
         ended(&mut reader).await;
     }
     assert_eq!(seen.accepts(), 0, "nothing connected");
+    assert_eq!(rig.policy.decisions(), 0, "no rule was asked");
 }
 
 /// An empty line after an answer (some clients end a body with an extra CRLF, RFC 9112 §2.2) and

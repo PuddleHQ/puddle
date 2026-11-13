@@ -30,7 +30,10 @@
 # jobs that run nightly and on a pull request to main instead (the WHP VM jobs of vm-windows, the
 # Windows UI job and the native Windows clippy job, and the WebKit half of the Linux UI end-to-end
 # tests, which webkit.yml runs nightly), unless the group's diff touches a path that
-# can only break that job, which pulls it back into the queue (`escalates`, below). Unset, any
+# can only break that job, which pulls it back into the queue (`escalates`, below): a path of the
+# job's own, and for the Windows VM and clippy jobs also any changed Rust file whose text holds
+# Windows `cfg` content (`cfg_windows_files`; the merge queue run reads each changed `.rs` file at
+# the tested commit, and `classify` takes the list in SCOPE_CFG_WINDOWS). Unset, any
 # other value, any other event and any doubt run everything, as before. The required check names
 # do not change: the result job's summary says the job ran in the nightly or release tier.
 #
@@ -156,6 +159,8 @@ escalates() {
     crates/puddle-app/*) echo ui ;;
     esac
     case $lower in *windows*) echo vm; echo clippy ;; esac
+    # A Rust file with Windows `cfg` content (`cfg_windows_files` below fills the list on a merge queue run).
+    case $'\n'${SCOPE_CFG_WINDOWS:-}$'\n' in *$'\n'"$1"$'\n'*) echo vm; echo clippy ;; esac
     # What a second browser engine can see differently: markup and styles (a component, a stylesheet,
     # the document shell, static files) and the browser test setup. Plain TypeScript logic is not
     # listed: the engines share it, and the nightly WebKit run covers the rest.
@@ -163,6 +168,38 @@ escalates() {
     ui/*.svelte | ui/*.css | ui/src/app.html | ui/static/* | ui/package.json | ui/playwright.config.ts | \
         ui/vite.config.ts | ui/e2e/warm-up.ts | ui/e2e/fixture.ts | ui/e2e/fixture-build.ts | ui/e2e/support.ts) echo webkit ;;
     esac
+}
+
+# Windows `cfg` content: a line that names `windows` inside a `cfg`, `cfg_attr` or `cfg!` call, or a
+# `target_os` / `target_family` test for it (also on a line of its own inside a multi-line `cfg`).
+# `not(windows)` counts too: it changes what the Windows build leaves out.
+WINDOWS_CFG_RE='(cfg[_a-z]*!?\(|target_(os|family)).*windows'
+# At most this many changed `.rs` files are read; past it every one counts as Windows content.
+MAX_CFG_READS=60
+
+# stdin: changed paths. stdout: the changed Rust files whose text at <head> holds Windows `cfg`
+# content, whole file and not only the changed lines (code inside an existing `#[cfg(windows)]` block
+# shows no `cfg` line in the diff). Fails safe: a file that cannot be read (deleted, renamed away,
+# an API error) and every file past MAX_CFG_READS are listed. A path path_class would send to
+# `always`/`unknown` is read like the others; the list only adds escalations.
+cfg_windows_files() {
+    local head=$1 repo=${GITHUB_REPOSITORY:-} p body
+    local -a rs=()
+    while IFS= read -r p; do
+        case $p in *.rs) rs+=("$p") ;; esac
+    done
+    [ "${#rs[@]}" -gt 0 ] || return 0
+    if [ "${#rs[@]}" -gt "$MAX_CFG_READS" ] || [ -z "$head" ] || [ -z "$repo" ]; then
+        printf '%s\n' "${rs[@]}"
+        return 0
+    fi
+    for p in "${rs[@]}"; do
+        if ! body=$(gh api -H 'Accept: application/vnd.github.raw+json' "repos/$repo/contents/$p?ref=$head" 2>/dev/null); then
+            echo "$p"
+        elif grep -Eq "$WINDOWS_CFG_RE" <<<"$body"; then
+            echo "$p"
+        fi
+    done
 }
 
 # Light mode: the repository variable PUDDLE_QUEUE is exactly `on` and this is a pull request to
@@ -275,6 +312,12 @@ scope() {
         return
     fi
     echo "scope: $(printf '%s\n' "$files" | grep -c .) changed paths" >&2
+    # Only a merge queue run in the nightly tier uses the list, so only it pays for the reads.
+    if tier_mode; then
+        SCOPE_CFG_WINDOWS=$(printf '%s\n' "$files" | cfg_windows_files "${MERGE_GROUP_HEAD_SHA:-}") || SCOPE_CFG_WINDOWS=$files
+        export SCOPE_CFG_WINDOWS
+        [ -z "$SCOPE_CFG_WINDOWS" ] || echo "scope: Rust files with Windows cfg content pull the Windows VM and clippy jobs into the queue: $(tr '\n' ' ' <<<"$SCOPE_CFG_WINDOWS")" >&2
+    fi
     if ! out=$(printf '%s\n' "$files" | classify); then
         echo "scope: classify failed, everything runs" >&2
         full_outputs

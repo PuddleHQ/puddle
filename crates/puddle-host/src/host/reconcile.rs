@@ -70,7 +70,7 @@ pub(super) async fn reconcile_with<R: Runtime>(
     let inventory = inventory_of(runtime, stored).await?;
     let report = reconcile(runtime, &inventory, &config.shutdown)
         .await
-        .map_err(|e| HostError::Reconcile(e.to_string()))?;
+        .map_err(HostError::Reconcile)?;
     if !report.unknown_volumes.is_empty() {
         // Kept, never removed: the list may be the thing that is missing or out of date.
         tracing::warn!(

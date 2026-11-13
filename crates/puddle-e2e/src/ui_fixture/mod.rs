@@ -732,7 +732,8 @@ impl State {
                 let remote = remote
                     .as_deref()
                     .map(puddle_api::RepoUrl::parse)
-                    .transpose()?;
+                    .transpose()
+                    .map_err(|e| e.to_string())?;
                 self.workspaces.add_orphan_volume(&id, remote);
                 self.events.emit(Event::ProblemsChanged {});
             }
@@ -742,7 +743,7 @@ impl State {
                 self.events.emit(Event::NetworkChanged { epoch });
             }
             Step::CredentialReadable { source, readable } => {
-                let spec = source.clone().into_spec()?;
+                let spec = source.clone().into_spec().map_err(|e| e.to_string())?;
                 self.credentials
                     .set_unreadable(spec, (!readable).then_some(SourceError::NotSignedIn));
             }
@@ -754,7 +755,7 @@ impl State {
             } => {
                 let at = std::time::SystemTime::now() - Duration::from_millis(*ago_ms);
                 self.credentials.note_read_at(
-                    &source.clone().into_spec()?,
+                    &source.clone().into_spec().map_err(|e| e.to_string())?,
                     match by {
                         ReadBy::Injection => puddle_secrets::ReadUse::Injection,
                         ReadBy::RepositoryList => puddle_secrets::ReadUse::RepositoryList,
@@ -971,7 +972,10 @@ impl State {
             .iter()
             .map(|request| {
                 let label = request.label.clone();
-                let draft = request.clone().into_store_draft()?;
+                let draft = request
+                    .clone()
+                    .into_store_draft()
+                    .map_err(|e| e.to_string())?;
                 let made = self
                     .store
                     .create_identity(UserId::OWNER, draft)
@@ -1074,8 +1078,10 @@ impl State {
         self.credentials
             .set_found(found(&seed.found, &seed.missing)?);
         for source in &seed.signed_out {
-            self.credentials
-                .set_unreadable(source.clone().into_spec()?, Some(SourceError::NotSignedIn));
+            self.credentials.set_unreadable(
+                source.clone().into_spec().map_err(|e| e.to_string())?,
+                Some(SourceError::NotSignedIn),
+            );
         }
         self.credentials.set_sign_in(match &seed.sign_in {
             Some(start) => SignInStart {

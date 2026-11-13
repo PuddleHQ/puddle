@@ -22,11 +22,13 @@ use tokio::task::JoinSet;
 
 use super::{
     EndExtensionHostsError, HostWorkspaces, Inner, Live, MAINTENANCE_WAIT, Parts, Running,
-    SAVE_HINT, SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard, SwitchEditorBuildError,
-    Ticket, Warmth, WriteNames, disk_used, name_or_id, not_found, wait_until_downloaded,
+    SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard, SwitchEditorBuildError, Ticket,
+    Warmth, WriteNames, disk_used, name_or_id, not_found, wait_until_downloaded,
 };
 use crate::HostError;
 use crate::files::Stored;
+use crate::op_error::OpError;
+use crate::settings_read::SettingsReadError;
 
 impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The service over `parts`, with the workspaces the book held and the state each sandbox
@@ -246,19 +248,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// The create of `id` finished: saves its entry as complete. Until this succeeds the list
     /// says the create never finished, and the next start would remove its volume.
-    pub(super) fn mark_created(&self, id: &WorkspaceId) -> Result<(), String> {
+    pub(super) fn mark_created(&self, id: &WorkspaceId) -> Result<(), OpError> {
         let mut state = self.state();
-        let Some(slot) = state.slots.get_mut(id) else {
-            return Err(not_found(id).to_string());
-        };
-        slot.creating = false;
+        // A slot that is gone has nothing to mark; a create holds the workspace busy, so none
+        // can go while it runs.
+        if let Some(slot) = state.slots.get_mut(id) {
+            slot.creating = false;
+        }
         let saved = self.persist(&state);
         if saved.is_err()
             && let Some(slot) = state.slots.get_mut(id)
         {
             slot.creating = true;
         }
-        saved.map_err(|e| e.to_string())
+        saved.map_err(|source| OpError::NewNotSaved { source })
     }
 
     pub(super) fn status_event(&self, record: &WorkspaceRecord) {
@@ -511,7 +514,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// takes over the busy mark of `ticket`; nothing awaits between the two.
     pub(super) fn run<F>(&self, mut ticket: Ticket<R>, work: F)
     where
-        F: Future<Output = Result<(), String>> + Send + 'static,
+        F: Future<Output = Result<(), OpError>> + Send + 'static,
     {
         let this = self.clone();
         let (id, op) = (ticket.record.id.clone(), ticket.op);
@@ -653,7 +656,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     /// Ends an operation: the busy mark goes, the state follows the outcome, and the last event
     /// of the operation says how it went.
-    pub(super) fn conclude(&self, id: &WorkspaceId, op: Operation, result: Result<(), String>) {
+    pub(super) fn conclude(&self, id: &WorkspaceId, op: Operation, result: Result<(), OpError>) {
         let mut state = self.state();
         let Some(slot) = state.slots.get_mut(id) else {
             return;
@@ -742,10 +745,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 // The entry still says "being created", so the next start drops it and removes
                 // what is left of the volume: nothing the user worked on.
                 tracing::warn!(workspace = %id, error = %e, "the workspace list was not saved after a failed create");
-            } else if let Err(reason) = &mut result {
+            } else {
                 // The workspace is now missing from the saved list: the next start keeps its
                 // volume and reports it, but doesn't list the workspace.
-                *reason = format!("{reason}; {e}; {SAVE_HINT}");
+                result = result.map_err(|cause| OpError::NotSaved {
+                    cause: Box::new(cause),
+                    source: e,
+                });
             }
         }
         drop(state);
@@ -757,7 +763,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Ok(()) => self.progress(&name, WorkspaceStep::Done, None),
             Err(reason) => {
                 tracing::warn!(workspace = %id, %op, %reason, "workspace operation failed");
-                self.progress(&name, WorkspaceStep::Failed, Some(reason));
+                self.progress(&name, WorkspaceStep::Failed, Some(reason.to_string()));
             }
         }
     }
@@ -768,7 +774,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         name: &WorkspaceId,
         op: Operation,
-        result: &Result<(), String>,
+        result: &Result<(), OpError>,
         delete_note: Option<&'static str>,
     ) {
         let kind = match op {
@@ -783,7 +789,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 WorkspaceOpOutcome::Succeeded,
                 delete_note.map(str::to_owned),
             ),
-            Err(reason) => (WorkspaceOpOutcome::Failed, Some(reason.clone())),
+            Err(reason) => (WorkspaceOpOutcome::Failed, Some(reason.to_string())),
         };
         self.record_op(kind, name, outcome, detail);
     }
@@ -809,7 +815,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The default memory for a workspace made without one: the settings' value. An unreadable
     /// settings document is an error, so the workspace is not made with a size the user never
     /// chose.
-    pub(super) fn default_memory(&self) -> Result<MemoryMib, String> {
+    pub(super) fn default_memory(&self) -> Result<MemoryMib, SettingsReadError> {
         let global = crate::settings_read::global(self.inner.settings.as_ref())?;
         Ok(resolve(&global, None::<&WorkspaceSettings>).memory.value)
     }
@@ -821,7 +827,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let read = || {
             let global = crate::settings_read::global(settings)?;
             let own = crate::settings_read::workspace(settings, name)?;
-            Ok::<_, String>(resolve(&global, Some(&own)).cpus.value)
+            Ok::<_, SettingsReadError>(resolve(&global, Some(&own)).cpus.value)
         };
         read().unwrap_or_else(|reason| {
             tracing::warn!(workspace = %name, %reason, "the workspace boots with the default CPU count: the settings cannot be read");
@@ -829,13 +835,27 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         })
     }
 
+    /// The workspace's image and what the runtime says about it, pulled if it is not local yet.
+    pub(super) async fn pulled_image(
+        &self,
+        record: &WorkspaceRecord,
+        announce_pull: bool,
+    ) -> Result<(ImageRef, ImageConfig), OpError> {
+        let image = ImageRef::new(&record.image)?;
+        if announce_pull {
+            self.progress(
+                &record.id,
+                WorkspaceStep::PullingImage,
+                Some(record.image.clone()),
+            );
+        }
+        let config = self.image_config(&image).await?;
+        Ok((image, config))
+    }
+
     /// The image config of `image`, pulling it if needed.
-    pub(super) async fn image_config(&self, image: &ImageRef) -> Result<ImageConfig, String> {
-        self.inner
-            .runtime
-            .pull_image(image)
-            .await
-            .map_err(|e| e.to_string())
+    pub(super) async fn image_config(&self, image: &ImageRef) -> Result<ImageConfig, OpError> {
+        Ok(self.inner.runtime.pull_image(image).await?)
     }
 
     /// Starts pulling the image the delete check boots on a task the service owns, unless it is

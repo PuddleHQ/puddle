@@ -71,7 +71,7 @@ impl LoginKey {
             }
         }
         let mut seed = Zeroizing::new([0u8; 32]);
-        getrandom::fill(&mut *seed).map_err(|e| io::Error::other(e.to_string()))?;
+        getrandom::fill(&mut *seed).map_err(io::Error::other)?;
         let key = SigningKey::from_bytes(&seed);
         let public_bytes = key.verifying_key().to_bytes();
         let public_line = format!(

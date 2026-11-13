@@ -70,7 +70,12 @@ impl FakePlatform {
     fn call(&self, what: &'static str) -> Result<(), HostError> {
         self.log.lock().unwrap().push(what.to_owned());
         if self.refuse == Some(what) {
-            return Err(HostError::Roots(format!("{what} refused")));
+            return Err(HostError::Roots(
+                puddle_certs::StoreError::DisallowedUnreadable {
+                    store: SOURCES[0],
+                    reason: format!("{what} refused"),
+                },
+            ));
         }
         Ok(())
     }
@@ -590,6 +595,9 @@ struct RecordingLauncher {
     forget_fails_with: Mutex<Option<String>>,
     /// The ids the shell says it keeps browser data under.
     data_under: Mutex<Vec<String>>,
+    /// A path to make unwritable when a window is asked to close: the first thing a delete does
+    /// once its mark is saved.
+    unwritable_on_close: Mutex<Option<PathBuf>>,
 }
 
 impl Launcher for RecordingLauncher {
@@ -626,7 +634,12 @@ impl Launcher for RecordingLauncher {
         &'a self,
         workspace: &'a WorkspaceId,
     ) -> futures_util::future::BoxFuture<'a, ()> {
-        Box::pin(async move { self.closed.lock().unwrap().push(workspace.to_string()) })
+        Box::pin(async move {
+            self.closed.lock().unwrap().push(workspace.to_string());
+            if let Some(path) = self.unwritable_on_close.lock().unwrap().take() {
+                make_unwritable(&path);
+            }
+        })
     }
 
     fn forget_browser<'a>(
@@ -2639,6 +2652,24 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
         )
         .await;
     assert_eq!(refused.status, 409, "direct SSH is off: {}", refused.body);
+    assert_eq!(
+        refused.json()["message"],
+        "direct SSH is off for this workspace; allow it first"
+    );
+    // The host refuses it itself too, for a caller that did not pass the API's check.
+    let attached = host
+        .workspaces()
+        .attach(
+            &WorkspaceId::new("acme").unwrap(),
+            puddle_api::AttachMode::Desktop,
+        )
+        .await
+        .unwrap();
+    assert!(!attached.opened);
+    assert_eq!(
+        attached.message.as_deref(),
+        Some("direct SSH is off for this workspace; allow it first")
+    );
     assert!(rig.launcher.opened.lock().unwrap().is_empty());
     allow_direct_ssh(&api, "acme", true).await;
     let reply = api
@@ -5474,6 +5505,32 @@ async fn stopping_a_workspace_downloads_the_image_the_delete_check_boots() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_delete_that_fails_and_cannot_save_the_list_says_both() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    rig.runtime
+        .inject(Op::RemoveVolume, Fault::always(disk_error("remove volume")));
+    // The delete's mark is saved; its failure then finds the list unwritable.
+    *rig.launcher.unwritable_on_close.lock().unwrap() = Some(list_path(&rig));
+
+    let confirm = json!({"confirm": true}).to_string();
+    let accepted = api.delete("/api/workspaces/acme", Some(&confirm)).await;
+    assert_eq!(accepted.status, 202, "{}", accepted.body);
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "failed", "{end}");
+    let detail = end["detail"].as_str().unwrap();
+    assert!(detail.contains("no space left"), "the cause: {detail}");
+    assert!(detail.contains("workspace list"), "the save: {detail}");
+    assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "stopped");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_delete_is_refused_when_the_workspace_list_cannot_be_saved() {
     let rig = Rig::named_ids();
     let host = rig.start().await;
@@ -6625,7 +6682,11 @@ async fn a_drawn_id_that_anything_is_kept_under_is_drawn_again_and_what_is_kept_
 struct Always(&'static str);
 
 impl puddle_api::IdSource for Always {
-    fn draw(&self, _name: &puddle_api::DisplayName, _attempt: u32) -> Result<WorkspaceId, String> {
+    fn draw(
+        &self,
+        _name: &puddle_api::DisplayName,
+        _attempt: u32,
+    ) -> Result<WorkspaceId, puddle_api::IdDrawError> {
         Ok(WorkspaceId::new(self.0).unwrap())
     }
 }
@@ -11252,6 +11313,14 @@ async fn a_check_that_cannot_run_is_not_a_verdict_on_the_script() {
         api.get("/api/workspaces/acme/shell-init").await.json()["saved"],
         false
     );
+
+    // A runtime that fails the check's exec is no verdict either, and says why.
+    *rig.guest.check_answer.lock().unwrap() = None;
+    rig.runtime
+        .inject(Op::Exec, Fault::once(disk_error("exec")).only_for("acme"));
+    let saved = put_shell_init(&api, "acme", "export A=1\n").await;
+    assert_eq!(saved.status, 503, "{}", saved.body);
+    assert!(saved.body.contains("no space left"), "{}", saved.body);
 
     // Starting: the same failure is a problem on the workspace and the start goes on.
     *rig.guest.check_answer.lock().unwrap() = None;

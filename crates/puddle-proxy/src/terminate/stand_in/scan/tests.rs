@@ -730,3 +730,66 @@ async fn the_scanned_body_ends_when_the_body_does() {
     while body.frame().await.is_some() {}
     assert!(body.is_end_stream());
 }
+
+#[test]
+fn a_compressed_frame_is_decoded_only_up_to_the_cap_and_the_decoder_is_then_dropped() {
+    let late = token(TokenKind::GithubPersonal, "late");
+    let early = token(TokenKind::Npm, "early");
+    let mut plain = vec![b' '; 40 * MAX_SCANNED];
+    plain.extend_from_slice(late.as_bytes());
+    let mut first = early.clone().into_bytes();
+    first.extend_from_slice(&plain);
+    let rig = rig(true);
+    for (body, kinds) in [(plain, Vec::<&str>::new()), (first, vec!["npm_token"])] {
+        let response = answer(None, Some("gzip"), &[], Vec::new());
+        let AnswerBody::Scanned(mut scan) =
+            scan_answer(&rig.stand_ins, response, false, &rig.report).into_body()
+        else {
+            panic!("a text body is scanned");
+        };
+        scan.read(Some(&gzip(&body)));
+        assert!(scan.done && scan.decoder.is_none(), "reading stopped");
+        // Later frames are not looked at, whatever they hold.
+        scan.read(Some(&gzip(late.as_bytes())));
+        scan.read(None);
+        assert_eq!(rig.report.kinds(), kinds);
+    }
+}
+
+#[test]
+fn a_plain_body_past_the_cap_is_neither_copied_nor_read() {
+    let late = token(TokenKind::GithubPersonal, "plain-late");
+    let rig = rig(true);
+    let response = answer(None, None, &[], Vec::new());
+    let AnswerBody::Scanned(mut scan) =
+        scan_answer(&rig.stand_ins, response, false, &rig.report).into_body()
+    else {
+        panic!("a text body is scanned");
+    };
+    scan.read(Some(&vec![b' '; MAX_SCANNED]));
+    assert!(scan.done, "the cap ends the reading");
+    scan.read(Some(late.as_bytes()));
+    assert_eq!(rig.report.kinds(), Vec::<String>::new());
+}
+
+#[test]
+fn a_gzip_body_read_in_pieces_is_read_to_its_end() {
+    let made = token(TokenKind::GithubPersonal, "pieces");
+    let plain = format!("{} {made} ", "filler ".repeat(2000));
+    let packed = gzip(plain.as_bytes());
+    let rig = rig(true);
+    let response = answer(None, Some("gzip"), &[], Vec::new());
+    let AnswerBody::Scanned(mut scan) =
+        scan_answer(&rig.stand_ins, response, false, &rig.report).into_body()
+    else {
+        panic!("a text body is scanned");
+    };
+    let (first, rest) = packed.split_at(packed.len() / 2);
+    scan.read(Some(first));
+    assert!(!scan.done && scan.decoder.is_some(), "the body goes on");
+    scan.read(Some(rest));
+    assert!(!scan.done, "no end yet");
+    scan.read(None);
+    assert!(scan.done && scan.decoder.is_none());
+    assert_eq!(rig.report.kinds(), ["github_token"]);
+}

@@ -10,6 +10,10 @@ use rustls::AlertDescription;
 /// not trust the workspace's CA (the usual cause: a tool with its own list of roots), or found
 /// something else wrong with the certificate. `None` for every other end: the client closed,
 /// stalled or reset, or the failure was Puddle's own.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "rustls's AlertDescription lists every TLS alert; only the certificate ones are named and the rest are not a certificate rejection"
+)]
 pub(crate) fn rejected_certificate(err: &io::Error) -> Option<&'static str> {
     let tls = err.get_ref()?.downcast_ref::<rustls::Error>()?;
     let rustls::Error::AlertReceived(alert) = tls else {

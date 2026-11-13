@@ -52,3 +52,18 @@ fn the_refusals_of_the_upstream_leg_say_what_happened() {
     );
     assert_eq!(not_offered().status, "502 Bad Gateway");
 }
+
+/// Only a server-side failure is remembered for pass-through; a bad name is the guest's own.
+#[test]
+fn only_server_side_tls_failures_are_passed_through() {
+    use puddle_upstream::TlsConnectError as E;
+    assert_eq!(
+        tls_pass_through(&E::Certificate("x".into())),
+        Some("server_certificate")
+    );
+    assert_eq!(
+        tls_pass_through(&E::Handshake("x".into())),
+        Some("server_tls")
+    );
+    assert_eq!(tls_pass_through(&E::InvalidName("x".into())), None);
+}

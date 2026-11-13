@@ -180,7 +180,9 @@ fn classify_v4(a: Ipv4Addr) -> AddressClass {
 fn embedded(v4: Ipv4Addr, rule: &'static str) -> AddressClass {
     match classify_v4(v4) {
         AddressClass::Local { category, .. } => local(category, rule),
-        _ => local(LocalCategory::Special, rule),
+        AddressClass::Public | AddressClass::Company(_) | AddressClass::PuddleEndpoint(_) => {
+            local(LocalCategory::Special, rule)
+        }
     }
 }
 
@@ -188,7 +190,9 @@ fn embedded(v4: Ipv4Addr, rule: &'static str) -> AddressClass {
 fn translated(v4: Ipv4Addr, rule: &'static str) -> AddressClass {
     match classify_v4(v4) {
         AddressClass::Local { category, .. } => local(category, rule),
-        other => other,
+        other @ (AddressClass::Public
+        | AddressClass::Company(_)
+        | AddressClass::PuddleEndpoint(_)) => other,
     }
 }
 

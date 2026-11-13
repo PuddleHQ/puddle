@@ -3,33 +3,52 @@
 
 use std::process::Command;
 
+use crate::digest::verify;
 use crate::version::VersionRefusal;
 use crate::{
-    DevOverride, RuntimeEnv, RuntimeError, RuntimeLayout, RuntimeVersion, VersionStatus,
-    check_version, read_embedded_version,
+    DevOverride, DigestStatus, RuntimeDigests, RuntimeEnv, RuntimeError, RuntimeLayout,
+    RuntimeVersion, VersionStatus, check_version, read_embedded_version,
 };
 
-/// A bundled runtime that exists and passed the version check. Only this type hands out the
+/// A bundled runtime that exists and passed the version and hash checks. Only this type hands out the
 /// environment, so code can't run msb without the check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BundledRuntime {
     layout: RuntimeLayout,
     status: VersionStatus,
+    digest_status: DigestStatus,
 }
 
 impl BundledRuntime {
-    /// Opens the runtime in `layout` and checks its embedded version against `expected`
-    /// (normally [`RuntimeVersion::built_for`]).
+    /// Opens the runtime in `layout`: checks its embedded version against `expected` (normally
+    /// [`RuntimeVersion::built_for`]) and its files against the hashes built into this Puddle
+    /// ([`RuntimeDigests::built_in`]).
     ///
     /// The binary is only read, never run; `PATH` is never searched.
     ///
     /// # Errors
     ///
-    /// [`RuntimeError::Missing`], [`RuntimeError::Unreadable`], [`RuntimeError::NoVersion`] or
-    /// [`RuntimeError::Mismatch`] (naming both versions), unless `dev` is active for the last two.
+    /// [`RuntimeError::Missing`], [`RuntimeError::Unreadable`], [`RuntimeError::NoVersion`],
+    /// [`RuntimeError::Mismatch`] (naming both versions) or [`RuntimeError::Digest`] (naming the
+    /// file and both hashes), unless `dev` is active for the last three.
     pub fn open(
         layout: RuntimeLayout,
         expected: &RuntimeVersion,
+        dev: DevOverride,
+    ) -> Result<Self, RuntimeError> {
+        Self::open_with(layout, expected, &RuntimeDigests::built_in(), dev)
+    }
+
+    /// [`Self::open`] with another list of expected hashes (tests, and callers whose runtime
+    /// isn't the one this build was made for).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub fn open_with(
+        layout: RuntimeLayout,
+        expected: &RuntimeVersion,
+        digests: &RuntimeDigests,
         dev: DevOverride,
     ) -> Result<Self, RuntimeError> {
         if let Some(path) = layout.required_files().into_iter().find(|f| !f.is_file()) {
@@ -54,7 +73,12 @@ impl BundledRuntime {
                 },
             }
         })?;
-        Ok(Self { layout, status })
+        let digest_status = verify(&layout, digests, dev)?;
+        Ok(Self {
+            layout,
+            status,
+            digest_status,
+        })
     }
 
     /// The layout the runtime was opened from.
@@ -67,6 +91,12 @@ impl BundledRuntime {
     #[must_use]
     pub fn status(&self) -> &VersionStatus {
         &self.status
+    }
+
+    /// How the hash check passed; [`DigestStatus::Overridden`] should be logged as a warning.
+    #[must_use]
+    pub fn digest_status(&self) -> &DigestStatus {
+        &self.digest_status
     }
 
     /// The environment plan against the current process environment.

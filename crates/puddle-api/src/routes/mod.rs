@@ -54,6 +54,7 @@ mod rule_sets;
 mod rules;
 pub(crate) mod settings;
 mod shell_init;
+mod ssh_agent;
 mod start_folder;
 mod terminals;
 mod workspaces;
@@ -311,6 +312,11 @@ fn environment_router() -> OpenApiRouter<AppState> {
         .routes(routes!(
             interception::get_learned_limits,
             interception::put_learned_limits
+        ))
+        .routes(routes!(ssh_agent::get_ssh_agent))
+        .routes(routes!(
+            ssh_agent::put_ssh_agent_host,
+            ssh_agent::delete_ssh_agent_host
         ))
         .routes(routes!(logins::list_logins))
         .routes(routes!(logins::forget_login))

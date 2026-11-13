@@ -120,6 +120,8 @@ pub enum Finding {
     RuntimeMissing,
     /// The runtime is another version than this build needs.
     RuntimeVersionMismatch,
+    /// A runtime file's bytes differ from the ones this Puddle ships with.
+    RuntimeDigestMismatch,
     /// The runtime's file can't be read or isn't msb.
     RuntimeUnreadable,
     /// File permissions deny reading or running the runtime.

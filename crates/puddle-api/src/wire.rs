@@ -118,6 +118,11 @@ pub struct Health {
     pub version: String,
     /// The API contract's version ([`crate::API_VERSION`]).
     pub api_version: String,
+    /// The build of the app this server serves, read from the build's own `_app/version.json`: a
+    /// page that carries another build is stale and reloads. `null` when the server serves no
+    /// app (a development server behind the Vite proxy).
+    #[schema(required = true)]
+    pub ui_build_id: Option<String>,
 }
 
 /// The background problems that stand.

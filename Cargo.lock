@@ -6442,6 +6442,7 @@ dependencies = [
  "puddle-secrets",
  "puddle-settings",
  "puddle-ssh",
+ "puddle-ssh-agent",
  "puddle-store",
  "puddle-test-kit",
  "puddle-types",

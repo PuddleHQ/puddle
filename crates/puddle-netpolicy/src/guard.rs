@@ -16,7 +16,6 @@ use crate::{
 
 /// What the proxy may do with one resolved address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum AddressVerdict {
     /// Connect if the rules allow the request.
     Allow,
@@ -159,7 +158,9 @@ impl NetPolicy {
     pub fn company_signal(&self, name: Option<&Host>, addr: SocketAddr) -> Option<CompanySignal> {
         match self.classify_named(name, addr) {
             AddressClass::Company(signal) => Some(signal),
-            _ => None,
+            AddressClass::Public | AddressClass::Local { .. } | AddressClass::PuddleEndpoint(_) => {
+                None
+            }
         }
     }
 
@@ -200,7 +201,7 @@ impl NetPolicy {
         if let Host::Ip(ip) = target.host() {
             return match verdict(self.classify(SocketAddr::new(*ip, port)), access) {
                 AddressVerdict::Block(reason) => Some(reason),
-                _ => None,
+                AddressVerdict::Allow | AddressVerdict::ExactOnly(_) => None,
             };
         }
         if let Host::Name(name) = target.host()
@@ -246,8 +247,8 @@ fn verdict(class: AddressClass, access: LocalAccess) -> AddressVerdict {
         }
         AddressClass::Company(_) if access.wildcards_reach_local() => AddressVerdict::Allow,
         AddressClass::Company(_) => AddressVerdict::ExactOnly(LocalCategory::CompanyNetwork),
-        // Puddle's own endpoints, and any class this version doesn't know: blocked.
-        _ => AddressVerdict::Block(BlockReason::PuddleEndpoint),
+        // Puddle's own endpoints are never reachable. Listed, so a new class is a compile error here.
+        AddressClass::PuddleEndpoint(_) => AddressVerdict::Block(BlockReason::PuddleEndpoint),
     }
 }
 
@@ -268,7 +269,12 @@ pub fn block_message(host: &Host, workspace: &WorkspaceId, reasons: &[BlockReaso
         .iter()
         .filter_map(|r| match r {
             BlockReason::LocalToggle(c) => Some(*c),
-            _ => None,
+            BlockReason::SshUnsupported
+            | BlockReason::UdpUnsupported
+            | BlockReason::PuddleEndpoint
+            | BlockReason::LocalAddress
+            | BlockReason::SettingsUnreadable
+            | BlockReason::CompanyNetwork(_) => None,
         })
         .collect();
     toggles.sort_unstable();
@@ -281,7 +287,12 @@ pub fn block_message(host: &Host, workspace: &WorkspaceId, reasons: &[BlockReaso
     if toggles.is_empty() {
         if let Some(signal) = reasons.iter().find_map(|r| match r {
             BlockReason::CompanyNetwork(signal) => Some(*signal),
-            _ => None,
+            BlockReason::SshUnsupported
+            | BlockReason::UdpUnsupported
+            | BlockReason::PuddleEndpoint
+            | BlockReason::LocalAddress
+            | BlockReason::LocalToggle(_)
+            | BlockReason::SettingsUnreadable => None,
         }) {
             return company_network_message(host, None, Some(signal));
         }

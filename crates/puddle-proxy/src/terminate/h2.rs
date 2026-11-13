@@ -161,7 +161,7 @@ impl Shared {
         match &*self.leg.lock().unwrap_or_else(PoisonError::into_inner) {
             LegState::H2(conn) if !conn.sender.is_closed() => Some(Usable::H2(conn.sender.clone())),
             LegState::H1(pool) => Some(Usable::Pool(pool.clone())),
-            _ => None,
+            LegState::None | LegState::H2(_) => None,
         }
     }
 

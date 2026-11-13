@@ -128,7 +128,7 @@ pub(crate) async fn write<W: AsyncWrite + Unpin>(
                 ));
             }
             Framing::Chunked => writer.write_all(b"0\r\n\r\n").await?,
-            _ => {}
+            Framing::None | Framing::Length(_) | Framing::UntilClose => {}
         }
     }
     writer.flush().await?;

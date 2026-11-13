@@ -224,7 +224,8 @@ impl From<StoreError> for ApiError {
             | StoreError::IdentityInvalid(_)
             | StoreError::EnvInvalid(_)
             | StoreError::ShellInitInvalid(_)
-            | StoreError::RequestRuleInvalid(_) => Self::invalid(err.to_string()),
+            | StoreError::RequestRuleInvalid(_)
+            | StoreError::TooManySshAgentHosts(_) => Self::invalid(err.to_string()),
             _ => Self::internal(&err),
         }
     }

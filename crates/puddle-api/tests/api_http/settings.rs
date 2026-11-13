@@ -43,6 +43,7 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
                "minimize_to_tray": null, "app_icon": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_disk_full": null, "disk_warning_percent": null, "notify_unexpected_stop": null,
                "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null, "notify_low_disk_space": null, "disk_warn_free_gb": null, "disk_fail_free_gb": null})
     );
+    assert_eq!(view["tools"], json!({"mise": null}));
     assert_eq!(view["unknown_fields"], json!([]));
     let e = &view["effective"];
     assert_eq!(e["memory"], json!({"value": 8192, "source": "default"}));
@@ -71,6 +72,132 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
     );
     // Reading wrote nothing.
     assert_eq!(api.settings.load_global().unwrap(), None);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_global_mise_switch_is_stored_globally_and_never_per_workspace() {
+    let api = start().await;
+    api.own("w");
+    let w = WorkspaceId::new("w").unwrap();
+
+    // A workspace starts with unset switches; reading wrote nothing.
+    let view = api.get("/api/settings/workspaces/w").await.json();
+    assert_eq!(view["tools"], json!({"mise": null, "repo_code": null}));
+    assert_eq!(api.settings.load_workspace(&w).unwrap(), None);
+
+    // The workspace switches are stored sparse in the workspace document.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings/workspaces/w",
+            Some(&json!({"tools": {"mise": false, "repo_code": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json()["tools"],
+        json!({"mise": false, "repo_code": false})
+    );
+    assert_eq!(
+        api.settings.load_workspace(&w).unwrap().unwrap(),
+        json!({"schema_version": 1, "tools": {"mise": false, "repo_code": false}})
+    );
+    // PUT replaces: a body without `tools` clears them back to the default.
+    let reply = api
+        .send("PUT", "/api/settings/workspaces/w", Some(&json!({})))
+        .await;
+    assert_eq!(
+        reply.json()["tools"],
+        json!({"mise": null, "repo_code": null})
+    );
+
+    // The global switch is stored in the global document only.
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": false}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["tools"], json!({"mise": false}));
+    assert_eq!(
+        api.get("/api/settings").await.json()["tools"]["mise"],
+        false
+    );
+    assert_eq!(
+        api.settings.load_global().unwrap().unwrap(),
+        json!({"schema_version": 2, "tools": {"mise": false}})
+    );
+    // Switching it off stored nothing in any workspace document.
+    assert_eq!(
+        api.settings.load_workspace(&w).unwrap().unwrap(),
+        json!({"schema_version": 1})
+    );
+
+    // A workspace cannot carry the global switch: the request refuses it, and the layer has no field.
+    for body in [
+        json!({"tools": {"mise": true, "global": true}}),
+        json!({"mise": true}),
+        json!({"overrides": {"mise": true}}),
+    ] {
+        let reply = api
+            .send("PUT", "/api/settings/workspaces/w", Some(&body))
+            .await;
+        assert_eq!(reply.status, 422, "{body}: {}", reply.body);
+    }
+    // A workspace value of its own does not change the global answer.
+    api.send(
+        "PUT",
+        "/api/settings/workspaces/w",
+        Some(&json!({"tools": {"mise": true, "repo_code": true}})),
+    )
+    .await;
+    assert_eq!(
+        api.get("/api/settings").await.json()["tools"]["mise"],
+        false
+    );
+
+    // The old name of a request without the field: absent means default, and a bad value is refused.
+    let reply = api.send("PUT", "/api/settings", Some(&json!({}))).await;
+    assert_eq!(reply.json()["tools"], json!({"mise": null}));
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"mise": "no"}})),
+        )
+        .await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"tools": {"repo_code": true}})),
+        )
+        .await;
+    assert_eq!(reply.status, 422, "{}", reply.body);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_settings_file_without_the_tool_fields_loads_as_on() {
+    let api = start().await;
+    api.own("w");
+    let w = WorkspaceId::new("w").unwrap();
+    api.settings
+        .save_global(json!({"schema_version": 2, "workspace_defaults": {"memory": 4096}}))
+        .unwrap();
+    api.settings
+        .save_workspace(&w, json!({"schema_version": 1, "overrides": {"cpus": 2}}))
+        .unwrap();
+    let global = api.get("/api/settings").await.json();
+    assert_eq!(global["tools"], json!({"mise": null}));
+    assert_eq!(global["unknown_fields"], json!([]));
+    let own = api.get("/api/settings/workspaces/w").await.json();
+    assert_eq!(own["tools"], json!({"mise": null, "repo_code": null}));
+    assert_eq!(own["unknown_fields"], json!([]));
     api.running.shutdown().await;
 }
 

@@ -35,7 +35,6 @@ pub struct TlsSetupError(String);
 
 /// Why a TLS connection to a server was not made.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
 pub enum TlsConnectError {
     /// The name is not a valid DNS name (an IP literal is refused too: Puddle verifies names).
     #[error("{0:?} is not a valid server name")]

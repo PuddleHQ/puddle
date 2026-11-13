@@ -7,7 +7,8 @@
 //! 1. builds a [`RuntimeLayout`]: the bundled runtime folder (next to `puddle.exe`) and Puddle's
 //!    private `MSB_HOME`, so images and volumes never mix with a user's own msb;
 //! 2. opens the runtime with [`BundledRuntime::open`], which refuses a missing `msb` binary or one
-//!    whose embedded version isn't exactly [`BUILT_FOR`] (both versions named in the error);
+//!    whose embedded version isn't exactly [`BUILT_FOR`] (both versions named in the error), then hashes
+//!    msb and the firmware and refuses bytes other than the ones built in (file and both hashes named);
 //! 3. gives the SDK the runtime and home as arguments (`puddle-compute-msb`), so the process
 //!    environment is never changed and a user's `MSB_*` variables are ignored. [`RuntimeEnv`] is the
 //!    same rule for a child [`std::process::Command`] Puddle starts itself: it removes **every**
@@ -24,6 +25,7 @@
 //! | [`BUILT_FOR`], [`RuntimeVersion`] | the pinned `<release>-puddle.N` and its parser |
 //! | [`read_embedded_version`] | the version msb embeds in its binary (`.msbver`), read without running it |
 //! | [`check_version`], [`VersionStatus`], [`DevOverride`] | the exact-match rule and the dev-only escape hatch |
+//! | [`RuntimeDigests`], [`DigestStatus`] | the hashes of msb and the firmware built in from `ci/msb-runtime.sha256`, and how the check passed |
 //! | [`RuntimeLayout`], [`RuntimeEnv`], [`BundledRuntime`] | paths, environment, the opened runtime |
 //! | [`HostOs`], [`RuntimeFiles`], [`GuestArch`] | the per-OS file-name table and the guest architecture (agent target): the only place `msb.exe`, `libkrunfw.dll` and friends are spelled |
 //! | [`RuntimeError`] | every way the runtime can be unusable |
@@ -34,6 +36,7 @@
 //!   release build with it on doesn't compile, and a test fails if any workspace crate enables it.
 #![forbid(unsafe_code)]
 
+mod digest;
 mod env;
 mod error;
 mod layout;
@@ -42,6 +45,7 @@ mod platform;
 mod runtime;
 mod version;
 
+pub use digest::{DigestStatus, RuntimeDigests, sha256_file};
 pub use env::{RuntimeEnv, is_msb_variable};
 pub use error::RuntimeError;
 pub use layout::{LIBKRUNFW_FILE_NAME, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeLayout};

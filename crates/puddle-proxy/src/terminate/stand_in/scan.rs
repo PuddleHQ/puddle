@@ -429,7 +429,7 @@ impl Body for ScanBody {
                 }
             }
             Poll::Ready(None) => this.read(None),
-            _ => {}
+            Poll::Ready(Some(Err(_))) | Poll::Pending => {}
         }
         polled
     }

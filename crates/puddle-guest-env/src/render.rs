@@ -132,6 +132,9 @@ pub fn guest_proxy_config(
     // Cargo fetches git dependencies with the git CLI, which follows the variables and, later,
     // ssh_config's ProxyCommand.
     env.set("CARGO_NET_GIT_FETCH_WITH_CLI", "true");
+    if let Some(socket) = &settings.ssh_agent {
+        env.set("SSH_AUTH_SOCK", socket.as_str());
+    }
     let env = env.finish()?;
 
     let gradle_home = image_dir(image("GRADLE_USER_HOME"))
@@ -377,7 +380,7 @@ fn ssh_config(settings: &ProxySettings) -> Result<String, ConfigError> {
         let [a, b, ..] = bridge.ip().octets();
         let _ = write!(command, " --local-net {a}.{b}.0.0/16");
     }
-    Ok(format!(
+    let mut config = format!(
         "# {GENERATED}\n\
          # SSH from a workspace is not supported yet: ssh runs the agent as its ProxyCommand, which\n\
          # refuses the connection and says why. Loopback and the container bridge stay direct (the\n\
@@ -385,7 +388,20 @@ fn ssh_config(settings: &ProxySettings) -> Result<String, ConfigError> {
          # wins.\n\
          Match host \"*,!localhost,!::1\"\n    \
          ProxyCommand {command} %h %p %n\n"
-    ))
+    );
+    if let Some(socket) = &settings.ssh_agent {
+        let socket = socket.as_str();
+        // ssh expands `%` tokens and `${VAR}` in IdentityAgent, and the value is one quoted word.
+        if socket.contains(['%', '$', '"']) || socket.chars().any(char::is_control) {
+            return Err(ConfigError::GuestPath {
+                reason: format!("the SSH agent socket {socket:?} can't be an IdentityAgent"),
+            });
+        }
+        // The socket asks the user's agent on the host, for the hosts the workspace has it on
+        // for. It holds no key in the guest.
+        let _ = writeln!(config, "    IdentityAgent \"{socket}\"");
+    }
+    Ok(config)
 }
 
 /// The Docker CLI passes these to every container and build it starts. Containers reach the

@@ -6443,6 +6443,7 @@ dependencies = [
  "puddle-secrets",
  "puddle-settings",
  "puddle-ssh",
+ "puddle-ssh-agent",
  "puddle-store",
  "puddle-test-kit",
  "puddle-types",
@@ -6677,6 +6678,7 @@ dependencies = [
  "puddle-fs",
  "puddle-test-kit",
  "serde_json",
+ "sha2 0.11.1",
  "tempfile",
  "thiserror 2.0.21",
 ]

@@ -46,7 +46,6 @@ pub const MAX_NAME: usize = 253;
 /// `AAAA` and every other type never leave the guest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
-#[non_exhaustive]
 pub enum RecordType {
     /// An address: the answer says whether the guest gets a stand-in.
     A,
@@ -153,7 +152,6 @@ pub enum Record {
 /// The host's answer to a [`ResolveQuery`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ResolveAnswer {
     /// Answer an `A` query with a stand-in address.
     StandIn {

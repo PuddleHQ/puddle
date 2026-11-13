@@ -17,7 +17,8 @@ use puddle_doctor::{
     Status, SystemProbe, diagnose,
 };
 use puddle_runtime::{
-    DevOverride, LIBKRUNFW_FILE_NAME, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeError, RuntimeVersion,
+    DevOverride, LIBKRUNFW_FILE_NAME, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeDigests,
+    RuntimeError, RuntimeVersion, sha256_file,
 };
 
 const EXPECTED: &str = "0.7.7-puddle.2";
@@ -52,6 +53,14 @@ fn runtime_dir(root: &Path, version: &str) -> std::path::PathBuf {
     std::fs::write(&msb, fake_msb(version)).unwrap();
     std::fs::write(dir.join(LIBKRUNFW_FILE_NAME), b"firmware").unwrap();
     dir
+}
+
+/// The hashes of the files `runtime_dir` wrote: an untouched install.
+fn digests_of(dir: &Path) -> RuntimeDigests {
+    RuntimeDigests::pinned(
+        sha256_file(&dir.join(MSB_FILE_NAME)).unwrap(),
+        sha256_file(&dir.join(LIBKRUNFW_FILE_NAME)).unwrap(),
+    )
 }
 
 fn no_boot() -> Options {
@@ -120,7 +129,8 @@ fn another_version_is_a_mismatch_naming_both() {
 fn the_right_version_is_ready_and_then_started() {
     let root = tempfile::tempdir().unwrap();
     let dir = runtime_dir(root.path(), EXPECTED);
-    let probe = SystemProbe::new(dir.clone(), expected(), DevOverride::none());
+    let probe = SystemProbe::new(dir.clone(), expected(), DevOverride::none())
+        .with_digests(digests_of(&dir));
     // Before the runtime check, nothing may run.
     assert!(matches!(
         probe.launch(Duration::from_secs(5)),
@@ -157,6 +167,57 @@ fn the_dev_override_counts_only_when_compiled_in() {
     } else {
         assert!(
             matches!(state, RuntimeState::Unusable(RuntimeError::Mismatch { .. })),
+            "{state:?}"
+        );
+    }
+}
+
+#[test]
+fn a_swapped_firmware_is_a_digest_finding_naming_the_file_and_both_hashes() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = runtime_dir(root.path(), EXPECTED);
+    let digests = digests_of(&dir);
+    let firmware = dir.join(LIBKRUNFW_FILE_NAME);
+    let expected_hash = sha256_file(&firmware).unwrap();
+    std::fs::write(&firmware, b"swapped").unwrap();
+    let found_hash = sha256_file(&firmware).unwrap();
+    let probe = SystemProbe::new(dir, expected(), DevOverride::none()).with_digests(digests);
+    let report = diagnose(&probe, &no_boot(), "0.1.0");
+    let runtime = report.check(CheckId::Runtime).unwrap();
+    assert_eq!(
+        runtime.finding,
+        Some(Finding::RuntimeDigestMismatch),
+        "{runtime:?}"
+    );
+    for part in [firmware.display().to_string(), expected_hash, found_hash] {
+        assert!(runtime.summary.contains(&part), "{}", runtime.summary);
+    }
+    assert_eq!(
+        report.check(CheckId::Launch).unwrap().status,
+        Status::Skipped
+    );
+    assert!(!report.ok);
+}
+
+#[test]
+fn the_dev_override_accepts_swapped_files_and_says_so() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = runtime_dir(root.path(), EXPECTED);
+    let digests = digests_of(&dir);
+    std::fs::write(dir.join(LIBKRUNFW_FILE_NAME), b"swapped").unwrap();
+    let probe = SystemProbe::new(dir, expected(), DevOverride::requested()).with_digests(digests);
+    let state = probe.runtime().state;
+    if puddle_runtime::DEV_OVERRIDE_COMPILED {
+        assert_eq!(
+            state,
+            RuntimeState::Ready {
+                version: EXPECTED.into(),
+                overridden: true
+            }
+        );
+    } else {
+        assert!(
+            matches!(state, RuntimeState::Unusable(RuntimeError::Digest { .. })),
             "{state:?}"
         );
     }

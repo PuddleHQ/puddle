@@ -140,7 +140,9 @@ impl HostApi {
                     TransportError::Unreachable(format!("{name:?} is not a valid server name"))
                 }
                 TlsConnectError::Certificate(why) => TransportError::Tls(why),
-                other => TransportError::Unreachable(format!("the TLS handshake failed: {other}")),
+                TlsConnectError::Handshake(why) => {
+                    TransportError::Unreachable(format!("the TLS handshake failed: {why}"))
+                }
             })?;
         let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await

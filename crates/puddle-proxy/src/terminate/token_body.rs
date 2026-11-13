@@ -205,7 +205,7 @@ impl TokenBody {
                         walk(name, path, inner, out);
                     }
                 }
-                _ => {}
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
             }
         }
         let mut out = Vec::new();

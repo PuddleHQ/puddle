@@ -1,0 +1,11 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed, under crates/puddle-fs/.
+# Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
+# path glob here starts with crates/puddle-fs/; the gate refuses another crate's entry, so two pull requests that
+# touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-fs/src/lock.rs | Err(TryLockError::Error(source)) => { | the OS refusing the lock call for a reason other than "held" (an unsupported file system) cannot be provoked in a test
+crates/puddle-fs/src/lock.rs | path: lock_path,\nsource, | as above
+crates/puddle-fs/src/lock.rs | path: lock_path,\nsource,\n}); | as above
+crates/puddle-fs/src/lock.rs | return Err(LockError::Io { | as above
+crates/puddle-fs/src/lock.rs | return Err(LockError::Io {\npath: lock_path, | as above
+crates/puddle-fs/src/private/unix.rs | Err(CheckError::Io(err)) => Err(err), | the permission read of a file just opened failing; not reproducible in a test
+crates/puddle-fs/src/private/unix.rs | return Err(io::Error::other(format!("the mode is still {now:o}"))); | a chmod by the folder's owner that succeeds but leaves group or other bits (a file system that ignores modes); not reproducible in a test

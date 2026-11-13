@@ -143,7 +143,7 @@ fn blocked_names(root: &Path, w: &Walk) -> Vec<(String, BlockedBy)> {
 fn a_file_where_a_folder_should_be_blocks_msb_and_is_named() {
     let (root, _data, uid) = tree(0o755, 0o755, 0o755);
     std::fs::write(root.path().join("a/file"), b"x").unwrap();
-    mode(&root.path().join("a/file"), 0o644); // the umask must not make it group-writable
+    mode(&root.path().join("a/file"), 0o666); // a file others can write is still no folder
     let w = walk(root.path(), &root.path().join("a/file/data"), uid);
     assert_eq!(
         blocked_names(root.path(), &w),

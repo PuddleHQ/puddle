@@ -303,3 +303,47 @@ fn skip_reasons_read_well_and_times_before_1970_work() {
     assert_eq!(unix_seconds(UNIX_EPOCH - Duration::from_secs(5)), -5);
     assert_eq!(unix_seconds(UNIX_EPOCH + Duration::from_secs(5)), 5);
 }
+
+fn root_with_crl(cn: &str, uri: &str) -> Ca {
+    let key = rcgen::KeyPair::generate().unwrap();
+    let mut p = params(cn, 2040);
+    p.crl_distribution_points = vec![rcgen::CrlDistributionPoint {
+        uris: vec![uri.to_owned()],
+    }];
+    let cert = p.self_signed(&key).unwrap();
+    Ca {
+        key,
+        cert,
+        params: p,
+    }
+}
+
+#[test]
+fn the_urls_a_synced_certificate_names_are_listed_and_a_skipped_ones_are_not() {
+    let corp = root_with_crl("Corp Root", "http://pki.corp.test/root.crl");
+    let banned = root_with_crl("Banned Root", "http://evil.test/x.crl");
+    let old = {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut p = params("Old Root", 2029);
+        p.crl_distribution_points = vec![rcgen::CrlDistributionPoint {
+            uris: vec!["http://old.test/x.crl".to_owned()],
+        }];
+        let cert = p.self_signed(&key).unwrap();
+        Ca {
+            key,
+            cert,
+            params: p,
+        }
+    };
+    let mut s = StoreSnapshot::new();
+    s.add(LM_ROOT_GP, der(&corp));
+    s.add(LM_ROOT, der(&banned));
+    s.add(CU_DISALLOWED, der(&banned));
+    s.add(LM_ROOT, der(&old));
+    let r = CorporateRoots::select(&s, now());
+    assert_eq!(r.distribution_urls(), ["http://pki.corp.test/root.crl"]);
+    assert_eq!(
+        CorporateRoots::default().distribution_urls(),
+        Vec::<String>::new()
+    );
+}

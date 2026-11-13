@@ -42,7 +42,7 @@ vm_unrelated_only() {
 # 1. Replay of the merged pull requests: class and outputs as recorded, and an independent check
 # that any pull request with an always-run path got a full run.
 always_re='^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|\.cargo/|\.config/|\.githooks/|\.github/workflows/|ci/|scripts/|crates/puddle-vm-tests/|crates/puddle-api/openapi/|ui/package-lock\.json|ui/src/lib/api/schema\.d\.ts|.*/Cargo\.toml$)'
-data_re='^scripts/(diff-coverage-exclusions\.txt|coverage-baseline\.json|standalone-allow\.txt)$'
+data_re='^scripts/(diff-coverage-exclusions\.txt|diff-coverage-exclusions/[^/]+\.txt|coverage-baseline\.json|standalone-allow\.txt)$'
 replayed=0
 declare -A seen_class=()
 pr="" exp="" paths=()
@@ -107,6 +107,7 @@ want "299 docs files" "docs false false false false" "${many[@]}"
 want "docs only" "docs false false false false" docs/STANDARDS.md README.md .github/dependabot.yml
 want "ui only" "ui false false true false" ui/src/lib/a.ts ui/e2e/b.spec.ts docs/x.md
 want "ui and gate data" "mixed true false true false" ui/src/a.ts scripts/diff-coverage-exclusions.txt
+want "ui and a crate's exclusions" "mixed true false true false" ui/src/a.ts scripts/diff-coverage-exclusions/puddle-api.txt
 want "gate data only" "rust true false true false" scripts/coverage-baseline.json
 want "ui fixtures" "mixed true true true false" ui/e2e/fixtures/workspaces.json
 want "vm crate" "rust true true true true" crates/puddle-compute-msb/src/lib.rs
@@ -186,6 +187,23 @@ tier_want "a store module leaves WebKit to the nightly" "true true true true" ui
 tier_want "a fixture leaves WebKit to the nightly" "true true true true" ui/e2e/fixtures/rules.json
 tier_want "a component beside a Rust change" "true true true false" crates/puddle-store/src/lib.rs ui/src/routes/inbox/+page.svelte
 tier_want "two escalations add up" "false false false true" crates/puddle-compute-msb/src/lib.rs crates/puddle-app/src/lib.rs crates/puddle-ipc/src/windows/mod.rs
+# Windows `cfg` content: classify takes the list of Rust files that hold it in SCOPE_CFG_WINDOWS (the
+# merge queue run fills it from the files at the tested commit; section 5b drives that part).
+cfgdefers() { # cfgdefers <list of cfg files, newline separated> <paths...>
+    local list=$1
+    shift
+    printf '%s\n' "$@" | env SCOPE_CFG_WINDOWS="$list" PUDDLE_TIER=on GITHUB_EVENT_NAME=merge_group "$scope" classify | sort |
+        awk -F= '{v[$1]=$2} END {print v["defer_vm_windows"], v["defer_win_ui"], v["defer_win_clippy"], v["defer_linux_webkit"]}'
+}
+[ "$(cfgdefers "crates/puddle-store/src/lib.rs" crates/puddle-store/src/lib.rs)" = "false true false true" ] ||
+    bad "tier: a Rust file with Windows cfg content must pull the VM and clippy jobs back"
+[ "$(cfgdefers "crates/puddle-store/src/lib.rs" crates/puddle-store/src/lib.rs crates/puddle-types/src/a.rs)" = "false true false true" ] ||
+    bad "tier: one cfg file among others still escalates"
+[ "$(cfgdefers "crates/puddle-store/src/lib.rs" crates/puddle-types/src/a.rs)" = "true true true true" ] ||
+    bad "tier: a Rust file that is not on the cfg list must stay deferred"
+[ "$(cfgdefers "crates/puddle-store/src/lib.rs" crates/puddle-store/src/lib.rs.bak)" = "true true true true" ] ||
+    bad "tier: the cfg list matches whole paths, not prefixes"
+[ "$(cfgdefers "" crates/puddle-store/src/lib.rs)" = "true true true true" ] || bad "tier: an empty cfg list defers"
 # Always-run paths (the msb pin among them, the shared VM test crate, the workflows) pull every moved job back.
 for p in Cargo.lock Cargo.toml ci/msb-runtime.sha256 ci/msb-tag.sh ci/fetch-msb.sh crates/puddle-vm-tests/src/lib.rs \
     .github/workflows/vm-windows.yml .github/workflows/windows.yml .github/workflows/ci.yml ci/scope.sh scripts/check.sh; do
@@ -211,6 +229,15 @@ cat >"$tmp/bin/gh" <<'GH'
 # fake gh: `gh api repos/R/pulls/N` -> head sha; `gh api --paginate repos/R/pulls/N/files...` -> $FAKE_FILES;
 # `gh api repos/R/compare/B...H` -> a compare reply with status $FAKE_STATUS and the files in $FAKE_FILES
 case "$*" in
+*/contents/*)
+    # `gh api -H Accept... repos/R/contents/PATH?ref=SHA` -> the file in $FAKE_CONTENTS, or an error when it is missing
+    [ "${FAKE_MODE:-}" = contentserror ] && exit 1
+    last=${*: -1}
+    path=${last#repos/o/r/contents/}
+    [ "${path%%\?ref=*}?ref=head1" = "$path" ] || exit 1
+    path=${path%%\?ref=*}
+    cat "$FAKE_CONTENTS/$path" || exit 1
+    ;;
 */files*) [ "${FAKE_MODE:-}" = error ] && exit 1; cat "$FAKE_FILES" ;;
 */compare/*)
     [ "${FAKE_MODE:-}" = error ] && exit 1
@@ -230,7 +257,7 @@ MAIN_ENV=()
 run_main() {
     local event=$1 base=$2 mode=$3 files=$4 head=${5:-abc123}
     env -u PUDDLE_QUEUE -u PUDDLE_TIER PATH="$tmp/bin:$PATH" GITHUB_EVENT_NAME="$event" PR_BASE_REF="$base" PR_NUMBER=7 GITHUB_REPOSITORY=o/r \
-        PR_HEAD_SHA="$head" FAKE_MODE="$mode" FAKE_FILES="$files" FAKE_HEAD=abc123 GITHUB_OUTPUT="$tmp/out" \
+        PR_HEAD_SHA="$head" FAKE_MODE="$mode" FAKE_FILES="$files" FAKE_HEAD=abc123 FAKE_CONTENTS="$tmp/contents" GITHUB_OUTPUT="$tmp/out" \
         "${MAIN_ENV[@]}" "$scope" 2>/dev/null
     local rc=$?
     echo "rc=$rc"
@@ -293,6 +320,52 @@ printf '%s\n' "${many[@]}" >"$tmp/many.txt"
 MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1)
 main_case "merge group, 300 files (the compare API's cap)" full merge_group "" ok "$tmp/many.txt"
 
+# 5b. Windows cfg content on a merge queue run in the nightly tier, read from the files at the tested commit.
+mkdir -p "$tmp/contents/crates/a/src" "$tmp/contents/crates/b/src"
+printf 'fn a() {}\n#[cfg(windows)]\nfn w() {}\n' >"$tmp/contents/crates/a/src/lib.rs"
+printf 'fn b() {}\n' >"$tmp/contents/crates/b/src/lib.rs"
+printf '#[cfg(any(unix,\n    target_os = "windows"))]\nfn m() {}\n' >"$tmp/contents/crates/a/src/multi.rs"
+printf '#[cfg(not(windows))]\nfn n() {}\n' >"$tmp/contents/crates/a/src/not.rs"
+printf 'let x = cfg!(target_os = "windows");\n' >"$tmp/contents/crates/a/src/macro.rs"
+printf '// windows is mentioned here only in prose; cfg too\nfn p() {}\n' >"$tmp/contents/crates/a/src/prose.rs"
+printf '#[cfg(target_os = "linux")]\nfn l() {}\n' >"$tmp/contents/crates/a/src/linux.rs"
+tierfiles() { # tierfiles <FAKE_MODE> <paths...> -> "vm clippy" defer flags of the merge queue run
+    local mode=$1 f="$tmp/tierfiles.txt"
+    shift
+    printf '%s\n' "$@" >"$f"
+    : >"$tmp/out"
+    env -u PUDDLE_QUEUE PATH="$tmp/bin:$PATH" GITHUB_EVENT_NAME=merge_group GITHUB_REPOSITORY=o/r PUDDLE_TIER=on \
+        MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 FAKE_MODE="$mode" FAKE_FILES="$f" FAKE_CONTENTS="$tmp/contents" \
+        GITHUB_OUTPUT="$tmp/out" "$scope" >/dev/null 2>&1
+    awk -F= '{v[$1]=$2} END {print v["defer_vm_windows"], v["defer_win_clippy"]}' "$tmp/out"
+}
+tf_want() {
+    local label=$1 exp=$2 got
+    shift 2
+    got=$(tierfiles "$@")
+    [ "$got" = "$exp" ] || bad "cfg windows: $label: got '$got', want '$exp'"
+}
+tf_want "a file with a cfg(windows) block" "false false" ok crates/a/src/lib.rs
+tf_want "a multi-line cfg with target_os" "false false" ok crates/a/src/multi.rs
+tf_want "a not(windows) cfg" "false false" ok crates/a/src/not.rs
+tf_want "cfg! with target_os" "false false" ok crates/a/src/macro.rs
+tf_want "a file with no cfg content stays deferred" "true true" ok crates/b/src/lib.rs
+tf_want "windows in prose is not a cfg" "true true" ok crates/a/src/prose.rs
+tf_want "a cfg for another os stays deferred" "true true" ok crates/a/src/linux.rs
+tf_want "a cfg file beside a plain one" "false false" ok crates/b/src/lib.rs crates/a/src/lib.rs
+tf_want "a file that cannot be read escalates" "false false" ok crates/b/src/gone.rs
+tf_want "every read failing escalates" "false false" contentserror crates/b/src/lib.rs
+tf_want "a non-Rust file is not read" "true true" contentserror docs/guide.md
+mapfile -t rs_many < <(seq 1 61 | sed 's|^|crates/b/src/m|; s|$|.rs|')
+tf_want "more Rust files than the read cap escalate" "false false" ok "${rs_many[@]}"
+# Off the nightly tier nothing is read: a pull request run never calls the contents API.
+: >"$tmp/out"
+printf 'crates/b/src/lib.rs\n' >"$tmp/rs.txt"
+out=$(env -u PUDDLE_TIER PATH="$tmp/bin:$PATH" GITHUB_EVENT_NAME=merge_group GITHUB_REPOSITORY=o/r MERGE_GROUP_BASE_SHA=base1 \
+    MERGE_GROUP_HEAD_SHA=head1 FAKE_MODE=contentserror FAKE_FILES="$tmp/rs.txt" FAKE_CONTENTS="$tmp/contents" "$scope" 2>&1 >/dev/null)
+grep -q 'Windows cfg' <<<"$out" && bad "cfg windows: reads happened without PUDDLE_TIER=on"
+grep -q 'scope:' <<<"$out" || bad "cfg windows: the off-tier control run printed nothing, so it proves nothing"
+
 # The light mode: only PUDDLE_QUEUE=on exactly, only on a pull request to develop. The scoped
 # outputs stay as the files say; a doubtful file list runs everything without the light mode.
 MAIN_ENV=(PUDDLE_QUEUE=on)
@@ -338,6 +411,8 @@ MAIN_ENV=()
 # The nightly tier through the whole script: only a merge queue run with PUDDLE_TIER=on, and the
 # outputs of the group's diff; any doubt prints the full set with nothing deferred.
 printf 'crates/puddle-app/src/lib.rs\n' >"$tmp/app.txt"
+mkdir -p "$tmp/contents/crates/puddle-app/src"
+printf 'fn app() {}\n' >"$tmp/contents/crates/puddle-app/src/lib.rs"
 printf 'ui/src/lib/components/RequestRow.svelte\n' >"$tmp/component.txt"
 MAIN_ENV=(MERGE_GROUP_BASE_SHA=base1 MERGE_GROUP_HEAD_SHA=head1 PUDDLE_TIER=on)
 main_case "tier: merge group, ui-only diff" ui merge_group "" ok "$tmp/ui.txt"
@@ -891,8 +966,10 @@ if 'hash:${PARTITION}/${PARTITIONS}' not in wtext2 or "PARTITIONS: ${{ strategy.
     bad.append("windows: the partitions must split by nextest `--partition hash:` over strategy.job-total")
 up = [s for s in wj["test-build"]["steps"] if s.get("uses", "").startswith("actions/upload-artifact")]
 dn = [s for s in wj["tests"]["steps"] if s.get("uses", "").startswith("actions/download-artifact")]
-if len(up) != 1 or len(dn) != 1 or up[0]["with"]["name"] != dn[0]["with"]["name"]:
-    bad.append("windows: the build job's upload and the partition job's download must name the same artifact")
+if len(up) != 1 or len(dn) != 2 or {s["with"]["name"] for s in dn} != {up[0]["with"]["name"]}:
+    bad.append("windows: the build job's upload and the partition job's download (first try and second try) must name the same artifact")
+if [s.get("timeout-minutes") for s in dn] != [8, 8] or dn[0].get("continue-on-error") is not True or not dn[1]["name"].endswith("(second try)"):
+    bad.append("windows: the archive download needs a step limit, continue-on-error and a second try (a hung download must not hold the job to its limit)")
 if "cargo nextest archive --workspace --all-features --locked --profile ci" not in wtext2:
     bad.append("windows: the build job must archive the workspace with --all-features --locked --profile ci")
 if 'export RUSTUP_TOOLCHAIN' not in wtext2 or "rust-toolchain.toml" not in str(wj["tests"]["steps"]):

@@ -197,7 +197,7 @@ pub fn run(args: &ServeArgs) -> ExitCode {
         }
     };
     runtime.block_on(async {
-        let host = match Host::start(prepared, &MsbFactory, HostOptions::default()).await {
+        let host = match Host::start(prepared, &MsbFactory, HostOptions::system()).await {
             Ok(host) => host,
             Err(e) => {
                 eprintln!("puddle: {e}");

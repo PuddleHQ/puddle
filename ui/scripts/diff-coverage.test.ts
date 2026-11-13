@@ -156,6 +156,29 @@ describe("exclusions file", () => {
     ).toBeUndefined();
     expect(exclusionOrderError("a.rs | c | r\na.rs | b | r")).toMatch(/line 2/);
   });
+  it("readExclusions reads a folder of per-crate files and refuses another crate's entry", () => {
+    const dir = mkdtempSync(join(tmpdir(), "excl-"));
+    try {
+      writeFileSync(join(dir, "a.txt"), "# h\ncrates/a/src/x.rs | * | r\n");
+      writeFileSync(join(dir, "ui.txt"), "ui/src/y.ts | * | r\n");
+      writeFileSync(join(dir, "notes.md"), "not an exclusion file");
+      expect(readExclusions(dir).map((e) => e.glob)).toEqual([
+        "crates/a/src/x.rs",
+        "ui/src/y.ts",
+      ]);
+      writeFileSync(join(dir, "a.txt"), "crates/b/src/x.rs | * | r\n");
+      expect(() => readExclusions(dir)).toThrow(
+        /a\.txt: "crates\/b\/src\/x\.rs" is not under crates\/a\//,
+      );
+      writeFileSync(
+        join(dir, "a.txt"),
+        "crates/a/z.rs | * | r\ncrates/a/y.rs | * | r\n",
+      );
+      expect(() => readExclusions(dir)).toThrow(/a\.txt: .*belongs before/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it("readExclusions refuses an unsorted file and reads a sorted one", () => {
     const dir = mkdtempSync(join(tmpdir(), "excl-"));
     try {
@@ -169,20 +192,16 @@ describe("exclusions file", () => {
     }
   });
   it("keeps the committed files sorted", () => {
-    for (const name of ["diff", "full"]) {
-      const file = join(
-        import.meta.dirname,
-        `../../scripts/${name}-coverage-exclusions.txt`,
-      );
-      expect(exclusionOrderError(readFileSync(file, "utf8"))).toBeUndefined();
-    }
-  });
-  it("accepts every entry of the committed file", () => {
     const file = join(
       import.meta.dirname,
-      "../../scripts/diff-coverage-exclusions.txt",
+      "../../scripts/full-coverage-exclusions.txt",
     );
-    const entries = parseExclusions(readFileSync(file, "utf8"));
+    expect(exclusionOrderError(readFileSync(file, "utf8"))).toBeUndefined();
+  });
+  it("accepts every entry of the committed folder, each in its own crate's file", () => {
+    const entries = readExclusions(
+      join(import.meta.dirname, "../../scripts/diff-coverage-exclusions"),
+    );
     expect(entries.length).toBeGreaterThan(100);
     // A whole-file `*` is a deliberate, reviewed choice; keep the list short.
     expect(entries.filter((e) => e.lines === "*").length).toBeLessThan(15);

@@ -12,6 +12,7 @@ info  Disk encryption     data folder not found; no swap
       from: Puddle's data folder could not be found, so its drive was not asked
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 ok    Azure CLI (az)      version 2.64.0
+ok    Credential store    a test write and delete worked
 
 No problems found. (1.2 s)
 
@@ -70,6 +71,11 @@ No problems found. (1.2 s)
       "id": "az_cli",
       "status": "ok",
       "summary": "version 2.64.0"
+    },
+    {
+      "id": "credential_store",
+      "status": "ok",
+      "summary": "a test write and delete worked"
     }
   ],
   "elapsed_ms": 1234

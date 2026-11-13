@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Windows: the shell's `System.Volume.BitLockerProtection` property (the one Explorer shows),
-//! which a normal user can read, unlike the `BitLocker` WMI classes and `manage-bde`. Asked of
-//! `PowerShell`, because the COM calls behind it would be unsafe code that cannot be tried on a
+//! which answers 0 ("unknown") unless the process is elevated, so a normal doctor run reports the
+//! drive as unknown; the `BitLocker` WMI classes and `manage-bde` need elevation too, and no other
+//! source was found that does not. Asked of `PowerShell`, because the COM calls behind it would be unsafe code that cannot be tried on a
 //! machine without `BitLocker` here. No unsafe code.
 
 use std::os::windows::process::CommandExt;

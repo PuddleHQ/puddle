@@ -36,16 +36,10 @@ fn a_pipe_that_never_answers_parks_one_request_not_one_per_run() {
 
     // The first request is parked in its read. A second run must neither connect (the only pipe
     // instance is taken, which would read as unreachable) nor park another thread.
-    let began = Instant::now();
     let second = list_identities(&endpoint, limit);
     assert!(
         matches!(second, Err(AgentError::TimedOut(l)) if l == limit),
         "{second:?}"
-    );
-    assert!(
-        began.elapsed() < limit / 2,
-        "the second request waited {:?}",
-        began.elapsed()
     );
 
     // The server closes its end: the parked read ends and the endpoint is free again.

@@ -300,10 +300,6 @@ impl Config {
     /// # Errors
     ///
     /// The first variable with a value that doesn't parse or is out of range.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one flat list of variables, each with its own check"
-    )]
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
         let mut config = Self::default();
         let lookup = |var: &'static str| get(var).map(|v| (v, var));
@@ -340,25 +336,7 @@ impl Config {
         if let Some((v, var)) = lookup("PUDDLE_AGENT_WINDOW") {
             config.window = v.parse().map_err(|_| bad(var, &v, "expected bytes"))?;
         }
-        let mut oom = OomSources::default();
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_VMSTAT") {
-            oom.vmstat = path(var, &v)?;
-        }
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_KMSG") {
-            oom.kmsg = path(var, &v)?;
-        }
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_OOM_POLL_MS") {
-            oom.poll = millis(var, &v)?;
-        }
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_OOM_GRACE_MS") {
-            oom.grace = millis(var, &v)?;
-        }
-        config.oom = match lookup("PUDDLE_AGENT_OOM") {
-            None => Some(oom),
-            Some((v, _)) if v == "1" => Some(oom),
-            Some((v, _)) if v == "0" => None,
-            Some((v, var)) => return Err(bad(var, &v, "expected 0 or 1")),
-        };
+        config.oom = oom_watch(&lookup)?;
         config.entrypoint = match lookup("PUDDLE_AGENT_ENTRYPOINT_EXIT") {
             None => Some(EntrypointWatch::default()),
             Some((v, _)) if v == "off" => None,
@@ -367,71 +345,8 @@ impl Config {
                 ..EntrypointWatch::default()
             }),
         };
-        let mut ports = PortWatch::default();
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_PORTS_DIR") {
-            ports.dir = path(var, &v)?;
-        }
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_PORTS_POLL_MS") {
-            ports.poll = millis(var, &v)?;
-        }
-        config.ports = match lookup("PUDDLE_AGENT_PORTS") {
-            None => Some(ports),
-            Some((v, _)) if v == "1" => Some(ports),
-            Some((v, _)) if v == "0" => None,
-            Some((v, var)) => return Err(bad(var, &v, "expected 0 or 1")),
-        };
-        let mut dns = DnsConfig::default();
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_DNS_TABLE") {
-            dns.table = if v == "off" {
-                None
-            } else {
-                Some(path(var, &v)?)
-            };
-        }
-        let mut capture = CaptureConfig::default();
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_PORT") {
-            capture.port = v
-                .parse()
-                .ok()
-                .filter(|p| *p != 0)
-                .ok_or_else(|| bad(var, &v, "expected a port, 1 to 65535"))?;
-        }
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_IFACE") {
-            capture.interface = interface_name(var, &v)?;
-        }
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_POLL_MS") {
-            capture.poll = millis(var, &v)?;
-        }
-        if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_LOG_GROUP") {
-            let group: u16 = v
-                .parse()
-                .map_err(|_| bad(var, &v, "expected a log group, 0 to 65535"))?;
-            capture.log_group = (group != 0).then_some(group);
-        }
-        let capture_on = match lookup("PUDDLE_AGENT_CAPTURE") {
-            None => false,
-            Some((v, _)) if v == "off" => false,
-            Some((v, _)) if v == "on" => true,
-            Some((v, var)) => return Err(bad(var, &v, "expected on or off")),
-        };
-        config.dns = match lookup("PUDDLE_AGENT_DNS") {
-            None => capture_on.then_some(dns),
-            Some((v, var)) if v == "off" => {
-                if capture_on {
-                    return Err(bad(
-                        var,
-                        &v,
-                        "capture needs the stub DNS: its redirect sends DNS there",
-                    ));
-                }
-                None
-            }
-            Some((v, _)) if v == "on" => Some(dns),
-            Some((v, var)) => {
-                dns.listen = dns_addr(var, &v)?;
-                Some(dns)
-            }
-        };
+        config.ports = port_watch(&lookup)?;
+        (config.capture, config.dns) = capture_and_dns(&lookup)?;
         config.editor = EditorServer::from_lookup(&get)
             .map_err(|e| bad(e.var, &get(e.var).unwrap_or_default(), &e.reason))?
             .map(|server| {
@@ -445,7 +360,6 @@ impl Config {
                     root: PathBuf::from("/"),
                 }
             });
-        config.capture = capture_on.then_some(capture);
         if let Some((v, var)) = lookup("PUDDLE_AGENT_LOG") {
             config.log = v
                 .parse()
@@ -453,6 +367,109 @@ impl Config {
         }
         Ok(config)
     }
+}
+
+/// Reads one variable: its value and name, `None` when unset.
+type Lookup<'a> = &'a dyn Fn(&'static str) -> Option<(String, &'static str)>;
+
+/// The OOM watch: its sources and timings, or `None` when `PUDDLE_AGENT_OOM` turns it off.
+fn oom_watch(lookup: Lookup<'_>) -> Result<Option<OomSources>, ConfigError> {
+    let mut oom = OomSources::default();
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_VMSTAT") {
+        oom.vmstat = path(var, &v)?;
+    }
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_KMSG") {
+        oom.kmsg = path(var, &v)?;
+    }
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_OOM_POLL_MS") {
+        oom.poll = millis(var, &v)?;
+    }
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_OOM_GRACE_MS") {
+        oom.grace = millis(var, &v)?;
+    }
+    match lookup("PUDDLE_AGENT_OOM") {
+        None => Ok(Some(oom)),
+        Some((v, _)) if v == "1" => Ok(Some(oom)),
+        Some((v, _)) if v == "0" => Ok(None),
+        Some((v, var)) => Err(bad(var, &v, "expected 0 or 1")),
+    }
+}
+
+/// The port watch: its folder and timing, or `None` when `PUDDLE_AGENT_PORTS` turns it off.
+fn port_watch(lookup: Lookup<'_>) -> Result<Option<PortWatch>, ConfigError> {
+    let mut ports = PortWatch::default();
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_PORTS_DIR") {
+        ports.dir = path(var, &v)?;
+    }
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_PORTS_POLL_MS") {
+        ports.poll = millis(var, &v)?;
+    }
+    match lookup("PUDDLE_AGENT_PORTS") {
+        None => Ok(Some(ports)),
+        Some((v, _)) if v == "1" => Ok(Some(ports)),
+        Some((v, _)) if v == "0" => Ok(None),
+        Some((v, var)) => Err(bad(var, &v, "expected 0 or 1")),
+    }
+}
+
+/// The capture and the stub DNS it needs: `PUDDLE_AGENT_CAPTURE` and `PUDDLE_AGENT_DNS` decide
+/// together, since capture's redirect sends DNS to the stub.
+fn capture_and_dns(
+    lookup: Lookup<'_>,
+) -> Result<(Option<CaptureConfig>, Option<DnsConfig>), ConfigError> {
+    let mut dns = DnsConfig::default();
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_DNS_TABLE") {
+        dns.table = if v == "off" {
+            None
+        } else {
+            Some(path(var, &v)?)
+        };
+    }
+    let mut capture = CaptureConfig::default();
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_PORT") {
+        capture.port = v
+            .parse()
+            .ok()
+            .filter(|p| *p != 0)
+            .ok_or_else(|| bad(var, &v, "expected a port, 1 to 65535"))?;
+    }
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_IFACE") {
+        capture.interface = interface_name(var, &v)?;
+    }
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_POLL_MS") {
+        capture.poll = millis(var, &v)?;
+    }
+    if let Some((v, var)) = lookup("PUDDLE_AGENT_CAPTURE_LOG_GROUP") {
+        let group: u16 = v
+            .parse()
+            .map_err(|_| bad(var, &v, "expected a log group, 0 to 65535"))?;
+        capture.log_group = (group != 0).then_some(group);
+    }
+    let capture_on = match lookup("PUDDLE_AGENT_CAPTURE") {
+        None => false,
+        Some((v, _)) if v == "off" => false,
+        Some((v, _)) if v == "on" => true,
+        Some((v, var)) => return Err(bad(var, &v, "expected on or off")),
+    };
+    let dns = match lookup("PUDDLE_AGENT_DNS") {
+        None => capture_on.then_some(dns),
+        Some((v, var)) if v == "off" => {
+            if capture_on {
+                return Err(bad(
+                    var,
+                    &v,
+                    "capture needs the stub DNS: its redirect sends DNS there",
+                ));
+            }
+            None
+        }
+        Some((v, _)) if v == "on" => Some(dns),
+        Some((v, var)) => {
+            dns.listen = dns_addr(var, &v)?;
+            Some(dns)
+        }
+    };
+    Ok((capture_on.then_some(capture), dns))
 }
 
 fn bad(var: &'static str, value: &str, reason: &str) -> ConfigError {

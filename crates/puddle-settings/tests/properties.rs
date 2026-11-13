@@ -224,7 +224,7 @@ proptest! {
 
     #[test]
     fn global_documents_round_trip(g in global()) {
-        let doc = g.to_document();
+        let doc = g.to_document().unwrap();
         prop_assert_eq!(&doc["schema_version"], &json!(GLOBAL_SCHEMA_VERSION));
         let loaded = GlobalSettings::from_document(doc).unwrap();
         prop_assert_eq!(loaded.settings, g);
@@ -234,7 +234,7 @@ proptest! {
 
     #[test]
     fn workspace_documents_round_trip(s in workspace()) {
-        let doc = s.to_document();
+        let doc = s.to_document().unwrap();
         prop_assert_eq!(&doc["schema_version"], &json!(WORKSPACE_SCHEMA_VERSION));
         prop_assert_eq!(WorkspaceSettings::from_document(doc).unwrap().settings, s);
     }
@@ -250,7 +250,7 @@ proptest! {
             Just(json!({"nested": [1, null, "x"]})),
         ],
     ) {
-        let mut doc = g.to_document();
+        let mut doc = g.to_document().unwrap();
         let mut paths = Vec::new();
         for (i, key) in keys.iter().enumerate() {
             let parent = ["", "workspace_defaults", "vscode_server", "consents"][i % 4];
@@ -267,7 +267,7 @@ proptest! {
         listed.sort();
         paths.sort();
         prop_assert_eq!(listed, paths);
-        prop_assert_eq!(loaded.settings.to_document(), doc);
+        prop_assert_eq!(loaded.settings.to_document().unwrap(), doc);
     }
 
     #[test]

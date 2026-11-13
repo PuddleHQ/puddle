@@ -55,3 +55,28 @@ fn error_names_the_kind() {
         "not a valid account name"
     );
 }
+
+#[test]
+fn the_build_time_host_check_agrees_with_the_runtime_one() {
+    let long = "a".repeat(257);
+    let samples = [
+        "github.com",
+        "dev.azure.com",
+        "host:8443",
+        "",
+        "-x",
+        ".x",
+        "a b",
+        "a\nb",
+        "né.example",
+        "a_b",
+        &long,
+    ];
+    for sample in samples {
+        assert_eq!(
+            is_valid_host(sample),
+            HostName::new(sample).is_ok(),
+            "{sample:?}"
+        );
+    }
+}

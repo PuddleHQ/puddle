@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use puddle_store::{Limits, ManualClock, ShellInitText};
+use puddle_types::GuestPath;
 
 use super::*;
 

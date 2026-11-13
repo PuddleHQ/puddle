@@ -46,7 +46,7 @@ pub(crate) fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettin
         tracing::warn!(fields = ?loaded.unknown_fields, "global settings have fields this Puddle doesn't know; kept");
     }
     if let Some(from) = loaded.migrated_from {
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         tracing::info!(from, "global settings migrated");
     }
     Ok(loaded)
@@ -66,7 +66,7 @@ pub(crate) fn load_workspace(
         tracing::warn!(%workspace, fields = ?loaded.unknown_fields, "workspace settings have fields this Puddle doesn't know; kept");
     }
     if let Some(from) = loaded.migrated_from {
-        repo.save_workspace(workspace, loaded.settings.to_document())?;
+        repo.save_workspace(workspace, loaded.settings.to_document()?)?;
         tracing::info!(%workspace, from, "workspace settings migrated");
     }
     Ok(loaded)
@@ -144,7 +144,7 @@ pub(crate) async fn put_global(
                 "ui.app_icon: give Puddle an image before choosing your own icon",
             ));
         }
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         Ok(loaded)
     })
     .await?;
@@ -210,7 +210,7 @@ pub(crate) async fn put_workspace_settings(
         let global = load_global(repo)?;
         let mut loaded = load_workspace(repo, &workspace)?;
         body.overrides.apply_to(&mut loaded.settings.overrides)?;
-        repo.save_workspace(&workspace, loaded.settings.to_document())?;
+        repo.save_workspace(&workspace, loaded.settings.to_document()?)?;
         tracing::info!(%workspace, "workspace settings changed");
         Ok(workspace_view(workspace, &global.settings, &loaded))
     })
@@ -276,7 +276,7 @@ pub(crate) async fn put_consent(
         {
             loaded.settings.vscode_server.server = Some(puddle_settings::ServerChoice::CodeServer);
         }
-        repo.save_global(loaded.settings.to_document())?;
+        repo.save_global(loaded.settings.to_document()?)?;
         Ok(Consents::from(&loaded.settings.consents))
     })
     .await?;

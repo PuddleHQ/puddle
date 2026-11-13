@@ -8,8 +8,7 @@ fn p(s: &str) -> GuestPath {
 #[test]
 fn an_owner_only_file_never_prints_its_contents() {
     let secret = GuestFile::new(p("/etc/puddle/key"), b"CANARY-KEY".to_vec())
-        .with_mode(0o600)
-        .unwrap();
+        .with_mode(FileMode::new(0o600));
     let shown = format!("{secret:?}");
     let leaked_text = shown.contains("CANARY");
     let leaked_bytes = shown.contains("67, 65");
@@ -104,9 +103,45 @@ fn guest_file_defaults_and_mode_check() {
     assert_eq!(f.mode(), GuestFile::DEFAULT_MODE);
     assert_eq!(f.path(), &p("/etc/x"));
     assert_eq!(f.contents(), b"hi");
-    assert_eq!(f.clone().with_mode(0o4755).unwrap().mode(), 0o4755);
-    let err = f.with_mode(0o10000).unwrap_err();
+    assert_eq!(f.with_mode(FileMode::new(0o4755)).mode(), 0o4755);
+    let err = FileMode::try_new(0o10000).unwrap_err();
     assert_eq!(err.what(), "file mode");
+}
+
+#[test]
+fn the_build_time_path_check_agrees_with_the_runtime_one() {
+    let long = format!("/{}", "a".repeat(4096));
+    let samples = [
+        "/",
+        "/a",
+        "/a/b",
+        "/a/b/",
+        "//",
+        "/a//b",
+        "/.",
+        "/..",
+        "/a/.",
+        "/a/..",
+        "/a/./b",
+        "/a/../b",
+        "/...",
+        "/.a",
+        "/a.",
+        "/a\0b",
+        "a",
+        "",
+        "relative/x",
+        "/ab/cd/ef",
+        "/a/b/c/",
+        &long,
+    ];
+    for sample in samples {
+        assert_eq!(
+            is_valid_path(sample),
+            GuestPath::new(sample).is_ok(),
+            "{sample:?}"
+        );
+    }
 }
 
 #[test]

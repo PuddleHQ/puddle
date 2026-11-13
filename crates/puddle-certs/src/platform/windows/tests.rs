@@ -32,8 +32,7 @@ fn the_end_of_a_store_is_not_an_error_but_any_other_stop_is() {
         let mut items = items.into_iter();
         move || items.next()
     };
-    #[expect(clippy::cast_sign_loss, reason = "HRESULT bit pattern compared as u32")]
-    let not_found = CRYPT_E_NOT_FOUND as u32;
+    let not_found = CRYPT_E_NOT_FOUND.cast_unsigned();
     let (read, failure) = drain(from(vec![vec![1], vec![2]]), || not_found);
     assert_eq!((read.len(), failure), (2, None));
     let (read, failure) = drain(from(vec![vec![1]]), || ERROR_SUCCESS);

@@ -19,7 +19,8 @@ fn local_access_follows_the_settings_when_they_can_be_read() {
     let repo = MemorySettings::default();
     let mut own = WorkspaceSettings::default();
     own.overrides.local_toggles.private = Some(true);
-    repo.save_workspace(&name(), own.to_document()).unwrap();
+    repo.save_workspace(&name(), own.to_document().unwrap())
+        .unwrap();
     let access = local_access(&repo, &name());
     assert!(access.is_on(LocalCategory::Private));
     assert!(!access.is_on(LocalCategory::Loopback));

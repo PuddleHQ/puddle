@@ -6,7 +6,7 @@ use std::io;
 use std::path::Path;
 
 use puddle_compute::{FileMount, SandboxSpec};
-use puddle_types::GuestPath;
+use puddle_types::guest_path;
 
 /// `guest/boot.sh`: the hook itself.
 pub const BOOT_SH: &str = include_str!("../guest/boot.sh");
@@ -29,21 +29,6 @@ pub const CODE_SERVER_GUEST: &str = "/puddle/code-server";
 /// The guest directory with Puddle's read-only mounts. The plan may not write below it.
 pub const MOUNT_DIR_GUEST: &str = "/puddle";
 
-/// A guest path from one of this crate's constants (or a constant directory and a number).
-pub(crate) fn guest_path(path: &str) -> GuestPath {
-    // Only ever called with the constants above, which a unit test checks are valid.
-    GuestPath::new(path).unwrap_or_else(|_| unreachable_guest_path(path))
-}
-
-#[cold]
-#[expect(
-    clippy::panic,
-    reason = "invariant: every constant passed to guest_path is a valid GuestPath (unit-tested)"
-)]
-fn unreachable_guest_path(path: &str) -> GuestPath {
-    panic!("constant guest path {path:?} is not valid")
-}
-
 /// Writes `boot.sh` and `agent-supervise.sh` into the host directory `dir` (created if needed)
 /// and returns the read-only mounts that put them at [`BOOT_SH_GUEST`] and
 /// [`AGENT_SUPERVISE_GUEST`]. Add them to the spec with [`with_boot_mounts`].
@@ -58,15 +43,18 @@ pub fn write_assets(dir: &Path) -> io::Result<Vec<FileMount>> {
     std::fs::write(&boot, BOOT_SH)?;
     std::fs::write(&supervise, AGENT_SUPERVISE_SH)?;
     Ok(vec![
-        FileMount::read_only(boot, guest_path(BOOT_SH_GUEST)),
-        FileMount::read_only(supervise, guest_path(AGENT_SUPERVISE_GUEST)),
+        FileMount::read_only(boot, guest_path!(BOOT_SH_GUEST)),
+        FileMount::read_only(supervise, guest_path!(AGENT_SUPERVISE_GUEST)),
     ])
 }
 
 /// `spec` with the code-server release folder `dir` mounted read-only at [`CODE_SERVER_GUEST`].
 #[must_use]
 pub fn with_code_server_mount(spec: SandboxSpec, dir: &Path) -> SandboxSpec {
-    spec.with_file_mount(FileMount::read_only_dir(dir, guest_path(CODE_SERVER_GUEST)))
+    spec.with_file_mount(FileMount::read_only_dir(
+        dir,
+        guest_path!(CODE_SERVER_GUEST),
+    ))
 }
 
 /// `spec` with the boot scripts in `assets` (from [`write_assets`]) and, if given, the agent
@@ -81,7 +69,7 @@ pub fn with_boot_mounts(
         spec = spec.with_file_mount(m);
     }
     if let Some(agent) = agent_binary {
-        spec = spec.with_file_mount(FileMount::read_only(agent, guest_path(AGENT_GUEST)));
+        spec = spec.with_file_mount(FileMount::read_only(agent, guest_path!(AGENT_GUEST)));
     }
     spec
 }

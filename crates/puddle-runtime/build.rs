@@ -6,35 +6,43 @@
 //! when the SDK's crates resolve to more than one source (a half-done bump).
 
 #![forbid(unsafe_code)]
-#![expect(
-    clippy::exit,
-    reason = "a build script stops the build with an exit code"
-)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 #[path = "build/built_for.rs"]
 mod built_for;
 
-use built_for::built_for;
+use built_for::{built_for, parts};
 
-fn main() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-    let lock_path = Path::new(&manifest_dir).join("../../Cargo.lock");
-    println!("cargo::rerun-if-changed={}", lock_path.display());
-    let lock = std::fs::read_to_string(&lock_path).unwrap_or_else(|e| {
-        fail(&format!(
-            "cannot read the workspace lock file {}: {e}",
-            lock_path.display()
-        ))
-    });
-    match built_for(&lock) {
-        Ok(version) => println!("cargo::rustc-env=PUDDLE_MSB_BUILT_FOR={version}"),
-        Err(message) => fail(&message),
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            println!("cargo::error=puddle-runtime: {message}");
+            ExitCode::FAILURE
+        }
     }
 }
 
-fn fail(message: &str) -> ! {
-    println!("cargo::error=puddle-runtime: {message}");
-    std::process::exit(1)
+fn run() -> Result<(), String> {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let lock_path = Path::new(&manifest_dir).join("../../Cargo.lock");
+    println!("cargo::rerun-if-changed={}", lock_path.display());
+    let lock = std::fs::read_to_string(&lock_path).map_err(|e| {
+        format!(
+            "cannot read the workspace lock file {}: {e}",
+            lock_path.display()
+        )
+    })?;
+    let version = built_for(&lock)?;
+    let [major, minor, patch, puddle] = parts(&version)?;
+    println!("cargo::rustc-env=PUDDLE_MSB_BUILT_FOR={version}");
+    let out_dir = std::env::var_os("OUT_DIR").ok_or("cargo gave no OUT_DIR")?;
+    let generated = PathBuf::from(out_dir).join("built_for_version.rs");
+    std::fs::write(
+        &generated,
+        format!("RuntimeVersion::from_parts({major}, {minor}, {patch}, {puddle})\n"),
+    )
+    .map_err(|e| format!("cannot write {}: {e}", generated.display()))
 }

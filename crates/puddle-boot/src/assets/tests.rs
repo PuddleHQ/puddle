@@ -3,14 +3,14 @@ use super::*;
 
 #[test]
 fn constants_are_valid_guest_paths_under_the_mount_dir() {
-    let dir = guest_path(MOUNT_DIR_GUEST);
+    let dir = guest_path!(MOUNT_DIR_GUEST);
     for p in [
-        BOOT_SH_GUEST,
-        AGENT_SUPERVISE_GUEST,
-        AGENT_GUEST,
-        CODE_SERVER_GUEST,
+        guest_path!(BOOT_SH_GUEST),
+        guest_path!(AGENT_SUPERVISE_GUEST),
+        guest_path!(AGENT_GUEST),
+        guest_path!(CODE_SERVER_GUEST),
     ] {
-        assert!(guest_path(p).is_within(&dir), "{p}");
+        assert!(p.is_within(&dir), "{p}");
     }
 }
 
@@ -18,12 +18,6 @@ fn constants_are_valid_guest_paths_under_the_mount_dir() {
 fn ssh_runs_the_agent_where_the_hook_mounts_it() {
     // The guest's ssh_config names the agent by path; puddle-guest-env can't see this crate.
     assert_eq!(puddle_guest_env::DEFAULT_AGENT, AGENT_GUEST);
-}
-
-#[test]
-#[should_panic(expected = "is not valid")]
-fn an_invalid_constant_is_a_bug() {
-    let _ = guest_path("relative");
 }
 
 #[test]

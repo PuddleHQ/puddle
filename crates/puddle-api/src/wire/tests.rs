@@ -115,13 +115,13 @@ fn settings_layer_round_trips_and_keeps_unknown_stored_fields() {
     let wire = SettingsLayer::from(&full_layer());
     wire.clone().apply_to(&mut stored.overrides).unwrap();
     assert_eq!(SettingsLayer::from(&stored.overrides), wire);
-    assert_eq!(stored.to_document()["overrides"]["swap"], 4);
+    assert_eq!(stored.to_document().unwrap()["overrides"]["swap"], 4);
     // Clearing every value leaves only the unknown field.
     SettingsLayer::default()
         .apply_to(&mut stored.overrides)
         .unwrap();
     assert_eq!(
-        stored.to_document(),
+        stored.to_document().unwrap(),
         json!({"schema_version": 1, "overrides": {"swap": 4}})
     );
 }

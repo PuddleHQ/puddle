@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
 use crate::machine::MACHINE_SETTINGS_GUEST;
+use puddle_types::FileMode;
 
 fn image(entrypoint: &[&str], cmd: &[&str], path: Option<&str>) -> ImageConfig {
     ImageConfig {
@@ -343,7 +344,7 @@ fn capture_is_on_unless_switched_off_or_there_is_no_agent() {
 #[test]
 fn render_has_header_files_steps_and_end_marker() {
     let plan = BootPlan::builder(&image(&["e"], &[], Some("/bin")))
-        .file(file("/etc/it's", "50%\n").with_mode(0o600).unwrap())
+        .file(file("/etc/it's", "50%\n").with_mode(FileMode::new(0o600)))
         .agent(AgentConfig {
             binary: GuestPath::new("/opt/agent").unwrap(),
             port: 4000,
@@ -480,8 +481,7 @@ fn merged_files_render_their_spec_and_are_counted() {
     )
     .unwrap();
     let merged = GuestFile::merged(GuestPath::new("/root/c.json").unwrap(), spec)
-        .with_mode(0o600)
-        .unwrap();
+        .with_mode(FileMode::new(0o600));
     // Every plan merges VS Code's Machine settings.
     let without = BootPlan::builder(&ImageConfig::default()).build().unwrap();
     assert!(without.has_merged_files());

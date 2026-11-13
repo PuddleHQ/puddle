@@ -5,7 +5,7 @@
 #[path = "../build/built_for.rs"]
 mod built_for;
 
-use built_for::built_for;
+use built_for::{built_for, parts};
 
 const TAG: &str = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.7-puddle.3#7e3e0b2b4611cd6f4cfa2c82b58cee650eff03a7";
 
@@ -97,4 +97,23 @@ fn packages_without_a_name_or_version_are_skipped() {
         package("microsandbox", "0.7.7-puddle.3", Some(TAG))
     );
     assert_eq!(built_for(&lock).as_deref(), Ok("0.7.7-puddle.3"));
+}
+
+#[test]
+fn the_version_splits_into_four_numbers() {
+    assert_eq!(parts("0.7.7-puddle.3"), Ok([0, 7, 7, 3]));
+    assert_eq!(parts("10.20.30-puddle.1"), Ok([10, 20, 30, 1]));
+    for bad in [
+        "0.7.7",
+        "0.7-puddle.1",
+        "0.7.7.1-puddle.1",
+        "0.7.7-puddle.0",
+        "0.7.07-puddle.1",
+        "0.7.7-puddle.",
+        "0.7.7-puddle.1+meta",
+        "a.7.7-puddle.1",
+        "",
+    ] {
+        assert!(parts(bad).is_err(), "{bad:?}");
+    }
 }

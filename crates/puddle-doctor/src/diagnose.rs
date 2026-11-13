@@ -937,11 +937,8 @@ fn load_failure(os: Os, msb: &Path, code: i32, hypervisor_ready: bool) -> Option
     if os != Os::Windows {
         return None;
     }
-    #[expect(
-        clippy::cast_sign_loss,
-        reason = "Windows reports NTSTATUS exit codes as i32; the bits are the code"
-    )]
-    let status = code as u32;
+    // Windows reports NTSTATUS exit codes as i32; the bits are the code.
+    let status = code.cast_unsigned();
     match status {
         codes::STATUS_INVALID_IMAGE_HASH => Some(app_control(msb)),
         codes::STATUS_ACCESS_DENIED => Some(edr(msb)),
@@ -966,11 +963,8 @@ Platform DLLs of a current Windows 10/11."
 
 fn hex_or_dec(os: Os, code: i32) -> String {
     if os == Os::Windows && code < 0 {
-        #[expect(
-            clippy::cast_sign_loss,
-            reason = "Windows reports NTSTATUS exit codes as i32; the bits are the code"
-        )]
-        let status = code as u32;
+        // Windows reports NTSTATUS exit codes as i32; the bits are the code.
+        let status = code.cast_unsigned();
         format!("0x{status:08X}")
     } else {
         code.to_string()

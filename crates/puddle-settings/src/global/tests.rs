@@ -10,7 +10,7 @@ fn empty_object_is_all_defaults_and_writes_back_as_version_only() {
     assert_eq!(loaded.settings, GlobalSettings::default());
     assert_eq!(loaded.migrated_from, Some(1), "no version means version 1");
     assert_eq!(
-        loaded.settings.to_document(),
+        loaded.settings.to_document().unwrap(),
         json!({ "schema_version": 2 })
     );
 }
@@ -27,7 +27,7 @@ fn the_ssh_agent_pipe_is_unset_by_default_and_a_blank_value_is_unset() {
         Some(r"\\.\pipe\pageant.alice")
     );
     assert_eq!(
-        named.settings.to_document()["ui"],
+        named.settings.to_document().unwrap()["ui"],
         json!({"ssh_agent_pipe": r"  \\.\pipe\pageant.alice  "}),
         "the stored text is kept as written"
     );
@@ -51,7 +51,7 @@ fn the_free_space_lines_default_to_20_and_5_gb_and_a_stored_pair_out_of_order_is
     let limits = ui.disk_limits();
     assert_eq!((limits.warn().gb(), limits.fail().gb()), (50, 10));
     assert_eq!(
-        loaded.settings.to_document()["ui"],
+        loaded.settings.to_document().unwrap()["ui"],
         json!({"notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10})
     );
 
@@ -143,7 +143,7 @@ fn ui_prefs_and_server_choice_default_and_round_trip() {
     assert!(ui.inbox_shortcuts());
     assert!(ui.start_at_login());
     assert_eq!(ui.app_icon(), AppIconChoice::DuckNight);
-    assert_eq!(loaded.settings.to_document(), doc);
+    assert_eq!(loaded.settings.to_document().unwrap(), doc);
 }
 
 #[test]
@@ -151,12 +151,12 @@ fn a_document_from_before_these_fields_loads_unchanged_and_ui_unknowns_are_kept(
     let old = json!({ "schema_version": 2, "vscode_server": { "telemetry": true } });
     let loaded = GlobalSettings::from_document(old.clone()).unwrap();
     assert_eq!(loaded.migrated_from, None);
-    assert_eq!(loaded.settings.to_document(), old);
+    assert_eq!(loaded.settings.to_document().unwrap(), old);
 
     let newer = json!({ "schema_version": 2, "ui": { "font_scale": 2, "theme": "light" } });
     let loaded = GlobalSettings::from_document(newer.clone()).unwrap();
     assert_eq!(loaded.unknown_fields, ["ui.font_scale"]);
-    assert_eq!(loaded.settings.to_document(), newer);
+    assert_eq!(loaded.settings.to_document().unwrap(), newer);
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn unknown_fields_at_every_level_are_listed_and_written_back() {
         .as_object_mut()
         .unwrap()
         .remove("telemetry");
-    assert_eq!(loaded.settings.to_document(), want);
+    assert_eq!(loaded.settings.to_document().unwrap(), want);
 }
 
 #[test]
@@ -211,7 +211,7 @@ fn a_version_1_document_keeps_its_defaults_under_the_new_name() {
         loaded.settings.workspace_defaults.memory.unwrap().get(),
         4096
     );
-    let doc = loaded.settings.to_document();
+    let doc = loaded.settings.to_document().unwrap();
     assert_eq!(doc["schema_version"], 2);
     assert_eq!(doc["workspace_defaults"]["memory"], 4096);
     assert_eq!(doc["ui"]["theme"], "dark");
@@ -260,7 +260,7 @@ fn first_run_defaults_to_not_completed_and_round_trips() {
     let loaded = GlobalSettings::from_document(json!({})).unwrap();
     assert!(!loaded.settings.first_run.is_completed());
     assert_eq!(
-        loaded.settings.to_document(),
+        loaded.settings.to_document().unwrap(),
         json!({ "schema_version": 2 }),
         "an unset flow is not written"
     );
@@ -273,7 +273,7 @@ fn first_run_defaults_to_not_completed_and_round_trips() {
         loaded.settings.first_run.completed_at,
         Some(UnixMillis(1_700_000_000_000))
     );
-    assert_eq!(loaded.settings.to_document(), doc);
+    assert_eq!(loaded.settings.to_document().unwrap(), doc);
 }
 
 #[test]
@@ -281,7 +281,7 @@ fn first_run_keeps_fields_it_does_not_know() {
     let doc = json!({ "schema_version": 2, "first_run": { "completed_at": 5, "tour": "v2" } });
     let loaded = GlobalSettings::from_document(doc.clone()).unwrap();
     assert_eq!(loaded.unknown_fields, ["first_run.tour"]);
-    assert_eq!(loaded.settings.to_document(), doc);
+    assert_eq!(loaded.settings.to_document().unwrap(), doc);
 }
 
 #[test]
@@ -294,7 +294,7 @@ fn consents_round_trip() {
             terms_version: TermsVersion::new("https://example.test/terms").unwrap(),
         },
     );
-    let doc = g.to_document();
+    let doc = g.to_document().unwrap();
     assert_eq!(doc["consents"]["vscode_server"]["state"], "granted");
     assert_eq!(GlobalSettings::from_document(doc).unwrap().settings, g);
 }

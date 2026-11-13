@@ -27,7 +27,7 @@ pub const WORKSPACE_SCHEMA_VERSION: u32 = 1;
 ///     .unwrap()
 ///     .settings;
 /// assert_eq!(s.overrides.zoom_hotkeys, Some(false));
-/// assert_eq!(s.to_document(), json!({"schema_version": 1, "overrides": {"zoom_hotkeys": false}}));
+/// assert_eq!(s.to_document().unwrap(), json!({"schema_version": 1, "overrides": {"zoom_hotkeys": false}}));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct WorkspaceSettings {
@@ -51,8 +51,12 @@ impl WorkspaceSettings {
 
     /// The document to store: the current `schema_version`, set values only, unknown fields
     /// as they were read.
-    #[must_use]
-    pub fn to_document(&self) -> Value {
+    ///
+    /// # Errors
+    ///
+    /// [`SettingsError::Unstorable`] when the settings cannot be serialised, which their types
+    /// (string keys only) rule out.
+    pub fn to_document(&self) -> Result<Value, SettingsError> {
         document::store(self)
     }
 }

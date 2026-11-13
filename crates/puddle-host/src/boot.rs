@@ -18,7 +18,9 @@ use puddle_guest_env::{ProxySettings, guest_proxy_config, ssh_known_hosts_file};
 use puddle_ipc::IpcRoot;
 use puddle_proxy::{Proxy, Route};
 use puddle_store::Store;
-use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId};
+use puddle_types::{
+    GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId, guest_path,
+};
 use puddle_workspace::Layout;
 
 use crate::dev_cert::GuestCertSource;
@@ -66,13 +68,8 @@ pub(crate) fn root_disk_size(grown_mib: Option<u32>) -> DiskSize {
 
 /// The disk Docker's data lives on: one per sandbox, deleted with it.
 fn docker_disk() -> OwnedDisk {
-    #[expect(
-        clippy::expect_used,
-        reason = "invariant: DOCKER_DATA_DIR is a fixed absolute path"
-    )]
-    let guest = GuestPath::new(DOCKER_DATA_DIR).expect("the Docker data folder is a guest path");
     OwnedDisk {
-        guest,
+        guest: guest_path!(DOCKER_DATA_DIR),
         size: DOCKER_DISK_SIZE,
     }
 }

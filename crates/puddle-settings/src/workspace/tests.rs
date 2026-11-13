@@ -15,7 +15,7 @@ fn unknown_fields_are_listed_with_their_path() {
         ["dangerous", "overrides.local_toggles.vpn"]
     );
     assert_eq!(
-        loaded.settings.to_document()["dangerous"]["reach_puddle_endpoints"],
+        loaded.settings.to_document().unwrap()["dangerous"]["reach_puddle_endpoints"],
         true
     );
 }
@@ -41,7 +41,7 @@ fn errors_name_the_document_kind() {
 #[test]
 fn a_document_without_overrides_is_version_only() {
     assert_eq!(
-        WorkspaceSettings::default().to_document(),
+        WorkspaceSettings::default().to_document().unwrap(),
         json!({"schema_version": 1})
     );
 }

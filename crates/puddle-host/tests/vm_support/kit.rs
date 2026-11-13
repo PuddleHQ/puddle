@@ -44,29 +44,29 @@ impl Flavour {
         match self {
             Self::Apt => format!(
                 "export DEBIAN_FRONTEND=noninteractive
-                 rm -rf /tmp/kit && mkdir -p /tmp/kit
-                 apt-get update -qq && apt-get install -y -qq --download-only --no-install-recommends {packages} >/tmp/kit-build.log 2>&1 \
-                   || {{ echo 'kit build failed:'; tail -15 /tmp/kit-build.log; exit 1; }} >&2
-                 cp /var/cache/apt/archives/*.deb /tmp/kit/ && cd /tmp/kit && tar -cf - . | base64 -w0"
+                 rm -rf /root/kit && mkdir -p /root/kit
+                 apt-get update -qq && apt-get install -y -qq --download-only --no-install-recommends {packages} >/root/kit-build.log 2>&1 \
+                   || {{ echo 'kit build failed:'; tail -15 /root/kit-build.log; exit 1; }} >&2
+                 cp /var/cache/apt/archives/*.deb /root/kit/ && cd /root/kit && tar -cf - . | base64 -w0"
             ),
             Self::Apk => format!(
-                "rm -rf /tmp/kit && mkdir -p /tmp/kit
-                 {{ apk update && apk fetch -R -o /tmp/kit {packages}; }} >/tmp/kit-build.log 2>&1 \
-                   || {{ echo 'kit build failed:'; tail -15 /tmp/kit-build.log; exit 1; }} >&2
-                 cd /tmp/kit && tar -cf - . | base64 -w0"
+                "rm -rf /root/kit && mkdir -p /root/kit
+                 apk --no-cache fetch -R -o /root/kit {packages} >/root/kit-build.log 2>&1 \
+                   || {{ echo 'kit build failed:'; tail -15 /root/kit-build.log; exit 1; }} >&2
+                 cd /root/kit && tar -cf - . | base64 -w0"
             ),
         }
     }
 
-    /// Guest script: installs what `/tmp/kit` holds, with no network.
+    /// Guest script: installs what `/root/kit` holds, with no network.
     fn install(self) -> &'static str {
         match self {
             Self::Apt => {
                 "export DEBIAN_FRONTEND=noninteractive
-                 apt-get install -y -qq --no-install-recommends --no-download /tmp/kit/*.deb >/tmp/kit-install.log 2>&1 || { tail -15 /tmp/kit-install.log; exit 1; }"
+                 apt-get install -y -qq --no-install-recommends --no-download /root/kit/*.deb >/root/kit-install.log 2>&1 || { tail -15 /root/kit-install.log; exit 1; }"
             }
             Self::Apk => {
-                "apk add --allow-untrusted --no-network /tmp/kit/*.apk >/tmp/kit-install.log 2>&1 || { tail -15 /tmp/kit-install.log; exit 1; }"
+                "apk add --allow-untrusted --no-network /root/kit/*.apk >/root/kit-install.log 2>&1 || { tail -15 /root/kit-install.log; exit 1; }"
             }
         }
     }
@@ -195,7 +195,7 @@ impl PackageKit {
         workspace: &WorkspaceId,
     ) -> (i32, String, String) {
         let script = format!(
-            "rm -rf /tmp/kit && mkdir -p /tmp/kit && cd /tmp/kit
+            "rm -rf /root/kit && mkdir -p /root/kit && cd /root/kit
              {{ curl -fsS --max-time 120 -o kit.tar http://{KIT_HOST}/kit.tar 2>/dev/null \
                 || wget -qO kit.tar http://{KIT_HOST}/kit.tar; }} || {{ echo 'kit download failed'; exit 1; }}
              tar -xf kit.tar && rm kit.tar
@@ -229,9 +229,12 @@ async fn exec(
     let handle = vm.runtime.get(&workspace.sandbox_name()).await.unwrap();
     let out = handle
         .exec(
-            ExecRequest::sh(script)
-                .as_user("root")
-                .with_timeout(timeout),
+            ExecRequest::sh(format!(
+                "cd && exec sh -l -c '{}'",
+                script.replace('\'', "'\\''")
+            ))
+            .as_user("root")
+            .with_timeout(timeout),
         )
         .await
         .unwrap_or_else(|e| panic!("the guest script did not finish: {e}\n{script}"));

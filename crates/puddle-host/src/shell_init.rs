@@ -104,7 +104,7 @@ impl Copies {
     ///
     /// # Errors
     /// A message for the user when the database cannot be read or the folder cannot be written.
-    pub(crate) fn publish(&self, id: &WorkspaceId) -> Result<Published, String> {
+    pub(crate) fn publish(&self, id: &WorkspaceId) -> Result<Published, ShellInitError> {
         self.write(id, true)
     }
 
@@ -113,11 +113,11 @@ impl Copies {
     ///
     /// # Errors
     /// A message for the user when the database cannot be read or the folder cannot be written.
-    pub(crate) fn refresh(&self, id: &WorkspaceId) -> Result<Published, String> {
+    pub(crate) fn refresh(&self, id: &WorkspaceId) -> Result<Published, ShellInitError> {
         self.write(id, false)
     }
 
-    fn write(&self, id: &WorkspaceId, revive: bool) -> Result<Published, String> {
+    fn write(&self, id: &WorkspaceId, revive: bool) -> Result<Published, ShellInitError> {
         // Held from the read of the text, so a later save is never overwritten by an older one.
         let mut deleted = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         if revive {
@@ -128,21 +128,20 @@ impl Copies {
         let wanted = self
             .store
             .shell_init(id)
-            .map_err(|e| format!("cannot read the saved shell init: {e}"))?
+            .map_err(ShellInitError::Read)?
             .map_or_else(String::new, |saved| saved.content.as_str().to_owned());
-        publish_in(&self.dir(id), &wanted)
-            .map_err(|e| format!("cannot write the shell init for the workspace: {e}"))
+        publish_in(&self.dir(id), &wanted).map_err(ShellInitError::Write)
     }
 
     /// The text saved for `id`, if any.
     ///
     /// # Errors
     /// A message for the user when the database cannot be read.
-    pub(crate) fn saved(&self, id: &WorkspaceId) -> Result<Option<String>, String> {
+    pub(crate) fn saved(&self, id: &WorkspaceId) -> Result<Option<String>, ShellInitError> {
         self.store
             .shell_init(id)
             .map(|saved| saved.map(|s| s.content.as_str().to_owned()))
-            .map_err(|e| format!("cannot read the saved shell init: {e}"))
+            .map_err(ShellInitError::Read)
     }
 
     /// Removes `id`'s folder (the workspace is gone). A folder that is not there is fine.
@@ -242,11 +241,31 @@ pub(crate) fn check_request(content: &str, user: SessionUser) -> ExecRequest {
     request
 }
 
+/// Why a workspace's shell init could not be saved, copied or checked. The messages are for the
+/// user.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ShellInitError {
+    /// The saved text could not be read from the database.
+    #[error("cannot read the saved shell init: {0}")]
+    Read(#[source] puddle_store::StoreError),
+    /// The workspace's folder could not be written.
+    #[error("cannot write the shell init for the workspace: {0}")]
+    Write(#[source] std::io::Error),
+    /// The check script did not run.
+    #[error("the check could not run in the workspace (exit {code}): {stderr}")]
+    CheckFailed {
+        /// The script's exit code.
+        code: i32,
+        /// What it wrote to its error stream.
+        stderr: String,
+    },
+}
+
 /// The most of a script's output the user is shown.
 const SHOWN_BYTES: usize = 2 * 1024;
 
 /// Reads what the check said.
-pub(crate) fn verdict(output: &ExecOutput) -> Result<Verdict, String> {
+pub(crate) fn verdict(output: &ExecOutput) -> Result<Verdict, ShellInitError> {
     let said = output.stdout_text();
     let said = said.trim_end();
     let mut shown: String = said.chars().take(SHOWN_BYTES).collect();
@@ -263,10 +282,10 @@ pub(crate) fn verdict(output: &ExecOutput) -> Result<Verdict, String> {
              shell's output (VS Code Remote-SSH, scp, rsync); remove what prints, or print only \
              when the shell is interactive. It printed: {shown}"
         ))),
-        code => Err(format!(
-            "the check could not run in the workspace (exit {code}): {}",
-            output.stderr_text().trim_end()
-        )),
+        code => Err(ShellInitError::CheckFailed {
+            code,
+            stderr: output.stderr_text().trim_end().to_owned(),
+        }),
     }
 }
 

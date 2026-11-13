@@ -26,7 +26,7 @@ use crate::wire::{
     GrowRootDiskRequest, NewWorkspaceIdentity, NewWorkspaceRequest, RenameWorkspaceRequest,
     SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
 };
-use crate::workspaces::{GitSetup, LocalSource, NewRepository, WorkspaceError};
+use crate::workspaces::{GitSetup, LocalCheckoutError, LocalSource, NewRepository, WorkspaceError};
 
 /// The id in a path. A string that can't be an id names no workspace.
 pub(super) fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
@@ -108,9 +108,10 @@ async fn direct_ssh_of_one(state: &AppState, record: &WorkspaceRecord) -> Direct
 }
 
 /// Whether direct SSH is on for one workspace; the error says why it cannot be known.
-async fn direct_ssh_on(state: &AppState, record: WorkspaceRecord) -> Result<bool, String> {
+async fn direct_ssh_on(state: &AppState, record: WorkspaceRecord) -> Result<bool, WorkspaceError> {
     let d = direct_ssh_of_one(state, &record).await;
-    d.unreadable.map_or(Ok(d.on), Err)
+    d.unreadable
+        .map_or(Ok(d.on), |reason| Err(WorkspaceError::Conflict(reason)))
 }
 
 /// The workspaces as the API shows them.
@@ -411,7 +412,7 @@ pub(crate) async fn create_workspace(
     paths.sort();
     paths.dedup();
     let service = state.workspaces.clone();
-    let locals: BTreeMap<String, Result<LocalSource, String>> = blocking(move || {
+    let locals: BTreeMap<String, Result<LocalSource, LocalCheckoutError>> = blocking(move || {
         Ok(paths
             .into_iter()
             .map(|p| {
@@ -728,7 +729,7 @@ pub(crate) async fn attach_workspace(
                     )
                     .into());
                 }
-                Err(reason) => return Err(WorkspaceError::Conflict(reason).into()),
+                Err(refused) => return Err(refused.into()),
             }
         }
     }

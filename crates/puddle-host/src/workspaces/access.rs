@@ -13,6 +13,8 @@ use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_types::{Problem, SessionUser, WorkspaceId};
 
+use crate::op_error::OpError;
+use crate::settings_read::SettingsReadError;
 use crate::ssh_config::ssh_host;
 use crate::ssh_target::{ReportingTarget, report_no_endpoint};
 
@@ -49,43 +51,39 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn desktop_target(
         &self,
         record: &WorkspaceRecord,
-    ) -> Result<DesktopTarget, String> {
+    ) -> Result<DesktopTarget, OpError> {
         let name = &record.id;
         match self.direct_ssh_setting(name) {
             Ok(true) => {}
             Ok(false) => {
-                return Err("direct SSH is off for this workspace; allow it first".to_owned());
+                return Err(OpError::DirectSshOff);
             }
             Err(reason) => {
                 tracing::warn!(workspace = %name, %reason, "direct SSH stays off: the settings cannot be read");
-                return Err(format!(
-                    "the settings cannot be read ({reason}); direct SSH counts as off until they can"
-                ));
+                return Err(OpError::DirectSshUnknown(reason));
             }
         }
         let live = self.inner.live.lock().await;
         let entry = live.get(name);
-        let Some(endpoint) = entry
-            .and_then(|e| e.ssh.as_ref())
-            .map(|ssh| ssh.endpoint().path().to_path_buf())
-        else {
-            return Err(format!(
-                "direct SSH has no endpoint in {name}; restart the workspace to try again"
-            ));
+        // A running workspace with direct SSH on has both; the entry has neither before its start
+        // finished or after its stop began, and then there is nothing to name.
+        let (Some(endpoint), Some(guest)) = (
+            entry
+                .and_then(|e| e.ssh.as_ref())
+                .map(|ssh| ssh.endpoint().path().to_path_buf()),
+            entry.and_then(|e| e.guest.as_ref()),
+        ) else {
+            return Err(OpError::NoEndpoint(name.clone()));
         };
-        let guest = entry.and_then(|e| e.guest.as_ref());
-        let user = guest.map_or(SessionUser::Root, |g| g.session_user);
-        let open = match guest {
-            Some(guest) => Self::open_target(record, guest),
-            None => return Err(format!("{name} is not running; start it first")),
-        };
+        let user = guest.session_user;
+        let open = Self::open_target(record, guest);
         let key = problem_key("ssh", name);
         self.inner
             .ssh
             .publish(name, &endpoint, user)
             .map_err(|reason| {
                 self.ssh_not_usable(name, &reason);
-                format!("direct SSH is on but the ssh config could not be written: {reason}")
+                OpError::SshEntry(reason)
             })?;
         self.inner.problems.clear(&key);
         Ok(DesktopTarget {
@@ -145,7 +143,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let read = || {
             let global = crate::settings_read::global(settings)?;
             let own = crate::settings_read::workspace(settings, name)?;
-            Ok::<_, String>(resolve(&global, Some(&own)).reconnection_grace.value)
+            Ok::<_, SettingsReadError>(resolve(&global, Some(&own)).reconnection_grace.value)
         };
         match read() {
             Ok(grace) => grace.secs(),
@@ -206,14 +204,17 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// What `name`'s settings say about its window, or why they cannot be read.
-    pub(super) fn window_settings(&self, name: &WorkspaceId) -> Result<Effective, String> {
+    pub(super) fn window_settings(
+        &self,
+        name: &WorkspaceId,
+    ) -> Result<Effective, SettingsReadError> {
         let settings = self.inner.settings.as_ref();
         let global = crate::settings_read::global(settings)?;
         let own = crate::settings_read::workspace(settings, name)?;
         Ok(resolve(&global, Some(&own)))
     }
 
-    pub(super) fn direct_ssh_setting(&self, name: &WorkspaceId) -> Result<bool, String> {
+    pub(super) fn direct_ssh_setting(&self, name: &WorkspaceId) -> Result<bool, SettingsReadError> {
         let settings = self.inner.settings.as_ref();
         let global = crate::settings_read::global(settings)?;
         let own = crate::settings_read::workspace(settings, name)?;
@@ -292,7 +293,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// Raises the problem that direct SSH is on for `name` and cannot be used.
-    pub(super) fn ssh_not_usable(&self, name: &WorkspaceId, reason: &str) {
+    pub(super) fn ssh_not_usable(&self, name: &WorkspaceId, reason: &dyn std::fmt::Display) {
         tracing::warn!(workspace = %name, %reason, "direct SSH is on but not usable");
         self.inner.problems.raise(
             Problem::new(
@@ -427,8 +428,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         record: &WorkspaceRecord,
         remove: bool,
         created_volume: bool,
-        reason: String,
-    ) -> String {
+        reason: OpError,
+    ) -> OpError {
         let inner = &self.inner;
         let mut leftovers = Vec::new();
         let name = &record.id;

@@ -45,6 +45,7 @@ mod request_rules;
 mod rows;
 mod sets;
 mod shell_init;
+mod ssh_agent;
 pub(crate) mod users;
 
 use audit::{append, append_for, appended_since, audit_head};
@@ -61,6 +62,7 @@ pub use learned::LearnedRow;
 pub use ports::PinnedPort;
 pub use request_rules::{MAX_REQUEST_RULES, NewRequestRule, RequestRule};
 pub use sets::{RuleSetEntryInfo, RuleSetInfo, SystemHost, SystemPlan, parse_rule_set};
+pub use ssh_agent::{MAX_SSH_AGENT_HOSTS, MAX_SSH_AGENT_KEYS, SshAgentHost};
 pub use users::WorkspaceOwners;
 
 /// Tunable limits. The defaults are the spec's *(default)* values.

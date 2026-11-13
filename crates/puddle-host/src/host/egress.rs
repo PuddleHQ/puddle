@@ -12,6 +12,7 @@ use puddle_netpolicy::{
     CompanySignals, NetPolicy, NoSignals, PkiDistributionPoints, PuddleEndpoints,
 };
 use puddle_ports::Ports;
+use puddle_proxy::ssh_agent::SshAgents;
 use puddle_proxy::{
     GitSsh, GitSshAccounts, GitSshHttps, Proxy, TcpPortProbe, Terminations, Upstream,
 };
@@ -301,7 +302,11 @@ impl Egress {
                 .port_probe
                 .clone()
                 .unwrap_or_else(|| Arc::new(TcpPortProbe::default())),
-        );
+        )
+        // On for no host until the user turns it on for one; the hosts are each workspace's.
+        .with_ssh_agent(Arc::new(SshAgents::new(Arc::new(
+            crate::ssh_agent::SettingsAgent::new(Some(Arc::clone(settings))),
+        ))));
         if let Some(resolver) = &options.resolver {
             proxy = proxy.with_resolver(Arc::clone(resolver));
         }

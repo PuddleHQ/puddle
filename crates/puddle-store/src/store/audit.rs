@@ -167,6 +167,7 @@ impl Store {
             super::interception::delete_workspace_rows(tx, workspace)?;
             super::learned::delete_workspace_rows(tx, workspace)?;
             super::request_rules::delete_workspace_rows(tx, workspace, now, fx)?;
+            super::ssh_agent::delete_workspace_rows(tx, workspace)?;
             Ok(WorkspaceDeletion {
                 rules_deleted: rules.len() as u64,
                 pending_expired: expired,

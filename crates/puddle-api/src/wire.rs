@@ -40,6 +40,7 @@ mod rule_sets;
 mod rules;
 mod settings_view;
 mod shell_init;
+mod ssh_agent;
 mod start_folder;
 mod workspaces;
 
@@ -115,6 +116,7 @@ pub use settings_view::{
     UiPrefs, VsCodeServer, WorkspaceSettingsRequest, WorkspaceSettingsView,
 };
 pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};
+pub use ssh_agent::{SshAgentHostRequest, SshAgentHostView, SshAgentView};
 pub use start_folder::{StartFolderRequest, StartFolderSet};
 
 pub use workspaces::{

@@ -193,8 +193,6 @@ impl HostEndpoint {
         let seen = Arc::clone(&lines);
         let (stop, mut stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
-            // The root's directory goes away with its last holder.
-            let _root = root;
             loop {
                 let accepted = tokio::select! {
                     _ = &mut stopped => break,
@@ -209,6 +207,8 @@ impl HostEndpoint {
                     .unwrap_or_else(PoisonError::into_inner)
                     .push(line);
             }
+            // The root's directory goes away with its last holder.
+            drop(root);
         });
         Ok(Self {
             path,

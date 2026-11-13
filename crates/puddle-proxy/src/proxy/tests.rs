@@ -2,14 +2,20 @@
 //! Decision, address and refusal logic without a guest stream. The full path over a route is in
 //! `tests/route.rs`.
 
-use std::net::IpAddr;
+use std::io;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use puddle_types::{NullSink, PendingId, RuleId, RuleSetId};
-use tokio::net::TcpListener;
+use puddle_agent_proto::host::HostConfig;
+use puddle_netpolicy::LocalCategory;
+use puddle_types::{NullSink, PatternKind, PendingId, PendingOutcome, RuleId, RuleSetId};
+use tokio::net::{TcpListener, TcpStream};
 
+use super::forward::{abort, forward_one_request};
 use super::*;
+use crate::destination::AddressVerdict;
 use crate::testing::{AnyAddress, StaticPolicy, StaticResolver};
+use crate::token_gate;
 
 fn workspace() -> WorkspaceId {
     WorkspaceId::new("box").unwrap()

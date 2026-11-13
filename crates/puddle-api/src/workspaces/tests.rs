@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use puddle_store::IdentityId;
+
+use super::repositories::draw_entry_id;
 use super::*;
+use crate::checkouts::AddRepository;
 
 struct SecretLogin(String);
 

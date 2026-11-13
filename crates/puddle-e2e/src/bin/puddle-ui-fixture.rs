@@ -9,10 +9,19 @@
 
 use std::process::ExitCode;
 
-use puddle_e2e::ui_fixture::cli;
+use puddle_e2e::ui_fixture::{cli, stack};
+
+fn main() -> ExitCode {
+    // Before the runtime: a too small main stack is named here instead of aborting inside start-up.
+    if let Err(message) = stack::check_main_thread() {
+        eprintln!("puddle-ui-fixture: {message}");
+        return ExitCode::from(2);
+    }
+    serve()
+}
 
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn serve() -> ExitCode {
     match cli::run(std::env::args().skip(1)).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {

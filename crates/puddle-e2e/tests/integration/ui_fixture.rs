@@ -207,6 +207,33 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
     );
 }
 
+/// The binary's start-up runs on its main thread inside `#[tokio::main]`, whose stack `build.rs`
+/// links at 8 MiB on Windows (the default 1 MiB overflowed in a debug build, intermittently).
+/// Here each built-in scenario starts the same way on a thread with half of that, so the binary
+/// keeps at least twice what its start-up needs and a scenario that grows shows up here, not as an
+/// abort in the UI tests.
+#[test]
+fn every_built_in_scenario_starts_on_half_the_programs_main_thread_stack() {
+    let stack = puddle_e2e::ui_fixture::stack::linked_stack_bytes() / 2;
+    for name in built_in_names() {
+        std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn(move || {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        let run = start(name).await;
+                        run.fixture.shutdown().await;
+                    });
+            })
+            .unwrap()
+            .join()
+            .unwrap_or_else(|_| panic!("scenario {name} did not start on {stack} bytes of stack"));
+    }
+}
+
 #[tokio::test]
 async fn the_default_scenario_is_the_one_pending_request_the_ui_gates_count_on() {
     let run = start("default").await;

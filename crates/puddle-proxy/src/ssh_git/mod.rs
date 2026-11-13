@@ -30,7 +30,6 @@ mod pkt;
 mod session;
 
 use std::fmt;
-use std::net::IpAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -39,6 +38,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::destination::BoxFuture;
 use crate::proxy::WorkspaceHandler;
+use crate::terminate::Outcome;
 pub use grammar::GitService;
 pub(crate) use grammar::{GitHost, PathForm, built_in, built_in_names};
 pub use host_keys::{GitSshHostKeys, GitSshKeyError};
@@ -124,21 +124,14 @@ fn no_identity(host: &Host) -> GitSshGreeting {
 #[derive(Debug)]
 pub struct GitSshContext {
     pub(crate) handler: WorkspaceHandler,
-    reached: Mutex<Option<Reached>>,
-}
-
-/// Where an upstream connection went, for the connection's record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Reached {
-    pub(crate) ip: Option<IpAddr>,
-    pub(crate) hop: Option<String>,
+    legs: Mutex<Vec<Outcome>>,
 }
 
 impl GitSshContext {
     pub(crate) fn new(handler: WorkspaceHandler) -> Self {
         Self {
             handler,
-            reached: Mutex::new(None),
+            legs: Mutex::new(Vec::new()),
         }
     }
 
@@ -148,20 +141,31 @@ impl GitSshContext {
         &self.handler.workspace
     }
 
-    /// Keeps the first place an upstream connection reached.
-    pub(crate) fn reached(&self, reached: Reached) {
-        self.reached
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get_or_insert(reached);
+    /// Keeps what an upstream's HTTPS leg did, for the connection's record. A connection runs
+    /// at most [`MAX_LEGS`] legs the record reads.
+    pub(crate) fn leg_closed(&self, outcome: Outcome) {
+        keep_leg(
+            &mut self.legs.lock().unwrap_or_else(PoisonError::into_inner),
+            outcome,
+        );
     }
 
-    /// The first place an upstream connection reached, if one did.
-    pub(crate) fn first_reached(&self) -> Option<Reached> {
-        self.reached
+    /// The outcomes of the HTTPS legs that have closed, in the order they closed.
+    pub(crate) fn legs(&self) -> Vec<Outcome> {
+        self.legs
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+}
+
+/// How many closed legs a connection's record keeps.
+const MAX_LEGS: usize = 64;
+
+/// Adds `outcome` to `legs` unless [`MAX_LEGS`] are kept already.
+fn keep_leg(legs: &mut Vec<Outcome>, outcome: Outcome) {
+    if legs.len() < MAX_LEGS {
+        legs.push(outcome);
     }
 }
 

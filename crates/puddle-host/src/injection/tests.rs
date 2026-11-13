@@ -161,7 +161,7 @@ fn a_workspace_warns_about_a_foreign_credential_by_its_setting_read_each_time() 
 }
 
 #[tokio::test]
-async fn git_over_ssh_off_makes_no_host_keys_and_serves_no_ssh_names() {
+async fn git_over_ssh_off_makes_no_host_keys_but_still_names_the_ssh_hosts_so_they_are_refused() {
     let store = store();
     let (injection, terminations) = injection(&store);
     let ws = workspace("alpha");
@@ -171,7 +171,7 @@ async fn git_over_ssh_off_makes_no_host_keys_and_serves_no_ssh_names() {
     let termination = terminations.termination(&ws).unwrap();
     assert!(termination.git_ssh_keys().is_none());
     assert!(
-        !termination
+        termination
             .git_ssh_hosts()
             .contains(&Host::parse_normalised("git.corp.example").unwrap())
     );

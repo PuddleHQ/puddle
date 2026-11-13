@@ -690,6 +690,15 @@ impl StreamHandler for WorkspaceHandler {
     }
 }
 
+impl Proxy {
+    /// Tells the guest watcher that an agent session of `workspace` ended.
+    pub(crate) fn session_ended(&self, workspace: &WorkspaceId) {
+        if let Some(watcher) = &self.guest {
+            watcher.session_ended(workspace);
+        }
+    }
+}
+
 impl WorkspaceHandler {
     /// Audits UDP the guest's capture rules refused: a `blocked` record with reason
     /// `udp_unsupported`, never a pending row (nothing can approve it). The report is the guest's

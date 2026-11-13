@@ -18,17 +18,30 @@
 #     failure on a pull request (the policy of the vm-windows workflow);
 #   - uninstalling removes the install folder, the Start menu entry and the registry keys, and
 #     leaves no file outside Puddle's own data folders (listed below).
+# With -BaselineMsi it tests instead the upgrade a user makes: from an older build (the last
+# release, ci/fetch-baseline-msi.sh) to this one, with a workspace that holds files:
+#   - the older build makes a workspace from the stock image and writes files to its volume, and
+#     the workspace is stopped, as a user leaves it before an upgrade;
+#   - after the upgrade the newer build lists the workspace under its id and name, its system check
+#     passes against the older runtime's data (msb's home included), the workspace starts, and its
+#     files are there byte for byte, read through the newer runtime;
+#   - the workspace is deleted and the newer build uninstalled.
+# The steps before the upgrade drive the older build's API, so they use only the calls both have.
 # Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>]
+#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>]
 #        pwsh ci/msi-install-test.ps1 -SelfTest      (the helpers' own checks; needs no MSI)
 # Without -UpgradeMsi the upgrade step is skipped and the first MSI is the one uninstalled.
 # Where the machine has no usable hypervisor, a failing `virtualization` or `hypervisor` check is
 # reported but does not fail the test (it says nothing about the installer), the boot steps are
-# skipped and say so; every other failing check fails.
+# skipped and say so (with -BaselineMsi that is the whole test); every other failing check fails.
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Run')][string]$Msi,
-    [Parameter(ParameterSetName = 'Run')][string]$UpgradeMsi = '',
-    [Parameter(ParameterSetName = 'Run')][string]$LogDir = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
+    [Parameter(Mandatory = $true, ParameterSetName = 'CrossVersion')][string]$BaselineMsi,
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'CrossVersion')][string]$UpgradeMsi = '',
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'CrossVersion')][string]$LogDir = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')][switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
@@ -295,51 +308,168 @@ function Get-WorkspaceNow($Conn, [string]$Id) {
     (Invoke-PuddleApi $Conn 'Get' '/api/workspaces').workspaces | Where-Object { $_.id -eq $Id }
 }
 
+# Waits until workspace $Id runs and is not busy, and returns it. A workspace that is made or
+# stopped and not busy is started once, as the app's own button does; crashed or volume_missing
+# fails at once.
+function Wait-WorkspaceRunning($Conn, [string]$Id, [string]$Name, [int]$TimeoutSec) {
+    # A hashtable, so the probe's change is seen by its next call (a scriptblock's own variables
+    # are new each time).
+    $state = @{ Started = $false }
+    Wait-Until "workspace $Name ($Id) is not running" $TimeoutSec {
+        $w = Get-WorkspaceNow $Conn $Id
+        if ($null -eq $w) { Fail "workspace $Name ($Id) vanished while it was being made or started" }
+        if ($w.status -in @('crashed', 'volume_missing')) { Fail "workspace $Name ($Id) is $($w.status)" }
+        if ($w.status -eq 'running' -and -not $w.busy) { return $w }
+        if (-not $state.Started -and -not $w.busy -and $w.status -in @('created', 'stopped')) {
+            $state.Started = $true
+            Invoke-PuddleApi $Conn 'Post' "/api/workspaces/$Id/start" | Out-Null
+        }
+    }
+}
+
+function Stop-Workspace($Conn, [string]$Id, [string]$Name) {
+    Invoke-PuddleApi $Conn 'Post' "/api/workspaces/$Id/stop" | Out-Null
+    Wait-Until "workspace $Name ($Id) did not stop" 120 {
+        $w = Get-WorkspaceNow $Conn $Id
+        $null -ne $w -and -not $w.busy -and $w.status -eq 'stopped'
+    } | Out-Null
+}
+
+# Deletes a stopped workspace and checks that nothing of it runs or stays in the runtime.
+function Remove-Workspace($Conn, [string]$Id, [string]$Name) {
+    Invoke-PuddleApi $Conn 'Delete' "/api/workspaces/$Id" @{ confirm = $true } | Out-Null
+    Wait-Until "workspace $Name ($Id) is still listed after the delete" 120 { $null -eq (Get-WorkspaceNow $Conn $Id) } | Out-Null
+    Wait-Until 'a runtime process is still running after the workspace was deleted' 60 {
+        @(Get-RuntimeProcesses).Count -eq 0
+    } | Out-Null
+    $left = Invoke-InstalledMsb @('ls')
+    Expect ($left.Output -notmatch [regex]::Escape($Id)) "msb still lists $Id after the delete: $($left.Output)"
+    Write-Host "workspace $Name ($Id) stopped and deleted; no runtime process left"
+}
+
+# Runs a shell command in workspace $Id through the installed msb and returns its output; fails
+# naming $What when it exits non-zero.
+function Invoke-InWorkspace([string]$Id, [string]$Command, [string]$What) {
+    $ran = Invoke-InstalledMsb @('exec', $Id, '--', 'sh', '-c', $Command)
+    Expect ($ran.Code -eq 0) "${What}: msb exec in $Id exited with $($ran.Code): $($ran.Output)"
+    $ran.Output
+}
+
 # A workspace from the stock image, made, run in, stopped and deleted through the installed
 # program's API, the way the app's own buttons do. Puddle picks the id; the create's answer
 # carries it, and every later call and the runtime's sandbox go by it.
 function Test-WorkspaceLifecycle($Conn) {
     $name = 'msi-test'
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    $made = Invoke-PuddleApi $Conn 'Post' '/api/workspaces' @{ name = $name }
-    $wsId = $made.id
-    Expect ($wsId -cmatch '^[a-z][0-9a-z]{7}$') "the create answered no generated id: $($made | ConvertTo-Json -Compress)"
-    Expect ($made.name -eq $name) "the create answered the name $($made.name), not $name"
-    $started = $false
-    $running = Wait-Until "workspace $name ($wsId) is not running" $CreateBudgetSec {
-        $w = Get-WorkspaceNow $Conn $wsId
-        if ($null -eq $w) { Fail "workspace $name ($wsId) vanished while it was being made" }
-        if ($w.status -in @('crashed', 'volume_missing')) { Fail "workspace $name ($wsId) is $($w.status)" }
-        if ($w.status -eq 'running' -and -not $w.busy) { return $w }
-        # A create that ends with the workspace made but down is started once, as the app does.
-        if (-not $started -and -not $w.busy -and $w.status -in @('created', 'stopped')) {
-            $started = $true
-            Invoke-PuddleApi $Conn 'Post' "/api/workspaces/$wsId/start" | Out-Null
-        }
-    }
+    $wsId = New-Workspace $Conn $name
+    $running = Wait-WorkspaceRunning $Conn $wsId $name $CreateBudgetSec
     Write-Host "workspace $name ($wsId) running $([math]::Round($clock.Elapsed.TotalSeconds)) s after the create (image: $($running.image))"
     Expect ($clock.Elapsed.TotalSeconds -le $CreateBudgetSec) "the create took over $CreateBudgetSec s"
 
     $token = [guid]::NewGuid().ToString()
-    $ran = Invoke-InstalledMsb @('exec', $wsId, '--', 'sh', '-c', "echo $token; . /etc/os-release; echo `$ID")
-    Expect ($ran.Code -eq 0) "msb exec in $wsId exited with $($ran.Code): $($ran.Output)"
-    Expect ($ran.Output -match [regex]::Escape($token)) "the command in $wsId did not run: $($ran.Output)"
-    Expect ($ran.Output -match '(?m)^debian\s*$') "the workspace is not the stock debian image: $($ran.Output)"
+    $out = Invoke-InWorkspace $wsId "echo $token; . /etc/os-release; echo `$ID" 'the command'
+    Expect ($out -match [regex]::Escape($token)) "the command in $wsId did not run: $out"
+    Expect ($out -match '(?m)^debian\s*$') "the workspace is not the stock debian image: $out"
     Write-Host "ran a command inside $wsId"
 
-    Invoke-PuddleApi $Conn 'Post' "/api/workspaces/$wsId/stop" | Out-Null
-    Wait-Until "workspace $name ($wsId) did not stop" 120 {
-        $w = Get-WorkspaceNow $Conn $wsId
-        $null -ne $w -and -not $w.busy -and $w.status -eq 'stopped'
-    } | Out-Null
-    Invoke-PuddleApi $Conn 'Delete' "/api/workspaces/$wsId" @{ confirm = $true } | Out-Null
-    Wait-Until "workspace $name ($wsId) is still listed after the delete" 120 { $null -eq (Get-WorkspaceNow $Conn $wsId) } | Out-Null
-    Wait-Until 'a runtime process is still running after the workspace was deleted' 60 {
-        @(Get-RuntimeProcesses).Count -eq 0
-    } | Out-Null
-    $left = Invoke-InstalledMsb @('ls')
-    Expect ($left.Output -notmatch [regex]::Escape($wsId)) "msb still lists $wsId after the delete: $($left.Output)"
-    Write-Host "workspace $name ($wsId) stopped and deleted; no runtime process left"
+    Stop-Workspace $Conn $wsId $name
+    Remove-Workspace $Conn $wsId $name
+}
+
+# Makes a workspace from the stock image over the API and returns the id Puddle gave it.
+function New-Workspace($Conn, [string]$Name) {
+    $made = Invoke-PuddleApi $Conn 'Post' '/api/workspaces' @{ name = $Name }
+    Expect ($made.id -cmatch '^[a-z][0-9a-z]{7}$') "the create answered no generated id: $($made | ConvertTo-Json -Compress)"
+    Expect ($made.name -eq $Name) "the create answered the name $($made.name), not $Name"
+    $made.id
+}
+
+# The files the upgrade must keep, in the folder $Dir of the workspace's volume: a token the
+# test chose and 4 MiB of random bytes. The script fails unless $Dir's parent is a mount (the
+# volume, not the sandbox's own disk), and prints the token and the bytes' SHA-256.
+function Get-WriteFilesScript([string]$VolumeRoot, [string]$Token) {
+    $dir = "$VolumeRoot/upgrade-check"
+    "set -e; grep -q ' $VolumeRoot ' /proc/mounts || { echo '$VolumeRoot is not a mount'; exit 1; }; " +
+    "mkdir -p $dir; echo $Token > $dir/token.txt; head -c 4194304 /dev/urandom > $dir/random.bin; sync; " +
+    "cat $dir/token.txt; sha256sum $dir/random.bin"
+}
+
+# Reads back what Get-WriteFilesScript wrote.
+function Get-ReadFilesScript([string]$VolumeRoot) {
+    $dir = "$VolumeRoot/upgrade-check"
+    "set -e; cat $dir/token.txt; sha256sum $dir/random.bin"
+}
+
+# The token and the SHA-256 from the output of either script, or $null for what is missing.
+function Read-FilesReport([string]$Output) {
+    $lines = @($Output -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $sha = $lines | Where-Object { $_ -match '^([0-9a-f]{64})\s' } | ForEach-Object { $Matches[1] } | Select-Object -First 1
+    $token = $lines | Where-Object { $_ -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' } | Select-Object -First 1
+    [pscustomobject]@{ Token = $token; Sha256 = $sha }
+}
+
+# Fails unless the package version $To is newer than $From: Windows Installer only upgrades to a
+# higher version, so anything else would test a downgrade or a reinstall.
+function Assert-NewerVersion([string]$From, [string]$To) {
+    Expect ([version]$To -gt [version]$From) "the upgrade goes from $From to $To, which is not newer"
+}
+
+# The upgrade a user makes: from the older build $Baseline to $Upgrade, with a workspace that
+# holds files. $Policy is 'run' or 'skip' (no usable hypervisor: nothing here can run).
+function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$Policy) {
+    if ($Policy -ne 'run') {
+        Write-Host '::warning title=upgrade test skipped::the upgrade with a workspace needs a running workspace, and this machine boots none'
+        return
+    }
+    Invoke-Msiexec @('/i', "`"$Baseline`"") 'msi-baseline-install.log'
+    $first = Assert-InstalledLayout
+    Write-Host "installed the baseline, version $($first.Version)"
+
+    Step 'the older build makes a workspace and writes files to its volume, then stops it'
+    $name = 'upgrade-test'
+    $token = [guid]::NewGuid().ToString()
+    $conn = Start-Installed
+    try {
+        $wsId = New-Workspace $conn $name
+        Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
+        $volume = "/workspaces/$wsId"
+        $wrote = Read-FilesReport (Invoke-InWorkspace $wsId (Get-WriteFilesScript $volume $token) 'writing the files')
+        Expect ($wrote.Token -eq $token -and $wrote.Sha256) "writing the files in $wsId printed no token or checksum"
+        Write-Host "wrote $volume/upgrade-check (random.bin sha256 $($wrote.Sha256))"
+        Stop-Workspace $conn $wsId $name
+    } finally {
+        Stop-Installed
+    }
+
+    Step 'upgrade to this build'
+    Invoke-Msiexec @('/i', "`"$Upgrade`"") 'msi-upgrade.log'
+    $second = Assert-InstalledLayout
+    Assert-NewerVersion $first.Version $second.Version
+    Write-Host "upgraded $($first.Version) to $($second.Version)"
+    Assert-InstalledWorks $Policy
+
+    Step 'the newer build lists the workspace, starts it, and its files are there'
+    $conn = Start-Installed
+    try {
+        $w = Get-WorkspaceNow $conn $wsId
+        Expect ($null -ne $w) "the upgraded program does not list workspace ${wsId}: $((Invoke-PuddleApi $conn 'Get' '/api/workspaces') | ConvertTo-Json -Depth 4 -Compress)"
+        Expect ($w.name -eq $name) "workspace $wsId is called '$($w.name)' after the upgrade, not '$name'"
+        Expect ($w.status -eq 'stopped') "workspace $wsId is '$($w.status)' after the upgrade, not stopped"
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
+        Write-Host "workspace $name ($wsId) running $([math]::Round($clock.Elapsed.TotalSeconds)) s after the start"
+        $read = Read-FilesReport (Invoke-InWorkspace $wsId (Get-ReadFilesScript $volume) 'reading the files')
+        Expect ($read.Token -eq $token) "the token file in $wsId changed or is gone after the upgrade: '$($read.Token)', expected $token"
+        Expect ($read.Sha256 -eq $wrote.Sha256) "random.bin in $wsId changed after the upgrade: sha256 $($read.Sha256), was $($wrote.Sha256)"
+        Write-Host "the files in $wsId are intact after the upgrade"
+        Stop-Workspace $conn $wsId $name
+        Remove-Workspace $conn $wsId $name
+    } finally {
+        Stop-Installed
+    }
+
+    Invoke-Msiexec @('/x', "`"$Upgrade`"") 'msi-uninstall.log'
+    Expect (-not (Test-Path -LiteralPath $InstallDir)) "$InstallDir is still there after the uninstall"
 }
 
 if ($SelfTest) {
@@ -376,13 +506,39 @@ if ($SelfTest) {
     $calls = 0
     Check 'Wait-Until polls until the probe succeeds' ((Wait-Until 'x' 5 { $script:calls++; $script:calls -ge 3 } 10) -eq $true -and $calls -eq 3)
     Check 'Wait-Until gives up and says what it waited for' (Throws { Wait-Until 'the thing' 1 { $false } 100 } 'the thing \(gave up after 1 s\)')
+    $sum = 'a' * 64
+    $files = Read-FilesReport "f81d4fae-7dec-11d0-a765-00a0c91e6bf6`r`n$sum  /workspaces/w1/upgrade-check/random.bin`n"
+    Check 'the files report gives the token' ($files.Token -eq 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6')
+    Check 'the files report gives the checksum' ($files.Sha256 -eq $sum)
+    $none = Read-FilesReport "cat: /workspaces/w1/upgrade-check/token.txt: No such file or directory`n"
+    Check 'a files report without them gives neither' ($null -eq $none.Token -and $null -eq $none.Sha256)
+    $write = Get-WriteFilesScript '/workspaces/w1' 'tok'
+    Check 'the write script refuses a folder that is not a mount' ($write -match [regex]::Escape("grep -q ' /workspaces/w1 ' /proc/mounts"))
+    Check 'the write script writes where the read script reads' (($write -match [regex]::Escape('/workspaces/w1/upgrade-check/random.bin')) -and ((Get-ReadFilesScript '/workspaces/w1') -match [regex]::Escape('sha256sum /workspaces/w1/upgrade-check/random.bin')))
+    # Wait-WorkspaceRunning against a fake API: made and down twice, then starting, then running.
+    $script:seen = @(
+        [pscustomobject]@{ status = 'created'; busy = $false }, [pscustomobject]@{ status = 'created'; busy = $false },
+        [pscustomobject]@{ status = 'starting'; busy = $true }, [pscustomobject]@{ status = 'running'; busy = $false; image = 'debian' })
+    $script:polls = 0
+    $script:starts = @()
+    function Get-WorkspaceNow($Conn, [string]$Id) { $script:seen[[math]::Min($script:polls++, $script:seen.Count - 1)] }
+    function Invoke-PuddleApi($Conn, [string]$Method, [string]$Path) { $script:starts += "$Method $Path" }
+    $ran = Wait-WorkspaceRunning $null 'w1' 'test' 10
+    Check 'a workspace made but down is started once and waited for' ($ran.status -eq 'running' -and ($script:starts -join ',') -eq 'Post /api/workspaces/w1/start')
+    $script:seen = @([pscustomobject]@{ status = 'volume_missing'; busy = $false })
+    $script:polls = 0
+    Check 'a workspace without its volume fails at once' (Throws { Wait-WorkspaceRunning $null 'w1' 'test' 10 } 'test \(w1\) is volume_missing')
+    Check 'a newer package version passes' (-not (Throws { Assert-NewerVersion '0.0.0' '0.0.1' } '.'))
+    Check 'the same version is not an upgrade' (Throws { Assert-NewerVersion '0.2.0' '0.2.0' } 'not newer')
+    Check 'versions compare as numbers' (Throws { Assert-NewerVersion '0.10.0' '0.9.1' } 'not newer')
     if ($failures -gt 0) { Fail "$failures self-test checks failed" }
     Write-Host 'self-test ok'
     return
 }
 
-Expect (Test-Path -LiteralPath $Msi) "no such MSI: $Msi"
-if ($UpgradeMsi) { Expect (Test-Path -LiteralPath $UpgradeMsi) "no such MSI: $UpgradeMsi" }
+foreach ($path in @($Msi, $BaselineMsi, $UpgradeMsi) | Where-Object { $_ }) {
+    Expect (Test-Path -LiteralPath $path) "no such MSI: $path"
+}
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 Expect (-not (Test-Path -LiteralPath $InstallDir)) "$InstallDir exists before the test: not a clean machine"
 Expect (-not (Test-Path -LiteralPath $DataDir)) "$DataDir exists before the test: not a clean machine"
@@ -404,8 +560,14 @@ if ($policy -eq 'skip') {
 }
 
 Step 'the package is per user'
-foreach ($path in @($Msi, $UpgradeMsi) | Where-Object { $_ }) {
+foreach ($path in @($Msi, $BaselineMsi, $UpgradeMsi) | Where-Object { $_ }) {
     Expect (Test-PerUserPackage $path) "$path is not a per-user package (needs no elevation, no ALLUSERS)"
+}
+
+if ($BaselineMsi) {
+    Test-UpgradeFromBaseline $BaselineMsi $UpgradeMsi $policy
+    Step 'ok'
+    return
 }
 
 Invoke-Msiexec @('/i', "`"$Msi`"") 'msi-install.log'

@@ -128,6 +128,26 @@ struct Entry {
     failed: BTreeMap<u16, Failed>,
 }
 
+/// Which workspaces' agent sessions ended, from [`Ports::agent_sessions_ended`].
+#[derive(Debug)]
+pub struct EndedSessions(tokio::sync::broadcast::Receiver<WorkspaceId>);
+
+impl EndedSessions {
+    /// The workspace of the next agent session that ended. A receiver that fell behind skips
+    /// to the oldest name still held; when the ports are gone it never returns.
+    pub async fn next(&mut self) -> WorkspaceId {
+        loop {
+            match self.0.recv().await {
+                Ok(workspace) => return workspace,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+    }
+}
+
 struct Active {
     host_port: u16,
     forward: Forward,
@@ -143,6 +163,8 @@ struct Inner {
     entries: Mutex<HashMap<WorkspaceId, Entry>>,
     /// Serialises the calls that change forwards, so two of them never race for one port.
     changing: tokio::sync::Mutex<()>,
+    /// The workspaces whose agent session ended, for whoever wants to check on the VM.
+    ended: tokio::sync::broadcast::Sender<WorkspaceId>,
 }
 
 /// The ports of every workspace. Cheap to clone; clones share everything.
@@ -187,6 +209,7 @@ impl Ports {
                 max_connections: MAX_CONNECTIONS,
                 entries: Mutex::new(HashMap::new()),
                 changing: tokio::sync::Mutex::new(()),
+                ended: tokio::sync::broadcast::channel(64).0,
             }),
         }
     }
@@ -203,6 +226,13 @@ impl Ports {
             None => unreachable!("with_connection_limit is for a fresh Ports"),
         }
         self
+    }
+
+    /// Says which workspace's agent session ended, each time one does. A receiver that falls
+    /// behind loses the oldest names; it is a hint to look, never the only way to find out.
+    #[must_use]
+    pub fn agent_sessions_ended(&self) -> EndedSessions {
+        EndedSessions(self.inner.ended.subscribe())
     }
 
     fn entries(&self) -> MutexGuard<'_, HashMap<WorkspaceId, Entry>> {
@@ -550,6 +580,11 @@ impl GuestWatcher for Ports {
             .send_replace(Some(link));
     }
 
+    fn session_ended(&self, workspace: &WorkspaceId) {
+        // No receiver is fine: nobody is watching.
+        let _ = self.inner.ended.send(workspace.clone());
+    }
+
     fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>) {
         let changed = {
             let mut entries = self.entries();
@@ -566,3 +601,6 @@ impl GuestWatcher for Ports {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

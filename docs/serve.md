@@ -264,6 +264,52 @@ domain (`ws.example.net` next to `puddle.example.org`) is safer, and the advice.
 certificates for these names are the proxy's job. A wildcard certificate is needed for them: without
 one the web apps and editors are not available in a browser, while the UI itself works.
 
+## Run as a Linux user service
+
+On Linux, run `puddle serve` as a systemd user unit. The unit runs under your own account, not as root.
+Create the unit file `~/.config/systemd/user/puddle-serve.service`:
+
+```ini
+[Unit]
+Description=Puddle server
+
+[Service]
+ExecStart=/path/to/puddle serve --config /path/to/serve.toml
+
+[Install]
+WantedBy=default.target
+```
+
+Then start it and enable it at boot:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now puddle-serve
+```
+
+A user's services stop when the user logs out, unless the account lingers. Enable lingering once for
+the account that runs Puddle:
+
+```sh
+loginctl enable-linger <user>
+```
+
+### Secrets need the OS keyring to be unlocked
+
+Secret values are kept in the operating system's credential store. On Linux, that store is a Secret
+Service provider, such as gnome-keyring. The provider must be running and unlocked. It starts locked
+after every boot, so unlock it again after each restart of the machine.
+
+- While the provider is missing or locked, a write of a secret fails with HTTP 503. The response says
+  the credential store is not available, and nothing is changed. The server still starts and serves
+  other requests.
+- A running `puddle serve` does not recover by itself. Installing or unlocking the provider after the
+  service started does not fix the 503 responses. Restart the service after you unlock the provider:
+
+  ```sh
+  systemctl --user restart puddle-serve
+  ```
+
 ## What is not a start-up option
 
 The config file holds no secrets and no tokens. The settings Puddle keeps in its store, such as the

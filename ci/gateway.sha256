@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The JetBrains Gateway release the Gateway attach test runs (crates/puddle-host/tests/vm_gateway_attach.rs):
 # `<version> <release asset> <sha256>`. ci/fetch-gateway.sh refuses a download that is not listed here or does
 # not match. The value is the SHA-256 JetBrains publishes beside the asset

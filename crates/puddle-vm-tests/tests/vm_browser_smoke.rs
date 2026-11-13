@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Smoke for the VM tier's browser client: headless Chromium and node each load something over a
 //! real loopback connection and read a result back. It boots no VM: the server is the test's own
 //! (the browser editor tests put the host's front there). Linux only, because only `vm-linux`

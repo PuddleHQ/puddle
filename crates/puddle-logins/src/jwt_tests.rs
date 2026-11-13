@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tests of a field whose stand-in is a JWT ([`StandInKind::Jwt`]): a refresh makes a new stand-in, and
 //! the slot keeps the last few older ones registered.
 

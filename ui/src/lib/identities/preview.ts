@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Which identity a new workspace's repository will get, worked out in the form before anything is
 // sent. It mirrors the host's choice (`choose` in the store): the identity you picked, else one that
 // names the owner, else one that covers the rest of the host (one already on the workspace's list

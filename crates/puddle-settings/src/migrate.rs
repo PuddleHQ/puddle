@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Schema versions and the migration runner.
 //!
 //! A document's `schema_version` names the shape it was written in. Version 1 is the first

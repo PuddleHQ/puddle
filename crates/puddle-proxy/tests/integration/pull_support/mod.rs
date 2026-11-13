@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Local servers and a raw HTTP client for the pull-proxy tests.
 #![expect(
     clippy::unwrap_used,

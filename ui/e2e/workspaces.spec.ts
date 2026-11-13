@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The workspace screens against the real API on the fixture backend (fake workspace service).
 // Every test starts from the `lived-in` scenario on its worker's own backend: web-shop running,
 // docs-site stopped with unsaved work, data-tools never started, and requests waiting for each.

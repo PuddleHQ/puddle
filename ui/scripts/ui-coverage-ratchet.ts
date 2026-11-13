@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The UI's coverage ratchet (docs/STANDARDS.md, "Coverage"): ui/coverage-baseline.json holds the best
 // lines, branches, functions and statements percentages reached so far (rounded down to 0.1), and
 // vite.config.ts uses them as vitest's thresholds, so a run below any of them fails in `npm test`.

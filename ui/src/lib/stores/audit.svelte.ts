@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The activity screen's state: the audit records that match the filter, newest first, read a page
 // at a time from the API, and the live tail.
 //

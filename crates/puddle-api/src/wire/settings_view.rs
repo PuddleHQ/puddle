@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settings on the wire (puddle-settings).
 
 use puddle_settings as settings;

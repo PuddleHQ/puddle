@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Edges of the request-path matching that the unit tests next to the code do not pin down: the
 //! exact readings a request target has, the limits of a path pattern and of a method list, and
 //! that percent-decoding stops. Each assertion is the result a caller sees at the public API.

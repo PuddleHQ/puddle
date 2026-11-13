@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Linux gates on every push to develop/main, every pull request and every merge queue run
 # (docs/STANDARDS.md, "CI").
 # Four jobs run side by side so a run takes about as long as the longest: the Rust tests with coverage,

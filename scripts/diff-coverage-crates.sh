@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Names the crates whose Rust files a change touches, for `scripts/check.sh diff-coverage-fast`.
 # usage: diff-coverage-crates.sh <base commit>
 # Prints one package name per line (sorted), measuring the working tree against the base the way the

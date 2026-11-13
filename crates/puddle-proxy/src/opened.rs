@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A guest connection whose `CONNECT` head was read, on its way to a splice or a termination.
 
 use std::io;

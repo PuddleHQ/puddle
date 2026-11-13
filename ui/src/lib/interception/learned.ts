@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The hosts Puddle stopped decrypting because a tool in a workspace refused Puddle's certificate:
 // the event that announces one, the calls that decrypt a host again or make it permanent, and the
 // notice that suggests making it permanent once a tool keeps refusing.

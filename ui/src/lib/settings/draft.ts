@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The edits on the Settings screen that are not saved yet. The screen shows a stored value with
 // the draft laid over it, and Save sends the draft as one change to the settings document.
 import type { LocalCategory } from "#lib/decision/local.ts";

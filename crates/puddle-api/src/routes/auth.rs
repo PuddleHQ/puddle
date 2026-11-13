@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Browser sign-in: the first visitor, passwords, the session cookie, devices and the sign-in
 //! methods. See [`crate::signin`] for how a session works.
 //!

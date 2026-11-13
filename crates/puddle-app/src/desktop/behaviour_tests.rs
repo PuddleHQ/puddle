@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #![expect(
     clippy::unwrap_used,
     reason = "helpers outside #[test] fns run only in tests; a panic is how a test fails"

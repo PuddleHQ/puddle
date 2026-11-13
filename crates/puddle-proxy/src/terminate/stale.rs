@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Stale stand-ins: values that are shaped like one of Puddle's stand-ins but that this
 //! workspace's registry does not hold.
 //!

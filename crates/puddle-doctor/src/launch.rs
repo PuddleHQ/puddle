@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Runs a program with a time limit and keeps the start of its output and the end of its errors.
 
 use std::io::Read;

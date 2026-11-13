@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `resolve` stream: the guest's stub DNS asks the host about one name.
 //!
 //! The agent opens a stream per lookup and writes [`PREAMBLE`], then one JSON [`ResolveQuery`]

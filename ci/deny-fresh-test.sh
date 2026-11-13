@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/deny-fresh.sh with a stand-in for cargo-deny that keeps its own "index": `fetch` copies
 # the upstream list of yanked versions into it, `check` judges the fixture lock file
 # (ci/fixtures/yanked.lock) against that index only. Cases: a stale index lets the yanked crate pass when the

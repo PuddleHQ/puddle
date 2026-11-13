@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The app icon on the Settings screen: the choices and their names, and the three calls that
 // read the icons, store the user's own image and remove it. Which icon is in use is the
 // `ui.app_icon` setting, saved with the rest; the image itself is stored at once.

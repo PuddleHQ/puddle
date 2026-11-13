@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, signIn, test, watchCsp, staysEmpty } from "./support";
 
 // Computed-style and box-size checks of the visual identity, in place of screenshot baselines.

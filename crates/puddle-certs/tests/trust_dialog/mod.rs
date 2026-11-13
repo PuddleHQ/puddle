@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Adds the development certificate to `CurrentUser\Root` on a real Windows desktop and answers
 //! the confirmation Windows shows for it, for the tests that need the add to end (`windows_store`
 //! and `windows_browsers`).

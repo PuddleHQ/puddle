@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Validated names that end up as an argument or a line of a tool's input.
 //!
 //! A name that reaches a child process is checked first, so it cannot be an option (`-x`), carry a

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A panic writes a crash file and still reaches the hook that was there before. This is its own
 //! test program because the panic hook is process-wide, and the tests in it run on parallel
 //! threads: each one holds [`Hook`] for its whole body, so only one hook is installed at a time and

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The workspace disks the workspace list does not name (fixture scenario `lived-in`): the notice
 // on the workspace list, restoring one by keyboard, and the question for a repository address when
 // the disk gave none. The notice never says a disk holds files and offers no way to delete one.

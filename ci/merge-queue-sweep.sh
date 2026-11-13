@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Puts a pull request into the merge queue when auto-merge is armed on it, it is ready (merge state CLEAN: every required
 # check green) and it still is not in the queue. GitHub sometimes never hands an armed, green pull request to a
 # ruleset merge queue (community discussion 209348, since Sep 2026; seen here on a Dependabot PR armed by the workflow

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host keys the Git hosts publish, as SHA-256 fingerprints.
 //!
 //! Puddle ends SSH to the Git hosts itself, so the filtered agent never signs a login to one: a

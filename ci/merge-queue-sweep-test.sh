@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/merge-queue-sweep.sh with a fake `gh` serving a GraphQL answer ($FAKE_PRS) and recording each call:
 # which PRs it acts on (armed, CLEAN, not queued, last check older than SWEEP_MIN) and the fallback when the direct
 # merge request fails. Prints ok only when every case passes.

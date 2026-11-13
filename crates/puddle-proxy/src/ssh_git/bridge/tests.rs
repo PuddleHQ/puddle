@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The bridge against a recording smart-HTTP host: which requests a session turns into, with
 //! which bodies and headers, and what the guest reads back.
 

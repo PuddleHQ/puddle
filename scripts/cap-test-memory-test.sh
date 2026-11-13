@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Tests scripts/cap-test-memory.sh: the command's status and arguments pass through, and a command
 # that allocates without end fails at the limit (here 64 MiB) instead of growing.
 set -eu

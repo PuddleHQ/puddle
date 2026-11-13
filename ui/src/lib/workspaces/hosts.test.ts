@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
 const post = vi.hoisted(() => vi.fn());
 vi.mock("#lib/api/client.ts", () => ({ api: { POST: post } }));

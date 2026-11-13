@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which icon the window, the tray and the taskbar button show: the built-in one the user chose,
 //! or their own image, read from the settings folder.
 //!

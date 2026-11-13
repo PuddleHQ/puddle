@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use puddle_api::OpenTarget;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};

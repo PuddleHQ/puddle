@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 /// A sdk that answers the plan it is given and records what was applied.

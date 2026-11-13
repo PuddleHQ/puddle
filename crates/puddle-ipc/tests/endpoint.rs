@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Endpoints end to end on the host's real IPC (named pipes on Windows, Unix sockets elsewhere).
 #![expect(
     clippy::unwrap_used,

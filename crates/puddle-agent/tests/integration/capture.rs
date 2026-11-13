@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests for transparent capture, with the real kernel: each test runs in its own network
 //! namespace (`unshare -Urnm`, the way `real_bridge.rs` does), with a stand-in for the VM's network
 //! device (`eth0`, a default route), the agent, and a fake host behind the agent's Unix socket

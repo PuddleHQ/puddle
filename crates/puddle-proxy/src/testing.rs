@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Test doubles (feature `testing`). Never use them in product code: [`AnyAddress`] connects
 //! anywhere, [`StaticPolicy`] keeps its rules in memory, and [`CollectingConnectionLog`] keeps
 //! the audit in memory, [`StaticResolver`] and [`StaticRecords`] have fixed answers.

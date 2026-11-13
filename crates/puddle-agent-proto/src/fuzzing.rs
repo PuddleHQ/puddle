@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Entry points for the `resolve_line` cargo-fuzz target: the lookup lines the host reads from
 //! the guest agent (and the agent reads back). Each function takes arbitrary bytes, never panics,
 //! and panics only when an invariant the lines rest on does not hold.

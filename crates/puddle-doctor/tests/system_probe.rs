@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! [`SystemProbe`] on this machine against runtime folders built per test: what it reports for a
 //! missing, wrong-version, unexecutable and right-version msb, and that `diagnose` only starts msb
 //! when the runtime check passed. The real msb is booted by `vm_doctor` (puddle-vm-tests).

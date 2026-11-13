@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! SHA-256 checksums: hashing files and checking them against a release's `checksums.sha256`.
 
 use std::collections::BTreeMap;

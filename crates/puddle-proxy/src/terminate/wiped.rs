@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A byte buffer for what may hold a secret: it grows by copying into a new buffer and
 //! overwriting the old one, and it is overwritten when it drops, also after it became [`Bytes`].
 

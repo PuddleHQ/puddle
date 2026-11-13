@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fake website: answers every name it is given over plain HTTP and TLS, reached through the
 //! fake internet's company proxy, and records what it was sent.
 #![expect(

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! [`Workspaces`]: create or reuse a workspace's volume, attach it to one sandbox at a time,
 //! trim it, and delete it only after the user confirmed what would be lost.
 

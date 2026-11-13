@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The lists: which credentials to read, the in-memory cache, one read at a time per credential,
 //! and the back-off when a host limits us.
 //!

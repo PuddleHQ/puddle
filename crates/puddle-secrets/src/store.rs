@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where a pasted token is kept: the seam over the OS credential store.
 
 use std::collections::HashMap;

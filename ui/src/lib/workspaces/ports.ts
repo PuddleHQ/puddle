@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the Ports tab knows about ports: what a typed port is, how a row reads, and the stream
 // events that change the list.
 import type { components } from "#lib/api/schema.d.ts";

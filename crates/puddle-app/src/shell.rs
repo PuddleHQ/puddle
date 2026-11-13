@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Wiring: plugins, the backend and the main window, and the exit hook (the quit sequence).
 
 use std::path::PathBuf;

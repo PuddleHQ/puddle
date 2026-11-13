@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The machine's listening sockets and process tree, for the hostile-guest sweep that asks
 //! "does Puddle, or the runtime it started, listen on anything but loopback?".
 //!

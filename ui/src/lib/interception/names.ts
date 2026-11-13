@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The never-decrypt names as one editable text: a name per line, or separated by commas or
 // spaces. The API normalises and judges each name; this only splits and removes repeats.
 

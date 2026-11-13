@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The login key of direct SSH: the one key the runtime's SSH server accepts and the ssh config
 //! entries name.
 //!

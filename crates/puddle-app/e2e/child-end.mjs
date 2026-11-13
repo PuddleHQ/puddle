@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // When a child process has ended and its stdout and stderr are read to the end.
 //
 // `exit` can fire before the last output chunks are read, so a caller that reads captured output

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git's pkt-lines (gitprotocol-common), read off the guest's side of a command so the HTTPS
 //! bridge can tell where one request ends. Each line keeps the bytes it came as, so what goes
 //! upstream is what the guest sent.

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Installs Puddle's MSI on a clean Windows machine the way a user would (per user, silent), starts
 # the installed program, runs the system check against the installed runtime, upgrades it with a
 # newer MSI, and uninstalls it, checking at each step what the installer promises:
@@ -239,7 +239,7 @@ function Assert-InstalledLayout {
         'puddle-app.exe', 'puddle.exe',
         'runtime\msb.exe', 'runtime\libkrunfw.dll', 'runtime\runtime.json', 'runtime\puddle-agent',
         'runtime\code-server\bin\code-server', 'runtime\code-server\package.json',
-        'runtime\licenses\NOTICE.txt', 'runtime\licenses\GPL-3.0.txt',
+        'runtime\licenses\NOTICE.txt', 'runtime\licenses\AGPL-3.0.txt',
         'runtime\licenses\THIRD-PARTY-msb.txt', 'runtime\licenses\THIRD-PARTY-puddle.txt',
         'runtime\licenses\THIRD-PARTY-ui.txt', 'runtime\licenses\code-server\LICENSE')
     foreach ($name in $required) {

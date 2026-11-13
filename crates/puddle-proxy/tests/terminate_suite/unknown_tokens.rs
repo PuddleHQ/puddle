@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of the scan of answers for tokens Puddle does not hold: a token of a known kind in
 //! an answer (header or body, split across chunks or frames, compressed) reaches the guest
 //! unchanged, the connection record names its kind, one notice is raised for a host and kind, the

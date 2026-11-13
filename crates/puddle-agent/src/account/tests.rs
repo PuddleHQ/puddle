@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 const PASSWD: &str = "root:x:0:0:root:/root:/bin/bash\n\

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guest agents' reports about their own workspaces (an entrypoint that exited, stub DNS
 //! trouble, an editor server that could not be installed or updated, capture rules the guest tore
 //! down or that cannot be installed, an agent that speaks another control protocol), made

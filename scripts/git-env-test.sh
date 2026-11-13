@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Gate-level check that the gates leave the repository of a calling git hook alone. A hook exports
 # GIT_DIR, GIT_INDEX_FILE and GIT_WORK_TREE; a gate that runs a mutating git command (`git init`,
 # `git config`, `git add`) without stripping them rewrites that repository. This runs the gates

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/cancel-dissolved-groups.sh with a fake `gh`: the merge queue comes from $FAKE_QUEUE (GraphQL JSON), the
 # runs from $FAKE_RUNS_JSON, and every `gh run cancel` is logged. Prints ok only when every case passes.
 set -uo pipefail

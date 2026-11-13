@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A desktop VS Code client for VM tests: the pinned release, started on Remote-SSH and driven over
 //! the DevTools Protocol, beside the VM.
 //!

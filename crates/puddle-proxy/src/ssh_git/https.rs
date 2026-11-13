@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The HTTPS leg of Git over SSH: Puddle reaches the Git host as the workspace's own `git` would
 //! for the HTTPS remote.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tokens in an answer that Puddle does not hold.
 //!
 //! A tool that logs in without a capture profile, or a server that hands out a token of its own

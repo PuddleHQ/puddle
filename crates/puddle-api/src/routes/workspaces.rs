@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Workspaces: list, create, detail, start, stop, reclaim space, the delete check, delete and
 //! attach. The routes only translate; [`crate::WorkspaceService`] does the work. Long
 //! operations answer 202 with the workspace marked busy and report through `status_changed` and

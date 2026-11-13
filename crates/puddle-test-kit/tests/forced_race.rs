@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The forced race behind the rule against `try_recv()`: a host forwards an event from its own task, so the
 //! event can land after the replies a test awaited (the sign-in failure that flaked on a loaded runner).
 //! The emit is held back by 300 ms of virtual time, so the race is certain, not a matter of load: the old

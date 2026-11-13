@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of captured logins through the real proxy: a login made in the workspace ends with the
 //! real tokens on the host and stand-ins in the workspace, the stand-ins are swapped back toward
 //! the service's hosts and nowhere else, a refresh works with them, and a login that cannot be

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Recognising SSH on a `CONNECT` tunnel and refusing it for Git hosts.
 //!
 //! SSH to the name of a Git host (`github.com`, `ssh.dev.azure.com`, a host of one of the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 const REAL_SECRET: &str = "puddle-secret-API_KEY-00112233445566778899aabbccddeeff";

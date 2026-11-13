@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The editor connections open per workspace. A workbench window keeps at least one WebSocket to
 //! its server for as long as it is connected (and a window that crashed or lost its network ends
 //! its sockets with the operating system), so "no connection" means no window is connected, which

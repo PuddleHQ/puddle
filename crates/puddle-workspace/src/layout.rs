@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where a workspace lives in the guest: the volume's mount point, the checkouts below it and
 //! Puddle's own directory beside them.
 //!

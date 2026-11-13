@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Plain HTTPS reads of public GitHub data: release assets and API answers, fetched with `curl`.
 //!
 //! No `gh` and no sign-in: the forks and upstream are public, so a host that has only `git` and

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One isolated msb world per test process: settings, private home, scoped SDK backend.
 
 use std::future::Future;

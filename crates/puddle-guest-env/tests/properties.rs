@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Property tests: `NO_PROXY` entries are parsed strictly, and whatever entries pass can't break
 //! the syntax of a generated file (a stray quote in sudoers would lock `sudo` for everyone).
 

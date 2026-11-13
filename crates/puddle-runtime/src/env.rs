@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The environment that makes the msb SDK use Puddle's runtime and home, and nothing of the user's.
 //!
 //! The SDK takes Puddle's runtime and home as explicit arguments and ignores the environment

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A fake guest root for running the real `boot.sh` on the test host: stubbed `sysctl`,
 //! `update-ca-certificates` and `puddle-agent`, a fake `/proc` for the files the hook reads, and
 //! cleanup of every process the hook started.

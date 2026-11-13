@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which data folder `puddle backup` and `puddle doctor` look at: the one `puddle serve` would use.
 //!
 //! Serve reads `data_dir` from its option table (flag, `PUDDLE_DATA_DIR`, the `--config` file, then

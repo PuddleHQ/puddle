@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The desktop VS Code the VM tests drive (ci/fetch-vscode.sh): `<name> <version> <url> <sha256>`. The VS Code line is the
 # release server's own `sha256hash` for that exact version
 # (https://update.code.visualstudio.com/api/versions/<version>/win32-x64-archive/stable); Remote-SSH is the Marketplace

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A UI Automation driver for the installed, release app on Windows: the real window, clicked and read
 // the way a person does it (a release build has no DevTools port, so the CDP driver of smoke.mjs cannot
 // reach it). One long-lived PowerShell (uia.ps1) answers one JSON request per line. WebView2 exposes the

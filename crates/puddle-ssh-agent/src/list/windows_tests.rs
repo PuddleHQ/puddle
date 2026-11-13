@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real pipe: a server that takes the connection and never answers, as a locked agent that asks
 //! its user first does.
 use super::*;

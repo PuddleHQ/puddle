@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The check behind `BUILT_FOR`, shared by the build script and `tests/built_for.rs`: the msb
 //! runtime version is the `microsandbox` SDK package's version in `Cargo.lock`, which must come
 //! from the fork tag `v<version>`, with every other `microsandbox*` crate from the same source.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Desktop VS Code end to end on a real microVM (Windows WHP): the pinned desktop VS Code opens a
 //! workspace over Remote-SSH, through the ssh config entry the host wrote, the bridge and the
 //! runtime's SSH server, and a driver clicks and types in the real window. It stands for the VS Code

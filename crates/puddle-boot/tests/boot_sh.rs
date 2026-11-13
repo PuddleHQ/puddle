@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real `guest/boot.sh`, run on the test host against a fake root with stubbed `sysctl`,
 //! `update-ca-certificates` and `puddle-agent`, under every POSIX shell the host has (dash and
 //! bash at least). The VM version of these checks is `tests/vm_boot.rs`.

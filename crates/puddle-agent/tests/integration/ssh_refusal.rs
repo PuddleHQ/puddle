@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests with real clients: OpenSSH `ssh` and `git` in a guest-like setup, through the
 //! `puddle-agent connect` binary as `ProxyCommand` (the drop-in `puddle-guest-env` writes), the
 //! agent's listener, a Unix socket route and the real proxy. Every SSH connection is refused with

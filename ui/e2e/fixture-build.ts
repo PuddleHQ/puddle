@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Playwright's global setup: builds the UI fixture backend once for the whole run and hands the
 // executable's path to the workers through the environment (`PUDDLE_E2E_FIXTURE_BIN`).
 //

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The system check (`puddle doctor`) as a route: the first-run flow and Settings run it.
 
 use axum::Json;

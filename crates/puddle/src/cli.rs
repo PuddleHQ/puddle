@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Command-line parsing for the host program, kept apart from `main` so it is unit-testable.
 
 /// What the program should do, decided from its arguments.

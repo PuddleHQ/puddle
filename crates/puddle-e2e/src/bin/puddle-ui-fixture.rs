@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle-ui-fixture`: the real API on fake services, for UI development and end-to-end tests.
 //! See `puddle_e2e::ui_fixture` and `puddle-ui-fixture --help`.
 #![forbid(unsafe_code)]

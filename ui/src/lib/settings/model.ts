@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The global settings as the screen shows them: the wording of the Microsoft server consent,
 // what each control offers, and how an edit becomes the whole document the API replaces.
 import type { components } from "#lib/api/schema.d.ts";

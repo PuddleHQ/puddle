@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Runs the Rust tests with coverage (`cargo llvm-cov nextest --no-report <args>`) and sets aside the profile files
 # that cannot be read, so the report step that follows merges readable files only (scripts/check.sh runs
 # `cargo llvm-cov report` after this script). The instrumented runtime writes one `.profraw` file per process

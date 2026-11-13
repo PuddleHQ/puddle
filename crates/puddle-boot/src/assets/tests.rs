@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 #[test]
@@ -29,7 +29,7 @@ fn an_invalid_constant_is_a_bug() {
 #[test]
 fn scripts_are_posix_sh_with_licence_headers() {
     for s in [BOOT_SH, AGENT_SUPERVISE_SH] {
-        assert!(s.starts_with("#!/bin/sh\n# SPDX-License-Identifier: GPL-3.0-or-later\n"));
+        assert!(s.starts_with("#!/bin/sh\n# SPDX-License-Identifier: AGPL-3.0-or-later\n"));
         assert!(!s.contains('\r'), "CRLF would break sh in the guest");
     }
 }

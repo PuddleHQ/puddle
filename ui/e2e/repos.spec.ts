@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The repository lists against the real API on the fixture backend, scenario `repo-lists`: five
 // identities, each with a list in a different state (Work: GitHub with a note, plus an Azure
 // DevOps organisation with a project that has a space; Personal: the rest of github.com;

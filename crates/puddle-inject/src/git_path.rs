@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which repository, and what kind of access, a request on a Git host is about.
 //!
 //! The push and pull lists and the choice of credential all hang on this reading, so it is

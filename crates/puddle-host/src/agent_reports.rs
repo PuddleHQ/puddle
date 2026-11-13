@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The guest agents' reports about their own workspaces (an entrypoint that exited, stub DNS
 //! trouble, an editor server that could not be installed or updated, capture rules the guest tore
-//! down or that cannot be installed), made background problems.
+//! down or that cannot be installed, an agent that speaks another control protocol), made
+//! background problems.
 //!
 //! A report is the guest's claim and the guest is untrusted, so a report can only raise one of
 //! four problems of the workspace whose route carried it, with text written here. Reports count
@@ -12,6 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use puddle_agent_proto::control::PROTOCOL_VERSION;
 use puddle_agent_proto::editor::NEEDS_GLIBC;
 use puddle_agent_proto::host::{AgentReport, AgentReports};
 use puddle_agent_proto::{EditorProblemKind, StubDnsTrouble};
@@ -52,6 +54,11 @@ fn capture_tamper_key(id: &WorkspaceId) -> String {
 /// The key of the problem about capture rules that cannot be installed in `name`.
 fn capture_unavailable_key(id: &WorkspaceId) -> String {
     format!("capture-unavailable:{id}")
+}
+
+/// The key of the problem about an agent in `name` that speaks another control protocol.
+fn agent_protocol_key(id: &WorkspaceId) -> String {
+    format!("agent-protocol:{id}")
 }
 
 /// The key of the problem about the stub DNS of `name`.
@@ -198,6 +205,34 @@ fn capture_unavailable_problem(id: &WorkspaceId, name: &str, reason: &str) -> Pr
     .about(id.clone())
 }
 
+/// The problem for a guest agent whose hello named another control protocol: the session ignores
+/// it from then on. `agent_version` is the agent's cleaned text.
+fn agent_protocol_problem(
+    id: &WorkspaceId,
+    name: &str,
+    agent_version: &str,
+    protocol: u32,
+) -> Problem {
+    let version = if agent_version.is_empty() {
+        "an unnamed version".to_owned()
+    } else {
+        format!("version {agent_version}")
+    };
+    Problem::new(
+        agent_protocol_key(id),
+        format!("{name} runs a guest agent this Puddle cannot talk to"),
+        format!(
+            "The agent in the workspace ({version}) speaks control protocol {protocol}, and this \
+             Puddle speaks {PROTOCOL_VERSION}. Puddle ignores what that agent reports and sends it \
+             nothing, so open ports, out-of-memory kills and editor and capture problems in this \
+             workspace go unreported. Network traffic still goes through Puddle and its rules. Stop \
+             and start the workspace: a start gives it the agent that came with this Puddle. This \
+             goes away when the workspace stops."
+        ),
+    )
+    .about(id.clone())
+}
+
 /// What a kind of stub DNS trouble means for the tools in the workspace, or `None` when the client
 /// asks again and usually gets its answer (only the host log hears of it).
 fn stub_dns_effect(kind: StubDnsTrouble) -> Option<&'static str> {
@@ -240,8 +275,8 @@ struct Run {
     name: DisplayName,
     /// Reports count: the workspace is starting or running, not stopping.
     taking: bool,
-    /// The entrypoint problem was raised from a report in this run.
-    entrypoint: bool,
+    /// The problems raised at most once per run that this run raised.
+    raised: BTreeSet<Once>,
     /// The DNS trouble kinds the problem names.
     dns: BTreeSet<StubDnsTrouble>,
     /// The editor's install problem.
@@ -250,10 +285,19 @@ struct Run {
     update: ReasonSlot,
     /// The editor's session-user problem.
     session_user: ReasonSlot,
-    /// The tamper problem was raised in this run.
-    tampered: bool,
     /// The capture-unavailable problem.
     unavailable: ReasonSlot,
+}
+
+/// A problem a run raises at most once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Once {
+    /// The entrypoint exited with a failure.
+    Entrypoint,
+    /// The guest tore down the capture rules.
+    Tampered,
+    /// The agent speaks another control protocol.
+    Mismatch,
 }
 
 /// What one run has reported of one problem that names a reason.
@@ -298,13 +342,52 @@ impl Run {
         Self {
             name,
             taking: true,
-            entrypoint: false,
+            raised: BTreeSet::new(),
             dns: BTreeSet::new(),
             install: ReasonSlot::default(),
             update: ReasonSlot::default(),
             session_user: ReasonSlot::default(),
-            tampered: false,
             unavailable: ReasonSlot::default(),
+        }
+    }
+
+    /// `true` the first time this run raises `problem`.
+    fn first(&mut self, problem: Once) -> bool {
+        self.raised.insert(problem)
+    }
+
+    /// The problem an editor report raises, if any; sets `ended` when it ends one.
+    fn editor(
+        &mut self,
+        workspace: &WorkspaceId,
+        kind: EditorProblemKind,
+        problem: Option<String>,
+        ended: &mut Option<EditorProblemKind>,
+    ) -> Option<Problem> {
+        let shown = self.name.as_str().to_owned();
+        let slot = match kind {
+            EditorProblemKind::Install => &mut self.install,
+            EditorProblemKind::Update => &mut self.update,
+            EditorProblemKind::SessionUser => &mut self.session_user,
+            _ => return None,
+        };
+        match slot.report(problem) {
+            Slot::Same => None,
+            Slot::Ended => {
+                *ended = Some(kind);
+                None
+            }
+            Slot::Limited => {
+                tracing::info!(%workspace, ?kind, "an editor report past the limit for one run ignored");
+                None
+            }
+            Slot::Raised(reason) if kind == EditorProblemKind::Install => {
+                Some(editor_install_problem(workspace, &shown, &reason))
+            }
+            Slot::Raised(reason) if kind == EditorProblemKind::Update => {
+                Some(editor_update_problem(workspace, &shown, &reason))
+            }
+            Slot::Raised(reason) => Some(editor_session_user_problem(workspace, &shown, &reason)),
         }
     }
 }
@@ -339,6 +422,7 @@ impl ReportDesk {
         self.problems.clear(&editor_session_user_key(id));
         self.problems.clear(&capture_tamper_key(id));
         self.problems.clear(&capture_unavailable_key(id));
+        self.problems.clear(&agent_protocol_key(id));
     }
 
     /// A stop of `id` was accepted: what its guest reports from now (its entrypoint ended by the
@@ -356,7 +440,7 @@ impl ReportDesk {
         }
     }
 
-    /// `id` no longer runs: the DNS, editor and capture problems are about a machine that is gone (the
+    /// `id` no longer runs: the DNS, editor, capture and agent-protocol problems are about a machine that is gone (the
     /// agent of the next start tells again). The entrypoint problem stays until the next start,
     /// because the image still has the fault.
     pub(crate) fn end(&self, id: &WorkspaceId) {
@@ -367,6 +451,7 @@ impl ReportDesk {
         self.problems.clear(&editor_session_user_key(id));
         self.problems.clear(&capture_tamper_key(id));
         self.problems.clear(&capture_unavailable_key(id));
+        self.problems.clear(&agent_protocol_key(id));
     }
 
     /// `id` was deleted: both problems end.
@@ -390,12 +475,12 @@ impl AgentReports for ReportDesk {
             let shown = run.name.as_str().to_owned();
             match report {
                 AgentReport::EntrypointExited { status: 0, .. } => None,
-                AgentReport::EntrypointExited { .. } if run.entrypoint => {
+                AgentReport::EntrypointExited { .. } if run.raised.contains(&Once::Entrypoint) => {
                     tracing::info!(%workspace, "a second entrypoint report in one run ignored");
                     None
                 }
                 AgentReport::EntrypointExited { status, tail } => {
-                    run.entrypoint = true;
+                    run.first(Once::Entrypoint);
                     let tail = if tail.is_empty() {
                         "no output".to_owned()
                     } else {
@@ -411,37 +496,11 @@ impl AgentReports for ReportDesk {
                     && run.dns.insert(kind))
                 .then(|| stub_dns_problem(workspace, &shown, &run.dns)),
                 AgentReport::EditorStatus { kind, problem } => {
-                    let slot = match kind {
-                        EditorProblemKind::Install => &mut run.install,
-                        EditorProblemKind::Update => &mut run.update,
-                        EditorProblemKind::SessionUser => &mut run.session_user,
-                        _ => return,
-                    };
-                    match slot.report(problem) {
-                        Slot::Same => None,
-                        Slot::Ended => {
-                            end_editor = Some(kind);
-                            None
-                        }
-                        Slot::Limited => {
-                            tracing::info!(%workspace, ?kind, "an editor report past the limit for one run ignored");
-                            None
-                        }
-                        Slot::Raised(reason) if kind == EditorProblemKind::Install => {
-                            Some(editor_install_problem(workspace, &shown, &reason))
-                        }
-                        Slot::Raised(reason) if kind == EditorProblemKind::Update => {
-                            Some(editor_update_problem(workspace, &shown, &reason))
-                        }
-                        Slot::Raised(reason) => {
-                            Some(editor_session_user_problem(workspace, &shown, &reason))
-                        }
-                    }
+                    run.editor(workspace, kind, problem, &mut end_editor)
                 }
-                AgentReport::CaptureTampered { .. } => {
-                    (!std::mem::replace(&mut run.tampered, true))
-                        .then(|| capture_tamper_problem(workspace, &shown))
-                }
+                AgentReport::CaptureTampered { .. } => run
+                    .first(Once::Tampered)
+                    .then(|| capture_tamper_problem(workspace, &shown)),
                 AgentReport::CaptureUnavailable { reason } => {
                     match run.unavailable.report(reason) {
                         Slot::Same => None,
@@ -458,6 +517,12 @@ impl AgentReports for ReportDesk {
                         }
                     }
                 }
+                AgentReport::ProtocolMismatch {
+                    agent_version,
+                    protocol,
+                } => run
+                    .first(Once::Mismatch)
+                    .then(|| agent_protocol_problem(workspace, &shown, &agent_version, protocol)),
                 _ => None,
             }
         };

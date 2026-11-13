@@ -228,16 +228,61 @@ async fn a_name_that_stops_resolving_keeps_its_last_addresses_and_a_moved_record
     );
 }
 
-#[tokio::test]
-async fn a_name_that_never_answers_does_not_stop_the_others() {
-    let records = Arc::new(Records::default());
-    records.set("alt.example.org", &["10.9.9.9"]);
+/// A resolver that never answers for one name and answers for the rest from `records`.
+struct Silent {
+    silent: &'static str,
+    records: Records,
+}
+
+impl NameResolver for Silent {
+    fn resolve<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Vec<IpAddr>>> + Send + 'a>> {
+        if name == self.silent {
+            return Box::pin(std::future::pending());
+        }
+        self.records.resolve(name)
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_name_that_never_answers_is_given_up_on_and_does_not_stop_the_others() {
+    let resolver = Silent {
+        silent: "puddle.example.org",
+        records: Records::default(),
+    };
+    resolver.records.set("alt.example.org", &["10.9.9.9"]);
     let endpoints = PuddleEndpoints::new();
     let front = FrontAddresses::new(
         &remote(&["puddle.example.org", "alt.example.org"], None, &[]),
         &endpoints,
-        records,
+        Arc::new(resolver),
     );
     front.refresh().await;
     assert!(blocked(dial(&guard(&endpoints), None, "10.9.9.9", 443)));
+}
+
+#[tokio::test]
+async fn a_name_that_resolves_to_a_mapped_address_blocks_the_ipv4_address() {
+    let records = Arc::new(Records::default());
+    records.set(
+        "puddle.example.org",
+        &["::ffff:192.168.1.50", "192.168.1.50"],
+    );
+    let endpoints = PuddleEndpoints::new();
+    let front = FrontAddresses::new(
+        &remote(&["puddle.example.org"], None, &[]),
+        &endpoints,
+        records,
+    );
+    front.refresh().await;
+    assert!(blocked(dial(&guard(&endpoints), None, "192.168.1.50", 443)));
+    assert_eq!(endpoints.list().len(), 1, "one address, one registration");
+}
+
+#[tokio::test]
+async fn the_system_resolver_answers_for_a_name_the_host_knows() {
+    let ips = SystemResolver.resolve("localhost").await.unwrap();
+    assert!(ips.iter().any(IpAddr::is_loopback), "{ips:?}");
 }

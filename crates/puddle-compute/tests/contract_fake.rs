@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The contract suite against `FakeRuntime`: the fake must pass every case, with the upstream stale-directory bug
-//! unfixed (msb 0.7.6) and fixed (the fork).
+//! The contract suite against `FakeRuntime`: the fake must pass every case.
 #![expect(
     clippy::unwrap_used,
     reason = "the env helper runs outside #[test] but only in tests"
 )]
 
 use puddle_compute::contract::{self, ContractEnv};
-use puddle_compute::fake::{FakeConfig, FakeRuntime};
+use puddle_compute::fake::FakeRuntime;
 use puddle_types::ImageRef;
 
 async fn env() -> ContractEnv<FakeRuntime> {
@@ -30,17 +29,6 @@ async fn run_all_passes_on_a_shared_fake() {
     let report = contract::run_all(&env).await;
     assert!(report.all_passed(), "{:#?}", report.failed);
     assert_eq!(report.passed.len(), contract::CASES.len());
-}
-
-#[tokio::test]
-async fn run_all_passes_with_the_stale_dir_fix() {
-    let fixed = FakeRuntime::with_config(FakeConfig {
-        stale_dir_fixed: true,
-        ..FakeConfig::default()
-    });
-    let env = ContractEnv::new(fixed, ImageRef::new(FakeRuntime::DEBIAN).unwrap());
-    let report = contract::run_all(&env).await;
-    assert!(report.all_passed(), "{:#?}", report.failed);
 }
 
 #[tokio::test]
@@ -145,4 +133,121 @@ async fn the_suite_catches_a_runtime_that_always_fails() {
     );
     let failed = failing_cases(rt).await;
     assert!(failed.len() >= 20, "{failed:?}");
+}
+
+/// A runtime whose guest answers `probe` with `output` instead of what the fake guest would.
+fn guest_answers(
+    probe: puddle_compute::probes::Probe,
+    output: puddle_compute::ExecOutput,
+    only_arg: Option<&'static str>,
+) -> FakeRuntime {
+    let rt = FakeRuntime::new();
+    rt.on_exec(
+        move |_: &mut puddle_compute::fake::ExecContext<'_>, r: &puddle_compute::ExecRequest| {
+            let (found, args) = puddle_compute::probes::Probe::of(r)?;
+            (found == probe && only_arg.is_none_or(|a| args.get(1) == Some(&a)))
+                .then(|| output.clone())
+        },
+    );
+    rt
+}
+
+#[tokio::test]
+async fn the_suite_catches_a_guest_that_reaches_out() {
+    use puddle_compute::ExecOutput;
+    use puddle_compute::probes::Probe;
+    let leaks = [
+        (
+            Probe::NoDirectNetwork,
+            ExecOutput::new(1, "DNS resolved\n", ""),
+            "hg01_guest_has_no_direct_network",
+        ),
+        (
+            Probe::Icmp,
+            ExecOutput::new(
+                0,
+                "127.0.0.1 reply\n1.1.1.1 reply\n8.8.8.8 no-reply\n9.9.9.9 no-reply\n",
+                "",
+            ),
+            "hg01_guest_has_no_direct_network",
+        ),
+        (
+            Probe::Icmp,
+            ExecOutput::new(
+                0,
+                "1.1.1.1 no-reply\n8.8.8.8 no-reply\n9.9.9.9 no-reply\n",
+                "",
+            ),
+            "hg01_guest_has_no_direct_network",
+        ),
+        (
+            Probe::Packet,
+            ExecOutput::new(
+                0,
+                "control-packet captured\nraw-control sent\nraw6 1.1.1.1 sent\n",
+                "",
+            ),
+            "hg01_raw_and_packet_sockets_reach_no_network",
+        ),
+        (
+            Probe::Packet,
+            ExecOutput::new(0, "raw-control sent\n", ""),
+            "hg01_raw_and_packet_sockets_reach_no_network",
+        ),
+    ];
+    for (probe, output, case) in leaks {
+        let failed = failing_cases(guest_answers(probe, output.clone(), None)).await;
+        assert_eq!(failed, [case], "{probe:?} answering {output:?}");
+    }
+}
+
+#[tokio::test]
+async fn the_suite_catches_a_guest_that_reaches_a_vsock_address_it_should_not() {
+    use puddle_compute::ExecOutput;
+    use puddle_compute::probes::Probe;
+    let accepted = |port: u32| ExecOutput::new(0, format!("accepted {port}\n"), "cid: x\n");
+    // The first case sweeps the host and CIDs 0, 1 and 3; the second sweeps the other CIDs and the
+    // guest's own, which is 3.
+    for (cid, cases) in [
+        ("0", &["hg02_only_the_routed_vsock_port_accepts"][..]),
+        ("1", &["hg02_only_the_routed_vsock_port_accepts"][..]),
+        (
+            "3",
+            &[
+                "hg02_only_the_routed_vsock_port_accepts",
+                "hg02_no_other_vsock_address_accepts",
+            ][..],
+        ),
+        ("4", &["hg02_no_other_vsock_address_accepts"][..]),
+    ] {
+        let failed =
+            failing_cases(guest_answers(Probe::VsockSweep, accepted(5000), Some(cid))).await;
+        assert_eq!(failed, cases, "CID {cid} accepting");
+    }
+    // An unrouted host port accepting, and a routed port whose bytes never arrive.
+    let failed = failing_cases(guest_answers(Probe::VsockSweep, accepted(4000), Some("2"))).await;
+    assert_eq!(
+        failed,
+        [
+            "hg02_only_the_routed_vsock_port_accepts",
+            "hg02_no_other_vsock_address_accepts"
+        ]
+    );
+    let failed = failing_cases(guest_answers(Probe::VsockSweep, accepted(5000), Some("2"))).await;
+    assert_eq!(
+        failed,
+        [
+            "hg02_only_the_routed_vsock_port_accepts",
+            "hg02_no_other_vsock_address_accepts"
+        ]
+    );
+    let garbled = ExecOutput::new(0, "it works\n", "");
+    let failed = failing_cases(guest_answers(Probe::VsockSweep, garbled, None)).await;
+    assert_eq!(
+        failed,
+        [
+            "hg02_only_the_routed_vsock_port_accepts",
+            "hg02_no_other_vsock_address_accepts"
+        ]
+    );
 }

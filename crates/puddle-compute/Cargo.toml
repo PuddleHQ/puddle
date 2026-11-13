@@ -14,13 +14,14 @@ publish.workspace = true
 puddle-types = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+puddle-ipc = { workspace = true, optional = true }
 russh = { workspace = true, optional = true }
 
 [features]
 # FakeRuntime: an in-memory msb for unit tests of the crates above the compute plane.
-fake = ["tokio/io-util", "dep:russh"]
+fake = ["tokio/io-util", "dep:russh", "dep:puddle-ipc"]
 # The contract suite every Runtime implementation runs (contract::run_all, contract_tests!).
-contract = ["tokio/io-util", "tokio/macros", "tokio/rt", "tokio/time"]
+contract = ["tokio/io-util", "tokio/macros", "tokio/rt", "tokio/time", "dep:puddle-ipc"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "rt-multi-thread", "time"] }

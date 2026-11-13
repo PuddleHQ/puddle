@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use puddle_compute::probes::VSOCK_SWEEP;
 use puddle_compute::{ExecOutput, ExecRequest, Runtime, Sandbox, SandboxSpec};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_ipc::Listener;
@@ -98,71 +99,6 @@ pub(crate) async fn cleanup(rt: &MsbRuntime, names: &[&SandboxName]) {
         let _ = rt.remove(n).await;
     }
 }
-
-/// Connects to host or neighbour CIDs over `AF_VSOCK` in batches of non-blocking connects and
-/// prints `accepted <port>` for each port that took the connection, then sends it a line.
-/// perl-base is in every Debian image and can open an `AF_VSOCK` socket by number. Arguments:
-/// the line to send, the CID, then ports or `lo-hi` ranges. A summary of how the other ports
-/// ended goes to stderr.
-const VSOCK_SWEEP: &str = r#"
-use strict; use warnings; use Socket; use Fcntl;
-# usage: sweep.pl MESSAGE CID PORT|LO-HI ...
-# Non-blocking connects in batches; prints "accepted PORT" per accepted port and a summary line.
-my ($msg, $cid, @specs) = @ARGV;
-my @ports;
-for my $spec (@specs) {
-  my ($lo, $hi) = $spec =~ /^(\d+)-(\d+)$/ ? ($1, $2) : ($spec, $spec);
-  push @ports, $lo .. $hi;
-}
-my $BATCH = 4096;
-my (%outcome, @accepted);
-while (my @batch = splice(@ports, 0, $BATCH)) {
-  my (%pending, @open);
-  my $wvec = '';
-  for my $port (@batch) {
-    socket(my $s, 40, SOCK_STREAM, 0) or die "socket: $!";
-    fcntl($s, F_SETFL, fcntl($s, F_GETFL, 0) | O_NONBLOCK) or die "fcntl: $!";
-    if (connect($s, pack("S S L L x4", 40, 0, $port, $cid))) {
-      push @open, [$s, $port];
-    } elsif ($!{EINPROGRESS}) {
-      vec($wvec, fileno($s), 1) = 1;
-      $pending{fileno($s)} = [$s, $port];
-    } else {
-      $outcome{"$!"}++;
-      close $s;
-    }
-  }
-  my $deadline = time + 15;
-  while (%pending && time < $deadline) {
-    my $w = $wvec;
-    next if select(undef, $w, undef, 1) <= 0;
-    for my $fd (keys %pending) {
-      next unless vec($w, $fd, 1);
-      my ($s, $port) = @{ delete $pending{$fd} };
-      vec($wvec, $fd, 1) = 0;
-      my $err = unpack("i", getsockopt($s, SOL_SOCKET, SO_ERROR));
-      if ($err == 0) { push @open, [$s, $port]; }
-      else { local $! = $err; $outcome{"$!"}++; close $s; }
-    }
-  }
-  for my $p (values %pending) { $outcome{"no answer"}++; close $p->[0]; }
-  for my $o (@open) {
-    my ($s, $port) = @$o;
-    $outcome{accepted}++;
-    push @accepted, $port;
-    select((select($s), $| = 1)[0]);
-    # Blocking again for the send.
-    fcntl($s, F_SETFL, fcntl($s, F_GETFL, 0) & ~O_NONBLOCK);
-    print {$s} "$msg\n";
-    print "accepted $port\n";
-    # Linger before closing: msb on Windows can lose the last bytes of a stream the guest closes
-    # at once (tail loss), which is not what this probe tests.
-    select(undef, undef, undef, 0.3);
-    close $s;
-  }
-}
-print STDERR "cid $cid: ", join(", ", map { "$_ x$outcome{$_}" } sort keys %outcome), "\n";
-"#;
 
 /// What a vsock sweep of one CID saw.
 #[derive(Debug)]

@@ -22,6 +22,7 @@
 //! | Read-only mounts | every file, directory and checkout mount is passed to msb read-only, so msb's file server refuses writes whatever the guest does to its mount flags |
 //! | Memory | `--memory` from the spec at create; [`puddle_compute::Runtime::set_memory`] persists a new size for the next start; `--max-memory` is never set |
 //! | CPUs | `--cpus` from the spec at create (when given); [`puddle_compute::Runtime::set_cpus`] persists a new count for the next start; `--max-cpus` is never set apart from that pin |
+//! | Environment | `SandboxBuilder::env` at create; [`puddle_compute::Runtime::set_env`] writes the changed variables for the next start with `modify().env()/remove_env().next_start()`, so a changed variable keeps the sandbox and its root disk |
 //!
 //! # SDK options
 //!

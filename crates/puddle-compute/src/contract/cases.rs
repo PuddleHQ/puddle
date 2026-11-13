@@ -84,6 +84,7 @@ cases! {
     routes_and_no_network_are_accepted => "a spec with vsock routes is accepted and boots",
     memory_change_applies_at_next_start => "the memory setting: modify().memory().next_start() on msb",
     cpus_change_applies_at_next_start => "the cpus setting: modify().cpus().next_start() on msb",
+    env_change_applies_at_next_start_and_keeps_the_root_disk => "modify().env()/remove_env().next_start() on msb: the new value is seen and the root disk stays",
     hg01_guest_has_no_direct_network => "as root, direct IP, DNS, UDP, IPv6 and raw ICMP reach nothing while loopback works",
     hg01_raw_and_packet_sockets_reach_no_network => "as root, raw IP and AF_PACKET sockets reach nothing, also over a sink device given an address and a route",
     hg02_only_the_routed_vsock_port_accepts => "a vsock connect sweep of the host and CIDs 0, 1 and 3: only the routed port accepts, and its bytes arrive",
@@ -977,6 +978,68 @@ async fn cpus_change_applies_at_next_start<R: Runtime>(c: &Case<'_, R>) -> Outco
     let err = fails(
         "set cpus of an unknown sandbox",
         rt.set_cpus(&c.sandbox("nope")?, CpuCount::MIN),
+    )
+    .await?;
+    check!(
+        matches!(err, ComputeError::NotFound { .. }),
+        "want NotFound, got {err:?}"
+    );
+    Ok(())
+}
+
+/// The four variables the case watches as one guest sees them ("unset" for an absent one), then
+/// the root disk marker.
+async fn env_and_marker<S: Sandbox>(sb: &S) -> Result<String, String> {
+    let mut seen = Vec::new();
+    for var in ["KEPT", "CHANGED", "ADDED", "GONE"] {
+        let out = step("printenv", sb.exec(ExecRequest::new("printenv", [var]))).await?;
+        seen.push(if out.status.success() {
+            out.stdout_text().trim_end().to_owned()
+        } else {
+            "unset".to_owned()
+        });
+    }
+    let marker = read_file(sb, "/root-disk-marker").await?;
+    Ok(format!(
+        "{} {}",
+        seen.join(" "),
+        marker.unwrap_or_else(|| "no marker".to_owned()).trim_end()
+    ))
+}
+
+fn guest_env(pairs: &[(&str, &str)]) -> Result<GuestEnv, String> {
+    let mut env = GuestEnv::new();
+    for (k, v) in pairs {
+        env.set(k, v).map_err(|e| e.to_string())?;
+    }
+    Ok(env)
+}
+
+async fn env_change_applies_at_next_start_and_keeps_the_root_disk<R: Runtime>(
+    c: &Case<'_, R>,
+) -> Outcome {
+    let rt = c.runtime();
+    let name = c.sandbox("a")?;
+    let made_with = guest_env(&[("KEPT", "same"), ("CHANGED", "old"), ("GONE", "1")])?;
+    let sb = step("create", rt.create(spec(c, &name).with_env(&made_with))).await?;
+    write_file(&sb, "/root-disk-marker", "on-the-root-disk\n").await?;
+    let now = guest_env(&[("KEPT", "same"), ("CHANGED", "new"), ("ADDED", "yes")])?;
+    step("set env", rt.set_env(&name, &now)).await?;
+    let running = env_and_marker(&sb).await?;
+    check!(
+        running == "same old unset 1 on-the-root-disk",
+        "the running sandbox changed its variables: {running:?}"
+    );
+    step("stop", sb.stop()).await?;
+    let sb = step("start", rt.start(&name)).await?;
+    let after = env_and_marker(&sb).await?;
+    check!(
+        after == "same new yes unset on-the-root-disk",
+        "after the restart: {after:?}, want the new variables and the root disk file"
+    );
+    let err = fails(
+        "set env of an unknown sandbox",
+        rt.set_env(&c.sandbox("nope")?, &now),
     )
     .await?;
     check!(

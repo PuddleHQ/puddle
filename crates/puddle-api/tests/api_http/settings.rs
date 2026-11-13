@@ -77,6 +77,8 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
 #[tokio::test]
 async fn global_and_workspace_values_resolve_in_order() {
     let api = start().await;
+    api.own("big");
+    api.own("plain");
     let reply = api
         .send(
             "PUT",
@@ -181,6 +183,7 @@ async fn out_of_range_and_unknown_settings_are_refused() {
 #[tokio::test]
 async fn unknown_stored_fields_are_listed_and_kept() {
     let api = start().await;
+    api.own("box");
     api.settings
         .save_global(
             json!({"schema_version": 1, "rule_sets": ["x"], "workspace_defaults": {"swap": 2}}),
@@ -224,6 +227,7 @@ async fn unknown_stored_fields_are_listed_and_kept() {
 #[tokio::test]
 async fn settings_from_a_newer_puddle_are_a_conflict_and_left_alone() {
     let api = start().await;
+    api.own("box");
     let newer = json!({"schema_version": 99, "workspace_defaults": {"memory": 4096}});
     api.settings.save_global(newer.clone()).unwrap();
     for (method, path, body) in [
@@ -254,6 +258,7 @@ async fn settings_from_a_newer_puddle_are_a_conflict_and_left_alone() {
 #[tokio::test]
 async fn damaged_settings_are_a_conflict_that_says_what_is_wrong() {
     let api = start().await;
+    api.own("box");
     // A stored document that isn't an object: the body carries the reason, not a bare 500.
     api.settings.save_global(json!([1, 2])).unwrap();
     for (method, path, body) in [

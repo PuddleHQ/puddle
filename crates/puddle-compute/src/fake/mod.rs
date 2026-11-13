@@ -55,7 +55,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use puddle_types::{CpuCount, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus};
+use puddle_types::{
+    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub use self::exec::{ExecContext, ExecHandler, FsError};
@@ -88,6 +90,8 @@ pub enum Op {
     SetMemory,
     /// [`Runtime::set_cpus`].
     SetCpus,
+    /// [`Runtime::set_env`].
+    SetEnv,
     /// [`Runtime::grow_root_disk`].
     GrowRootDisk,
     /// [`Runtime::list`].
@@ -213,6 +217,9 @@ struct SandboxRecord {
     /// A size [`Runtime::grow_root_disk`] left for the next boot (the runtime could not grow
     /// live), applied by [`SandboxRecord::boot`].
     pending_root: Option<DiskSize>,
+    /// The variables the guest booted with: a [`Runtime::set_env`] on a running sandbox only
+    /// shows at the next boot, as on a real guest.
+    booted_env: GuestEnv,
 }
 
 impl SandboxRecord {
@@ -227,6 +234,7 @@ impl SandboxRecord {
     fn boot(&mut self, boot: u64) {
         self.status = WorkspaceStatus::Running;
         self.boot = boot;
+        self.booted_env = self.spec.env.clone();
         if let Some(size) = self.pending_root.take() {
             self.grow_reported(size);
         }
@@ -694,6 +702,7 @@ impl Runtime for FakeRuntime {
                     files: Files::new(),
                     root_disk: None,
                     pending_root: None,
+                    booted_env: GuestEnv::new(),
                 },
             );
             return Err(e);
@@ -718,6 +727,7 @@ impl Runtime for FakeRuntime {
             files: Files::new(),
             root_disk: None,
             pending_root: None,
+            booted_env: GuestEnv::new(),
         };
         record.boot(boot);
         state.sandboxes.insert(name.to_string(), record);
@@ -803,6 +813,21 @@ impl Runtime for FakeRuntime {
                     sandbox: name.to_string(),
                 })?;
         record.spec.cpus = Some(cpus.get());
+        Ok(())
+    }
+
+    async fn set_env(&self, name: &SandboxName, env: &GuestEnv) -> Result<(), ComputeError> {
+        self.turn().await;
+        let mut state = self.lock();
+        state.enter(Op::SetEnv, Some(name.as_str()), None)?;
+        let record =
+            state
+                .sandboxes
+                .get_mut(name.as_str())
+                .ok_or_else(|| ComputeError::NotFound {
+                    sandbox: name.to_string(),
+                })?;
+        record.spec.env = env.clone();
         Ok(())
     }
 
@@ -1025,7 +1050,7 @@ impl FakeSandbox {
                 .ok_or_else(|| ComputeError::NotFound {
                     sandbox: self.name.to_string(),
                 })?;
-        let mut env = record.spec.env.clone();
+        let mut env = record.booted_env.clone();
         env.extend(&request.env);
         let mut ctx = ExecContext {
             sandbox: &self.name,

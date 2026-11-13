@@ -160,5 +160,5 @@ async fn a_guest_cannot_reach_the_api_even_with_every_local_toggle_on_and_an_all
             "{authority}: the refusal must say why: {body:?}"
         );
     }
-    assert_eq!(rig.store.open_pending(None).unwrap().len(), 0);
+    assert_eq!(rig.store.open_pending_every_user(None).unwrap().len(), 0);
 }

@@ -110,3 +110,30 @@ fn a_numeric_lookup_gives_one_stream_address_with_the_port() {
     let addrs = lookup("127.0.0.1", 8080).unwrap();
     assert_eq!(addrs, ["127.0.0.1:8080".parse::<SocketAddr>().unwrap()]);
 }
+
+#[test]
+fn a_double_lets_no_distribution_point_through_unless_it_says_so() {
+    let host = Host::parse_normalised("pki.corp.example").unwrap();
+    let addr: SocketAddr = "10.1.2.3:80".parse().unwrap();
+    assert!(!Fixed(None).pki_address(&host, addr));
+}
+
+#[test]
+fn the_product_guard_lets_a_distribution_point_use_private_addresses_only() {
+    let guard = NetPolicy::new(std::sync::Arc::new(puddle_netpolicy::LocalAccess::NONE));
+    let host = Host::parse_normalised("pki.corp.example").unwrap();
+    let check: &dyn AddressCheck = &guard;
+    for (addr, expected) in [
+        ("10.1.2.3:80", true),
+        ("192.168.0.9:80", true),
+        ("127.0.0.1:80", false),
+        ("169.254.169.254:80", false),
+        ("8.8.8.8:80", false),
+    ] {
+        assert_eq!(
+            check.pki_address(&host, addr.parse().unwrap()),
+            expected,
+            "{addr}"
+        );
+    }
+}

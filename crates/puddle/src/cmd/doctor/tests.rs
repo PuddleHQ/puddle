@@ -137,7 +137,8 @@ fn flags() {
         cli::parse(["doctor", "--no-boot", "--json"]),
         Ok(Command::Doctor(DoctorArgs {
             json: true,
-            no_boot: true
+            no_boot: true,
+            flags: Flags::new(),
         }))
     );
     assert_eq!(
@@ -151,6 +152,30 @@ fn flags() {
 }
 
 #[test]
+fn the_data_folder_options_are_taken_like_serves() {
+    let Ok(Command::Doctor(args)) = cli::parse(["doctor", "--data-dir", "d", "--config", "c.toml"])
+    else {
+        panic!("doctor takes both options");
+    };
+    assert_eq!(
+        args.flags.get("data_dir"),
+        Some(&crate::cmd::serve::options::Value::Path("d".into()))
+    );
+    assert_eq!(
+        args.flags.get("config"),
+        Some(&crate::cmd::serve::options::Value::Path("c.toml".into()))
+    );
+    assert_eq!(
+        cli::parse(["doctor", "--data-dir"]),
+        Err(UsageError::MissingArgument("--data-dir <path>"))
+    );
+    assert_eq!(
+        cli::parse(["doctor", "--data-dir", "a", "--data-dir", "b"]),
+        Err(UsageError::UnknownArgument("--data-dir".into()))
+    );
+}
+
+#[test]
 fn healthy_text_report_exits_zero() {
     let (text, code) = report(
         &Fake {
@@ -158,7 +183,7 @@ fn healthy_text_report_exits_zero() {
             failed_boot_kept: None,
             free_bytes: 100 * GB,
         },
-        DoctorArgs::default(),
+        &DoctorArgs::default(),
         OWN_LINES,
     );
     assert!(text.starts_with("puddle doctor (puddle "), "{text}");
@@ -171,6 +196,7 @@ fn json_report_with_a_failure_exits_one() {
     let args = DoctorArgs {
         json: true,
         no_boot: true,
+        ..DoctorArgs::default()
     };
     let (json, code) = report(
         &Fake {
@@ -178,7 +204,7 @@ fn json_report_with_a_failure_exits_one() {
             failed_boot_kept: None,
             free_bytes: 100 * GB,
         },
-        args,
+        &args,
         OWN_LINES,
     );
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -198,8 +224,8 @@ fn json_report_with_a_failure_exits_one() {
 #[test]
 fn no_boot_skips_the_test_boot() {
     let args = DoctorArgs {
-        json: false,
         no_boot: true,
+        ..DoctorArgs::default()
     };
     let (text, _) = report(
         &Fake {
@@ -207,7 +233,7 @@ fn no_boot_skips_the_test_boot() {
             failed_boot_kept: None,
             free_bytes: 100 * GB,
         },
-        args,
+        &args,
         OWN_LINES,
     );
     assert!(text.contains("not checked: --no-boot"), "{text}");
@@ -224,9 +250,9 @@ fn failed_boot_report(json: bool) -> String {
     };
     let args = DoctorArgs {
         json,
-        no_boot: false,
+        ..DoctorArgs::default()
     };
-    report(&probe, args, OWN_LINES).0
+    report(&probe, &args, OWN_LINES).0
 }
 
 #[test]
@@ -295,10 +321,10 @@ fn disk_report(free_bytes: u64, lines: (u64, u64)) -> (String, ExitCode) {
         free_bytes,
     };
     let args = DoctorArgs {
-        json: false,
         no_boot: true,
+        ..DoctorArgs::default()
     };
-    report(&probe, args, lines)
+    report(&probe, &args, lines)
 }
 
 #[test]

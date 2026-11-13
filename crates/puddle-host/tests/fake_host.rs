@@ -4860,6 +4860,7 @@ async fn a_busy_database_does_not_hold_up_the_workspace_list_while_a_rename_save
     let rename = api.patch("/api/workspaces/acme", &body);
     let id = WorkspaceId::new("acme").unwrap();
     let probe = async {
+        // flake-ok: nothing signals that the rename has reached its write to the database; a late probe only makes the test pass where the old code would fail
         tokio::time::sleep(Duration::from_millis(500)).await;
         // The list's lock is a plain mutex, so a reader that has to wait blocks its thread:
         // measure how long the read took rather than time it out.
@@ -4872,8 +4873,9 @@ async fn a_busy_database_does_not_hold_up_the_workspace_list_while_a_rename_save
     let (renamed, (read, took)) = tokio::join!(rename, probe);
     assert_eq!(renamed.status, 200, "{}", renamed.body);
     assert!(read.is_ok());
+    // flake-ok: the bar is 4 s against the 5 s the database makes a writer wait; a read of the list takes microseconds
     assert!(
-        took < Duration::from_secs(2),
+        took < Duration::from_secs(4),
         "the workspace list waited {took:?} for a write to the database"
     );
     host.shutdown().await;

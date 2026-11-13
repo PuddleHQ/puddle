@@ -13,7 +13,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
-use crate::common::{Api, STEP, start, start_with};
+use crate::common::{Api, RawSocket, STEP, start, start_with};
 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -454,6 +454,25 @@ async fn an_unknown_or_oversized_message_closes_the_socket_with_1008() {
     }
 }
 
+/// The host's close of a refused page is a handshake: it waits for the page's close before it drops
+/// the connection, so a page that is still sending is not reset.
+#[tokio::test]
+async fn a_refusal_waits_for_the_page_to_answer_the_close() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = RawSocket::open(
+        api.addr,
+        &format!("/api/workspaces/shop/terminals/{terminal}"),
+        None,
+        &format!("{SUBPROTOCOL}, ticket.{ticket}"),
+    )
+    .await;
+    socket.send(0x1, b"not json").await;
+    assert_eq!(socket.read_close().await, 1008);
+    socket.answer_close_after_a_pause().await;
+}
+
 #[tokio::test]
 async fn a_message_far_over_the_limit_is_cut_off_by_the_socket_itself() {
     let api = start().await;
@@ -488,6 +507,27 @@ async fn a_shutdown_ends_the_terminals_with_quitting() {
     };
     let ended: Value = serde_json::from_str(&ended).unwrap();
     assert_eq!(ended, json!({"type": "ended", "reason": "quitting"}));
+}
+
+/// The quitting end is a handshake too.
+#[tokio::test]
+async fn a_shutdown_waits_for_the_page_to_answer_the_close() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let (terminal, ticket) = ticket(&api, "shop").await;
+    let mut socket = RawSocket::open(
+        api.addr,
+        &format!("/api/workspaces/shop/terminals/{terminal}"),
+        None,
+        &format!("{SUBPROTOCOL}, ticket.{ticket}"),
+    )
+    .await;
+    let page = async {
+        // The text message of the end, then the close.
+        assert_eq!(socket.read_close().await, 1000);
+        socket.answer_close_after_a_pause().await;
+    };
+    tokio::join!(api.running.shutdown(), page);
 }
 
 #[tokio::test]

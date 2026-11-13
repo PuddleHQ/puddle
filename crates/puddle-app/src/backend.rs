@@ -124,8 +124,7 @@ impl Source {
 
 /// The host's configuration: installed beside this program, plus what `options` change.
 fn host_config(options: &Options) -> Result<HostConfig, HostError> {
-    let exe = std::env::current_exe()
-        .map_err(|e| HostError::DataDir(format!("cannot find this program's folder: {e}")))?;
+    let exe = std::env::current_exe().map_err(HostError::ProgramFolder)?;
     let mut config = match &options.data_dir {
         Some(data) => HostConfig::installed(&exe, data)?,
         None => HostConfig::installed_for_user(&exe)?,

@@ -89,7 +89,7 @@ impl From<&settings::WorkspaceLayer> for SettingsLayer {
 impl SettingsLayer {
     /// Writes these values into `layer`, leaving its unknown fields alone.
     pub(crate) fn apply_to(self, layer: &mut settings::WorkspaceLayer) -> Result<(), ApiError> {
-        let invalid = |err: puddle_types::ValidationError| ApiError::invalid(err.to_string());
+        let invalid = |err: puddle_types::ValidationError| ApiError::invalid(err);
         let Self {
             memory,
             cpus,
@@ -537,6 +537,12 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true, minimum = 1, maximum = 10000)]
     pub disk_fail_free_gb: Option<u32>,
+    /// The SSH agent `puddle doctor` asks for the key list: a named pipe on Windows (default
+    /// `\\.\pipe\openssh-ssh-agent`), a socket path elsewhere (default the `SSH_AUTH_SOCK` of
+    /// Puddle's session). Null or blank is unset; at most 1024 characters, no control characters.
+    #[serde(default)]
+    #[schema(required = true, max_length = 1024)]
+    pub ssh_agent_pipe: Option<String>,
 }
 
 impl From<&settings::UiPrefs> for UiPrefs {
@@ -568,6 +574,7 @@ impl From<&settings::UiPrefs> for UiPrefs {
             notify_low_disk_space: u.notify_low_disk_space,
             disk_warn_free_gb: u.disk_warn_free_gb.map(Into::into),
             disk_fail_free_gb: u.disk_fail_free_gb.map(Into::into),
+            ssh_agent_pipe: u.ssh_agent_pipe.clone(),
         }
     }
 }
@@ -579,13 +586,36 @@ pub(super) fn colour_text(colour: Option<&settings::HexColour>) -> Option<String
 fn free_gb(gb: Option<u32>) -> Result<Option<settings::FreeGb>, ApiError> {
     gb.map(settings::FreeGb::new)
         .transpose()
-        .map_err(|err| ApiError::invalid(err.to_string()))
+        .map_err(ApiError::invalid)
+}
+
+/// The longest pipe or socket path the settings take.
+const SSH_AGENT_PIPE_MAX: usize = 1024;
+
+/// The agent pipe or socket as stored: trimmed, a blank one unset.
+fn agent_pipe_text(text: Option<String>) -> Result<Option<String>, ApiError> {
+    let Some(text) = text else { return Ok(None) };
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if text.chars().count() > SSH_AGENT_PIPE_MAX {
+        return Err(ApiError::invalid(format!(
+            "ssh_agent_pipe is longer than {SSH_AGENT_PIPE_MAX} characters"
+        )));
+    }
+    if text.chars().any(char::is_control) {
+        return Err(ApiError::invalid(
+            "ssh_agent_pipe holds a control character",
+        ));
+    }
+    Ok(Some(text.to_owned()))
 }
 
 fn parse_colour(text: Option<String>) -> Result<Option<settings::HexColour>, ApiError> {
     text.map(|t| settings::HexColour::new(&t))
         .transpose()
-        .map_err(|err| ApiError::invalid(err.to_string()))
+        .map_err(ApiError::invalid)
 }
 
 impl UiPrefs {
@@ -615,6 +645,7 @@ impl UiPrefs {
             notify_low_disk_space,
             disk_warn_free_gb,
             disk_fail_free_gb,
+            ssh_agent_pipe,
         } = self;
         prefs.theme = theme.map(Into::into);
         prefs.density = density.map(Into::into);
@@ -635,7 +666,7 @@ impl UiPrefs {
         prefs.disk_warning_percent = disk_warning_percent
             .map(settings::DiskWarningPercent::new)
             .transpose()
-            .map_err(|err| ApiError::invalid(err.to_string()))?;
+            .map_err(ApiError::invalid)?;
         prefs.notify_unexpected_stop = notify_unexpected_stop;
         prefs.confirm_global_rules = confirm_global_rules;
         prefs.inbox_shortcuts = inbox_shortcuts;
@@ -643,6 +674,7 @@ impl UiPrefs {
         prefs.notify_low_disk_space = notify_low_disk_space;
         prefs.disk_warn_free_gb = free_gb(disk_warn_free_gb)?;
         prefs.disk_fail_free_gb = free_gb(disk_fail_free_gb)?;
+        prefs.ssh_agent_pipe = agent_pipe_text(ssh_agent_pipe)?;
         // The failure line above the warning line would make the warning unreachable.
         settings::DiskSpaceLimits::new(
             prefs
@@ -652,7 +684,7 @@ impl UiPrefs {
                 .disk_fail_free_gb
                 .unwrap_or(settings::FreeGb::DEFAULT_FAIL),
         )
-        .map_err(|err| ApiError::invalid(err.to_string()))?;
+        .map_err(ApiError::invalid)?;
         Ok(())
     }
 }

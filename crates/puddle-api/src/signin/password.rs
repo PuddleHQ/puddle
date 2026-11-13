@@ -24,12 +24,20 @@ const LANES: u32 = 1;
 const SALT_BYTES: usize = 16;
 
 /// Why a password was refused or could not be hashed.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum PasswordError {
     /// The password does not meet the policy; the text says how.
+    #[error("{0}")]
     Weak(&'static str),
-    /// The operating system gave no randomness, or the hash could not be computed.
-    Failed(String),
+    /// The operating system gave no randomness.
+    #[error("no randomness: {0}")]
+    Random(getrandom::Error),
+    /// The hash parameters are refused.
+    #[error("the password hash parameters are refused: {0}")]
+    Params(argon2::Error),
+    /// The hash could not be computed.
+    #[error("the password could not be hashed: {0}")]
+    Hash(argon2::password_hash::Error),
 }
 
 /// Checks `password` against the policy: [`MIN_PASSWORD_CHARS`] to [`MAX_PASSWORD_BYTES`], and
@@ -50,19 +58,18 @@ pub(crate) fn check_policy(password: &str, name: &str) -> Result<(), PasswordErr
 }
 
 fn argon() -> Result<Argon2<'static>, PasswordError> {
-    let params = Params::new(MEMORY_KIB, PASSES, LANES, None)
-        .map_err(|e| PasswordError::Failed(e.to_string()))?;
+    let params = Params::new(MEMORY_KIB, PASSES, LANES, None).map_err(PasswordError::Params)?;
     Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
 }
 
 /// The hash of `password` as a PHC string (`$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>`).
 pub(crate) fn hash(password: &str) -> Result<String, PasswordError> {
     let mut salt = [0u8; SALT_BYTES];
-    getrandom::fill(&mut salt).map_err(|e| PasswordError::Failed(e.to_string()))?;
+    getrandom::fill(&mut salt).map_err(PasswordError::Random)?;
     argon()?
         .hash_password_with_salt(password.as_bytes(), &salt)
         .map(|hash| hash.to_string())
-        .map_err(|e| PasswordError::Failed(e.to_string()))
+        .map_err(PasswordError::Hash)
 }
 
 /// Whether `password` is the one `stored` (a PHC string) was made from. A stored value that does
@@ -78,7 +85,7 @@ pub(crate) fn verify(stored: &str, password: &str) -> bool {
 /// then costs the same time as a wrong password.
 pub(crate) fn decoy() -> Result<Zeroizing<String>, PasswordError> {
     let mut noise = [0u8; 16];
-    getrandom::fill(&mut noise).map_err(|e| PasswordError::Failed(e.to_string()))?;
+    getrandom::fill(&mut noise).map_err(PasswordError::Random)?;
     hash(&format!("{noise:?}")).map(Zeroizing::new)
 }
 

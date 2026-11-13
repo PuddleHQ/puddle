@@ -434,3 +434,122 @@ fn dechunk(mut rest: &str) -> String {
     }
     out
 }
+
+/// The handshake's nonce (a fixed one is fine: the host only echoes its hash).
+const NONCE: &str = "AQIDBAUGBwgJCgsMDQ4PEA==";
+
+/// A WebSocket client written by hand, so a test can see what a library client hides: whether the
+/// host keeps the connection open until the page has answered its close.
+pub(crate) struct RawSocket {
+    stream: TcpStream,
+    pending: Vec<u8>,
+}
+
+impl RawSocket {
+    /// Opens `path` as a WebSocket with the given sub-protocols and, when given, a `Host`.
+    pub(crate) async fn open(
+        addr: SocketAddr,
+        path: &str,
+        host: Option<&str>,
+        protocols: &str,
+    ) -> Self {
+        let host = host.map_or_else(|| addr.to_string(), str::to_owned);
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
+             Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {NONCE}\r\n\
+             Sec-WebSocket-Protocol: {protocols}\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut socket = Self {
+            stream,
+            pending: Vec::new(),
+        };
+        let head = loop {
+            if let Some(end) = socket.pending.windows(4).position(|w| w == b"\r\n\r\n") {
+                break socket.pending.drain(..end + 4).collect::<Vec<u8>>();
+            }
+            assert!(socket.fill(STEP).await, "the handshake ended early");
+        };
+        let head = String::from_utf8_lossy(&head);
+        assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+        socket
+    }
+
+    /// Reads more bytes; false when the connection ended.
+    async fn fill(&mut self, within: Duration) -> bool {
+        let mut buffer = [0_u8; 4096];
+        let read = tokio::time::timeout(within, self.stream.read(&mut buffer))
+            .await
+            .expect("bytes or the end of the connection in time");
+        match read {
+            Ok(0) | Err(_) => false,
+            Ok(n) => {
+                self.pending.extend_from_slice(&buffer[..n]);
+                true
+            }
+        }
+    }
+
+    /// The next frame from the host as (opcode, payload).
+    async fn frame(&mut self) -> (u8, Vec<u8>) {
+        loop {
+            if self.pending.len() >= 2 {
+                let (opcode, short) = (self.pending[0] & 0x0f, usize::from(self.pending[1] & 0x7f));
+                let (head, length) = match short {
+                    126 if self.pending.len() >= 4 => (
+                        4,
+                        usize::from(u16::from_be_bytes([self.pending[2], self.pending[3]])),
+                    ),
+                    126 => (usize::MAX, 0),
+                    127 => panic!("a frame this size is not expected"),
+                    n => (2, n),
+                };
+                if head != usize::MAX && self.pending.len() >= head + length {
+                    let payload = self.pending[head..head + length].to_vec();
+                    self.pending.drain(..head + length);
+                    return (opcode, payload);
+                }
+            }
+            assert!(
+                self.fill(STEP).await,
+                "the host closed before the close frame"
+            );
+        }
+    }
+
+    /// Reads frames until the host's close frame; its status code.
+    pub(crate) async fn read_close(&mut self) -> u16 {
+        loop {
+            let (opcode, payload) = self.frame().await;
+            if opcode == 0x8 {
+                return u16::from_be_bytes([payload[0], payload[1]]);
+            }
+        }
+    }
+
+    /// Sends one masked frame.
+    pub(crate) async fn send(&mut self, opcode: u8, payload: &[u8]) {
+        let mask = [1_u8, 2, 3, 4];
+        let mut frame = vec![0x80 | opcode, 0x80 | u8::try_from(payload.len()).unwrap()];
+        frame.extend_from_slice(&mask);
+        frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+        self.stream.write_all(&frame).await.unwrap();
+    }
+
+    /// After the host's close: the host must keep the connection open until the page answers, then
+    /// end it. Dropping it at once resets the connection when the page is still sending.
+    pub(crate) async fn answer_close_after_a_pause(&mut self) {
+        let early = tokio::time::timeout(
+            Duration::from_millis(300),
+            self.stream.read(&mut [0_u8; 64]),
+        )
+        .await;
+        assert!(
+            early.is_err(),
+            "the host closed the connection before the page answered: {early:?}"
+        );
+        self.send(0x8, &1000_u16.to_be_bytes()).await;
+        while self.fill(STEP).await {}
+    }
+}

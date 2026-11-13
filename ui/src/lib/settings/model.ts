@@ -128,7 +128,7 @@ export const LOCAL_EXPLAIN: Record<string, string> = {
     "Services on your own machine, like a database in Docker Desktop. Turning this on also lets the workspace reach any service listening on this computer's 127.0.0.1, and the ports other workspaces forwarded to this computer.",
   private: "Your home or office network (10.x, 192.168.x, ...).",
   company_network:
-    "Destinations your company's VPN, private-access client or DNS suffixes mark as internal. Puddle does not read those signals yet, so for now this switch changes nothing.",
+    "Destinations your company's VPN, private-access client or DNS suffixes mark as internal. Puddle reads those signals on Windows only; on other systems this switch changes nothing.",
   link_local: "169.254.x.x and fe80::, usually device discovery.",
   metadata: "Instance metadata endpoints such as 169.254.169.254.",
   special: "Carrier-grade NAT, benchmarking and similar ranges.",

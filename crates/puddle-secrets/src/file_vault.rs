@@ -184,7 +184,8 @@ struct Loaded {
 }
 
 impl FileVault {
-    /// Makes a new, empty vault at `path` (its folder is made owner-only if missing).
+    /// Makes a new, empty vault at `path` (its folder is made owner-only if missing). A relative
+    /// `path` is taken against the current folder now, once.
     ///
     /// # Errors
     /// [`VaultError::Exists`] when there is a file at `path`, [`VaultError::Io`] or
@@ -193,10 +194,11 @@ impl FileVault {
         if path.exists() {
             return Err(VaultError::Exists);
         }
+        let path = std::path::absolute(path).map_err(|_| VaultError::Io)?;
         let mut vault_id = [0_u8; ID_LEN];
         getrandom::fill(&mut vault_id).map_err(|_| VaultError::Random)?;
         let vault = Self {
-            path: path.to_owned(),
+            path,
             key,
             source,
             vault_id,
@@ -206,7 +208,8 @@ impl FileVault {
         Ok(vault)
     }
 
-    /// Opens the vault at `path` and checks `key` against it.
+    /// Opens the vault at `path` and checks `key` against it. A relative `path` is taken against
+    /// the current folder now, once.
     ///
     /// # Errors
     /// [`VaultError::Missing`], [`VaultError::NotAVault`], [`VaultError::UnknownVersion`],
@@ -214,7 +217,7 @@ impl FileVault {
     /// [`VaultError::Io`].
     pub fn open(path: &Path, key: VaultKey) -> Result<Self, VaultError> {
         let mut vault = Self {
-            path: path.to_owned(),
+            path: std::path::absolute(path).map_err(|_| VaultError::Io)?,
             key,
             source: KeySourceTag::KeyFile,
             vault_id: [0; ID_LEN],
@@ -363,10 +366,9 @@ impl FileVault {
 
     /// Step one of a change: the new content in `<vault>.tmp`, synced. The old vault is untouched.
     fn write_temp(&self, bytes: &[u8]) -> Result<PathBuf, VaultError> {
-        let dir = self.path.parent().filter(|p| !p.as_os_str().is_empty());
-        if let Some(dir) = dir {
-            puddle_fs::private::create_dir(dir).map_err(|_| VaultError::Io)?;
-        }
+        // The path is absolute, so only a file system root has no folder, and a root is no file.
+        let dir = self.path.parent().ok_or(VaultError::Io)?;
+        puddle_fs::private::create_dir(dir).map_err(|_| VaultError::Io)?;
         let mut tmp_name = self.path.as_os_str().to_owned();
         tmp_name.push(".tmp");
         let tmp = PathBuf::from(tmp_name);

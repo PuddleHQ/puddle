@@ -404,3 +404,15 @@ fn a_rename_that_fails_removes_the_temp_file_and_keeps_what_is_there() {
     assert!(!tmp.exists());
     assert_eq!(fs::read(path.join("kept")).unwrap(), b"kept");
 }
+
+#[test]
+fn an_empty_path_is_an_io_error() {
+    assert_eq!(
+        FileVault::create(Path::new(""), key(1), KeySourceTag::KeyFile).err(),
+        Some(VaultError::Io)
+    );
+    assert_eq!(
+        FileVault::open(Path::new(""), key(1)).err(),
+        Some(VaultError::Io)
+    );
+}

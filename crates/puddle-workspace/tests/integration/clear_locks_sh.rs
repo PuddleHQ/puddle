@@ -65,7 +65,7 @@ fn git_ok(dir: &Path, args: &[&str]) {
 }
 
 struct Fixture {
-    _tmp: tempfile::TempDir,
+    tmp: tempfile::TempDir,
     vol: PathBuf,
     proc_dir: PathBuf,
 }
@@ -117,11 +117,7 @@ fn fixture() -> Fixture {
     std::fs::create_dir(vol.join("linked")).unwrap();
     std::os::unix::fs::symlink(&outside, vol.join("linked/.git")).unwrap();
     std::os::unix::fs::symlink(&outside, vol.join("linkdir")).unwrap();
-    Fixture {
-        _tmp: tmp,
-        vol,
-        proc_dir,
-    }
+    Fixture { tmp, vol, proc_dir }
 }
 
 async fn run(shell: &'static str, fx: &Fixture) -> LockReport {
@@ -293,11 +289,7 @@ fn repair_fixture() -> Fixture {
     git_ok(&api, &["checkout", "-q", "feature"]);
     std::fs::write(api.join("a.txt"), "edited, not staged\n").unwrap();
     std::fs::write(api.join("new.txt"), "untracked\n").unwrap();
-    Fixture {
-        _tmp: tmp,
-        vol,
-        proc_dir,
-    }
+    Fixture { tmp, vol, proc_dir }
 }
 
 /// Overwrites `path` with `len` NUL bytes, as a power cut leaves a renamed file.
@@ -723,7 +715,7 @@ fn linked_fixture() -> Fixture {
     git_ok(&wt, &["checkout", "-q", "wtb"]);
     std::fs::write(wt.join("w.txt"), "edited, not staged\n").unwrap();
 
-    let lib = fx._tmp.path().join("lib");
+    let lib = fx.tmp.path().join("lib");
     std::fs::create_dir(&lib).unwrap();
     git_ok(&lib, &["init", "-q", "-b", "main"]);
     std::fs::write(lib.join("l.txt"), "l\n").unwrap();
@@ -840,7 +832,7 @@ async fn healthy_linked_worktrees_and_submodules_are_not_touched() {
 async fn a_gitdir_pointer_that_leaves_the_volume_is_reported_and_not_followed() {
     for shell in shells() {
         let fx = linked_fixture();
-        let outside = fx._tmp.path().join("outside-git");
+        let outside = fx.tmp.path().join("outside-git");
         std::fs::create_dir_all(outside.join("objects")).unwrap();
         std::fs::create_dir_all(outside.join("refs")).unwrap();
         zero_fill(&outside.join("HEAD"), 12);

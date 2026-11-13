@@ -204,15 +204,11 @@ async fn vm_ssh_agent_logs_in_with_the_users_key_through_the_filter_and_stops_wh
     );
     let vm = start_vm_host_platform("sshag", options, &HarnessPlatform::default(), |_| {}).await;
     let api = Api::new(vm.host.url(), vm.host.token());
-    let settings = api
-        .request(
-            "PUT",
-            "/api/settings",
-            Some(&json!({"ui": {"ssh_agent_pipe": agent_path}}).to_string()),
-            true,
-        )
-        .await;
-    assert_eq!(settings.status, 200, "{}", settings.body);
+    // The agent is named in the settings file only (the API does not take it), as a user does.
+    vm.host
+        .settings()
+        .save_global(json!({"schema_version": 2, "ui": {"ssh_agent_pipe": agent_path}}))
+        .unwrap();
     let workspace =
         create_workspace_from(&vm, &api, "sshag", &[NAME], json!({"memory_mib": 2048})).await;
     let id = workspace.as_str();

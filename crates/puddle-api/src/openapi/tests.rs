@@ -38,7 +38,22 @@ fn every_operation_documents_the_guard_refusals() {
             assert!(op["tags"].as_array().is_some_and(|t| !t.is_empty()));
         }
     }
-    assert_eq!(count, 127, "operations in the spec");
+    assert_eq!(
+        count,
+        committed_operation_count(),
+        "operations in the spec and in the committed contract"
+    );
+}
+
+#[test]
+fn operation_count_counts_methods_and_not_other_path_keys() {
+    let spec = serde_json::json!({ "paths": {
+        "/a": { "get": {}, "post": {}, "parameters": [] },
+        "/b": { "delete": {}, "summary": "x" },
+        "/c": {}
+    }});
+    assert_eq!(operation_count(&spec), 3);
+    assert_eq!(operation_count(&serde_json::json!({})), 0);
 }
 
 /// ADR 0002: responses always carry every field (`null`, never absent), so the generated

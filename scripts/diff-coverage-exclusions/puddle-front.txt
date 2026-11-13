@@ -1,0 +1,29 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed, under crates/puddle-front/.
+# Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
+# path glob here starts with crates/puddle-front/; the gate refuses another crate's entry, so two pull requests that
+# touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-front/src/keys.rs | Err(err) => return Err(err), | the key file failing to be read or written (disk full, permissions); tests use a temp dir that works
+crates/puddle-front/src/proxy.rs | "The key for the editor's stored secrets could not be made.",\n)\n} | the closing line of the failure branch listed just above it; the reason there applies
+crates/puddle-front/src/proxy.rs | Err(_) => return bad_gateway(workspace, guest_port, "it did not answer in time"), | the 60 s answer timeout and the socket cap's refusal: a test would wait a minute or open the whole cap; the editor-unreachable 502 test covers the sibling branch
+crates/puddle-front/src/proxy.rs | Err(_) => return bad_gateway(workspace, guest_port, "too many sockets are open"), | the 60 s answer timeout and the socket cap's refusal: a test would wait a minute or open the whole cap; the editor-unreachable 502 test covers the sibling branch
+crates/puddle-front/src/proxy.rs | Err(err) => return bad_gateway(workspace, guest_port, &err.to_string()), | an error from the editor connection or the agent stream, reached only when it breaks mid-connect
+crates/puddle-front/src/proxy.rs | Err(err) => return key_trouble(workspace, &err.to_string()), | x3 | the owner-only key file failing to be read or written (disk full, permissions); tests use a temp dir that works
+crates/puddle-front/src/proxy.rs | Ok(Err(err)) => return key_trouble(workspace, &err.to_string()), | the owner-only key file failing to be read or written (disk full, permissions); tests use a temp dir that works
+crates/puddle-front/src/proxy.rs | Ok(Err(err)) => {\nreturn bad_gateway(workspace, guest_port, &format!("it did not answer ({err})")); | the 60 s answer timeout and the socket cap's refusal: a test would wait a minute or open the whole cap; the editor-unreachable 502 test covers the sibling branch
+crates/puddle-front/src/proxy.rs | Ok(Ok(response)) => response,\nOk(Err(err)) => { | the 60 s answer timeout and the socket cap's refusal: a test would wait a minute or open the whole cap; the editor-unreachable 502 test covers the sibling branch
+crates/puddle-front/src/proxy.rs | fn key_trouble(workspace: &WorkspaceId, why: &str) -> Response<Body> { | the owner-only key file failing to be read or written (disk full, permissions); tests use a temp dir that works
+crates/puddle-front/src/proxy.rs | fn socket_error(err: &std::io::Error) { | a peer dropping mid-stream, which loopback tests cannot cut at a chosen byte; the function only logs
+crates/puddle-front/src/proxy.rs | fn socket_error(err: &std::io::Error) {\ntracing::debug!(error = %err, "an editor socket ended with an error");\n} | a peer dropping mid-stream, which loopback tests cannot cut at a chosen byte; the function only logs
+crates/puddle-front/src/proxy.rs | let (Ok(client), Ok(server)) = tokio::join!(client_upgrade, server_upgrade) else {\nreturn; | the closing line of the failure branch listed just above it; the reason there applies
+crates/puddle-front/src/proxy.rs | tracing::debug!(error = %err, "an editor connection ended with an error"); | a peer dropping mid-stream, which loopback tests cannot cut at a chosen byte; the line only logs
+crates/puddle-front/src/proxy.rs | tracing::debug!(error = %err, "an editor socket ended with an error"); | a peer dropping mid-stream, which loopback tests cannot cut at a chosen byte; the line only logs
+crates/puddle-front/src/proxy.rs | tracing::debug!(error = %err, "an editor socket ended with an error");\n}\n}\n}\n});\n} | the closing line of the failure branch listed just above it; the reason there applies
+crates/puddle-front/src/proxy.rs | tracing::warn!(%workspace, error = %why, "the editor's secret key could not be made"); | the owner-only key file failing to be read or written (disk full, permissions); tests use a temp dir that works
+crates/puddle-front/src/proxy.rs | tracing::warn!(%workspace, error = %why, "the editor's secret key could not be made");\ntext( | the owner-only key file failing to be read or written (disk full, permissions); tests use a temp dir that works
+crates/puddle-front/src/server.rs | Ok(accepted) => accepted,\nErr(err) => { | the closing line of the failure branch listed just above it; the reason there applies
+crates/puddle-front/src/server.rs | tokio::time::sleep(ACCEPT_BACKOFF).await; | the accept call failing (out of file descriptors); a loopback test cannot make a listener's accept fail
+crates/puddle-front/src/server.rs | tokio::time::sleep(ACCEPT_BACKOFF).await;\ncontinue; | the closing line of the failure branch listed just above it; the reason there applies
+crates/puddle-front/src/server.rs | tracing::debug!(error = %err, "a front connection ended with an error"); | a peer dropping mid-stream, which loopback tests cannot cut at a chosen byte; the line only logs
+crates/puddle-front/src/server.rs | tracing::warn!(error = %err, "the front could not accept"); | the accept call failing (out of file descriptors); a loopback test cannot make a listener's accept fail
+crates/puddle-front/src/server.rs | tracing::warn!(open = connections.len(), "a front connection was refused"); | the log line for a connection refused past the connection cap; the cap's limit is too large to open in a unit test
+crates/puddle-front/src/server.rs | tracing::warn!(open = connections.len(), "a front connection was refused");\ncontinue; | the closing line of the failure branch listed just above it; the reason there applies

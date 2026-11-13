@@ -1,0 +1,16 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed, under crates/puddle-ports/.
+# Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
+# path glob here starts with crates/puddle-ports/; the gate refuses another crate's entry, so two pull requests that
+# touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-ports/src/forward.rs | drop(permit);\n});\n}\nErr(err) => { | an accept error on a loopback listener cannot be provoked portably
+crates/puddle-ports/src/forward.rs | tokio::time::sleep(Duration::from_millis(50)).await; | the pause after an accept error; see above
+crates/puddle-ports/src/forward.rs | tracing::debug!(error = %err, "zero linger on a refused forward connection"); | a log line for a socket option the system refused
+crates/puddle-ports/src/forward.rs | tracing::debug!(guest_port, error = %err, "a forwarded connection ended with an error"); | a log line for a connection reset in flight
+crates/puddle-ports/src/forward.rs | tracing::warn!(guest_port, error = %err, "a forward could not accept"); | an accept error on a loopback listener (descriptor exhaustion) cannot be provoked portably
+crates/puddle-ports/src/ports.rs | "the system does not let Puddle use it (ports below 1024 and ranges the system reserves are closed to programs without special rights)".to_owned() | see above
+crates/puddle-ports/src/ports.rs | None => unreachable!("with_connection_limit is for a fresh Ports"), | a programming error guard: the builder is called on the only handle
+crates/puddle-ports/src/ports.rs | PortsError::Cannot {\nhost_port, | see above
+crates/puddle-ports/src/ports.rs | if let Some(active) = undone {\nactive.forward.close().await;\n} | the closing braces of two bodies whose lines ran: the `else` of "the forward we just opened is gone" (the workspace was deleted between opening it and saving the pin, a race a test cannot hold still) and the end of the `AddrInUse` arm, which always returns, so no line runs after it
+crates/puddle-ports/src/ports.rs | owner: PortOwner::Program(program),\n};\n} | the closing braces of two bodies whose lines ran: the `else` of "the forward we just opened is gone" (the workspace was deleted between opening it and saving the pin, a race a test cannot hold still) and the end of the `AddrInUse` arm, which always returns, so no line runs after it
+crates/puddle-ports/src/ports.rs | reason: if err.kind() == std::io::ErrorKind::PermissionDenied { | a bind refused for a reason other than a taken port: privileged ports are refused on Linux and allowed on Windows, so a portable test cannot force it
+crates/puddle-ports/src/ports.rs | } else {\nerr.to_string() | see above

@@ -136,5 +136,29 @@ fn add_guard_responses(doc: &mut OpenApi) {
     }
 }
 
+/// How many operations (a method on a path) `spec` lists. The tests compare the live contract with
+/// the committed one by this count, so no test keeps a number that every new route must bump.
+#[cfg(test)]
+pub(crate) fn operation_count(spec: &serde_json::Value) -> usize {
+    const METHODS: [&str; 8] = [
+        "get", "put", "post", "delete", "options", "head", "patch", "trace",
+    ];
+    spec["paths"].as_object().map_or(0, |paths| {
+        paths
+            .values()
+            .filter_map(serde_json::Value::as_object)
+            .map(|item| METHODS.iter().filter(|m| item.contains_key(**m)).count())
+            .sum()
+    })
+}
+
+/// The operation count of the committed `openapi.json`.
+#[cfg(test)]
+pub(crate) fn committed_operation_count() -> usize {
+    let committed: serde_json::Value =
+        serde_json::from_str(include_str!("../openapi/openapi.json")).unwrap();
+    operation_count(&committed)
+}
+
 #[cfg(test)]
 mod tests;

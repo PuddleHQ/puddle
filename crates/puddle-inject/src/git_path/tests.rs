@@ -4,14 +4,14 @@ use super::*;
 fn git_of(classified: Classified) -> Option<GitPath> {
     match classified {
         Classified::Git(found) => Some(found),
-        _ => None,
+        Classified::NotGit | Classified::Ambiguous(_) => None,
     }
 }
 
 fn why(classified: &Classified) -> Option<&'static str> {
     match classified {
         Classified::Ambiguous(why) => Some(why),
-        _ => None,
+        Classified::NotGit | Classified::Git(_) => None,
     }
 }
 

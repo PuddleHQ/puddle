@@ -38,7 +38,6 @@ pub const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
 /// One message from the host to the agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum HostMessage {
     /// The sandbox's editor window closed: end the extension hosts of the editor servers in the
     /// guest and everything they started (language servers, debuggees), and leave the terminals

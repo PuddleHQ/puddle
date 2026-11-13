@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::time::SystemTime;
+
 use puddle_api::MemorySettings;
 use puddle_repos::{ApiReply, FakeApi, Freshness, Read, Secrets};
 use puddle_secrets::{Credential, Secret, SourceError, SourceSpec};
@@ -121,4 +123,44 @@ async fn a_repository_list_renewed_behind_the_callers_back_is_announced_as_an_ev
         .unwrap()
         .unwrap();
     assert_eq!(event, Event::RepoListsChanged {});
+}
+
+#[test]
+fn the_distribution_points_come_from_the_synced_roots_and_only_from_them() {
+    use puddle_certs::{SOURCES, StoreSnapshot};
+
+    let root = |cn: &str, url: &str| {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn);
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.not_after = rcgen::date_time_ymd(2090, 1, 1);
+        params.crl_distribution_points = vec![rcgen::CrlDistributionPoint {
+            uris: vec![url.to_owned()],
+        }];
+        let key = rcgen::KeyPair::generate().unwrap();
+        params.self_signed(&key).unwrap().der().to_vec()
+    };
+    let mut snapshot = StoreSnapshot::new();
+    snapshot.add(
+        SOURCES[0],
+        root("Corp Root", "http://pki.corp.example/root.crl"),
+    );
+    // Expired: not synced, so its address is not a distribution point either.
+    let mut old = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    old.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    old.not_after = rcgen::date_time_ymd(2001, 1, 1);
+    old.crl_distribution_points = vec![rcgen::CrlDistributionPoint {
+        uris: vec!["http://old.corp.example/x.crl".to_owned()],
+    }];
+    let key = rcgen::KeyPair::generate().unwrap();
+    snapshot.add(SOURCES[0], old.self_signed(&key).unwrap().der().to_vec());
+    let roots = CorporateRoots::select(&snapshot, SystemTime::now());
+
+    let points = distribution_points(&roots);
+    let host = |n: &str| puddle_types::Host::parse_normalised(n).unwrap();
+    assert!(points.covers(&host("pki.corp.example"), 80, "GET", "/root.crl"));
+    assert!(!points.covers(&host("old.corp.example"), 80, "GET", "/x.crl"));
+    assert!(distribution_points(&CorporateRoots::default()).is_empty());
 }

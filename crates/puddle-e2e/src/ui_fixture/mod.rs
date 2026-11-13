@@ -53,6 +53,7 @@ pub mod cli;
 pub mod control;
 mod repos;
 pub mod scenario;
+pub mod stack;
 
 pub use scenario::{CheckoutSeed, RemoteNoteSeed};
 pub use scenario::{

@@ -220,3 +220,19 @@ fn a_release_asset_is_downloaded_into_the_folder() {
     let got = source.fetch(Origin::Fork, "msb", dir.path()).unwrap();
     assert_eq!(std::fs::read(got).unwrap(), b"bin");
 }
+
+#[test]
+fn a_github_answer_that_is_missing_fails_the_facts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut source = served_source(Some("v5.6.1-puddle.1"), dir.path());
+    let no_makefile = &ROUTES[..2];
+    let base = crate::github::tests::serve(no_makefile);
+    source.github = GitHub::at(&base, &base, "curl");
+    let err = source.facts().unwrap_err().to_string();
+    assert!(err.contains("404") && err.contains("Makefile"), "{err}");
+
+    let base = crate::github::tests::serve(&[]);
+    source.github = GitHub::at(&base, &base, "curl");
+    let err = source.facts().unwrap_err().to_string();
+    assert!(err.contains("404") && err.contains("compare"), "{err}");
+}

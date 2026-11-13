@@ -565,3 +565,46 @@ fn a_guest_cannot_reach_the_front_or_the_network_listener_with_every_toggle_on()
         AddressVerdict::Allow
     );
 }
+
+// Which addresses a certificate distribution point may be fetched from without a rule.
+
+#[test]
+fn a_distribution_point_may_be_on_a_private_or_company_address_with_every_toggle_off() {
+    let g = company_guard(LocalAccess::NONE);
+    let pki = named("pki.corp.example");
+    // a private address, and one the DNS suffix puts in the company network, and a CGNAT one
+    assert!(g.pki_address(Some(&pki), sa("10.1.2.3:80")));
+    assert!(g.pki_address(Some(&pki), sa("172.16.0.9:80")));
+    assert!(g.pki_address(None, sa("100.64.3.7:80")));
+    assert!(g.pki_address(Some(&pki), sa("10.8.1.1:80")));
+    // the physical LAN stays private, and private qualifies
+    assert!(g.pki_address(Some(&pki), sa("192.168.1.77:80")));
+}
+
+#[test]
+fn a_distribution_point_never_reaches_loopback_link_local_metadata_public_or_puddle() {
+    let (g, _api) = guard(LocalAccess::NONE);
+    let pki = named("pki.corp.example");
+    for addr in [
+        "127.0.0.1:80",
+        "[::1]:80",
+        "169.254.1.1:80",
+        "169.254.169.254:80",
+        "0.0.0.0:80",
+        "192.0.2.1:80",
+        "8.8.8.8:80",
+        "[2001:4860:4860::8888]:80",
+        // Puddle's own listener, even though it is on loopback
+        "127.0.0.1:7070",
+    ] {
+        assert!(!g.pki_address(Some(&pki), sa(addr)), "{addr}");
+    }
+}
+
+#[test]
+fn the_azure_devops_message_names_the_host_the_port_and_the_https_way() {
+    let text = azure_devops_ssh_message();
+    assert!(text.contains("ssh.dev.azure.com:22"), "{text}");
+    assert!(text.contains("HTTPS remotes work"), "{text}");
+    assert!(!text.contains("rule"), "{text}");
+}

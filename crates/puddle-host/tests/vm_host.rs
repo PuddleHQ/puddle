@@ -3599,6 +3599,15 @@ async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceId, name:
     password
 }
 
+/// Stops the workspace, resets its root disk (the sandbox is removed) and starts it again, so the
+/// next start makes a new sandbox on the same volume. A changed variable no longer does this: it
+/// keeps the sandbox and its root disk.
+async fn rebuild_sandbox(api: &Api, events: &mut support::Events, name: &str) {
+    for step in ["stop", "reset-root-disk", "start"] {
+        op_and_wait(api, events, name, step).await;
+    }
+}
+
 /// What the guest says about Docker's data folder: its mount, the mounts of the root and of the
 /// workspace volume for comparison, and the folder's size in bytes.
 fn docker_disk_script(name: &str) -> String {
@@ -3689,24 +3698,8 @@ async fn vm_host_dockers_data_is_on_a_disk_of_the_sandbox_that_a_rebuild_replace
     let kept = guest(&runtime, &sandbox, &script).await;
     assert_eq!(said(&kept, "marker"), "layer", "{kept}");
 
-    // A rebuild (a changed variable makes the next start create a new sandbox) leaves it behind.
-    let changed = api
-        .put(
-            &format!("/api/workspaces/{name}/env/REBUILD"),
-            &json!({"kind": "plain", "value": "1"}).to_string(),
-        )
-        .await;
-    assert_eq!(changed.status, 200, "{}", changed.body);
-    for step in ["stop", "start"] {
-        let reply = api
-            .post(&format!("/api/workspaces/{name}/{step}"), "")
-            .await;
-        assert_eq!(reply.status, 202, "{}", reply.body);
-        let end = events
-            .until(ended(name_static), Duration::from_secs(300))
-            .await;
-        assert_eq!(end["step"], "done", "{end}");
-    }
+    // A rebuild (a root-disk reset makes the next start create a new sandbox) leaves it behind.
+    rebuild_sandbox(&api, &mut events, name_static).await;
     let rebuilt = guest(
         &runtime,
         &sandbox,
@@ -3828,25 +3821,9 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     )
     .await;
 
-    // Rebuild the sandbox: a changed variable makes the next start create a new sandbox on the
+    // Rebuild the sandbox: a root-disk reset makes the next start create a new sandbox on the
     // same volume.
-    let changed = api
-        .put(
-            &format!("/api/workspaces/{name}/env/REBUILD"),
-            &json!({"kind": "plain", "value": "1"}).to_string(),
-        )
-        .await;
-    assert_eq!(changed.status, 200, "{}", changed.body);
-    for step in ["stop", "start"] {
-        let reply = api
-            .post(&format!("/api/workspaces/{name}/{step}"), "")
-            .await;
-        assert_eq!(reply.status, 202, "{}", reply.body);
-        let end = events
-            .until(ended(name_static), Duration::from_secs(300))
-            .await;
-        assert_eq!(end["step"], "done", "{end}");
-    }
+    rebuild_sandbox(&api, &mut events, name_static).await;
     editor_up(&runtime, &sandbox).await;
     let after = guest(
         &runtime,

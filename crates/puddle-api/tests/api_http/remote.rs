@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NetworkEndpoint, NetworkListener,
-    PublicHost, Remote, RemoteServing, RunningApi, Services, SettingsRepo, TlsIdentity, UiAssets,
-    UiFile,
+    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NameResolver, NetworkEndpoint,
+    NetworkListener, PublicHost, Remote, RemoteServing, RunningApi, Services, SettingsRepo,
+    TlsIdentity, UiAssets, UiFile,
 };
 use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};
 use puddle_store::{Limits, ManualClock, Store};
@@ -60,7 +60,35 @@ struct Bound {
     endpoints: PuddleEndpoints,
 }
 
+/// Answers from a fixed table; a name not in it does not resolve.
+#[derive(Clone, Default)]
+struct Table(Arc<std::sync::Mutex<HashMap<&'static str, Vec<IpAddr>>>>);
+
+impl NameResolver for Table {
+    fn resolve<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = std::io::Result<Vec<IpAddr>>> + Send + 'a>> {
+        Box::pin(async move {
+            self.0
+                .lock()
+                .unwrap()
+                .get(name)
+                .cloned()
+                .ok_or_else(|| std::io::Error::other("no such name"))
+        })
+    }
+}
+
 async fn bind(config: ApiConfig) -> Bound {
+    bind_resolving(config, HashMap::new()).await
+}
+
+async fn bind_resolving(config: ApiConfig, records: HashMap<&'static str, Vec<IpAddr>>) -> Bound {
+    bind_with(config, Table(Arc::new(std::sync::Mutex::new(records)))).await
+}
+
+async fn bind_with(config: ApiConfig, table: Table) -> Bound {
     let endpoints = PuddleEndpoints::new();
     let clock = Arc::new(ManualClock::new(START_MS));
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
@@ -70,7 +98,8 @@ async fn bind(config: ApiConfig) -> Bound {
         Arc::new(EventHub::default()),
         clock,
     )
-    .with_endpoints(endpoints.clone());
+    .with_endpoints(endpoints.clone())
+    .with_front_resolver(Arc::new(table));
     let token = ApiToken::generate().unwrap();
     let server = ApiServer::bind(config, token.clone(), services)
         .await
@@ -334,6 +363,79 @@ async fn remote_serving_registers_the_front_and_blocks_the_names_until_it_stops(
     api.running.shutdown().await;
     assert_eq!(endpoints.list(), []);
     assert_eq!(endpoints.find_name("puddle.example.org"), None);
+}
+
+#[tokio::test]
+async fn a_front_on_another_machine_is_blocked_by_address_as_well_as_by_name() {
+    let front: IpAddr = "192.168.1.50".parse().unwrap();
+    let api = bind_resolving(
+        config(Some(serving(
+            &["puddle.example.org", "alt.example.org:8443"],
+            Some("ws.example.net"),
+        ))),
+        HashMap::from([
+            ("puddle.example.org", vec![front]),
+            ("alt.example.org", vec![front]),
+            ("ws.example.net", vec![front]),
+        ]),
+    )
+    .await;
+    let own = OwnAddresses;
+    for port in [443, 8443] {
+        assert_eq!(
+            api.endpoints.find(SocketAddr::new(front, port), &own),
+            Some(EndpointKind::ExternalFront),
+            "{port}"
+        );
+    }
+    // The mapped form of the same address.
+    let mapped = SocketAddr::new("::ffff:192.168.1.50".parse().unwrap(), 443);
+    assert_eq!(
+        api.endpoints.find(mapped, &own),
+        Some(EndpointKind::ExternalFront)
+    );
+    for dest in [
+        SocketAddr::new(front, 22),
+        SocketAddr::new("192.168.1.51".parse().unwrap(), 443),
+    ] {
+        assert_eq!(api.endpoints.find(dest, &own), None, "{dest}");
+    }
+    let endpoints = api.endpoints.clone();
+    api.running.shutdown().await;
+    assert_eq!(endpoints.find(SocketAddr::new(front, 443), &own), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_front_whose_record_moves_is_followed_while_the_api_serves() {
+    let old: IpAddr = "192.168.1.50".parse().unwrap();
+    let new: IpAddr = "192.168.1.60".parse().unwrap();
+    let table = Table::default();
+    table
+        .0
+        .lock()
+        .unwrap()
+        .insert("puddle.example.org", vec![old]);
+    let api = bind_with(
+        config(Some(serving(&["puddle.example.org"], None))),
+        table.clone(),
+    )
+    .await;
+    let own = OwnAddresses;
+    let blocked = |ip| api.endpoints.find(SocketAddr::new(ip, 443), &own).is_some();
+    assert!(blocked(old));
+    assert!(!blocked(new));
+    table
+        .0
+        .lock()
+        .unwrap()
+        .insert("puddle.example.org", vec![new]);
+    tokio::time::sleep(std::time::Duration::from_secs(70)).await;
+    assert!(
+        blocked(new),
+        "the new address is blocked after the next lookup"
+    );
+    assert!(!blocked(old), "the old one is let go");
+    api.running.shutdown().await;
 }
 
 // ---- the network listener ----

@@ -13,7 +13,8 @@ use std::process::ExitCode;
 use puddle_host::HostPaths;
 
 use crate::cli::{Command, UsageError};
-use crate::cmd::serve::options::{Effective, Flags, spec_for_flag};
+use crate::cmd::data_folder;
+use crate::cmd::serve::options::{Effective, Flags};
 use crate::cmd::serve::{ServeArgs, effective};
 
 /// How `puddle user reset` should run.
@@ -46,26 +47,13 @@ where
     let mut flags = Flags::new();
     while let Some(arg) = args.next() {
         let arg = arg.as_ref();
-        let unknown = || UsageError::UnknownArgument(arg.to_owned());
-        if matches!(arg, "--config" | "--data-dir") {
-            let spec = spec_for_flag(arg).ok_or_else(unknown)?;
-            if flags.contains_key(spec.key) {
-                return Err(unknown());
-            }
-            let text = args.next().ok_or(UsageError::MissingArgument(spec.usage))?;
-            let value = spec.kind.parse_text(text.as_ref()).map_err(|expected| {
-                UsageError::InvalidValue {
-                    option: spec.flag(),
-                    expected,
-                    value: text.as_ref().to_owned(),
-                }
-            })?;
-            flags.insert(spec.key, value);
-        } else if !arg.starts_with('-') && name.is_none() {
-            name = Some(arg.to_owned());
-        } else {
-            return Err(unknown());
+        if data_folder::take_option(arg, &mut args, &mut flags)? {
+            continue;
         }
+        if arg.starts_with('-') || name.is_some() {
+            return Err(UsageError::UnknownArgument(arg.to_owned()));
+        }
+        name = Some(arg.to_owned());
     }
     let name = name.ok_or(UsageError::MissingArgument("user reset <name>"))?;
     Ok(Command::UserReset(ResetArgs { name, flags }))

@@ -982,7 +982,10 @@ async fn browser_attach_opens_the_window_through_the_launcher_and_answers_opened
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    assert_eq!(reply.json(), json!({"opened": true, "message": null}));
+    assert_eq!(
+        reply.json(),
+        json!({"opened": true, "message": null, "open_uri": null})
+    );
     assert_eq!(
         api.launcher.browsers_opened(),
         [WorkspaceId::new("web").unwrap()]
@@ -1009,7 +1012,16 @@ async fn desktop_attach_opens_the_editor_when_direct_ssh_is_on() {
         )
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    assert_eq!(reply.json(), json!({"opened": true, "message": null}));
+    // The link follows the workspace's ssh host and start folder, so a client on another machine
+    // can open the editor itself.
+    assert_eq!(
+        reply.json(),
+        json!({
+            "opened": true,
+            "message": null,
+            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspaces/web"
+        })
+    );
     assert_eq!(api.launcher.opened(), [WorkspaceId::new("web").unwrap()]);
     api.running.shutdown().await;
 }
@@ -1141,7 +1153,11 @@ async fn a_desktop_that_cannot_open_says_why() {
     assert_eq!(reply.status, 200);
     assert_eq!(
         reply.json(),
-        json!({"opened": false, "message": "VS Code is not installed"})
+        json!({
+            "opened": false,
+            "message": "VS Code is not installed",
+            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspaces/web"
+        })
     );
     api.running.shutdown().await;
 }
@@ -1161,7 +1177,7 @@ async fn a_browser_window_that_cannot_open_says_why() {
     assert_eq!(reply.status, 200);
     assert_eq!(
         reply.json(),
-        json!({"opened": false, "message": "the editor gave no session"})
+        json!({"opened": false, "message": "the editor gave no session", "open_uri": null})
     );
     api.running.shutdown().await;
 }

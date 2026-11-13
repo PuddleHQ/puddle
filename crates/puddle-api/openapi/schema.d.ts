@@ -2096,6 +2096,13 @@ export interface components {
              *     installed).
              */
             message: string | null;
+            /**
+             * @description A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,
+             *     for a client on another machine than the host (a browser on a device that reached
+             *     `puddle serve`). Present for a desktop attach, whether or not the host opened a window
+             *     itself; `null` for a browser attach.
+             */
+            open_uri: string | null;
             /** @description Whether Puddle opened an editor itself (desktop mode, when it worked). */
             opened: boolean;
         };
@@ -3679,6 +3686,12 @@ export interface components {
         Health: {
             /** @description The API contract's version ([`crate::API_VERSION`]). */
             api_version: string;
+            /**
+             * @description The build of the app this server serves, read from the build's own `_app/version.json`: a
+             *     page that carries another build is stale and reloads. `null` when the server serves no
+             *     app (a development server behind the Vite proxy).
+             */
+            ui_build_id: string | null;
             /** @description Puddle's version. */
             version: string;
         };

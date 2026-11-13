@@ -284,6 +284,7 @@ describe("opening in VS Code", () => {
     api.attachReply = {
       opened: false,
       message: "VS Code isn't installed.",
+      open_uri: null,
     };
     actions.openDesktop(w("trusted"));
     await expect
@@ -295,7 +296,7 @@ describe("opening in VS Code", () => {
   });
 
   it("has words of its own when the service gave none", async () => {
-    api.attachReply = { opened: false, message: null };
+    api.attachReply = { opened: false, message: null, open_uri: null };
     actions.openDesktop(w("trusted"));
     await expect
       .poll(() => messages())
@@ -314,6 +315,58 @@ describe("opening in VS Code", () => {
   });
 });
 
+describe("opening from another computer than the host", () => {
+  const link = "vscode://vscode-remote/ssh-remote+puddle-up/workspaces/up";
+  let followed: string[];
+  beforeEach(() => {
+    followed = [];
+    actions = new WorkspaceActions(store, toasts, async () => removed, {
+      assign: (uri: string | URL) => void followed.push(String(uri)),
+    });
+  });
+
+  it("follows the link the host gives when it opened no editor itself", async () => {
+    api.attachReply = {
+      opened: false,
+      message: "VS Code is not installed",
+      open_uri: link,
+    };
+    actions.openDesktop(w("up"));
+    await expect
+      .poll(() => messages())
+      .toEqual(["Opening up in VS Code on this computer."]);
+    expect(followed).toEqual([link]);
+    expect(toasts.items[0]?.tone).toBe("info");
+  });
+
+  it("follows nothing when the host opened the editor", async () => {
+    api.attachReply = { opened: true, message: null, open_uri: link };
+    actions.openDesktop(w("up"));
+    await expect.poll(() => messages()).toEqual(["Opening up in VS Code."]);
+    expect(followed).toEqual([]);
+  });
+
+  it("shows the host's words when it gave no link", async () => {
+    api.attachReply = {
+      opened: false,
+      message: "direct SSH is on but the ssh config could not be written",
+      open_uri: null,
+    };
+    actions.openDesktop(w("up"));
+    await expect.poll(() => toasts.items[0]).toMatchObject({ tone: "error" });
+    expect(followed).toEqual([]);
+  });
+
+  it("never follows a link for the browser editor", async () => {
+    api.attachReply = { opened: false, message: "no window", open_uri: link };
+    actions.openBrowser(w("up"));
+    await expect
+      .poll(() => toasts.items[0])
+      .toMatchObject({ message: "no window" });
+    expect(followed).toEqual([]);
+  });
+});
+
 describe("opening in the browser", () => {
   it("asks for a browser attach and says the window is opening", async () => {
     actions.openBrowser(w("up"));
@@ -326,6 +379,7 @@ describe("opening in the browser", () => {
     api.attachReply = {
       opened: false,
       message: "the browser editor opens from the desktop app",
+      open_uri: null,
     };
     actions.openBrowser(w("up"));
     await expect
@@ -337,7 +391,7 @@ describe("opening in the browser", () => {
   });
 
   it("has words of its own when the service gave none, naming the browser editor", async () => {
-    api.attachReply = { opened: false, message: null };
+    api.attachReply = { opened: false, message: null, open_uri: null };
     actions.openBrowser(w("up"));
     await expect
       .poll(() => messages())

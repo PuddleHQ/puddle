@@ -11,7 +11,7 @@
       "name": "GPL-3.0-or-later",
       "identifier": "GPL-3.0-or-later"
     },
-    "version": "0.30.0"
+    "version": "0.31.0"
   },
   "paths": {
     "/api/app-icons": {
@@ -11256,7 +11256,8 @@
         "description": "What an attach did.",
         "required": [
           "opened",
-          "message"
+          "message",
+          "open_uri"
         ],
         "properties": {
           "message": {
@@ -11265,6 +11266,13 @@
               "null"
             ],
             "description": "Why nothing was opened, when that is not an error (for example VS Code is not\ninstalled)."
+          },
+          "open_uri": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A `vscode://` link that opens the workspace in the desktop editor of whoever follows it,\nfor a client on another machine than the host (a browser on a device that reached\n`puddle serve`). Present for a desktop attach, whether or not the host opened a window\nitself; `null` for a browser attach."
           },
           "opened": {
             "type": "boolean",
@@ -15193,12 +15201,20 @@
         "description": "The API's identity, for a client to check it reached Puddle.",
         "required": [
           "version",
-          "api_version"
+          "api_version",
+          "ui_build_id"
         ],
         "properties": {
           "api_version": {
             "type": "string",
             "description": "The API contract's version ([`crate::API_VERSION`])."
+          },
+          "ui_build_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The build of the app this server serves, read from the build's own `_app/version.json`: a\npage that carries another build is stale and reloads. `null` when the server serves no\napp (a development server behind the Vite proxy)."
           },
           "version": {
             "type": "string",

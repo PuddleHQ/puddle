@@ -110,6 +110,8 @@ pub(crate) struct AppState {
     pub(crate) company_signals: Arc<dyn CompanySignals>,
     /// Browser sign-in; `None` when the host gave the API no accounts to sign in to.
     pub(crate) sign_in: Option<Arc<SignIn>>,
+    /// The build of the app this server serves (`GET /api/health`), `None` when it serves none.
+    pub(crate) ui_build_id: Option<String>,
     /// Becomes `true` when the server shuts down; ends SSE streams.
     pub(crate) shutdown: watch::Receiver<bool>,
 }

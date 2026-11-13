@@ -11,10 +11,16 @@
 //! Needs `PUDDLE_GATEWAY_DIR`: the pinned Gateway that `ci/fetch-gateway.sh` unpacks. The probe is
 //! built from its sources with Gateway's own `javac` on each run.
 #![expect(
-    clippy::unwrap_used,
     clippy::print_stdout,
-    clippy::print_stderr,
-    reason = "a plain test program for a VM: a failed step fails the run; the probe's report goes to stderr"
+    reason = "the runner reads `--list` and the results from stdout"
+)]
+#![cfg_attr(
+    unix,
+    expect(
+        clippy::unwrap_used,
+        clippy::print_stderr,
+        reason = "a plain test program for a VM: a failed step fails the run; the probe's report goes to stderr"
+    )
 )]
 
 mod support;

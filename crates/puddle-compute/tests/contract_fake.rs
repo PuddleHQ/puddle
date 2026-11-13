@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The contract suite against `FakeRuntime`: the fake must pass every case.
 #![expect(
     clippy::unwrap_used,

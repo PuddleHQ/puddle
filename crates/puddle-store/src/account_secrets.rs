@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The sign-in secrets: each user's password hash and pending invite. They share the database
 //! file with [`crate::Store`] but not its interface: no `Store` method reads these tables, and this
 //! repository is handed out once ([`crate::Store::take_account_secrets`]) to the sign-in code, so the

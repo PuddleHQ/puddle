@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Test helper of the ci/fetch-*-test.sh scripts: python3 -I ci/flaky-server.py <folder> <fails> <log>
 # serves the folder on a free 127.0.0.1 port (printed on the first line), drops the connection for the
 # first <fails> requests (the way a stream error looks to curl) and logs one line per request.

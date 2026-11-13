@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # cargo-fuzz targets for what a guest's first bytes reach. Not a
 # member of the root workspace (it needs a nightly toolchain and libFuzzer), so the stable gates
 # never build it; `.github/workflows/fuzz.yml` runs it nightly. Each target's checked-in corpus under
@@ -7,7 +7,7 @@
 name = "puddle-fuzz"
 version = "0.0.0"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license = "AGPL-3.0-or-later"
 publish = false
 
 [package.metadata]

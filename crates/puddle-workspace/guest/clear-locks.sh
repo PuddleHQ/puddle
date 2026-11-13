@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Removes stale git lock files after a crash or hard kill, then repairs the two git files a power
 # cut leaves zero-filled: `HEAD` and the index.
 #

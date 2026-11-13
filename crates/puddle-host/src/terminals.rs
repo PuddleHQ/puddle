@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A terminal's session: the host's own SSH connection to the runtime's SSH server over an
 //! in-memory stream, signed in with the login key, with a pseudo-terminal and a login shell.
 //!

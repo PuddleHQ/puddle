@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Decrypting every host: a workspace's switch and the names that are never decrypted.
 //!
 //! The settings live in the database. A change reaches a running workspace at once: the store

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Smoke test of a workspace window in the real shell (WebView2, so Windows only): the shell opens
 // one on a page this script serves from `probe.localhost`, standing in for a workspace's editor,
 // and the page attacks the shell the way hostile guest script would. Driven over WebView2's DevTools

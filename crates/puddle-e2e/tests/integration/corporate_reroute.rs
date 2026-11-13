@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A network change while a tunnel is open, against the lab's Squid: the machine leaves the
 //! company network (the route goes from the proxy to `DIRECT`) and comes back. A tunnel on the
 //! route that is gone is closed within two seconds so its client reconnects, and new connections

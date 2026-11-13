@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A fake Git host behind the TLS rig, and a workspace whose injector is the real one over a real
 //! in-memory store.
 #![expect(

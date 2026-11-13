@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspaces whose disk a quit could not trim, kept in a small file so the next start can
 //! tell the user. The quit has no window left to say it in, and the log is not where a user looks.
 

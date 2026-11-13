@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
 import type { EventStreamOptions } from "../api/sse.ts";
 import { LiveState } from "./live.svelte.ts";

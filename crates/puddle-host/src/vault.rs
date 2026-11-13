@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The credential store Puddle keeps its values in, and the clean-up of what nothing names.
 
 use std::sync::Arc;

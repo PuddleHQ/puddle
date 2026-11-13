@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Finding the accounts the user is already signed in with, from a closed list of listing commands.
 //!
 //! Every command prints names only. Each answer is parsed into the few fields kept below

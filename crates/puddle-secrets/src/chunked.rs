@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A store that spreads a long value over several entries of the store underneath.
 //!
 //! The Windows credential store keeps at most 2560 bytes per entry, which is 1280 UTF-16 code

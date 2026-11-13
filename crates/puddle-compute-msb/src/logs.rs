@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Housekeeping of msb's per-sandbox log files (`sandboxes/<name>/logs/`).
 
 use std::path::Path;

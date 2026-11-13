@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a guest may ask a terminated Git host over SSH, and which repository it names.
 //!
 //! The command is read with one strict grammar: `git-upload-pack` or

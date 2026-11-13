@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `OpenAI` Codex login through the real proxy and the shipped profile, against fake servers that
 //! speak the login's wire format: the code exchange (a form), the token exchange that trades the
 //! identity token for an API key (a form again, same path and same answer field), the refresh

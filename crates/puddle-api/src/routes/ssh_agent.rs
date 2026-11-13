@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The filtered SSH agent: the hosts a workspace may use the user's SSH agent for.
 //!
 //! Off for every host until the user turns it on for one here; no rule, default or other route

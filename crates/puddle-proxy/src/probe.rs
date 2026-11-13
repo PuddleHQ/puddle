@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's own probe of a TCP port, for telling a network that blocks a port from a Puddle
 //! refusal (the Azure DevOps SSH message).
 

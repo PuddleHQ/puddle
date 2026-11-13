@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of the concurrent gate runner (scripts/gate-sched.sh) with stub gates, and of the skip of
 # the `notices` gate (scripts/check.sh, with a stub cargo in a scratch repository). What it checks:
 # gates of different streams overlap; each gate's output stays whole under its `==> <gate>` line;

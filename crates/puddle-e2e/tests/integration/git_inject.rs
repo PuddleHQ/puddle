@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git over HTTPS end to end, tier I: real `git` against the guest's way in (the real agent on
 //! Unix), the real proxy with TLS termination, the real injector over a real store, and a fake
 //! Git host that is the real `git http-backend` behind TLS and records every request it answers.

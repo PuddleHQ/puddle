@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where the API keeps settings documents. The API reads and writes raw documents and does the
 //! versioning itself (`puddle-settings`: migrate, keep unknown fields, refuse newer), so a store
 //! only has to keep JSON values.

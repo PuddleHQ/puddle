@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tests of the Microsoft Entra profile ([`ENTRA`]) with stand-ins for its tokens: access tokens
 //! for several resources at once, each over a thousand characters, an opaque refresh token and an
 //! `id_token`. No token here is a real one; every value is built by the test.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The default workspace image, the maintenance image and the image the VM tests boot and the one the fake runtime knows are pinned by digest, not by the moving tag
 # (`mcr.microsoft.com/devcontainers/base:debian@sha256:...`), so a registry change reaches users only through a
 # reviewed pull request. The constants live in Rust; this script keeps them equal and current.

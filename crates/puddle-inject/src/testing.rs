@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! In-memory settings and credential sources for tests, and a [`World`]: a workspace in a real
 //! in-memory store with identities, a repository table and an injector over them. Never in
 //! product code (feature `testing`).

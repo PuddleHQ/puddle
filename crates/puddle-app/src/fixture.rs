@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fixture backend, for developing the window: the real API router on in-memory services, with
 //! one pending request seeded so the inbox has something to show. All data is fictional. It runs no
 //! workspaces, so its shutdown only stops the API.

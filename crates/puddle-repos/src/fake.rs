@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Scripted answers in place of a Git host, for tests of this crate and of the crates that use it.
 //! Never in product code.
 

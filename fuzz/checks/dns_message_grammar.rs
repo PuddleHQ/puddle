@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The checks of the `dns_message_grammar` cargo-fuzz target: DNS messages built from the wire
 //! grammar, so most inputs get past the header and the first label. Included, beside
 //! `dns_message.rs` as `dns_message`, by the fuzz target and by the stable corpus replay in

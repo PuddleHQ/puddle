@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Proves the flake-rule layout merges cleanly: one branch adds a rule, another adds a second rule, a third
 # flips a counted rule (one the test adds to the base) to failing, and `git merge-tree` merges all three with no conflict and keeps every
 # change. A rule list kept in one set or one table would conflict on exactly these edits.

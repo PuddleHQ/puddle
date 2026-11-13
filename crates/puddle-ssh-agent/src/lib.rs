@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The SSH agent on this machine, as Puddle's host side sees it, and the filtered agent a workspace
 //! may be given in front of it.
 //!

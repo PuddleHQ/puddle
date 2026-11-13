@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! How the host tells the agent to run the browser editor's server (code-server).
 //!
 //! The host sets four environment variables on the agent ([`EditorServer::env`]); the agent reads

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real Git injector (`puddle-inject`) behind the real proxy, on both HTTP versions, against
 //! a fake Git host: the workspace's own header, the credential of the identity that covers the
 //! owner, the push and pull lists, what a `401` becomes, what the connection record says.

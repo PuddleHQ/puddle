@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `GET /api/network-health` over real HTTP: the fake, the real report over faked OS answers and
 //! a real fake proxy, redaction, the `network_changed` event.
 

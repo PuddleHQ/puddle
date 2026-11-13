@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Developer and release tasks, run as `cargo xtask <command>` (alias in `.cargo/config.toml`).
 //!
 //! - `runtime`: assembles the bundled msb runtime folder of this OS ([`assemble`]): on Windows the

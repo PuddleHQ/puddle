@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where the main window may go.
 //!
 //! The main window shows Puddle's own page from the API origin and nothing else. A link or

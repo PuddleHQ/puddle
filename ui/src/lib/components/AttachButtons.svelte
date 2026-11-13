@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import Plug from "@lucide/svelte/icons/plug";
   import Play from "@lucide/svelte/icons/play";

@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { onDestroy, onMount } from "svelte";
@@ -1185,7 +1185,7 @@
             <span class="muted">
               (version unavailable: Puddle's service didn't say)</span
             >{/if}
-          <span class="muted"> &middot; GPL-3.0-or-later</span>
+          <span class="muted"> &middot; AGPL-3.0-or-later</span>
         </p>
         <details ontoggle={() => void loadNotices()}>
           <summary>Third-party licences</summary>

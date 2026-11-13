@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // App-level notices: things that happened outside what the user is looking at (a workspace ran
 // out of memory, stopped on its own, the network got worse). They stay in a list until dismissed
 // or until the cause is gone. A notice with a key already in the list replaces it, so a repeat

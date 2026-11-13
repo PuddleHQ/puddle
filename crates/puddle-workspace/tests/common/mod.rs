@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared by the tests that run `git` (or scripts that do) on the host.
 //!
 //! Under a git hook (the pre-push gates run the tests) git exports `GIT_DIR`, `GIT_INDEX_FILE`

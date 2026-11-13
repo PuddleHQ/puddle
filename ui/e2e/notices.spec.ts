@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // App-level notices driven by events, on the fixture backend (scenario `lived-in`): they show on
 // any screen, never take focus, and can be dismissed. Waits are on conditions, never on time.
 import type { Page } from "@playwright/test";

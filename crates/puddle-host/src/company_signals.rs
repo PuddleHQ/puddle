@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's readers for the company-network category: what the machine's network says about
 //! which private addresses are the company's (`puddle_netpolicy::CompanySignals`).
 //!

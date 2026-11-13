@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Prints the commit a change is measured from for the diff gates (diff-coverage, mutants on the changed
 # lines, diff-coverage-fast): $DIFF_BASE if it resolves, else the merge base with origin/develop; nothing
 # when neither exists.

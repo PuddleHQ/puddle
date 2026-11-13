@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Decision, address and refusal logic without a guest stream. The full path over a route is in
 //! `tests/route.rs`.
 

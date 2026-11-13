@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The whole host on fakes: the sandbox runtime is `FakeRuntime` with a scripted guest, the
 //! machine is a fake that records what it was asked, and everything else (store, proxies, the
 //! workspace service, the API, the UI route, the event stream) is the real code.

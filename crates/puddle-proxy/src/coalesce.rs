@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One lookup in flight per name: connects that ask for a name while a lookup of it is running
 //! share that lookup's answer instead of each starting their own.
 //!

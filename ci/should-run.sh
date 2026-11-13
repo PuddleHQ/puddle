@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Two gates on "this commit already has a green run". Needs GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA
 # and `actions: read`; writes to $GITHUB_OUTPUT. Self-test: ci/should-run-test.sh.
 #

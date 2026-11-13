@@ -1,7 +1,7 @@
 # Contributing to Puddle
 
 Thanks for wanting to help. Puddle is a personal project of Tijs van Kampen, licensed
-GPL-3.0-or-later (see `LICENSE`). Questions about contributing or the CLA:
+AGPL-3.0-or-later (see `LICENSE`). Questions about contributing or the CLA:
 <puddle@tijsvankampen.be>. Security problems: see [SECURITY.md](SECURITY.md), not a public issue.
 
 ## Before your first pull request: the CLA
@@ -18,7 +18,7 @@ What it means in short (the [CLA](CLA.md) itself is what counts):
 - **The owner may relicense** your contribution under any licence, including permissive or
   proprietary ones, but must always also offer it under the licence Puddle used when you submitted
   it (§2.3, Harmony "Option Five"). This keeps options open, for example moving Puddle under an
-  organisation later; your contribution stays available under GPL-3.0-or-later either way.
+  organisation later; your contribution stays available under AGPL-3.0-or-later either way.
 - You confirm the work is yours to give (§3). **If you write code as an employee**, your employer
   may own it: get your employer's approval first (§3(c)), or ask us about the entity version.
 
@@ -42,7 +42,7 @@ else (copied from another project, generated from a template, and so on):
 - say in the pull request where it comes from and under which licence, with a link;
 - mark it in the pull request description as "Submitted on behalf of a third party: <name>".
 
-Material under a licence that isn't compatible with GPL-3.0-or-later can't be accepted. Do not
+Material under a licence that isn't compatible with AGPL-3.0-or-later can't be accepted. Do not
 submit code copied from, or translated from, Huddle (infosupport/huddle): Puddle takes only ideas
 from it.
 
@@ -78,18 +78,18 @@ Every source file starts with an SPDX licence identifier in the file's own comme
 first line (after a shebang, if any):
 
 ```rust
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 ```
 
 ```sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 ```
 
 ```html
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 ```
 
-Package manifests carry the same identifier (`license = "GPL-3.0-or-later"` in `Cargo.toml`,
-`"license": "GPL-3.0-or-later"` in `package.json`). Files that come from elsewhere keep their own
+Package manifests carry the same identifier (`license = "AGPL-3.0-or-later"` in `Cargo.toml`,
+`"license": "AGPL-3.0-or-later"` in `package.json`). Files that come from elsewhere keep their own
 identifier and copyright line (see "Work you did not write"). Generated files and lock files need
 no header.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Puddle's guest development certificate step: makes .NET's own tooling accept the certificate
 # Puddle put in /etc/puddle/dev-cert (the system store, Node's extra CAs and the bundle already

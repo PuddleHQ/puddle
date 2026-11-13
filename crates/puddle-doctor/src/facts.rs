@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a [`crate::Probe`] reports: plain data, no OS handles, so tests can fake every case and
 //! [`crate::diagnose`] can turn it into findings on any platform.
 

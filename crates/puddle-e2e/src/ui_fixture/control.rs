@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The control server: a second loopback listener next to the API, so a test or a developer can
 //! change what the page sees while it is open. It exists only in the fixture; the product has
 //! nothing like it. It takes the same bearer token as the API.

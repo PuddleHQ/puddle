@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle ssh-bridge`: relays `ssh`'s stdio to a sandbox's SSH endpoint (it is the
 //! `ProxyCommand`).
 //!

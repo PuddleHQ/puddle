@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the machine's network looks like, in neutral terms: its adapters, its IPv4 routes and the
 //! DNS namespaces it resolves through. The company-network category reads it to tell a company
 //! address (behind a VPN or a private-access client, under a company DNS suffix) from a home or

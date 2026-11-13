@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Where the bundled runtime and Puddle's private msb home live.
 
 use std::path::{Path, PathBuf};

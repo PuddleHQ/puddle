@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Freezing a VM's process from a test, and the arithmetic of a heartbeat that ran through it.
 //!
 //! A frozen VMM gets no CPU, so the guest inside it stands still, the way it does while a host

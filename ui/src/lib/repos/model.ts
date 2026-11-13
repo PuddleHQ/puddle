@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the repository lists mean on screen, as pure functions: how a list's freshness, notes and
 // problem are worded, which identities reach a repository, and which clone addresses the
 // workspace's repository table cannot hold. The lists come from `GET /api/repos`; every string

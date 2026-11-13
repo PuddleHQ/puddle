@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A real pipe: the DACL as the OS reports it, and clients under restricted tokens.
 
 use std::path::Path;

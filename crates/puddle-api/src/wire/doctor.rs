@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The system check on the wire: the report of `puddle doctor` with every field always present
 //! (ADR 0002), so the UI's types say `string | null`, never "maybe missing". The command line's
 //! JSON leaves out what is empty; this one carries it as `null` and adds each check's title.

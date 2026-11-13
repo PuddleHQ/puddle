@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the host knows about each workspace's ports: which ones listen in the guest, which are
 //! forwarded to this computer, which are pinned.
 //!

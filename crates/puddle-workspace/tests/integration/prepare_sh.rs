@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real `guest/prepare.sh` under dash and bash, against a temp dir that plays the volume root.
 //! A test is not root, so `chown` is a stub (`PUDDLE_CHOWN`) that records its arguments: the
 //! script's own choices (what to give away, in which order, what to leave) are what is checked.

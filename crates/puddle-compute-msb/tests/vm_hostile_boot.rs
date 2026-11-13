@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest cases at tier V that need the product's boot hook: the guest runs Puddle's real
 //! `puddle-agent` (started by `boot.sh`, from `PUDDLE_AGENT_BIN`, the static build of
 //! `ci/build-agent.sh`) against a real proxy on the host, and Puddle's own read-only mounts.

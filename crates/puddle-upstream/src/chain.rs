@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Connecting through the route [`Discovery`] picked: the hops in order, the `CONNECT`
 //! and absolute-form exchanges with a proxy, and the `407` loop driven by [`ProxyAuth`].
 //!

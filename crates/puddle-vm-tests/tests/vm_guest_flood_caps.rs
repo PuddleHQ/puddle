@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A guest that floods the host-side devices meets the caps of the msb fork, and the sandbox stays
 //! healthy. The caps are unit-tested in the fork at device level; this runs them from inside a
 //! booted guest: it reads 64 MiB from the random-number device, writes 32 MiB to its console and

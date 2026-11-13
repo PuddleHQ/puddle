@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guest end of a port forward: the host opens a `forward` stream
 //! ([`puddle_agent_proto::forward`]), the agent connects to that port on the guest's loopback and
 //! splices the two.

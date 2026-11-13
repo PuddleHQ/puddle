@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The hosts of a create's repositories: what the create form shows before it allows them, and
 //! the check that refuses a create a block rule covers (storage ST-44a).
 

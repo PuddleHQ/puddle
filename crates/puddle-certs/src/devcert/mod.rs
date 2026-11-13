@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The localhost development certificate.
 //!
 //! A server a developer runs in a workspace over HTTPS reaches the host's browser as raw TCP on

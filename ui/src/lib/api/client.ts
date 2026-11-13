@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The typed API client: openapi-fetch over the generated schema.d.ts (ADR 0004). A wrong path or
 // body is a compile error (client.types.test.ts). One middleware adds the bearer token.
 import createClient, { type Middleware } from "openapi-fetch";

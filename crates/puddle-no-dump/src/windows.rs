@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Windows Error Reporting: the per-user list of executables that get no crash dump.
 
 use windows_sys::Win32::System::ErrorReporting::{

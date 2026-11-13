@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Browser sign-in on the wire. Only [`SessionGrant`] carries a credential (the access token a
 //! sign-in hands to the browser that just proved who it is); every other type here is safe to
 //! show to anyone who may see it, and a test keeps it that way: no password, hash, refresh token,

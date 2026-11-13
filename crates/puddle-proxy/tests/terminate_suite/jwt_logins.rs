@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A login whose access token is a JWT, through the real proxy: the tool reads the claims of the
 //! stand-in it is given, and the stand-ins it was given in the last few exchanges are each swapped for
 //! the real token of their own exchange toward the service's API host. A fake server stands in for the service.

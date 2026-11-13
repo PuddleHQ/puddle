@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Secret scanning: gitleaks over the commits being checked, with the rules and the reviewed
 # allowlist of fake test values in .gitleaks.toml. The gitleaks version is pinned in
 # ci/gitleaks.sha256; install it with ci/fetch-gitleaks.sh <dir-on-PATH>.

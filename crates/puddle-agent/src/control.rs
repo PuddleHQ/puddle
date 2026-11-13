@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The agent's side of the control stream: hello first, then every report from the OOM watch.
 //! A failed write reopens the stream (on a new session if the old one died) and resends.
 

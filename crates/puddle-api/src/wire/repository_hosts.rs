@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The hosts a workspace create allows for its repositories (storage ST-44a).
 
 use serde::{Deserialize, Serialize};

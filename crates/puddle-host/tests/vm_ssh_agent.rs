@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The filtered SSH agent end to end on a real microVM: the guest's own OpenSSH logs in to an SSH
 //! server by a key that only the user's agent on the host holds. The guest has an agent socket,
 //! `SSH_AUTH_SOCK` and `IdentityAgent`, but no key: each request goes to Puddle's filter, which

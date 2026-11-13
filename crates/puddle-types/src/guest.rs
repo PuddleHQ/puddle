@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What Puddle puts into a guest: paths, files and environment variables.
 //!
 //! Providers (proxy config, corporate roots, the per-workspace CA) produce [`GuestFile`]s and

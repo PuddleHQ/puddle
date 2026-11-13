@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Local-destination categories: the address classes a user can switch on per workspace.
 //!
 //! One enum for every crate: `puddle-netpolicy` classifies addresses into it, `puddle-settings`

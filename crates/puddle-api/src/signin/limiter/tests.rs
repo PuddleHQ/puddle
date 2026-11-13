@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 fn fail_times(limiter: &mut Limiter, key: &str, times: u32, now: u64) {

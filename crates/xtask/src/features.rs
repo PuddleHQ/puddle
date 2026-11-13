@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The release-feature check: no test double ships. Puddle's crates keep their in-memory doubles
 //! (the test resolver, the allow-any address check, the fuzz entry points) behind a `testing` or
 //! `fuzzing` feature that only dev-dependencies turn on. A feature that leaked into a normal

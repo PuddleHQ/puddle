@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Does a real browser accept an HTTPS certificate? Serves one certificate on a loopback port and opens it
 // in headless Edge, Chrome and Firefox, each with a throwaway profile.
 //

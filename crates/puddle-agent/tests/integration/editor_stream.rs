@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `editor` stream through a real agent and the host's session code over a Unix socket: the
 //! host reaches the editor server's port (and only that port) and reads its password. A plain echo
 //! server on the port stands in for the editor server.

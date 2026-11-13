@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reading events from a channel with a bound, instead of `try_recv()` before the sender has run.
 
 use std::fmt::Debug;

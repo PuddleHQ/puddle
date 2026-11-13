@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! [`SshEndpoint`]: serves SSH to every client of a sandbox's owner-only endpoint.
 
 use std::future::Future;

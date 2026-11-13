@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The runtime pin list, `ci/msb-runtime.sha256`: lines of `<tag> <name> <value>`. It is the one
 //! source of what each fork tag's runtime is made of; `ci/fetch-msb.sh` reads the same lines
 //! (`pinned`, reachable as `fetch-msb.sh --pinned <tag> <name>`), and a test keeps the two

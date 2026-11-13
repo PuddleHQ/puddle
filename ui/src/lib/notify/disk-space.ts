@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The in-app notice for free space: raised when the drive that holds Puddle's data crosses the
 // warning or the failure line, withdrawn when it recovers. The notice follows the same switch as
 // the system notification (Settings, Notifications); a recovery is never announced.

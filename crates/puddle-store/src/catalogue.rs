@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The rule sets that ship with Puddle, and the hosts Puddle allows because of the user's own
 //! setup ("System managed"), as data (`docs/spec/rules.md` §7).
 //!

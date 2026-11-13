@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Three stream events become notices: a credential a workspace asked for that Puddle can't read
 // ("sign in"), a push or fetch the workspace's repository table refused ("allow it"), and a Git
 // host's `401` that no identity could answer ("attach an identity"). None opens a window or

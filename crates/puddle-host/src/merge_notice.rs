@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The notice for a file of the user's that Puddle merges its settings into and cannot parse:
 //! the file stays as it is, so the settings Puddle wanted in it are missing until it is fixed.
 

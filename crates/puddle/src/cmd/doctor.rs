@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>]`: checks this
 //! machine's prerequisites and what can get in the way, with the exact fix for each problem
 //! ([`puddle_doctor`]). Exit code 0 when nothing failed, 1 when something must be fixed first, so

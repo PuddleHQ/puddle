@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The contract suite: behaviour every [`Runtime`] must share, run against the fake (here, on
 //! every push) and against the msb SDK adapter (`puddle-compute-msb`, on VMs). A difference
 //! between the fake and msb shows up as a red case, not as a surprise in a later VM test

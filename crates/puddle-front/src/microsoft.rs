@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What Microsoft's `code serve-web` adds around its server and a direct start loses: the
 //! secret-storage key. The workbench keeps secrets in memory unless the cookie
 //! `vscode-secret-key-path` exists; it then POSTs to the path in it and combines the 32 bytes it

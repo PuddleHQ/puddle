@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of scripts/coverage-run.sh with the real compiler and the real `llvm-profdata`: a tiny instrumented
 # program writes a good `.profraw` file, a copy cut to 100 bytes (and an empty file) plays the file of a process
 # that stopped mid-write, and a stub "cargo llvm-cov" merges the files the way cargo-llvm-cov does, in batches of

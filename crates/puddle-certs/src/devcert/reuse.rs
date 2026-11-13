@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which existing ASP.NET development certificate Puddle reuses.
 //!
 //! A certificate is reused only if it carries the marker, is a leaf, is valid now and for at

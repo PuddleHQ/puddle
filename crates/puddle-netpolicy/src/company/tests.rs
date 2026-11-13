@@ -254,3 +254,23 @@ fn the_default_found_reports_the_client_the_host_read_and_no_suffixes() {
         }
     );
 }
+
+#[test]
+fn a_host_that_implements_nothing_answers_no_to_every_signal_and_unread_to_the_lan() {
+    let none = NoSignals;
+    assert!(!none.pac_direct("nexus.corp.example"));
+    assert!(!none.in_dns_namespace("nexus.corp.example"));
+    assert!(!none.private_access_client());
+    assert!(!none.vpn_routed(ip("10.8.0.1")));
+    assert_eq!(none.physical_lan(ip("10.8.0.1")), LanReading::Unread);
+}
+
+#[test]
+fn a_private_address_with_no_signal_on_a_read_lan_stays_private() {
+    let s = StaticSignals::new().with_lan_subnet(ip("192.168.1.0"), 24);
+    assert_eq!(
+        company_signal(true, ip("10.1.2.3"), Some("a.test"), &s),
+        None
+    );
+    assert_eq!(company_signal(true, ip("172.16.0.9"), None, &s), None);
+}

@@ -99,14 +99,11 @@ fn no_second_request_goes_to_an_endpoint_that_has_a_parked_one() {
     // The agent answers: both parked threads end and the endpoint takes requests again.
     open.send(()).unwrap();
     open.send(()).unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while parked::is_parked(endpoint.path()) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the endpoint stayed parked"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
+    puddle_test_kit::eventually_blocking(
+        "the endpoint stops being parked",
+        Duration::from_secs(10),
+        || !parked::is_parked(endpoint.path()),
+    );
     open.send(()).unwrap();
     let third = within_gated(
         &endpoint,

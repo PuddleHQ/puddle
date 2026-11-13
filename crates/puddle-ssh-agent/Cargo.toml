@@ -23,6 +23,7 @@ testing = []
 [dev-dependencies]
 puddle-ssh-agent = { path = ".", features = ["testing"] }
 puddle-ipc = { workspace = true }
+puddle-test-kit = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 

@@ -2,7 +2,6 @@
 //! The real pipe: a server that takes the connection and never answers, as a locked agent that asks
 //! its user first does.
 use super::*;
-use std::time::Instant;
 use tokio::net::windows::named_pipe::ServerOptions;
 
 #[test]
@@ -45,9 +44,9 @@ fn a_pipe_that_never_answers_parks_one_request_not_one_per_run() {
     // The server closes its end: the parked read ends and the endpoint is free again.
     stop.send(()).unwrap();
     server.join().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while parked::is_parked(endpoint.path()) {
-        assert!(Instant::now() < deadline, "the parked request never ended");
-        thread::sleep(Duration::from_millis(10));
-    }
+    puddle_test_kit::eventually_blocking(
+        "the parked request ends",
+        Duration::from_secs(10),
+        || !parked::is_parked(endpoint.path()),
+    );
 }

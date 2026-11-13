@@ -263,6 +263,8 @@ pub struct Proxy {
     git_ssh: Option<crate::ssh_git::GitSsh>,
     ssh_agents: Option<Arc<crate::ssh_agent::SshAgents>>,
     guest: Option<Arc<dyn GuestWatcher>>,
+    pki: Arc<puddle_netpolicy::PkiDistributionPoints>,
+    port_probe: Option<Arc<dyn crate::probe::PortProbe>>,
     pub(crate) sink: Arc<dyn EventSink>,
     reports: Option<Arc<dyn AgentReports>>,
     pub(crate) config: ProxyConfig,
@@ -299,6 +301,8 @@ impl Proxy {
             git_ssh: None,
             ssh_agents: None,
             guest: None,
+            pki: Arc::default(),
+            port_probe: None,
             sink,
             reports: None,
             config: ProxyConfig::default(),
@@ -321,6 +325,27 @@ impl Proxy {
     #[must_use]
     pub fn with_agent_reports(mut self, reports: Arc<dyn AgentReports>) -> Self {
         self.reports = Some(reports);
+        self
+    }
+
+    /// Lets a plain-HTTP `GET` or `HEAD` of one of `points` through without a rule or a toggle
+    /// when its host resolves only to company-network or private addresses: the CRL and
+    /// authority-information-access URLs of the roots the host synced.
+    #[must_use]
+    pub fn with_pki_distribution_points(
+        mut self,
+        points: puddle_netpolicy::PkiDistributionPoints,
+    ) -> Self {
+        self.pki = Arc::new(points);
+        self
+    }
+
+    /// Probes with `probe` whether this machine can reach `ssh.dev.azure.com:22` when a workspace
+    /// asks for it, so the refusal can say that the company network blocks the port.
+    /// Without a probe the refusal is the ordinary one.
+    #[must_use]
+    pub fn with_port_probe(mut self, probe: Arc<dyn crate::probe::PortProbe>) -> Self {
+        self.port_probe = Some(probe);
         self
     }
 
@@ -546,6 +571,55 @@ impl Proxy {
     /// before the rules (SSH to any other name is spliced after a rules decision).
     pub(crate) fn refuses_ssh(&self, request: &EgressRequest) -> bool {
         request.protocol == Some(ProtocolHint::Ssh) && self.is_git_ssh_name(request)
+    }
+
+    /// The refusal text for SSH to Azure DevOps when this machine's own probe of the port failed
+    ///; `None` for any other destination, port or answer, and without a probe.
+    async fn azure_devops_ssh_message(&self, request: &EgressRequest) -> Option<String> {
+        let probe = self.port_probe.as_ref()?;
+        let is_azure = matches!(&request.host, Host::Name(name) if name.as_str() == puddle_netpolicy::AZURE_DEVOPS_SSH_HOST);
+        if !is_azure || request.port != 22 {
+            return None;
+        }
+        let reachable = probe
+            .reachable(puddle_netpolicy::AZURE_DEVOPS_SSH_HOST, 22)
+            .await;
+        (!reachable).then(puddle_netpolicy::azure_devops_ssh_message)
+    }
+
+    /// A plain-HTTP `GET` or `HEAD` of a certificate distribution point named in a synced root
+    ///: `Some` admits it with its record (`pki_distribution_point`, no rule, no toggle)
+    /// when the host is a name or literal that resolves, and every address is a company-network or
+    /// private one. `None` leaves the request to the ordinary decision, which is also what a
+    /// public, late or missing answer gets.
+    pub(crate) async fn admit_distribution_point(
+        &self,
+        request: &EgressRequest,
+        method: &str,
+        path: &str,
+    ) -> Option<(Admitted, ConnectionEvent)> {
+        if !self.pki.covers(&request.host, request.port, method, path) {
+            return None;
+        }
+        let addrs = resolve_destination(self, &request.host, request.port)
+            .await
+            .ok()?;
+        if !addrs
+            .iter()
+            .all(|addr| self.addresses.pki_address(&request.host, *addr))
+        {
+            return None;
+        }
+        let mut event = ConnectionEvent::new(
+            request,
+            ConnectionDecision::Allow,
+            ConnectionReason::PkiDistributionPoint,
+        );
+        event.company_network = addrs
+            .iter()
+            .find_map(|addr| self.addresses.company_signal(&request.host, *addr));
+        tracing::info!(workspace = %request.workspace, host = %request.host, port = request.port, "certificate distribution point allowed");
+        Some((Admitted::checked(addrs, true), event))
     }
 
     /// The rule that decides `request`, without recording anything (on a blocking thread: the
@@ -1236,7 +1310,11 @@ async fn admit_into(
     // other name is decided below like every connection.
     if proxy.refuses_ssh(request) {
         note_block(event, BlockReason::SshUnsupported);
-        return Err(block(request, &[BlockReason::SshUnsupported]));
+        let mut refusal = block(request, &[BlockReason::SshUnsupported]);
+        if let Some(message) = proxy.azure_devops_ssh_message(request).await {
+            refusal.message = message;
+        }
+        return Err(refusal);
     }
     // Name stage: a literal or a name that is blocked by itself never reaches the rules, so it
     // never becomes a pending row (R-14).

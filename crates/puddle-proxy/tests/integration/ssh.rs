@@ -19,7 +19,7 @@ use puddle_agent_proto::tokio_yamux::{Control, Session, StreamHandle};
 use puddle_agent_proto::yamux::client_config;
 use puddle_ipc::IpcRoot;
 use puddle_proxy::testing::{AnyAddress, CollectingConnectionLog, StaticPolicy, StaticResolver};
-use puddle_proxy::{BoxFuture, Proxy, Resolver, Route};
+use puddle_proxy::{BoxFuture, PortProbe, Proxy, Resolver, Route};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionReason, Host, NullSink, WorkspaceId,
 };
@@ -54,6 +54,15 @@ impl Rig {
     }
 
     fn build(names: &[&str], any_address: bool) -> Self {
+        Self::build_with(names, any_address, |proxy| proxy)
+    }
+
+    /// As [`Self::new`], with `tune` applied to the proxy before it serves.
+    fn with_proxy(names: &[&str], tune: impl FnOnce(Proxy) -> Proxy) -> Self {
+        Self::build_with(names, true, tune)
+    }
+
+    fn build_with(names: &[&str], any_address: bool, tune: impl FnOnce(Proxy) -> Proxy) -> Self {
         let policy = Arc::new(StaticPolicy::new());
         let log = Arc::new(CollectingConnectionLog::new());
         let resolver = names
@@ -66,7 +75,7 @@ impl Rig {
         if any_address {
             proxy = proxy.with_address_check(Arc::new(AnyAddress));
         }
-        let proxy = Arc::new(proxy);
+        let proxy = Arc::new(tune(proxy));
         let root = IpcRoot::new().unwrap();
         let route = proxy.serve_route(root.listen().unwrap(), WorkspaceId::new("box").unwrap());
         Self {
@@ -264,6 +273,95 @@ async fn an_announced_ssh_connect_to_a_git_host_is_refused_on_any_port_before_an
     assert_eq!(rig.policy.pending().len(), 0, "nothing in the inbox");
     assert_eq!(rig.resolver.lookups(), 0, "nothing was resolved");
     assert_ssh_refusals(&rig.events(authorities.len()).await, authorities.len());
+}
+
+/// A probe that answers as set and counts how often it was asked.
+struct FixedProbe {
+    reachable: bool,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl FixedProbe {
+    fn answering(reachable: bool) -> Arc<Self> {
+        Arc::new(Self {
+            reachable,
+            asked: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl PortProbe for FixedProbe {
+    fn reachable<'a>(&'a self, _host: &'a str, _port: u16) -> BoxFuture<'a, bool> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move { self.reachable })
+    }
+}
+
+const AZURE_BLOCKED: &str = "puddle: your company network blocks SSH to ssh.dev.azure.com:22; HTTPS remotes work and need no key: Puddle adds your credentials\n";
+
+#[tokio::test]
+async fn ssh_to_azure_devops_names_the_company_network_when_the_hosts_probe_of_port_22_failed() {
+    let probe = FixedProbe::answering(false);
+    let rig = Rig::with_proxy(&[], |p| p.with_port_probe(probe.clone()));
+    let mut guest = rig.guest().await;
+    let answer = guest.announce("ssh.dev.azure.com:22").await;
+    assert!(answer.starts_with("HTTP/1.1 403"), "{answer}");
+    assert!(
+        answer.contains("x-puddle-blocked: ssh_unsupported\r\n"),
+        "{answer}"
+    );
+    assert!(answer.ends_with(AZURE_BLOCKED), "{answer}");
+    assert_eq!(probe.asked(), 1);
+    assert_eq!(rig.policy.decisions(), 0, "the rules were never asked");
+    assert_ssh_refusals(&rig.events(1).await, 1);
+}
+
+#[tokio::test]
+async fn ssh_to_azure_devops_keeps_the_ordinary_refusal_when_the_port_is_reachable() {
+    let probe = FixedProbe::answering(true);
+    let rig = Rig::with_proxy(&[], |p| p.with_port_probe(probe.clone()));
+    let mut guest = rig.guest().await;
+    let answer = guest.announce("ssh.dev.azure.com:22").await;
+    assert!(
+        answer.ends_with(
+            "puddle: SSH is not supported yet, use HTTPS: the remote becomes https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO\n"
+        ),
+        "{answer}"
+    );
+    assert_eq!(probe.asked(), 1);
+}
+
+#[tokio::test]
+async fn only_azure_devops_on_port_22_is_probed() {
+    let probe = FixedProbe::answering(false);
+    let rig = Rig::with_proxy(&[], |p| p.with_port_probe(probe.clone()));
+    let mut guest = rig.guest().await;
+    for authority in [
+        "ssh.dev.azure.com:443",
+        "vs-ssh.visualstudio.com:22",
+        "github.com:22",
+        "gitlab.com:22",
+    ] {
+        let answer = guest.announce(authority).await;
+        assert!(
+            answer.contains("puddle: SSH is not supported yet"),
+            "{authority}: {answer}"
+        );
+        assert!(!answer.contains("company network"), "{authority}: {answer}");
+    }
+    assert_eq!(probe.asked(), 0, "no probe for any other destination");
+}
+
+#[tokio::test]
+async fn without_a_probe_azure_devops_gets_the_ordinary_refusal() {
+    let rig = Rig::new(&[]);
+    let mut guest = rig.guest().await;
+    let answer = guest.announce("ssh.dev.azure.com:22").await;
+    assert!(!answer.contains("company network"), "{answer}");
 }
 
 #[tokio::test]

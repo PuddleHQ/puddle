@@ -73,6 +73,16 @@ fn a_quiet_port_is_below_the_ephemeral_ranges_and_can_be_bound_plainly() {
 }
 
 #[test]
+fn two_picks_that_start_at_the_same_point_get_different_ports() {
+    // Two processes that pick the same number in the same moment: before the claim, both were
+    // handed it (the probe frees it again) and one lost the bind later.
+    let range = (30_000, 200);
+    let first = free_port_from(range.0, range.1, 17, 0).unwrap();
+    let second = free_port_from(range.0, range.1, 17, 0).unwrap();
+    assert_ne!(first, second);
+}
+
+#[test]
 fn a_range_with_every_port_held_has_none_free() {
     let (_held, port) = bound_port();
     assert_eq!(free_port_in(port, 1), None);

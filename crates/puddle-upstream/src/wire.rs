@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The small piece of HTTP/1.1 a client of a proxy needs: write a request head, read a response
 //! head with hard limits. Everything read here comes from a proxy that may be broken or hostile,
 //! so nothing is trusted: heads are bounded, lengths are capped, parsing never panics.

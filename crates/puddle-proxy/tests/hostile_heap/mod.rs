@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A global allocator that counts live and peak heap bytes, for the tests that bound memory. A test
 //! binary installs it with `#[global_allocator]`; it is the only test in that binary, so nothing
 //! else allocates meanwhile.

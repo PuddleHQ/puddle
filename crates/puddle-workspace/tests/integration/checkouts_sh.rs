@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real `guest/checkouts.sh` under dash and bash, against real git repositories in a temp
 //! dir that plays the volume root, driven through [`Workspaces::list_checkouts`] on the fake (its
 //! exec handler runs the script on the host). The fixture volume is the one the delete check's

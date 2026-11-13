@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration test: the built agent binary's command line.
 #![expect(
     clippy::unwrap_used,

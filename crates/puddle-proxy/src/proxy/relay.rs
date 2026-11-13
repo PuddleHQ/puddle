@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Decide, connect and relay one `CONNECT` whose destination is known.
 
 use std::sync::Arc;

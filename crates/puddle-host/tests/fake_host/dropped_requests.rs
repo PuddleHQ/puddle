@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace request the API drops (its time limit, a client that went away) stops at one of
 //! its awaits. Wherever that is, the workspace must not stay busy and no maintenance sandbox may
 //! be left running: each request here is dropped at every await it has, one after the other.

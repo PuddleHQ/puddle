@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rules: who they apply to, what they match, what they do, until when (`docs/spec/rules.md` §1).
 
 use puddle_types::{RuleId, WorkspaceId};

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle backup`: a consistent copy of the state a restore needs, made while the host runs.
 //!
 //! The copy holds the database (`puddle.db`: rules, pending requests, audit log, environment

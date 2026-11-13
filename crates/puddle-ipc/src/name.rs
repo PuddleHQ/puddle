@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Unguessable endpoint names.
 //!
 //! On Windows the pipe namespace is shared by every user on the machine and anyone can list it, so

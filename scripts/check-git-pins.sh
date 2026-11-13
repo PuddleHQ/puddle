@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # No dependency may be pinned by a bare `branch =` (docs/STANDARDS.md, "Dependencies"). A branch is a
 # moving name: once the owner rebases or force-pushes it, the commit a lock file records is no
 # longer on the branch's history and every fresh fetch fails with "revision not found" even though

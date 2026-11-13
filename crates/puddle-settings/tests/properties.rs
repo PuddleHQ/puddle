@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Property tests for resolution and for documents (round trip, unknown fields, versions).
 #![expect(
     clippy::unwrap_used,

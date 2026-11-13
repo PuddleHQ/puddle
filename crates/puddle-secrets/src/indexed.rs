@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A store that remembers which ids it holds, so values nothing refers to any more can be found.
 //!
 //! The OS credential stores cannot list what Puddle put in them. A value is left behind when a

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The agent's end of the host's messages ([`puddle_agent_proto::host_control`]): reads one,
 //! does what it asks, writes one reply.
 

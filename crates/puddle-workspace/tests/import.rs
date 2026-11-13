@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Starting a workspace from checkouts on this computer, against the fake runtime: the import
 //! runs in the workspace's maintenance sandbox with no route, the volume and each checkout's
 //! `.git` read-only, clones each one with every git call guarded, and leaves nothing behind.

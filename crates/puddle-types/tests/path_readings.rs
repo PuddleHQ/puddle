@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A differential test of the paths a rule on method and path compares against the paths real
 //! servers read. Each `view` below models one family of servers; for any request target built
 //! from hostile pieces, a pattern that names the path a server reads must also name one of

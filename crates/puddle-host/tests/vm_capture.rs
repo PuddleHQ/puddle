@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Transparent capture on a real microVM (K on Linux KVM, W on Windows WHP), with no proxy
 //! setting in play: the host's boot hook turns capture on, and tools that ignore proxy settings
 //! reach the internet only the way a rule allows, by name or by address, through the agent and

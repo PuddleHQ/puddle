@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of TLS termination for bound hosts: what is decrypted, what the real server sees,
 //! what the guest sees, and what stays spliced.
 use crate::terminate_support;

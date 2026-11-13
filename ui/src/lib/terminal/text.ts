@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Text that comes from the workspace (a window title, an end reason) and the lines Puddle says
 // when a terminal is over.
 import type { Ended } from "./wire.ts";

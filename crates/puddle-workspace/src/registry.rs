@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which sandbox holds which workspace (ADR 0006 point 8). In memory: after a restart Puddle
 //! rebuilds it with [`crate::Workspaces::adopt`] (at reconcile), and running holders are
 //! also seen through the runtime's own holder lookup.

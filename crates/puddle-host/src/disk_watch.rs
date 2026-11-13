@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Watches how full the workspaces' disks are while nobody asks.
 //!
 //! The list and every finished operation already read the disks' use; a root disk or volume that

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The company-network destination category on screen against the real API on the fixture backend:
 // the switch in Settings, the message on an inbox request, the Network health entries and the
 // chip and filter in Activity. Each test has a backend of its own. In the `company-network`

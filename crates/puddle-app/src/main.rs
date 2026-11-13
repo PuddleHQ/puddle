@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `puddle-app` program: all logic is in the library.
 #![forbid(unsafe_code)]
 // No console window in release builds on Windows.

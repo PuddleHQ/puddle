@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle backup [--config <path>] [--data-dir <path>] <dest>`: a consistent copy of Puddle's
 //! database (without the sign-in secrets), settings and workspace list in a new folder, made while
 //! the host runs (see [`puddle_host::backup`]). The data folder is the one `puddle serve` would use

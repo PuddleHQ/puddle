@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle-agent`: see the library docs. This file only wires the command line, logging and the
 //! runtime.
 #![forbid(unsafe_code)]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Keeps a tab from running old code against a newer server. The server names the build of the app
 // it serves in `GET /api/health`; a tab whose own build differs reloads, once per server build.
 // A tab left open across an upgrade (or a server that came back after one) is the case: the

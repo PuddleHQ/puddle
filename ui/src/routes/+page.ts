@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { redirect } from "@sveltejs/kit";
 import { api } from "#lib/api/client.ts";
 

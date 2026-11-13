@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A browser client for VM tests: node and headless Chromium, run beside the VM.
 //!
 //! The browser runs on the test host, the way a user's browser does: the browser editor's front

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The lab registry's shared pieces: its name, a resolver that points the name at a local
 //! listener, the lab root and a server certificate signed by it, and the digest format.
 #![expect(

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Nightly performance bars: the six `#[ignore]`d tests in crates/puddle-proxy/tests/terminate_suite/perf.rs
 # (terminating next to splicing, HTTP/2 next to HTTP/1.1, resident memory of an idle connection),
 # built in release mode, because a debug build says nothing about throughput or memory. Each test

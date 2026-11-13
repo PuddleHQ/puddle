@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Puddle's settings model: the global settings, per-workspace overrides, the consent
 //! store, and how a stored document is versioned, migrated and read back. No storage and no API:
 //! a store keeps the documents ([`GlobalSettings::to_document`] gives a JSON value), the API

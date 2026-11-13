@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Basic authentication to an upstream proxy from credentials the user configured, and a list
 //! that tries several [`ProxyAuth`] implementations in order (Basic after SSPI, say).
 //!

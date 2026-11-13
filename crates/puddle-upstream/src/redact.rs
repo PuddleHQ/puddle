@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Making text safe to show: the network-health report and the logs may name proxies, PAC
 //! addresses and what went wrong, never a credential or a token. Two layers back each other:
 //! the types that carry proxies ([`crate::ProxyAddr`]) cannot hold credentials at all, and

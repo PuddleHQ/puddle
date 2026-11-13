@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the identities screens ask the host about credentials (credentials spec §3, §8): the
 //! accounts already signed in on this computer, whether Puddle can read one now, a pasted token
 //! (write-only), and signing in on a click. No response carries a secret value, and the one request

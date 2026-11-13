@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The upstream's response, written to the guest.
 //!
 //! The upstream client (hyper) has already framed and checked the response; what is written here

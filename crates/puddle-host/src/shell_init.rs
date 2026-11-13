@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's shell init as the host applies it.
 //!
 //! The text the user saved lives in the database and nowhere else is the truth. At every start

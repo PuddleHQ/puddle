@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! macOS: `fdesetup status` (no administrator rights needed) for the boot volume that holds the
 //! data folder, and `sysctl vm.swapusage`, which ends in `(encrypted)` when swap is.
 

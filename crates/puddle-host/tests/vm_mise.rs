@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Risk tests for the mise integration (docs/plan/mise-build-plan.md, M-1): the real `mise` binary
 //! in a real microVM, reaching the real internet through Puddle's proxy. It answers what the design
 //! left assumed: the musl binary trusts Puddle's CA, two installs of one tool at once are safe, a

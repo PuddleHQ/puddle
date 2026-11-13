@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-ssh"
 description = "SSH endpoint per workspace (serve_connection behind the readiness gate) and the ssh-bridge relay"

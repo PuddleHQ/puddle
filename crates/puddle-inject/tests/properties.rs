@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Properties of the injector over generated requests: whatever the path, method, query and
 //! headers, a request never carries a credential that is not the one the owner in its path is
 //! covered by; never one of another workspace's; never when the workspace sent its own

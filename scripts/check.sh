@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
 #   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, quality, secrets, clippy, clippy-windows, deny, advisories, notices, openapi, test, doc, coverage,

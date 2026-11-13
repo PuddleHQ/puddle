@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # A test that returns early because something is missing passes without testing anything. This gate
 # fails the forms that hide such a skip, so a missing prerequisite has to be either a failure in CI
 # or a skip a reader can see and read the reason for.

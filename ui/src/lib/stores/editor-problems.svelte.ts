@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The host's problems about a workspace's browser editor server: it could not be installed
 // (`editor-install:<workspace>`, told on the workspace's page and in the Connect dialog) or could
 // not take a newer build (`editor-update:<workspace>`, the page only: the editor still opens) or

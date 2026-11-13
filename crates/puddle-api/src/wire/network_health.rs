@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Wire types of the network-health report.
 //!
 //! Safe to show by construction: proxies are `host:port` (no user info), the PAC address has no

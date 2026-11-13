@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Puts the pinned Forgejo release binary in <dest-dir>/forgejo, for the lab (PUDDLE_FORGEJO_BIN): a
 # real Git forge the tests start for one run, with its own SSH server and an account made for the
 # run. The download must match the SHA-256 pinned in ci/forgejo.sha256.

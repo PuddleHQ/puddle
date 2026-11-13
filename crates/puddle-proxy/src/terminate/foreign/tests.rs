@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use ::http::header::{AUTHORIZATION, HeaderName, HeaderValue};
 
 use puddle_test_kit::{TokenKind, token, with_broken_checksum, with_checksum};

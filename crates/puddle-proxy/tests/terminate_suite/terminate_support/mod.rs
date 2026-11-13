@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Test rig for terminated connections: a fake TLS upstream with a recording handler, a workspace
 //! proxy with a termination, and a guest that speaks TLS through the route.
 #![expect(

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The workspace page's Repositories section and start folder, on the fixture backend. Scenario
 // `unmanaged-checkouts`: dev is running with a managed checkout (changes in it), a hostile one,
 // one without a remote, one over ssh, an unreadable one, a personal one and a scratch one, and a

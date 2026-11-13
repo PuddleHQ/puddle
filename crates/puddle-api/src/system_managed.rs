@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! System managed: which hosts Puddle allows because of the user's own setup (rules spec R-41).
 //! Derived from the settings here and handed to the store, at start and after every settings
 //! or consent change, so the allows follow the choices that justify them.

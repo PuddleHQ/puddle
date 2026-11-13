@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Quoting for the plan, which `boot.sh` sources as POSIX sh. Everything Puddle puts into the plan
 //! goes through one of these two functions, so no value can end a word or run a command.
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A stream over the workspace's connection limit is answered first and audited after. While the
 //! connection log lags (here it is held shut), the refusals waiting for their audit row must not
 //! keep their streams: a flood would otherwise hold a task and a read buffer for every refused

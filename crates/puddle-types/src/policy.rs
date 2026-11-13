@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the proxy asks the rules engine, and what it gets back (`docs/spec/rules.md` R-9, R-14).
 //!
 //! The proxy depends on [`Policy`]; the store implements it; the host program wires

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The stand-in table: which name a stand-in address stands for.
 //!
 //! A client that resolves a name through the stub gets an address from `198.18.0.0/15`, and the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The event hub: Puddle's components emit [`Event`]s into it ([`EventSink`]), and every SSE
 //! subscriber gets a copy.
 

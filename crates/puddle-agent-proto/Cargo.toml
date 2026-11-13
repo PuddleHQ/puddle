@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-agent-proto"
 description = "Wire protocol between the guest agent and the host: yamux settings, control stream, host session, reset-preserving relay"

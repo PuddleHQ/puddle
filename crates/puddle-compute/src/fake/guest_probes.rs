@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fake guest's answers to the hostile-guest probes of [`crate::probes`]: a guest with no
 //! network, whose only vsock destination is the host and whose only open host ports are the
 //! sandbox's routed ones.

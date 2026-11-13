@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Microsoft's VS Code server in the guest: found, downloaded, checked, unpacked on the workspace
 //! volume and started directly. The host asks for it only after the user's consent
 //! (`puddle_agent_proto::editor::ServerKind::Microsoft`); this module never decides that.

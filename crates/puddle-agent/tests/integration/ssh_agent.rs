@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guest's SSH agent socket through a real agent and the host's session code over a Unix
 //! socket: a client of the socket becomes one `ssh-agent` stream on the host, and the bytes go
 //! through both ways unchanged.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle-lab-forgejo`: the lab's Forgejo (`puddle_e2e::lab::Forgejo`) as a program, for a script
 //! that drives the installed app (`crates/puddle-app/e2e/usable.mjs`, the nightly "usable" run).
 //! It starts Forgejo answering to `--name`, makes the repository `acme/app` (a small npm project

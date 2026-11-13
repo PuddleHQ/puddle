@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! WebView2's own shortcuts (F5 and Ctrl+R reload, F7's caret-browsing prompt, print, find) off, so
 //! the editor and the terminal get every key. The setting has no portable counterpart: WebKitGTK
 //! has none to turn off, and the terminal page cancels those defaults itself there.

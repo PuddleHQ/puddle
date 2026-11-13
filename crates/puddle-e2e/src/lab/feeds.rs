@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Fake private package feeds for [`WebHost`](super::WebHost): one feed each for npm, `NuGet`, pip
 //! and Maven that answer `401` to a request without the one token it knows and serve a tiny
 //! package to a request that carries it, so a test can have the real tools install from a feed

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of secret stand-ins on HTTP/2 requests of a terminated connection: the same swap as on
 //! HTTP/1.1, whatever version the real server speaks.
 #![expect(

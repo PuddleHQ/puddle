@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The command line: `puddle-agent` runs the agent, `puddle-agent --version` prints the version.
 //! `puddle-agent merge-file ...` applies a merged guest file for the boot hook
 //! ([`crate::merge_file`]). `puddle-agent connect <host> <port> [<name>]` is the ssh

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Deletes the root-disk images that a grow of a stopped sandbox leaves behind.
 //!
 //! msb grows a stopped root by copying the head into a new `.grow-XXXXXX` folder and pointing

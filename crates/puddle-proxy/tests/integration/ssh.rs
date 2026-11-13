@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests for SSH from a workspace. SSH to a Git host's name is refused at once, whatever the
 //! port, with the reason `ssh_unsupported`; it never reaches the rules, the inbox or the
 //! resolver, and nothing of it reaches a server. SSH to any other name is decided by the rules like

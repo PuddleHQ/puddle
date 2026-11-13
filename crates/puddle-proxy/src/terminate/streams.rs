@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The open streams of one terminated HTTP/2 connection, and the clock that ends what stalls.
 //!
 //! A stream's idle timer cannot live in its body: the HTTP/2 library stops polling a body while it

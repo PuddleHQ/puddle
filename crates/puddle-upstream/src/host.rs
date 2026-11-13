@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Connections Puddle makes for itself: telemetry upload, downloads, anything the
 //! host program fetches. They take the same route and authentication as a workspace's traffic.
 //!

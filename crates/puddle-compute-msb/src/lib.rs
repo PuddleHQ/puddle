@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The compute-plane traits ([`puddle_compute::Runtime`], [`puddle_compute::Sandbox`]) over the
 //! msb SDK from Puddle's fork tag (`microsandbox`, git tag `v0.7.7-puddle.N` in the root `Cargo.toml`).
 //!

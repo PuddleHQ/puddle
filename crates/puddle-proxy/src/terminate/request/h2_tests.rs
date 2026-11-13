@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 #[test]
 fn an_unbuildable_injected_header_is_a_bad_gateway() {
     assert_eq!(unbuildable_header().status, "502 Bad Gateway");

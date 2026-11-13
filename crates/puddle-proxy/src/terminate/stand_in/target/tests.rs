@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::super::{SecretValue, StandInOrigin, TerminationSet, TokenBody};
 use super::*;
 use puddle_types::QueryName;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's checkouts, and adding, managing and removing the repositories on its list. The
 //! routes only translate; [`crate::WorkspaceService`] does the work.
 

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Arms auto-merge on a Dependabot PR whose updates are all patch or minor (cargo and npm only), so it goes
 # through the same required checks and merge queue as any PR. The decision is ci/dependabot-auto-merge.sh.
 # pull_request_target runs this file and the script from develop, never from the PR; the checkout takes

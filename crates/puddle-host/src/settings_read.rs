@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reading the settings documents for the host's own decisions (direct SSH, local destinations,
 //! the default memory). A missing document is a fresh install and means the defaults; one that
 //! exists but cannot be read or understood is an `Err` naming what is wrong, so each caller picks

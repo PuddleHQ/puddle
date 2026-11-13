@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's side of workspace ports: pinned forwards kept in the store, and the service the API
 //! serves the Ports tab from ([`puddle_ports::Ports`] does the work).
 

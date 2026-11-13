@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The one routing rule: a request belongs to workspace `name` when its `Host` is exactly
 //! `name.localhost:<the front's port>`, and to one port of that workspace's guest when it is
 //! `<port>.name.localhost:<the front's port>` (Puddle's own forward of that port, where the editor's

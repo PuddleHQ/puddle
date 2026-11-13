@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reading why a handshake with the guest ended, so that a client that refuses Puddle's
 //! certificate is told apart from one that merely went away.
 

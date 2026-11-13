@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host keys one start of a workspace's sandbox serves for Git over SSH.
 //!
 //! Each start makes one Ed25519, one ECDSA P-256 and one RSA 3072 key from the operating

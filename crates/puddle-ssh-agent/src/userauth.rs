@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The one thing the filtered agent signs: an SSH user-authentication request (RFC 4252 section
 //! 7), the data a client signs to log in with a public key.
 

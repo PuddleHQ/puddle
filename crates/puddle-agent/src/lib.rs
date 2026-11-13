@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Guest agent (`puddle-agent`): a static binary inside each sandbox (ADR 0005) that
 //!
 //! - listens for proxy clients (`HTTP(S)_PROXY`) and

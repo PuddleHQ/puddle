@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the workspace screens decide without the server: which buttons make sense for a state,
 // the words for states and progress steps, and the checks a create form can make before it asks.
 // Pure TypeScript, no DOM.

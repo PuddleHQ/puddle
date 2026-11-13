@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The backend the window talks to, in this process: the Puddle host, the same one `puddle serve`
 //! runs (store, proxies, sandbox runtime, workspaces, API), or the in-memory fixture for developing
 //! the window.

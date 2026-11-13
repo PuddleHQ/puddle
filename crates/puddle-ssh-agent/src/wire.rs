@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The agent protocol's framing and the one exchange Puddle needs (`draft-miller-ssh-agent`):
 //! `SSH_AGENTC_REQUEST_IDENTITIES` (11) answered by `SSH_AGENT_IDENTITIES_ANSWER` (12), or
 //! `SSH_AGENT_FAILURE` (5) from an agent that is locked or refuses.

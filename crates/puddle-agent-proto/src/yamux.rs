@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! yamux settings shared by the agent (client) and the host (server).
 
 use std::time::Duration;

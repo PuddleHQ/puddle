@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Opening the bundled runtime: present, readable, exactly the pinned version.
 #![expect(
     clippy::unwrap_used,

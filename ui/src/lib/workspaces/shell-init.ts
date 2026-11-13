@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The stream events the Shell init tab acts on.
 
 /** What `event` says about the shell init of workspace `id`: it changed, Puddle restored it, or neither. */

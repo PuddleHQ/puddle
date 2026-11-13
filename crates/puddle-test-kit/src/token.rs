@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Made-up secret-shaped values, built at run time so no complete token is ever written in
 //! source: a secret scanner then needs no allowlist entry per fixture, and a real-looking value
 //! in a test cannot be mistaken for a leaked one.

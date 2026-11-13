@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Devices (signed-in browsers) and the sign-in methods. A device row carries no credential: the
 //! digest of its refresh token lives behind [`crate::AccountSecrets`].
 

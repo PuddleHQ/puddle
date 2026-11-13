@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests of the image-pull proxy: a real loopback listener, raw HTTP clients and local
 //! servers. The bars: only `127.0.0.1`; a missing or wrong token is a `407` and nothing is
 //! connected; the right token tunnels and forwards; the guard blocks Puddle's own endpoints and

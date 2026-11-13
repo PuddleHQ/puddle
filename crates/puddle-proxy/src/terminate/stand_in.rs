@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Stand-ins: values a workspace holds in place of secrets.
 //!
 //! A workspace never holds a secret. It holds a random *stand-in* (an environment variable the

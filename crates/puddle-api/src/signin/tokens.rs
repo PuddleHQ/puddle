@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The random secrets of a session: refresh tokens, access tokens and invite secrets. Each is 32
 //! random bytes as 43 URL-safe characters. Only a SHA-256 digest of one is ever stored or looked
 //! up, so the database (a backup, a stolen file) holds nothing that signs in.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! How a workspace is reached (desktop, browser, SSH) and how it is quiesced.
 
 use std::sync::Arc;

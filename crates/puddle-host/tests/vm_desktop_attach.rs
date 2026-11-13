@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Desktop attach end to end on a real microVM (Linux KVM and Windows WHP): a real OpenSSH `ssh` logs in to a
 //! workspace through the ssh config entry the host wrote, the bridge, the endpoint and the
 //! runtime's own SSH server, with the login key the host made.

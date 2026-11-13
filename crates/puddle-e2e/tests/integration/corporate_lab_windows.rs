@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Windows only: the corporate-lab fixtures against the upstream chain with Windows' own engines.
 //! There is no guest agent on Windows, so the chain is driven directly: it is the part of the
 //! proxy that picks a route and signs in, and a curl-style client takes the connection it returns.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // How a workspace decrypts hosts: the switch for decrypting every host and the names it never
 // decrypts, plus the global never-decrypt list. Each change is saved at once and the screen shows
 // what the API answers, never what was typed.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Wire types of a workspace's checkouts and of adding, managing and removing repositories.
 
 use puddle_store::IdentityId;

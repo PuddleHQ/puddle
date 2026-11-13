@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The emulator: xterm.js behind the small `Screen` the session talks to. It lives as long as its
 // sub-tab, so leaving the Terminal tab keeps the scrollback; a view mounts it into the page
 // and takes it out again. No clipboard, file or image add-on is loaded, so an OSC 52 request to set

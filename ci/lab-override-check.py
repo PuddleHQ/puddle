@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Says when an entry of ci/lab/overrides.txt can be deleted.
 
 Usage: ci/lab-override-check.py [--json FILE] [OVERRIDES_FILE]

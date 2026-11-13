@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The front process: starts the worker with a hidden console, relays its output, and turns
 //! console events into a shutdown request on the worker's stdin.
 

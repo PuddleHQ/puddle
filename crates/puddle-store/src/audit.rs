@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The audit log's wire format (`docs/spec/rules.md` §5, ADR 0002).
 //!
 //! Every record is one variant of [`AuditRecord`], serialised by `serde_json` only (R-23), with

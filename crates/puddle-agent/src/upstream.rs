@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The way to the host: a small pool of yamux sessions, each on its own vsock connection.
 //!
 //! A vsock route on Windows tops out around 90–128 concurrent streams, far below what a parallel

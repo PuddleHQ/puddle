@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Pulling an image into msb's cache without creating a sandbox, and its config.
 //!
 //! The SDK 0.7.7 pulls only inside `create`; its image crate does the work, so the adapter calls

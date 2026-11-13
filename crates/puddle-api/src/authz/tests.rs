@@ -628,7 +628,7 @@ async fn hostile_every_route_keeps_each_user_to_their_own() {
         assert_eq!(theirs.0, want, "{m} {path}: {}", theirs.1);
         checked += 1;
     }
-    assert_eq!(checked, 50, "routes that name a resource");
+    assert_eq!(checked, 53, "routes that name a resource");
 
     // The routes of a user's own collections name the resource by an id the store looks up for
     // the principal: the owner's answer exactly as ids nobody has.

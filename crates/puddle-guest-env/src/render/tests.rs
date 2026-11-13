@@ -203,6 +203,43 @@ fn the_agent_path_is_one_shell_word_in_the_proxy_command() {
 }
 
 #[test]
+fn the_ssh_agent_socket_is_named_to_every_client_and_to_ssh_only_when_it_is_on() {
+    let off = default_config();
+    assert_eq!(off.env.get("SSH_AUTH_SOCK"), None);
+    assert!(!text(file_at(&off, SSH_CONFIG_GUEST)).contains("IdentityAgent"));
+
+    let settings = ProxySettings {
+        ssh_agent: Some(GuestPath::new("/run/puddle/ssh-agent.sock").unwrap()),
+        ..ProxySettings::default()
+    };
+    let on = guest_proxy_config(&settings, &[]).unwrap();
+    assert_eq!(
+        on.env.get("SSH_AUTH_SOCK"),
+        Some("/run/puddle/ssh-agent.sock")
+    );
+    let sudoers = text(file_at(&on, SUDOERS_GUEST));
+    assert!(sudoers.contains(" SSH_AUTH_SOCK "), "{sudoers}");
+    let ssh = text(file_at(&on, SSH_CONFIG_GUEST));
+    assert!(
+        ssh.ends_with(
+            "Match host \"*,!localhost,!::1\"\n    \
+             ProxyCommand '/puddle/puddle-agent' connect --local-net 172.17.0.0/16 %h %p %n\n    \
+             IdentityAgent \"/run/puddle/ssh-agent.sock\"\n"
+        ),
+        "{ssh}"
+    );
+
+    for bad in ["/run/100%.sock", "/run/${HOME}.sock", "/run/a\"b.sock"] {
+        let settings = ProxySettings {
+            ssh_agent: Some(GuestPath::new(bad).unwrap()),
+            ..ProxySettings::default()
+        };
+        let err = guest_proxy_config(&settings, &[]).unwrap_err();
+        assert!(err.to_string().contains("IdentityAgent"), "{bad}: {err}");
+    }
+}
+
+#[test]
 fn sudoers_snapshot() {
     let c = default_config();
     assert_eq!(

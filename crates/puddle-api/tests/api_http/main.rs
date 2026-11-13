@@ -39,6 +39,7 @@ mod second_user;
 mod settings;
 mod shell_init;
 mod sign_in;
+mod ssh_agent;
 mod terminals;
 mod ui;
 mod workspaces;

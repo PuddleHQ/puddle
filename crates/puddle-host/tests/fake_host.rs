@@ -7092,6 +7092,65 @@ async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_guest_gets_its_ssh_agent_socket_from_the_first_start_with_a_host_switched_on() {
+    const SSH_CONFIG: &str = "/etc/ssh/ssh_config.d/00-puddle.conf";
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let n = rig.guest.boots() - 1;
+    let seen = agent_settings(&rig.guest.plan_bytes(n));
+    assert_eq!(seen.get("PUDDLE_AGENT_SSH_AGENT"), None, "{seen:?}");
+    let files = rig.guest.plan_files(n);
+    let ssh = String::from_utf8_lossy(&files[SSH_CONFIG]).into_owned();
+    assert!(!ssh.contains("IdentityAgent"), "{ssh}");
+    assert!(
+        files
+            .values()
+            .all(|bytes| !String::from_utf8_lossy(bytes).contains("SSH_AUTH_SOCK")),
+        "no socket, no variable"
+    );
+
+    // The switch applies to the proxy at once; the guest's socket waits for the next start.
+    let put = api
+        .put(
+            "/api/workspaces/acme/ssh-agent/build.example.com",
+            &json!({"keys": null}).to_string(),
+        )
+        .await;
+    assert_eq!(put.status, 200, "{}", put.body);
+    for step in ["stop", "start"] {
+        let reply = api.post(&format!("/api/workspaces/acme/{step}"), "").await;
+        assert_eq!(reply.status, 202, "{}", reply.body);
+        events.until(ended("acme"), Duration::from_secs(20)).await;
+    }
+    let n = rig.guest.boots() - 1;
+    let seen = agent_settings(&rig.guest.plan_bytes(n));
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_SSH_AGENT").map(String::as_str),
+        Some("/run/puddle/ssh-agent.sock")
+    );
+    assert_eq!(
+        seen.get("PUDDLE_AGENT_SSH_AGENT_USER").map(String::as_str),
+        Some("agent")
+    );
+    let files = rig.guest.plan_files(n);
+    let ssh = String::from_utf8_lossy(&files[SSH_CONFIG]).into_owned();
+    assert!(
+        ssh.contains("    IdentityAgent \"/run/puddle/ssh-agent.sock\"\n"),
+        "{ssh}"
+    );
+    assert!(
+        files
+            .values()
+            .any(|bytes| String::from_utf8_lossy(bytes).contains("SSH_AUTH_SOCK")),
+        "the variable reaches the guest"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn the_workspaces_reconnection_grace_reaches_the_editor_server_at_the_next_start() {
     let rig = Rig::named_ids();
     let mut config = rig.config();

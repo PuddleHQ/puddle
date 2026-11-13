@@ -17,9 +17,9 @@ use crate::tools::run;
 pub const CONTRACT_DIR: &str = "crates/puddle-api/openapi";
 /// The spec's file name.
 pub const SPEC_FILE: &str = "openapi.json";
-/// The generated types' file name.
+/// The generated types' file name (the generator's output in its scratch folder).
 pub const TYPES_FILE: &str = "schema.d.ts";
-/// The UI's copy of the generated types, relative to the workspace root (the SPA imports it).
+/// The one committed copy of the generated types, relative to the workspace root (the SPA imports it).
 pub const UI_TYPES_PATH: &str = "ui/src/lib/api/schema.d.ts";
 
 /// Prepended to the generator's output (the SPDX gate covers `.ts` files).
@@ -118,8 +118,9 @@ pub fn with_header(generated: &str) -> String {
     format!("{TYPES_HEADER}{generated}")
 }
 
-/// Writes (or with `check`, compares) the spec `spec` and its types in `dir`, and the same types
-/// at each path in `copies` (the UI's import, [`UI_TYPES_PATH`]).
+/// Writes (or with `check`, compares) the spec `spec` in `dir` and its types at `types_path` (the
+/// UI's import, [`UI_TYPES_PATH`]). The types have one committed copy: a second one would give two
+/// pull requests that add a route two files to conflict in.
 ///
 /// # Errors
 ///
@@ -131,10 +132,9 @@ pub fn openapi(
     check: bool,
     types: Types,
     generator: &dyn TypeGenerator,
-    copies: &[PathBuf],
+    types_path: &Path,
 ) -> Result<Report> {
     let spec_path = dir.join(SPEC_FILE);
-    let types_path = dir.join(TYPES_FILE);
     let spec_state = if check {
         if read(&spec_path).ok().as_deref() != Some(spec) {
             return Err(XtaskError::Stale(spec_path));
@@ -158,20 +158,16 @@ pub fn openapi(
     }
     let generated = with_header(&generator.generate(spec)?);
     let types_state = if check {
-        for path in std::iter::once(&types_path).chain(copies) {
-            if read(path).ok().as_deref() != Some(generated.as_str()) {
-                return Err(XtaskError::Stale(path.clone()));
-            }
+        if read(types_path).ok().as_deref() != Some(generated.as_str()) {
+            return Err(XtaskError::Stale(types_path.to_path_buf()));
         }
         "is current"
     } else {
-        for path in std::iter::once(&types_path).chain(copies) {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| XtaskError::io(format!("create {}", parent.display()), e))?;
-            }
-            write(path, &generated)?;
+        if let Some(parent) = types_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| XtaskError::io(format!("create {}", parent.display()), e))?;
         }
+        write(types_path, &generated)?;
         "written"
     };
     Ok(Report {

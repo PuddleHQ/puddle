@@ -93,9 +93,11 @@ is unit-testable (see `crates/puddle/src/cli.rs`).
 - **Node** (22 or newer, CI uses 24) for one gate: `scripts/check.sh openapi` regenerates the API
   contract's TypeScript types with `openapi-typescript` (pinned in
   `crates/puddle-api/openapi/package-lock.json`) and compares them with the committed
-  `schema.d.ts`. Without Node the gate checks `openapi.json` only and says so; CI (`CI` set)
-  fails instead. After changing a route or a wire type, run `cargo xtask openapi` and commit
-  both files.
+  `ui/src/lib/api/schema.d.ts`, the one committed copy (a second copy would give every pull request
+  that adds a route two generated files to conflict in). Without Node the gate checks `openapi.json`
+  only and says so; CI (`CI` set) fails instead. After changing a route or a wire type, run
+  `cargo xtask openapi` and commit both files. After a merge conflict in either file, take the
+  other side's version and run the command again: both files are generated, never merged by hand.
 - **Node 24** also runs the UI gates (`ui/`, section 13): `scripts/check.sh ui ui-licences ui-audit
   ui-e2e`. Every npm package is pinned to an exact version in `ui/package.json` and
   `ui/package-lock.json`. `ui-e2e` needs Playwright's browsers (`cd ui && npx playwright install

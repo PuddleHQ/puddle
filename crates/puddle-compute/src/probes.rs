@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The guest-side programs of the hostile-guest contract cases, and how to tell them apart.
 //!
 //! Each script starts with a `# puddle-probe: <name>` line. A real runtime runs it in the guest

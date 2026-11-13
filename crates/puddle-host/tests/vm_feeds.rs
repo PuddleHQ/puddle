@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Private package feeds on a real microVM (K on Linux KVM): the real `npm`, `pip`, `dotnet`
 //! (`NuGet`) and `mvn` install a package from a feed that answers `401` to a request without its
 //! token, with the token held in the guest only as a secret's stand-in.

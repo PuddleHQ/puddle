@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A minimal Chrome DevTools Protocol client for the shell's end-to-end scripts (plain Node 24, no
 // packages): one page target over its websocket.
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! [`FakeRuntime`]: an in-memory [`Runtime`] that behaves like the msb Puddle pins, for
 //! unit tests of everything above the compute plane (feature `fake`).
 //!

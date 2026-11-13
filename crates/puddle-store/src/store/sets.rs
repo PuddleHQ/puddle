@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rule sets and System managed in the store (`docs/spec/rules.md` §7, R-36 to R-43): the sets
 //! the user makes, the switches of every set, the built-in sets' update record, and the reasons
 //! behind the System managed hosts.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The fake runtime's SSH server with a pseudo-terminal stand-in, for tests of a client that asks
 //! for a shell ([`FakeRuntime::serve_terminals`](super::FakeRuntime::serve_terminals)).
 //!

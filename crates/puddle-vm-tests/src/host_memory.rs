@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host-side resident memory of a process, in bytes: the number a VM test reads off the
 //! process that runs a microVM to see whether memory the guest freed went back to the host.
 //!

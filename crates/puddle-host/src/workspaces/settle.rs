@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settling a running workspace: plans, environment, shell init, locks and repairs.
 
 use crate::agent_reports::{clear_no_sudo, entrypoint_problem, no_sudo_problem};

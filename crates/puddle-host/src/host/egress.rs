@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Network plumbing the host wires up: corporate roots, injection and the egress proxy.
 
 use crate::agent_reports::ReportDesk;

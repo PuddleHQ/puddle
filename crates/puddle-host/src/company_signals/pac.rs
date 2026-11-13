@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The proxy-script signal: the script answers `DIRECT` for a name while it names proxies for
 //! other URLs, which is the script author's own definition of "internal".
 //!

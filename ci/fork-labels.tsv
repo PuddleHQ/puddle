@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Every commit the forks carry over their upstream, and why (ci/fork-upkeep.py reads this file).
 # Columns, tab separated:
 #   fork     microsandbox, libkrun, russh, imago or libkrunfw

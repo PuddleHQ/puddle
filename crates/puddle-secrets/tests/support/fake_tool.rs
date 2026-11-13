@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A stand-in for `gh` and `git`, for the source tests.
 //!
 //! The tests copy this binary to a temporary directory under the name of the real tool and write

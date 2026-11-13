@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Recording the audit log: connections, workspace operations, the sweep, and the audit queries.
 
 use std::collections::HashMap;

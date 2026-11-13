@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Running the hook: after every create, start and re-adoption, behind the gate.
 
 use std::time::{Duration, Instant};

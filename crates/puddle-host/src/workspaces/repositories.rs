@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's repository list at run time: the checkouts on its volume, adding a repository
 //! (a clone, or a checkout that is already there), cloning an entry again and taking one off the
 //! list. Part of [`HostWorkspaces`](super::HostWorkspaces); the rules are in the storage spec.

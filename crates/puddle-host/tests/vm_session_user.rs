@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The non-root session user on a real microVM (K on Linux KVM, W on Windows WHP), with the real
 //! tools at their widest: a new workspace's user is `agent`, becomes root with `sudo`, installs
 //! system packages through `sudo`, runs Claude Code with `--dangerously-skip-permissions` (which

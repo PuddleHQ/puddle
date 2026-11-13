@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
 /// Tests that bind port 0, hand out a port they dropped, or spawn a child run one at a time. A

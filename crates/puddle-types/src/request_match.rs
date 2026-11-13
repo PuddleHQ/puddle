@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a rule on method and path compares: a canonical form of the request path, a path
 //! pattern, and a set of methods (`docs/spec/rules.md` R-49..R-55).
 //!

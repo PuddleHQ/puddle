@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The one list of top-level sections. Later rows add a screen by adding an entry here (and a
 // folder under src/routes), never by editing the layout.
 import Inbox from "@lucide/svelte/icons/inbox";

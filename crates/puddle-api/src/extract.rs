@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! axum extractors whose rejections are [`ApiErrorBody`](crate::ApiErrorBody) JSON like every
 //! other error, instead of axum's plain-text ones.
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Terminals: a shell in a running workspace, reached over a WebSocket.
 //!
 //! `POST` asks for one and answers with a single-use ticket; the socket then opens with the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Which hosts the repositories of a create form are on, and where each stands: the answer of
 // `POST /api/repository-hosts`. `new` hosts are the ones the create will allow for the workspace;
 // `blocked` ones (a deny rule covers them) refuse the create.

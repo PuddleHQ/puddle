@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Windows only: the real WinHTTP engine against a local PAC server, and the registry
 //! path end to end. The registry tests edit the *current user's* Internet Settings, so they run
 //! only where `GITHUB_ACTIONS` is set (a throwaway runner), never on a developer's machine. They

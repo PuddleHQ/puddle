@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The Windows UI Automation side of uia.mjs: one long-lived PowerShell that answers one JSON request per
 # input line with one JSON line. It finds the app's top-level windows by process id, finds elements in
 # the web content WebView2 exposes through UI Automation, and acts on them (Invoke, Toggle, Select, a

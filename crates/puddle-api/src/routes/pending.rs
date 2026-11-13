@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Pending requests: list, inbox, approve, deny (docs/spec/rules.md §3).
 
 use axum::Json;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The settings every workspace has, each optional. The same type holds the global defaults
 //! ([`crate::GlobalSettings::workspace_defaults`]) and one workspace's overrides
 //! ([`crate::WorkspaceSettings::overrides`]); `None` means "not set here, ask the next level".

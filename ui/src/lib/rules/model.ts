@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The rules table as pure data: how a rule reads, which rules a filter keeps, and in which order
 // they are shown. No layout and no API calls here.
 import type { components } from "#lib/api/schema.d.ts";

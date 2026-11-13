@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! One Puddle host process per data folder.
 //!
 //! [`DataLock::acquire`] takes an exclusive advisory lock on a file in the data folder. The

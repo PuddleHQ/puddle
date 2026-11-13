@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Corporate-network fixtures: the things a client network puts between a machine and the
 //! internet, started as real programs on free loopback ports for one test each.
 //!

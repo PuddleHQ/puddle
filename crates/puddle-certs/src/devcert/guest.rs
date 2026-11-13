@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a workspace gets of the development certificate: the certificate and its key as boot
 //! files, the system-store copy, the .NET step and the variables that point tools at the files.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // A stand-in for `GET /api/audit` and `GET /api/workspaces`, for unit and component tests, in the
 // shape openapi-fetch returns them. It filters and pages like the API does. Not shipped (tests
 // import it).

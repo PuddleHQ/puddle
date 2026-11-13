@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Stand-ins that look like the token they stand for.
 //!
 //! A tool that is handed a stand-in may look at it: GitHub's tokens start with a type prefix

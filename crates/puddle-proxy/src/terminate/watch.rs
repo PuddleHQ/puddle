@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A watch over the guest's HTTP/2 frames, for the limits the HTTP/2 library does not have.
 //!
 //! The library bounds what a stream or a header list may use, but not how long a half-sent header

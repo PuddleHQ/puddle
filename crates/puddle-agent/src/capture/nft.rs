@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Installs a [`Plan`] into the kernel's `nf_tables` over netlink, and reads back what is there.
 //!
 //! No `nft` binary and no C library: the messages are written here (`Writer`). The attribute

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Docker Hub login through the real proxy and the shipped profile, against fake servers that
 //! speak the CLI's wire format: the device flow's poll (a form in, JSON out), the personal access token
 //! `desktop-generate` mints from the access token (a nested `data.token`), the `Basic` credential the

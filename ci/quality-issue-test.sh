@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/quality-issue.sh with a stub `gh` (answers `api` from files, `issue list` from a variable, records
 # its write calls and keeps the body file) and a stub scanner. Cases: no open issue opens one with the first report;
 # an open issue is rewritten and its recorded lists give the delta (new and gone, a comment only when something is new);

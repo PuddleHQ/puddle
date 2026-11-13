@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The capture rules as data: which packets are redirected to the agent, which fail at once.
 //!
 //! [`Plan::capture`] is the whole rule set. [`nft`](super::nft) turns it into kernel messages and

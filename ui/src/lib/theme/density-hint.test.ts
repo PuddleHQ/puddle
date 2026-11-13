@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The inline script in app.html applies the density hint before the first style resolution. It
 // can't import density.ts, so this runs it and checks it does what loadDensity + applyDensity do.
 import { readFileSync } from "node:fs";

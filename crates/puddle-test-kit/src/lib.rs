@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared helpers for tests. A test that waits for something names what it waits for and says
 //! how long it may take; a wait that runs out panics with that name, before nextest's
 //! slow-timeout kills the test without one.

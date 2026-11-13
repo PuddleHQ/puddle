@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Builds Puddle's per-user MSI on Windows (Git Bash), in three steps so a second MSI (the upgrade
 # test's newer version) neither stages nor compiles again.
 #
@@ -54,7 +54,7 @@ stage() {
     agent=$("$here/build-agent.sh" --locked)
     cp "$agent" "$stage/runtime/puddle-agent"
     cp "$root/ui/THIRD-PARTY-NOTICES.txt" "$stage/runtime/licenses/THIRD-PARTY-ui.txt"
-    cp "$root/LICENSE" "$stage/runtime/licenses/GPL-3.0.txt"
+    cp "$root/LICENSE" "$stage/runtime/licenses/AGPL-3.0.txt"
     cargo build --release --locked --manifest-path "$root/crates/puddle/Cargo.toml"
     # Tauri names a sidecar `<name>-<target triple>` and installs it beside the shell as `<name>`.
     cp "$(target_dir)/release/puddle.exe" "$stage/bin/puddle-$triple.exe"

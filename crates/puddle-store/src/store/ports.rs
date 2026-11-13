@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Pinned port forwards in the store: a port in a workspace that is forwarded to the same port of
 //! this computer each time the workspace starts. What is forwarded right now, and which ports a
 //! workspace listens on, is not stored: the host learns it from the guest.

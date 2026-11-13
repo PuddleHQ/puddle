@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Validated names: workspace ids, sandboxes, volumes and image references.
 //!
 //! Workspace id, sandbox and volume names are DNS labels (RFC 1123: `a-z`, `0-9`, `-`, 1–63

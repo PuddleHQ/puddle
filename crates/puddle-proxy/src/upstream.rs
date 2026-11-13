@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The way out of the host once a connection has been admitted: straight to a checked
 //! address, or along the route the company's proxy settings give ([`puddle_upstream::Chain`]).
 //!

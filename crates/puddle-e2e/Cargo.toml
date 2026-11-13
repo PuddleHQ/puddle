@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 [package]
 name = "puddle-e2e"
 description = "End-to-end and hostile-guest test harness and the UI fixture backend; tests and dev only, no product code"

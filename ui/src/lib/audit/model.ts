@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What the activity screen shows of an audit record, and how its filters turn into an API query
 // and a page address. Pure: nothing here touches the page or the network.
 import type { components } from "#lib/api/schema.d.ts";

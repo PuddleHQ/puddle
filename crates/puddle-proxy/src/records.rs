@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `SRV`, `TXT` and `MX` lookups for names the rules allow (the guest's stub DNS forwards them;
 //! `mongodb+srv` and Kerberos need them). Address lookups go through [`crate::Resolver`].
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Remote serving: the settings that let a reverse proxy in front of Puddle reach the API, and
 //! the names a request may use then.
 //!

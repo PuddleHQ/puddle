@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rules: list, create, delete, change expiry (docs/spec/rules.md §1–2).
 
 use axum::Json;

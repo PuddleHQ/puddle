@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* eslint-disable svelte/prefer-svelte-reactivity -- the maps and sets here are bookkeeping that no template reads, so they need no reactivity */
 // Shell-level live state: the pending-request count for the nav badge and the document title,
 // and how the event stream is doing. Screens that need more subscribe to `eventStream` themselves.

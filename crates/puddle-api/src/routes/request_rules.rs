@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rules on the method and path of a request: they only ever refuse.
 //!
 //! A change reaches a running workspace at once: the store announces it and the host reads the

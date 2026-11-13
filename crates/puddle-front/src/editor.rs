@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the front needs of a workspace: a way to reach its editor server, and which server it is.
 
 use std::future::Future;

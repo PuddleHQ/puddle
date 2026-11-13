@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Git over SSH end to end on real microVMs: the guest's own OpenSSH, `git` and cargo's
 //! built-in Git (libgit2) talk SSH to a Git host Puddle knows, Puddle ends the SSH session itself
 //! and reaches the host the way the workspace's identity does, so the guest holds no key, no agent

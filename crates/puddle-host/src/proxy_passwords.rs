@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The sign-in Puddle uses for a company proxy that asks for a user name and password (Basic),
 //! kept per proxy in the operating system's credential store and nowhere else: never in a
 //! settings file, never in the audit, never in a log.

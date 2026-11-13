@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The proxy listener inside the guest: every accepted connection becomes one yamux stream to
 //! the host, spliced so an abort stays an abort. The agent doesn't parse the request;
 //! the host proxy does, except for one thing: a request from a container (see

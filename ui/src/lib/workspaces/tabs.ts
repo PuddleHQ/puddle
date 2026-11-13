@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The tabs of a workspace's page, in order. A tab is a folder under `routes/workspaces/[id]/`
 // (the overview is the folder itself); a later tab is added here and as a folder.
 export interface Tab {

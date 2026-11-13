@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The host's side of credential injection: one CA for each running sandbox, the registry that
 //! tells the proxy which hosts each workspace decrypts, the injector of each start, the cache of
 //! secrets behind it, and the stand-ins of the workspace's environment secrets.

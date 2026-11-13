@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Captured logins: a login made inside a workspace keeps its real tokens on the host.
 //!
 //! A tool that logs in inside a workspace (`claude` and `/login`, `gh auth login`,

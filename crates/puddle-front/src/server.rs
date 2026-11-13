@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The listener: binds the loopback, enters itself in the registry of Puddle's own listeners and
 //! serves every connection with [`crate::proxy`].
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the injector tests share: the crate's own `World` and a few checks on a decision.
 #![expect(
     clippy::unwrap_used,

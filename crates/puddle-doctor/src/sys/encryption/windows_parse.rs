@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Reading the one line the `PowerShell` script prints (`windows.rs`), kept apart so every shape
 //! of answer is tested on any OS.
 

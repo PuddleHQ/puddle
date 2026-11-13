@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Starting Puddle when the user signs in. The Settings switch is kept with the other window
 //! choices; this module turns it into the one thing the operating system keeps: an entry that
 //! starts the program at sign-in.

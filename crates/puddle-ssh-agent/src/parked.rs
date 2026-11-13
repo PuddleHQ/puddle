@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Which endpoints still have a request thread nobody waits for.
 //!
 //! A read on a Windows named pipe cannot be given a time limit without unsafe code, which this

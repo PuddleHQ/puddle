@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import FormDialog from "./FormDialog.svelte";
   import { MS_POPUP, MS_TERMS_URL } from "#lib/settings/model.ts";

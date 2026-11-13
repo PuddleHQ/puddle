@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The first-run flow against the real API on the fixture backend: the whole way through, a
 // blocking finding, skipping, the certificates step with company roots, and the system check
 // run again from Settings. Each test has a backend of its own, reset before it.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rules and pending requests on the wire (docs/spec/rules.md).
 
 use std::time::Duration;

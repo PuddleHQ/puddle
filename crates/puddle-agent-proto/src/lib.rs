@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The wire protocol between the guest agent (`puddle-agent`) and the host.
 //!
 //! One workspace reaches the host over a vsock route (a Unix socket or named pipe on the host).

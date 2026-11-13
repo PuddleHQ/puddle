@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // What a real webview (WebView2, so Windows only) keeps for a workspace's origins, which the host's
 // fake-launcher tests can only assume: local storage, IndexedDB and a cookie on `<id>.localhost`
 // and on a forwarded port's `<port>.<id>.localhost`, kept under the workspace's own data folder.

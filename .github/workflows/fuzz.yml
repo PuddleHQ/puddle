@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Fuzzing of what a guest's first bytes reach (fuzz/): ten minutes per target every night and one hour
 # per target every Sunday, on a nightly toolchain, by hand with a different length. Each parser has
 # a byte-level target and a grammar target (`dns_message_grammar`, `resolve_line_grammar`) that builds

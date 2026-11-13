@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Playwright's global setup: starts each project's browser once and opens the app in it, before
 // any test runs.
 //

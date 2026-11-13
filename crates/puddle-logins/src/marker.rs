@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A small file that says which services have a login kept for a workspace, so that a start
 //! with capture off does not have to ask the credential store.
 //!

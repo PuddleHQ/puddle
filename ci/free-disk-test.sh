@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Tests ci/free-disk.sh on a scratch tree: it removes the listed paths only when free space is under the
 # threshold, leaves everything else alone, and exits 0 when a path is missing.
 set -euo pipefail

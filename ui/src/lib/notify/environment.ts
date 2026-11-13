@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Notices for two background failures a workspace's tabs cannot show unless they are open: a
 // change to its variables or secrets that did not reach it while it ran, and a kept port forward
 // that could not be opened again at a start. Each says why and links to the tab that fixes it.

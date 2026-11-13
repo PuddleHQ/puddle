@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! JSON with comments, as VS Code reads its settings files: `//` and `/* */` comments and a
 //! trailing comma before `}` or `]`.
 //!

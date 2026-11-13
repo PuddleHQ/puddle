@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Hostile-guest cases at tier V that need msb's own files: a root process in the guest tries to
 //! make the host attach a file of its choosing as its root disk, and to map device registers.
 //! The cases that hold for any runtime (no network, only routed vsock ports) are in the contract

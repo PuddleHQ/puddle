@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The `ui-audit` gate: `npm audit` on production dependencies at moderate and above, minus the
 // reviewed exceptions in audit-exceptions.json (advisory id, reason, review-by date), like
 // deny.toml's `ignore`. An exception past its date fails again, so it gets looked at.

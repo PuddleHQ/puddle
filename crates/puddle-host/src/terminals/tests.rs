@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The session against the fake runtime's SSH server with its pseudo-terminal stand-in.
 
 use std::time::Duration;

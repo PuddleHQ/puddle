@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Rules on the method and path of a request (`docs/spec/rules.md` R-49..R-55). They only ever
 //! refuse, so they live apart from the rules on hosts: their own table, their own numbering,
 //! and no precedence to resolve.

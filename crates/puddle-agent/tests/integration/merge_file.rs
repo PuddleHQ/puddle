@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration test: `puddle-agent merge-file` as the boot hook calls it.
 #![cfg(unix)]
 #![expect(

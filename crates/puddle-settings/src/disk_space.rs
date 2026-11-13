@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! How little free space on the drive that holds Puddle's data is a warning and how little is a
 //! failure: the two lines `puddle doctor` and the app's notice both read.
 

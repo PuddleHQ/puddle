@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/fetch-baseline-msi.sh with a fake `gh` (no network): a release's MSI wins; a
 # release without one fails; with no release, the newest green develop run on another commit that
 # kept an MSI is taken, and runs of this commit, of other branches, expired ones and red ones are

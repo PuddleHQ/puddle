@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Two timings of the runner it runs on, printed on one line: hashing 1 GiB of zeroes (one core) and writing
 # 256 MiB with fsync (disk). Evidence only: vm-linux prints it above the tests so that a run where every test
 # ran several times slower than usual names the cause (a slow host) instead of looking like a hang. It gates

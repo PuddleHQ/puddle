@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Git tests' rig: a fake Git host (real `git http-backend` behind TLS), a workspace `box`
 //! whose injector is the real one over a real in-memory store, the real proxy with TLS
 //! termination for the host's name, and the way a client reaches it: the real guest agent where

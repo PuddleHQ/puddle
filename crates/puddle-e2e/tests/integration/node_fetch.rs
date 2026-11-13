@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Regression test, L2 with a real client: Node `fetch` with `NODE_USE_ENV_PROXY=1` (what
 //! `puddle-guest-env` sets in the guest) sends a plain `http://` URL as a `CONNECT host:port`
 //! tunnel, not as an absolute-form request. Through the real agent, proxy and SQLite store, such a

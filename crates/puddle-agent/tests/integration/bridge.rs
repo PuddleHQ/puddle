@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests for the Docker bridge listener: the bridge appears after the agent started,
 //! disappears, and comes back as a different interface, with a fake probe standing in for the
 //! kernel and `127.0.0.2` standing in for the bridge address.

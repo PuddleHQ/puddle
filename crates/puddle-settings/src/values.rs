@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Value types for single settings. Like `puddle-types`, each validates in its constructor and
 //! when deserialised.
 

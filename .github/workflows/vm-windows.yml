@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # VM tests on Windows WHP (tier W): crate puddle-vm-tests under `nextest --profile vm` on the
 # hosted windows-2025 runner, whose Hyper-V/WHP runs msb microVMs (observed, not promised by
 # GitHub). It runs on every pull request to develop (a required check there) and to main, on every merge queue run, by

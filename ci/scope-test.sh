@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/scope.sh: replays the merged pull requests in ci/scope-prs.txt, checks that every
 # always-run path forces a full run, plants paths the rules do not know to show the fail-open, drives
 # the whole script with a fake `gh` (a failed, stale, empty or huge file list, a merge queue diff,

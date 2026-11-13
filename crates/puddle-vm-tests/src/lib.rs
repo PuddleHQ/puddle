@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Harness for tests that boot real microVMs through the msb SDK (tiers K, W and R).
 //!
 //! Test code only; never a dependency of product crates.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the guest gets: the synced roots and Puddle's CAs as boot files, the step that builds
 //! the full bundle in the guest, and the environment that points tools at it.
 

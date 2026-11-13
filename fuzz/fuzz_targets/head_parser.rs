@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A guest's first bytes on a proxied stream: the request head, its target and the host's normal
 //! form. The checks are in `puddle_proxy::fuzzing::head`.
 #![no_main]

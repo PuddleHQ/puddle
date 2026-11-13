@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The colour of a rule set: a typed [`Fill`] that is one solid colour today.
 //!
 //! A fill is a tagged value (`{"kind": "solid", "color": "#0a6a85"}`), not a bare colour, so a

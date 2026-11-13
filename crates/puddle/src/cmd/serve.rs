@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `puddle serve`: runs the host process (store, proxies, sandbox runtime, workspaces, API)
 //! until Ctrl-C, a termination signal or the end of the console session, then stops every
 //! workspace cleanly.

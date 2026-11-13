@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! WebSocket through a terminated connection (RFC 6455 over HTTP/1.1 `Upgrade`, RFC 8441 over
 //! HTTP/2 extended `CONNECT`).
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Environment variables and secrets on the wire (credentials spec §9). A plain variable's value
 //! is shown and changed here. A secret's value is write-only: a request carries it once, to be
 //! kept in the operating system's credential store, and no response, error or log line carries it,

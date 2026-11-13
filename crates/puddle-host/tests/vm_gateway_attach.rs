@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! `JetBrains` Gateway's own SSH client against a workspace's direct SSH entry, on a real microVM.
 //!
 //! Gateway runs headless with a small probe plugin (`tests/gateway_probe/`) that calls Gateway's

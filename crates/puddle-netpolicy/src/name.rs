@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The name stage: turn the host a guest asked for into Puddle's normal form, before any rule
 //! lookup and before DNS (`docs/spec/rules.md` §1).
 //!

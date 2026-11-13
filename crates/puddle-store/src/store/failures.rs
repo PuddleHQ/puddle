@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What the store does when SQLite fails in the middle of a change: the error comes back as it is
 //! and the change leaves nothing behind.
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // One workspace's settings: its overrides, what is in effect, and the global values the
 // "use the global setting" choices name. A change is saved at once and replaces the overrides
 // (the API replaces, so every save sends the whole layer).

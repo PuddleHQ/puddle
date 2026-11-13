@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # The Forgejo releases the lab may run (crates/puddle-e2e/src/lab/forgejo.rs): `<version> <release asset> <sha256>`.
 # Forgejo ships no Windows build (it dropped Windows support), so the Windows tier runs Gitea, the project Forgejo
 # forked from, from Gitea's own release (https://dl.gitea.com/gitea/<version>/<asset>, checksum from <asset>.sha256);

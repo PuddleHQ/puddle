@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The test boot's process handling against fake `msb` scripts: the real VM boot is a VM test
 //! (`vm_doctor.rs`).
 #![cfg(unix)]

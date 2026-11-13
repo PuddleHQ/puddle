@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The log filter of Puddle's programs.
 //!
 //! `PUDDLE_LOG=trace` is for finding out what Puddle did, and Puddle's code never logs a secret.

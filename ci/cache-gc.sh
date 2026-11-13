@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Keeps the repo's Actions caches under GitHub's 10 GB cap, so the 137 MB cargo-xwin entry (a miss
 # costs a 14-minute MSVC CRT download) is never evicted. Deletes, newest kept:
 #   - on develop/main, all but the newest entry of each rust-cache / msb build / node / notices-stamp group (an old

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Usage: ci/apt-retry.sh <command that runs apt>...   (e.g. sudo apt-get install -y libfoo)
 # ci/apt-setup.sh picks a mirror before the install, but a probe of 2 MB cannot see every slow
 # backend: a backend that passed the probe still served the real install at 40 kB/s, and one runner

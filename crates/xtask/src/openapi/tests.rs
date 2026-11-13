@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 use std::cell::Cell;
 
 use super::*;
@@ -38,7 +38,7 @@ fn write_then_check_passes_and_drift_fails() {
     let r = openapi(dir.path(), "{}\n", false, Types::Required, &g, &types_path).unwrap();
     assert_eq!(r.line(), "openapi.json written; schema.d.ts written");
     let types = std::fs::read_to_string(&types_path).unwrap();
-    assert!(types.starts_with("// SPDX-License-Identifier: GPL-3.0-or-later\n"));
+    assert!(types.starts_with("// SPDX-License-Identifier: AGPL-3.0-or-later\n"));
     let r = openapi(dir.path(), "{}\n", true, Types::Required, &g, &types_path).unwrap();
     assert_eq!(r.line(), "openapi.json is current; schema.d.ts is current");
     assert_eq!(g.calls.get(), 2);

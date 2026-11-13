@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // How the page learns the API token. The desktop shell sets `window.__PUDDLE__` with an init
 // script before the app starts; in `npm run dev` the Vite proxy adds the token to /api requests
 // itself, so the page never holds one. The token is never read from a URL, a cookie or storage,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Environment variables and secrets over real HTTP, against a real store: a secret's value goes
 //! to the credential store and never comes back.
 

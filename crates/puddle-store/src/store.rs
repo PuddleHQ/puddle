@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The SQLite-backed store: rules, pending requests, audit, sweeper work.
 //!
 //! Decisions read an in-memory rule index snapshot (rules, rule set entries and switches)

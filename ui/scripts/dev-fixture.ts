@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // `npm run dev:fixture [-- <scenario> [<port>]]`: the real API on fake services (the UI fixture
 // backend) and Vite's dev server in front of it, with hot reload. The browser never holds the
 // token: the dev proxy adds it. Scripted events: see the printed `curl` lines.

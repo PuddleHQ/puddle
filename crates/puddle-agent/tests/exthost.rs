@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! I tests for the extension-host cleanup with real processes: shell scripts below a fake server
 //! folder stand in for the server's extension host, its pty host and the processes below them.
 #![cfg(target_os = "linux")]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Refusing a tunnel that is not decrypted but asks, in its TLS `ClientHello`, for a token
 //! endpoint of the workspace's logins.
 //!

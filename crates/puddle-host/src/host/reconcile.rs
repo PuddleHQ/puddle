@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Adopting and reconciling the runtime's workspaces at start.
 
 use std::collections::{BTreeMap, BTreeSet};

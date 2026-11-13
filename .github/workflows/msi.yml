@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Builds Puddle's per-user MSI on a clean windows-2025 runner and tests it the way a user meets it:
 # a silent install, the installed program starting and finding its runtime, an upgrade over the
 # previous MSI that keeps the data folder, the installed program's real test boot, a workspace made

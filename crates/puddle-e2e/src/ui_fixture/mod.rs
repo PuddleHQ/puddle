@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The UI fixture backend: the real `puddle-api` router on an in-memory store, a manual
 //! clock and in-memory settings, seeded from a [`Scenario`] and driven by scripted [`Step`]s.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Settings and consents (`puddle-settings`). Documents are read through their versioning rules:
 //! an older one is migrated and written back, unknown fields are kept and logged, one from a
 //! newer Puddle is refused with 409.

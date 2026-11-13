@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a listing is made of: repositories, why a list could not be read, and notes about what a
 //! list leaves out. Names and URLs only; nothing here holds a secret.
 

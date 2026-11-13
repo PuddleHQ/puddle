@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The one place Puddle swaps the process-wide panic hook.
 //!
 //! `std::panic::take_hook` then `set_hook` is not atomic, and the hook is shared by every thread.

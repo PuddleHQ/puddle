@@ -12,7 +12,7 @@
 //! `~/.cache/puddle-vm-tools`, under `capture-kits/`; with neither, every run is cold.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -38,20 +38,22 @@ pub(crate) enum Flavour {
 }
 
 impl Flavour {
-    /// Guest script: the package files of `packages` and everything they need, in `/tmp/kit`.
+    /// Guest script: downloads the package files of `packages` and everything they need and prints
+    /// them as one base64 tar (nothing else goes to stdout).
     fn build(self, packages: &str) -> String {
         match self {
             Self::Apt => format!(
                 "export DEBIAN_FRONTEND=noninteractive
                  rm -rf /tmp/kit && mkdir -p /tmp/kit
                  apt-get update -qq && apt-get install -y -qq --download-only --no-install-recommends {packages} >/tmp/kit-build.log 2>&1 \
-                   || {{ echo 'kit build failed:'; tail -15 /tmp/kit-build.log; exit 1; }}
-                 cp /var/cache/apt/archives/*.deb /tmp/kit/"
+                   || {{ echo 'kit build failed:'; tail -15 /tmp/kit-build.log; exit 1; }} >&2
+                 cp /var/cache/apt/archives/*.deb /tmp/kit/ && cd /tmp/kit && tar -cf - . | base64 -w0"
             ),
             Self::Apk => format!(
                 "rm -rf /tmp/kit && mkdir -p /tmp/kit
                  {{ apk update && apk fetch -R -o /tmp/kit {packages}; }} >/tmp/kit-build.log 2>&1 \
-                   || {{ echo 'kit build failed:'; tail -15 /tmp/kit-build.log; exit 1; }}"
+                   || {{ echo 'kit build failed:'; tail -15 /tmp/kit-build.log; exit 1; }} >&2
+                 cd /tmp/kit && tar -cf - . | base64 -w0"
             ),
         }
     }
@@ -61,7 +63,7 @@ impl Flavour {
         match self {
             Self::Apt => {
                 "export DEBIAN_FRONTEND=noninteractive
-                 dpkg -i /tmp/kit/*.deb >/tmp/kit-install.log 2>&1 || { tail -15 /tmp/kit-install.log; exit 1; }"
+                 apt-get install -y -qq --no-install-recommends --no-download /tmp/kit/*.deb >/tmp/kit-install.log 2>&1 || { tail -15 /tmp/kit-install.log; exit 1; }"
             }
             Self::Apk => {
                 "apk add --allow-untrusted --no-network /tmp/kit/*.apk >/tmp/kit-install.log 2>&1 || { tail -15 /tmp/kit-install.log; exit 1; }"
@@ -76,7 +78,9 @@ pub(crate) struct PackageKit {
     packages: &'static str,
     mirror: &'static str,
     file: Option<PathBuf>,
-    cached: Option<Arc<Vec<u8>>>,
+    /// The kit's tar: read from the cache at [`Self::open`], or filled by the cold run; what the
+    /// fake website serves.
+    bytes: Arc<Mutex<Option<Arc<Vec<u8>>>>>,
 }
 
 impl PackageKit {
@@ -105,21 +109,14 @@ impl PackageKit {
             packages,
             mirror,
             file,
-            cached,
+            bytes: Arc::new(Mutex::new(cached)),
         }
-    }
-
-    /// Whether this run installs with no live mirror.
-    pub(crate) fn warm(&self) -> bool {
-        self.cached.is_some()
     }
 
     /// `base` with the fake website also serving this kit at `http://kit.invalid/kit.tar` (and
     /// whatever `base` already answers).
     pub(crate) fn options(&self, base: WebOptions) -> WebOptions {
-        let Some(bytes) = self.cached.clone() else {
-            return base;
-        };
+        let slot = self.bytes.clone();
         let inner: Option<Responder> = base.responder.clone();
         let responder: Responder = Arc::new(move |seen| {
             let on_kit = seen
@@ -127,6 +124,7 @@ impl PackageKit {
                 .first()
                 .is_some_and(|h| h.split(':').next() == Some(KIT_HOST));
             if on_kit && seen.target.split('?').next() == Some("/kit.tar") {
+                let bytes = slot.lock().unwrap().clone()?;
                 return Some(WebAnswer {
                     status: 200,
                     content_type: "application/x-tar",
@@ -142,24 +140,20 @@ impl PackageKit {
     }
 
     /// Installs the packages in `workspace` and runs `check` (a guest command that fails when they
-    /// are not usable); returns what `check` printed. The workspace must allow [`KIT_HOST`] on a
-    /// warm cache and the mirror on a cold one.
+    /// are not usable); returns what `check` printed. The workspace must allow [`KIT_HOST`] and, for
+    /// a cold run, the mirror.
     pub(crate) async fn install(
         &self,
         vm: &VmHost,
         workspace: &WorkspaceId,
         check: &str,
     ) -> String {
-        if self.cached.is_some() {
-            let script = format!(
-                "rm -rf /tmp/kit && mkdir -p /tmp/kit && cd /tmp/kit
-                 {{ curl -fsS --max-time 60 -o kit.tar http://{KIT_HOST}/kit.tar 2>/dev/null \
-                    || wget -qO kit.tar http://{KIT_HOST}/kit.tar; }} || {{ echo 'kit download failed'; exit 1; }}
-                 tar -xf kit.tar && rm kit.tar
-                 {}",
-                self.flavour.install()
-            );
-            let (code, out, err) = exec(vm, workspace, &script, Duration::from_secs(120)).await;
+        let note = format!(
+            " (live third party: {}; an outage there fails this test)",
+            self.mirror
+        );
+        if self.bytes.lock().unwrap().is_some() {
+            let (code, out, err) = self.unpack_and_install(vm, workspace).await;
             let (checked, said, _) = exec(vm, workspace, check, Duration::from_secs(60)).await;
             if code == 0 && checked == 0 {
                 return said;
@@ -168,15 +162,9 @@ impl PackageKit {
                 "the cached kit did not install (exit {code}, check {checked}); using the mirror: {out}{err}{said}"
             );
         }
-        self.cold(vm, workspace, check).await
-    }
-
-    async fn cold(&self, vm: &VmHost, workspace: &WorkspaceId, check: &str) -> String {
-        let note = format!(
-            " (live third party: {}; an outage there fails this test)",
-            self.mirror
-        );
-        let (code, out, err) = exec(
+        // Cold, or the cached kit did not fit this image: download from the mirror, keep the files
+        // for the next run and install them the way a warm run does.
+        let (code, packed, err) = exec(
             vm,
             workspace,
             &self.flavour.build(self.packages),
@@ -185,36 +173,36 @@ impl PackageKit {
         .await;
         assert_eq!(
             code, 0,
-            "the packages could not be fetched{note}: {out}{err}"
+            "the packages could not be fetched{note}: {packed}{err}"
         );
-        // Save the files for the next run before installing them: they are the same ones.
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(packed.trim())
+            .unwrap_or_else(|e| panic!("the kit came out of the guest unreadable: {e}"));
         if let Some(file) = &self.file {
-            let (code, packed, err) = exec(
-                vm,
-                workspace,
-                "cd /tmp/kit && tar -cf - . | base64 -w0",
-                Duration::from_secs(300),
-            )
-            .await;
-            if code == 0 {
-                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(packed.trim()) {
-                    save(file, &bytes);
-                }
-            } else {
-                eprintln!("the kit could not be read out of the guest: {err}");
-            }
+            save(file, &bytes);
         }
-        let (code, out, err) = exec(
-            vm,
-            workspace,
-            self.flavour.install(),
-            Duration::from_secs(120),
-        )
-        .await;
+        *self.bytes.lock().unwrap() = Some(Arc::new(bytes));
+        let (code, out, err) = self.unpack_and_install(vm, workspace).await;
         assert_eq!(code, 0, "the packages did not install{note}: {out}{err}");
         let (code, said, err) = exec(vm, workspace, check, Duration::from_secs(60)).await;
         assert_eq!(code, 0, "the packages are not usable{note}: {said}{err}");
         said
+    }
+
+    async fn unpack_and_install(
+        &self,
+        vm: &VmHost,
+        workspace: &WorkspaceId,
+    ) -> (i32, String, String) {
+        let script = format!(
+            "rm -rf /tmp/kit && mkdir -p /tmp/kit && cd /tmp/kit
+             {{ curl -fsS --max-time 120 -o kit.tar http://{KIT_HOST}/kit.tar 2>/dev/null \
+                || wget -qO kit.tar http://{KIT_HOST}/kit.tar; }} || {{ echo 'kit download failed'; exit 1; }}
+             tar -xf kit.tar && rm kit.tar
+             {}",
+            self.flavour.install()
+        );
+        exec(vm, workspace, &script, Duration::from_secs(180)).await
     }
 }
 

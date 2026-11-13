@@ -407,6 +407,7 @@ impl<R: Runtime + Clone> Host<R> {
             proxy,
             &roots,
             store.clone(),
+            config.paths.data(),
         )?
         .with_dev_cert(dev_cert.clone());
         steps.push(Step::GuestFilesReady);

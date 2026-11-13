@@ -3993,13 +3993,14 @@ async fn operations_are_refused_once_shutdown_has_begun() {
 // ---- after a restart ----------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_volume() {
+async fn a_restart_keeps_the_workspaces_and_the_sandbox_with_its_root_disk() {
     let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
     create(&api1, &mut events, "acme").await;
     let created_at = api1.get("/api/workspaces/acme").await.json()["created_at"].clone();
+    let route = rig.runtime.routes(&SandboxName::new("acme").unwrap());
     host.shutdown().await;
     // The next start is a new process: the first one's hold on the data folder ends.
     drop(host);
@@ -4019,7 +4020,8 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
     );
     assert!(again.reconcile_report().volumes_removed.is_empty());
 
-    // This process does not serve the old sandbox's route, so starting rebuilds the sandbox.
+    // This process serves the route the sandbox was made with, so starting keeps the sandbox, and
+    // with it the root disk: no new sandbox, none removed, the same route, no notice.
     let mut events = api2.events().await;
     api2.post("/api/workspaces/acme/start", "").await;
     let end = events.until(ended("acme"), Duration::from_secs(20)).await;
@@ -4028,15 +4030,120 @@ async fn a_restart_keeps_the_workspaces_and_rebuilds_the_sandbox_on_the_same_vol
         status_of(&api2.get("/api/workspaces/acme").await),
         "running"
     );
-    let creates = rig
-        .runtime
-        .calls()
-        .iter()
-        .filter(|c| format!("{:?}", c.op) == "Create")
-        .count();
-    assert_eq!(creates, 2);
+    assert_eq!(calls_of(&rig, "Create"), 1);
+    assert_eq!(calls_of(&rig, "Remove"), 0);
+    assert_eq!(
+        rig.runtime.routes(&SandboxName::new("acme").unwrap()),
+        route
+    );
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again"))
+    });
+    assert!(!said, "a kept sandbox needs no warning");
     assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
+
+    // The workspace works after the takeover: it stops and starts again in the same sandbox.
+    api2.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(calls_of(&rig, "Create"), 1);
     again.shutdown().await;
+}
+
+/// A changed variable and a restart together: the stopped sandbox of the earlier run takes the new
+/// variables, and still keeps its root disk.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_with_a_changed_variable_writes_it_to_the_kept_sandbox() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    api1.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    put_env(
+        &api1,
+        "/api/env/EDITOR",
+        json!({"kind": "plain", "value": "nano"}),
+    )
+    .await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&rig, "Create"), 1);
+    assert_eq!(calls_of(&rig, "Remove"), 0);
+    assert_eq!(
+        rig.guest
+            .boot_envs
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("EDITOR"),
+        Some("nano")
+    );
+    again.shutdown().await;
+}
+
+/// A sandbox whose route this run does not serve (its install id is gone, as after a copy of the
+/// data folder or a sandbox from before routes were stable) is made again on the same volume,
+/// and the user is told what that costs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_that_cannot_serve_the_sandboxes_route_makes_it_again_and_says_so() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    // A new install id: every route name changes.
+    std::fs::write(
+        rig.dir.path().join("data/ipc-id"),
+        "0123456789abcdef0123456789abcdef",
+    )
+    .unwrap();
+
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&rig, "Create"), 2);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("made again") && d.contains("volume"))
+    });
+    assert!(said, "no notice that the sandbox was made again");
+    assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
+    // The new sandbox has the new run's stable route: a second restart keeps it.
+    again.shutdown().await;
+    drop(again);
+    drop(events);
+    let third = rig.start().await;
+    let api3 = api(&third);
+    let mut events = api3.events().await;
+    api3.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(calls_of(&rig, "Create"), 2);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    third.shutdown().await;
 }
 
 /// Docker's data folder is a disk of the sandbox itself: every sandbox the host makes has one,
@@ -6977,10 +7084,7 @@ async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
-    let installed = rig
-        .dir
-        .path()
-        .join("data/guest-share/puddle/code-server-9.9.9");
+    let installed = rig.dir.path().join("data/guest-share/puddle/code-server");
     assert!(installed.join("bin/code-server").is_file());
     assert!(installed.join(".puddle-installed").is_file());
     let seen = agent_settings(&rig.guest.plan_bytes(rig.guest.boots() - 1));

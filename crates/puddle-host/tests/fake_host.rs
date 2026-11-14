@@ -9331,6 +9331,7 @@ async fn deleting_a_workspace_removes_its_variables_rules_and_the_values_of_its_
     )
     .await;
     host.store()
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&puddle_store::NewRule {
             scope: puddle_store::Scope::Workspace(name("acme")),
             pattern: puddle_store::Pattern::parse("example.org").unwrap(),

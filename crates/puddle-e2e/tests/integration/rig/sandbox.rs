@@ -127,6 +127,7 @@ pub(crate) async fn rig_guarded(
 
 pub(crate) fn allow(store: &Store, host: &str) {
     store
+        .as_user(puddle_store::UserId::OWNER)
         .add_rule(&NewRule {
             scope: Scope::Workspace(workspace()),
             pattern: Pattern::parse(host).unwrap(),

@@ -1,7 +1,7 @@
 {
   "name": "puddle-login-tools-old",
   "private": true,
-  "description": "Pins Claude Code 2.1.5, the last release whose login ends on console.anthropic.com, for the old-login test. Deliberately not bumped: Dependabot does not watch this directory.",
+  "description": "Pins Claude Code 2.1.5, the last release whose login ends on console.anthropic.com, for the old-login test. Deliberately not bumped: Dependabot does not watch this directory. Used only by the console-host login test in CI (login screen with fake hosts, no agent session); the reasons, the open alerts and the removal condition are in .github/dependabot.yml.",
   "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.5"

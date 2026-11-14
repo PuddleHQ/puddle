@@ -12,7 +12,23 @@ export type LinkVerdict =
   /** Not an `http` or `https` address. */
   | { kind: "ignore" };
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+/**
+ * Whether an address names this computer: `localhost` and its subdomains, the loopback
+ * addresses 127.0.0.0/8 and [::1], the unspecified addresses 0.0.0.0 and [::], and the
+ * IPv4-mapped form of any of those. The URL parser has already normalised the spelling
+ * (`0x7f000001` is `127.0.0.1`, `[::ffff:127.0.0.1]` is `[::ffff:7f00:1]`).
+ */
+function isLocalHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (/^127(\.\d{1,3}){3}$/.test(host) || host === "0.0.0.0") return true;
+  if (host === "[::1]" || host === "[::]") return true;
+  const mapped = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(host);
+  if (mapped === null) return false;
+  const high = parseInt(mapped[1], 16);
+  const low = parseInt(mapped[2], 16);
+  return high >> 8 === 127 || (high === 0 && low === 0);
+}
 
 /** The port an address names, with the scheme's default when it names none. */
 function portOf(url: URL): number {
@@ -33,7 +49,7 @@ export function judgeLink(
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     return { kind: "ignore" };
   }
-  if (!LOCAL_HOSTS.has(url.hostname.toLowerCase())) {
+  if (!isLocalHost(url.hostname)) {
     return { kind: "open", url: url.href };
   }
   const port = portOf(url);

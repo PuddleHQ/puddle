@@ -5,7 +5,7 @@
 use std::future::Future;
 
 use puddle_store::WorkspaceGit;
-use puddle_types::{Event, WorkspaceId};
+use puddle_types::{Event, PendingEnd, WorkspaceId};
 use tokio::sync::broadcast::{Receiver, error::RecvError};
 use tokio::task::{JoinHandle, JoinSet};
 
@@ -40,10 +40,14 @@ pub(crate) trait Changes: Clone + Send + Sync + 'static {
 
     /// The same for every workspace, after events were missed.
     fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send;
+
+    /// A pending request of the workspace was closed, `allowed` or not: a tool install that
+    /// waited on it may run again. Quick: what it starts runs on its own.
+    fn pending_closed(&self, workspace: &WorkspaceId, id: i64, allowed: bool);
 }
 
 /// Applies each [`Event::WorkspaceGitChanged`], [`Event::RequestRulesChanged`], [`Event::WorkspaceEnvChanged`],
-/// [`Event::WorkspaceShellInitChanged`] and [`Event::GlobalEnvChanged`] of `events` to `service`
+/// [`Event::WorkspaceShellInitChanged`], [`Event::GlobalEnvChanged`] and [`Event::PendingClosed`] of `events` to `service`
 /// until the task is aborted. A Git change's
 /// decrypt set follows in the order the changes arrive; the guest rewrites and the reads of the
 /// credential store run on their own, so a guest or a store that is slow to answer delays only
@@ -81,6 +85,9 @@ pub(crate) fn follow<G: Changes>(mut events: Receiver<Event>, service: G) -> Joi
                         });
                     }
                     Ok(Event::RequestRulesChanged {}) => service.all_request_rules_changed(),
+                    Ok(Event::PendingClosed { workspace, id, state, .. }) => {
+                        service.pending_closed(&workspace, id, state == PendingEnd::Allowed);
+                    }
                     Ok(_) => {}
                     Err(RecvError::Lagged(_)) => {
                         service.all_git_changed().await;

@@ -325,6 +325,26 @@ export function judge(
   return report;
 }
 
+/**
+ * True only when the report measured at least one line of `first..last` and every measured line
+ * ran. The whole span is judged, not its last line: a closing brace runs whenever the block is
+ * entered, and a branch that races (which side of a select finishes first) is the line inside it.
+ */
+function ranEveryExecutableLine(
+  hits: Map<number, number> | undefined,
+  first: number,
+  last: number,
+): boolean {
+  let measured = 0;
+  for (let n = first; n <= last; n += 1) {
+    const h = hits?.get(n);
+    if (h === undefined) continue;
+    if (h === 0) return false;
+    measured += 1;
+  }
+  return measured > 0;
+}
+
 /** An entry that excuses nothing any more, and why. */
 export interface StaleEntry {
   entry: Exclusion;
@@ -366,8 +386,9 @@ export function staleExclusions(
       for (let at = lines.length; at <= text.length; at += 1) {
         if (!endsAt(text, at, lines)) continue;
         present = true;
-        const h = hits?.get(at);
-        if (h === undefined || h === 0) alive = true;
+        if (!ranEveryExecutableLine(hits, at - lines.length + 1, at)) {
+          alive = true;
+        }
       }
     }
     if (!present) {

@@ -733,6 +733,36 @@ describe("staleExclusions", () => {
     expect(staleExclusions(e, files, never, source)).toHaveLength(1);
   });
 
+  it("keeps a multi-line entry while one of its lines never runs, even if the last one does", () => {
+    const two = {
+      "src/m.rs": ["if first {", "    second()?;", "}"],
+    };
+    const src = (path: string) => two[path as keyof typeof two];
+    const e = entries("src/m.rs | if first {\\nsecond()?;\\n} | why");
+    const race = new Map([
+      [
+        "src/m.rs",
+        new Map([
+          [1, 4],
+          [2, 0],
+          [3, 4],
+        ]),
+      ],
+    ]);
+    expect(staleExclusions(e, ["src/m.rs"], race, src)).toEqual([]);
+    const all = new Map([
+      [
+        "src/m.rs",
+        new Map([
+          [1, 4],
+          [2, 1],
+          [3, 4],
+        ]),
+      ],
+    ]);
+    expect(staleExclusions(e, ["src/m.rs"], all, src)).toHaveLength(1);
+  });
+
   it("flags an entry whose line a test now runs", () => {
     const e = entries("src/a.rs | let excused_line = compute_one()?; | why");
     const cov = new Map([["src/a.rs", new Map([[2, 3]])]]);
